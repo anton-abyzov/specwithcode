@@ -97,8 +97,12 @@ jobs:
             | tee test.log | grep -E "layout |probe |error:|Test Case|failed|passed" | tail -120
           mkdir -p build/device-matrix && cp -R "$HOME/layout-shots" build/device-matrix/ || true
 
+      # Evidence, not a gate: the layout tests above decide the result. Left
+      # unbounded it ran past the job's 60 minutes and cancelled every run.
       - name: Screenshot every width class
         working-directory: apps/ios
+        timeout-minutes: 15
+        continue-on-error: true
         run: bash Tools/device-matrix.sh build/device-matrix
 
       - name: Upload screenshots

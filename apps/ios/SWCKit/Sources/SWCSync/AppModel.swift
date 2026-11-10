@@ -258,6 +258,10 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   /// A coordinator started it: its project lists it, the recents leave it
   /// out, as the desktop's chats do.
   public var isCoordinatorWorker = false
+  /// The model's options and the thread's values, for the composer's options menu.
+  public var traits: ModelTraits?
+  /// Its access level, for the same menu.
+  public var runtimeMode: RuntimeModeChoice?
   public var machineLabel: String
   public var machineOnline: Bool
   /// The machine is still on its first attempt; see `MachineSummary.isSettling`.
@@ -622,6 +626,8 @@ public protocol AppEngine: AnyObject {
   /// Loads an open conversation again after `loadError`.
   func reload(_ session: ChatSession)
   func send(_ text: String, images: [OutgoingImage], to target: ChatTarget) async throws
+  /// Sends with the model and options for this message, as the desktop's composer does.
+  func send(_ text: String, images: [OutgoingImage], modelSelection: ModelSelection?, to target: ChatTarget) async throws
   /// Where to fetch an attachment shown in the transcript. Nil when it cannot be shown.
   func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL?
   /// Every thread each machine holds, for resolving links. Nil to use the model's lists.
@@ -668,6 +674,10 @@ public protocol AppEngine: AnyObject {
 extension AppEngine {
   public func send(_ text: String, to target: ChatTarget) async throws {
     try await send(text, images: [], to: target)
+  }
+
+  public func send(_ text: String, images: [OutgoingImage], modelSelection: ModelSelection?, to target: ChatTarget) async throws {
+    try await send(text, images: images, to: target)
   }
 
   public func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL? { nil }

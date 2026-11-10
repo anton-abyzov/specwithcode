@@ -128,11 +128,18 @@ nonisolated enum DictationError: LocalizedError {
 #if os(iOS)
 /// Apple's recognizer fed from the microphone. Recognition stays on the phone
 /// when the language supports it, so no audio leaves it.
+///
+/// The system calls the authorization handler, the audio tap and the
+/// recognition handler on its own queues. The package isolates code to the
+/// main actor by default, and a closure made there would trap the moment the
+/// system called it off the main thread (build 38 crashed right after Allow),
+/// so those closures are made in the nonisolated helpers below.
 @MainActor
 final class AppleSpeechEngine: SpeechEngine {
   private let audio = AVAudioEngine()
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var task: SFSpeechRecognitionTask?
+  private var tapInstalled = false
 
   func start(locale: Locale, onEvent: @escaping @MainActor (SpeechEvent) -> Void) async throws {
     guard await Self.speechAllowed() else { throw DictationError.speechDenied }
@@ -152,14 +159,49 @@ final class AppleSpeechEngine: SpeechEngine {
     if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
     self.request = request
 
+    // With no input (a call holds the mic, or the route just changed) the
+    // format has no channels, and a tap with it raises an exception.
     let input = audio.inputNode
-    input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+    let format = input.outputFormat(forBus: 0)
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+      stop()
+      throw DictationError.unavailable
+    }
+    Self.installTap(on: input, format: format, feeding: request)
+    tapInstalled = true
+    audio.prepare()
+    do {
+      try audio.start()
+    } catch {
+      stop()
+      throw error
+    }
+    task = Self.recognitionTask(recognizer, request: request, onEvent: onEvent)
+  }
+
+  func stop() {
+    if audio.isRunning { audio.stop() }
+    if tapInstalled {
+      audio.inputNode.removeTap(onBus: 0)
+      tapInstalled = false
+    }
+    request?.endAudio()
+    task?.finish()
+    request = nil
+    task = nil
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+  }
+
+  /// Runs on the audio thread.
+  private nonisolated static func installTap(on input: AVAudioInputNode, format: AVAudioFormat, feeding request: SFSpeechAudioBufferRecognitionRequest) {
+    input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
       request.append(buffer)
     }
-    audio.prepare()
-    try audio.start()
+  }
 
-    task = recognizer.recognitionTask(with: request) { result, error in
+  /// The handler runs on the recognizer's queue and hops to the main actor.
+  private nonisolated static func recognitionTask(_ recognizer: SFSpeechRecognizer, request: SFSpeechAudioBufferRecognitionRequest, onEvent: @escaping @MainActor (SpeechEvent) -> Void) -> SFSpeechRecognitionTask {
+    recognizer.recognitionTask(with: request) { result, error in
       let text = result?.bestTranscription.formattedString
       let isFinal = result?.isFinal ?? false
       // Cancelled by stop (216, 301) or no speech heard (1110): not failures.
@@ -171,19 +213,8 @@ final class AppleSpeechEngine: SpeechEngine {
     }
   }
 
-  func stop() {
-    if audio.isRunning {
-      audio.stop()
-      audio.inputNode.removeTap(onBus: 0)
-    }
-    request?.endAudio()
-    task?.finish()
-    request = nil
-    task = nil
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-  }
-
-  private static func speechAllowed() async -> Bool {
+  /// The system answers on a queue of its own.
+  private nonisolated static func speechAllowed() async -> Bool {
     switch SFSpeechRecognizer.authorizationStatus() {
     case .authorized: return true
     case .notDetermined:

@@ -234,13 +234,118 @@ public struct ServerProviderModel: Codable, Hashable, Sendable {
   public var aliases: [String]?
   public var badge: String?
   public var isCustom: Bool?
+  /// The options the model takes, such as effort, Ultracode or fast mode.
+  public var optionDescriptors: [ProviderOptionDescriptor]
 
-  public init(slug: String, name: String, aliases: [String]? = nil, badge: String? = nil, isCustom: Bool? = nil) {
+  public init(slug: String, name: String, aliases: [String]? = nil, badge: String? = nil, isCustom: Bool? = nil, optionDescriptors: [ProviderOptionDescriptor] = []) {
     self.slug = slug
     self.name = name
     self.aliases = aliases
     self.badge = badge
     self.isCustom = isCustom
+    self.optionDescriptors = optionDescriptors
+  }
+
+  enum CodingKeys: String, CodingKey { case slug, name, aliases, badge, isCustom, capabilities }
+  enum CapabilityKeys: String, CodingKey { case optionDescriptors }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    slug = try c.decode(String.self, forKey: .slug)
+    name = try c.decode(String.self, forKey: .name)
+    aliases = try? c.decodeIfPresent([String].self, forKey: .aliases)
+    badge = try? c.decodeIfPresent(String.self, forKey: .badge)
+    isCustom = try? c.decodeIfPresent(Bool.self, forKey: .isCustom)
+    if let caps = try? c.nestedContainer(keyedBy: CapabilityKeys.self, forKey: .capabilities) {
+      optionDescriptors = (try? caps.decodeLossyArray(ProviderOptionDescriptor.self, forKey: .optionDescriptors)) ?? []
+    } else {
+      optionDescriptors = []
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(slug, forKey: .slug)
+    try c.encode(name, forKey: .name)
+    try c.encodeIfPresent(aliases, forKey: .aliases)
+    try c.encodeIfPresent(badge, forKey: .badge)
+    try c.encodeIfPresent(isCustom, forKey: .isCustom)
+    if !optionDescriptors.isEmpty {
+      var caps = c.nestedContainer(keyedBy: CapabilityKeys.self, forKey: .capabilities)
+      try caps.encode(optionDescriptors, forKey: .optionDescriptors)
+    }
+  }
+}
+
+/// One option a model takes, from its capabilities: a choice among values
+/// (effort, context window) or an on/off switch (Ultracode, fast mode).
+public struct ProviderOptionDescriptor: Codable, Hashable, Sendable, Identifiable {
+  public struct Choice: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var label: String
+    public var description: String?
+    public var isDefault: Bool?
+
+    public init(id: String, label: String, description: String? = nil, isDefault: Bool? = nil) {
+      self.id = id
+      self.label = label
+      self.description = description
+      self.isDefault = isDefault
+    }
+  }
+
+  public enum Kind: Hashable, Sendable {
+    case select([Choice])
+    case boolean
+  }
+
+  public var id: String
+  public var label: String
+  public var description: String?
+  public var kind: Kind
+  /// The machine's value when the thread has not chosen one.
+  public var currentValue: ModelOption.Value?
+
+  public init(id: String, label: String, description: String? = nil, kind: Kind, currentValue: ModelOption.Value? = nil) {
+    self.id = id
+    self.label = label
+    self.description = description
+    self.kind = kind
+    self.currentValue = currentValue
+  }
+
+  enum CodingKeys: String, CodingKey { case id, label, description, type, options, currentValue }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(String.self, forKey: .id)
+    label = try c.decode(String.self, forKey: .label)
+    description = try? c.decodeIfPresent(String.self, forKey: .description)
+    switch try c.decode(String.self, forKey: .type) {
+    case "select":
+      kind = .select(try c.decodeLossyArray(Choice.self, forKey: .options))
+      currentValue = (try? c.decodeIfPresent(String.self, forKey: .currentValue)).flatMap { $0.map(ModelOption.Value.string) }
+    case "boolean":
+      kind = .boolean
+      currentValue = (try? c.decodeIfPresent(Bool.self, forKey: .currentValue)).flatMap { $0.map(ModelOption.Value.bool) }
+    case let other:
+      throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown option type \(other)")
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(id, forKey: .id)
+    try c.encode(label, forKey: .label)
+    try c.encodeIfPresent(description, forKey: .description)
+    switch kind {
+    case let .select(choices):
+      try c.encode("select", forKey: .type)
+      try c.encode(choices, forKey: .options)
+    case .boolean:
+      try c.encode("boolean", forKey: .type)
+    }
+    try c.encodeIfPresent(currentValue, forKey: .currentValue)
   }
 }
 

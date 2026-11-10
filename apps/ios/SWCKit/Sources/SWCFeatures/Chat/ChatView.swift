@@ -1,5 +1,6 @@
 import SwiftUI
 import SWCSync
+import SWCWire
 import Weave
 
 private nonisolated struct BesideCoordinatorKey: EnvironmentKey {
@@ -104,7 +105,7 @@ private struct ChatScreen: View {
       .overlay(alignment: .bottom) { scrollToLatest }
       .edgeBar(.bottom) { composerArea }
       .screenChrome { header }
-      .overlay(alignment: .topTrailing) { rail }
+      .overlay(alignment: .bottomTrailing) { rail }
       // Whole points only, so a sub-point change never starts another pass.
       .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing.rounded() } action: { railWidth = $0 }
       .onGeometryChange(for: CGFloat.self) { max(0, $0.size.height - $0.safeAreaInsets.top - $0.safeAreaInsets.bottom).rounded() } action: { availableHeight = $0 }
@@ -587,8 +588,10 @@ private struct ChatScreen: View {
     }
   }
 
-  /// Beside the list, a thread's controls move into the status rail, under
-  /// the clock and Wi-Fi of an unfolded iPhone Duo and on the same centre.
+  /// Beside the list, a thread's controls move into the status rail of an
+  /// unfolded iPhone Duo, on the centre of its clock and Wi-Fi. They sit at the
+  /// rail's foot: the system's own icons run down from the top, and on a phone
+  /// with a call, a recording or a Focus on they reach well past the clock.
   private var usesRail: Bool {
     sidebarVisible && !isBesideCoordinator && target.threadRef != nil && railWidth >= WeaveSize.statusRailMinWidth
   }
@@ -598,7 +601,7 @@ private struct ChatScreen: View {
       VStack(spacing: 0) { threadControlButtons(thread) }
         .padding(.vertical, 2)
         .weaveGlass(in: Capsule(), interactive: true)
-        .padding(.top, WeaveSize.statusRailClearance)
+        .padding(.bottom, WeaveSpacing.s4)
         .padding(.trailing, railWidth / 2 + WeaveSize.statusRailCenterOffset - WeaveSize.minTap / 2)
         .ignoresSafeArea(.container, edges: .trailing)
         .accessibilityIdentifier("chat.rail")
@@ -819,14 +822,25 @@ private struct ChatScreen: View {
       }
       // Only a worker thread with a bound SpecWeave increment shows it; a
       // coordinator or Aide chat never does.
-      if !(isShort && composerFocused), increment != nil || session.plan != nil {
+      if !(isShort && composerFocused), increment != nil || session.plan != nil || showsModelOptions {
         HStack {
           if let increment {
             TaskProgressPill(settled: increment.settledCount, total: increment.tasks.count) { showingIncrement = true }
               .accessibilityIdentifier("chat.increment")
               .transition(.opacity.combined(with: .scale(scale: 0.9)))
           }
-          Spacer()
+          if showsModelOptions, let thread = threadSummary {
+            ModelOptionsMenu(
+              model: thread.identity.model,
+              traits: chosenTraits,
+              runtimeMode: thread.runtimeMode,
+              hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty,
+              onSet: setOption,
+              onAccess: setAccess
+            )
+            .layoutPriority(-1)
+          }
+          Spacer(minLength: 0)
           if let plan = session.plan {
             Button { scrollToPlan() } label: {
               Text("Provider checklist · \(plan.completed)/\(plan.total)")
@@ -1031,6 +1045,39 @@ private struct ChatScreen: View {
     }
   }
 
+  private var threadSummary: ThreadSummary? { target.threadRef.flatMap { model.thread($0) } }
+
+  /// Threads only: a coordinator's messages go through its own send, which takes no model.
+  private var showsModelOptions: Bool {
+    guard let thread = threadSummary, session.sendBlockedReason == nil else { return false }
+    return thread.traits?.isEmpty == false || thread.runtimeMode != nil
+  }
+
+  /// The thread's options with the ones chosen here laid over them.
+  private var chosenTraits: ModelTraits? {
+    guard let traits = threadSummary?.traits else { return nil }
+    return (router.optionDrafts[target] ?? []).reduce(traits) { $0.setting($1.id, to: $1.value) }
+  }
+
+  private func setOption(_ id: String, _ value: ModelOption.Value) {
+    var chosen = router.optionDrafts[target] ?? []
+    chosen.removeAll { $0.id == id }
+    // Back to the thread's own value: nothing left to send.
+    if threadSummary?.traits?.selection.option(id) != value { chosen.append(ModelOption(id: id, value: value)) }
+    router.optionDrafts[target] = chosen.isEmpty ? nil : chosen
+  }
+
+  private func setAccess(_ mode: RuntimeModeChoice) {
+    guard let thread = target.threadRef, threadSummary?.runtimeMode != mode else { return }
+    Task {
+      do {
+        try await model.engine.perform(.setRuntimeMode(mode), on: thread)
+      } catch {
+        session.lastError = error.localizedDescription
+      }
+    }
+  }
+
   private func send() {
     guard !photosPending else { return }
     dictation.stop()
@@ -1040,13 +1087,17 @@ private struct ChatScreen: View {
     guard !text.isEmpty || !images.isEmpty else { return }
     router.drafts[target] = ""
     router.attachmentDrafts[target] = nil
+    let chosen = router.optionDrafts[target] ?? []
+    let selection = chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
+    router.optionDrafts[target] = nil
     session.lastError = nil
     isNearBottom = true
     let target = target
     Task {
       do {
-        try await model.engine.send(text, images: images, to: target)
+        try await model.engine.send(text, images: images, modelSelection: selection, to: target)
       } catch {
+        if !chosen.isEmpty, router.optionDrafts[target] == nil { router.optionDrafts[target] = chosen }
         // Whatever was added while the upload ran stays, after what failed to send.
         let added = router.drafts[target] ?? ""
         router.drafts[target] = added.isEmpty ? original : "\(original)\n\(added)"

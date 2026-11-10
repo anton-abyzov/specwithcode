@@ -1,6 +1,7 @@
 import Observation
 import SwiftUI
 import SWCSync
+import SWCWire
 import Weave
 
 /// A screen pushed onto a navigation stack.
@@ -162,6 +163,8 @@ final class AppRouter {
   var drafts: [ChatTarget: String] = [:]
   /// Pictures waiting in each chat's composer. They survive leaving the chat, as text does.
   var attachmentDrafts: [ChatTarget: [OutgoingImage]] = [:]
+  /// Model options chosen in each chat's composer, sent with its next message.
+  var optionDrafts: [ChatTarget: [ModelOption]] = [:]
   private(set) var pendingPhotoBatches: [ChatTarget: Int] = [:]
 
   func beginPhotoBatch(for target: ChatTarget) {
