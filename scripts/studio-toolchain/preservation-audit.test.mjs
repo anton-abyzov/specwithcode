@@ -104,6 +104,23 @@ test("accepts the actual lock: identity map, exact SDK promotion and reviewed ch
   );
 });
 
+test("ignores registry deprecation notes, which pnpm adds and drops on a refresh", () => {
+  const note =
+    "    deprecated: |-\n      Deprecated for a test.\n        Second line of the note.\n";
+  const at = current.indexOf("    resolution: {integrity: ", current.indexOf("\npackages:\n"));
+  const end = current.indexOf("\n", current.indexOf("\n", at) + 1) + 1;
+  const noted = current.slice(0, end) + note + current.slice(end);
+  assert.notEqual(noted, current);
+  verify(noted);
+  verify(noted.replace(note, "    deprecated: Single-line note\n"));
+  assert.equal(
+    canonicalLockSections(noted, registry),
+    canonicalLockSections(current, registry),
+  );
+  // A changed integrity next to the note is still refused.
+  refused(change(noted, "integrity: sha512-", "integrity: sha512-A"));
+});
+
 test("compares registry data with the reviewed f0b6d13fb lock without trusting the identity map", () => {
   // An identity map widened to rewrite registry data would change the baseline
   // and the lock alike, so only the direct comparison can refuse it.

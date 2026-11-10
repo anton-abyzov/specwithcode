@@ -40,13 +40,23 @@ function parseLockTree(text, where) {
 // Map keys and set-like lists carry no order, and pnpm re-sorts them whenever
 // it rewrites the lock (for example after the identity map renamed keys).
 // Every line still has to sit under the same parents, the same number of times.
+// A registry's deprecation note is advice, not resolution data: pnpm adds or drops
+// it whenever it rewrites the lock against the live registry, while the
+// resolution, integrity and dependencies stay the same. It is left out of every
+// comparison, so a lock refresh cannot fail the audit on it.
+const advisory = (node) => node.line.startsWith("deprecated:");
+
 function canonicalLock(node, depth = 0) {
-  const children = node.children.map((child) => canonicalLock(child, depth + 1)).sort();
+  const children = node.children
+    .filter((child) => !advisory(child))
+    .map((child) => canonicalLock(child, depth + 1))
+    .sort();
   return (depth === 0 ? "" : `${"  ".repeat(depth - 1)}${node.line}\n`) + children.join("");
 }
 
 function lockPaths(node, prefix = [], out = new Map()) {
   for (const child of node.children) {
+    if (advisory(child)) continue;
     const path = [...prefix, child.line];
     const key = path.join(" > ");
     out.set(key, (out.get(key) ?? 0) + 1);
