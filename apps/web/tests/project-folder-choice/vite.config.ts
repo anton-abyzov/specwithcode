@@ -10,7 +10,7 @@ export default defineConfig({
       enforce: "pre",
       resolveId(id, importer) {
         if (
-          importer?.endsWith("NewProjectFolderPicker.tsx") &&
+          /(NewProjectFolderPicker|FolderBrowser)\.tsx$/.test(importer ?? "") &&
           /\/state\/(filesystem|query|projects|use-atom-command)$/.test(id)
         )
           return fileURLToPath(new URL("./mocks.ts", import.meta.url));

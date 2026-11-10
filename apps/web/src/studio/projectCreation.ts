@@ -89,3 +89,31 @@ export function suggestProjectMachine<T extends string>(input: {
   }
   return best;
 }
+
+/**
+ * Why the machine in New project is the one selected, shown under the machine
+ * choice so a preselected machine is never a surprise.
+ */
+export function projectMachineReason(input: {
+  readonly selected: string;
+  readonly selectedLabel: string;
+  /** The machine New project opened on, before any pick in the dialog. */
+  readonly suggested: string | null;
+  readonly thisDevice: string | null;
+  readonly loadBalancingEnabled: boolean;
+}): string {
+  const { selected, selectedLabel, suggested, thisDevice, loadBalancingEnabled } = input;
+  if (selected !== suggested) {
+    return selected === thisDevice
+      ? "You picked this device."
+      : `You picked ${selectedLabel}. The next new project starts on this device again.`;
+  }
+  if (loadBalancingEnabled) {
+    return "Chosen by load balancing (Settings, Load balancing). Pick another machine to override it for this project.";
+  }
+  if (selected === thisDevice)
+    return "New projects start on this device. Pick another machine to put this one there.";
+  return thisDevice === null
+    ? `${selectedLabel} is selected because this device cannot hold projects.`
+    : `${selectedLabel} is selected because this device cannot create projects right now.`;
+}

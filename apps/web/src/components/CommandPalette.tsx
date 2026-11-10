@@ -149,9 +149,11 @@ import {
   type LinkTarget,
 } from "./studio/FolderLinkSuggestion";
 import { ProjectLinkDialog } from "./studio/ProjectLinkDialog";
+import { projectPlaces } from "./studio/folderBrowser.logic";
 import {
   defaultProjectMachine,
   newProjectDraft,
+  projectMachineReason,
   resolveNewProjectName,
   suggestProjectMachine,
   type NewProjectKind,
@@ -1039,6 +1041,8 @@ function OpenCommandPaletteDialog(props: {
     /** Machine of the Add project sources view under this step; null from the palette root. */
     readonly sourcesEnvironmentId: EnvironmentId | null;
     readonly kind: NewProjectKind;
+    /** The machine the step opened on, to say why it is the one selected. */
+    readonly suggestedEnvironmentId: EnvironmentId | null;
   } | null>(null);
   const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
   const [newProjectUsesSpecweave, setNewProjectUsesSpecweave] = useState(true);
@@ -1052,8 +1056,36 @@ function OpenCommandPaletteDialog(props: {
     environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
       ?.serverConfig?.specweaveSetUp === true;
   const nickname = useMachineNicknames();
+  const newProjectServerConfig =
+    environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
+      ?.serverConfig ?? null;
+  // The machine's own projects folder; app-managed storage only on servers that report no other.
+  const newProjectDefaultFolder =
+    newProjectServerConfig?.suggestedProjectsRoot ??
+    newProjectServerConfig?.newProjectsRoot ??
+    null;
+  const newProjectMachineProjects = useMemo(
+    () =>
+      projects
+        .filter((project) => project.environmentId === newProjectEnvironmentId)
+        .map((project) => ({ workspaceRoot: project.workspaceRoot, title: project.title })),
+    [projects, newProjectEnvironmentId],
+  );
+  const newProjectPlaces = useMemo(
+    () =>
+      projectPlaces({
+        projectsFolder: newProjectDefaultFolder,
+        projectRoots: newProjectMachineProjects.map((project) => project.workspaceRoot),
+      }),
+    [newProjectDefaultFolder, newProjectMachineProjects],
+  );
   const folderChoice = useProjectFolderChoice(newProjectEnvironmentId, isCreatingNewProject, {
     remember: true,
+    projectName: newProjectFlow?.kind === "code" ? query.trim() : "",
+    places: newProjectPlaces,
+    projects: newProjectMachineProjects,
+    // Servers that report a projects folder also answer filesystem.createDirectory.
+    canCreateFolder: newProjectServerConfig?.suggestedProjectsRoot !== undefined,
     machineLabel:
       newProjectEnvironmentId === null
         ? null
@@ -1063,9 +1095,7 @@ function OpenCommandPaletteDialog(props: {
               (environment) => environment.environmentId === newProjectEnvironmentId,
             )?.label ?? newProjectEnvironmentId,
           ),
-    defaultPath:
-      environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
-        ?.serverConfig?.newProjectsRoot ?? null,
+    defaultPath: newProjectDefaultFolder,
     // The system folder dialog only shows this device's disks, and only the
     // macOS desktop app maps its paths one-to-one onto the primary machine.
     nativePicker:
@@ -1834,15 +1864,53 @@ function OpenCommandPaletteDialog(props: {
     [environments],
   );
 
+  // The device in front of the person: the local server, however it is reached.
+  const thisDeviceEnvironmentId = useMemo(
+    () =>
+      environments.find((environment) => isThisMachineTarget(environment.entry))?.environmentId ??
+      primaryEnvironmentId,
+    [environments, primaryEnvironmentId],
+  );
+  const suggestNewProjectMachine = useCallback(
+    (current: EnvironmentId | null): EnvironmentId | null =>
+      suggestProjectMachine({
+        current,
+        eligible: addProjectEnvironmentOptions
+          .filter(
+            (option) => option.isConnected && newProjectsRootFor(option.environmentId) !== null,
+          )
+          .map((option) => option.environmentId),
+        primary: thisDeviceEnvironmentId,
+        loadBalancing: {
+          enabled: clientSettings.loadBalancingEnabled,
+          weights: clientSettings.loadBalancingWeights,
+        },
+      }),
+    [
+      addProjectEnvironmentOptions,
+      clientSettings.loadBalancingEnabled,
+      clientSettings.loadBalancingWeights,
+      newProjectsRootFor,
+      thisDeviceEnvironmentId,
+    ],
+  );
+
   const startNewProject = useCallback(
     (
-      environmentId: EnvironmentId,
+      requestedEnvironmentId: EnvironmentId,
       sourcesEnvironmentId: EnvironmentId | null,
       kind: NewProjectKind = "code",
     ): void => {
+      // A code project starts on this device wherever New project was opened
+      // from: the machine of the open thread, or of the Add project view, is
+      // not a choice the person made for it. An assistant belongs to the
+      // machine it was asked for.
+      const suggestedEnvironmentId =
+        kind === "code" ? suggestNewProjectMachine(requestedEnvironmentId) : null;
+      const environmentId = suggestedEnvironmentId ?? requestedEnvironmentId;
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
-      setNewProjectFlow({ environmentId, sourcesEnvironmentId, kind });
+      setNewProjectFlow({ environmentId, sourcesEnvironmentId, kind, suggestedEnvironmentId });
       setNewProjectPublishesToGitHub(false);
       setNewProjectUsesSpecweave(true);
       pushPaletteView({
@@ -1857,7 +1925,7 @@ function OpenCommandPaletteDialog(props: {
       // Coming back to New project picks up the name typed before.
       if (kind === "code") setQuery(newProjectDraft.name());
     },
-    [pushPaletteView],
+    [pushPaletteView, suggestNewProjectMachine],
   );
 
   const buildAddProjectSourceGroups = useCallback(
@@ -2166,15 +2234,7 @@ function OpenCommandPaletteDialog(props: {
       });
       return;
     }
-    const target = suggestProjectMachine({
-      current: currentExecutionEnvironmentId,
-      eligible: newProjectEnvironmentOptions.map((option) => option.environmentId),
-      primary: primaryEnvironmentId,
-      loadBalancing: {
-        enabled: clientSettings.loadBalancingEnabled,
-        weights: clientSettings.loadBalancingWeights,
-      },
-    });
+    const target = suggestNewProjectMachine(currentExecutionEnvironmentId);
     if (target !== null) {
       startNewProject(target, null, kind);
       return;
@@ -3615,7 +3675,7 @@ function OpenCommandPaletteDialog(props: {
           .map((option) => ({
             environmentId: option.environmentId,
             label: option.label,
-            isPrimary: option.isPrimary,
+            isPrimary: option.environmentId === thisDeviceEnvironmentId,
             isConnected: option.isConnected,
             icon: <EnvironmentMachineIcon kind={option.machine} className="size-3.5" />,
           }));
@@ -4202,6 +4262,17 @@ function OpenCommandPaletteDialog(props: {
         <ProjectMachineChoice
           machines={newProjectMachines}
           selectedId={newProjectFlow.environmentId}
+          reason={
+            newProjectFlow.kind === "code" && newProjectMachines.length > 1
+              ? projectMachineReason({
+                  selected: newProjectFlow.environmentId,
+                  selectedLabel: newProjectEnvironmentLabel ?? newProjectFlow.environmentId,
+                  suggested: newProjectFlow.suggestedEnvironmentId,
+                  thisDevice: thisDeviceEnvironmentId,
+                  loadBalancingEnabled: clientSettings.loadBalancingEnabled,
+                })
+              : null
+          }
           busy={isCreatingNewProject}
           onSelect={(environmentId) => switchNewProjectEnvironment(environmentId as EnvironmentId)}
         />

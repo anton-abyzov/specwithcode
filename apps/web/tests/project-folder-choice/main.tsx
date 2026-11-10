@@ -4,9 +4,31 @@ import { useState } from "react";
 import { EnvironmentId } from "@specweave-studio/contracts";
 import { useProjectFolderChoice } from "../../src/hooks/useProjectFolderChoice";
 import {
+  AddExistingProjectLink,
   ProjectCreationPreview,
+  ProjectMachineChoice,
   projectCreationGroups,
 } from "../../src/components/studio/ProjectCreation";
+import { projectPlaces } from "../../src/components/studio/folderBrowser.logic";
+import { projectMachineReason } from "../../src/studio/projectCreation";
+import { LaptopIcon } from "lucide-react";
+
+const MACHINES = {
+  m4: {
+    label: "MacBook M4",
+    projectsFolder: "/Users/you/Projects",
+    projects: [
+      { workspaceRoot: "/Users/you/Projects/github/specweave-umb", title: "specweave" },
+      { workspaceRoot: "/Users/you/Projects/github/vskill", title: "vskill" },
+    ],
+  },
+  // Its projects folder is not made yet, and it has one project elsewhere.
+  m1: {
+    label: "MacBook M1",
+    projectsFolder: "/Users/remote/Projects",
+    projects: [{ workspaceRoot: "/Users/remote/work/client-app", title: "Client app" }],
+  },
+} as const;
 import { CommandPaletteContent } from "../../src/components/CommandPaletteContent";
 import { CommandPaletteResults } from "../../src/components/CommandPaletteResults";
 import { CommandDialog, CommandDialogPopup } from "../../src/components/ui/command";
@@ -19,31 +41,59 @@ function Fixture() {
   const clone = new URLSearchParams(location.search).get("mode") === "clone";
   const [machine, setMachine] = useState(EnvironmentId.make("m4"));
   const [name, setName] = useState(clone ? "" : "Example project");
-  const folder = useProjectFolderChoice(machine, false);
-  const groups = projectCreationGroups({
-    kind: "code",
-    busy: false,
-    github: null,
-    addExisting: () => {
-      (window as any).existingClicked = true;
-    },
-    machines: ["m4", "m1"].map((id) => ({
-      selected: machine === id,
-      item: {
-        kind: "action",
-        value: id,
-        title: id === "m4" ? "MacBook M4" : "MacBook M1",
-        description: id === "m4" ? "This device" : "Remote machine",
-        icon: null,
-        searchTerms: [],
-        keepOpen: true,
-        run: async () => {
-          folder.reset();
-          setMachine(EnvironmentId.make(id));
-        },
-      },
-    })),
+  const current = MACHINES[machine as "m4" | "m1"];
+  const folder = useProjectFolderChoice(machine, false, {
+    defaultPath: clone ? null : current.projectsFolder,
+    machineLabel: current.label,
+    projects: current.projects,
+    canCreateFolder: true,
+    ...(clone
+      ? {}
+      : {
+          projectName: name,
+          places: projectPlaces({
+            projectsFolder: current.projectsFolder,
+            projectRoots: current.projects.map((project) => project.workspaceRoot),
+          }),
+        }),
   });
+  const [specweave, setSpecweave] = useState(true);
+  const groups = clone
+    ? []
+    : projectCreationGroups({
+        kind: "code",
+        busy: false,
+        github: null,
+        specweave: { checked: specweave, toggle: () => setSpecweave((value) => !value) },
+      });
+  const machineChoice = (
+    <ProjectMachineChoice
+      machines={(["m4", "m1"] as const).map((id) => ({
+        environmentId: id,
+        label: MACHINES[id].label,
+        isPrimary: id === "m4",
+        isConnected: true,
+        icon: <LaptopIcon className="size-3.5" />,
+      }))}
+      selectedId={machine}
+      reason={
+        clone
+          ? null
+          : projectMachineReason({
+              selected: machine,
+              selectedLabel: current.label,
+              suggested: "m4",
+              thisDevice: "m4",
+              loadBalancingEnabled: false,
+            })
+      }
+      busy={false}
+      onSelect={(id) => {
+        if (clone) folder.reset();
+        setMachine(EnvironmentId.make(id));
+      }}
+    />
+  );
   return (
     <CommandDialog open>
       <CommandDialogPopup
@@ -72,16 +122,19 @@ function Fixture() {
           }
         >
           {clone ? (
-            <CloneProjectDestination
-              machine={machine === "m4" ? "MacBook M4" : "MacBook M1"}
-              path={folder.path ? `${folder.path}/orbita` : null}
-              picker={folder.picker}
-              busy={false}
-              allowed={true}
-              onClone={() => {
-                (window as any).cloned = { machine, path: `${folder.path}/orbita` };
-              }}
-            />
+            <>
+              {machineChoice}
+              <CloneProjectDestination
+                machine={machine === "m4" ? "MacBook M4" : "MacBook M1"}
+                path={folder.path ? `${folder.path}/orbita` : null}
+                picker={folder.picker}
+                busy={false}
+                allowed={true}
+                onClone={() => {
+                  (window as any).cloned = { machine, path: `${folder.path}/orbita` };
+                }}
+              />
+            </>
           ) : (
             <>
               <ProjectCreationPreview
@@ -91,19 +144,28 @@ function Fixture() {
                 root={folder.path}
                 machine={machine === "m4" ? "MacBook M4" : "MacBook M1"}
               />
+              {machineChoice}
               {folder.picker}
             </>
           )}
-          <CommandPaletteResults
-            groups={
-              clone ? groups.filter((group) => group.value === "new-project-machines") : groups
-            }
-            isActionsOnly={false}
-            keybindings={{}}
-            onExecuteItem={(item) => {
-              if (item.kind === "action") void item.run();
-            }}
-          />
+          {groups.length > 0 ? (
+            <CommandPaletteResults
+              groups={groups}
+              isActionsOnly={false}
+              keybindings={{}}
+              onExecuteItem={(item) => {
+                if (item.kind === "action") void item.run();
+              }}
+            />
+          ) : null}
+          {clone ? null : (
+            <AddExistingProjectLink
+              busy={false}
+              onClick={() => {
+                (window as any).existingClicked = true;
+              }}
+            />
+          )}
         </CommandPaletteContent>
       </CommandDialogPopup>
     </CommandDialog>

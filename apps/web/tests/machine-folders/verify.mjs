@@ -94,14 +94,18 @@ try {
     await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
     await page.getByRole("button", { name: "Commit for me", exact: true }).click();
     await page.getByText("No uncommitted changes on MacBook Pro M4.", { exact: false }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Up one folder" }).count(), 0);
+    assert.equal(await page.getByRole("listbox").count(), 0);
     await page.getByRole("button", { name: "Browse…", exact: true }).click();
-    await page.getByRole("button", { name: "Up one folder" }).click();
+    assert.equal(await page.getByRole("button", { name: "Up one folder" }).count(), 0);
+    await page
+      .getByRole("navigation", { name: "Current folder" })
+      .getByRole("button", { name: "Projects", exact: true })
+      .click();
     assert.equal(
       await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
       "/Users/you/Projects",
     );
-    await page.getByRole("button", { name: "another-project", exact: true }).click();
+    await page.getByRole("option", { name: "another-project", exact: true }).click();
     await page.screenshot({ path: join(output, `${width}-${theme}-browse.png`), fullPage: true });
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     assert.deepEqual(

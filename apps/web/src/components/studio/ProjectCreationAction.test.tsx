@@ -25,7 +25,7 @@ describe("project creation readiness", () => {
     expect(name).toContain("Enter a project name");
     expect(name).toContain(' disabled=""');
     const folder = renderToStaticMarkup(<ProjectCreationAction {...props} hasFolder={false} />);
-    expect(folder).toContain("Use this folder");
+    expect(folder).toContain("Project location");
     expect(folder).toContain(' disabled=""');
   });
   it("enables the assistant without a repository folder and prevents duplicate submissions", () => {

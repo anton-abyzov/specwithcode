@@ -65,11 +65,14 @@ export interface ProjectMachineOption {
 export function ProjectMachineChoice({
   machines,
   selectedId,
+  reason = null,
   busy,
   onSelect,
 }: {
   machines: readonly ProjectMachineOption[];
   selectedId: string;
+  /** Why this machine is the one selected. */
+  reason?: string | null;
   busy: boolean;
   onSelect: (environmentId: string) => void;
 }) {
@@ -107,6 +110,15 @@ export function ProjectMachineChoice({
           );
         })}
       </div>
+      {reason ? (
+        <p
+          role="note"
+          data-slot="project-machine-reason"
+          className="mt-1 text-xs text-muted-foreground"
+        >
+          {reason}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -144,8 +156,8 @@ export function ProjectCreationPreview({
               : !name
                 ? "Type a project name in the field above"
                 : root === null
-                  ? "Choose a folder below"
-                  : `Creates ${path}, or uses the chosen folder if it is already a project`}
+                  ? "Choose where it goes below"
+                  : "A code project in the location chosen below"}
             {machine === null ? "" : ` on ${machine}`}
           </span>
           {kind === "code" && newProjectNameNotice(name) ? (
