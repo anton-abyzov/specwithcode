@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { RuntimeRequestId, ThreadId } from "@specweave-studio/contracts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
@@ -17,6 +18,7 @@ import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionMana
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as Cleanup from "./ServiceUpdateCleanup.ts";
 import * as ClosedQuestions from "./ServiceUpdateClosedQuestions.ts";
+import * as Hold from "./ServiceUpdateHold.ts";
 import * as Preparation from "./ServiceUpdatePreparation.ts";
 
 /** The columns update.py, the drain and the stale-wait check read. */
@@ -66,6 +68,8 @@ const run = <E>(
   body: (parts: Parts) => Effect.Effect<void, E, SqlClient.SqlClient>,
   /** Where what the sweep closes is recorded; absent in tools without one. */
   store?: ClosedQuestions.ServiceUpdateClosedQuestionsShape,
+  /** The service's update hold, for an if-idle look; absent in tools without one. */
+  hold?: Hold.ServiceUpdateHoldShape,
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -108,9 +112,11 @@ const run = <E>(
       }),
       Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         release: (input) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             fixture.released.push(input.providerSessionId);
-          }) as never,
+            // The session the provider closed stops counting as work.
+            yield* sql`UPDATE orchestration_v2_projection_provider_sessions SET status = 'stopped'`;
+          }).pipe(Effect.orDie) as never,
       }),
       Layer.mock(Cleanup.ServiceUpdateCleanup)({
         finalizeStuckRuns: (input) =>
@@ -147,11 +153,15 @@ const run = <E>(
         }),
       }),
     );
+    const withStore =
+      store === undefined
+        ? mocks
+        : Layer.merge(mocks, Layer.succeed(ClosedQuestions.ServiceUpdateClosedQuestions, store));
     const parts = yield* Preparation.makePartsWithTimings(fast).pipe(
       Effect.provide(
-        store === undefined
-          ? mocks
-          : Layer.merge(mocks, Layer.succeed(ClosedQuestions.ServiceUpdateClosedQuestions, store)),
+        hold === undefined
+          ? withStore
+          : Layer.merge(withStore, Layer.succeed(Hold.ServiceUpdateHold, hold)),
       ),
     );
     yield* body(parts);
@@ -671,3 +681,93 @@ it.live("leaves a thread waiting when what it would close cannot be recorded", (
     recordingStore(fixture, [], false),
   );
 });
+
+// `update --if-idle` and the fleet's idle-only rollout: a question nobody answered must not keep
+// the service busy for good, as an open question kept M4 off 1.0.220-1.0.224.
+const noAgentHold = () =>
+  Hold.makeWithOptions({ agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json" });
+const ifIdle = { stopWork: false, hold: true, ifIdle: true } as const;
+
+it.live("an if-idle hold closes a turn that only waits on a person, then holds", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    const fixture = newFixture(true);
+    yield* run(
+      fixture,
+      (parts) =>
+        Effect.gen(function* () {
+          yield* waitingWorker(60 * 24 * 3, 60 * 24 * 3, "user_input");
+          const result = yield* parts.service.prepare(ifIdle);
+          assert.isTrue(result.idle);
+          assert.isTrue(result.held);
+          assert.deepEqual(result.blockers, []);
+          assert.isTrue(yield* hold.isHeld);
+          assert.deepEqual(yield* pending, {
+            runs: [["r1", "interrupted"]],
+            requests: [["req1", "cancelled"]],
+          });
+          assert.deepEqual(fixture.cleanupCalls[0], {
+            step: "finalize",
+            reason: Preparation.STALE_WAIT_REASON,
+            threadIds: ["t1"],
+          });
+        }),
+      undefined,
+      hold,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("an if-idle hold still waits for a question asked in the last 2 minutes", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    const fixture = newFixture(true);
+    yield* run(
+      fixture,
+      (parts) =>
+        Effect.gen(function* () {
+          yield* waitingWorker(1, 1, "user_input");
+          const result = yield* parts.service.prepare(ifIdle);
+          assert.isFalse(result.held);
+          assert.isFalse(yield* hold.isHeld);
+          assert.isTrue(result.blockers.some((blocker) => blocker.kind === "request"));
+          assert.deepEqual(fixture.dispatched, []);
+          assert.deepEqual(yield* pending, {
+            runs: [["r1", "running"]],
+            requests: [["req1", "pending"]],
+          });
+        }),
+      undefined,
+      hold,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("an if-idle hold closes no question while other work runs", () =>
+  Effect.gen(function* () {
+    const hold = yield* noAgentHold();
+    const fixture = newFixture(true);
+    yield* run(
+      fixture,
+      (parts) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* waitingWorker(60, 60, "user_input");
+          yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id)
+            VALUES ('r2', 't2', 'running', NULL)`;
+          const result = yield* parts.service.prepare(ifIdle);
+          assert.isFalse(result.held);
+          assert.deepEqual(fixture.dispatched, []);
+          assert.deepEqual(yield* pending, {
+            runs: [
+              ["r1", "running"],
+              ["r2", "running"],
+            ],
+            requests: [["req1", "pending"]],
+          });
+        }),
+      undefined,
+      hold,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

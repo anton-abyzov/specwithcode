@@ -1106,9 +1106,23 @@ export const makePartsWithTimings = (
                 // Waiting commands may still be in project admission or at a thread lock.
                 // Closing admission and awaiting those commits is a fence; timed looks are not.
                 yield* owner.awaitAdmissions;
-                const rows = yield* readBlockerRows;
+                let rows = yield* readBlockerRows;
                 const terminalCount = yield* openTerminals;
                 const copies = yield* folderCopies;
+                // Threads that only wait on a person stop no quiet moment: they are
+                // closed and asked again after the restart, as Update now and the
+                // waiting-for-quiet sweep do. Only when nothing else keeps it busy.
+                if (rows.length > 0 && terminalCount === 0 && copies === 0) {
+                  const released = yield* releaseStaleWaits.pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("service-update.if-idle.stale-waits-failed", {
+                        cause,
+                      }).pipe(Effect.as({ releasedThreads: [] })),
+                    ),
+                  );
+                  if (released.releasedThreads.length > 0)
+                    rows = yield* awaitIdle(timings.settleMs);
+                }
                 const idle = rows.length === 0 && terminalCount === 0 && copies === 0;
                 const confirmed = idle
                   ? yield* owner.confirmLease(token, IF_IDLE_HOLD_TTL_MS)

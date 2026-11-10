@@ -72,6 +72,40 @@ class IdleRollout(unittest.TestCase):
         self.assertEqual(len(self.fleet.calls('m4', 'request')), 1)
         self.assertIn('--force', self.fleet.asked['m4'])
 
+    def test_refusal_logs_the_service_blockers_not_a_missing_offer(self):
+        self.busy = 3
+        self.override = None
+        question = {'kind': 'request', 'count': 1, 'threadTitle': 'Sidebar linked-project fixes',
+                    'waitsOnPerson': True}
+        original = self.run_cli
+
+        def busy_with_question(argv, **kwargs):
+            done = original(argv, **kwargs)
+            reply = json.loads(done.stdout)
+            if not reply['held']:
+                reply['blockers'] = [question]
+                reply['folderCopies'] = 0
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(reply), stderr='')
+
+        self.hold = r.ServiceHold(home=self.home, run=busy_with_question)
+        self.hold.wait_for_idle = True
+        lines = []
+        result = r.rollout(f.NEW, self.fleet.hosts(), only='m4', hold=self.hold, clock=self.clock,
+                           sleep=self.clock.sleep, say=lines.append, poll=15)
+        self.assertEqual(result['m4']['result'], 'installed')
+        refusals = [line for line in lines if 'not idle' in line]
+        self.assertEqual(refusals, [
+            'm4: the service is not idle, so %s waits; busy with: 1 request '
+            '(Sidebar linked-project fixes) waiting on a person' % f.NEW])
+        self.assertFalse([line for line in lines if 'does not offer' in line])
+        self.assertEqual(self.fleet.calls('m4', 'check'), [])
+
+    def test_describe_blockers_names_terminals_and_copies(self):
+        self.assertEqual(r.describe_blockers({'blockers': [{'kind': 'run', 'count': 2}],
+                                              'openTerminals': 1, 'folderCopies': 2}),
+                         '2 run, 1 open terminal, 2 folder copies')
+        self.assertEqual(r.describe_blockers({}), 'nothing it names')
+
     def test_busy_deadline_never_installs_or_releases_another_hold(self):
         self.busy = 100
         with self.assertRaisesRegex(r.RolloutError, 'did not install'):

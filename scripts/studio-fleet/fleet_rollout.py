@@ -725,6 +725,25 @@ def _plural(count, word):
     return '%d %s%s' % (count, word, '' if count == 1 else 's')
 
 
+def describe_blockers(reply):
+    """What keeps the service busy, as its prepare answer names it: each blocker by kind and thread,
+    marked when it only waits on a person, then terminals and folder copies."""
+    parts = []
+    for blocker in reply.get('blockers') or []:
+        if not isinstance(blocker, dict):
+            continue
+        parts.append('%s %s%s%s' % (
+            blocker.get('count'), blocker.get('kind'),
+            ' (%s)' % blocker['threadTitle'] if blocker.get('threadTitle') else '',
+            ' waiting on a person' if blocker.get('waitsOnPerson') is True else ''))
+    for key, one, many in (('openTerminals', 'open terminal', 'open terminals'),
+                           ('folderCopies', 'folder copy', 'folder copies')):
+        count = reply.get(key)
+        if type(count) is int and count > 0:
+            parts.append('%d %s' % (count, one if count == 1 else many))
+    return ', '.join(parts) or 'nothing it names'
+
+
 def describe_hold(reply):
     """One line for what the drain stopped and what is left."""
     left = ', '.join('%s %s%s' % (blocker.get('count'), blocker.get('kind'),
@@ -842,6 +861,8 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     waited = [None]  # installRequestedAt of the last held request someone else wrote that this rollout waits on.
     copying = [0]  # Folder copies the forced drain, or a worker's request, waits for, as last seen.
     counted = [0]  # Copies a drain found: no drain again until the service's own count shows none.
+    refused = [None]  # What the last idle-only hold was refused for (`describe_blockers`), else None.
+    said = [None]  # The refusal last logged, so a busy service asked every poll is named once per change.
     deferred = [False]  # A worker's request held back while M4 copies.
     acked = [None]  # installRequestedAt the host wrote back for the last request, or None.
     unacked = [0]  # Requests in a row the host did not acknowledge.
@@ -855,6 +876,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     def drain(status):
         """Update now's drain and hold, right before a request; True when the service holds.
         Raises RolloutError when the service cannot be held."""
+        refused[0] = None
         if holder[0] is None or status.get('status') == 'installing' or not offers(status, version):
             return False
         # The forced drain stops no copy, and from its hold on the copy's other side gets 503s until
@@ -897,6 +919,11 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                     or reply.get('stoppedThreads') != 0 or reply.get('interruptedRuns', 0) != 0):
                 raise unheld('invalid idle-only preparation result')
             if reply['held'] is False:
+                why = describe_blockers(reply)
+                if said[0] != why:
+                    say('%s: the service is not idle, so %s waits; busy with: %s'
+                        % (identity, version, why))
+                refused[0] = said[0] = why
                 return False
             if not reply['idle'] or reply.get('openTerminals') != 0:
                 raise unheld('idle-only hold did not prove quiet')
@@ -1046,7 +1073,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             held_request = drain(status)
             if held_request or (holder[0] is None and not held_back()):
                 asked, requests = ask(), 1
-            elif copying[0]:  # The release is offered; the drain (or a worker's request) waits for the copies.
+            elif copying[0] or refused[0]:  # Offered; the drain waits for copies or quiet.
                 asked, requests = clock(), 0
             elif status.get('status') == 'installing':  # Never a forced request before the hold.
                 # The install under way, not joined (automatic, or its hold ran out): the agent
@@ -1135,7 +1162,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 # on M4 would follow no drain: that install ends the hold.
                 continue
             if holder[0] is not None and not held_request:
-                asked = clock() if copying[0] else check()  # Waits for copies, or still not offered.
+                asked = clock() if copying[0] or refused[0] else check()  # Copies, quiet, or not offered.
                 continue
             say('%s: the %s window ended without an install; asking once more' % (identity, 'hold' if force else 'request'))
             held_request = drain(status)
@@ -1144,7 +1171,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             elif deferred[0]:
                 asked = clock()
             else:  # It waits for copies, or no longer offers the release.
-                asked = clock() if copying[0] else check()
+                asked = clock() if copying[0] or refused[0] else check()
     except (RolloutError, KeyboardInterrupt):
         release(status)
         raise
