@@ -355,7 +355,7 @@ enum MarkdownInline {
       guard let url = run.link else {
         // A backticked absolute path to a viewable file is tappable too.
         if run.inlinePresentationIntent?.contains(.code) == true,
-           let path = HostFileLink.hostPath(String(attributed[run.range].characters)),
+           let path = HostFileLink.hostPath(String(attributed[run.range].characters), decode: false),
            let link = HostFileLink.url(for: path) {
           hostFiles.append((run.range, link))
         }

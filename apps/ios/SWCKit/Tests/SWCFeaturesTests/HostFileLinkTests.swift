@@ -39,6 +39,9 @@ struct HostFileLinkTests {
   @Test func internalLinksRoundTripAndRejectOtherSchemes() throws {
     let url = try #require(HostFileLink.url(for: "/Users/me/My Report.html"))
     #expect(HostFileLink.path(url) == "/Users/me/My Report.html")
+    let percent = try #require(HostFileLink.url(for: "/Users/me/100%25 done.md"))
+    #expect(HostFileLink.path(percent) == "/Users/me/100%25 done.md")
+    #expect(links("`/Users/me/100%25.txt`").compactMap(HostFileLink.path) == ["/Users/me/100%25.txt"])
     #expect(!MarkdownInline.isOpenable(url))
     #expect(HostFileLink.path(try #require(URL(string: "https://example.com/a.html"))) == nil)
     #expect(HostFileLink.path(try #require(URL(string: "swc-file://evil/a.html"))) == nil)

@@ -29,14 +29,16 @@ public nonisolated enum HostFileLink {
   }
 
   /// An absolute host path the viewer can show, from a written path or a `file://` URL.
-  public static func hostPath(_ written: String) -> String? {
+  /// `decode` is for link targets, which arrive percent-encoded; a backticked path
+  /// or an already decoded URL path is taken literally.
+  public static func hostPath(_ written: String, decode: Bool = true) -> String? {
     let trimmed = written.trimmingCharacters(in: .whitespacesAndNewlines)
     var path: String
     if trimmed.lowercased().hasPrefix("file://") {
       guard let url = URL(string: trimmed), url.host == nil || url.host == "" || url.host == "localhost" else { return nil }
       path = url.path
     } else {
-      path = trimmed.removingPercentEncoding ?? trimmed
+      path = decode ? (trimmed.removingPercentEncoding ?? trimmed) : trimmed
     }
     // A trailing `:12` or `#L12` names a line; the file is what opens.
     if let hash = path.firstIndex(of: "#") { path = String(path[..<hash]) }
@@ -61,7 +63,7 @@ public nonisolated enum HostFileLink {
     guard url.scheme?.lowercased() == scheme,
           let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
           parts.host == nil || parts.host == "" else { return nil }
-    return hostPath(parts.path)
+    return hostPath(parts.path, decode: false)
   }
 
   /// The internal link for a Markdown link target, when it names a host file.

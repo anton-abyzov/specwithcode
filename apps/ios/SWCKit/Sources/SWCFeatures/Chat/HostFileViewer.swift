@@ -154,9 +154,12 @@ struct HostFileViewer: View {
   private static func fetchText(_ url: URL) async throws -> String {
     let session = URLSession(configuration: .ephemeral)
     defer { session.finishTasksAndInvalidate() }
-    let (data, response) = try await session.data(from: url)
-    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw HostFileError.missing }
     let limit = 2 * 1024 * 1024
+    // One byte past the limit tells a cut file from one that just fits.
+    var request = URLRequest(url: url)
+    request.setValue("bytes=0-\(limit)", forHTTPHeaderField: "Range")
+    let (data, response) = try await session.data(for: request)
+    guard let http = response as? HTTPURLResponse, http.statusCode == 200 || http.statusCode == 206 else { throw HostFileError.missing }
     let text = String(decoding: data.prefix(limit), as: UTF8.self)
     return data.count > limit ? text + "\n\n… (showing the first 2 MB)" : text
   }
@@ -218,11 +221,21 @@ private struct HostFileWebView: UIViewRepresentable {
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
       guard action.targetFrame?.isMainFrame != false, let url = action.request.url else { return .allow }
-      if url == start || action.navigationType == .other && url.host == start.host && url.path == start.path { return .allow }
+      if Self.sameDocument(url, start) { return .allow }
       if action.navigationType == .linkActivated, let scheme = url.scheme?.lowercased(), ["http", "https", "mailto", "tel"].contains(scheme), url.host != start.host {
         await UIApplication.shared.open(url)
       }
       return .cancel
+    }
+
+    /// The file itself, or a jump to an anchor within it.
+    static func sameDocument(_ url: URL, _ start: URL) -> Bool {
+      func withoutFragment(_ url: URL) -> URL? {
+        var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        parts?.fragment = nil
+        return parts?.url
+      }
+      return withoutFragment(url) == withoutFragment(start)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse) async -> WKNavigationResponsePolicy {
