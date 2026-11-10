@@ -321,7 +321,7 @@ export function laneEntryUnavailable(
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
   if (provider === undefined) return "not on this machine";
   const model = findModel(provider, selection.model);
-  if (model === undefined) return "model not offered";
+  if (model === undefined) return "not offered by this account";
   const floor = input.policy.minimumTier;
   const tier = modelTier(model);
   if (floor != null && (tier === null || tierRank(tier) < tierRank(floor)))

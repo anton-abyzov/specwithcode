@@ -50,10 +50,21 @@ export function tierOfModel(
 ): ModelLane | null {
   if (lanes == null || model === undefined) return null;
   for (const lane of ["complex", "routine"] as const) {
-    if ((lanes[lane] ?? []).some((entry) => isSameModel({ slug: entry.model }, { slug: model })))
-      return lane;
+    if ((lanes[lane] ?? []).some((entry) => laneEntryCovers(entry.model, model))) return lane;
   }
   return null;
+}
+
+/**
+ * Whether a tier entry stands for `model`: the same model, or a newer release
+ * of its family, which the tier follows (see `followNewestReleases`).
+ */
+function laneEntryCovers(entry: string, model: string): boolean {
+  if (isSameModel({ slug: entry }, { slug: model })) return true;
+  const [a, b] = [modelFamily(model), modelFamily(entry)];
+  return (
+    a !== null && b !== null && a.stem === b.stem && compareModelVersions(a.version, b.version) > 0
+  );
 }
 
 /** Whether a tier itself ranks a model on `instanceId` (not just its expansion elsewhere). */
@@ -245,10 +256,10 @@ export function newerOfFamily(
 }
 
 /**
- * Tier entries moved to the newest release of their family that the same
- * provider lists (Fable 5.1 becomes Fable 5.2 once it is offered), without
- * duplicates. An entry the provider does not list, or that is already the
- * newest, stays as written.
+ * Tier entries led by the newest release of their family that the same
+ * provider lists (Fable 5.2, then the chosen Fable 5.1, once 5.2 is
+ * offered), without duplicates. An entry the provider does not list, or that
+ * is already the newest, stays as written.
  */
 export function followNewestReleases(
   entries: ReadonlyArray<ModelSelection>,
@@ -262,13 +273,31 @@ export function followNewestReleases(
       provider && provider.models.some((model) => model.slug === entry.model)
         ? newerOfFamily(provider, entry.model)
         : undefined;
-    const next = newer === undefined ? entry : { ...entry, model: newer };
-    const key = `${next.instanceId}\u0000${next.model}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(next);
+    // The newer release leads; the person's own choice stays right behind it.
+    for (const next of newer === undefined ? [entry] : [{ ...entry, model: newer }, entry]) {
+      const key = fallbackSelectionKey(next);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(next);
+    }
   }
   return out;
+}
+
+/**
+ * The fallback chain as the person wrote it, without other providers'
+ * copies: the explicit order, or the tiers with each entry following its
+ * family's newest listed release.
+ */
+export function namedFallbackOrder(
+  rule: FallbackOrderRule & TierFallbackInput,
+  currentModel: string | undefined,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models">>,
+): { readonly order: ReadonlyArray<ModelSelection>; readonly fromTiers: boolean } {
+  const chain = effectiveFallbackOrder(rule, currentModel);
+  return chain.fromTiers
+    ? { ...chain, order: followNewestReleases(chain.order, providers) }
+    : chain;
 }
 
 /** Drivers whose tier models a provider without its own entry borrows, in order. */

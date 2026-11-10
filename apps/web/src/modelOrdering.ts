@@ -42,14 +42,17 @@ function newerAboveOlder<T extends ModelSlugItem>(
   models: ReadonlyArray<T>,
 ): ReadonlyMap<string, number> {
   const next = new Map(ranks);
+  const ranked = [...ranks].flatMap(([slug, rank]) => {
+    const family = modelFamily(slug);
+    return family ? [{ family, rank }] : [];
+  });
   for (const model of models) {
     if (ranks.has(model.slug)) continue;
     const family = modelFamily(model.slug);
     if (!family) continue;
     let best: number | undefined;
-    for (const [slug, rank] of ranks) {
-      const other = modelFamily(slug);
-      if (!other || other.stem !== family.stem) continue;
+    for (const { family: other, rank } of ranked) {
+      if (other.stem !== family.stem) continue;
       if (compareModelVersions(family.version, other.version) <= 0) continue;
       if (best === undefined || rank < best) best = rank;
     }
@@ -109,8 +112,8 @@ export function sortModelsForProviderInstance<T extends ModelSlugItem>(
 }
 
 /**
- * A starred model's newer releases on the same provider sort with it, so a
- * star on Fable 5.1 does not keep it above Fable 5.2. Their stars are unchanged.
+ * A starred model's newest release on the same provider sorts with it, so a
+ * star on Fable 5.1 does not keep it above Fable 5.2. Stars are unchanged.
  */
 function withNewerReleases<T extends ProviderModelItem>(
   favorites: ReadonlySet<string>,
@@ -119,20 +122,22 @@ function withNewerReleases<T extends ProviderModelItem>(
     providerModelKey(instanceId, slug),
 ): ReadonlySet<string> {
   if (favorites.size === 0) return favorites;
-  const starred = items.filter((item) => favorites.has(keyOf(item.slug, item.instanceId)));
-  const next = new Set(favorites);
+  // The newest release of each family on each provider.
+  const newest = new Map<string, { slug: string; version: ReadonlyArray<number> }>();
   for (const item of items) {
     const family = modelFamily(item.slug);
     if (!family) continue;
-    const olderStarred = starred.some((other) => {
-      const otherFamily = modelFamily(other.slug);
-      return (
-        other.instanceId === item.instanceId &&
-        otherFamily?.stem === family.stem &&
-        compareModelVersions(family.version, otherFamily.version) > 0
-      );
-    });
-    if (olderStarred) next.add(keyOf(item.slug, item.instanceId));
+    const key = `${item.instanceId}\u0000${family.stem}`;
+    const best = newest.get(key);
+    if (!best || compareModelVersions(family.version, best.version) > 0)
+      newest.set(key, { slug: item.slug, version: family.version });
+  }
+  const next = new Set(favorites);
+  for (const item of items) {
+    if (!favorites.has(keyOf(item.slug, item.instanceId))) continue;
+    const family = modelFamily(item.slug);
+    const best = family && newest.get(`${item.instanceId}\u0000${family.stem}`);
+    if (best) next.add(keyOf(best.slug, item.instanceId));
   }
   return next;
 }

@@ -264,8 +264,32 @@ describe("followNewestReleases", () => {
       ),
     ).toEqual([
       sel("claudeAgent", "claude-fable-5-2"),
+      sel("claudeAgent", "claude-fable-5-1"),
       sel("claudeAgent", "claude-opus-5-5"),
       sel("claudeAgent", "claude-gone-1"),
+    ]);
+  });
+
+  it("keeps a thread on the followed release in its own tier when it hits a limit", () => {
+    const fable = provider(
+      "claudeAgent",
+      "claudeAgent",
+      ["claude-fable-5-1", "claude-fable-5-2", "claude-sonnet-5-5"],
+      null,
+    );
+    const input = {
+      modelLanes: {
+        complex: [sel("claudeAgent", "claude-fable-5-1")],
+        routine: [sel("claudeAgent", "claude-sonnet-5-5")],
+      },
+      defaultModelSelection: sel("claudeAgent", "claude-sonnet-5-5"),
+    };
+    expect(tierOfModel(input.modelLanes, "claude-fable-5-2")).toBe("complex");
+    expect(tierOfModel(input.modelLanes, "claude-fable-5-0")).toBeNull();
+    expect(tierFallbackOrder(input, "claude-fable-5-2", [fable])).toEqual([
+      sel("claudeAgent", "claude-fable-5-2"),
+      sel("claudeAgent", "claude-fable-5-1"),
+      sel("claudeAgent", "claude-sonnet-5-5"),
     ]);
   });
 });
