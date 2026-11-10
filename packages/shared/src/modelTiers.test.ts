@@ -292,4 +292,34 @@ describe("followNewestReleases", () => {
       sel("claudeAgent", "claude-sonnet-5-5"),
     ]);
   });
+
+  it("never follows a newer release billed differently from the chosen one", () => {
+    const opencode = provider("opencode", "opencode", [], null, {
+      models: [
+        { slug: "claude-sonnet-4-5", name: "Sonnet 4.5", isCustom: false, capabilities: null },
+        {
+          slug: "claude-sonnet-4-6",
+          name: "Sonnet 4.6",
+          isCustom: false,
+          capabilities: null,
+          billing: "unknown",
+        },
+      ],
+    });
+    expect(followNewestReleases([sel("opencode", "claude-sonnet-4-5")], [opencode])).toEqual([
+      sel("opencode", "claude-sonnet-4-5"),
+    ]);
+  });
+
+  it("puts a model in the tier that names it exactly before one that follows an older release", () => {
+    expect(
+      tierOfModel(
+        {
+          complex: [sel("claudeAgent", "claude-opus-4-1")],
+          routine: [sel("claudeAgent", "claude-opus-5-5")],
+        },
+        "claude-opus-5-5",
+      ),
+    ).toBe("routine");
+  });
 });

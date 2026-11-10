@@ -16,6 +16,7 @@ import {
   type ProviderInstanceId,
   type ProviderModelTier,
   type ProviderModelTiers,
+  providerModelBilling,
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
@@ -49,8 +50,14 @@ export function tierOfModel(
   model: string | undefined,
 ): ModelLane | null {
   if (lanes == null || model === undefined) return null;
-  for (const lane of ["complex", "routine"] as const) {
-    if ((lanes[lane] ?? []).some((entry) => laneEntryCovers(entry.model, model))) return lane;
+  // An exact entry wins over a newer release an older entry follows.
+  for (const covers of [
+    (entry: string) => isSameModel({ slug: entry }, { slug: model }),
+    (entry: string) => laneEntryCovers(entry, model),
+  ]) {
+    for (const lane of ["complex", "routine"] as const) {
+      if ((lanes[lane] ?? []).some((entry) => covers(entry.model))) return lane;
+    }
   }
   return null;
 }
@@ -245,14 +252,21 @@ export function newestOfFamily(
   return best?.slug;
 }
 
-/** The newest listed release of `slug`'s family when it is newer than `slug`, else undefined. */
+/**
+ * The newest listed release of `slug`'s family when it is newer than `slug`
+ * and billed the same way, else undefined: choosing a model never consents to
+ * a release that costs money or reports unknown billing.
+ */
 export function newerOfFamily(
   provider: Pick<ServerProvider, "models">,
   slug: string,
 ): string | undefined {
   const newest = newestOfFamily(provider, slug);
   const [a, b] = [newest && modelFamily(newest), modelFamily(slug)];
-  return a && b && compareModelVersions(a.version, b.version) > 0 ? newest : undefined;
+  if (!a || !b || compareModelVersions(a.version, b.version) <= 0) return undefined;
+  return providerModelBilling(provider, newest) === providerModelBilling(provider, slug)
+    ? newest
+    : undefined;
 }
 
 /**
