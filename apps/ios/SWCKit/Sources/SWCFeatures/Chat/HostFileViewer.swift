@@ -159,7 +159,10 @@ struct HostFileViewer: View {
     var request = URLRequest(url: url)
     request.setValue("bytes=0-\(limit)", forHTTPHeaderField: "Range")
     let (data, response) = try await session.data(for: request)
-    guard let http = response as? HTTPURLResponse, http.statusCode == 200 || http.statusCode == 206 else { throw HostFileError.missing }
+    guard let http = response as? HTTPURLResponse else { throw HostFileError.missing }
+    // An empty file has no byte 0 to send, so a range request for it is unsatisfiable.
+    if http.statusCode == 416 { return "" }
+    guard http.statusCode == 200 || http.statusCode == 206 else { throw HostFileError.missing }
     let text = String(decoding: data.prefix(limit), as: UTF8.self)
     return data.count > limit ? text + "\n\n… (showing the first 2 MB)" : text
   }
