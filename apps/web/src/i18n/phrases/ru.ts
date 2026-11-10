@@ -659,6 +659,11 @@ export const ru: PhraseCatalog = {
   "Enter a model slug.": "Введите идентификатор модели.",
   Favorites: "Избранное",
   "Filter models": "Фильтр моделей",
+  "Model ID": "ID модели",
+  "Stars and arrows arrange the model picker only. The model that takes over at a usage limit is set in Fallback order and Model tiers.":
+    "Звёзды и стрелки меняют только порядок в выборе модели. Модель, которая подхватывает работу при лимите использования, задаётся в разделах «Порядок резервных моделей» и «Уровни моделей».",
+  "For a model this list does not show yet. Type the exact ID the provider accepts; it is sent as typed.":
+    "Для модели, которой ещё нет в этом списке. Введите точный ID, который принимает провайдер; он отправляется как есть.",
   "Hidden from picker": "Скрыты из выбора",
   "Model slugs must be {max} characters or less.":
     "Идентификатор модели должен быть не длиннее {max} символов.",

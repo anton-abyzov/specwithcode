@@ -663,6 +663,11 @@ export const fr: PhraseCatalog = {
   "Enter a model slug.": "Saisissez l’identifiant du modèle.",
   Favorites: "Favoris",
   "Filter models": "Filtrer les modèles",
+  "Model ID": "ID du modèle",
+  "Stars and arrows arrange the model picker only. The model that takes over at a usage limit is set in Fallback order and Model tiers.":
+    "Les étoiles et les flèches ne règlent que l'ordre du sélecteur de modèles. Le modèle qui prend le relais à une limite d'utilisation se règle dans Ordre de secours et Niveaux de modèles.",
+  "For a model this list does not show yet. Type the exact ID the provider accepts; it is sent as typed.":
+    "Pour un modèle que cette liste n'affiche pas encore. Saisissez l'ID exact accepté par le fournisseur ; il est envoyé tel quel.",
   "Hidden from picker": "Masqués du sélecteur",
   "Model slugs must be {max} characters or less.":
     "L’identifiant du modèle doit contenir {max} caractères au maximum.",
