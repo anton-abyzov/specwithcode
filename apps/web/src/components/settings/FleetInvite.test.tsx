@@ -58,8 +58,9 @@ import {
   ConnectReadinessNotice,
   TailscaleReadinessNotice,
   countsAsTailscaleCheckFailure,
-  fleetInviteDirectionNotice,
+  fleetInviteManagedMachines,
   fleetInviteValidity,
+  fleetMachineNameList,
   tailscaleReadinessView,
   useFleetInvite,
 } from "./FleetInvite";
@@ -481,33 +482,65 @@ it("requires explicit coordinator approval and shows the local identity for enro
 });
 
 describe("a join line made on a machine that already starts work on others", () => {
-  it("says nothing on a machine that starts work on no other", () => {
-    expect(fleetInviteDirectionNotice("Mac M5", [])).toBeNull();
-    expect(fleetInviteDirectionNotice("Mac M5", [" "])).toBeNull();
-    expect(text(panel(render()))).not.toContain("Adding a machine to this one?");
+  const machine = (label: string, status?: "allowed" | "expiring" | "not_allowed" | "revoked") => ({
+    environmentId: EnvironmentId.make(`env-${label}`),
+    label,
+    ...(status === undefined
+      ? {}
+      : { workers: { status, access: null, expiresAt: null, renewable: false, problem: null } }),
   });
 
-  it("names the machines and which way the line works", () => {
-    expect(fleetInviteDirectionNotice("Mac M4", ["M1"])).toContain(
-      "Mac M4 already starts work on M1. A line made here does the opposite",
-    );
-    expect(fleetInviteDirectionNotice("Mac M4", ["M1", "M3"])).toContain("on M1 and M3.");
-    expect(fleetInviteDirectionNotice("Mac M4", ["M1", "M3", "Mini", "Air", "M2"])).toContain(
-      "on M1, M3, Mini and 2 more.",
-    );
+  it("counts only machines this one may start work on now", () => {
+    expect(
+      fleetInviteManagedMachines(
+        [
+          machine("m4", "allowed"),
+          machine("M1", "allowed"),
+          machine("M3", "expiring"),
+          machine("Listed", "not_allowed"),
+          machine("Revoked", "revoked"),
+          machine("Old server"),
+          { ...machine("twin", "allowed"), label: " M1 " },
+        ],
+        "env-m4",
+      ),
+    ).toEqual(["M1", "M3"]);
+  });
+
+  it("lists up to four names and counts the rest", () => {
+    expect(fleetMachineNameList([])).toBeNull();
+    expect(fleetMachineNameList([" "])).toBeNull();
+    expect(fleetMachineNameList(["M1"])).toBe("M1");
+    expect(fleetMachineNameList(["M1", "M3"])).toBe("M1 and M3");
+    expect(fleetMachineNameList(["M1", "M3", "Mini"])).toBe("M1, M3 and Mini");
+    expect(fleetMachineNameList(["M1", "M3", "Mini", "Air"])).toBe("M1, M3, Mini and Air");
+    expect(fleetMachineNameList(["M1", "M3", "Mini", "Air", "M2"])).toBe("M1, M3, Mini and 2 more");
+    expect(fleetMachineNameList(["M1", "M1"])).toBe("M1");
+  });
+
+  it("says nothing on a machine that starts work on no other", () => {
+    expect(text(panel(render()))).not.toContain("Adding a machine to this one?");
   });
 
   it("shows before the line is made and stays once it is", async () => {
     const managedMachines = ["M1", "M3"];
     const before = text(panel(render(), { managedMachines }));
     expect(before).toContain("Adding a machine to this one?");
-    expect(before).toContain("To add a new machine to Mac M4, open SpecWithCode on the new");
+    expect(before).toContain("Agents on Mac M4 already start work on M1 and M3.");
+    expect(before).toContain(
+      "To add a new machine to Mac M4 instead, open SpecWithCode on the new",
+    );
     runtime.invite.mockResolvedValue(invitation);
     await render().create();
     await vi.waitFor(() => expect(render().invitation).toEqual(invitation));
     const shown = panel(render(), { managedMachines });
     expect(line(shown)!.props.value).toBe("swc-machine-synthetic-line");
-    expect(text(shown)).toContain("it lets the machine you pick start work on Mac M4");
+    expect(text(shown)).toContain("lets the machine you pick start work on Mac M4");
+  });
+
+  it("names this machine in plain words when it has no name", () => {
+    const shown = text(panel(render(), { managedMachines: ["M1"], defaultName: null }));
+    expect(shown).toContain("Agents on this machine already start work on M1.");
   });
 });
 
