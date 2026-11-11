@@ -18,18 +18,21 @@ export const PLATFORMS = [
   "other",
 ];
 
-// Buckets that count as a fresh install and as an update download.
-export const NEW_INSTALL_PLATFORMS = [
+// Installer downloads. Windows .exe and Linux AppImage are also what the in-app
+// updater fetches, so these include auto-updates and overstate fresh installs.
+export const INSTALLER_PLATFORMS = [
   "mac-dmg",
   "windows-exe",
   "linux-deb",
   "linux-appimage",
   "install-script",
 ];
-export const UPDATE_PLATFORMS = ["mac-zip", "update-metadata"];
+// macOS update payloads (the .zip the updater fetches). update-metadata stays its own
+// row: it counts update checks, not downloads.
+export const UPDATE_PLATFORMS = ["mac-zip"];
 
 // Summary rows added after the per-platform rows.
-export const SUMMARY_ROWS = ["new-installs", "updates", "all"];
+export const SUMMARY_ROWS = ["installers", "mac-updates", "all"];
 
 /**
  * Maps a release asset name to its platform bucket. Order matters: update metadata
@@ -110,14 +113,14 @@ function withSummary(byPlatform) {
   const sum = (list) => list.reduce((acc, p) => acc + (byPlatform[p] ?? 0), 0);
   return {
     ...byPlatform,
-    "new-installs": sum(NEW_INSTALL_PLATFORMS),
-    updates: sum(UPDATE_PLATFORMS),
+    installers: sum(INSTALLER_PLATFORMS),
+    "mac-updates": sum(UPDATE_PLATFORMS),
     all: sum(PLATFORMS),
   };
 }
 
 /**
- * Cumulative download counts per platform bucket, plus new-installs, updates and all.
+ * Cumulative download counts per platform bucket, plus installers, mac-updates and all.
  * @param {{ releases: Array<{ tag: string, assets: Array<{ name: string, downloadCount: number }> }> }} snapshot
  */
 export function totalsByPlatform(snapshot) {

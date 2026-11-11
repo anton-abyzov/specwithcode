@@ -42,8 +42,8 @@ describe("crash report sanitizing", () => {
     const stack = sanitizeStack(
       "Error: boom at /Users/anton/x.ts\n    at run (/Users/anton/Projects/app/src/main.ts:10:5)\n    at C:\\Users\\Anton\\app\\x.js:1:1",
     );
-    expect(stack).toContain("at run (~/Projects/app/src/main.ts:10:5)");
-    expect(stack).toContain("at ~\\app\\x.js:1:1");
+    expect(stack).toContain("at run (main.ts:10:5)");
+    expect(stack).toContain("at x.js:1:1");
     expect(stack).not.toMatch(/Users[\\/]+anton/iu);
   });
 
@@ -97,6 +97,55 @@ describe("crash report sanitizing", () => {
     expect(crashReportEndpoint("http://127.0.0.1:8787")).toBe(
       "http://127.0.0.1:8787/v1/crash-reports",
     );
+  });
+});
+
+describe("review hardening", () => {
+  it("redacts secrets in JSON nested inside a JSON string", () => {
+    const text = sanitizeErrorMessage(
+      '{"error":"{\\"token\\":\\"abc123def456\\",\\"refresh_token\\":\\"short-secret\\"}"}',
+    );
+    expect(text).not.toContain("abc123def456");
+    expect(text).not.toContain("short-secret");
+  });
+
+  it("sanitizes every non-frame stack line and trims frame paths", () => {
+    const stack = sanitizeStack(
+      'Error: boom\n  detail: prompt was "summarize /Volumes/X/secret.txt please"\n    at foo (file:///Volumes/Client/app/x.js:1:2)\n    at bar (/opt/app/node_modules/effect/dist/esm/Effect.js:3:4)\n    at baz (/Applications/SpecWithCode.app/Contents/Resources/app.asar/dist-electron/main.js:9:9)',
+    );
+    expect(stack).not.toContain("Volumes");
+    expect(stack).not.toContain("secret.txt");
+    expect(stack).toContain("at foo (x.js:1:2)");
+    expect(stack).toContain("at bar (node_modules/effect/dist/esm/Effect.js:3:4)");
+    expect(stack).toContain("at baz (dist-electron/main.js:9:9)");
+  });
+
+  it("handles spaces in user and folder names, and hostnames", () => {
+    const message = sanitizeErrorMessage(
+      "open '/Volumes/Client Acme/Q4 plan/notes.md' from /Users/Anton Abyzov/Projects/acme via getaddrinfo ENOTFOUND antons-mbp.local on antons-mbp",
+      null,
+      ["antons-mbp.local"],
+    );
+    expect(message).not.toMatch(/Acme|Q4|notes|Abyzov|antons-mbp/u);
+  });
+
+  it("keeps only a safe model name and drops turn failure text", () => {
+    const report = buildCrashReport({
+      ...base,
+      kind: "turn_failed",
+      model: "/Users/anton/models/acme-private.gguf",
+      error: {
+        name: "invalid_request",
+        message: 'messages[0].content "rewrite my letter"',
+        stack: "x",
+      },
+      homeDir: "/Users/anton",
+    });
+    expect(report.model).toBe("acme-private.gguf");
+    expect(report.message).toBeUndefined();
+    expect(report.stack).toBeUndefined();
+    expect(report.errorName).toBe("invalid_request");
+    expect(buildCrashReport({ ...base, model: "anton@host/finetune" }).model).toBe("host/finetune");
   });
 });
 

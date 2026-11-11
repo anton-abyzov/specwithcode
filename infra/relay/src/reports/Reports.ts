@@ -166,13 +166,14 @@ const make = Effect.gen(function* () {
       return errorResponse(400, "invalid_body");
     }
     const installIdHash = yield* sha256Hex(report.installId);
-    // The shared budget first, so a flood of fresh install ids stops there.
-    const globalAllowed = yield* crashFailOpen(limiter.allowGlobal);
-    const installAllowed =
-      globalAllowed && (yield* crashFailOpen(limiter.allowInstall(installIdHash)));
-    if (!globalAllowed || !installAllowed) {
+    // Per-install first: one install flooding with its own id must not spend the
+    // shared budget every other install relies on. The shared budget then stops
+    // a flood of fresh install ids.
+    const installAllowed = yield* crashFailOpen(limiter.allowInstall(installIdHash));
+    const globalAllowed = installAllowed && (yield* crashFailOpen(limiter.allowGlobal));
+    if (!installAllowed || !globalAllowed) {
       yield* Effect.annotateCurrentSpan({
-        "relay.crash.rate_limit": globalAllowed ? "install" : "global",
+        "relay.crash.rate_limit": installAllowed ? "global" : "install",
       });
       yield* outcome("rate_limited");
       return errorResponse(429, "rate_limited", {

@@ -85,6 +85,22 @@ export interface CrashReportInput {
   readonly count?: number | null;
   /** Home directory to strip from messages and stacks, when known. */
   readonly homeDir?: string | null;
+  /** This machine's hostname, redacted wherever it appears in text. */
+  readonly hostname?: string | null;
+}
+
+/**
+ * Model ids can be user-chosen (a local model file, `user@host/finetune`).
+ * Keep only the last path part and drop anything before an `@`.
+ */
+function safeModelId(value: string | null | undefined, homeDir: string | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  let model = stripHomePaths(value.trim(), homeDir);
+  if (/^(?:~|[A-Za-z]:|[\\/])/u.test(model) || model.includes("\\")) {
+    model = model.split(/[\\/]/u).pop() ?? "";
+  }
+  if (model.includes("@")) model = model.slice(model.lastIndexOf("@") + 1);
+  return shortToken(redactDiagnosticText(model), 120);
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
@@ -136,12 +152,14 @@ function shortSlug(value: string, max: number): string {
   return slug.length > 0 ? slug : "unknown";
 }
 
+// User folder names can contain spaces ("/Users/Anton Abyzov"), so a name runs
+// to the next separator, quote or line end rather than the next space.
 const HOME_PATTERNS: ReadonlyArray<RegExp> = [
-  /\/Users\/[^/\s'"`:)]+/gu,
-  /\/home\/[^/\s'"`:)]+/gu,
+  /\/Users\/[^/\n'"`:)]+/gu,
+  /\/home\/[^/\n'"`:)]+/gu,
   /\/root(?=[/\s'"`:)]|$)/gu,
-  /[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s'"`:)]+/gu,
-  /\\\\wsl(?:\$|\.localhost)\\[^\\\s]+\\home\\[^\\\s'"`:)]+/giu,
+  /[A-Za-z]:[\\/]+Users[\\/]+[^\\/\n'"`:)]+/gu,
+  /\\\\wsl(?:\$|\.localhost)\\[^\\\s]+\\home\\[^\\\n'"`:)]+/giu,
 ];
 
 function escapeRegExp(value: string): string {
@@ -198,41 +216,129 @@ const SECRET_RULES: ReadonlyArray<readonly [RegExp, string]> = [
 // eslint-disable-next-line no-control-regex -- stripping control characters is the point
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
 
-/** Removes secrets, emails, ids and home paths from free text. */
-export function redactDiagnosticText(text: string, homeDir?: string | null): string {
-  let result = stripHomePaths(text.replace(CONTROL_CHARACTERS, ""), homeDir);
+const LOCAL_HOST_PATTERN =
+  /\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|home|internal|localdomain)\b/giu;
+
+/**
+ * Words that identify this machine or user (hostname, account name). Each is
+ * replaced wherever it appears, case-insensitively. Short or generic values
+ * are skipped so ordinary words are not mangled.
+ */
+function identifyingTerms(
+  homeDir?: string | null,
+  terms?: ReadonlyArray<string | null | undefined>,
+) {
+  const result = new Set<string>();
+  const add = (value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (!trimmed || trimmed.length < 3) return;
+    if (["root", "user", "admin", "runner", "ubuntu", "localhost"].includes(trimmed.toLowerCase()))
+      return;
+    result.add(trimmed);
+  };
+  const home = homeDir?.trim().replace(/[\\/]+$/u, "");
+  if (home) add(home.split(/[\\/]/u).pop());
+  for (const term of terms ?? []) {
+    add(term);
+    add(term?.replace(/\.(?:local|lan|home|internal|localdomain)$/iu, ""));
+  }
+  return [...result].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Removes secrets, emails, ids, hostnames and home paths from free text.
+ * `terms` are extra identifying words, such as the machine's hostname.
+ */
+export function redactDiagnosticText(
+  text: string,
+  homeDir?: string | null,
+  terms?: ReadonlyArray<string | null | undefined>,
+): string {
+  // JSON nested in a JSON string escapes its quotes (\"token\":\"x\"); unescape so the
+  // key/value rules see the field names.
+  let result = text.replace(CONTROL_CHARACTERS, "").replace(/\\+(["'])/gu, "$1");
+  result = stripHomePaths(result, homeDir);
+  for (const term of identifyingTerms(homeDir, terms)) {
+    result = result.replace(new RegExp(escapeRegExp(term), "giu"), "<redacted>");
+  }
+  result = result.replace(LOCAL_HOST_PATTERN, "<host>");
   for (const [pattern, replacement] of SECRET_RULES) {
     result = result.replace(pattern, replacement);
   }
   return result;
 }
 
-const ABSOLUTE_PATH_PATTERN =
-  /(?:~(?:[\\/][^\\/\s'"`:()<>]+)+|(?:[A-Za-z]:)?(?:[\\/][^\\/\s'"`:()<>]+){2,})[\\/]?(?=[\s'"`:()<>,]|$)/gu;
+// A segment may hold single spaces ("Client Acme"), so a path runs on to the next
+// quote, colon, bracket or line end. Over-redacting the words after a path is fine.
+const PATH_SEGMENT = String.raw`[^\\/\s'"\x60:()<>]+(?: [^\\/\s'"\x60:()<>]+)*`;
+const ABSOLUTE_PATH_PATTERN = new RegExp(
+  String.raw`(?:file:\/\/)?(?:~(?:[\\/]${PATH_SEGMENT})+|(?:[A-Za-z]:)?(?:[\\/]${PATH_SEGMENT}){2,})[\\/]?(?=[\s'"\x60:()<>,]|$)`,
+  "gu",
+);
 
 /**
  * Error messages from fs and spawn often name user files. Messages keep the
  * error text but every path is replaced, so no file or folder name leaves.
  */
-export function sanitizeErrorMessage(message: string, homeDir?: string | null): string {
-  const redacted = redactDiagnosticText(message, homeDir).replace(ABSOLUTE_PATH_PATTERN, "<path>");
+export function sanitizeErrorMessage(
+  message: string,
+  homeDir?: string | null,
+  terms?: ReadonlyArray<string | null | undefined>,
+): string {
+  const redacted = redactDiagnosticText(message, homeDir, terms).replace(
+    ABSOLUTE_PATH_PATTERN,
+    "<path>",
+  );
   return truncate(redacted.trim(), CRASH_REPORT_MAX_MESSAGE_CHARS);
+}
+
+const FRAME_PATTERN = /^(\s*at\s+(?:.*?\s+\()?)(.+?)(:\d+(?::\d+)?)?(\)?)$/u;
+
+/**
+ * A code location keeps only what names the code, not where it lives on disk:
+ * the part after the last `node_modules/`, `app.asar/` or a monorepo
+ * `apps/` / `packages/` folder, otherwise just the file name.
+ */
+export function sanitizeCodeLocation(location: string): string {
+  if (/^(?:node:|native|<anonymous>|\[native code\]|internal\/)/u.test(location)) return location;
+  const path = location.replace(/^file:\/\//u, "").replace(/\\/gu, "/");
+  for (const marker of ["node_modules/", "app.asar/", "app.asar.unpacked/"]) {
+    const index = path.lastIndexOf(marker);
+    if (index >= 0) return path.slice(index + (marker.startsWith("app.asar") ? marker.length : 0));
+  }
+  const repo = /\/((?:apps|packages|infra)\/[^/]+\/(?:src|dist|dist-electron|build)\/.+)$/u.exec(
+    path,
+  );
+  if (repo) return repo[1]!;
+  return path.split("/").pop() || "<path>";
+}
+
+function sanitizeFrame(line: string): string | null {
+  if (!/^\s+at\s/u.test(line)) return null;
+  const match = FRAME_PATTERN.exec(line);
+  if (!match) return null;
+  const [, head = "", location = "", position = "", close = ""] = match;
+  return `${head}${sanitizeCodeLocation(location)}${position}${close}`;
 }
 
 /**
  * Stacks keep function names and code locations so a failure can be found,
  * with the home directory shown as `~` and secrets redacted.
  */
-export function sanitizeStack(stack: string, homeDir?: string | null): string {
-  const lines = redactDiagnosticText(stack, homeDir)
+export function sanitizeStack(
+  stack: string,
+  homeDir?: string | null,
+  terms?: ReadonlyArray<string | null | undefined>,
+): string {
+  const lines = redactDiagnosticText(stack, homeDir, terms)
     .split(/\r?\n/u)
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0)
-    .slice(0, 60);
-  // The first line repeats the message; it goes through the stricter message rules.
-  if (lines.length > 0 && !/^\s+at\s/u.test(lines[0]!)) {
-    lines[0] = sanitizeErrorMessage(lines[0]!, homeDir);
-  }
+    .slice(0, 60)
+    // Frames keep function names and a code location; every other line (the
+    // message, which a stack repeats, and its continuation lines) gets the
+    // strict message rules.
+    .map((line) => sanitizeFrame(line) ?? sanitizeErrorMessage(line, homeDir, terms));
   return truncate(lines.join("\n"), CRASH_REPORT_MAX_STACK_CHARS);
 }
 
@@ -287,6 +393,7 @@ function errorParts(error: unknown): ErrorParts {
 function sanitizeDetail(
   detail: Readonly<Record<string, unknown>> | null | undefined,
   homeDir?: string | null,
+  terms?: ReadonlyArray<string | null | undefined>,
 ): Record<string, CrashReportDetailValue> | undefined {
   if (!detail) return undefined;
   const result: Record<string, CrashReportDetailValue> = {};
@@ -296,7 +403,7 @@ function sanitizeDetail(
     if (typeof value === "boolean") result[key] = value;
     else if (typeof value === "number" && Number.isFinite(value)) result[key] = value;
     else if (typeof value === "string" && value.length > 0) {
-      result[key] = truncate(sanitizeErrorMessage(value, homeDir), 200);
+      result[key] = truncate(sanitizeErrorMessage(value, homeDir, terms), 200);
     }
   }
   return Object.keys(result).length > 0 ? result : undefined;
@@ -306,14 +413,20 @@ function sanitizeDetail(
 export function buildCrashReport(input: CrashReportInput): CrashReport {
   const parts = errorParts(input.error);
   const homeDir = input.homeDir ?? null;
+  const terms = [input.hostname];
   const category = shortToken(input.category) ?? input.kind;
   const provider = shortToken(input.provider);
-  const model = shortToken(input.model, 120);
+  const model = safeModelId(input.model, homeDir);
   const errorName = shortToken(parts.name);
   const osVersion = shortToken(input.osVersion, 40);
-  const message = parts.message ? sanitizeErrorMessage(parts.message, homeDir) : undefined;
-  const stack = parts.stack ? sanitizeStack(parts.stack, homeDir) : undefined;
-  const detail = sanitizeDetail(input.detail, homeDir);
+  // Provider errors for a failed turn can quote the prompt or the reply (a
+  // content-policy or validation error), so a turn failure carries only its
+  // category, code and provider, never its message.
+  const freeText = input.kind !== "turn_failed";
+  const message =
+    freeText && parts.message ? sanitizeErrorMessage(parts.message, homeDir, terms) : undefined;
+  const stack = freeText && parts.stack ? sanitizeStack(parts.stack, homeDir, terms) : undefined;
+  const detail = sanitizeDetail(input.detail, homeDir, terms);
   const count =
     typeof input.count === "number" && Number.isInteger(input.count) && input.count > 1
       ? Math.min(input.count, 1_000_000)

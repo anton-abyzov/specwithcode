@@ -313,6 +313,7 @@ export const makeWith = Effect.fn("DesktopCrashReporter.make")(function* (
         error: event.error,
         detail,
         homeDir: options.homeDir,
+        hostname: options.hostname,
       });
       const count = limiter.admit(crashReportFingerprint(draft), now());
       if (count === null) return null;
@@ -329,7 +330,13 @@ export const makeWith = Effect.fn("DesktopCrashReporter.make")(function* (
         HttpClientRequest.post(endpoint).pipe(HttpClientRequest.bodyText(body, "application/json")),
       )
       .pipe(
-        Effect.map((response) => response.status >= 200 && response.status < 300),
+        // Settled: accepted, or refused for good (4xx other than 429), so a
+        // pending file is not resent on every launch.
+        Effect.map(
+          (response) =>
+            (response.status >= 200 && response.status < 300) ||
+            (response.status >= 400 && response.status < 500 && response.status !== 429),
+        ),
         Effect.timeout(SEND_TIMEOUT),
         Effect.catchCause(() => Effect.succeed(false)),
       );

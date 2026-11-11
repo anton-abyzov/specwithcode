@@ -71,14 +71,14 @@ describe("totals and delta", () => {
     rel("v1", { "a.dmg": 14, "a-arm64.zip": 4, "install.sh": 2, "x.exe": 1 }),
   ]);
 
-  it("sums cumulative totals with new-installs, updates and all", () => {
+  it("sums cumulative totals with installers, mac-updates and all", () => {
     const t = totalsByPlatform(cur);
     NodeAssert.equal(t["mac-dmg"], 17);
     NodeAssert.equal(t["mac-zip"], 4);
     NodeAssert.equal(t["windows-exe"], 1);
     NodeAssert.equal(t["update-metadata"], 7);
-    NodeAssert.equal(t["new-installs"], 17 + 2 + 1);
-    NodeAssert.equal(t.updates, 4 + 7);
+    NodeAssert.equal(t.installers, 17 + 2 + 1);
+    NodeAssert.equal(t["mac-updates"], 4);
     NodeAssert.equal(t.all, 31);
   });
 
@@ -89,8 +89,8 @@ describe("totals and delta", () => {
     NodeAssert.equal(d["install-script"], 0);
     NodeAssert.equal(d["windows-exe"], 1);
     NodeAssert.equal(d["update-metadata"], 7);
-    NodeAssert.equal(d["new-installs"], 8);
-    NodeAssert.equal(d.updates, 7);
+    NodeAssert.equal(d.installers, 8);
+    NodeAssert.equal(d["mac-updates"], 0);
     NodeAssert.equal(d.all, 15);
   });
 

@@ -93,6 +93,14 @@ export function readOrCreateCrashInstallId(baseDir: string): string | null {
   }
 }
 
+function safeHostname(): string | null {
+  try {
+    return NodeOS.hostname();
+  } catch {
+    return null;
+  }
+}
+
 /** `<os>-<arch>-<12 hex of sha256(hostname)>`; the hostname itself never leaves. */
 export function serverCrashMachineLabel(): string {
   let hostname = "";
@@ -150,6 +158,7 @@ export function buildServerCrashReport(input: ServerCrashReportInput): CrashRepo
     detail: input.detail ?? null,
     count: input.count ?? null,
     homeDir: safeHomeDir(),
+    hostname: safeHostname(),
   });
 }
 
@@ -252,7 +261,8 @@ export function resolveCrashReportPathsSync(input: {
       ? NodePath.resolve(expandHome(raw, input.homeDir))
       : studioDefaultHome(input.homeDir);
   const devUrl = flagValue(input.argv, "dev-url") ?? input.env.VITE_DEV_SERVER_URL;
-  const isDev = devUrl !== undefined && devUrl.trim().length > 0 && !explicit;
+  // Matches cli/config.ts: --base-dir and STUDIO_HOME are both explicit.
+  const isDev = devUrl !== undefined && devUrl.trim().length > 0 && !(raw && raw.length > 0);
   const stateDir = NodePath.join(baseDir, isDev ? "dev" : "userdata");
   return { baseDir, stateDir, settingsPath: NodePath.join(stateDir, "settings.json") };
 }
