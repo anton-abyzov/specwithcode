@@ -679,6 +679,8 @@ describe("workers on private machines", () => {
     const props = {
       machine: {
         ...withWorkers.machines[1]!,
+        // No key on that machine, so this server cannot make the code itself.
+        pairingConfigured: false,
         workers: {
           ...notAllowed,
           status: "allowed" as const,
@@ -709,6 +711,14 @@ describe("workers on private machines", () => {
     const raised = FleetWorkersRow({ ...props, draft: { access: "full-access", pairingCode: "" } });
     expect(code(raised)).not.toBeNull();
     expect(button(raised, "Change access")?.props.disabled).toBe(true);
+    // With a key there the change needs nothing pasted.
+    const keyed = FleetWorkersRow({
+      ...props,
+      machine: { ...props.machine, pairingConfigured: true },
+      draft: { access: "full-access", pairingCode: "" },
+    });
+    expect(code(keyed)).toBeNull();
+    expect(button(keyed, "Change access")?.props.disabled).toBe(false);
     const full = FleetWorkersRow({
       ...props,
       machine: { ...props.machine, workers: { ...props.machine.workers, access: "full-access" } },
@@ -736,9 +746,51 @@ describe("workers on private machines", () => {
     });
   });
 
-  it("needs a pasted code before Allow when this server cannot pair there", () => {
+  it("allows without a code on a machine added by a join line", () => {
+    // The join line left a key there, but the grant does not renew by itself.
     const props = {
       machine: { ...withWorkers.machines[1]!, workers: { ...notAllowed, renewable: false } },
+      disabled: false,
+      canManage: true,
+      draft: { access: "full-access" as const, pairingCode: "" },
+      onDraftChange: vi.fn(),
+      onAction: vi.fn(),
+    };
+    expect(props.machine.pairingConfigured).toBe(true);
+    const row = FleetWorkersRow(props);
+    expect(
+      visitElements(
+        row,
+        (element) => element.props["aria-label"] === "Pairing code made on Mac M1",
+      ),
+    ).toBeNull();
+    const allow = button(row, "Allow workers")!;
+    expect(allow.props.disabled).toBe(false);
+    (allow.props.onClick as () => void)();
+    expect(props.onAction).toHaveBeenCalledExactlyOnceWith("allow");
+    // Once that machine refused the code this server made, a code can be pasted.
+    const refused = FleetWorkersRow({
+      ...props,
+      machine: {
+        ...props.machine,
+        workers: { ...props.machine.workers, problem: "pairing_unavailable" as const },
+      },
+    });
+    const field = visitElements(
+      refused,
+      (element) => element.props["aria-label"] === "Pairing code made on Mac M1",
+    );
+    expect(field?.props.placeholder).toBe("Code made on Mac M1 for this machine");
+    expect(button(refused, "Allow workers")?.props.disabled).toBe(true);
+  });
+
+  it("needs a pasted code before Allow when this server cannot pair there", () => {
+    const props = {
+      machine: {
+        ...withWorkers.machines[1]!,
+        pairingConfigured: false,
+        workers: { ...notAllowed, renewable: false },
+      },
       disabled: false,
       canManage: true,
       draft: { access: "auto" as const, pairingCode: "" },
