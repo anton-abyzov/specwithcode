@@ -76,8 +76,9 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
-      // Vitest loads this through the per-file @vitest-environment directive.
-      "ignoreDependencies": ["jsdom"],
+      // Vitest loads jsdom through the per-file @vitest-environment directive; the
+      // picker-calm verifier reads axe-core's script from disk to inject it.
+      "ignoreDependencies": ["jsdom", "axe-core"],
       // Worktree setup (scripts/setup-worktree.ts) runs this directly.
       // Browser verification fixtures under tests/ are served and run directly.
       "entry": ["scripts/warm-dep-cache.ts", "tests/*/**/*.{js,mjs,ts,tsx,css}"],
