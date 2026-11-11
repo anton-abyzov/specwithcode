@@ -937,6 +937,27 @@ describe("projects and chats sidebar", () => {
     ).not.toContain("Personal assistant");
     window.removeEventListener("studio:open-command-palette", listen);
   });
+  it("does not offer Set up when another machine's assistant is listed", async () => {
+    state.groups = [
+      ...state.groups,
+      {
+        projectKey: "remote:/percy",
+        displayName: "Percy",
+        memberProjects: [
+          { environmentId: "remote", id: "p9", workspaceSettings: { kind: "personal" } },
+        ],
+      },
+    ];
+    await render();
+    expect(
+      [...container.querySelectorAll("button")].some((b) =>
+        b.textContent?.startsWith("Personal assistant"),
+      ),
+    ).toBe(false);
+    expect(
+      container.querySelector('.sws-side-actions [aria-label="Personal assistant"]')?.textContent,
+    ).toContain("Percy");
+  });
   it("pins the personal assistant above Projects, outside the project paging", async () => {
     state.groups = [
       ...Array.from({ length: 10 }, (_, index) => ({
