@@ -1,10 +1,13 @@
 import { useTx } from "../../i18n";
-import { ChevronDownIcon, StarIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, StarIcon } from "lucide-react";
 import { memo, type ReactNode, useCallback, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { ComboboxItem } from "../ui/combobox";
 import type { ModelSearchHeader, ModelSearchOlderSection } from "./modelSearchGroups";
+import { modelSearchMatchedAlias } from "./modelPickerSearch";
+import { HighlightedModelName } from "./ModelPickerSearchNotes";
+import { renderRich } from "../../i18n/rich";
 
 /**
  * The heading over one model in search results: its name once, and how many providers
@@ -13,6 +16,10 @@ import type { ModelSearchHeader, ModelSearchOlderSection } from "./modelSearchGr
 export const ModelSearchGroupHeader = memo(function ModelSearchGroupHeader(props: {
   readonly header: ModelSearchHeader;
   readonly familyStar?: ModelSearchFamilyStar;
+  /** The search typed, whose matched characters the name marks. */
+  readonly query?: string;
+  /** The model's catalog aliases: one is named when it, not the name, matched. */
+  readonly aliases?: ReadonlyArray<string> | undefined;
 }) {
   const { header } = props;
   return (
@@ -23,7 +30,7 @@ export const ModelSearchGroupHeader = memo(function ModelSearchGroupHeader(props
       )}
       data-model-search-group={header.label}
     >
-      <ModelSearchHeading header={header}>
+      <ModelSearchHeading header={header} query={props.query} aliases={props.aliases}>
         {header.older || !props.familyStar ? null : (
           <FamilyStarButton header={header} star={props.familyStar} />
         )}
@@ -78,16 +85,30 @@ function FamilyStarButton(props: {
 // The name stays whole; on a narrow picker the pills wrap to a line of their own.
 function ModelSearchHeading(props: {
   readonly header: ModelSearchHeader;
+  readonly query?: string | undefined;
+  readonly aliases?: ReadonlyArray<string> | undefined;
   readonly children?: ReactNode;
 }) {
   const tx = useTx();
   const { header } = props;
+  const query = props.query ?? "";
+  const alias = query
+    ? modelSearchMatchedAlias({ aliases: props.aliases }, header.label, query)
+    : null;
   return (
     <>
       <span className="flex min-w-0 max-w-full items-baseline gap-1.5">
         <span className="sws-picker-group-name min-w-0 truncate text-sm text-foreground">
-          {header.label}
+          <HighlightedModelName label={header.label} query={query} />
         </span>
+        {alias ? (
+          <span
+            className="min-w-0 truncate text-xs text-muted-foreground"
+            data-model-search-alias=""
+          >
+            <HighlightedModelName label={alias} query={query} />
+          </span>
+        ) : null}
         {header.latest ? (
           <span
             className="shrink-0 rounded border border-primary/35 bg-primary/10 px-1 py-px text-3xs font-semibold leading-none text-foreground"
@@ -119,6 +140,7 @@ export function ModelSearchOlderRow(props: {
   readonly value: string;
   readonly section: ModelSearchOlderSection;
   readonly familyStar?: ModelSearchFamilyStar;
+  readonly query?: string;
 }) {
   const tx = useTx();
   const { section } = props;
@@ -136,7 +158,7 @@ export function ModelSearchOlderRow(props: {
       data-model-search-older={section.family}
     >
       <div className="sws-picker-group flex min-w-0 flex-1 flex-wrap items-baseline gap-x-1.5 gap-y-1 pt-1">
-        <ModelSearchHeading header={section.latest}>
+        <ModelSearchHeading header={section.latest} query={props.query}>
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-px text-2xs leading-none",
@@ -157,6 +179,35 @@ export function ModelSearchOlderRow(props: {
           ) : null}
         </ModelSearchHeading>
       </div>
+    </ComboboxItem>
+  );
+}
+
+/** A provider's legacy models, folded behind one row that opens them in place. */
+export function ModelLegacySectionRow(props: {
+  readonly index: number;
+  readonly value: string;
+  readonly count: number;
+  readonly isExpanded: boolean;
+}) {
+  const tx = useTx();
+  return (
+    <ComboboxItem
+      hideIndicator
+      index={props.index}
+      value={props.value}
+      aria-expanded={props.isExpanded}
+      className="group w-full cursor-pointer"
+    >
+      <div className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
+        <span className="text-sm leading-snug">{tx("Legacy models")}</span>
+        <span className="text-xs font-normal leading-snug text-muted-foreground">
+          {renderRich(tx("{count} models"), { count: props.count })}
+        </span>
+      </div>
+      <ChevronRightIcon
+        className={cn("size-4 transition-transform", props.isExpanded && "rotate-90")}
+      />
     </ComboboxItem>
   );
 }

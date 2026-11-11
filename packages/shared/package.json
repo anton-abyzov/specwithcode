@@ -260,6 +260,10 @@
       "types": "./src/modelLanes.ts",
       "import": "./src/modelLanes.ts"
     },
+    "./modelSearchIntents": {
+      "types": "./src/modelSearchIntents.ts",
+      "import": "./src/modelSearchIntents.ts"
+    },
     "./modelTiers": {
       "types": "./src/modelTiers.ts",
       "import": "./src/modelTiers.ts"
