@@ -458,8 +458,10 @@ export async function writtenSpecIncrements(
   const found: Array<{ readonly root: string; readonly incrementId: string }> = [];
   const seen = new Set<string>();
   for (const spec of specs.slice(0, WRITTEN_SPECS_CHECKED)) {
+    const resolved = NodePath.resolve(thread.worktreePath ?? workspaceRoot, spec);
+    // On POSIX a backslash is part of a name, never a separator.
     const match = WRITTEN_SPEC.exec(
-      NodePath.resolve(thread.worktreePath ?? workspaceRoot, spec).replaceAll("\\", "/"),
+      resolved.startsWith("/") ? resolved : resolved.replaceAll("\\", "/"),
     );
     const incrementId = match?.[2];
     if (match === null || incrementId === undefined || !INCREMENT_FOLDER.test(incrementId)) {

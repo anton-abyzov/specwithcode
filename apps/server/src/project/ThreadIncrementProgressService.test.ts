@@ -766,13 +766,72 @@ it.layer(layerTest)("ThreadIncrementProgressService", (it) => {
     }),
   );
 
-  it("compares paths after resolving dots, and proves nothing from a relative one", () => {
+  it.effect("counts a subagent started after the first read, within a minute or so", () =>
+    Effect.gen(function* () {
+      const parent = yield* addThread("thread:evidence:late:parent");
+      yield* addChange(parent, 1, "/srv/parent/a.ts");
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+      const inside = (root: string) =>
+        Effect.gen(function* () {
+          const source = yield* evidence(parent);
+          return yield* Effect.promise(() => source.workedIn([root]));
+        });
+      assert.isFalse(yield* inside("/srv/child"));
+
+      const child = yield* addThread("thread:evidence:late:child", {
+        providerChild: true,
+        parent: "thread:evidence:late:parent",
+      });
+      yield* addChange(child, 1, "/srv/child/a.ts");
+      // The project's subagents are listed again after a minute.
+      yield* TestClock.adjust("61 seconds");
+      assert.isTrue(yield* inside("/srv/child"));
+      // Another project's thread is never this one's subagent.
+      const foreign = yield* addThread("thread:evidence:late:foreign", {
+        projectId: OTHER_PROJECT,
+        providerChild: true,
+        parent: "thread:evidence:late:parent",
+      });
+      yield* addChange(foreign, 1, "/srv/foreign/a.ts");
+      yield* TestClock.adjust("61 seconds");
+      assert.isFalse(yield* inside("/srv/foreign"));
+    }),
+  );
+
+  it.effect("reads a thread afresh once its history was purged and its ordinals start over", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:purged");
+      const specOf = (id: string) => `/srv/purged/.specweave/increments/${id}/spec.md`;
+      yield* addChange(thread, 40, specOf("0001-before"));
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+      const specs = Effect.gen(function* () {
+        const source = yield* evidence(thread);
+        return yield* Effect.promise(() => source.writtenSpecs());
+      });
+      assert.deepStrictEqual(yield* specs, [specOf("0001-before")]);
+
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${thread}`;
+      assert.deepStrictEqual(yield* specs, []);
+      yield* addChange(thread, 1, specOf("0002-after"));
+      assert.deepStrictEqual(yield* specs, [specOf("0002-after")]);
+    }),
+  );
+
+  it("compares paths as text, and proves nothing from a relative one or one with dots up", () => {
     const inside = ThreadIncrementProgressService.isInsideAny;
     assert.isTrue(inside("/home/a/live/spec-os/src/app.ts", ["/home/a/live/spec-os"]));
     assert.isTrue(inside("/home/a/live/spec-os/src/app.ts", ["/home/a/live/spec-os/"]));
-    // Climbing out of the folder is outside it, wherever the path starts.
+    // `..` may cross a link, so where it lands cannot be told from the text: it proves nothing.
     assert.isFalse(inside("/home/a/live/spec-os/../other/app.ts", ["/home/a/live/spec-os"]));
-    assert.isTrue(inside("/home/a/live/spec-os/../other/app.ts", ["/home/a/live/other"]));
+    assert.isFalse(inside("/home/a/live/spec-os/../other/app.ts", ["/home/a/live/other"]));
+    assert.isFalse(inside("/proj/link/../victim/f.ts", ["/proj/victim"]));
+    assert.isFalse(inside("/home/a/live/spec-os/app.ts", ["/home/a/live/x/../spec-os"]));
+    // On POSIX a backslash is part of a file name, never a separator.
+    assert.isFalse(inside("/elsewhere/a\\..\\..\\root/x.ts", ["/root"]));
+    assert.isFalse(inside("/elsewhere\\root/x.ts", ["/elsewhere/root"]));
     assert.isTrue(inside("/home/a/live/./spec-os//src/app.ts", ["/home/a/live/spec-os"]));
     assert.isFalse(inside("/home/a/live/spec-os-two/app.ts", ["/home/a/live/spec-os"]));
     assert.isFalse(inside("/home/a/live/spec-os", ["/home/a/live/spec-os"]));

@@ -198,8 +198,13 @@ const IN_PROGRESS = new Set(["idle", "pending", "running", "waiting"]);
 const EVIDENCE_KEPT = 5_000;
 /** Specs remembered per thread, newest first. */
 const SPECS_KEPT = 20;
-/** How long a thread's list of provider-native subagents is reused. */
+/** How long a project's list of provider-native subagents is reused. */
 const SUBAGENTS_TTL_MS = 60_000;
+/**
+ * How far back of the newest thread update a refresh of that list looks again,
+ * for a subagent whose row was written a moment after its own timestamp.
+ */
+const SUBAGENTS_OVERLAP_MS = 5 * 60_000;
 
 /** The paths one file_change row names: its `fileName` and every `[path, oldPath]` of its changes. */
 export function fileChangePaths(fileName: string | null, paths: string | null): string[] {
@@ -218,7 +223,11 @@ export function fileChangePaths(fileName: string | null, paths: string | null): 
   return named;
 }
 
-const slashed = (path: string) => path.replaceAll("\\", "/");
+/**
+ * `path` with forward slashes. A path that starts with `/` is a POSIX one,
+ * where a backslash is part of a name and never a separator.
+ */
+const slashed = (path: string) => (path.startsWith("/") ? path : path.replaceAll("\\", "/"));
 
 /** Whether `path` names an increment's `spec.md` (`…/.specweave/increments/<id>/spec.md`). */
 export function isIncrementSpecPath(path: string): boolean {
@@ -226,33 +235,33 @@ export function isIncrementSpecPath(path: string): boolean {
 }
 
 /**
- * `path` absolute, with forward slashes and `.`/`..` resolved; null when it is
- * relative, since nothing here knows the folder a provider meant it from.
+ * `path` absolute, with forward slashes and a lowercase drive letter. Null
+ * when it is relative, since nothing here knows the folder a provider meant it
+ * from, and when it holds `..`, which may cross a link, so where it lands
+ * cannot be told from the text.
  */
 function absolutePath(path: string): string | null {
   const text = slashed(path);
   const drive = /^[A-Za-z]:(?=\/)/u.exec(text)?.[0] ?? "";
   if (drive === "" && !text.startsWith("/")) return null;
-  const parts: string[] = [];
-  for (const part of text.slice(drive.length).split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") parts.pop();
-    else parts.push(part);
-  }
-  return `${drive.toLowerCase()}/${parts.join("/")}`;
+  const parts = text
+    .slice(drive.length)
+    .split("/")
+    .filter((part) => part !== "" && part !== ".");
+  return parts.includes("..") ? null : `${drive.toLowerCase()}/${parts.join("/")}`;
 }
 
 /**
- * Whether `path` lies inside one of `roots`, compared as text after resolving
- * `.` and `..`. A relative path, a link or another spelling of a folder
- * answers no: evidence only ever widens what a thread may read.
+ * Whether `path` lies inside one of `roots`, compared as text. A relative
+ * path, one with `..`, and a root that is a filesystem or drive root answer
+ * no. A link or another spelling of the folder answers no as well, so the
+ * reader passes each root both as written and resolved.
  */
 export function isInsideAny(path: string, roots: ReadonlyArray<string>): boolean {
   const target = absolutePath(path);
   if (target === null) return false;
   return roots.some((root) => {
     const base = absolutePath(root);
-    // A drive or filesystem root is never a planning folder.
     return base !== null && !base.endsWith("/") && target.startsWith(`${base}/`);
   });
 }
@@ -517,27 +526,28 @@ export const make = Effect.gen(function* () {
         WHERE thread_id = ${threadId}
       `;
       const newest = bounds?.newest ?? null;
-      if (newest === null) return { completed: [] as EvidenceRow[], trail: trail ?? null };
+      // Nothing left of the thread, or its history was purged and its ordinals
+      // start over below where the trail stands: what was read is gone.
+      if (newest === null) return { completed: [] as EvidenceRow[], trail: null, afresh: true };
+      const known = trail !== undefined && newest < trail.through ? undefined : trail;
       const rows =
-        trail === undefined
+        known === undefined
           ? yield* newestFileChanges(threadId, newest, specs)
           : [
-              ...(trail.pending.length === 0
+              ...(known.pending.length === 0
                 ? []
-                : yield* fileChangesAt(threadId, trail.pending, specs)),
-              ...(trail.through >= newest
+                : yield* fileChangesAt(threadId, known.pending, specs)),
+              ...(known.through >= newest
                 ? []
-                : yield* fileChangesBetween(threadId, trail.through, newest, specs)),
+                : yield* fileChangesBetween(threadId, known.through, newest, specs)),
             ];
       const pending = [
         ...new Set(rows.filter((row) => IN_PROGRESS.has(row.status)).map((row) => row.ordinal)),
       ];
       return {
         completed: rows.filter((row) => row.status === "completed"),
-        trail: {
-          through: Math.max(newest, trail?.through ?? newest),
-          pending: pending.slice(-PENDING_KEPT),
-        } satisfies Trail,
+        trail: { through: newest, pending: pending.slice(-PENDING_KEPT) } satisfies Trail,
+        afresh: known === undefined,
       };
     });
 
@@ -562,16 +572,17 @@ export const make = Effect.gen(function* () {
   const specsWrittenBy = (threadId: string) =>
     Effect.gen(function* () {
       const known = specTrails.get(threadId);
-      const { completed, trail } = yield* completedSince(threadId, known, true);
+      const { completed, trail, afresh } = yield* completedSince(threadId, known, true);
       const specs = newestSpecs([
-        ...(known?.specs ?? []),
+        ...(afresh ? [] : (known?.specs ?? [])),
         ...completed.flatMap((row) =>
           fileChangePaths(row.fileName, row.paths)
             .filter(isIncrementSpecPath)
             .map((path) => ({ at: row.updatedAt, ordinal: row.ordinal, path })),
         ),
       ]);
-      if (trail !== null) remember(specTrails, threadId, { ...trail, specs });
+      if (trail === null) specTrails.delete(threadId);
+      else remember(specTrails, threadId, { ...trail, specs });
       return specs;
     });
 
@@ -589,34 +600,77 @@ export const make = Effect.gen(function* () {
       const inside = completed.some((row) =>
         fileChangePaths(row.fileName, row.paths).some((path) => isInsideAny(path, roots)),
       );
-      if (trail !== null) remember(workTrails, key, { ...trail, inside });
+      if (trail === null) workTrails.delete(key);
+      else remember(workTrails, key, { ...trail, inside });
       return inside;
     });
 
   // A provider-native subagent's edits are stored under its own thread id and
-  // belong to the thread that spawned it.
-  const subagents = new Map<string, { readonly at: number; readonly ids: ReadonlyArray<string> }>();
-  const ownThreads = (threadId: string) =>
+  // belong to the thread that spawned it. Lineage sits in the thread's payload,
+  // which no index covers, so a project's subagents are listed once and then
+  // kept up from the threads updated since (`project_id, updated_at` index).
+  interface Subagents {
+    readonly at: number;
+    /** The newest thread update looked at. */
+    readonly since: string;
+    readonly byParent: ReadonlyMap<string, ReadonlyArray<string>>;
+  }
+  const subagents = new Map<string, Subagents>();
+
+  /** The provider-native subagents of a project's threads, by the thread that spawned them. */
+  const subagentsOf = (projectId: string) =>
     Effect.gen(function* () {
       const now = (yield* Clock.clockWith(Effect.succeed)).currentTimeMillisUnsafe();
-      const known = subagents.get(threadId);
-      if (known !== undefined && now - known.at < SUBAGENTS_TTL_MS) return [threadId, ...known.ids];
-      const ids = (yield* sql<{ readonly threadId: string }>`
-        SELECT thread_id AS "threadId" FROM orchestration_v2_projection_threads
-        WHERE json_extract(payload_json, '$.lineage.parentThreadId') = ${threadId}
+      const known = subagents.get(projectId);
+      if (known !== undefined && now - known.at < SUBAGENTS_TTL_MS) return known.byParent;
+      const [bounds] = yield* sql<{ readonly newest: string | null }>`
+        SELECT MAX(updated_at) AS newest FROM orchestration_v2_projection_threads
+        WHERE project_id = ${projectId}
+      `;
+      const newest = bounds?.newest ?? null;
+      if (newest === null) return known?.byParent ?? new Map<string, ReadonlyArray<string>>();
+      const lastSeen = known === undefined ? Number.NaN : Date.parse(known.since);
+      const from = Number.isNaN(lastSeen)
+        ? ""
+        : DateTime.formatIso(DateTime.makeUnsafe(lastSeen - SUBAGENTS_OVERLAP_MS));
+      const rows = yield* sql<{
+        readonly threadId: string;
+        readonly parentThreadId: string | null;
+      }>`
+        SELECT thread_id AS "threadId",
+          json_extract(payload_json, '$.lineage.parentThreadId') AS "parentThreadId"
+        FROM orchestration_v2_projection_threads
+        WHERE project_id = ${projectId} AND updated_at >= ${from}
           AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
           AND json_extract(payload_json, '$.creationSource') = 'provider'
-      `).map((row) => row.threadId);
-      remember(subagents, threadId, { at: now, ids });
-      return [threadId, ...ids];
-    });
+      `;
+      const byParent = new Map(
+        Number.isNaN(lastSeen)
+          ? []
+          : [...known!.byParent].map(([parent, ids]) => [parent, [...ids]]),
+      );
+      for (const row of rows) {
+        if (row.parentThreadId === null) continue;
+        const ids = byParent.get(row.parentThreadId) ?? [];
+        if (!ids.includes(row.threadId)) ids.push(row.threadId);
+        byParent.set(row.parentThreadId, ids);
+      }
+      remember(subagents, projectId, { at: now, since: newest, byParent });
+      return byParent as ReadonlyMap<string, ReadonlyArray<string>>;
+    }).pipe(
+      Effect.tapError((cause) => Effect.logDebug("subagent lookup failed", cause)),
+      Effect.orElseSucceed(() => new Map<string, ReadonlyArray<string>>()),
+    );
 
-  /** The evidence of one thread and its provider-native subagents; a failed lookup proves nothing. */
-  const evidenceOf = (threadId: string): ThreadWorkEvidence => ({
+  /**
+   * The evidence of one thread and its provider-native subagents (`children`,
+   * from subagentsOf); a failed lookup proves nothing.
+   */
+  const evidenceOf = (threadId: string, children: ReadonlyArray<string>): ThreadWorkEvidence => ({
     workedIn: (roots) =>
       runEvidence(
         Effect.gen(function* () {
-          for (const own of yield* ownThreads(threadId)) {
+          for (const own of [threadId, ...children]) {
             if (yield* changedInside(own, roots)) return true;
           }
           return false;
@@ -628,9 +682,8 @@ export const make = Effect.gen(function* () {
     writtenSpecs: () =>
       runEvidence(
         Effect.gen(function* () {
-          const own = yield* ownThreads(threadId);
           // The parent's and its subagents' writes in one order, by when each completed.
-          const written = yield* Effect.forEach(own, specsWrittenBy);
+          const written = yield* Effect.forEach([threadId, ...children], specsWrittenBy);
           return newestSpecs(written.flat()).map((entry) => entry.path);
         }).pipe(
           Effect.tapError((cause) => Effect.logDebug("thread work evidence lookup failed", cause)),
@@ -818,6 +871,7 @@ export const make = Effect.gen(function* () {
       const threads = new Map(
         (yield* summariesOf(input.projectId, ids)).map((thread) => [thread.id, thread]),
       );
+      const children = threads.size === 0 ? null : yield* subagentsOf(input.projectId);
       const sources: ThreadIncrementSource[] = [];
       for (const threadId of ids) {
         const thread = threads.get(threadId);
@@ -829,7 +883,7 @@ export const make = Effect.gen(function* () {
           branch: thread.branch,
           worktreePath: thread.worktreePath,
           ...(link === undefined ? {} : { link: { incrementId: link.incrementId } }),
-          evidence: evidenceOf(threadId),
+          evidence: evidenceOf(threadId, children?.get(threadId) ?? []),
         });
       }
       const threadsRead =
@@ -861,6 +915,7 @@ export const make = Effect.gen(function* () {
 
   /** The folders outside the checkout rules that this thread itself plans in (evidencedRoots). */
   const workedRootsOf = (
+    projectId: ThreadIncrementProgressInput["projectId"],
     workspaceRoot: string,
     thread: {
       readonly id: string;
@@ -869,15 +924,18 @@ export const make = Effect.gen(function* () {
       readonly worktreePath: string | null;
     },
   ) =>
-    Effect.promise(() =>
-      evidencedRoots(workspaceRoot, {
-        threadId: thread.id,
-        title: thread.title,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        evidence: evidenceOf(thread.id),
-      }).catch(() => [] as string[]),
-    );
+    Effect.gen(function* () {
+      const children = (yield* subagentsOf(projectId)).get(thread.id) ?? [];
+      return yield* Effect.promise(() =>
+        evidencedRoots(workspaceRoot, {
+          threadId: thread.id,
+          title: thread.title,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          evidence: evidenceOf(thread.id, children),
+        }).catch(() => [] as string[]),
+      );
+    });
 
   const listIncrements = (input: ProjectIncrementsListInput) =>
     Effect.gen(function* () {
@@ -885,7 +943,8 @@ export const make = Effect.gen(function* () {
       const thread =
         input.threadId === undefined ? null : yield* threadOf(input.projectId, input.threadId);
       // With a thread, also the increments of the folders it planned in itself.
-      const worked = thread === null ? [] : yield* workedRootsOf(project.workspaceRoot, thread);
+      const worked =
+        thread === null ? [] : yield* workedRootsOf(input.projectId, project.workspaceRoot, thread);
       const page = yield* Effect.promise(() =>
         queryProjectIncrements(
           project.workspaceRoot,
@@ -922,7 +981,7 @@ export const make = Effect.gen(function* () {
       if (incrementId !== null) {
         // The thread's checkout, a folder it planned in itself, or another
         // checkout Git registered for its repository.
-        const worked = yield* workedRootsOf(project.workspaceRoot, thread);
+        const worked = yield* workedRootsOf(input.projectId, project.workspaceRoot, thread);
         const known = yield* Effect.promise(() =>
           linkedIncrementRoot(project.workspaceRoot, thread.worktreePath, incrementId, worked),
         );
