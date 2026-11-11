@@ -605,6 +605,89 @@ it.effect("reads the run that owns a background roster, not a queued or resumed 
   }).pipe(Effect.provide(layerTest)),
 );
 
+// Live clock: the selection compares against the database's own "now".
+it.live(
+  "selects threads whose settled latest run lost background work, or that hold a roster",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const lost = [{ kind: "task" as const, label: "build (id wf_1)", id: "wf_1" }];
+      const waiting = yield* createThread("lost-work-waiting");
+      yield* createRun(waiting, "completed", { restartCancelledBackgroundWork: lost });
+      // A later run, even a queued one, carries the note itself.
+      const answered = yield* createThread("lost-work-answered");
+      yield* createRun(answered, "completed", { restartCancelledBackgroundWork: lost });
+      yield* createRun(answered, "queued", { ordinal: 2, completedAt: null });
+      // Losses older than a day wait for a person.
+      const old = yield* createThread("lost-work-old");
+      yield* createRun(old, "completed", {
+        restartCancelledBackgroundWork: lost,
+        completedAt: DateTime.subtract(now, { hours: 25 }),
+      });
+      const archived = yield* createThread("lost-work-archived", { archivedAt: now });
+      yield* createRun(archived, "completed", { restartCancelledBackgroundWork: lost });
+      const quiet = yield* createThread("lost-work-none");
+      yield* createRun(quiet, "completed");
+      // The automatic turn failed to start: its thread is looked at again.
+      const failedWake = yield* createThread("lost-work-failed-wake");
+      yield* createRun(failedWake, "completed", { restartCancelledBackgroundWork: lost });
+      yield* createRun(failedWake, "failed", {
+        ordinal: 2,
+        completedAt: now,
+        userMessageId: MessageId.make(`message:restart-continuation:run:${failedWake}:1`),
+      });
+      // A person's own failed message is not.
+      const failedOwn = yield* createThread("lost-work-failed-own");
+      yield* createRun(failedOwn, "completed", { restartCancelledBackgroundWork: lost });
+      yield* createRun(failedOwn, "failed", { ordinal: 2, completedAt: now });
+      // A rolled-back turn left nothing after the loss.
+      const rolledBack = yield* createThread("lost-work-rolled-back");
+      yield* createRun(rolledBack, "completed", { restartCancelledBackgroundWork: lost });
+      yield* createRun(rolledBack, "rolled_back", { ordinal: 2, completedAt: now });
+      const roster = yield* createThread("lost-work-roster");
+      yield* projections.apply({
+        id: EventId.make("event:recovery:lost-work-roster"),
+        type: "provider-thread.updated",
+        threadId: roster,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make("provider-thread:recovery:lost-work-roster"),
+          appThreadId: roster,
+          ownerNodeId: null,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          pendingBackgroundTasks: [{ taskId: "wf_2", description: "Build", kind: "workflow" }],
+        },
+      });
+      assert.deepEqual(
+        new Set(yield* projections.getRecoveryThreadIds("lost-background-work")),
+        new Set([waiting, failedWake, rolledBack, roster]),
+      );
+      // The caller's own bound replaces the database's day.
+      assert.deepEqual(
+        new Set(
+          yield* projections.getRecoveryThreadIds("lost-background-work", {
+            since: DateTime.subtract(now, { hours: 26 }),
+          }),
+        ),
+        new Set([waiting, old, failedWake, rolledBack, roster]),
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("marks fork descendants unreadable when their source is missing or corrupt", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
