@@ -563,6 +563,9 @@ export function StudioFleetConnections({
           canManage={canManageWorkers}
           open={inviteOpen}
           onOpenChange={setInviteOpen}
+          managedMachines={(snapshot?.machines ?? [])
+            .filter((machine) => machine.environmentId !== environmentId)
+            .map((machine) => machine.label)}
         />
       }
       machineStatuses={machineStatuses}

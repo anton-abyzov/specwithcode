@@ -58,6 +58,7 @@ import {
   ConnectReadinessNotice,
   TailscaleReadinessNotice,
   countsAsTailscaleCheckFailure,
+  fleetInviteDirectionNotice,
   fleetInviteValidity,
   tailscaleReadinessView,
   useFleetInvite,
@@ -477,6 +478,37 @@ it("requires explicit coordinator approval and shows the local identity for enro
   expect(text(panel(controller))).toContain("env-m4");
   expect(await controller.create()).toBeNull();
   expect(runtime.invite).not.toHaveBeenCalled();
+});
+
+describe("a join line made on a machine that already starts work on others", () => {
+  it("says nothing on a machine that starts work on no other", () => {
+    expect(fleetInviteDirectionNotice("Mac M5", [])).toBeNull();
+    expect(fleetInviteDirectionNotice("Mac M5", [" "])).toBeNull();
+    expect(text(panel(render()))).not.toContain("Adding a machine to this one?");
+  });
+
+  it("names the machines and which way the line works", () => {
+    expect(fleetInviteDirectionNotice("Mac M4", ["M1"])).toContain(
+      "Mac M4 already starts work on M1. A line made here does the opposite",
+    );
+    expect(fleetInviteDirectionNotice("Mac M4", ["M1", "M3"])).toContain("on M1 and M3.");
+    expect(fleetInviteDirectionNotice("Mac M4", ["M1", "M3", "Mini", "Air", "M2"])).toContain(
+      "on M1, M3, Mini and 2 more.",
+    );
+  });
+
+  it("shows before the line is made and stays once it is", async () => {
+    const managedMachines = ["M1", "M3"];
+    const before = text(panel(render(), { managedMachines }));
+    expect(before).toContain("Adding a machine to this one?");
+    expect(before).toContain("To add a new machine to Mac M4, open SpecWithCode on the new");
+    runtime.invite.mockResolvedValue(invitation);
+    await render().create();
+    await vi.waitFor(() => expect(render().invitation).toEqual(invitation));
+    const shown = panel(render(), { managedMachines });
+    expect(line(shown)!.props.value).toBe("swc-machine-synthetic-line");
+    expect(text(shown)).toContain("it lets the machine you pick start work on Mac M4");
+  });
 });
 
 describe("FleetInvitePanel main machine choice", () => {

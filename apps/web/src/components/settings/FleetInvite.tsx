@@ -308,6 +308,31 @@ function MainMachinePicker({
   );
 }
 
+const NO_MANAGED_MACHINES: ReadonlyArray<string> = [];
+
+/**
+ * A line made here lets the chosen machine start work on this one. On a
+ * machine that already starts work on others, that is usually the wrong way
+ * round: the person wants to add a new machine to this one. Null when this
+ * machine starts work on no other.
+ */
+export function fleetInviteDirectionNotice(
+  hereName: string,
+  managedMachines: ReadonlyArray<string>,
+): string | null {
+  const names = managedMachines.map((name) => name.trim()).filter((name) => name !== "");
+  if (names.length === 0) return null;
+  const shown = names.slice(0, 3);
+  const rest = names.length - shown.length;
+  const list =
+    rest > 0
+      ? `${shown.join(", ")} and ${rest} more`
+      : shown.length === 1
+        ? shown[0]!
+        : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]!}`;
+  return `${hereName} already starts work on ${list}. A line made here does the opposite: it lets the machine you pick start work on ${hereName}. To add a new machine to ${hereName}, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.`;
+}
+
 /** The name field, the line once made, and plain-words problems. Layout belongs to the caller. */
 export function FleetInvitePanel({
   controller,
@@ -318,6 +343,7 @@ export function FleetInvitePanel({
   createLabel = "Make the line",
   blocked = false,
   mainMachines = NO_MAIN_MACHINES,
+  managedMachines = NO_MANAGED_MACHINES,
 }: {
   readonly controller: Pick<
     FleetInviteController,
@@ -343,11 +369,20 @@ export function FleetInvitePanel({
   readonly blocked?: boolean;
   /** Other machines this app knows, offered before asking for an ID. */
   readonly mainMachines?: ReadonlyArray<MainMachineOption>;
+  /** Machines this one already starts work on, by name; any makes the direction worth saying. */
+  readonly managedMachines?: ReadonlyArray<string>;
 }) {
   const tx = useTx();
   const { name, setName, pending, invitation, revoked, problem } = controller;
+  const direction = fleetInviteDirectionNotice(defaultName ?? "This machine", managedMachines);
   return (
     <div className="flex min-w-0 flex-col gap-3">
+      {direction ? (
+        <Alert variant="warning" role="status" aria-label="Adding a machine to this one?">
+          <AlertTitle>Adding a machine to this one?</AlertTitle>
+          <AlertDescription>{direction}</AlertDescription>
+        </Alert>
+      ) : null}
       {controller.ownEnvironmentId ? (
         <p className="text-xs text-muted-foreground">
           {renderRich(tx("This machine’s environment ID: {code}"), {
@@ -848,6 +883,7 @@ export function FleetInviteDialog({
   open,
   onOpenChange,
   readiness,
+  managedMachines = NO_MANAGED_MACHINES,
 }: {
   readonly environmentId: EnvironmentId;
   /** This machine's own name, used when the field is left empty. */
@@ -856,6 +892,8 @@ export function FleetInviteDialog({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly readiness: TailscaleReadiness;
+  /** Machines this one already starts work on, by name. */
+  readonly managedMachines?: ReadonlyArray<string>;
 }) {
   const tx = useTx();
   const controller = useFleetInvite(environmentId, readiness.status?.connect !== undefined);
@@ -907,6 +945,7 @@ export function FleetInviteDialog({
             onCopy={(code) => copyToClipboard(code, undefined)}
             blocked={readiness.blocksInvite}
             mainMachines={mainMachines}
+            managedMachines={managedMachines}
           />
         </DialogPanel>
       </DialogPopup>
@@ -925,12 +964,15 @@ export function FleetInviteArea({
   canManage,
   open,
   onOpenChange,
+  managedMachines = NO_MANAGED_MACHINES,
 }: {
   readonly environmentId: EnvironmentId;
   readonly defaultName: string | null;
   readonly canManage: boolean;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  /** Machines this one already starts work on, by name. */
+  readonly managedMachines?: ReadonlyArray<string>;
 }) {
   const readiness = useTailscaleReadiness(environmentId, {
     enabled: canManage,
@@ -955,6 +997,7 @@ export function FleetInviteArea({
         open={open}
         onOpenChange={onOpenChange}
         readiness={readiness}
+        managedMachines={managedMachines}
       />
     </>
   );
