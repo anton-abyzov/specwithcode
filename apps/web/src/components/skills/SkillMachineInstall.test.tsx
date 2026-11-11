@@ -186,9 +186,14 @@ describe("one machine install", () => {
       [...host.querySelectorAll("label")]
         .find((node) => node.textContent?.startsWith(text))
         ?.querySelector("input") as HTMLInputElement;
+    // A user-level read lists ~/vskill.lock as a "project" lock; it is still user-wide.
+    const homeLockRow = {
+      lock: { lockScope: "project", version: "1.1.0" },
+    } as unknown as ProjectSkillRow;
     for (const [key, userLevel, row] of [
       ["user-row", false, userRow],
       ["user-level", true, null],
+      ["user-level-home-lock", true, homeLockRow],
     ] as const) {
       await act(async () =>
         root.render(

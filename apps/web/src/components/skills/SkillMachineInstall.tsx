@@ -81,7 +81,9 @@ export function SkillMachineInstall({
 }) {
   const push = useAtomCommand(projectWorkspace.skillFleetPush, { reportFailure: false });
   const skillId = controls.row.lock?.skillId ?? null;
-  const installedScope = row?.lock?.lockScope ?? null;
+  // A user-level read scans the home folder, so every lock it reports is user-wide, even
+  // ~/vskill.lock, which the scan lists as a project lock.
+  const installedScope = row?.lock ? (controls.userLevel ? "user" : row.lock.lockScope) : null;
   // Follow the machine's copy, then this machine's scope, until the user picks.
   const [pickedScope, setScope] = useState<SkillInstallScope | null>(null);
   const scope: SkillInstallScope =
@@ -94,7 +96,7 @@ export function SkillMachineInstall({
   // user chooses; nothing is assumed.
   const [pickedPin, setPin] = useState<boolean | null>(null);
   const projectLockUnread = scope === "project" && controls.userLevel;
-  const pinKnown = !unread && (installedScope === scope || (!row && !projectLockUnread));
+  const pinKnown = !unread && !projectLockUnread && (installedScope === scope || !row);
   const pinned = pinKnown && installedScope === scope ? (row?.lock?.pinnedVersion ?? null) : null;
   const pin = pickedPin ?? (pinKnown ? Boolean(pinned) : null);
   const [preview, setPreview] = useState<{ key: string; expectedHash: string } | null>(null);
