@@ -58,7 +58,8 @@ export function ProjectRoutines({
   modelSelection?: ModelSelection | null;
   /** The machine every routine here runs on, named once in the header. */
   machineLabel?: string | null;
-  onOpenThread?: (threadId: ThreadId) => void;
+  /** Opens a routine's thread on the machine that holds it: the runner's for its routines. */
+  onOpenThread?: (threadId: ThreadId, environmentId: EnvironmentId) => void;
 }) {
   // The runner is the copy that coordinates (D-12); side-by-side active copies
   // each run their own, so this page shows the viewed copy's routines. Only a
@@ -212,7 +213,9 @@ export function ProjectRoutines({
             setUnknownRun(null);
             void act(task, "run", target);
           }}
-          onOpenThread={onOpenThread}
+          onOpenThread={
+            onOpenThread ? (threadId) => onOpenThread(threadId, target.environmentId) : undefined
+          }
         />
       ))}
     </ul>

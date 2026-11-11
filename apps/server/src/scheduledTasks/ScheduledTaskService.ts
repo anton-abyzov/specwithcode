@@ -63,6 +63,8 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
 import {
+  HANDOFF_ROUTINE_WAIT,
+  HANDOVER_ROUTINE_CHANGE_REFUSAL,
   makeRoutineCoordinatorGate,
   RESTING_ROUTINE_CHANGE_REFUSAL,
 } from "./ScheduledTaskCoordinatorGate.ts";
@@ -1899,22 +1901,34 @@ export const layer = Layer.effect(
     /**
      * A resting copy of a coordinator-owned routine is changed on its runner,
      * never here (1267 D-12): the runner's next replica would replace the
-     * change, and its copy is the only one written. Only the public methods
-     * check; replicas and Away write through the internal ones.
+     * change, and its copy is the only one written. While the coordinator is
+     * being handed over nothing changes either: the change could miss the
+     * copy that travels. Every target is judged: the stored row and, for a
+     * save, the routine it would become. Only the public methods check;
+     * replicas and Away write through the internal ones.
      */
     const onRunner = <A>(
-      target:
+      targets: ReadonlyArray<
         | { readonly id: ScheduledTaskId }
-        | Pick<ScheduledTask, "projectId" | "ownThread" | "schedule">,
+        | Pick<ScheduledTask, "projectId" | "ownThread" | "schedule">
+      >,
       change: Effect.Effect<A, ScheduledTaskError>,
     ) =>
       Effect.gen(function* () {
-        const task = "id" in target ? yield* findTask(target.id) : target;
-        const hold = task === null ? null : yield* coordinatorHold(task);
-        if (hold?.kind === "rest")
-          return yield* taskError(RESTING_ROUTINE_CHANGE_REFUSAL, {
-            ...("id" in target ? { taskId: target.id } : {}),
-          });
+        for (const target of targets) {
+          const task = "id" in target ? yield* findTask(target.id) : target;
+          const hold = task === null ? null : yield* coordinatorHold(task);
+          const refusal =
+            hold?.kind === "rest"
+              ? RESTING_ROUTINE_CHANGE_REFUSAL
+              : hold?.kind === "wait" && hold.reason === HANDOFF_ROUTINE_WAIT
+                ? HANDOVER_ROUTINE_CHANGE_REFUSAL
+                : null;
+          if (refusal !== null)
+            return yield* taskError(refusal, {
+              ...("id" in target ? { taskId: target.id } : {}),
+            });
+        }
         return yield* change;
       });
 
@@ -1923,21 +1937,22 @@ export const layer = Layer.effect(
       subscribeList,
       upsert: (input, options) =>
         onRunner(
-          input.id === undefined
-            ? {
-                projectId: input.projectId,
-                // An unbound routine runs in a thread of its own (asOwnThreadRoutine). A
-                // webhook routine never travels, so it is never held: only the kind matters.
-                ownThread:
-                  (input.ownThread === true || input.threadId == null) &&
-                  input.schedule.type !== "webhook",
-                schedule: { type: "manual" },
-              }
-            : { id: input.id },
+          [
+            ...(input.id === undefined ? [] : [{ id: input.id }]),
+            {
+              projectId: input.projectId,
+              // An unbound routine runs in a thread of its own (asOwnThreadRoutine). A
+              // webhook routine never travels, so it is never held: only the kind matters.
+              ownThread:
+                (input.ownThread === true || input.threadId == null) &&
+                input.schedule.type !== "webhook",
+              schedule: { type: "manual" },
+            },
+          ],
           upsert(input, options),
         ),
-      setEnabled: (input) => onRunner({ id: input.id }, setEnabled(input)),
-      delete: (input) => onRunner({ id: input.id }, deleteTask(input)),
+      setEnabled: (input) => onRunner([{ id: input.id }], setEnabled(input)),
+      delete: (input) => onRunner([{ id: input.id }], deleteTask(input)),
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries: webhooks.listWebhookDeliveries,

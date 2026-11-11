@@ -251,7 +251,6 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
         return resuming
           ? result("in-doubt", inDoubtDetail(label))
           : result("failed", `${label} did not answer. Nothing changed.`);
-      const gathered = yield* deps.gather(project, identity.id);
       const operationId = resuming
         ? binding.operationId!
         : (input.operationId ?? plannedHandoverOperationId(identity.id, binding.epoch + 1));
@@ -271,6 +270,8 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
         .pipe(Effect.result);
       if (gave._tag === "Failure")
         return result("failed", `Not handed over: ${linkErrorText(gave.failure)}`);
+      // Gathered once this copy rests and refuses changes, so no edit made meanwhile is left behind.
+      const gathered = yield* deps.gather(project, identity.id);
       const { coordinatorBinding, self, successor } = gave.success;
       const request: PlannedHandoverRequest = {
         protocolVersion: PLANNED_HANDOVER_PROTOCOL_VERSION,

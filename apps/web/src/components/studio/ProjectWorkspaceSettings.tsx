@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type {
+  EnvironmentId,
   ModelSelection,
   ProjectEnvironmentEntryRef,
   ProjectWorkerMachine,
@@ -164,7 +165,8 @@ export function ProjectWorkspaceSettings({
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
-  onOpenThread: (id: ThreadId) => void;
+  /** `environmentId` names the machine holding the thread when it is not this copy's. */
+  onOpenThread: (id: ThreadId, environmentId?: EnvironmentId) => void;
   canOperate: boolean;
   /** Why editing is off; defaults to a missing permission. */
   accessNotice?: string | undefined;
@@ -784,13 +786,13 @@ export function ProjectWorkspaceSettings({
                   projectKey={projectKey}
                   canOperate={!disabled}
                   admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
-                  onOpenThread={(id) => {
+                  onOpenThread={(id, environmentId) => {
                     if (dirty || memoryDirty || environmentDraftDirty || connectionDirty) {
                       setCloseWarning(true);
                       return;
                     }
                     onClose();
-                    onOpenThread(id);
+                    onOpenThread(id, environmentId);
                   }}
                 />
               )}

@@ -112,5 +112,37 @@ describe("own and team work grants", () => {
     expect(WorkGrants.withOwnRoutines(legacy, managers, now)).toBe(legacy);
     const owner = { ...base, owner: "other" as const };
     expect(WorkGrants.withOwnRoutines(owner, managers, now)).toBe(owner);
+
+    // The upgrade holds only while the grant is own: once its coordinator no
+    // longer manages this machine it is a team grant, and team grants stay off.
+    expect(upgraded.routinesAutoGranted).toBe(true);
+    expect(WorkGrants.effectiveGrant(upgraded, managers).routines).toBe(true);
+    const demoted = WorkGrants.effectiveGrant(upgraded, new Set());
+    expect(demoted.kind).toBe("team");
+    expect(demoted.routines).toBe(false);
+    // Routines the owner switched on by hand stay on for a team grant.
+    const byHand = { ...base, routines: true, routinesSettledAt: now };
+    expect(WorkGrants.withOwnRoutines(byHand, managers, now).routinesAutoGranted).toBeUndefined();
+    expect(WorkGrants.effectiveGrant(byHand, new Set()).routines).toBe(true);
   });
+
+  it.effect("keeps routines on after the owner switches them on by hand", () =>
+    Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      yield* grants.forCoordinator(MINISTORM);
+      const upgraded = (yield* grants.policies).find(
+        (policy) => policy.coordinatorEnvironmentId === MINISTORM,
+      );
+      expect(upgraded?.routinesAutoGranted).toBe(true);
+      // An edit that leaves routines alone keeps the mark; the owner's choice clears it.
+      const scoped = yield* grants.update({
+        coordinatorEnvironmentId: MINISTORM,
+        projects: { kind: "all" },
+      });
+      expect(scoped.routinesAutoGranted).toBe(true);
+      const chosen = yield* grants.update({ coordinatorEnvironmentId: MINISTORM, routines: true });
+      expect(chosen.routinesAutoGranted).toBeUndefined();
+      expect(WorkGrants.effectiveGrant(chosen, new Set()).routines).toBe(true);
+    }).pipe(Effect.provide(layer)),
+  );
 });

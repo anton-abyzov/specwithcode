@@ -40,6 +40,9 @@ export const HANDOFF_ROUTINE_WAIT = "Waiting: this project is being handed to an
 /** Why a resting copy is not changed here (1267 D-12): its runner's copy is the only one written. */
 export const RESTING_ROUTINE_CHANGE_REFUSAL =
   "This routine runs on the machine that coordinates this project, so change, run or delete it there: open it from that machine in SpecWithCode. To run it here instead, take over the coordinator on this machine first.";
+/** Why a routine is not changed while its coordinator is being handed over: the change could miss the copy that travels. */
+export const HANDOVER_ROUTINE_CHANGE_REFUSAL =
+  "This project's coordinator is being handed to another machine, so its routines cannot change right now. Try again in a moment.";
 
 export interface RoutineCoordinatorGateDeps {
   /** This machine's coordinator roles; without it the project's own binding is read. */
