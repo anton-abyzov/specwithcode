@@ -30,3 +30,13 @@ export const forkParkedFiber = <A, E, R>(
 export const forkParked = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<void, never, Scope.Scope | R> => forkParkedFiber(effect).pipe(Effect.asVoid);
+
+/**
+ * Reports a root as parked, then waits for activation. Run it before `Effect.acquireRelease`,
+ * never inside its acquire: an acquire cannot be interrupted, so a stop signal that arrives while
+ * it waits there never ends the launch, and the process stays up after it was told to stop.
+ */
+export const parkUntilActivation = (
+  parked: Deferred.Deferred<void>,
+  activation: Effect.Effect<void>,
+): Effect.Effect<void> => Deferred.succeed(parked, undefined).pipe(Effect.andThen(activation));

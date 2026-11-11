@@ -26,6 +26,8 @@ import { createServer } from "node:http";
 import { basename, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { quitApp as quitAppOnce } from "./lib/app-quit.ts";
+
 const arg = (name, fallback) => {
   const index = process.argv.indexOf(`--${name}`);
   if (index !== -1) return process.argv[index + 1];
@@ -142,15 +144,34 @@ const launch = () => {
   );
   child.unref();
 };
-const quitApp = async () => {
-  // Repeated: a running update can relaunch the app after the first signal.
-  await until("the app to quit", 60_000, () => {
-    const pid = appPid();
-    if (pid === null) return true;
-    spawnSync("kill", [String(pid)]);
-    return false;
+/** Every process running the app's binary: the app, its helpers and the backend it started. */
+const appProcesses = () =>
+  readdirSync("/proc")
+    .filter((name) => /^\d+$/.test(name))
+    .filter((pid) => {
+      try {
+        // A package that replaced the binary leaves the link as "<path> (deleted)".
+        return readlinkSync(`/proc/${pid}/exe`).startsWith(APP);
+      } catch {
+        return false;
+      }
+    })
+    .map(Number);
+const quitApp = () =>
+  quitAppOnce({
+    appPid,
+    leftovers: () =>
+      appProcesses().map((pid) => {
+        try {
+          const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+          return `${pid} (${argv.slice(0, 3).join(" ")})`;
+        } catch {
+          return String(pid);
+        }
+      }),
+    signal: (pid) => spawnSync("kill", [String(pid)]),
+    until,
   });
-};
 
 /** Evaluates in the app's window over the DevTools protocol. Rejects when the app goes away. */
 const evaluate = async (expression, timeoutMs = 60_000) => {
