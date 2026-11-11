@@ -472,10 +472,7 @@ export function AddFolderPanel({
         ) : null}
       </div>
       <div
-        className={cn(
-          "grid min-h-0 border-t forced-colors:border-[CanvasText]",
-          places.length > 0 && "sm:grid-cols-[10.5rem_1fr]",
-        )}
+        className={cn("grid min-h-0 border-t", places.length > 0 && "sm:grid-cols-[10.5rem_1fr]")}
       >
         {places.length > 0 ? (
           <FolderPlaces places={places} currentPath={listing.path} onOpen={folder.open} />
@@ -505,7 +502,7 @@ export function AddFolderPanel({
             id={listId}
             role="listbox"
             aria-label={`Folders${folder.machineLabel ? ` on ${folder.machineLabel}` : ""}`}
-            className="flex flex-col gap-px forced-colors:[&_[aria-selected=true]]:bg-[Highlight] forced-colors:[&_[aria-selected=true]]:text-[HighlightText]"
+            className="flex flex-col gap-px"
           >
             <FolderRows
               listId={listId}
@@ -536,16 +533,17 @@ export function AddFolderAction({ folder }: { readonly folder: AddFolder }) {
       aria-label="Add project"
     >
       <Button
-        className="w-full forced-colors:border-[ButtonText]"
+        className="w-full"
         data-slot="add-folder-primary"
         disabled={folder.adding || folder.choice.action === "none"}
         onClick={folder.submit}
       >
         <span className="truncate">{folder.adding ? "Adding…" : folder.choice.label}</span>
         {folder.adding ? null : (
-          <Kbd className="bg-primary-foreground/15 text-primary-foreground">
+          // A plain key hint: Kbd owns its colours, and they are not made for the primary fill.
+          <span className="rounded bg-primary-foreground/15 px-1.5 text-xs">
             {keyLabel("enter", platform)}
-          </Kbd>
+          </span>
         )}
       </Button>
       <p className="pt-2 text-xs text-muted-foreground">
