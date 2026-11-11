@@ -21,8 +21,8 @@ const sections = [
   description="How Anton Abyzov, the operator of SpecWithCode, handles information when you use SpecWithCode, app.studio.invalid, and studio.invalid."
   heading="SpecWithCode Privacy Policy"
   lede="This Privacy Policy describes how Anton Abyzov collects, uses, and shares personal information when you use the SpecWithCode desktop and hosted web applications, visit the studio.invalid marketing site, or use the optional SpecWithCode Connect service."
-  effectiveDate="2026-10-10"
-  lastUpdated="2026-10-10"
+  effectiveDate="2026-11-10"
+  lastUpdated="2026-11-10"
   sections={sections}
 >
   <section id="introduction">
@@ -92,6 +92,24 @@ const sections = [
               authentication tokens. See “Product Usage Data” under Your Choices below.
             </li>
             <li>
+              <strong>Crash and error reports.</strong> Crash and error reports are on by
+              default. When the SpecWithCode app or server crashes or hits an unexpected error,
+              it sends a short report to us at{" "}<code>relay.spec-weave.com</code>{" "}so we can
+              find and fix the problem. A report contains a random install ID created on your
+              machine (not your account ID), a coarse machine label made from the operating
+              system, the processor type and a hash of the install ID and the machine name, the app version,
+              the part of SpecWithCode that failed (desktop, server, or mobile), the coding
+              agent provider and model when the error involved one, the kind of failure, and the
+              error name, message, and stack trace. Before a report leaves your machine, file and
+              folder paths, file names, server names, command lines, quoted text, your user name,
+              the computer's name, email addresses, IP addresses, IDs, keys, and tokens are removed
+              from it. This removal works by rules and is best effort: an unusual error message can
+              still carry a name or value the rules do not recognise. A failed agent turn sends
+              no error message or stack trace. Reports never include your prompts, agent responses, file
+              contents, authentication tokens, conversation, thread, or project IDs, or full file
+              paths. See “Crash and Error Reports” under Your Choices below to turn them off.
+            </li>
+            <li>
               <strong>Information you provide to us.</strong> We collect information that you choose
               to provide when you request support, send feedback, or otherwise communicate with us.
             </li>
@@ -111,6 +129,18 @@ const sections = [
             troubleshoot the Services, not for targeted advertising.
           </p>
 
+          <h3>Site Analytics and Download Counts</h3>
+          <p>
+            The Site uses Cloudflare Web Analytics to count page views and measure page load
+            performance. It does not set cookies, does not use local storage, and does not build a
+            profile of you or follow you across other websites. When you click a download link or
+            copy the install command on the Site, your browser also sends an anonymous event to
+            our relay recording only which download it was (for example, the macOS or Windows
+            installer) and the page it came from. That event carries no cookie, no identifier,
+            and no account information. If your browser sends a Do Not Track signal, the Site does
+            not send download events.
+          </p>
+
           <h3>Information We Get From Others</h3>
           <p>
             We may receive personal information from service providers that help us operate the
@@ -120,7 +150,7 @@ const sections = [
 
           <h3>Cookies and Local Storage</h3>
           <p>
-            The Site and online portions of the Services may use cookies or similar technologies to
+            The Site does not use cookies for analytics. The Site and online portions of the Services may use cookies or similar technologies to
             operate essential features, maintain sessions, remember preferences, and understand
             whether the Services are functioning correctly. SpecWithCode also stores connection settings,
             credentials, preferences, drafts, and cached thread, file, branch, and server metadata on
@@ -249,7 +279,9 @@ const sections = [
             </li>
             <li>
               <strong>Cloudflare</strong> <em>(Cloudflare, Inc.)</em>.<br />
-              We use Cloudflare for networking, SpecWithCode Connect infrastructure, and content delivery.<br />
+              We use Cloudflare for networking, SpecWithCode Connect infrastructure, content
+              delivery, cookieless Site analytics (Cloudflare Web Analytics), and receiving crash
+              and error reports and download counts.<br />
               You can view Cloudflare's privacy policy here:{" "}<a
                 href="https://www.cloudflare.com/policies/privacy/"
                 >https://www.cloudflare.com/policies/privacy/</a
@@ -359,6 +391,22 @@ const sections = [
             This stops product events from being recorded or sent.
           </p>
 
+          <h3>Crash and Error Reports</h3>
+          <p>
+            Crash and error reports are on by default. To turn them off, switch off crash and
+            error reports in SpecWithCode Settings, or set{" "}<code>STUDIO_CRASH_REPORTS=false</code>
+            {" "}where SpecWithCode runs, for example in your shell profile or the server's
+            service environment, and restart SpecWithCode. When they are off, SpecWithCode sends no
+            reports and makes no network requests for them.
+          </p>
+
+          <h3>Site Analytics and Download Counts</h3>
+          <p>
+            You can block Cloudflare Web Analytics with a content blocker. To stop download events,
+            turn on your browser's Do Not Track setting or block requests to{" "}
+            <code>relay.spec-weave.com</code>.
+          </p>
+
           <h3>Cookies and Local Data</h3>
           <p>
             You can use your browser settings to stop accepting or to delete cookies, although some
@@ -373,7 +421,9 @@ const sections = [
             information while your account or the relevant feature is active and for as long as
             reasonably necessary to provide the Services, protect them from abuse, comply with law,
             and resolve disputes. Operational diagnostic traces are configured to expire after 30
-            days. Some records may remain longer in backups or where retention is required for
+            days. Crash and error reports, and the record of each download click (platform, file, page and
+            country), are kept only as log lines for as long as our hosting provider's log retention
+            keeps them, and are then deleted. Some records may remain longer in backups or where retention is required for
             security, fraud prevention, or legal compliance.
           </p>
           <p>
@@ -439,8 +489,10 @@ const sections = [
           <p class="section-number">09</p>
           <h2>Do Not Track</h2>
           <p>
-            We currently do not respond to browser “Do Not Track” signals. SpecWithCode does not use
-            personal information for cross-context behavioral or targeted advertising.
+            When your browser sends a “Do Not Track” signal, the Site does not send download
+            events. Cloudflare Web Analytics does not respond to the signal, but it is cookieless
+            and does not track you across websites. SpecWithCode does not use personal information
+            for cross-context behavioral or targeted advertising.
           </p>
         </section>
 

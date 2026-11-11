@@ -10,6 +10,7 @@
 import { isEntrypoint } from "./entrypoint.ts";
 import { installLiveDatabaseGuard } from "./persistence/liveDatabaseGuard.ts";
 import { quietSqliteExperimentalWarning } from "./quietWarnings.ts";
+import { installFatalCrashReportMonitor } from "./telemetry/crashReportFiles.ts";
 import { ensureServerThreadPoolSize } from "./threadPool.ts";
 
 if (
@@ -33,6 +34,9 @@ if (
     // Effect's file system captures node:fs at import.
     ensureServerThreadPoolSize();
     installLiveDatabaseGuard();
+    // Observes only: an uncaught exception still ends the process as before,
+    // after a sanitized report is stored for the next start (when reports are on).
+    installFatalCrashReportMonitor();
     // Before anything reads stdin: a desktop CLI launcher on Windows starts
     // the CLI without one. Never for the fast paths, whose stdin is a pipe.
     const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");

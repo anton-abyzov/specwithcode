@@ -2080,6 +2080,13 @@ export const ru: PhraseCatalog = {
     "Черновики, предпочтения и кэшированные данные интерфейса тоже могут оставаться на устройстве, где вы пользуетесь приложением, в том числе с удалённым окружением. Черновики могут содержать запросы, сведения о вложениях и выделенный текст терминала.",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "Когда вы начинаете ход агента или пользуетесь подключённым сервисом, выбранный провайдер получает нужный для этого запроса контекст согласно своей политике конфиденциальности.",
+  "Send crash and error reports automatically": "Автоматически отправлять отчеты о сбоях и ошибках",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "Включено по умолчанию. Отправляет версию приложения, ОС, архитектуру, категорию сбоя, провайдера и модель, когда это важно, очищенную ошибку и стек без домашних путей и случайный id установки. Никогда не отправляет промпты, ответы, файлы, токены, id аккаунтов и разговоров. STUDIO_CRASH_REPORTS=false на сервере тоже отключает отправку.",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "Отключено через STUDIO_CRASH_REPORTS или правила команды на этом сервере.",
+  "Update this server to change crash report settings.":
+    "Обновите этот сервер, чтобы менять настройки отчетов о сбоях.",
   "Product usage collection": "Сбор данных об использовании продукта",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "По умолчанию сбор выключен. Если оператор сервера его включит, события использования будут содержать выбор провайдера и модели, результаты ходов, длительность и суммы токенов. В них нет запросов, ответов и содержимого файлов.",

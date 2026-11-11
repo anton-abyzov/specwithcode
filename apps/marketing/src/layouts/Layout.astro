@@ -28,6 +28,11 @@ const socialImage = await getImage({
 const socialImageUrl = new URL(socialImage.src, Astro.site);
 const socialImageAlt = "SpecWithCode app icon";
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
+
+// Cloudflare Web Analytics (cookieless). Rendered only when the token is set
+// at build time, so local and preview builds load nothing.
+const cfWebAnalyticsToken = (import.meta.env.PUBLIC_CF_WEB_ANALYTICS_TOKEN ?? "").trim();
+const cfBeaconConfig = cfWebAnalyticsToken ? JSON.stringify({ token: cfWebAnalyticsToken }) : "";
 ---
 
 <html lang="en">
@@ -62,6 +67,14 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     <link rel="icon" type="image/png" href="/favicon-16x16.png?v=befb9e6d" sizes="16x16" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=befb9e6d" />
     <title>{title}</title>
+    {cfBeaconConfig && (
+      <script
+        is:inline
+        defer
+        src="https://static.cloudflareinsights.com/beacon.min.js"
+        data-cf-beacon={cfBeaconConfig}
+      ></script>
+    )}
   </head>
   <body>
     <div class:list={["page", pageClass]}>
@@ -107,6 +120,13 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     </div>
 
     <script>
+      import { startSiteEvents } from "../lib/siteEvents";
+
+      startSiteEvents(
+        { document, navigator, location },
+        import.meta.env.PUBLIC_SITE_EVENTS_ORIGIN,
+      );
+
       const nav = document.querySelector(".nav");
       const onScroll = () => {
         if (!nav) return;

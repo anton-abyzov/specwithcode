@@ -1708,6 +1708,11 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Concise by default: agents lead with the result and keep reports short. */
   responseStyle: ResponseStyle.pipe(Schema.withDecodingDefault(Effect.succeed("concise" as const))),
+  /**
+   * Automatic crash and error reports to the SpecWithCode relay. On by default;
+   * `STUDIO_CRASH_REPORTS=false` turns them off regardless of this setting.
+   */
+  crashReportsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -2310,6 +2315,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   agentInstructions: Schema.optionalKey(AgentInstructions),
+  crashReportsEnabled: Schema.optionalKey(Schema.Boolean),
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(

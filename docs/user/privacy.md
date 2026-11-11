@@ -39,5 +39,9 @@ bounded sample, not every failure in the environment.
 Review the exact JSON preview, check **I reviewed this report and want to save a copy**, then choose
 **Save report**. This saves a JSON file on your device. There is no automatic upload or support
 submission; you decide whether and where to share the file. Switching environments or preparing
-a new preview resets the review choice. Raw-log sharing and automatic crash reporting are not
-implemented by this feature.
+a new preview resets the review choice. This report never shares raw logs.
+
+Automatic crash and error reports are separate from this report. They are on by default and send
+a small sanitized report when something crashes or a turn fails. See
+[Crash and error reports](telemetry.md#crash-and-error-reports) for exactly what is sent and how
+to turn them off in **Settings** > **Data & privacy** or with `STUDIO_CRASH_REPORTS=false`.

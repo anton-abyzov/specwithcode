@@ -71,6 +71,7 @@ import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
+import * as Reports from "./reports/Reports.ts";
 
 const layerWebcrypto = Layer.succeed(
   Crypto.Crypto,
@@ -209,6 +210,32 @@ export const layer = Api.make(
       simple: {
         limit: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.limit,
         period: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.periodSeconds,
+      },
+    });
+    // Report keys are hashes (or one shared key) with the stage prepended,
+    // so stages sharing an account keep separate budgets.
+    const crashReportRateLimit = yield* Cloudflare.RateLimit("CRASH_REPORT_RATE_LIMIT", {
+      namespaceId: 1003,
+      simple: {
+        limit: Reports.RELAY_CRASH_REPORT_RATE_LIMIT.limit,
+        period: Reports.RELAY_CRASH_REPORT_RATE_LIMIT.periodSeconds,
+      },
+    });
+    const crashReportGlobalRateLimit = yield* Cloudflare.RateLimit(
+      "CRASH_REPORT_GLOBAL_RATE_LIMIT",
+      {
+        namespaceId: 1004,
+        simple: {
+          limit: Reports.RELAY_CRASH_REPORT_GLOBAL_RATE_LIMIT.limit,
+          period: Reports.RELAY_CRASH_REPORT_GLOBAL_RATE_LIMIT.periodSeconds,
+        },
+      },
+    );
+    const siteEventRateLimit = yield* Cloudflare.RateLimit("SITE_EVENT_RATE_LIMIT", {
+      namespaceId: 1005,
+      simple: {
+        limit: Reports.RELAY_SITE_EVENT_RATE_LIMIT.limit,
+        period: Reports.RELAY_SITE_EVENT_RATE_LIMIT.periodSeconds,
       },
     });
     const hookInboxes = yield* HookInboxObject.HookInboxObject;
@@ -355,12 +382,28 @@ export const layer = Api.make(
       allowEndpoint: allowWith(hookEndpointRateLimit),
     });
 
-    const layerApp = Layer.merge(
+    // Errors reach the report handlers, which fail open and say so on the span.
+    const checkWith =
+      (limiter: typeof crashReportRateLimit) =>
+      (key: string): Effect.Effect<boolean, Reports.ReportRateLimitError> =>
+        limiter.limit({ key: `${stage}:${key}` }).pipe(
+          Effect.map((result) => result.success),
+          Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+          Effect.mapError((error) => ({ message: error.message })),
+        );
+    const layerReportRateLimiter = Layer.succeed(Reports.ReportRateLimiter, {
+      allowInstall: checkWith(crashReportRateLimit),
+      allowGlobal: Effect.suspend(() => checkWith(crashReportGlobalRateLimit)("all")),
+      allowSiteClient: checkWith(siteEventRateLimit),
+    });
+
+    const layerApp = Layer.mergeAll(
       layerRelayApi,
       HookForwarder.layerApi.pipe(
         Layer.provide(HookForwarder.layer),
         Layer.provide(layerHookRateLimiter),
       ),
+      Reports.layerApi.pipe(Layer.provide(layerReportRateLimiter)),
     ).pipe(
       Layer.provideMerge(RelayHttpApi.layerClientAuth),
       Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),

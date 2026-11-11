@@ -308,6 +308,10 @@
       "types": "./src/managedEndpoint.ts",
       "import": "./src/managedEndpoint.ts"
     },
+    "./crashReport": {
+      "types": "./src/crashReport.ts",
+      "import": "./src/crashReport.ts"
+    },
     "./relayUrl": {
       "types": "./src/relayUrl.ts",
       "import": "./src/relayUrl.ts"

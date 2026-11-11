@@ -2062,6 +2062,13 @@ export const ko: PhraseCatalog = {
     "초안, 환경설정, 캐시된 인터페이스 데이터도 앱을 사용하는 기기에 남을 수 있으며, 원격 환경을 쓸 때도 마찬가지입니다. 초안에는 프롬프트, 첨부 파일 정보, 선택한 터미널 텍스트가 포함될 수 있습니다.",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "에이전트 턴을 시작하거나 연결된 서비스를 사용하면, 선택한 제공업체는 자체 개인정보 처리방침에 따라 해당 요청에 필요한 컨텍스트를 받습니다.",
+  "Send crash and error reports automatically": "충돌 및 오류 보고서 자동 전송",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "기본으로 켜져 있습니다. 앱 버전, OS, 아키텍처, 실패 유형, 필요한 경우 제공자와 모델, 홈 경로를 제거한 정리된 오류와 스택, 임의의 설치 ID를 보냅니다. 프롬프트, 응답, 파일, 토큰, 계정 또는 대화 ID는 절대 보내지 않습니다. 서버에서 STUDIO_CRASH_REPORTS=false로 설정해도 꺼집니다.",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "이 서버에서는 STUDIO_CRASH_REPORTS 또는 팀 규칙으로 꺼져 있습니다.",
+  "Update this server to change crash report settings.":
+    "충돌 보고서 설정을 바꾸려면 이 서버를 업데이트하세요.",
   "Product usage collection": "제품 사용 데이터 수집",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "수집은 기본적으로 꺼져 있습니다. 서버 운영자가 켜면 사용 이벤트에 제공업체 및 모델 선택, 턴 결과, 소요 시간, 토큰 합계가 포함됩니다. 프롬프트, 응답, 파일 내용은 포함되지 않습니다.",

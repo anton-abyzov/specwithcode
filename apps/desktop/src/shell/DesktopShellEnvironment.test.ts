@@ -274,12 +274,14 @@ describe("DesktopShellEnvironment", () => {
             PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             STUDIO_TELEMETRY_ENABLED: "false",
+            STUDIO_CRASH_REPORTS: "false",
           }),
       });
 
       assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.STUDIO_TELEMETRY_ENABLED, "false");
+      assert.equal(env.STUDIO_CRASH_REPORTS, "false");
     }),
   );
 

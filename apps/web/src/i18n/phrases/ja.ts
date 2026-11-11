@@ -2080,6 +2080,13 @@ export const ja: PhraseCatalog = {
     "下書き、設定、キャッシュされた画面データも、アプリを使うデバイスに残ることがあります（リモート環境を使う場合を含む）。下書きにはプロンプト、添付ファイルの詳細、選択したターミナルのテキストが含まれることがあります。",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "エージェントのターンを開始したり接続済みのサービスを使ったりすると、選択したプロバイダーは、そのリクエストに必要なコンテキストを自社のプライバシーポリシーに基づいて受け取ります。",
+  "Send crash and error reports automatically": "クラッシュとエラーのレポートを自動送信",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "既定でオンです。アプリのバージョン、OS、アーキテクチャ、失敗の種類、必要に応じてプロバイダーとモデル、ホームパスを除いた整形済みのエラーとスタック、ランダムなインストール ID を送信します。プロンプト、応答、ファイル、トークン、アカウントや会話の ID は送信しません。サーバーで STUDIO_CRASH_REPORTS=false を設定してもオフになります。",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "このサーバーでは STUDIO_CRASH_REPORTS またはチームのルールによりオフです。",
+  "Update this server to change crash report settings.":
+    "クラッシュレポートの設定を変更するには、このサーバーを更新してください。",
   "Product usage collection": "製品の利用状況の収集",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "収集は既定でオフです。サーバーの運用者が有効にした場合、利用イベントにはプロバイダーとモデルの選択、ターンの結果、所要時間、トークンの合計が含まれます。プロンプト、応答、ファイルの内容は含まれません。",

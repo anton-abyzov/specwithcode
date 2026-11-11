@@ -11,11 +11,17 @@ import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
 import {
   formatStartupCrashReport,
   parseStartupCrashRecords,
   type StartupCrashRecord,
 } from "./crash-log-model";
+import {
+  crashReportsDisabledByBuild,
+  getCrashReportsPreference,
+  setCrashReportsPreference,
+} from "./crashReporting";
 
 // expo-updates keeps its persistent log this long. Reading any further back
 // returns nothing, so this is the whole available window.
@@ -47,6 +53,12 @@ export function SettingsDiagnosticsRouteScreen() {
     Updates.isEnabled ? { status: "loading" } : { status: "unavailable" },
   );
   const [copied, setCopied] = useState(false);
+  const disabledByBuild = crashReportsDisabledByBuild();
+  const [autoReports, setAutoReports] = useState(() => getCrashReportsPreference());
+  const changeAutoReports = (value: boolean) => {
+    setCrashReportsPreference(value);
+    setAutoReports(value);
+  };
 
   useEffect(() => {
     if (!Updates.isEnabled) return;
@@ -106,6 +118,23 @@ export function SettingsDiagnosticsRouteScreen() {
             ))
           )}
         </SettingsSection>
+
+        <View className="gap-3">
+          <SettingsSection title="Error reports">
+            <SettingsSwitchRow
+              icon="stethoscope"
+              label="Send error reports"
+              disabled={disabledByBuild}
+              subtitle={disabledByBuild ? "Turned off in this build" : undefined}
+              value={!disabledByBuild && autoReports}
+              onValueChange={changeAutoReports}
+            />
+          </SettingsSection>
+          <Text className="px-2 text-sm leading-normal text-foreground-muted">
+            When the app hits an error it sends the app version, device type and a cleaned error
+            message and stack. Never your messages, files, tokens or account.
+          </Text>
+        </View>
 
         <View className="gap-3">
           <SettingsSection title="Actions">

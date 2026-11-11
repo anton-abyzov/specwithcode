@@ -58,6 +58,8 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as CrashReporter from "./telemetry/CrashReporter.ts";
+import { recordFatalCrashReportSync } from "./telemetry/crashReportFiles.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/resetCreditCoordinator.ts";
@@ -594,6 +596,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
+  Layer.provide(ProviderEventIngestor.layerFailureReports),
   Layer.provide(layerCheckpointStore),
   Layer.provide(layerGitWorkflow),
   Layer.provide(ResourceCleanupService.layer),
@@ -980,6 +983,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
+  Layer.provideMerge(CrashReporter.layer.pipe(Layer.provide(layerServerSettings))),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer),
@@ -1563,4 +1567,25 @@ export const runServer: Effect.Effect<
   never,
   Layer.Error<typeof layerMakeServer>,
   FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
-> = Layer.launch(layerMakeServer);
+> = Layer.launch(layerMakeServer).pipe(
+  // A server program that dies of a failure or defect stores one sanitized
+  // report for the next start to send. Interrupts are a normal stop.
+  Effect.tapCause((cause) =>
+    Cause.hasInterruptsOnly(cause)
+      ? Effect.void
+      : Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          recordFatalCrashReportSync({
+            kind: "fatal",
+            category: "server_program",
+            error: Cause.squash(cause),
+            paths: {
+              baseDir: config.baseDir,
+              stateDir: config.stateDir,
+              settingsPath: config.settingsPath,
+            },
+            env: process.env,
+          });
+        }),
+  ),
+);

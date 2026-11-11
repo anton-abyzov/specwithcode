@@ -65,6 +65,7 @@ import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopLegacyLocalStorage from "./app/DesktopLegacyLocalStorage.ts";
 import * as DesktopTelemetryPublisher from "./telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./telemetry/DesktopRendererHistory.ts";
+import * as DesktopCrashReporter from "./telemetry/DesktopCrashReporter.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as BrowserImport from "./preview/BrowserImport/BrowserImport.ts";
 import * as ExternalBrowsers from "./preview/ExternalBrowsers.ts";
@@ -161,6 +162,9 @@ const layerDesktopFoundation = Layer.mergeAll(
   DesktopAssets.layer,
   DesktopObservability.layer,
   DesktopRendererHistory.layer,
+  // Crash reports: on by default, off via STUDIO_CRASH_REPORTS=false or the
+  // server setting. Never blocks startup; sends are detached and time-boxed.
+  DesktopCrashReporter.layer,
 ).pipe(Layer.provideMerge(layerDesktopEnvironment));
 
 const layerDesktopSsh = layerDesktopSshEnvironment.pipe(

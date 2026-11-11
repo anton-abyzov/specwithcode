@@ -982,10 +982,12 @@ describe("DesktopBackendConfiguration", () => {
       const previousWslEnv = process.env.WSLENV;
       const previousDisabled = process.env.OTEL_SDK_DISABLED;
       const previousTelemetry = process.env.STUDIO_TELEMETRY_ENABLED;
+      const previousCrashReports = process.env.STUDIO_CRASH_REPORTS;
       try {
         delete process.env.WSLENV;
         process.env.OTEL_SDK_DISABLED = "true";
         process.env.STUDIO_TELEMETRY_ENABLED = "false";
+        process.env.STUDIO_CRASH_REPORTS = "false";
 
         yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -995,6 +997,8 @@ describe("DesktopBackendConfiguration", () => {
           assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_SDK_DISABLED");
           assert.equal(config.env.STUDIO_TELEMETRY_ENABLED, "false");
           assert.include((config.env.WSLENV ?? "").split(":"), "STUDIO_TELEMETRY_ENABLED");
+          assert.equal(config.env.STUDIO_CRASH_REPORTS, "false");
+          assert.include((config.env.WSLENV ?? "").split(":"), "STUDIO_CRASH_REPORTS");
         }).pipe(
           Effect.provide(
             DesktopBackendConfiguration.layer.pipe(
@@ -1016,6 +1020,7 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("WSLENV", previousWslEnv);
         restoreEnv("OTEL_SDK_DISABLED", previousDisabled);
         restoreEnv("STUDIO_TELEMETRY_ENABLED", previousTelemetry);
+        restoreEnv("STUDIO_CRASH_REPORTS", previousCrashReports);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

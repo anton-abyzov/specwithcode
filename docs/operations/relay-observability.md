@@ -54,3 +54,65 @@ forwards. The details are on the child spans: `HookInboxStore.hold` carries
 the consecutive failures behind the retry delay, the longest time a delivered request waited, and
 the backlog left. A run that errored outright has `relay.inbox.run_result = failed` on the root
 `relay.inbox.deliver` span instead.
+
+## Crash reports and site events
+
+Two unauthenticated endpoints take anonymous reports. Neither stores anything: each accepted
+request writes one Effect log line to Workers Logs and answers 202 `{ "ok": true }`. Both accept
+`application/json` and `text/plain` (what `navigator.sendBeacon` sends) and get the relay's normal
+CORS headers, so the marketing sites (`https://specwithcode.com`, `https://spec-weave.com`) can
+post to them. Rejections answer `{ "error": "<code>" }`: 400 `invalid_body`, 413
+`payload_too_large`, 415 `unsupported_media_type`, or 429 `rate_limited` with `retry-after: 60`.
+The code is in [`infra/relay/src/reports/Reports.ts`](../../infra/relay/src/reports/Reports.ts);
+the payload format and sanitizing rules are in
+[`packages/shared/src/crashReport.ts`](../../packages/shared/src/crashReport.ts).
+
+`POST /v1/crash-reports` takes a body of at most 16 KiB (`CRASH_REPORT_MAX_BYTES`, checked on
+`content-length` and again while the body streams in). The relay validates and re-sanitizes it
+with `parseCrashReport`, then logs a warning with the message `crash_report` and these fields:
+`log` (always `crash_report`), `surface`, `kind`, `category`, `appVersion`, `os`, `osVersion`,
+`arch`, `provider`, `model`, `errorName`, `message`, `stack`, `detail`, `count`, `machine`,
+`installIdHash`, `country` and `bytes`. Optional fields are left out when the report has none; a `turn_failed` report never has `message`
+or `stack`. The per-install limit is checked before the shared one.
+`installIdHash` is the first 16 hex characters of the install id's SHA-256 digest, so repeats from
+one installation group together without the raw id being logged. Reports never carry prompts,
+responses, file contents, tokens, account, thread or project ids, or raw paths.
+
+`POST /v1/site-events` takes a body of at most 1 KiB (`SITE_EVENT_MAX_BYTES`) parsed with
+`parseSiteEvent`, and logs an info line with the message `site_event` and the fields `log` (always
+`site_event`), `event` (`download_click` or `install_copy`), `platform`, `asset`, `page` and
+`country`. The client IP is used only, hashed, as a rate limit key.
+
+Limits use Cloudflare Rate Limiting bindings, keyed with the stage prepended:
+
+| Binding                          | Namespace | Key                       | Limit       |
+| -------------------------------- | --------- | ------------------------- | ----------- |
+| `CRASH_REPORT_RATE_LIMIT`        | 1003      | SHA-256 of the install id | 10 per 60s  |
+| `CRASH_REPORT_GLOBAL_RATE_LIMIT` | 1004      | one shared key            | 600 per 60s |
+| `SITE_EVENT_RATE_LIMIT`          | 1005      | SHA-256 of the client IP  | 30 per 60s  |
+
+The per-install limit is checked first, so one install cannot spend the shared budget; the shared
+budget then stops a flood of fresh install ids. Such a flood can still use up the shared 600 per
+minute and drop other installs' reports for that minute, which is accepted. The edge per-IP rule from `infra/relay/scripts/edge-rules.mjs` also covers both paths. If a
+limiter errors, the request goes through, the relay logs `Report rate limiter unavailable`, and
+the span carries `relay.crash.rate_limiter_failed_open` or
+`relay.site_event.rate_limiter_failed_open`.
+
+Spans: `relay.reports.crash` with `relay.crash.outcome` (`accepted`, `rate_limited`,
+`payload_too_large`, `invalid_body`, `unsupported_media_type`), `relay.crash.rate_limit`
+(`global` or `install`), `relay.crash.surface` and `relay.crash.kind`; and
+`relay.reports.site_event` with `relay.site_event.outcome`. Like every relay span, they are not
+exported.
+
+To read them:
+
+- Live: `npx wrangler tail <workerName> --search crash_report` (or `--search site_event`). Add
+  `--format json` to get each line's fields as JSON.
+- Dashboard: Workers & Pages > the relay Worker > Logs, then filter on `log = crash_report` (or
+  `site_event`) and group or filter by `surface`, `category`, `appVersion` or `installIdHash`.
+  Workers Logs extracts the fields from the logged object, so they can be queried directly.
+
+The Worker's Effect logger is the console pretty logger: each line is written as a header line
+(`[time] WARN (#fiber): crash_report`) followed by the fields object as its own console entry. The
+`log` field is on the object entry, so a filter on `log` finds the fields, and a search on the
+message text finds both entries.

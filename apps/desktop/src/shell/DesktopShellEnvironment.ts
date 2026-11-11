@@ -94,6 +94,8 @@ const LOGIN_SHELL_ENV_NAMES = [
   "XDG_SESSION_TYPE",
   "WAYLAND_DISPLAY",
   "STUDIO_TELEMETRY_ENABLED",
+  "STUDIO_CRASH_REPORTS",
+  "STUDIO_CRASH_REPORT_URL",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
@@ -474,6 +476,9 @@ const applyPosixEnvironment = Effect.fn("desktop.shellEnvironment.applyPosixEnvi
       "WAYLAND_DISPLAY",
       // The telemetry opt-out is documented as a shell variable; GUI launches never see it.
       "STUDIO_TELEMETRY_ENABLED",
+      // Same for the crash report switch: without it a Dock launch keeps reporting.
+      "STUDIO_CRASH_REPORTS",
+      "STUDIO_CRASH_REPORT_URL",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];

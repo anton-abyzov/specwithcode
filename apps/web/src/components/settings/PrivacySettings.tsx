@@ -1,7 +1,7 @@
 import { useTx } from "../../i18n";
 import { DownloadIcon, FileSearchIcon, ShieldCheckIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ServerObservability } from "@specweave-studio/contracts";
 import { resolveUsageAccess } from "@specweave-studio/client-runtime/state/usage-access";
 
 import { APP_VERSION } from "../../branding";
@@ -10,9 +10,12 @@ import { environmentSession } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { Switch } from "../ui/switch";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import {
   buildPrivateDiagnosticsReport,
   productUsageStatusLabel,
@@ -77,6 +80,61 @@ export function DiagnosticsReportPreview({
         {tx("The file is saved on your device. Share it with support only if you choose.")}
       </p>
     </div>
+  );
+}
+
+const CRASH_REPORT_SETTING_KEYS = ["crashReportsEnabled"] as const;
+const selectCrashReportsEnabled = (settings: { readonly crashReportsEnabled: boolean }) =>
+  settings.crashReportsEnabled;
+
+/**
+ * The automatic crash and error report switch. The value lives in server
+ * settings; `STUDIO_CRASH_REPORTS=false` (or team rules) on the selected
+ * server forces it off. Servers older than crash reporting report neither
+ * observability field, so the switch stays read-only there.
+ */
+export function CrashReportsSettingRow({
+  observability,
+}: {
+  readonly observability: ServerObservability | undefined;
+}) {
+  const tx = useTx();
+  const enabled = useScopedSettings(selectCrashReportsEnabled);
+  const updateSettings = useUpdateScopedSettings();
+  const forcedOff = observability?.crashReportsForcedOff === true;
+  const unsupported =
+    observability !== undefined &&
+    observability.crashReportsActive === undefined &&
+    observability.crashReportsForcedOff === undefined;
+  const note = forcedOff
+    ? tx("Turned off by STUDIO_CRASH_REPORTS or team rules on this server.")
+    : unsupported
+      ? tx("Update this server to change crash report settings.")
+      : null;
+  return (
+    <SettingsRow
+      {...searchableSetting("privacy-crash-reports")}
+      settingKeys={CRASH_REPORT_SETTING_KEYS}
+      description="On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off."
+      status={
+        note === null ? null : (
+          <span data-crash-reports-note className="text-xs text-muted-foreground">
+            {note}
+          </span>
+        )
+      }
+      control={
+        <Switch
+          checked={forcedOff ? false : enabled}
+          disabled={forcedOff || unsupported}
+          onCheckedChange={(checked) => {
+            if (forcedOff || unsupported) return;
+            updateSettings({ crashReportsEnabled: Boolean(checked) });
+          }}
+          aria-label={tx("Send crash and error reports automatically")}
+        />
+      }
+    />
   );
 }
 
@@ -154,6 +212,7 @@ export function PrivacySettingsPanel() {
           </div>
         </SettingsSection>
         <SettingsSection id="privacy-collection" title="Product improvement and diagnostics">
+          <CrashReportsSettingRow observability={observability} />
           <div className="space-y-3 p-4 text-sm sm:p-5">
             <p className="font-medium">{tx("Product usage collection")}</p>
             <p className="rounded-md bg-muted/40 px-3 py-2" role="status">

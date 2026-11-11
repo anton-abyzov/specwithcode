@@ -2094,6 +2094,13 @@ export const de: PhraseCatalog = {
     "Entwürfe, Einstellungen und zwischengespeicherte Oberflächendaten können auch auf dem Gerät bleiben, auf dem du die App nutzt, auch mit einer Remote-Umgebung. Entwürfe können Prompts, Details zu Anhängen und ausgewählten Terminaltext enthalten.",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "Wenn du einen Agent-Turn startest oder einen verbundenen Dienst nutzt, erhält der ausgewählte Anbieter den für diese Anfrage nötigen Kontext gemäß seiner eigenen Datenschutzerklärung.",
+  "Send crash and error reports automatically": "Absturz- und Fehlerberichte automatisch senden",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "Standardmäßig an. Sendet die App-Version, das Betriebssystem, die Architektur, die Fehlerkategorie, bei Bedarf Anbieter und Modell, einen bereinigten Fehler mit Stacktrace ohne Home-Pfade und eine zufällige Installations-ID. Sendet nie Prompts, Antworten, Dateien, Tokens oder Konto- und Gesprächs-IDs. STUDIO_CRASH_REPORTS=false auf dem Server schaltet es ebenfalls aus.",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "Auf diesem Server durch STUDIO_CRASH_REPORTS oder Teamregeln ausgeschaltet.",
+  "Update this server to change crash report settings.":
+    "Aktualisiere diesen Server, um die Einstellungen für Absturzberichte zu ändern.",
   "Product usage collection": "Erfassung der Produktnutzung",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "Die Erfassung ist standardmäßig aus. Wenn der Serverbetreiber sie aktiviert, enthalten Nutzungsereignisse Anbieter- und Modellwahl, Turn-Ergebnisse, Dauern und Token-Summen. Prompts, Antworten und Dateiinhalte sind nicht enthalten.",

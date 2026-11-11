@@ -69,6 +69,16 @@ interface TrackedRenderer {
   readonly removeListeners: () => void;
 }
 
+// Surface by webContents, so the crash reporter can label a renderer exit
+// without a dependency on this service.
+const rendererSurfaces = new WeakMap<Electron.WebContents, RendererIdentity["surface"]>();
+
+export function rendererSurfaceOf(
+  webContents: Electron.WebContents,
+): RendererIdentity["surface"] | undefined {
+  return rendererSurfaces.get(webContents);
+}
+
 const nonnegative = (value: number): number | null =>
   Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
 
@@ -172,6 +182,7 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
         surface: identity.surface,
         ...(identity.tabId === undefined ? {} : { tabId: identity.tabId.slice(0, 128) }),
       };
+      rendererSurfaces.set(webContents, boundedIdentity.surface);
       const existing = active.get(webContents.id);
       if (existing !== undefined) {
         if (
