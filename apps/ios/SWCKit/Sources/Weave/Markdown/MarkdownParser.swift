@@ -1,7 +1,7 @@
 import Foundation
 
 // A small block-level Markdown parser for assistant replies. It splits text
-// into headings, paragraphs, lists, quotes, fenced code, tables and rules;
+// into headings, paragraphs, images, lists, quotes, fenced code, tables and rules;
 // inline syntax inside each block is left for AttributedString to render.
 // Unclosed fences (a reply still streaming) become code blocks with what has
 // arrived so far.
@@ -9,6 +9,8 @@ import Foundation
 public nonisolated enum MarkdownBlock: Hashable, Sendable {
   case heading(level: Int, text: String)
   case paragraph(String)
+  /// A picture a paragraph embeds, lifted out to stand on its own.
+  case image(alt: String, source: MarkdownImageSource)
   case list([MarkdownListItem])
   case quote([MarkdownBlock])
   case code(language: String?, text: String)
@@ -74,7 +76,12 @@ public nonisolated enum MarkdownParser {
 
       func flushParagraph() {
         if !paragraph.isEmpty {
-          blocks.append(.paragraph(paragraph.joined(separator: "\n")))
+          for piece in MarkdownMedia.pieces(paragraph.joined(separator: "\n")) {
+            switch piece {
+            case let .text(text): blocks.append(.paragraph(text))
+            case let .image(alt, source): blocks.append(.image(alt: alt, source: source))
+            }
+          }
           paragraph.removeAll()
         }
       }

@@ -41,7 +41,7 @@ struct TranscriptRowView: View {
       if markdown.isEmpty, streaming {
         EmptyView()
       } else {
-        MarkdownText(markdown, collapsible: !streaming && markdown.count > Self.collapseThreshold, streaming: streaming, onOpenLink: onOpenLink)
+        MarkdownText(markdown, collapsible: !streaming && markdown.count > Self.collapseThreshold, streaming: streaming, mediaFallback: true, onOpenLink: onOpenLink)
           .padding(.leading, Self.textInset)
           .padding(.trailing, WeaveSpacing.s2)
       }

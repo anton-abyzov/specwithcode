@@ -121,6 +121,7 @@ private struct ChatScreen: View {
         HostFileViewer(file: file, target: target)
           .presentationDragIndicator(.visible)
       }
+      .environment(\.markdownImageLoader, imageLoader)
       .deviceViewer($deviceViewer)
       .task(id: router.pendingDeviceViewer) {
         // A launch route opens the viewer once this thread is on screen.
@@ -995,6 +996,17 @@ private struct ChatScreen: View {
   private var photosPending: Bool { router.pendingPhotoBatches[target, default: 0] > 0 }
 
   private var pendingImages: [OutgoingImage] { router.attachmentDrafts[target] ?? [] }
+
+  /// Pictures in replies load from this conversation's machine and open in the file viewer.
+  private var imageLoader: MarkdownImageLoader {
+    let engine = model.engine
+    let target = target
+    return MarkdownImageLoader(
+      connection: "\(target.environmentId)-\(model.machine(target.environmentId)?.status.isOnline == true)",
+      url: { path, thumbnail in try? await engine.hostFileURL(path: path, thumbnail: thumbnail, for: target) },
+      open: { path in hostFile = HostFileRoute(path: path) }
+    )
+  }
 
   private func openThreadLink(_ url: URL, in row: TranscriptRow) {
     if let path = HostFileLink.path(url) {

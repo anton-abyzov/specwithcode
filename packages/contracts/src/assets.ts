@@ -98,8 +98,15 @@ const ASSET_READS_HOST_FILES: Record<AssetResource["_tag"], boolean> = {
 export const assetResourceReadsHostFiles = (resource: AssetResource): boolean =>
   ASSET_READS_HOST_FILES[resource._tag];
 
+/** A downscaled copy for inline previews; the full file stays one request away. */
+export const AssetVariant = Schema.Literal("thumb");
+export type AssetVariant = typeof AssetVariant.Type;
+
 export const AssetCreateUrlInput = Schema.Struct({
   resource: AssetResource,
+  /** Honoured for image `media-file` resources only. A server that cannot
+      resize, or one too old to know the field, serves the original file. */
+  variant: Schema.optionalKey(AssetVariant),
 });
 export type AssetCreateUrlInput = typeof AssetCreateUrlInput.Type;
 

@@ -33,6 +33,7 @@ import { Check, Copy } from "lucide";
 import {
   AuthPreviewOperateScope,
   type AssetResource,
+  type AssetVariant,
   type EnvironmentId,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -52,6 +53,8 @@ import {
 } from "@specweave-studio/client-runtime/codex-artifact-templates";
 import {
   classifyMarkdownImageSource,
+  firstUnembeddedMedia,
+  type UnembeddedMedia,
   markdownImageSourceFragment,
 } from "@specweave-studio/client-runtime/markdown-images";
 import { inlineCodeFilePathCandidate } from "@specweave-studio/client-runtime/markdown-links";
@@ -288,6 +291,9 @@ interface ChatMarkdownProps {
   headingLevelOffset?: number | undefined;
   /** Folders the thread named files in; a bare file name may sit in one of them. */
   contextFolders?: ReadonlyArray<string> | undefined;
+  /** Show the first image or video the text names only by path as one thumbnail below it.
+      For agent messages; off for authored text, documents and previews. */
+  mediaFallback?: boolean | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -1828,8 +1834,10 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  /** Load a downscaled copy; the expanded viewer and the media actions keep the full file. */
+  readonly variant?: AssetVariant | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource, props.variant);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
   const path =
@@ -1921,6 +1929,43 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       originalUrl={props.originalUrl}
       onImageExpand={props.onImageExpand}
     />
+  );
+});
+
+/**
+ * The first image or video a message names only by path, as one thumbnail
+ * under the message. Nothing renders when the file cannot be signed, so a
+ * moved or foreign path leaves the chip alone.
+ */
+const ChatMarkdownMediaFallback = memo(function ChatMarkdownMediaFallback(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly media: UnembeddedMedia;
+  readonly cwd: string | undefined;
+  readonly onOpen: (path: string) => void;
+}) {
+  const { threadRef, media, onOpen } = props;
+  const resource = useMemo(
+    () => ({ _tag: "media-file" as const, threadId: threadRef.threadId, path: media.path }),
+    [media.path, threadRef.threadId],
+  );
+  const variant = media.kind === "image" ? "thumb" : undefined;
+  const assetUrl = useAssetUrlState(threadRef.environmentId, resource, variant);
+  const openFullFile = useCallback(() => onOpen(media.path), [media.path, onOpen]);
+  if (assetUrl._tag === "Failure") return null;
+  return (
+    <div className="mt-2" data-media-fallback={media.kind}>
+      <ChatMarkdownAssetImage
+        environmentId={threadRef.environmentId}
+        resource={resource}
+        kind={media.kind}
+        alt={media.path.split(/[\\/]/).at(-1) ?? media.kind}
+        variant={variant}
+        maxHeightRem={15}
+        workspaceRoot={props.cwd}
+        // The thumbnail is a downscaled copy; the viewer loads the file itself.
+        onImageExpand={openFullFile}
+      />
+    </div>
   );
 });
 
@@ -3895,6 +3940,7 @@ function ChatMarkdown({
   parseRawHtml = true,
   formatDates = false,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  mediaFallback = false,
   ...props
 }: ChatMarkdownProps) {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
@@ -3914,6 +3960,16 @@ function ChatMarkdown({
     openFileInPanel,
     openFolder,
   } = useChatMarkdownState({ text, ...props });
+  // A reply still streaming may embed its own media yet, so the fallback waits for the end.
+  const fallbackMedia = useMemo(
+    () => (mediaFallback && props.isStreaming !== true ? firstUnembeddedMedia(text) : null),
+    [mediaFallback, props.isStreaming, text],
+  );
+  const openMarkdownMedia = componentState.openMarkdownMedia;
+  const openFallbackMedia = useCallback(
+    (path: string) => openMarkdownMedia(path, path),
+    [openMarkdownMedia],
+  );
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
@@ -3953,6 +4009,14 @@ function ChatMarkdown({
           {text}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
+      {fallbackMedia && props.threadRef ? (
+        <ChatMarkdownMediaFallback
+          threadRef={props.threadRef}
+          media={fallbackMedia}
+          cwd={props.cwd}
+          onOpen={openFallbackMedia}
+        />
+      ) : null}
       {localMediaPreview ? (
         <ExpandedImageDialog
           preview={localMediaPreview}

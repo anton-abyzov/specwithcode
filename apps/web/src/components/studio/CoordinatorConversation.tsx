@@ -1280,6 +1280,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
           >
             <ChatMarkdown
               formatDates={message.role === "assistant"}
+              mediaFallback={message.role !== "user"}
               text={text}
               cwd={workspaceRoot}
               threadRef={threadRef}
@@ -1332,6 +1333,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
             >
               <ChatMarkdown
                 formatDates={message.role === "assistant"}
+                mediaFallback={message.role !== "user"}
                 text={text}
                 cwd={workspaceRoot}
                 threadRef={threadRef}

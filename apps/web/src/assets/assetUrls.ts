@@ -8,6 +8,7 @@ import {
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   type AssetResource,
+  type AssetVariant,
   assetResourceReadsHostFiles,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
@@ -24,6 +25,8 @@ export { resolveAssetUrl, type AssetUrlState } from "@specweave-studio/client-ru
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  /** A downscaled copy of an image, for inline previews; the server serves the original where it cannot resize. */
+  variant?: AssetVariant,
 ): AssetUrlState {
   const fileAccess = useFilesystemReadAccess(environmentId);
   const canReadResource =
@@ -32,7 +35,10 @@ export function useAssetUrlState(
   const result = useAtomValue(
     !canReadResource || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : assetEnvironment.createUrl({ environmentId, input: { resource } }),
+      : assetEnvironment.createUrl({
+          environmentId,
+          input: variant === undefined ? { resource } : { resource, variant },
+        }),
   );
   if (!canReadResource) return { _tag: fileAccess.isPending ? "Loading" : "Failure" };
   return assetUrlStateFromResult(

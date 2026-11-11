@@ -209,6 +209,39 @@ export function ThreadMarkdownImage(props: {
   );
 }
 
+/**
+ * The first image a message names only by path, as one thumbnail under the
+ * message. It loads a downscaled copy through the thread's server, so a phone
+ * on Connect does not download a full screenshot to show a small picture; a
+ * tap opens the file itself. Nothing renders when the file cannot be signed,
+ * so a moved or foreign path leaves the chip alone.
+ */
+export function ThreadMediaFallbackImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
+  readonly name: string;
+  /** The full file, for the expanded viewer. */
+  readonly previewSource: FilePreviewSource;
+  readonly actionsSource?: MediaActionsSource;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+}) {
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource, "thumb");
+  if (assetUrl._tag === "Failure") return null;
+  return (
+    <View testID="thread-media-fallback" style={{ marginTop: 8 }}>
+      <ThreadMarkdownImageView
+        uri={assetUrl._tag === "Success" ? assetUrl.url : null}
+        sourceKey={`fallback:${props.resource.path}`}
+        unavailable={false}
+        knownSize={assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined}
+        alt={props.name}
+        actionsSource={props.actionsSource}
+        onPressPreview={() => props.onPressPreview(props.previewSource)}
+      />
+    </View>
+  );
+}
+
 export function ThreadMarkdownImageUnavailable(props: { readonly alt: string | null }) {
   return (
     <ThreadMarkdownImageView

@@ -13,6 +13,7 @@ import {
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_HEADLESS_INSTRUCTIONS,
+  STUDIO_MEDIA_INSTRUCTIONS,
 } from "../../provider/RuntimeInstructions.ts";
 
 export const PI_STUDIO_MCP_EXTENSION_FILENAME = "pi-studio-mcp-extension.ts";
@@ -41,6 +42,7 @@ const RESPONSE_STYLE_ENV = ${JSON.stringify(STUDIO_PI_RESPONSE_STYLE_ENV)};
 const CONCISE_RESPONSE_STYLE = ${JSON.stringify(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS)};
 const DETAILED_RESPONSE_STYLE = ${JSON.stringify(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS)};
 const HEADLESS_INSTRUCTIONS = ${JSON.stringify(STUDIO_HEADLESS_INSTRUCTIONS)};
+const MEDIA_INSTRUCTIONS = ${JSON.stringify(STUDIO_MEDIA_INSTRUCTIONS)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -268,7 +270,7 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
   const token = env(TOKEN_ENV);
   const hasStudioMcp = endpoint !== undefined && token !== undefined;
 
-  // Deliver the response style and headless rule (always) and orchestration guidance (with the
+  // Deliver the response style, media and headless rules (always) and orchestration guidance (with the
   // SpecWithCode MCP server) through pi's real system-prompt channel. Wrapping the
   // first user message instead would stop it from starting with "/" and
   // silently break slash-command expansion.
@@ -276,6 +278,7 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
     systemPrompt: [
       event.systemPrompt,
       responseStyleInstructions(),
+      MEDIA_INSTRUCTIONS,
       HEADLESS_INSTRUCTIONS,
       ...(hasStudioMcp ? [ORCHESTRATION_INSTRUCTIONS] : []),
     ].join("\\n\\n"),

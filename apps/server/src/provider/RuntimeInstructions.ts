@@ -200,6 +200,15 @@ export const STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode
 - Ask workers and subagents you brief to report the same way.
 </response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
 
+/**
+ * A Markdown image or video shows inline on every device, through the thread's
+ * own server; a path in backticks is only a chip, which on a phone shows no
+ * picture of the work. One is enough: more would bury the reply. Every role
+ * gets this line, and Pi receives it through its extension.
+ */
+export const STUDIO_MEDIA_INSTRUCTIONS =
+  "Embed one representative image or video from your work as ![caption](/absolute/path) and list the other files as paths.";
+
 export function responseStyleInstructions(style: ResponseStyle = "concise"): string {
   return style === "detailed"
     ? STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS
@@ -236,7 +245,7 @@ export function buildRuntimeInstructions(runtime: {
     agentInstructions.length === 0
       ? ""
       : `<agent_instructions>\n${agentInstructions}\n</agent_instructions>\n\n`;
-  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. Embed images and videos with Markdown and absolute file paths.</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}`;
+  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. ${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}`;
 }
 
 function toSingleLine(value: string): string {

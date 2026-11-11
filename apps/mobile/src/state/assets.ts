@@ -8,6 +8,7 @@ import {
 } from "@specweave-studio/client-runtime/state/assets";
 import {
   type AssetResource,
+  type AssetVariant,
   assetResourceReadsHostFiles,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
@@ -36,6 +37,8 @@ export const projectFaviconUrlAtom = createProjectFaviconUrlAtomFamily({
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  /** A downscaled copy of an image, for inline previews; the server serves the original where it cannot resize. */
+  variant?: AssetVariant,
 ): AssetUrlState {
   const fileAccessSession = useEnvironmentQuery(
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
@@ -54,7 +57,10 @@ export function useAssetUrlState(
   const result = useAtomValue(
     !canReadResource || environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : assetEnvironment.createUrl({ environmentId, input: { resource } }),
+      : assetEnvironment.createUrl({
+          environmentId,
+          input: variant === undefined ? { resource } : { resource, variant },
+        }),
   );
   const shared = !canReadResource
     ? fileAccess.isPending

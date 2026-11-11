@@ -46,6 +46,7 @@ import { formatAttachmentSize } from "@specweave-studio/client-runtime/state/att
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   classifyMarkdownImageSource,
+  firstUnembeddedMedia,
   markdownImageSourceFragment,
 } from "@specweave-studio/client-runtime/markdown-images";
 import { resolveViewedImageAsset } from "@specweave-studio/client-runtime/work-log/presentation";
@@ -223,6 +224,7 @@ import { useFileChipShare } from "./useFileChipShare";
 import {
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
+  ThreadMediaFallbackImage,
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
@@ -1538,6 +1540,8 @@ function renderFeedEntry(
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
     readonly renderMarkdownImage: MarkdownImageRenderer;
+    /** One thumbnail for the first image or video a finished reply names only by path. */
+    readonly renderMediaFallback: (markdown: string) => ReactNode;
     readonly renderViewedImage: MarkdownImageRenderer;
     readonly renderReasoning: (text: string) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
@@ -1901,6 +1905,7 @@ function renderFeedEntry(
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
             />
+            {message.streaming ? null : props.renderMediaFallback(renderedText)}
           </MarkdownImageAvailableWidthContext>
         ) : null}
         {attachments.map((attachment) => {
@@ -2443,6 +2448,38 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           alt={image.alt}
           srcFragment={markdownImageSourceFragment(image.href)}
           actionsSource={media?.source.actionsSource}
+          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
+        />
+      );
+    },
+    [props.environmentId, props.threadId, props.workspaceRoot],
+  );
+  const renderMediaFallback = useCallback(
+    (markdown: string) => {
+      const picked = firstUnembeddedMedia(markdown);
+      const media = picked
+        ? resolveMarkdownMediaPreview(picked.path, {
+            environmentId: props.environmentId,
+            threadId: props.threadId,
+            workspaceRoot: props.workspaceRoot,
+          })
+        : null;
+      if (picked === null || media === null) return null;
+      if (media.kind === "video") {
+        return (
+          <View key={picked.path} style={{ marginTop: 8 }}>
+            <ThreadMarkdownVideo source={media.source} />
+          </View>
+        );
+      }
+      return (
+        <ThreadMediaFallbackImage
+          key={picked.path}
+          environmentId={props.environmentId}
+          resource={{ _tag: "media-file", threadId: props.threadId, path: picked.path }}
+          name={media.source.name ?? "Image"}
+          previewSource={media.source}
+          actionsSource={media.source.actionsSource}
           onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
         />
       );
@@ -3007,6 +3044,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onPressVideo,
             markdownLinkHandlers,
             renderMarkdownImage,
+            renderMediaFallback,
             renderViewedImage,
             renderReasoning,
             iconSubtleColor,
@@ -3071,6 +3109,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.skills,
       props.workspaceRoot,
       renderMarkdownImage,
+      renderMediaFallback,
       renderViewedImage,
       renderReasoning,
     ],

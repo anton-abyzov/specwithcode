@@ -31,7 +31,7 @@ describe("buildCodexDeveloperInstructions", () => {
       });
       NodeAssert.match(
         instructions,
-        /<runtime_info>.*Embed images and videos with Markdown.*<\/runtime_info>/,
+        /<runtime_info>.*Embed one representative image or video.*<\/runtime_info>/,
       );
     }
   });

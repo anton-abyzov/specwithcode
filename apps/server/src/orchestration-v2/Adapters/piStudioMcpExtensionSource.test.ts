@@ -5,6 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
+  STUDIO_MEDIA_INSTRUCTIONS,
 } from "../../provider/RuntimeInstructions.ts";
 import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
 import {
@@ -48,6 +49,8 @@ describe("Pi response style", () => {
     const concise = await systemPromptFor();
     assert.isTrue(concise.startsWith("PI_BASE\n\n"));
     assert.include(concise, STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS);
+    // Pi has no runtime_info block, so the one-image rule rides here.
+    assert.include(concise, STUDIO_MEDIA_INSTRUCTIONS);
     // Without a Studio MCP session there are no Studio tools to orchestrate with.
     assert.notInclude(concise, STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
     const detailed = await systemPromptFor({ [STUDIO_PI_RESPONSE_STYLE_ENV]: "detailed" });
