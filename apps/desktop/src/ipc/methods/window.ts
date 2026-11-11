@@ -268,6 +268,8 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     const selectedPath = yield* dialog.pickFolder({
       owner: yield* resolveOwnerWindow(event),
       defaultPath,
+      title: options?.title,
+      buttonLabel: options?.buttonLabel,
     });
     if (Option.isNone(selectedPath)) {
       return null;
