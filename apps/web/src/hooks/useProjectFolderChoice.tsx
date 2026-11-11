@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { FolderPlace } from "../components/studio/FolderBrowser";
 import { sameFolder, type KnownProject } from "../components/studio/folderBrowser.logic";
 import { NewProjectFolderPicker } from "../components/studio/NewProjectFolderPicker";
+import { withRecentFolder } from "../components/studio/pathField.logic";
 
 const REMEMBERED_KEY = "studio:new-project-parent:v1";
 
@@ -25,6 +26,54 @@ function writeRemembered(choices: Record<string, string>): void {
     localStorage.setItem(REMEMBERED_KEY, JSON.stringify(choices));
   } catch {
     // Storage can be full or disabled; the choice still holds for this session.
+  }
+}
+
+const RECENT_KEY = "studio:recent-folders:v1";
+
+function readAllRecent(): Record<string, string[]> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "{}");
+    if (parsed === null || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([machine, folders]) =>
+        Array.isArray(folders)
+          ? [[machine, folders.filter((folder): folder is string => typeof folder === "string")]]
+          : [],
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeAllRecent(recent: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+  } catch {
+    // Storage can be full or disabled; recent folders are a convenience.
+  }
+}
+
+/** Folders a person confirmed in an address bar on this machine, newest first. */
+export function readRecentFolders(environmentId: EnvironmentId | null): string[] {
+  return environmentId === null ? [] : (readAllRecent()[environmentId] ?? []);
+}
+
+/** Call when a folder is added or chosen for a project, not for every folder opened on the way. */
+export function rememberRecentFolder(environmentId: EnvironmentId, path: string): void {
+  // App storage and other hidden folders are not places to suggest.
+  if (/[\\/]\.[^\\/]+([\\/]|$)/.test(path)) return;
+  const all = readAllRecent();
+  writeAllRecent({ ...all, [environmentId]: withRecentFolder(all[environmentId] ?? [], path) });
+}
+
+/** A recent folder the machine no longer has. */
+export function forgetRecentFolder(environmentId: EnvironmentId, path: string): void {
+  const all = readAllRecent();
+  const kept = (all[environmentId] ?? []).filter((folder) => !sameFolder(folder, path));
+  if (kept.length !== (all[environmentId] ?? []).length) {
+    writeAllRecent({ ...all, [environmentId]: kept });
   }
 }
 
