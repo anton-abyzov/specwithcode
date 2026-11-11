@@ -265,7 +265,7 @@ function namedProjectReadme(name: string): string {
     "",
     `# ${name}`,
     "",
-    "Created in [SpecWithCode](https://studio.invalid).",
+    "Created in [SpecWithCode](https://specwithcode.com).",
     "",
   ].join("\n");
 }

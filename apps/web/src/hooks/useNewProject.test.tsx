@@ -109,3 +109,31 @@ it("keeps any other refusal in the server's words", async () => {
     expect.objectContaining({ description: "Another project already has this name." }),
   );
 });
+
+it("says nothing was pushed when publishing only added the remote", async () => {
+  const published = (status: string) => ({
+    _tag: "Success",
+    value: { status, repository: { nameWithOwner: "me/ec" } },
+  });
+  for (const [status, title] of [
+    ["remote_added", "GitHub repository created, nothing pushed yet"],
+    ["pushed", "Published to GitHub"],
+  ] as const) {
+    state.toast.mockReset();
+    state.fingerprint
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { projectId: "p1", workspaceRoot: "/home/me/ec" },
+      })
+      .mockResolvedValueOnce(published(status));
+    // Opening the new project is mocked away; only the publish outcome matters here.
+    await act(async () => {
+      await create({
+        environmentId: "m4" as never,
+        name: "ec",
+        github: { account: "me" },
+      }).catch(() => undefined);
+    });
+    expect(state.toast).toHaveBeenCalledWith(expect.objectContaining({ title }));
+  }
+});
