@@ -14,6 +14,12 @@
       "driver": "codex",
       "displayName": "Codex",
       "models": [{ "slug": "gpt-5.5", "name": "GPT-5.5" }]
+    },
+    {
+      "instanceId": "claude_max",
+      "driver": "claudeAgent",
+      "displayName": "Claude Max",
+      "models": [{ "slug": "claude-haiku-5-5", "name": "Claude Haiku 5.5" }]
     }
   ],
   "threads": [
@@ -97,6 +103,50 @@
       "label": "Claude Code · Sonnet 5.5"
     },
     {
+      "name": "a long-context model the catalog does not list",
+      "id": "thr_long_context",
+      "title": "Read the whole export",
+      "createdBy": "user",
+      "provider": "claudeAgent",
+      "model": "claude-opus-5-5[1m]",
+      "listed": true,
+      "group": "Idle",
+      "label": "Claude Code · Opus 5.5"
+    },
+    {
+      "name": "a dated model id",
+      "id": "thr_dated_model",
+      "title": "Compare two drafts",
+      "createdBy": "user",
+      "provider": "claudeAgent",
+      "model": "claude-sonnet-4-5-20250929",
+      "listed": true,
+      "group": "Idle",
+      "label": "Claude Code · Sonnet 4.5"
+    },
+    {
+      "name": "a second Claude Code instance someone named",
+      "id": "thr_named_instance",
+      "title": "Sort the photo folders",
+      "createdBy": "user",
+      "provider": "claude_max",
+      "model": "claude-opus-5-5",
+      "listed": true,
+      "group": "Idle",
+      "label": "Claude Code · Opus 5.5"
+    },
+    {
+      "name": "an uncatalogued Codex model with a name after its version",
+      "id": "thr_codex_named_model",
+      "title": "Draft the release notes",
+      "createdBy": "user",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "listed": true,
+      "group": "Idle",
+      "label": "Codex · GPT-6.1 Sol"
+    },
+    {
       "name": "a deleted thread",
       "id": "thr_removed",
       "title": "Try another layout",
@@ -114,6 +164,24 @@
     { "title": "# AGENTS.md instructions for /srv/app", "markup": true },
     { "title": "<command-name>/clear</command-name>", "markup": true },
     { "title": "<system-reminder>Check the open tasks</system-reminder>", "markup": true },
+    {
+      "title": "<relay from=\"coordinator\" thread=\"thr_inventory\">Report back</relay>",
+      "markup": true
+    },
+    { "title": "<task-notification>", "markup": true },
+    { "title": "<scheduled-task>Post the weekly digest</scheduled-task>", "markup": true },
+    { "title": "<local-command-stdout>ok</local-command-stdout>", "markup": true },
+    { "title": "<wake", "markup": true },
+    { "title": "<wake/>", "markup": true },
+    { "title": "<instructions>Refactor the parser</instructions>", "markup": false },
+    { "title": "<INSTRUCTIONS>", "markup": false },
+    { "title": "<T>", "markup": false },
+    { "title": "<Foo", "markup": false },
+    { "title": "<br>", "markup": false },
+    { "title": "<foo/", "markup": false },
+    { "title": "<wakeup> handler never fires", "markup": false },
+    { "title": "<Wake>", "markup": false },
+    { "title": "<wäke reason=\"mention\">", "markup": false },
     { "title": "<Button> does not render in Safari", "markup": false },
     { "title": "Fix <div> overflow in the header", "markup": false },
     { "title": "<3 this layout", "markup": false },

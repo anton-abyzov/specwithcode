@@ -35,30 +35,45 @@ public struct ThreadIdentity: Hashable, Sendable {
     let brand = id == "acpRegistry"
       ? Self.registryBrand(catalog?.iconUrl) ?? Self.localAcpBrand(selection.instanceId)
       : Self.providerBrand(id)
-    let names = ["claudeAgent": "Claude Code", "codex": "Codex", "githubCopilot": "GitHub Copilot", "copilot": "GitHub Copilot", "gemini": "Gemini CLI", "grok": "Grok", "opencode": "OpenCode", "pi": "Pi", "muse": "Muse"]
-    let named = catalog?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    let names = ["githubCopilot": "GitHub Copilot", "copilot": "GitHub Copilot", "gemini": "Gemini CLI"]
+    provider = Self.harnessNames[id]
+      ?? catalog?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
       ?? names[id] ?? selection.instanceId
-    provider = Self.harnessName(named, driver: id)
     let catalogued = catalog?.models.first { $0.slug == selection.model || ($0.aliases ?? []).contains(selection.model) }?.name
-    model = Self.withoutMaker(catalogued ?? Self.modelName(selection.model), harness: provider)
+    var named = catalogued ?? Self.modelName(selection.model)
+    // A short name drops "Claude"; through another harness the maker is the point.
+    if catalogued == nil, Self.maker(of: provider).caseInsensitiveCompare("Claude") != .orderedSame,
+       selection.model.range(of: #"^\s*claude[-_ ]"#, options: [.regularExpression, .caseInsensitive]) != nil,
+       !named.lowercased().hasPrefix("claude") {
+      named = "Claude " + named
+    }
+    model = Self.withoutMaker(named, harness: provider)
     providerBrand = brand
     modelBrand = Self.modelBrand(selection.model)
   }
 
-  /// "Claude" alone reads as the model's maker; the harness that runs the thread
-  /// is Claude Code, as the desktop names it. A name someone gave an instance stays.
-  static func harnessName(_ name: String, driver: String) -> String {
-    driver == "claudeAgent" && name.caseInsensitiveCompare("Claude") == .orderedSame ? "Claude Code" : name
+  /// The harness that runs a thread, by its driver, as the desktop names it:
+  /// "Claude" alone reads as the model's maker, and a second Claude Code
+  /// instance someone named "Claude Max" is still Claude Code in a row.
+  static let harnessNames = [
+    "claudeAgent": "Claude Code", "codex": "Codex", "cursor": "Cursor", "grok": "Grok", "muse": "Muse Code",
+    "pi": "Pi", "opencode": "OpenCode", "antigravity": "Antigravity",
+  ]
+
+  /// "Claude Code" is made by Claude, "Gemini CLI" by Gemini.
+  static func maker(of harness: String) -> String {
+    var maker = harness
+    for suffix in [" Code", " CLI"] where maker.hasSuffix(suffix) && maker.count > suffix.count {
+      maker.removeLast(suffix.count)
+    }
+    return maker
   }
 
   /// "Claude Code · Claude Opus 5.5" says Claude twice: the model drops the
   /// maker its harness already names. "Grok 5" stays whole, since a bare "5"
   /// is a version and not a model.
   static func withoutMaker(_ model: String, harness: String) -> String {
-    var maker = harness
-    for suffix in [" Code", " CLI"] where maker.hasSuffix(suffix) && maker.count > suffix.count {
-      maker.removeLast(suffix.count)
-    }
+    let maker = Self.maker(of: harness)
     guard !maker.isEmpty, model.count > maker.count + 1,
           model.prefix(maker.count).caseInsensitiveCompare(maker) == .orderedSame,
           model[model.index(model.startIndex, offsetBy: maker.count)] == " " else { return model }
@@ -109,21 +124,45 @@ public struct ThreadIdentity: Hashable, Sendable {
     return nil
   }
 
+  /// A model the machine's catalog does not list, as the desktop's `shortModelName`
+  /// reads it: `claude-opus-5-5[1m]` is "Opus 5.5", `claude-sonnet-4-5-20250929`
+  /// is "Sonnet 4.5", `gpt-6.1-sol` is "GPT-6.1 Sol". Only the Claude and GPT
+  /// families are read this way; a custom model keeps its exact identifier.
   static func modelName(_ slug: String) -> String {
-    // Known family/version ids only; a custom model keeps its exact identifier.
-    let lower = slug.lowercased()
-    for family in ["opus", "sonnet", "haiku", "fable"] {
-      let prefix = "claude-\(family)-"
-      if lower.hasPrefix(prefix) {
-        let version = String(slug.dropFirst(prefix.count))
-        if version.allSatisfy({ $0.isNumber || $0 == "-" || $0 == "." }) {
-          return family.capitalized + " " + version.replacingOccurrences(of: "-", with: ".")
-        }
-      }
+    let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return "Unknown model" }
+    if trimmed.lowercased() == "auto" { return "Auto" }
+    var cleaned = trimmed
+    // A context-window suffix, a host prefix and a date are noise in a list row.
+    for noise in [#"\[[^\]]*\]$"#, #"^[a-z0-9.-]+/"#, #"-(20\d{6}|latest|preview)$"#] {
+      if let range = cleaned.range(of: noise, options: [.regularExpression, .caseInsensitive]) { cleaned.removeSubrange(range) }
     }
-    if lower.hasPrefix("gpt-") { return "GPT-" + slug.dropFirst(4) }
-    if lower == "auto" { return "Auto" }
-    return slug.isEmpty ? "Unknown model" : slug
+    var parts: [String] = []
+    for part in cleaned.split(whereSeparator: { "-_ ".contains($0) }).map(String.init) {
+      // Adjacent bare numbers are one version: 5-5 reads 5.5.
+      if let last = parts.last, isDigits(part), isDigits(last) { parts[parts.count - 1] = last + "." + part } else { parts.append(part) }
+    }
+    guard let head = parts.first?.lowercased(), parts.count > 1 else { return slug }
+    let rest = Array(parts.dropFirst())
+    if head == "claude" {
+      guard let family = rest.first(where: { ["opus", "sonnet", "haiku", "fable"].contains($0.lowercased()) }) else {
+        return rest.map(titleWord).joined(separator: " ")
+      }
+      let version = rest.first { $0.range(of: #"^\d+(\.\d+)?$"#, options: .regularExpression) != nil }
+      return [titleWord(family), version].compactMap { $0 }.joined(separator: " ")
+    }
+    if head == "gpt", rest[0].first?.isNumber == true {
+      return (["GPT-" + rest[0]] + rest.dropFirst().map(titleWord)).joined(separator: " ")
+    }
+    return slug
+  }
+
+  private static func isDigits(_ text: String) -> Bool {
+    !text.isEmpty && text.allSatisfy { $0.isASCII && $0.isNumber }
+  }
+
+  private static func titleWord(_ word: String) -> String {
+    ["gpt", "xl", "ai", "oss"].contains(word.lowercased()) ? word.uppercased() : word.prefix(1).uppercased() + word.dropFirst()
   }
 }
 

@@ -18,10 +18,12 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as Importer from "./AgentSessionImporter.ts";
 import * as Scanner from "./AgentSessionScanner.ts";
+import * as ImportedThreadTitleRepair from "./ImportedThreadTitleRepair.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { projectFixture } from "./ProjectWorkspace.testkit.ts";
 
@@ -85,6 +87,7 @@ type Services =
   | ProjectionStore.ProjectionStoreV2
   | ProviderRuntime.ProviderSessionRuntimeRepository
   | EventSink.EventSinkV2
+  | ThreadManagement.ThreadManagementService
   | SqlClient.SqlClient
   | FileSystem.FileSystem
   | Path.Path;
@@ -118,6 +121,27 @@ const facades = Layer.unwrap(
       }),
       Layer.mock(Orchestrator.OrchestratorV2)({
         withProjectPermissionUpdate: (effect) => effect,
+        getThreadRecords: (id, fields, filter) =>
+          projections
+            .getThreadRecords(id, fields, filter)
+            .pipe(
+              Effect.mapError(
+                (cause) => new Orchestrator.OrchestratorProjectionError({ threadId: id, cause }),
+              ),
+            ),
+      }),
+      // The title repair reads threads through this service; it dispatches nothing here.
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getShellSnapshot: (options) =>
+          projections.getShellSnapshot(options).pipe(
+            Effect.mapError(
+              (cause) =>
+                new Orchestrator.OrchestratorProjectionError({
+                  threadId: ThreadId.make("thread:shell"),
+                  cause,
+                }),
+            ),
+          ),
         getThreadRecords: (id, fields, filter) =>
           projections
             .getThreadRecords(id, fields, filter)
@@ -380,6 +404,88 @@ it.effect(
         ]);
       }),
     ),
+);
+
+it.effect("renames a thread an earlier import titled with a setup line and keeps its age", () =>
+  withFixture((f) =>
+    Effect.gen(function* () {
+      const usedAt = DateTime.formatIso(DateTime.makeUnsafe(now - 60_000));
+      yield* write(
+        f.codexFile,
+        jsonl([
+          { type: "session_meta", timestamp: usedAt, payload: { id: codexId, cwd: f.workspace } },
+          {
+            type: "event_msg",
+            timestamp: usedAt,
+            payload: {
+              type: "user_message",
+              message: `<environment_context>\n<cwd>${f.workspace}</cwd>\n</environment_context>\n\nRepair the synthetic project`,
+            },
+          },
+          {
+            type: "response_item",
+            timestamp: usedAt,
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Synthetic repair complete" }],
+            },
+          },
+        ]),
+      );
+      const importer = yield* Importer.AgentSessionImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* importer.importRecentAgentThreads({ projectId });
+      const imported = yield* projections.getThreadProjection(importedId);
+      // What the earlier import stored: the message's first raw line, at the file's time.
+      const fileTime = DateTime.makeUnsafe(now - 1000);
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("test:earlier-import"),
+            type: "thread.metadata-updated",
+            threadId: importedId,
+            occurredAt: fileTime,
+            payload: {
+              ...imported.thread,
+              title: "<environment_context>",
+              updatedAt: fileTime,
+              settledAt: fileTime,
+            },
+          },
+        ],
+      });
+      expect((yield* projections.getThreadProjection(importedId)).thread.title).toBe(
+        "<environment_context>",
+      );
+
+      expect(yield* ImportedThreadTitleRepair.repairImportedThreadTitles()).toEqual({
+        renamed: 1,
+        archived: 0,
+        failed: 0,
+      });
+      const repaired = yield* projections.getThreadProjection(importedId);
+      expect(repaired.thread.title).toBe("Repair the synthetic project");
+      // The age is when the session was last used, not the repair's or the file's time.
+      expect(DateTime.formatIso(repaired.thread.updatedAt)).toBe(usedAt);
+      expect(DateTime.formatIso(repaired.updatedAt)).toBe(usedAt);
+      expect(repaired.thread.settledOverride).toBe("settled");
+      expect(repaired.messages).toEqual(imported.messages);
+      const listed = (yield* projections.getShellSnapshot({ location: "active" })).threads.find(
+        (thread) => thread.id === importedId,
+      );
+      expect(listed?.title).toBe("Repair the synthetic project");
+      expect(listed === undefined ? null : DateTime.formatIso(listed.updatedAt)).toBe(usedAt);
+
+      // A second start finds nothing left to repair.
+      expect(yield* ImportedThreadTitleRepair.repairImportedThreadTitles()).toEqual({
+        renamed: 0,
+        archived: 0,
+        failed: 0,
+      });
+    }),
+  ),
 );
 
 it.effect("rejects deleted or moved project intent before importing any real file", () =>

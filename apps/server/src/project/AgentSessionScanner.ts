@@ -1502,6 +1502,10 @@ export const make = Effect.gen(function* () {
           );
           // A copied home makes every file look recent; the session's own time decides.
           if (parsedThread === null || Date.parse(parsedThread.updatedAt) < cutoffMs) {
+            // Not a thread: its place goes to the next session, so bot wake-ups
+            // and old sessions cannot crowd real ones out of the import. The
+            // bytes and records it cost stay spent; they bound each scan.
+            transcriptsRemaining += 1;
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 

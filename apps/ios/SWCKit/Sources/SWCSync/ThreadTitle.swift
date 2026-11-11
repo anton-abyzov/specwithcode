@@ -13,23 +13,26 @@ public enum ThreadTitle {
   }
 
   /// Mirrors the server's `isHarnessMarkupTitle`; both run packages/shared/src/threadList.cases.json.
+  /// Only a block a harness writes counts. `<Button>` or `<T>` is a title a person typed.
   public static func isHarnessMarkup(_ title: String) -> Bool {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.range(of: #"^#+ AGENTS\.md instructions"#, options: .regularExpression) != nil { return true }
-    guard let tag = trimmed.range(of: #"^<[A-Za-z][\w:-]*(\s[^<>]*)?/?>?"#, options: .regularExpression) else { return false }
-    // The whole title is one tag, closed or cut off by the title's length.
-    if tag.upperBound == trimmed.endIndex { return true }
-    guard trimmed[tag].hasSuffix(">") else { return false }
-    let name = trimmed.dropFirst().prefix { $0.isLetter || $0.isNumber || "_:-".contains($0) }.lowercased()
-    return setupBlocks.contains(name) || name.hasPrefix("command-")
+    guard trimmed.first == "<" else { return false }
+    let rest = trimmed.dropFirst()
+    // ASCII only, as the server's `\w` reads a tag name.
+    guard let first = rest.first, first.isASCII, first.isLetter else { return false }
+    let name = rest.prefix { $0.isASCII && ($0.isLetter || $0.isNumber || "_:-".contains($0)) }
+    // The name ends the title (cut off by its length) or the tag goes on.
+    if let next = rest.dropFirst(name.count).first, !">/ \t".contains(next) { return false }
+    return harnessBlocks.contains(String(name)) || name.hasPrefix("command-")
   }
 
-  /// Blocks that only ever hold harness text, never the person's words.
-  private static let setupBlocks: Set<String> = [
-    "environment_context", "system-reminder", "system_reminder", "user_instructions", "instructions",
-    "permissions", "skills_instructions", "collaboration_mode", "turn_aborted", "subagent_notification",
-    "task-notification", "local-command-stdout", "local-command-stderr", "local-command-caveat",
-    "command-message", "command-stdout", "command-stderr", "bash-input", "bash-stdout", "bash-stderr",
-    "user-prompt-submit-hook", "session-start-hook", "ide_opened_file", "ide_selection", "image",
+  /// Blocks a harness writes and a person does not, in the case every harness writes them.
+  private static let harnessBlocks: Set<String> = [
+    "environment_context", "system-reminder", "system_reminder", "user_instructions", "skills_instructions",
+    "collaboration_mode", "turn_aborted", "subagent_notification", "task-notification", "scheduled-task",
+    "wake", "relay", "local-command-stdout", "local-command-stderr", "local-command-caveat",
+    "bash-input", "bash-stdout", "bash-stderr", "user-prompt-submit-hook", "session-start-hook",
+    "ide_opened_file", "ide_selection", "image",
   ]
 }

@@ -715,7 +715,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(ThreadManagementService.layer),
   ),
   // Renames threads an earlier build imported with a harness line as their title.
-  ImportedThreadTitleRepair.layerStart.pipe(Layer.provide(ThreadManagementService.layer)),
+  ImportedThreadTitleRepair.layerStart.pipe(
+    Layer.provide(ThreadManagementService.layer),
+    Layer.provide(RuntimeLayer.layerEventSink),
+  ),
   layerThreadSettlementWorker,
   layerThreadFinishActionWorker,
   // Handoff mode: leases, checkpoints after each turn and while a turn runs long.

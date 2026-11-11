@@ -1751,6 +1751,51 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("does not spend the import limit on sessions nobody typed in", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("studio-untyped-claude-");
+        const codexHomePath = yield* makeTempDir("studio-untyped-codex-");
+        const workspace = yield* makeTempDir("studio-untyped-workspace-");
+        const wakeUps = 101;
+        for (let index = 0; index < wakeUps; index += 1) {
+          const sessionId = `wake-session-${String(index).padStart(3, "0")}`;
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "selected", `${sessionId}.jsonl`),
+            contents: `${encodeTranscriptRecord({
+              type: "user",
+              cwd: workspace,
+              sessionId,
+              message: { content: '<wake reason="mention">Check the queue</wake>' },
+            })}\n`,
+            mtimeMs: nowMs - index * 1_000,
+          });
+        }
+        // Older than every wake-up, so it is read after the limit's worth of them.
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "selected", "typed-session.jsonl"),
+          contents: `${encodeTranscriptRecord({
+            type: "user",
+            cwd: workspace,
+            sessionId: "typed-session",
+            message: { content: "Plan this week of workouts" },
+          })}\n`,
+          mtimeMs: nowMs - wakeUps * 1_000,
+        });
+
+        const outcomes = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          return yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+
+        const tags = outcomes.map((outcome) => outcome._tag);
+        expect(tags.filter((tag) => tag === "Skipped")).toHaveLength(wakeUps);
+        expect(tags.at(-1)).toBe("Importable");
+      }),
+    );
+
     it.effect("skips excessive records without blocking an older valid transcript", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
