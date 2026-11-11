@@ -14,6 +14,12 @@
  * so a child's edits count for its parent unless the run that spawned it was
  * rolled back. Threads that changed only reports, specifications or other
  * documents are listed apart, as documentation, rather than as code.
+ *
+ * The service also tells the reader what each thread's own turns prove
+ * (`ThreadWorkEvidence`): the folders it changed files in and the increment
+ * specs it wrote, from the projection's `file_change` items. That is what
+ * lets a plan card follow an increment the agent planned in a folder outside
+ * the project, which the claim file in the user's home cannot vouch for.
  */
 import {
   ProjectWorkspaceError,
@@ -39,12 +45,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
+  evidencedRoots,
   isSpecweaveProject,
   linkedIncrementRoot,
   queryProjectIncrements,
   readThreadIncrementProgress,
   threadDeclaredSmallFix,
   type ThreadIncrementSource,
+  type ThreadWorkEvidence,
 } from "./ThreadIncrementProgress.ts";
 
 export class ThreadIncrementProgressService extends Context.Service<
@@ -176,6 +184,56 @@ export function fileChangeKind(
     : "code";
 }
 
+/**
+ * A thread's first evidence scan looks at its newest file changes only, so a
+ * long thread never costs a read of its whole history; later scans read what
+ * arrived since.
+ */
+const FIRST_EVIDENCE_SCAN = 1_000;
+/** Threads and folders whose evidence is remembered; the oldest is dropped first. */
+const EVIDENCE_KEPT = 5_000;
+/** Specs remembered per thread, newest first. */
+const SPECS_KEPT = 20;
+/** How long a thread's list of provider-native subagents is reused. */
+const SUBAGENTS_TTL_MS = 60_000;
+
+/** The paths one file_change row names: its `fileName` and every `[path, oldPath]` of its changes. */
+export function fileChangePaths(fileName: string | null, paths: string | null): string[] {
+  const named: string[] = fileName === null ? [] : [fileName];
+  try {
+    const pairs: unknown = paths === null ? [] : JSON.parse(paths);
+    if (Array.isArray(pairs)) {
+      for (const pair of pairs) {
+        if (!Array.isArray(pair)) continue;
+        for (const value of pair) if (typeof value === "string") named.push(value);
+      }
+    }
+  } catch {
+    // An unreadable change list names nothing more.
+  }
+  return named;
+}
+
+const slashed = (path: string) => path.replaceAll("\\", "/");
+
+/** Whether `path` names an increment's `spec.md` (`…/.specweave/increments/<id>/spec.md`). */
+export function isIncrementSpecPath(path: string): boolean {
+  return /(?:^|\/)\.specweave\/increments\/[^/]+\/spec\.md$/u.test(slashed(path));
+}
+
+/** Whether `path` lies inside one of `roots`. */
+export function isInsideAny(path: string, roots: ReadonlyArray<string>): boolean {
+  const normalized = slashed(path);
+  return roots.some((root) => normalized.startsWith(`${slashed(root).replace(/\/+$/u, "")}/`));
+}
+
+/** Sets `key` as the newest entry of a bounded memo. */
+function remember<V>(memo: Map<string, V>, key: string, value: V): void {
+  memo.delete(key);
+  memo.set(key, value);
+  if (memo.size > EVIDENCE_KEPT) memo.delete(memo.keys().next().value!);
+}
+
 const toTarget = (row: LinkRow | undefined): ThreadIncrementLinkTarget | undefined =>
   row === undefined
     ? undefined
@@ -187,6 +245,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
+  // The folder reader is plain promises; its evidence lookups run back in here.
+  const runEvidence = Effect.runPromiseWith(yield* Effect.context<never>());
 
   const projectOf = (projectId: ThreadIncrementProgressInput["projectId"]) =>
     projects
@@ -306,6 +366,163 @@ export const make = Effect.gen(function* () {
   // edits are stored under the child's own thread id and can outlive the
   // parent's run; until then a code change may still follow.
   const fileChanges = new Map<string, { readonly runKey: string; readonly kind: ChangeKind }>();
+
+  // ── What a thread's own turns prove (ThreadWorkEvidence) ──────────────────
+  // Ordinals are per thread and never change once given, so each thread is
+  // read up to a watermark and later reads take only what came after it. The
+  // watermark stops before the oldest item still in progress, whose path may
+  // not be final yet.
+
+  /** The ordinal up to which a thread's items are final, and where a first scan starts. */
+  const evidenceWindow = (threadId: string) =>
+    Effect.gen(function* () {
+      const [bounds] = yield* sql<{
+        readonly newest: number | null;
+        readonly active: number | null;
+        readonly floor: number | null;
+      }>`
+        SELECT
+          (
+            SELECT MAX(ordinal) FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadId}
+          ) AS newest,
+          (
+            SELECT MIN(ordinal) FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadId} AND status IN ('pending', 'running', 'waiting')
+          ) AS active,
+          (
+            SELECT MIN(ordinal) FROM (
+              SELECT ordinal FROM orchestration_v2_projection_turn_items
+              WHERE thread_id = ${threadId} AND type = 'file_change'
+              ORDER BY ordinal DESC LIMIT ${FIRST_EVIDENCE_SCAN}
+            )
+          ) AS floor
+      `;
+      const newest = bounds?.newest ?? -1;
+      const active = bounds?.active ?? null;
+      return {
+        settled: active === null ? newest : Math.min(newest, active - 1),
+        start: (bounds?.floor ?? 0) - 1,
+      };
+    });
+
+  /** A thread's file changes after `after`, oldest first; with `specs`, only rows naming `.specweave`. */
+  const fileChangesAfter = (threadId: string, after: number, specs: boolean) =>
+    sql<FileChangeRow>`
+      SELECT item.ordinal AS ordinal, item.turn_item_id AS "itemId",
+        json_extract(item.payload_json, '$.fileName') AS "fileName",
+        (
+          SELECT json_group_array(json_array(
+            json_extract(change.value, '$.path'),
+            json_extract(change.value, '$.oldPath')
+          ))
+          FROM json_each(item.payload_json, '$.changes') change
+        ) AS paths
+      FROM orchestration_v2_projection_turn_items item
+      WHERE item.thread_id = ${threadId} AND item.ordinal > ${after}
+        AND item.type = 'file_change'
+        AND (${specs ? 1 : 0} = 0 OR instr(item.payload_json, '.specweave') > 0)
+      ORDER BY item.ordinal, item.turn_item_id
+    `;
+
+  interface SpecTrail {
+    readonly through: number;
+    /** Newest first. */
+    readonly specs: ReadonlyArray<{ readonly ordinal: number; readonly path: string }>;
+  }
+  const specTrails = new Map<string, SpecTrail>();
+
+  /** The increment specs one thread wrote, newest first, with the ordinal of each write. */
+  const specsWrittenBy = (threadId: string) =>
+    Effect.gen(function* () {
+      const window = yield* evidenceWindow(threadId);
+      const trail = specTrails.get(threadId);
+      const rows = yield* fileChangesAfter(threadId, trail?.through ?? window.start, true);
+      const seen = rows.flatMap((row) =>
+        fileChangePaths(row.fileName, row.paths)
+          .filter(isIncrementSpecPath)
+          .map((path) => ({ ordinal: row.ordinal, path })),
+      );
+      const newestFirst = (entries: ReadonlyArray<{ ordinal: number; path: string }>) => {
+        const paths = new Set<string>();
+        return entries
+          .toSorted((left, right) => right.ordinal - left.ordinal)
+          .filter((entry) => !paths.has(entry.path) && paths.add(entry.path))
+          .slice(0, SPECS_KEPT);
+      };
+      const through = Math.max(trail?.through ?? window.start, window.settled);
+      remember(specTrails, threadId, {
+        through,
+        specs: newestFirst([
+          ...(trail?.specs ?? []),
+          ...seen.filter((entry) => entry.ordinal <= through),
+        ]),
+      });
+      return newestFirst([...(trail?.specs ?? []), ...seen]);
+    });
+
+  // A yes is kept: a change inside a folder cannot be taken back. A no keeps
+  // only how far the thread was read.
+  const workTrails = new Map<string, { readonly through: number; readonly inside: boolean }>();
+
+  /** Whether one thread changed a file inside one of `roots`. */
+  const changedInside = (threadId: string, roots: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const key = [threadId, ...roots.toSorted()].join("\u0000");
+      const trail = workTrails.get(key);
+      if (trail?.inside === true) return true;
+      const window = yield* evidenceWindow(threadId);
+      const rows = yield* fileChangesAfter(threadId, trail?.through ?? window.start, false);
+      const inside = rows.some((row) =>
+        fileChangePaths(row.fileName, row.paths).some((path) => isInsideAny(path, roots)),
+      );
+      remember(workTrails, key, {
+        through: Math.max(trail?.through ?? window.start, window.settled),
+        inside,
+      });
+      return inside;
+    });
+
+  // A provider-native subagent's edits are stored under its own thread id and
+  // belong to the thread that spawned it.
+  const subagents = new Map<string, { readonly at: number; readonly ids: ReadonlyArray<string> }>();
+  const ownThreads = (threadId: string) =>
+    Effect.gen(function* () {
+      const now = (yield* Clock.clockWith(Effect.succeed)).currentTimeMillisUnsafe();
+      const known = subagents.get(threadId);
+      if (known !== undefined && now - known.at < SUBAGENTS_TTL_MS) return [threadId, ...known.ids];
+      const ids = (yield* sql<{ readonly threadId: string }>`
+        SELECT thread_id AS "threadId" FROM orchestration_v2_projection_threads
+        WHERE json_extract(payload_json, '$.lineage.parentThreadId') = ${threadId}
+          AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+          AND json_extract(payload_json, '$.creationSource') = 'provider'
+      `).map((row) => row.threadId);
+      remember(subagents, threadId, { at: now, ids });
+      return [threadId, ...ids];
+    });
+
+  /** The evidence of one thread and its provider-native subagents; a failed lookup proves nothing. */
+  const evidenceOf = (threadId: string): ThreadWorkEvidence => ({
+    workedIn: (roots) =>
+      runEvidence(
+        Effect.gen(function* () {
+          for (const own of yield* ownThreads(threadId)) {
+            if (yield* changedInside(own, roots)) return true;
+          }
+          return false;
+        }).pipe(Effect.orElseSucceed(() => false)),
+      ),
+    writtenSpecs: () =>
+      runEvidence(
+        Effect.gen(function* () {
+          const own = yield* ownThreads(threadId);
+          // One thread: its ordinals order its writes. With subagents the
+          // parent's own writes come first, then each child's.
+          const written = yield* Effect.forEach(own, specsWrittenBy);
+          return [...new Set(written.flat().map((entry) => entry.path))];
+        }).pipe(Effect.orElseSucceed(() => [] as string[])),
+      ),
+  });
 
   /** One thread's own non-rolled-back file changes, newest first, until the first code change. */
   const changeKindOf = (threadId: string, roots: ReadonlyArray<string>) =>
@@ -497,6 +714,7 @@ export const make = Effect.gen(function* () {
           branch: thread.branch,
           worktreePath: thread.worktreePath,
           ...(link === undefined ? {} : { link: { incrementId: link.incrementId } }),
+          evidence: evidenceOf(threadId),
         });
       }
       const threadsRead =
@@ -526,18 +744,45 @@ export const make = Effect.gen(function* () {
       };
     }).pipe(asWorkspaceError(input.projectId));
 
+  /** The folders outside the checkout rules that this thread itself plans in (evidencedRoots). */
+  const workedRootsOf = (
+    workspaceRoot: string,
+    thread: {
+      readonly id: string;
+      readonly title: string | null;
+      readonly branch: string | null;
+      readonly worktreePath: string | null;
+    },
+  ) =>
+    Effect.promise(() =>
+      evidencedRoots(workspaceRoot, {
+        threadId: thread.id,
+        title: thread.title,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        evidence: evidenceOf(thread.id),
+      }).catch(() => [] as string[]),
+    );
+
   const listIncrements = (input: ProjectIncrementsListInput) =>
     Effect.gen(function* () {
       const project = yield* projectOf(input.projectId);
       const thread =
         input.threadId === undefined ? null : yield* threadOf(input.projectId, input.threadId);
+      // With a thread, also the increments of the folders it planned in itself.
+      const worked = thread === null ? [] : yield* workedRootsOf(project.workspaceRoot, thread);
       const page = yield* Effect.promise(() =>
-        queryProjectIncrements(project.workspaceRoot, thread?.worktreePath ?? null, {
-          ...(input.query === undefined ? {} : { query: input.query }),
-          ...(input.status === undefined ? {} : { status: input.status }),
-          ...(input.offset === undefined ? {} : { offset: input.offset }),
-          ...(input.limit === undefined ? {} : { limit: input.limit }),
-        }),
+        queryProjectIncrements(
+          project.workspaceRoot,
+          thread?.worktreePath ?? null,
+          {
+            ...(input.query === undefined ? {} : { query: input.query }),
+            ...(input.status === undefined ? {} : { status: input.status }),
+            ...(input.offset === undefined ? {} : { offset: input.offset }),
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          },
+          worked,
+        ),
       );
       const link =
         input.threadId === undefined
@@ -560,9 +805,11 @@ export const make = Effect.gen(function* () {
       }
       const incrementId = input.link.type === "increment" ? input.link.incrementId : null;
       if (incrementId !== null) {
-        // The thread's checkout, or another checkout Git registered for its repository.
+        // The thread's checkout, a folder it planned in itself, or another
+        // checkout Git registered for its repository.
+        const worked = yield* workedRootsOf(project.workspaceRoot, thread);
         const known = yield* Effect.promise(() =>
-          linkedIncrementRoot(project.workspaceRoot, thread.worktreePath, incrementId),
+          linkedIncrementRoot(project.workspaceRoot, thread.worktreePath, incrementId, worked),
         );
         if (known === null) {
           return yield* new ProjectWorkspaceError({

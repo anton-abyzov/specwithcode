@@ -11,7 +11,10 @@ const syntheticProgress: Plugin = {
   name: "thread-row-meta-progress",
   enforce: "pre",
   resolveId(source, importer) {
-    if (importer?.endsWith("ThreadsPane.tsx") && /useThreadIncrementProgress$/.test(source))
+    if (
+      (importer?.endsWith("ThreadsPane.tsx") || importer?.endsWith("SidebarPlanProgress.tsx")) &&
+      /useThreadIncrementProgress$/.test(source)
+    )
       return progress;
     if (importer?.endsWith("ModelBadge.tsx") && /state\/entities$/.test(source)) return configs;
     return null;
