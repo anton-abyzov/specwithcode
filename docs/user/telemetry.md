@@ -51,8 +51,10 @@ Each report is a small JSON object with these fields:
 - `detail`, a few short values such as an exit code, and `count`, how many identical reports were
   folded into this one.
 
-Reports never include prompts, responses, file contents, tokens, account ids, conversation,
-thread or project ids, or raw paths. A report is capped at 16 KiB.
+Reports never include prompts, responses, file contents, account ids, conversation, thread or
+project ids, or raw paths. Removing names and secrets from error text works by rules, so it is
+best effort: an unusual error message can still carry a name or value the rules do not
+recognise. Turn reports off if that is not acceptable for your work. A report is capped at 16 KiB.
 
 Reports go to the SpecWithCode relay on Cloudflare at `relay.spec-weave.com`. The relay checks
 each report again and writes it as one log line in Cloudflare Workers Logs. Reports are kept only

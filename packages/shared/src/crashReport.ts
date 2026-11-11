@@ -207,12 +207,13 @@ export function stripHomePaths(text: string, homeDir?: string | null): string {
   return result;
 }
 
+// Authorization values: `Bearer <token>`, `Basic <base64>`.
+const AUTH_SCHEME_PATTERN = /\b(Bearer|Basic|token)[ \t]{1,8}[A-Za-z0-9._~+/=-]{8,4000}/giu;
+
 const SECRET_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   // URL credentials, query strings and fragments.
   [/\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/@'"]{1,500}@/giu, "$1<redacted>@"],
   [/(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s?#'"]{1,2000})[?#][^\s'"]*/giu, "$1?<redacted>"],
-  // Authorization values.
-  [/\b(Bearer|Basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/giu, "$1 <redacted>"],
   // Well-known token shapes.
   [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}/gu, "<redacted-key>"],
   [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/gu, "<redacted-key>"],
@@ -247,7 +248,11 @@ const SECRET_KEY_WORD =
   /token|secret|password|passwd|api[_-]?key|apikey|credential|authorization|cookie|session/iu;
 // A key is one whole run of name characters, found from its first character
 // only, so a long run costs one bounded attempt and not one per position.
-const FIELD_KEY_PATTERN = /(?<![A-Za-z0-9_-])["']?([A-Za-z0-9_-]{1,80})["']?\s{0,8}[:=]\s{0,8}/gu;
+const FIELD_KEY_PATTERN = /(?<![A-Za-z0-9_-])["']?([A-Za-z0-9_-]{1,2000})["']?\s{0,8}[:=]\s{0,8}/gu;
+// A header value runs to the end of its line: `Bearer <token>`, `sid=a; csrf=b`.
+const HEADER_KEY_WORD = /authorization|cookie/iu;
+const LINE_REST_PATTERN = /[^\n"']{0,4000}/uy;
+const SCHEME_REST_PATTERN = /[ \t]{1,8}[^\s,;}&"']{1,4000}/uy;
 const FIELD_VALUE_PATTERN = /"[^"\n]{0,4000}"|'[^'\n]{0,4000}'|[^\s,;}&]{1,4000}/uy;
 
 /** Redacts the value of `key=value` and JSON fields whose key names a secret. */
@@ -266,9 +271,19 @@ function redactSecretFields(text: string): string {
     }
     const valueStart = FIELD_KEY_PATTERN.lastIndex;
     FIELD_VALUE_PATTERN.lastIndex = valueStart;
-    if (FIELD_VALUE_PATTERN.exec(text) === null) continue;
+    const value = FIELD_VALUE_PATTERN.exec(text);
+    if (value === null) continue;
+    let end = FIELD_VALUE_PATTERN.lastIndex;
+    if (HEADER_KEY_WORD.test(key) && !/^["']/u.test(value[0])) {
+      LINE_REST_PATTERN.lastIndex = valueStart;
+      if (LINE_REST_PATTERN.exec(text) !== null) end = Math.max(end, LINE_REST_PATTERN.lastIndex);
+    } else if (/^(?:bearer|basic|token)$/iu.test(value[0])) {
+      // `token: Bearer abc`: the scheme word is not the secret, the next word is.
+      SCHEME_REST_PATTERN.lastIndex = end;
+      if (SCHEME_REST_PATTERN.exec(text) !== null) end = SCHEME_REST_PATTERN.lastIndex;
+    }
     result += `${text.slice(copied, valueStart)}<redacted>`;
-    copied = FIELD_VALUE_PATTERN.lastIndex;
+    copied = end;
     FIELD_KEY_PATTERN.lastIndex = copied;
   }
   return result + text.slice(copied);
@@ -320,6 +335,8 @@ export function redactDiagnosticText(
     result = result.replace(new RegExp(escapeRegExp(term), "giu"), "<redacted>");
   }
   result = result.replace(LOCAL_HOST_PATTERN, "<host>");
+  // Before the field rule, which would take the scheme word and leave the token.
+  result = result.replace(AUTH_SCHEME_PATTERN, "$1 <redacted>");
   result = redactSecretFields(result);
   for (const [pattern, replacement] of SECRET_RULES) {
     result = result.replace(pattern, replacement);
@@ -335,6 +352,8 @@ const ABSOLUTE_PATH_PATTERN = new RegExp(
   "gu",
 );
 
+const URL_PATTERN = /\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s'"\x60<>)]{1,2000}/giu;
+
 const FILE_EXTENSIONS =
   "jsonl?|md|txt|pdf|docx?|xlsx?|pptx?|csv|ya?ml|toml|env|pem|key|sqlite|db|log|zip|png|jpe?g|gif|mp4|mov|gguf|tsx?|jsx?|mjs|cjs|py|rb|go|rs|sh|html|css|swift|kt|java|cpp|ini|conf|plist|lock";
 
@@ -342,8 +361,20 @@ const FILE_EXTENSIONS =
 const MESSAGE_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   // A failed command line can carry anything: arguments, commit text, a prompt.
   [/\b(Command failed(?: with exit code \d+)?:)[^\n]*/giu, "$1 <command>"],
-  // URLs keep their scheme; the host can be a company's own server.
-  [/\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s'"\x60<>)]{1,2000}/giu, "$1<host>"],
+  // scp-style remotes: `git@host:org/repo.git` (the address is already `<email>`).
+  [/(<email>|<redacted>@[A-Za-z0-9.-]{1,255}):[^\s'"\x60]{1,500}/gu, "<email>:<path>"],
+  // A host named after a label: `Could not resolve host: x`, `Host: x`, `DNS:x`.
+  [
+    /\b(host|hostname|server|DNS|altnames?)\s{0,4}[:=]\s{0,4}(?!<)[A-Za-z0-9.-]{1,255}/giu,
+    "$1: <host>",
+  ],
+  // Domain names: any name of three or more labels under a common ending, and
+  // two-label names under the endings that are never a property name.
+  [
+    /(?<![A-Za-z0-9._@/-])(?:[a-z0-9-]{1,63}\.){2,8}(?:com|net|org|io|dev|ai|co|app|cloud|edu|gov|us|uk|de|fr|ru|corp|tech|xyz|info|biz)(?![A-Za-z0-9_-])/giu,
+    "<host>",
+  ],
+  [/(?<![A-Za-z0-9._@/-])[a-z0-9-]{1,63}\.(?:com|net|org|edu|gov)(?![A-Za-z0-9_.-])/giu, "<host>"],
   // The host a network error names.
   [
     /\b(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EHOSTDOWN)\s+[^\s,;)]{1,300}/gu,
@@ -361,7 +392,8 @@ const MESSAGE_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   ],
   [
     new RegExp(
-      String.raw`(?<![A-Za-z0-9_./\\<@-])[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,100}\.(?:${FILE_EXTENSIONS})(?![A-Za-z0-9_])`,
+      // Not a member access: `console.log is not a function`, `res.json(`, `process.env.X`.
+      String.raw`(?<![A-Za-z0-9_./\\<@-])[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,100}\.(?:${FILE_EXTENSIONS})(?![A-Za-z0-9_]|\.[A-Za-z_$]|\s{0,2}\(|\s{1,2}is\s{1,2}(?:not|undefined|null)\b)`,
       "gu",
     ),
     "<file>",
@@ -385,10 +417,11 @@ export function sanitizeErrorMessage(
 ): string {
   // Cut before the rules run, so their cost never depends on what an error holds.
   const input = message.slice(0, CRASH_REPORT_MAX_MESSAGE_CHARS * 4);
-  let redacted = redactDiagnosticText(input, homeDir, terms).replace(
-    ABSOLUTE_PATH_PATTERN,
-    "<path>",
-  );
+  // URLs first, keeping only the scheme: the host can be a company's own
+  // server, and the path rule would otherwise cut a URL in half.
+  let redacted = redactDiagnosticText(input, homeDir, terms)
+    .replace(URL_PATTERN, "$1<host>")
+    .replace(ABSOLUTE_PATH_PATTERN, "<path>");
   for (const [pattern, replacement] of MESSAGE_RULES) {
     redacted = redacted.replace(pattern, replacement);
   }
@@ -412,10 +445,11 @@ export function sanitizeCodeLocation(location: string): string {
     const index = path.lastIndexOf(marker);
     if (index >= 0) return path.slice(index + (marker.startsWith("app.asar") ? marker.length : 0));
   }
-  const repo = /\/((?:apps|packages|infra)\/[^/]+\/(?:src|dist|dist-electron|build)\/.+)$/u.exec(
-    path,
-  );
+  const repo =
+    /(?:^|\/)((?:apps|packages|infra)\/[^/]+\/(?:src|dist|dist-electron|build)\/.+)$/u.exec(path);
   if (repo) return repo[1]!;
+  // Already trimmed by a sender (the relay sanitizes again): keep it as it is.
+  if (/^(?:src|dist|dist-electron|build)\/[A-Za-z0-9_./-]+$/u.test(path)) return path;
   return path.split("/").pop() || "<path>";
 }
 
@@ -539,7 +573,12 @@ export function buildCrashReport(input: CrashReportInput): CrashReport {
   const provider = short(input.provider);
   const model = safeModelId(input.model, homeDir);
   const errorName = short(parts.name);
-  const osVersion = short(input.osVersion, 40);
+  // A kernel release such as `5.15.133.1-microsoft-standard-WSL2` looks like an
+  // IP address to the redaction rules, so this one is checked by shape alone.
+  const osVersion =
+    typeof input.osVersion === "string" && /^[A-Za-z0-9._+-]{1,40}$/u.test(input.osVersion.trim())
+      ? input.osVersion.trim()
+      : undefined;
   // Provider errors for a failed turn can quote the prompt or the reply (a
   // content-policy or validation error), so a turn failure carries only its
   // category, code and provider, never its message.

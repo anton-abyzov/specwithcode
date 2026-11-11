@@ -210,12 +210,67 @@ describe("second review hardening", () => {
     );
   });
 
+  it("redacts authorization headers, cookies and long secret keys whole", () => {
+    for (const text of [
+      "Authorization: Bearer abcdefgh12345",
+      "Authorization: Basic dXNlcjpwYXNz",
+      "authorization=Bearer abc.def.ghi-12345",
+      '{"authorization":"Bearer abcdefgh12345"}',
+      "token: Bearer abcdefgh12345",
+      "Cookie: sid=abcdefgh12345; csrf=xyz98765",
+      `${"x".repeat(85)}_token=abcdefgh12345`,
+    ]) {
+      const clean = sanitizeErrorMessage(text);
+      expect(clean).not.toMatch(/abcdefgh12345|dXNlcjpwYXNz|ghi-12345|xyz98765/u);
+    }
+  });
+
+  it("sanitizes a report the same way twice, so the relay keeps code locations", () => {
+    const report = buildCrashReport({
+      ...base,
+      error: {
+        name: "Error",
+        message: "open /Users/anton/a/b.txt failed",
+        stack:
+          "Error: boom\n    at run (/Users/anton/dev/app/apps/server/src/server.ts:10:5)\n    at main (/Applications/SpecWithCode.app/Contents/Resources/app.asar/dist-electron/main.js:9:9)\n    at dep (/opt/x/node_modules/effect/dist/esm/Effect.js:3:4)",
+      },
+      homeDir: "/Users/anton",
+    });
+    expect(report.stack).toContain("at run (apps/server/src/server.ts:10:5)");
+    expect(report.stack).toContain("at main (dist-electron/main.js:9:9)");
+    expect(parseCrashReport(JSON.parse(encodeCrashReport(report)))).toEqual(report);
+  });
+
+  it("keeps member names in JS errors and masks hosts named without an error code", () => {
+    expect(sanitizeErrorMessage("console.log is not a function")).toContain("console.log");
+    expect(sanitizeErrorMessage("res.json is not a function")).toContain("res.json");
+    expect(sanitizeErrorMessage("process.env.FOO is undefined")).toContain("process.env.FOO");
+    for (const text of [
+      "fatal: unable to access 'x': Could not resolve host: git.acme-corp.com",
+      "connect ECONNREFUSED 10.0.0.5:5432 for db.acme-corp.io",
+      "Hostname/IP does not match certificate's altnames: Host: api.acme-corp.com. is not in the cert's altnames: DNS:foo.acme-corp.com",
+      "git@github.com:acme-corp/private-repo.git: Permission denied",
+      "request to http://api.acme-corp.com/v1 failed",
+    ]) {
+      expect(sanitizeErrorMessage(text)).not.toMatch(/acme|private-repo/u);
+    }
+    expect(sanitizeErrorMessage("request to http://api.acme-corp.com/v1 failed")).toBe(
+      "request to http://<host> failed",
+    );
+  });
+
+  it("keeps a WSL kernel release as the OS version", () => {
+    expect(
+      buildCrashReport({ ...base, osVersion: "5.15.133.1-microsoft-standard-WSL2" }).osVersion,
+    ).toBe("5.15.133.1-microsoft-standard-WSL2");
+  });
+
   it("drops short tokens that hold a path, an address or an id", () => {
     const report = buildCrashReport({
       ...base,
       category: "/Users/anton/secret",
       provider: "anton@host",
-      osVersion: "antons-mbp",
+      osVersion: "/Users/anton",
       hostname: "antons-mbp",
       error: { name: "Err/Maria@x.com", message: "x" },
     });

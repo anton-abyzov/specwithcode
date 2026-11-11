@@ -103,7 +103,9 @@ const sections = [
               error name, message, and stack trace. Before a report leaves your machine, file and
               folder paths, file names, server names, command lines, quoted text, your user name,
               the computer's name, email addresses, IP addresses, IDs, keys, and tokens are removed
-              from it. A failed agent turn sends no error message or stack trace. Reports never include your prompts, agent responses, file
+              from it. This removal works by rules and is best effort: an unusual error message can
+              still carry a name or value the rules do not recognise. A failed agent turn sends
+              no error message or stack trace. Reports never include your prompts, agent responses, file
               contents, authentication tokens, conversation, thread, or project IDs, or full file
               paths. See “Crash and Error Reports” under Your Choices below to turn them off.
             </li>
