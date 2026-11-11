@@ -222,6 +222,44 @@ describe("usage-limit recovery after the account changes", () => {
       }),
     );
 
+    it.effect("the arm does not outlive the change: a new account that fills up waits", () =>
+      Effect.gen(function* () {
+        let spent = false;
+        const snapshot = (at: number) =>
+          claudeRead(at, { changedAt: HOUR, ...(spent ? { usedPercent: 100 } : {}) });
+        const h = yield* unarmedAfterSwitch({ provider: snapshot });
+        yield* h.sweep;
+        assert.lengthOf(h.state.commands, 1);
+        // Armed for the change, but the new subscription is spent before the resume.
+        spent = true;
+        h.state.snapshot = snapshot(HOUR);
+        yield* h.sweep;
+        assert.deepEqual(resumes(h.state.commands), []);
+        // The old reset passes. Auto-continue is off, so nothing resumes by itself.
+        yield* TestClock.adjust("5 hours");
+        h.state.snapshot = snapshot(6 * HOUR);
+        yield* h.sweep;
+        yield* h.sweep;
+        assert.deepEqual(resumes(h.state.commands), []);
+      }),
+    );
+
+    it.effect("a resume held past the old reset still leaves while the change is proven", () =>
+      Effect.gen(function* () {
+        const h = yield* unarmedAfterSwitch();
+        yield* h.sweep;
+        h.state.handoffBlocked = true;
+        yield* h.sweep;
+        assert.deepEqual(resumes(h.state.commands), []);
+        yield* TestClock.adjust("4 hours");
+        yield* TestClock.adjust("30 minutes");
+        h.state.handoffBlocked = false;
+        h.state.snapshot = claudeRead(5 * HOUR + 30 * 60_000, { changedAt: HOUR });
+        yield* h.sweep;
+        assert.lengthOf(resumes(h.state.commands), 1);
+      }),
+    );
+
     it.effect("the reset passing still resumes nothing", () =>
       Effect.gen(function* () {
         const h = claudeSweepHarness({
@@ -282,14 +320,16 @@ describe("usage-limit recovery after the account changes", () => {
       }),
     );
 
-    it.effect("a paused project keeps its threads stopped", () =>
-      Effect.gen(function* () {
-        const h = yield* unarmedAfterSwitch();
-        h.state.projectPaused = true;
-        yield* h.sweep;
-        yield* h.sweep;
-        assert.deepEqual(h.state.commands, []);
-      }),
+    it.effect.each(["projectPaused", "projectArchived"] as const)(
+      "a project with %s keeps its threads stopped",
+      (held) =>
+        Effect.gen(function* () {
+          const h = yield* unarmedAfterSwitch();
+          h.state[held] = true;
+          yield* h.sweep;
+          yield* h.sweep;
+          assert.deepEqual(h.state.commands, []);
+        }),
     );
 
     it.effect("a person's snooze holds the thread", () =>

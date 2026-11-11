@@ -73,6 +73,8 @@ export const claudeSweepHarness = (input: {
   runInstance?: ProviderInstanceId;
   /** Earlier runs in the thread's records, such as the run a detour continued. */
   runs?: ReadonlyArray<Partial<OrchestrationV2ThreadProjection["runs"][number]>>;
+  /** Dispatches that fail without a receipt, as a busy thread's does; a retry may pass. */
+  fails?: (command: OrchestrationV2ServerCommand) => boolean;
   /** Commands the orchestrator rejects; a rejected id is rejected again on replay. */
   refuses?: (command: OrchestrationV2ServerCommand) => boolean;
   /**
@@ -102,6 +104,8 @@ export const claudeSweepHarness = (input: {
     handoffBlocked: false,
     /** The project is paused. */
     projectPaused: false,
+    /** The project is archived. */
+    projectArchived: false,
     /** Shell snapshot reads. */
     snapshotReads: 0,
     /** A busy Codex process on the instance still holds the previous subscription. */
@@ -144,6 +148,7 @@ export const claudeSweepHarness = (input: {
               ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
               autoResume: state.projectAutoResume,
               paused: state.projectPaused,
+              archived: state.projectArchived,
             },
           } as ProjectStore.ProjectRow),
         ),
@@ -202,6 +207,14 @@ export const claudeSweepHarness = (input: {
                   commandId: command.commandId,
                   commandType: command.type,
                   detail: "refused",
+                }),
+              );
+            if (input.fails?.(command))
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "busy",
                 }),
               );
             if (input.refuses?.(command)) {

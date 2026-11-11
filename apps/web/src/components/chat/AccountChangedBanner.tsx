@@ -43,7 +43,9 @@ const SUBSCRIPTION_CHANGE_DRIVERS = new Set(["claudeAgent", "codex"]);
  * by itself (`autoApproveSubscriptionChange`, on by default). Auto-continue
  * at the reset need not be on: the server arms the stop for the change
  * itself (`accountChangeArmCommand`), unless the person chose for this stop,
- * by turning its resume off or stopping the thread. It keeps the other gates
+ * by turning its resume off or stopping the thread, and only while the old
+ * limit still holds the thread: before its reset, or for a stop with no
+ * reset, within five hours of it. It keeps the other gates
  * of the reset-time resume: not settled, not snoozed, no approval or question
  * waiting on the person (the server refuses the resume while one blocks), and
  * a project that is neither paused nor archived. Anything else asks the
@@ -63,6 +65,10 @@ export function accountChangeAutoContinues(input: {
       }
     | null
     | undefined;
+  /** The reset the stop reported, if it reported one. */
+  readonly resetAt: string | null | undefined;
+  /** When the run stopped on its limit. */
+  readonly stoppedAtMs: number;
   readonly settledOverride: string | null | undefined;
   readonly snoozedUntil: string | null | undefined;
   /** The shell shows an approval or question waiting on the person. */
@@ -75,12 +81,27 @@ export function accountChangeAutoContinues(input: {
     SUBSCRIPTION_CHANGE_DRIVERS.has(input.driver) &&
     input.autoApprove &&
     !personChoseForStop(input.limitRecovery, input.runId) &&
+    ((input.limitRecovery?.runId === input.runId && input.limitRecovery.autoResume) ||
+      limitStillHolds(input.resetAt, input.stoppedAtMs, input.nowMs)) &&
     input.settledOverride !== "settled" &&
     !(input.snoozedUntil != null && Date.parse(input.snoozedUntil) > input.nowMs) &&
     !input.pendingRequest &&
     input.project?.paused !== true &&
     input.project?.archived !== true
   );
+}
+
+/** The longest the server keeps arming a stop that reported no reset (LIMIT_REARM_MAX_DELAY_MS). */
+const UNARMED_STOP_WINDOW_MS = 5 * 60 * 60_000;
+
+/** The server arms a stop for a subscription change only while its old limit still holds it. */
+function limitStillHolds(
+  resetAt: string | null | undefined,
+  stoppedAtMs: number,
+  nowMs: number,
+): boolean {
+  const resetMs = Date.parse(resetAt ?? "");
+  return Number.isFinite(resetMs) ? resetMs > nowMs : nowMs - stoppedAtMs < UNARMED_STOP_WINDOW_MS;
 }
 
 /** A person turned this stop's resume off, or stopped the thread: only they continue it. */

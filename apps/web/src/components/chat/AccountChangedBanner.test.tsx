@@ -131,6 +131,8 @@ it("promises a continue only when the server would send one", () => {
     autoApprove: true,
     runId: "run-1" as RunId,
     limitRecovery: { runId: "run-1" as RunId, autoResume: true },
+    resetAt: iso(5 * HOUR),
+    stoppedAtMs: 0,
     settledOverride: null,
     snoozedUntil: null,
     pendingRequest: false,
@@ -171,6 +173,14 @@ it("promises a continue only when the server would send one", () => {
     },
   ])
     expect(accountChangeAutoContinues({ ...armed, ...unarmed })).toBe(true);
+  // The server arms a stop only while its old limit still holds it; an armed
+  // stop resumes at the reset anyway.
+  const notArmed = { ...armed, limitRecovery: null };
+  expect(accountChangeAutoContinues({ ...notArmed, resetAt: iso(HOUR - 1) })).toBe(false);
+  expect(accountChangeAutoContinues({ ...armed, resetAt: iso(HOUR - 1) })).toBe(true);
+  // A stop that reported no reset: within five hours of it.
+  expect(accountChangeAutoContinues({ ...notArmed, resetAt: null })).toBe(true);
+  expect(accountChangeAutoContinues({ ...notArmed, resetAt: null, nowMs: 6 * HOUR })).toBe(false);
   // A snooze that already ran out holds nothing.
   expect(accountChangeAutoContinues({ ...armed, snoozedUntil: iso(HOUR - 1) })).toBe(true);
 });

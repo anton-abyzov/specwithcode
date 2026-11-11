@@ -86,14 +86,21 @@ const PLAIN_CONTINUE = /^continue where you left off\.?$/i;
 export function limitResumeText(input: {
   readonly text: string;
   readonly undelivered: string | null;
+  /** Attachments of the undelivered message; the repeat carries its text only. */
+  readonly undeliveredAttachments?: number;
 }): string {
   const undelivered = input.undelivered?.trim() ?? "";
   // A resume that was itself refused already carries both parts.
   if (undelivered.includes(LIMIT_LIFTED_SENTENCE)) return undelivered;
+  const attachments = input.undeliveredAttachments ?? 0;
   const lead =
     undelivered === "" || PLAIN_CONTINUE.test(undelivered)
       ? input.text
-      : `A usage limit stopped the last message before the provider saw it. Here it is again:\n\n${undelivered}`;
+      : `A usage limit stopped the last message before the provider saw it. Here it is again:\n\n${undelivered}${
+          attachments === 0
+            ? ""
+            : `\n\n(That message had ${attachments === 1 ? "an attachment" : `${attachments} attachments`} this repeat does not carry. Ask for ${attachments === 1 ? "it" : "them"} again if the work needs ${attachments === 1 ? "it" : "them"}.)`
+        }`;
   return `${lead}\n\n${LIMIT_LIFTED_SENTENCE}`;
 }
 
@@ -123,31 +130,47 @@ export function limitLiftedResumeText(
     (recovery?.runId === runId ? accountChangeArmOf(recovery.requestId) : null);
   if (changedMs === null) return null;
   const run = projection.runs.find((candidate) => candidate.id === runId);
-  const undelivered =
+  const kept =
     run !== undefined && run.startedAt === null
-      ? (projection.messages.find((message) => message.id === run.userMessageId)?.text ?? null)
-      : null;
-  return limitResumeText({ text: command.text, undelivered });
+      ? projection.messages.find((message) => message.id === run.userMessageId)
+      : undefined;
+  return limitResumeText({
+    text: command.text,
+    undelivered: kept?.text ?? null,
+    undeliveredAttachments: kept?.attachments?.length ?? 0,
+  });
 }
 
 /**
- * Whether a report's blocker is a usage limit: a closed set of wordings, so a
- * question about anything else is never taken for one.
+ * Whether a report's blocker is a provider usage limit: a closed set of
+ * wordings, so a question about anything else, or a limit of another kind (a
+ * file size, an API's rate limit, a storage quota), is not taken for one.
  */
 export function blockerNamesUsageLimit(blocker: string): boolean {
   return USAGE_LIMIT_WORDING.test(blocker);
 }
 
+/** Providers, model families and the word a plan's limit is named by. */
+const LIMIT_OWNER = String.raw`(?:claude|codex|fable|opus|sonnet|haiku|gpt|copilot|gemini|cursor|grok|muse|devin|opencode|subscription)`;
+
+/** Any character that does not end a sentence; the dot of a version ("5.2") does not. */
+const IN_SENTENCE = String.raw`(?:[^.?!\n]|\.(?=\d))`;
+
 const USAGE_LIMIT_WORDING = new RegExp(
   [
-    // "usage limit", "weekly Fable 5.2 limit", "5-hour limit"
-    String.raw`\b(?:usage|weekly|daily|monthly|hourly|session|5[- ]hour)\s+(?:\S+\s+){0,2}limits?\b`,
-    // "limit is used up", "limits were reached"
-    String.raw`\blimits?\s+(?:is|are|was|were|has been|have been)\s+(?:used up|reached|hit|exhausted|spent)\b`,
-    String.raw`\b(?:hit|reached|exhausted)\s+(?:the|its|their|our|my|a)\s+(?:\S+\s+){0,3}limits?\b`,
-    String.raw`\bquota\b`,
-    String.raw`\bout of (?:usage|credits)\b`,
-    String.raw`\busage credits\b`,
+    // "usage limit", "out of usage", "usage credits", "extra usage", "usage quota"
+    String.raw`\busage\s+(?:limits?|caps?|credits|quota)\b`,
+    String.raw`\bout of (?:extra )?usage\b`,
+    String.raw`\b(?:plan|subscription)(?:'s)?\s+quota\b`,
+    // "weekly Fable 5.2 limit", "5-hour limit": windows only a plan has
+    String.raw`\b(?:weekly|5[- ]hour|five[- ]hour)\s+(?:\S+\s+){0,2}limits?\b`,
+    // "Claude's limit", "the limit on Codex", within one sentence
+    String.raw`\b${LIMIT_OWNER}\b${IN_SENTENCE}{0,40}\blimits?\b`,
+    String.raw`\blimits?\b${IN_SENTENCE}{0,40}\b${LIMIT_OWNER}\b`,
+    // "hit your limit", "reached its session limit": a limit that is someone's
+    String.raw`\b(?:hit|reached|exhausted)\s+(?:your|its|their|our|my)\s+(?:\S+\s+){0,2}limits?\b`,
+    // "the session limit is used up": spent, where another kind of limit is "reached"
+    String.raw`\blimits?\s+(?:is|are|was|were|has been|have been)\s+(?:used up|exhausted|spent)\b`,
   ].join("|"),
   "i",
 );
@@ -219,7 +242,9 @@ export function limitBlockedContinuation(
     commandId: CommandId.make(id),
     messageId: MessageId.make(id),
     threadId: shell.id,
-    text: `Your last report named a usage limit as its blocker. ${providerName} on this machine is now signed in to a different subscription that has room. If the work was waiting on that limit, continue it now and do not wait for the old reset. If it waits on something else, say what.`,
+    // The change may be on another provider than the one the report meant, so
+    // the agent is told which one changed and left to judge.
+    text: `Your last report named a usage limit as its blocker. ${providerName} on this machine is now signed in to a different subscription that has room. If the limit you reported was ${providerName}'s, continue the work now and do not wait for the old reset. If it was another provider's limit, or the work waits on something else, say so.`,
     attachments: [],
     dispatchMode: { type: "start_immediately" },
     createdBy: "user",

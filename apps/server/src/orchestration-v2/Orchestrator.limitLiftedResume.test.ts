@@ -17,7 +17,12 @@ import * as TestClock from "effect/testing/TestClock";
 import { fixtureProjectDatabase } from "../project/ProjectWorkspace.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
-import { LIMIT_LIFTED_SENTENCE, accountChangeArmCommand } from "./limitLifted.ts";
+import {
+  LIMIT_LIFTED_SENTENCE,
+  accountChangeArmCommand,
+  isLimitBlockedThread,
+  limitBlockedContinuation,
+} from "./limitLifted.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -256,6 +261,99 @@ it.layer(layerTest)("the resume after a subscription change", (it) => {
       yield* TestClock.adjust("1 hour");
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       assert.isNull(accountChangeArmCommand(yield* thread.shell, thread.stopMs + 60_000, nowMs));
+    }),
+  );
+
+  it.effect("the message for a limit-blocked thread ends its Blocked state and starts a turn", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("limit-lifted:blocked");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("limit-lifted:create:blocked"),
+        threadId,
+        projectId,
+        title: "Coordinator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("limit-lifted:start:blocked"),
+        threadId,
+        messageId: MessageId.make("limit-lifted:start:blocked"),
+        text: "Build the level.",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      yield* TestClock.adjust("10 minutes");
+      const reportedAt = yield* DateTime.now;
+      // The turn ends with a report whose blocker is the worker's usage limit.
+      yield* events.write({
+        commandId: CommandId.make("limit-lifted:report:blocked"),
+        events: [
+          {
+            id: EventId.make("limit-lifted:report-run:blocked"),
+            type: "run.updated",
+            threadId,
+            occurredAt: reportedAt,
+            payload: {
+              ...run,
+              status: "completed",
+              startedAt: reportedAt,
+              completedAt: reportedAt,
+            },
+          },
+          {
+            id: EventId.make("limit-lifted:report-message:blocked"),
+            type: "message.updated",
+            threadId,
+            occurredAt: reportedAt,
+            payload: {
+              createdBy: "agent",
+              creationSource: "provider",
+              id: MessageId.make("limit-lifted:report:blocked"),
+              threadId,
+              runId: run.id,
+              nodeId: null,
+              role: "assistant",
+              text: "The worker stopped.\n\n**Blocker:** the weekly Fable 5.2 limit is used up and resets on November 13, 2026 at 02:00 UTC. Wait, or move to another model?",
+              attachments: [],
+              streaming: false,
+              createdAt: reportedAt,
+              updatedAt: reportedAt,
+            },
+          },
+        ],
+      });
+      const shell = Effect.map(orchestrator.getShellSnapshot(), (snapshot) =>
+        snapshot.threads.find((thread) => thread.id === threadId)!,
+      );
+      const blocked = yield* shell;
+      assert.include(blocked.reportedBlocker, "weekly Fable 5.2 limit");
+      yield* TestClock.adjust("20 minutes");
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const changedMs = nowMs - 60_000;
+      // The real shell of an idle thread with such a report is what the sweep looks for.
+      assert.isTrue(isLimitBlockedThread(blocked, changedMs, nowMs));
+      const message = limitBlockedContinuation(blocked, "Claude", changedMs);
+      yield* orchestrator.dispatch(message);
+      const after = yield* shell;
+      // A server-written message with the user role is newer than the report.
+      assert.isNull(after.reportedBlocker ?? null);
+      const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.lengthOf(runs, 2);
+      assert.equal(runs[1]?.userMessageId, message.messageId);
+      assert.isFalse(isLimitBlockedThread(after, changedMs, nowMs));
     }),
   );
 });

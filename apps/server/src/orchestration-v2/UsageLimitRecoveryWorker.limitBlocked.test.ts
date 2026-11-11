@@ -102,25 +102,128 @@ describe("a thread blocked on a usage-limit report, after the account changes", 
       assert.equal(message.creationSource, "server");
       assert.deepEqual(message.dispatchMode, { type: "start_immediately" });
       assert.include(message.text, "Claude on this machine is now signed in to a different");
-      // Later sweeps send nothing and do not read every thread again.
+      // The next sweep finds nothing left to send; after that the threads are
+      // not read again for this change.
       yield* TestClock.adjust("5 seconds");
       yield* running;
       yield* TestClock.adjust("1 minute");
       yield* running;
+      yield* TestClock.adjust("1 minute");
+      yield* running;
       assert.lengthOf(sent(h.state.commands), 1);
-      assert.equal(h.state.snapshotReads, 1);
+      assert.equal(h.state.snapshotReads, 2);
     }),
   );
 
-  it.effect("a sweep built after a restart sends the same message id", () =>
+  it.effect("a sweep built after a restart sends the same id, which is taken once", () =>
     Effect.gen(function* () {
       const h = yield* afterSwitch([coordinator]);
+      // Nothing survives in memory between these two; the id is all that keeps
+      // the message to one, through the orchestrator's command receipts.
       yield* h.sweep;
       yield* h.sweep;
+      assert.deepEqual(h.state.attempts, [
+        `limit-lifted:coordinator:run-9:${HOUR}`,
+        `limit-lifted:coordinator:run-9:${HOUR}`,
+      ]);
+    }),
+  );
+
+  it.effect("a message that failed to send is tried again, the others are not sent twice", () =>
+    Effect.gen(function* () {
+      let busy = true;
+      const second = { ...coordinator, id: ThreadId.make("second") };
+      const h = yield* afterSwitch([coordinator, second], {
+        harness: {
+          fails: (command) =>
+            busy && command.type === "message.dispatch" && command.threadId === "coordinator",
+        },
+      });
+      const running = yield* h.running;
+      yield* running;
       assert.deepEqual(
-        [...new Set(sent(h.state.commands).map((command) => command.commandId))],
-        [`limit-lifted:coordinator:run-9:${HOUR}`],
+        sent(h.state.commands).map((command) => command.threadId),
+        [ThreadId.make("second")],
       );
+      busy = false;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.includeMembers(
+        sent(h.state.commands).map((command) => command.commandId),
+        [`limit-lifted:coordinator:run-9:${HOUR}`, `limit-lifted:second:run-9:${HOUR}`],
+      );
+      // One more pass finds nothing left; then the threads are not read again.
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      const reads = h.state.snapshotReads;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.equal(h.state.snapshotReads, reads);
+      assert.lengthOf(sent(h.state.commands), 2);
+    }),
+  );
+
+  it.effect("sends one message per sweep, and stops when the new account fills up", () =>
+    Effect.gen(function* () {
+      const thread = (id: string) => ({ ...coordinator, id: ThreadId.make(id) });
+      const h = yield* afterSwitch([thread("first"), thread("second"), thread("third")]);
+      const running = yield* h.running;
+      yield* running;
+      assert.deepEqual(
+        sent(h.state.commands).map((command) => command.threadId),
+        [ThreadId.make("first")],
+      );
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.deepEqual(
+        sent(h.state.commands).map((command) => command.threadId),
+        [ThreadId.make("first"), ThreadId.make("second")],
+      );
+      // The new subscription is spent too: the third thread keeps waiting.
+      yield* TestClock.adjust("5 seconds");
+      h.state.snapshot = claudeRead(HOUR + 10_000, { changedAt: HOUR, usedPercent: 100 });
+      yield* running;
+      assert.lengthOf(sent(h.state.commands), 2);
+      // Room again: it gets its message.
+      yield* TestClock.adjust("5 seconds");
+      h.state.snapshot = claudeRead(HOUR + 15_000, { changedAt: HOUR });
+      yield* running;
+      assert.deepEqual(
+        sent(h.state.commands).map((command) => command.threadId),
+        [ThreadId.make("first"), ThreadId.make("second"), ThreadId.make("third")],
+      );
+    }),
+  );
+
+  it.effect("waits while a process of the instance still runs on the old subscription", () =>
+    Effect.gen(function* () {
+      const h = yield* afterSwitch([coordinator]);
+      h.state.replacementPending = true;
+      const running = yield* h.running;
+      yield* running;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      // A turn started now would run on the previous subscription and hit its limit.
+      assert.deepEqual(sent(h.state.commands), []);
+      assert.equal(h.state.snapshotReads, 0);
+      h.state.replacementPending = false;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.lengthOf(sent(h.state.commands), 1);
+    }),
+  );
+
+  it.effect("a message that keeps failing is given up after three sweeps", () =>
+    Effect.gen(function* () {
+      const h = yield* afterSwitch([coordinator], { harness: { fails: () => true } });
+      const running = yield* h.running;
+      for (let sweep = 0; sweep < 6; sweep += 1) {
+        yield* running;
+        yield* TestClock.adjust("5 seconds");
+      }
+      assert.lengthOf(h.state.attempts, 3);
+      assert.equal(h.state.snapshotReads, 3);
+      assert.deepEqual(sent(h.state.commands), []);
     }),
   );
 
@@ -208,6 +311,15 @@ describe("a thread blocked on a usage-limit report, after the account changes", 
     Effect.gen(function* () {
       const h = yield* afterSwitch([coordinator]);
       h.state.projectPaused = true;
+      yield* h.sweep;
+      assert.deepEqual(sent(h.state.commands), []);
+    }),
+  );
+
+  it.effect("an archived project sends nothing", () =>
+    Effect.gen(function* () {
+      const h = yield* afterSwitch([coordinator]);
+      h.state.projectArchived = true;
       yield* h.sweep;
       assert.deepEqual(sent(h.state.commands), []);
     }),

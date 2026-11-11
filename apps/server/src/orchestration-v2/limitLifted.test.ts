@@ -119,6 +119,18 @@ describe("limitResumeText", () => {
     expect(resumed).not.toContain(text);
   });
 
+  it("says when the repeat leaves attachments behind", () => {
+    const one = limitResumeText({
+      text,
+      undelivered: "See the screenshot.",
+      undeliveredAttachments: 1,
+    });
+    expect(one).toContain("had an attachment this repeat does not carry");
+    const two = limitResumeText({ text, undelivered: "See both.", undeliveredAttachments: 2 });
+    expect(two).toContain("had 2 attachments this repeat does not carry");
+    expect(limitResumeText({ text, undelivered: "No files." })).not.toContain("attachment");
+  });
+
   it("does not repeat an earlier plain resume", () => {
     expect(limitResumeText({ text, undelivered: text })).toBe(
       `${text}\n\n${LIMIT_LIFTED_SENTENCE}`,
@@ -222,6 +234,10 @@ describe("blockerNamesUsageLimit", () => {
     "We reached the weekly limit, wait or switch?",
     "The plan's quota is spent.",
     "The session limit is used up.",
+    "Waiting for the Fable 5.2 limit to reset.",
+    "You've hit your limit · resets 3pm",
+    "Out of extra usage, wait or switch?",
+    "The limit on Codex resets Friday; wait for it?",
   ])("takes %s for a usage limit", (blocker) => {
     expect(blockerNamesUsageLimit(blocker)).toBe(true);
   });
@@ -232,6 +248,14 @@ describe("blockerNamesUsageLimit", () => {
     "The PR needs your approval before I merge.",
     "Limit the change to the server, or include the web app?",
     "I need the App Store password.",
+    // Limits of another kind.
+    "Hit the 1500 line file limit in Orchestrator.ts",
+    "The GitHub API rate limit was reached; waiting for it to reset",
+    "GitHub Actions quota exhausted, CI will not run",
+    "Cloudflare R2 quota exceeded",
+    "Reached the session limit of 5 concurrent connections",
+    "Needs your decision on the daily limit for transfers",
+    "The upload limit was reached",
   ])("leaves %s alone", (blocker) => {
     expect(blockerNamesUsageLimit(blocker)).toBe(false);
   });
@@ -297,5 +321,8 @@ describe("isLimitBlockedThread", () => {
     expect(message.creationSource).toBe("server");
     expect(message.dispatchMode).toEqual({ type: "start_immediately" });
     expect(message.text).toContain("Claude on this machine is now signed in");
+    // The thread may run on, or have reported, another provider.
+    expect(message.text).toContain("If the limit you reported was Claude's, continue");
+    expect(message.text).toContain("If it was another provider's limit");
   });
 });
