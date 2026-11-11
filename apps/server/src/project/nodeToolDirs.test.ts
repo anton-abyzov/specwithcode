@@ -75,12 +75,18 @@ describe("nodeToolDirs", () => {
       const home = yield* Effect.promise(tempHome);
       const versions = NodePath.join(home, ".nvm", "versions", "node");
       const alias = NodePath.join(home, ".nvm", "alias");
+      // nvm's `lts/*` alias is a file named `*`, which Windows cannot hold (and nvm
+      // does not run there), so a Windows host starts the chain one hop later.
+      const starAlias = process.platform !== "win32";
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(NodePath.join(versions, "v22.20.0", "bin"), { recursive: true });
         await NodeFSP.mkdir(NodePath.join(versions, "v25.1.0", "bin"), { recursive: true });
         await NodeFSP.mkdir(NodePath.join(alias, "lts"), { recursive: true });
-        await NodeFSP.writeFile(NodePath.join(alias, "default"), "lts/*\n");
-        await NodeFSP.writeFile(NodePath.join(alias, "lts", "*"), "lts/jod\n");
+        await NodeFSP.writeFile(
+          NodePath.join(alias, "default"),
+          starAlias ? "lts/*\n" : "lts/jod\n",
+        );
+        if (starAlias) await NodeFSP.writeFile(NodePath.join(alias, "lts", "*"), "lts/jod\n");
         await NodeFSP.writeFile(NodePath.join(alias, "lts", "jod"), "v22.20.0\n");
       });
 
