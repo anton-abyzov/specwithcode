@@ -219,6 +219,8 @@ it.effect(
           historyOrigin: "v1_import",
           title: "Repair the synthetic project",
         });
+        // The session's own time, not the file's later one or the moment of the import.
+        expect(DateTime.formatIso(projection.thread.updatedAt)).toBe(at);
         expect(projection.messages.map((message) => [message.role, message.text])).toEqual([
           ["user", "Repair the synthetic project"],
           ["assistant", "Synthetic repair complete"],
@@ -305,6 +307,77 @@ it.effect(
           size: Buffer.byteLength(changed),
           filePath: f.codexFile,
         });
+      }),
+    ),
+);
+
+it.effect(
+  "names a session for its first typed line and leaves out one where nobody typed anything",
+  () =>
+    withFixture((f) =>
+      Effect.gen(function* () {
+        const typed = (message: string) => ({
+          type: "event_msg",
+          timestamp: at,
+          payload: { type: "user_message", message },
+        });
+        yield* write(
+          f.codexFile,
+          jsonl([
+            { type: "session_meta", timestamp: at, payload: { id: codexId, cwd: f.workspace } },
+            { type: "turn_context", timestamp: at, payload: { model: "gpt-6.1-sol" } },
+            typed(`<environment_context>\n<cwd>${f.workspace}</cwd>\n</environment_context>`),
+            typed(
+              "# AGENTS.md instructions for the project\n\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>",
+            ),
+            typed("Repair the synthetic project"),
+            {
+              type: "response_item",
+              timestamp: at,
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Synthetic repair complete" }],
+              },
+            },
+          ]),
+        );
+        // A session a harness woke: no person typed in it.
+        yield* write(
+          f.claudeFile,
+          jsonl([
+            {
+              type: "user",
+              timestamp: at,
+              cwd: f.workspace,
+              sessionId: claudeId,
+              message: { role: "user", content: '<wake reason="mention" thread="thr_1">' },
+            },
+            {
+              type: "assistant",
+              timestamp: at,
+              message: {
+                role: "assistant",
+                model: "claude-haiku-5-5",
+                content: [{ type: "text", text: "Nothing to do" }],
+              },
+            },
+          ]),
+        );
+        const importer = yield* Importer.AgentSessionImporter;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        expect(
+          yield* importer.importRecentAgentThreads({
+            projectId,
+            expectedWorkspaceRoot: f.workspace,
+          }),
+        ).toEqual({ importedCount: 1, skippedCount: 1 });
+        const projection = yield* projections.getThreadProjection(importedId);
+        expect(projection.thread.title).toBe("Repair the synthetic project");
+        expect(projection.messages.map((message) => [message.role, message.text])).toEqual([
+          ["user", "Repair the synthetic project"],
+          ["assistant", "Synthetic repair complete"],
+        ]);
       }),
     ),
 );

@@ -39,19 +39,41 @@ struct FleetRowTests {
     #expect(!ThreadGroups([row("x", placement: lost)]).isEmpty)
   }
 
-  @Test func rowMetaShowsWhereItLivesAndRuns() {
+  @Test func rowNoteShowsWhereItLivesAndRuns() {
     let moved = row("moved", placement: ThreadPlacement(owner: "M4", runsOn: "Minis"))
-    #expect(ProjectOverviewView.meta(moved, now: now) == "M4 → Minis · Last message")
+    // A thread that runs away from home names both machines, whatever the project spans.
+    #expect(ProjectOverviewView.note(moved, showsMachine: false, now: now) == "M4 → Minis · Last message")
+    #expect(ProjectOverviewView.age(moved, now: now) == "1m")
     #expect(ProjectOverviewView.spoken(moved, now: now) == "Idle, M4, running on Minis online")
 
     let lost = row("lost", activity: .working, placement: ThreadPlacement(owner: "M4", runsOn: "Minis", unknown: .init(machine: "Minis", lastSeenAt: now.addingTimeInterval(-60))))
-    let meta = plain(ProjectOverviewView.meta(lost, now: now))
-    #expect(meta.hasPrefix("M4 → Minis · Unknown · last seen "))
-    #expect(!meta.contains("Last message"))
+    let note = plain(ProjectOverviewView.note(lost, showsMachine: false, now: now) ?? "")
+    #expect(note.hasPrefix("M4 → Minis · Unknown · last seen "))
+    #expect(!note.contains("Last message"))
+    #expect(ProjectOverviewView.age(lost, now: now) == nil)
     #expect(ProjectOverviewView.spokenLabel(lost) == "lost")
     let spoken = plain(ProjectOverviewView.spoken(lost, now: now))
     #expect(spoken.hasPrefix("M4, running on Minis, Unknown, last seen "))
     #expect(!spoken.contains("Working"))
+  }
+
+  @Test func rowNamesTheMachineOnlyWhenItTellsThreadsApart() {
+    let home = row("home", placement: ThreadPlacement(owner: "MacBook Air"), preview: nil, minutesAgo: 28)
+    // A quiet thread on the project's only machine is two lines: its title, and who runs it.
+    #expect(ProjectOverviewView.note(home, showsMachine: false, now: now) == nil)
+    #expect(ProjectOverviewView.note(home, showsMachine: true, now: now) == "MacBook Air")
+    #expect(ProjectOverviewView.age(home, now: now) == "28m")
+
+    var busy = row("busy", activity: .working, placement: ThreadPlacement(owner: "M4"), minutesAgo: 9)
+    busy.workStartedAt = now.addingTimeInterval(-120)
+    #expect(ProjectOverviewView.note(busy, showsMachine: false, now: now) == nil)
+    #expect(ProjectOverviewView.age(busy, now: now) == "2m")
+    busy.planProgress = .init(completed: 3, total: 5)
+    #expect(ProjectOverviewView.note(busy, showsMachine: false, now: now) == "3/5 tasks")
+    #expect(ProjectOverviewView.note(busy, showsMachine: true, now: now) == "M4 · 3/5 tasks")
+
+    let failed = row("failed", activity: .failed, placement: ThreadPlacement(owner: "M4"), preview: "Out of credit")
+    #expect(ProjectOverviewView.note(failed, showsMachine: false, now: now) == "Failed · Out of credit")
   }
 
   @Test func switcherSaysWhichMachineAnswers() {

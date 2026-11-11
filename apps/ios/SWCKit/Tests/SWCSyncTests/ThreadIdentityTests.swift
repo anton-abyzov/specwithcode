@@ -18,6 +18,24 @@ import SWCWire
     #expect(custom.providerBrand == nil)
     #expect(custom.modelBrand == nil)
   }
+  @Test func namesTheHarnessAndDropsTheRepeatedMaker() {
+    // What a fresh desktop publishes: the provider as "Claude", the model as "Claude Opus 5.5".
+    let claude = ServerProviderSummary(instanceId: "claudeAgent", driver: "claudeAgent", displayName: "Claude", models: [.init(slug: "claude-opus-5-5", name: "Claude Opus 5.5")])
+    #expect(ThreadIdentity(selection: .init(instanceId: "claudeAgent", model: "claude-opus-5-5"), providers: [claude]).label == "Claude Code · Opus 5.5")
+    // A name someone gave an instance stays as typed, and the model keeps its maker.
+    var work = claude
+    work.displayName = "Claude (work)"
+    #expect(ThreadIdentity(selection: .init(instanceId: "claudeAgent", model: "claude-opus-5-5"), providers: [work]).label == "Claude (work) · Claude Opus 5.5")
+    // Through another harness the maker is the point.
+    let copilot = ServerProviderSummary(instanceId: "copilot", driver: "githubCopilot", displayName: "GitHub Copilot", models: [.init(slug: "claude-opus-5-5", name: "Claude Opus 5.5")])
+    #expect(ThreadIdentity(selection: .init(instanceId: "copilot", model: "claude-opus-5-5"), providers: [copilot]).label == "GitHub Copilot · Claude Opus 5.5")
+    let codex = ServerProviderSummary(instanceId: "codex", driver: "codex", displayName: "Codex", models: [.init(slug: "gpt-6.1-sol", name: "GPT-6.1-Sol")])
+    #expect(ThreadIdentity(selection: .init(instanceId: "codex", model: "gpt-6.1-sol"), providers: [codex]).label == "Codex · GPT-6.1-Sol")
+    // A bare version is not a model name.
+    #expect(ThreadIdentity.withoutMaker("Grok 5", harness: "Grok") == "Grok 5")
+    #expect(ThreadIdentity.withoutMaker("Grok Build", harness: "Grok") == "Build")
+    #expect(ThreadIdentity.withoutMaker("Claudette 2", harness: "Claude Code") == "Claudette 2")
+  }
   @Test func registryMarksRequireOfficialIdentity() {
     let official = ServerProviderSummary(instanceId: "custom-instance", driver: "acpRegistry", displayName: "My Copilot", iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg")
     let identity = ThreadIdentity(selection: .init(instanceId: "custom-instance", model: "claude-opus-5-5"), providers: [official])

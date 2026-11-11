@@ -238,6 +238,7 @@ import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchChe
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
 import * as AideBriefingSetup from "./project/AideBriefingSetup.ts";
 import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
+import * as ImportedThreadTitleRepair from "./project/ImportedThreadTitleRepair.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
@@ -713,6 +714,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(ProjectStore.layer),
     Layer.provide(ThreadManagementService.layer),
   ),
+  // Renames threads an earlier build imported with a harness line as their title.
+  ImportedThreadTitleRepair.layerStart.pipe(Layer.provide(ThreadManagementService.layer)),
   layerThreadSettlementWorker,
   layerThreadFinishActionWorker,
   // Handoff mode: leases, checkpoints after each turn and while a turn runs long.

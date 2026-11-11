@@ -36,12 +36,34 @@ public struct ThreadIdentity: Hashable, Sendable {
       ? Self.registryBrand(catalog?.iconUrl) ?? Self.localAcpBrand(selection.instanceId)
       : Self.providerBrand(id)
     let names = ["claudeAgent": "Claude Code", "codex": "Codex", "githubCopilot": "GitHub Copilot", "copilot": "GitHub Copilot", "gemini": "Gemini CLI", "grok": "Grok", "opencode": "OpenCode", "pi": "Pi", "muse": "Muse"]
-    provider = catalog?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    let named = catalog?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
       ?? names[id] ?? selection.instanceId
-    model = catalog?.models.first { $0.slug == selection.model || ($0.aliases ?? []).contains(selection.model) }?.name
-      ?? Self.modelName(selection.model)
+    provider = Self.harnessName(named, driver: id)
+    let catalogued = catalog?.models.first { $0.slug == selection.model || ($0.aliases ?? []).contains(selection.model) }?.name
+    model = Self.withoutMaker(catalogued ?? Self.modelName(selection.model), harness: provider)
     providerBrand = brand
     modelBrand = Self.modelBrand(selection.model)
+  }
+
+  /// "Claude" alone reads as the model's maker; the harness that runs the thread
+  /// is Claude Code, as the desktop names it. A name someone gave an instance stays.
+  static func harnessName(_ name: String, driver: String) -> String {
+    driver == "claudeAgent" && name.caseInsensitiveCompare("Claude") == .orderedSame ? "Claude Code" : name
+  }
+
+  /// "Claude Code · Claude Opus 5.5" says Claude twice: the model drops the
+  /// maker its harness already names. "Grok 5" stays whole, since a bare "5"
+  /// is a version and not a model.
+  static func withoutMaker(_ model: String, harness: String) -> String {
+    var maker = harness
+    for suffix in [" Code", " CLI"] where maker.hasSuffix(suffix) && maker.count > suffix.count {
+      maker.removeLast(suffix.count)
+    }
+    guard !maker.isEmpty, model.count > maker.count + 1,
+          model.prefix(maker.count).caseInsensitiveCompare(maker) == .orderedSame,
+          model[model.index(model.startIndex, offsetBy: maker.count)] == " " else { return model }
+    let rest = model.dropFirst(maker.count + 1).trimmingCharacters(in: .whitespaces)
+    return rest.contains(where: \.isLetter) ? rest : model
   }
 
   static func registryBrand(_ icon: String?) -> String? {

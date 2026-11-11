@@ -3182,7 +3182,7 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread).toBeNull();
   });
 
-  it("preserves context markup in response-only Codex messages", () => {
+  it("titles a response-only Codex session by its typed prompt and drops the setup message", () => {
     const context = "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
@@ -3215,14 +3215,13 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Initialize Git and add a README.");
     expect(thread?.messages.map((message) => message.text)).toEqual([
-      context,
       "Initialize Git and add a README.",
     ]);
   });
 
-  it("preserves a canonical Codex event that starts with context markup", () => {
+  it("titles a canonical Codex event that starts with context markup by what follows it", () => {
     const prompt =
       "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>\n\nCreate a useful project.";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -3242,7 +3241,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Create a useful project.");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
@@ -3287,6 +3286,124 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.messages.map((message) => message.text)).toEqual([quoted]);
+  });
+
+  it("titles a woken Claude session by the line after the harness tag", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "user",
+          sessionId: "claude-session",
+          timestamp: "2026-10-18T02:23:00.000Z",
+          message: {
+            role: "user",
+            content:
+              '<wake reason="mention" current-time="2026-10-18T02:23:00.000Z">\nPlan this week of workouts',
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "assistant",
+          sessionId: "claude-session",
+          timestamp: "2026-10-18T02:24:00.000Z",
+          message: { role: "assistant", content: "Here is the plan." },
+        }),
+      ].join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-11-11T14:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Plan this week of workouts");
+    // The file was copied on November 11; the session was last used on October 18.
+    expect(thread?.updatedAt).toBe("2026-10-18T02:24:00.000Z");
+  });
+
+  it.each([
+    ["a wake line alone", '<wake reason="mention" current-time="2026-10-30T04:18:00.000Z">'],
+    ["a session command", "<command-name>/clear</command-name>\n<command-args></command-args>"],
+    ["a reminder block", "<system-reminder>\nStay on task.\n</system-reminder>"],
+  ])("skips a Claude session that holds only %s", (_name, content) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "user",
+          sessionId: "claude-session",
+          message: { role: "user", content },
+        }),
+        encodeTranscriptRecord({
+          type: "assistant",
+          sessionId: "claude-session",
+          message: { role: "assistant", content: "Nothing to do." },
+        }),
+      ].join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread).toBeNull();
+  });
+
+  it("skips a Codex rollout that holds only its setup messages", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>",
+              },
+            ],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>",
+              },
+            ],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread).toBeNull();
+  });
+
+  it("titles a Claude slash command by the command and what was typed after it", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: encodeTranscriptRecord({
+        type: "user",
+        sessionId: "claude-session",
+        message: {
+          role: "user",
+          content:
+            "<command-message>sw-do</command-message>\n<command-name>/sw-do</command-name>\n<command-args>fix the login page</command-args>",
+        },
+      }),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("/sw-do fix the login page");
   });
 
   it("skips sessions without a visible user message", () => {

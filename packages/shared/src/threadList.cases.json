@@ -1,0 +1,122 @@
+{
+  "about": "One project's thread list as the desktop and the iPhone must both show it. Web: apps/web/src/studio/threadListCases.test.ts. iPhone: apps/ios/SWCKit/Tests/SWCFeaturesTests/ThreadListCasesTests.swift. The project is a new install's first project after its Claude Code and Codex sessions were imported and the coordinator started one thread.",
+  "environmentId": "env_air",
+  "projectId": "proj_fresh",
+  "providers": [
+    {
+      "instanceId": "claudeAgent",
+      "driver": "claudeAgent",
+      "displayName": "Claude",
+      "models": [{ "slug": "claude-opus-5-5", "name": "Claude Opus 5.5" }]
+    },
+    {
+      "instanceId": "codex",
+      "driver": "codex",
+      "displayName": "Codex",
+      "models": [{ "slug": "gpt-5.5", "name": "GPT-5.5" }]
+    }
+  ],
+  "threads": [
+    {
+      "name": "an imported Claude Code session",
+      "id": "import:claudeAgent:session-plan",
+      "title": "Plan this week of workouts",
+      "createdBy": "system",
+      "imported": true,
+      "settled": true,
+      "provider": "claudeAgent",
+      "model": "claude-opus-5-5",
+      "listed": true,
+      "group": "Resolved",
+      "label": "Claude Code · Opus 5.5"
+    },
+    {
+      "name": "an imported Codex session",
+      "id": "import:codex:session-readme",
+      "title": "Initialize Git and add a README.",
+      "createdBy": "system",
+      "imported": true,
+      "settled": true,
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "listed": true,
+      "group": "Resolved",
+      "label": "Codex · GPT-5.5"
+    },
+    {
+      "name": "a thread the coordinator started",
+      "id": "thr_inventory",
+      "title": "In-progress tasks inventory",
+      "createdBy": "agent",
+      "parent": "project-coordinator:proj_fresh",
+      "provider": "claudeAgent",
+      "model": "claude-opus-5-5",
+      "listed": true,
+      "group": "Idle",
+      "label": "Claude Code · Opus 5.5"
+    },
+    {
+      "name": "that thread's own subagent",
+      "id": "thr_inventory_helper",
+      "title": "Read the open specs",
+      "createdBy": "agent",
+      "parent": "thr_inventory",
+      "provider": "claudeAgent",
+      "model": "claude-opus-5-5",
+      "listed": false
+    },
+    {
+      "name": "the coordinator",
+      "id": "project-coordinator:proj_fresh",
+      "title": "Coordinator",
+      "createdBy": "system",
+      "provider": "claudeAgent",
+      "model": "claude-opus-5-5",
+      "listed": false
+    },
+    {
+      "name": "a thread the person started",
+      "id": "thr_login",
+      "title": "Fix the login page",
+      "createdBy": "user",
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "listed": true,
+      "group": "Idle",
+      "label": "Codex · GPT-5.5"
+    },
+    {
+      "name": "a model the machine's catalog does not list",
+      "id": "thr_uncatalogued",
+      "title": "Tidy the changelog",
+      "createdBy": "user",
+      "provider": "claudeAgent",
+      "model": "claude-sonnet-5-5",
+      "listed": true,
+      "group": "Idle",
+      "label": "Claude Code · Sonnet 5.5"
+    },
+    {
+      "name": "a deleted thread",
+      "id": "thr_removed",
+      "title": "Try another layout",
+      "createdBy": "user",
+      "deleted": true,
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "listed": false
+    }
+  ],
+  "titles": [
+    { "title": "<environment_context>", "markup": true },
+    { "title": "<wake reason=\"mention\" thread=\"thr_inventory\">", "markup": true },
+    { "title": "<wake reason=\"mention\" from=\"coordinator\" at=\"2026-11-1", "markup": true },
+    { "title": "# AGENTS.md instructions for /srv/app", "markup": true },
+    { "title": "<command-name>/clear</command-name>", "markup": true },
+    { "title": "<system-reminder>Check the open tasks</system-reminder>", "markup": true },
+    { "title": "<Button> does not render in Safari", "markup": false },
+    { "title": "Fix <div> overflow in the header", "markup": false },
+    { "title": "<3 this layout", "markup": false },
+    { "title": "Plan this week of workouts", "markup": false }
+  ]
+}
