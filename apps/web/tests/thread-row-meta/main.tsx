@@ -2,6 +2,9 @@
  * Synthetic data only: the production Threads pane with rows like the October 23
  * report (a Codex thread on a usage-limit fallback for Opus 5.5, plan, PR and machine
  * chips). `?theme=dark` the theme; the runner sets the pane width with the viewport.
+ * `?set=imported` shows a new install's first project instead: its imported Claude Code and
+ * Codex sessions, resolved, and the one thread the coordinator started; `?set=imported-before`
+ * shows the same sessions as a version before the import fix stored them.
  */
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -166,6 +169,60 @@ const threads = [
   }),
 ];
 
+// A new install's first project. "Before" is what the import stored until it took the
+// first typed line as the title and the last message as the age.
+const importedSet = params.get("set");
+const sol = { instanceId: codex, model: "gpt-5.5" } as ModelSelection;
+function imported(
+  id: string,
+  model: ModelSelection,
+  title: string,
+  rawTitle: string,
+  minutes: number,
+): EnvironmentThreadShell {
+  const before = importedSet === "imported-before";
+  return {
+    ...thread(id, before ? rawTitle : title, { model, minutes: before ? 28 : minutes }),
+    createdBy: "system",
+    historyOrigin: "v1_import",
+    settledOverride: "settled",
+  } as EnvironmentThreadShell;
+}
+const DAY = 1440;
+const importedThreads = [
+  thread("inventory", "In-progress tasks inventory", { model: opus, minutes: 28 }),
+  imported(
+    "workouts",
+    opus,
+    "Plan this week of workouts",
+    '<wake reason="mention" current-time="2026-11-10T14:02:11Z">',
+    200,
+  ),
+  imported("readme", sol, "Initialize Git and add a README.", "<environment_context>", 27 * 60),
+  imported(
+    "login",
+    opus,
+    "/sw-do fix the login page",
+    "<command-message>sw-do</command-message>",
+    2 * DAY + 90,
+  ),
+  imported(
+    "prices",
+    sol,
+    "Compare the three pricing tables",
+    "# AGENTS.md instructions for /srv/app",
+    4 * DAY + 90,
+  ),
+  imported(
+    "invoice",
+    opus,
+    "Why does the invoice total round down?",
+    "<system-reminder>",
+    16 * DAY + 90,
+  ),
+];
+const shownThreads = importedSet?.startsWith("imported") ? importedThreads : threads;
+
 function Harness() {
   const findRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
@@ -178,7 +235,7 @@ function Harness() {
     <main className="project-thread-pane sws-threads" data-fixture-pane>
       <ThreadsPane
         environmentId={host}
-        threads={threads}
+        threads={shownThreads}
         canChange
         findRef={findRef}
         query={query}

@@ -28,6 +28,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case checkOutput = "check-output"
   case readability
   case threadLists = "thread-lists"
+  /// A new install's first project: its imported Claude Code and Codex
+  /// sessions, resolved, and one thread the coordinator started.
+  case imported
   /// Duplicate project registrations on the same machine (e.g. trailing slash
   /// or re-registered folder), built from shells as the live engine does;
   /// the drawer shows each unique project once.
@@ -195,6 +198,7 @@ public final class FixtureEngine: AppEngine {
         threads[i].updatedAt = at
       }
     }
+    if scenario == .imported { threads = FixtureSample.importedThreads(now: now) }
     model.threadsByProject = Dictionary(grouping: threads) { $0.projectRef ?? FixtureSample.specweave }
     if scenario == .devices { model.devices = FixtureSample.devices }
     if scenario == .connect {
@@ -1194,4 +1198,43 @@ private enum FixtureSample {
       """, streaming: false),
     .approval(requestId: "req-publish", prompt: "npm publish --tag next", resolved: false),
   ]
+}
+
+private extension FixtureSample {
+  /// A new install's first project, as its machine lists it: the Claude Code
+  /// and Codex sessions the welcome step imported, resolved, and the one thread
+  /// the coordinator started. One title is what a desktop before the import
+  /// fix stored, to show how the row reads until that desktop updates.
+  static func importedThreads(now: Date) -> [ThreadSummary] {
+    func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
+    let claude = ThreadIdentity(provider: "Claude Code", model: "Opus 5.5", providerBrand: "claude", modelBrand: "claude")
+    let codex = ThreadIdentity(provider: "Codex", model: "GPT-5.5", providerBrand: "openai", modelBrand: "openai")
+    func thread(_ id: String, _ title: String, _ identity: ThreadIdentity, updated: Double, resolved: Bool = true) -> ThreadSummary {
+      var summary = ThreadSummary(
+        ref: ThreadRef(environmentId: studio, threadId: id),
+        projectRef: specweave,
+        projectTitle: "SpecWeave",
+        title: ThreadTitle.shown(title),
+        activity: .idle,
+        updatedAt: ago(updated),
+        isResolved: resolved,
+        machineLabel: "Office Mac",
+        machineOnline: true,
+        identity: identity
+      )
+      summary.isDone = true
+      summary.runtimeMode = .fullAccess
+      return summary
+    }
+    let day = 1440.0
+    return [
+      thread("i-inventory", "In-progress tasks inventory", claude, updated: 28, resolved: false),
+      thread("i-workouts", "Plan this week of workouts", claude, updated: 3 * 60),
+      thread("i-readme", "Initialize Git and add a README.", codex, updated: 26 * 60),
+      thread("i-login", "/sw-do fix the login page", claude, updated: 2 * day),
+      thread("i-prices", "Compare the three pricing tables", codex, updated: 4 * day),
+      thread("i-older", "<environment_context>", codex, updated: 9 * day),
+      thread("i-invoice", "Why does the invoice total round down?", claude, updated: 16 * day),
+    ]
+  }
 }

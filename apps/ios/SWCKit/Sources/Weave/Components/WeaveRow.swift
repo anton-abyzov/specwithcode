@@ -4,6 +4,9 @@ import SwiftUI
 /// and an optional chevron. Rows have no chevron by default; settings rows that
 /// push a screen pass `showsChevron: true`.
 ///
+/// A row may add a `note`: one more muted line under the subtitle that keeps
+/// its own line, so a long subtitle cannot push it out.
+///
 /// Titles and subtitles wrap. List previews pass line limits; at accessibility
 /// text sizes those limits double so more of the text stays readable. Rows
 /// with a text or menu value on the trailing edge pass `stacksTrailing`: the
@@ -12,6 +15,7 @@ import SwiftUI
 public struct WeaveRow<Leading: View, Trailing: View>: View {
   let title: String
   let subtitle: String?
+  let note: String?
   let titleLineLimit: Int?
   let subtitleLineLimit: Int?
   let showsChevron: Bool
@@ -27,6 +31,7 @@ public struct WeaveRow<Leading: View, Trailing: View>: View {
   public init(
     _ title: String,
     subtitle: String? = nil,
+    note: String? = nil,
     titleLineLimit: Int? = nil,
     subtitleLineLimit: Int? = nil,
     showsChevron: Bool = false,
@@ -39,6 +44,7 @@ public struct WeaveRow<Leading: View, Trailing: View>: View {
   ) {
     self.title = title
     self.subtitle = subtitle
+    self.note = note
     self.titleLineLimit = titleLineLimit
     self.subtitleLineLimit = subtitleLineLimit
     self.showsChevron = showsChevron
@@ -118,6 +124,12 @@ public struct WeaveRow<Leading: View, Trailing: View>: View {
           .foregroundStyle(Color.weave.muted)
           .lineLimit(scaled(subtitleLineLimit))
           .fixedSize(horizontal: false, vertical: subtitleLineLimit == nil)
+      }
+      if let note {
+        Text(note)
+          .font(.weave(.callout))
+          .foregroundStyle(Color.weave.muted)
+          .lineLimit(scaled(1))
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)

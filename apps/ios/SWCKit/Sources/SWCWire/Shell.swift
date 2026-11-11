@@ -24,8 +24,9 @@ public struct ShellSnapshot: Codable, Hashable, Sendable {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
     snapshotSequence = try c.decode(Int.self, forKey: .snapshotSequence)
-    threads = try c.decodeArray(ThreadShell.self, forKey: .threads)
-    archivedThreads = try c.decodeArray(ThreadShell.self, forKey: .archivedThreads)
+    // One thread this build cannot read must not empty the whole machine's list.
+    threads = try c.decodeLossyArray(ThreadShell.self, forKey: .threads)
+    archivedThreads = try c.decodeLossyArray(ThreadShell.self, forKey: .archivedThreads)
     projects = try c.decodeArray(ProjectShell.self, forKey: .projects)
   }
 }

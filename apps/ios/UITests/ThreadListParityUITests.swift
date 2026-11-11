@@ -41,4 +41,25 @@ final class ThreadListParityUITests: SWCUITestCase {
     button(startingWith: "Draft changelog").tap()
     waitForHittable(button("Thread actions"))
   }
+
+  func testImportedSessionsReadCleanlyLight() throws { try verifyImported(appearance: "light") }
+  func testImportedSessionsReadCleanlyDark() throws { try verifyImported(appearance: "dark") }
+
+  /// A new install's first project: the thread its coordinator started is
+  /// listed, and no imported session prints harness markup.
+  private func verifyImported(appearance: String) throws {
+    launch(fixture: "imported", route: "overview", appearance: appearance)
+    waitFor(text(startingWith: "Idle"))
+    XCTAssertTrue(button(startingWith: "In-progress tasks inventory").label.contains("Claude Code · Opus 5.5"))
+    let resolved = button(startingWith: "Resolved")
+    waitForHittable(resolved)
+    resolved.tap()
+    waitFor(button(startingWith: "Plan this week of workouts"))
+    XCTAssertTrue(button(startingWith: "Initialize Git and add a README.").label.contains("Codex · GPT-5.5"))
+    XCTAssertTrue(button(startingWith: "Imported session").exists)
+    XCTAssertFalse(element(containing: "<environment_context>").exists)
+    // One machine: no row spends a line on its name.
+    XCTAssertFalse(element(containing: "Office Mac").exists)
+    attachScreenshot("Imported-\(appearance)")
+  }
 }

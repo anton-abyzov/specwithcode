@@ -612,6 +612,7 @@
       "types": "./src/coordinatorReplySources.ts",
       "import": "./src/coordinatorReplySources.ts"
     },
+    "./threadList.cases.json": "./src/threadList.cases.json",
     "./transcriptDetail.cases.json": "./src/transcriptDetail.cases.json"
   },
   "scripts": {
