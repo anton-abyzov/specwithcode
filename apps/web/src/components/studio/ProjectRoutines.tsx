@@ -31,7 +31,7 @@ import {
   routineState,
 } from "../../studio/routinePresentation";
 import { randomUUID } from "../../lib/utils";
-import { routineRunnerOf } from "../../studio/routineRunner";
+import { routineFollowsCoordinator, routineRunnerOf } from "../../studio/routineRunner";
 import { PROJECT_MACHINES_SECTION_ID } from "./projectMachinesSection";
 import { RoutineQuickForm } from "./RoutineQuickForm";
 import { useLinkMachines } from "./useLinkMachines";
@@ -60,10 +60,14 @@ export function ProjectRoutines({
   machineLabel?: string | null;
   onOpenThread?: (threadId: ThreadId) => void;
 }) {
-  // A linked project's routines run on its coordinator's copy (D-12): this page
-  // reads and changes that copy's, so an edit here is never overwritten by the
-  // runner's next replica. With the runner offline it shows this machine's
-  // resting copies, read-only, and offers Run here.
+  // The runner is the copy that coordinates (D-12); side-by-side active copies
+  // each run their own, so this page shows the viewed copy's routines. Only a
+  // copy that gave its coordinator away has a runner elsewhere: this page then
+  // reads and changes the coordinator-owned routines on the runner, so an edit
+  // is never overwritten by its next replica, and with the runner offline shows
+  // this machine's resting copies, read-only, with Run here. Worker-thread and
+  // webhook routines never travel: they stay listed, and operable, for this
+  // machine in a group of their own.
   const projects = useProjects();
   const machines = useLinkMachines();
   const navigate = useNavigate();
@@ -82,6 +86,12 @@ export function ProjectRoutines({
   const query = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
+  // With the runner online the main query reads the runner; this one reads the viewed machine.
+  const hereQuery = useEnvironmentQuery(
+    runner?.online
+      ? serverEnvironment.scheduledTasksLive({ environmentId: viewedEnvironmentId, input: {} })
+      : null,
+  );
   const toggle = useAtomCommand(serverEnvironment.setScheduledTaskEnabled);
   const run = useAtomCommand(serverEnvironment.runScheduledTaskNow);
   const [busy, setBusy] = useState<string | null>(null);
@@ -93,10 +103,32 @@ export function ProjectRoutines({
     () => createScopedProjectSendReceipt(environmentId, projectId, "routine"),
     [environmentId, projectId],
   );
+  const hereReceipts = useMemo(
+    () => createScopedProjectSendReceipt(viewedEnvironmentId, viewedProjectId, "routine"),
+    [viewedEnvironmentId, viewedProjectId],
+  );
   const headingId = useId();
-  const tasks = query.data?.tasks.filter((t) => t.projectId === projectId) ?? [];
+  const listed = query.data?.tasks.filter((t) => t.projectId === projectId) ?? [];
+  const tasks = runner ? listed.filter(routineFollowsCoordinator) : listed;
+  const hereTasks = runner
+    ? (runner.online
+        ? (hereQuery.data?.tasks.filter((t) => t.projectId === viewedProjectId) ?? [])
+        : listed
+      ).filter((t) => !routineFollowsCoordinator(t))
+    : [];
+  const main: RoutineTarget = { environmentId, canOperate, receipts, refresh: query.refresh };
+  const here: RoutineTarget = {
+    environmentId: viewedEnvironmentId,
+    canOperate: viewedCanOperate,
+    receipts: hereReceipts,
+    refresh: runner?.online ? hereQuery.refresh : query.refresh,
+  };
   const settingsSearch = { project: projectKey, machine: environmentId };
-  async function act(task: ScheduledTask, kind: "toggle" | "run") {
+  async function act(
+    task: ScheduledTask,
+    kind: "toggle" | "run",
+    { environmentId, canOperate, receipts, refresh }: RoutineTarget,
+  ) {
     if (inFlight.current || !canOperate || (admissionBlocked && (kind === "run" || !task.enabled)))
       return;
     inFlight.current = true;
@@ -128,7 +160,7 @@ export function ProjectRoutines({
           receipts.acknowledge(commandId);
           setUnknownRun(null);
         }
-        query.refresh();
+        refresh();
       }
     } catch (cause) {
       setError(
@@ -149,7 +181,7 @@ export function ProjectRoutines({
         : machineLabel
           ? `On ${machineLabel}`
           : null,
-    tasks.length > 0 ? routineCountsLabel(tasks) : null,
+    tasks.length + hereTasks.length > 0 ? routineCountsLabel([...tasks, ...hereTasks]) : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -162,6 +194,28 @@ export function ProjectRoutines({
       <PlusIcon aria-hidden />
       New routine
     </Link>
+  );
+  const rows = (list: readonly ScheduledTask[], target: RoutineTarget) => (
+    <ul className="sws-routines-list">
+      {list.map((task) => (
+        <RoutineRow
+          key={task.id}
+          task={task}
+          busy={busy !== null}
+          canOperate={target.canOperate}
+          admissionBlocked={admissionBlocked}
+          unknownRun={unknownRun?.taskId === task.id}
+          onAct={(kind) => void act(task, kind, target)}
+          onConfirmRetry={() => {
+            if (inFlight.current || !target.canOperate || admissionBlocked || !unknownRun) return;
+            target.receipts.acknowledge(unknownRun.commandId);
+            setUnknownRun(null);
+            void act(task, "run", target);
+          }}
+          onOpenThread={onOpenThread}
+        />
+      ))}
+    </ul>
   );
   return (
     <section className="project-settings-section sws-routines" aria-labelledby={headingId}>
@@ -233,7 +287,7 @@ export function ProjectRoutines({
           Loading routines…
         </p>
       ) : tasks.length === 0 ? (
-        query.error ? null : (
+        query.error || hereTasks.length > 0 ? null : (
           <div className="sws-routines-empty">
             <strong>No routines yet</strong>
             <p>
@@ -245,27 +299,17 @@ export function ProjectRoutines({
           </div>
         )
       ) : (
-        <ul className="sws-routines-list">
-          {tasks.map((task) => (
-            <RoutineRow
-              key={task.id}
-              task={task}
-              busy={busy !== null}
-              canOperate={canOperate}
-              admissionBlocked={admissionBlocked}
-              unknownRun={unknownRun?.taskId === task.id}
-              onAct={(kind) => void act(task, kind)}
-              onConfirmRetry={() => {
-                if (inFlight.current || !canOperate || admissionBlocked || !unknownRun) return;
-                receipts.acknowledge(unknownRun.commandId);
-                setUnknownRun(null);
-                void act(task, "run");
-              }}
-              onOpenThread={onOpenThread}
-            />
-          ))}
-        </ul>
+        rows(tasks, main)
       )}
+      {hereTasks.length > 0 ? (
+        <div className="sws-routines-group" data-routine-group="here">
+          <p className="sws-routines-summary">
+            Runs on {machineLabel ?? machines.label(viewedEnvironmentId)}: worker thread and webhook
+            routines stay with this machine.
+          </p>
+          {rows(hereTasks, here)}
+        </div>
+      ) : null}
       {personal && canOperate ? (
         <div className="sws-routine-templates">
           <h3>Start from a template</h3>
@@ -302,6 +346,14 @@ export function ProjectRoutines({
       ) : null}
     </section>
   );
+}
+
+/** The machine a routine is changed on, and whether this page may change it there. */
+interface RoutineTarget {
+  readonly environmentId: EnvironmentId;
+  readonly canOperate: boolean;
+  readonly receipts: ReturnType<typeof createScopedProjectSendReceipt>;
+  readonly refresh: () => void;
 }
 
 function RoutineRow({

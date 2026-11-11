@@ -46,6 +46,43 @@ describe("where a project's routines run", () => {
     expect(routineRunnerOf(undefined, [m4, ministorm], () => true)).toBeNull();
   });
 
+  const withBinding = (member: EnvironmentProject, coordinatorBinding: unknown) =>
+    ({
+      ...member,
+      workspaceSettings: { ...member.workspaceSettings!, coordinatorBinding },
+    }) as unknown as EnvironmentProject;
+
+  it("is none for a coordinating copy beside a newer one started on its own", () => {
+    const own = withBinding(m4, { epoch: 0, state: "active" });
+    const peer = withBinding(ministorm, { epoch: 1, state: "active" });
+    expect(routineRunnerOf(own, [own, peer], () => true)).toBeNull();
+    expect(routineRunnerOf(peer, [own, peer], () => true)).toBeNull();
+  });
+
+  it("is the successor a resting copy names, even beside a newer coordinator", () => {
+    const [third] = [
+      { ...ministorm, environmentId: EnvironmentId.make("third"), id: ProjectId.make("p-third") },
+    ].map((member) => withBinding(member, { epoch: 5, state: "active" }));
+    const resting = withBinding(m4, { epoch: 2, state: "transferred", successor: refs[1] });
+    expect(routineRunnerOf(resting, [resting, ministorm, third!], () => true)?.member).toBe(
+      ministorm,
+    );
+  });
+
+  it("is the newest coordinating copy when a resting copy names no usable successor", () => {
+    const older = withBinding(
+      { ...ministorm, environmentId: EnvironmentId.make("third"), id: ProjectId.make("p-third") },
+      { epoch: 1, state: "active" },
+    );
+    expect(routineRunnerOf(m4, [m4, older, ministorm], () => true)?.member).toBe(ministorm);
+    const gone = withBinding(m4, {
+      epoch: 2,
+      state: "transferred",
+      successor: { ...refs[1]!, projectId: ProjectId.make("gone") },
+    });
+    expect(routineRunnerOf(gone, [gone, older, ministorm], () => true)?.member).toBe(ministorm);
+  });
+
   it("is none while no copy coordinates", () => {
     const resting = {
       ...ministorm,
