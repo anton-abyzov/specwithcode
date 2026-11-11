@@ -90,6 +90,15 @@ describe("SpecweaveSetup", () => {
     }),
   );
 
+  it("gives advice that needs no sudo and no reinstall when Node is missing", () => {
+    const detail = SpecweaveSetup.specweaveUnavailableDetail("linux");
+    expect(detail).toContain("neither specweave nor npx");
+    expect(detail).toContain("~/.local/bin");
+    expect(detail).not.toContain("npm i -g");
+    expect(detail).not.toContain("sudo");
+    expect(SpecweaveSetup.specweaveUnavailableDetail("win32")).toContain("nodejs.org");
+  });
+
   it.live("refuses a folder that is not the top of a Git repository, or has a linked config", () =>
     Effect.gen(function* () {
       const bin = yield* Effect.promise(() => tempDir("specweave-setup-bin-"));

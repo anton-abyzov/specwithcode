@@ -35,6 +35,20 @@ describe("buildStarterSuggestions", () => {
     ).toEqual(["goal", "changes", "tests", "explore", "memory", "routine"]);
   });
 
+  it("asks for the first commit when a repository has files and no commit", () => {
+    const first = buildStarterSuggestions(signals({ uncommittedFiles: 2 })).find(
+      (entry) => entry.id === "changes",
+    );
+    expect(first?.title).toBe("Make the first commit");
+    expect(first?.detail).toContain("2 files are waiting");
+    expect(first?.prompt).toContain("never invent an identity");
+    expect(
+      buildStarterSuggestions(
+        signals({ uncommittedFiles: 2, recentCommitSubjects: ["Initial commit"] }),
+      ).find((entry) => entry.id === "changes")?.title,
+    ).toBe("Review 2 uncommitted changes");
+  });
+
   it("never offers more than the limit, and keeps the general steps in it", () => {
     const all = ids({
       goal: "Ship",

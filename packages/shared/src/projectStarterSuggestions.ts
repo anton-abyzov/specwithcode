@@ -184,7 +184,20 @@ function repositorySuggestions(signals: ProjectStarterSignals): ProjectStarterSu
   }
   const goal = goalSuggestion(signals);
   if (goal) found.push(goal);
-  if (signals.uncommittedFiles > 0)
+  // Files but no commit at all: the first commit failed or was never made.
+  if (signals.uncommittedFiles > 0 && signals.recentCommitSubjects.length === 0)
+    found.push({
+      id: "changes",
+      topic: "changes",
+      origin: "repository",
+      title: "Make the first commit",
+      detail: `This repository has no commits yet: ${signals.uncommittedFiles} ${plural(signals.uncommittedFiles, "file is", "files are")} waiting. Usually Git has no name or email on this machine.`,
+      prompt: thread(
+        "Make the first commit",
+        'This repository has no commits yet. Check `git config user.name` and `git config user.email`. If either is missing, tell me the two `git config --global` commands to set them and stop; never invent an identity. Otherwise review what is in the folder and commit it as "Initial commit".',
+      ),
+    });
+  else if (signals.uncommittedFiles > 0)
     found.push({
       id: "changes",
       topic: "changes",
