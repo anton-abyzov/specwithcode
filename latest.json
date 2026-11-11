@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-11",
+  "takenAt": "2026-11-11T06:43:37.232Z",
+  "repo": "anton-abyzov/specwithcode",
+  "previousDate": null,
+  "releaseCount": 131,
+  "latestTag": "v1.0.232",
+  "totals": {
+    "mac-dmg": 2572,
+    "mac-zip": 560,
+    "windows-exe": 1061,
+    "linux-deb": 609,
+    "linux-appimage": 478,
+    "install-script": 29,
+    "server-archive": 1177,
+    "update-metadata": 23208,
+    "signature": 108,
+    "other": 0,
+    "installers": 4749,
+    "mac-updates": 560,
+    "all": 29802
+  },
+  "delta": null
+}
