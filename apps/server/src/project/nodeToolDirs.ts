@@ -25,7 +25,7 @@ const VERSION = /^v?(\d+)\.(\d+)\.(\d+)$/;
 /**
  * The installed version nvm's default alias names, else the newest one.
  * `alias` is the text of `alias/default`: a version, a prefix of one (`22`),
- * or a name such as `node` or `lts/*`, which means the newest here.
+ * or `node`, which means the newest. The caller follows named aliases first.
  */
 export function pickNvmVersion(
   installed: ReadonlyArray<string>,
@@ -49,6 +49,28 @@ export function pickNvmVersion(
   return (named ?? versions[0])?.name ?? null;
 }
 
+/**
+ * Every installed nvm version, the default alias's first and the rest newest
+ * first: a command installed under any of them is found, the default's wins.
+ */
+export function orderNvmVersions(
+  installed: ReadonlyArray<string>,
+  alias: string | null,
+): ReadonlyArray<string> {
+  const rest = [...installed];
+  const ordered: Array<string> = [];
+  for (let wanted = alias; ; wanted = null) {
+    const next = pickNvmVersion(rest, wanted);
+    if (next === null) return ordered;
+    ordered.push(next);
+    rest.splice(rest.indexOf(next), 1);
+  }
+}
+
+const NVM_ALIAS_HOPS = 4;
+/** An alias that names another alias file, such as `lts/*` or `lts/jod`. */
+const NVM_ALIAS_NAME = /^[\w*-]+(\/[\w*-]+)?$/;
+
 /** Folders to search after PATH: version managers, then the service's own Node. Missing ones are harmless. */
 export const nodeToolDirs = Effect.fn("nodeToolDirs")(function* (input: NodeToolDirsInput) {
   const fs = yield* FileSystem.FileSystem;
@@ -71,18 +93,26 @@ export const nodeToolDirs = Effect.fn("nodeToolDirs")(function* (input: NodeTool
 
   const nvmHome = set(input.nvmDir)[0] ?? path.join(home, ".nvm");
   const nvmVersions = path.join(nvmHome, "versions", "node");
-  const nvmVersion = windows
-    ? null
-    : pickNvmVersion(
+  const readAlias = (name: string) =>
+    fs.readFileString(path.join(nvmHome, "alias", ...name.split("/"))).pipe(
+      Effect.map((text) => text.trim()),
+      Effect.orElseSucceed(() => null),
+    );
+  // `default` may name another alias (`lts/*` -> `lts/jod` -> `v22.20.0`); follow it to a version.
+  let nvmAlias = windows ? null : yield* readAlias("default");
+  for (let hop = 0; hop < NVM_ALIAS_HOPS && nvmAlias !== null && !/^v?\d/.test(nvmAlias); hop++) {
+    nvmAlias = NVM_ALIAS_NAME.test(nvmAlias) ? yield* readAlias(nvmAlias) : null;
+  }
+  const nvm = windows
+    ? []
+    : orderNvmVersions(
         yield* fs.readDirectory(nvmVersions).pipe(Effect.orElseSucceed(() => [])),
-        yield* fs
-          .readFileString(path.join(nvmHome, "alias", "default"))
-          .pipe(Effect.orElseSucceed(() => null)),
-      );
+        nvmAlias,
+      ).map((version) => path.join(nvmVersions, version, "bin"));
 
   const dirs = [
     ...fnm,
-    ...(nvmVersion === null ? [] : [path.join(nvmVersions, nvmVersion, "bin")]),
+    ...nvm,
     path.join(set(input.voltaHome)[0] ?? path.join(home, ".volta"), "bin"),
     path.join(home, ".npm-global", "bin"),
     path.join(home, ".asdf", "shims"),
