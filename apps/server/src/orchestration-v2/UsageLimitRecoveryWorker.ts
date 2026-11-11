@@ -30,6 +30,7 @@ import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { isBlockingRuntimeRequest, withPendingRequestDetail } from "./blockingRuntimeRequest.ts";
 import {
   accountChangeArmCommand,
+  accountChangeArmLapse,
   accountChangeArmOf,
   isLimitBlockedThread,
   limitBlockedContinuation,
@@ -465,7 +466,8 @@ export const makeSweep = Effect.gen(function* () {
    * fills up stops the rest, since room is proven again on every sweep. While
    * a process of the instance still runs on the previous subscription nothing
    * is sent, or the turn would hit the old limit. The threads are read once
-   * per sweep until a pass finds nothing left to send.
+   * per sweep until a pass finds nothing left to send or to wait for, within
+   * LIMIT_REARM_MAX_DELAY_MS of the change.
    */
   const continueLimitBlocked = Effect.fn("UsageLimitRecoveryWorker.continueLimitBlocked")(
     function* (nowMs: number) {
@@ -507,9 +509,19 @@ export const makeSweep = Effect.gen(function* () {
           yield* save({ ...progress, readFailures: progress.readFailures + 1 });
           continue;
         }
+        // One turn per instance at a time, shared with the resumes below.
+        const lastAt = (yield* Ref.get(accountResumedAt)).get(instance);
+        if (
+          lastAt !== undefined &&
+          nowMs - lastAt >= 0 &&
+          nowMs - lastAt < ACCOUNT_RESUME_SPACING_MS
+        )
+          continue;
         const failed = new Map(progress.failed);
         let sentTo: ThreadId | null = null;
-        let retry = false;
+        // A failed send, or a thread held for now (a paused project, a handoff
+        // in flight), is looked at again on a later sweep.
+        let again = false;
         for (const shell of snapshot.value.threads) {
           if (
             progress.sent.has(shell.id) ||
@@ -517,7 +529,7 @@ export const makeSweep = Effect.gen(function* () {
             !isLimitBlockedThread(shell, changedMs, nowMs)
           )
             continue;
-          const sent = yield* admission
+          const outcome = yield* admission
             .withLock(
               shell.projectId,
               Effect.gen(function* () {
@@ -525,65 +537,81 @@ export const makeSweep = Effect.gen(function* () {
                 if (
                   Option.isNone(project) ||
                   project.value.deletedAt != null ||
+                  project.value.workspaceSettings?.archived
+                )
+                  return "skip" as const;
+                if (
                   projectExecutionIsFenced(
                     project.value.workspaceSettings,
                     shell.projectId,
                     shell.id,
                   ) ||
-                  project.value.workspaceSettings?.paused ||
-                  project.value.workspaceSettings?.archived
+                  project.value.workspaceSettings?.paused
                 )
-                  return false;
-                // Lock order as for the arms: project admission -> settings -> dispatch.
-                return yield* settings.withSettingsSnapshot((currentSettings) =>
+                  return "held" as const;
+                // Lock order as for the arms: project admission -> settings.
+                // The message is decided under the settings snapshot and sent
+                // after it, so no settings write waits on a starting turn.
+                const message = yield* settings.withSettingsSnapshot((currentSettings) =>
                   Effect.gen(function* () {
                     if (
                       resolveProjectSettings(currentSettings, shell.projectId).settings
                         .autoApproveSubscriptionChange === false
                     )
-                      return false;
+                      return "skip" as const;
                     // Read again under the lock: a reply, a Stop or a settle
                     // since the snapshot wins over this message.
                     const current = yield* projections.getThreadShell(shell.id);
                     if (
                       !current ||
                       current.projectId !== shell.projectId ||
-                      !isLimitBlockedThread(current, changedMs, yield* Clock.currentTimeMillis) ||
-                      (yield* machineHandoff.localTurnBlocked(shell.id))
+                      !isLimitBlockedThread(current, changedMs, yield* Clock.currentTimeMillis)
                     )
-                      return false;
-                    return yield* send(
-                      limitBlockedContinuation(
-                        current,
-                        provider.displayName ?? String(provider.driver),
-                        changedMs,
-                      ),
+                      return "skip" as const;
+                    return limitBlockedContinuation(
+                      current,
+                      provider.displayName ?? String(provider.driver),
+                      changedMs,
                     );
                   }),
                 );
+                if (message === "skip") return message;
+                if (yield* machineHandoff.localTurnBlocked(shell.id)) return "held" as const;
+                return (yield* send(message)) ? ("sent" as const) : ("skip" as const);
               }),
             )
             .pipe(
               Effect.catchCause((cause) => {
                 failed.set(shell.id, (failed.get(shell.id) ?? 0) + 1);
-                retry = retry || failed.get(shell.id)! < LIMIT_BLOCKED_ATTEMPTS;
                 return Effect.logWarning(
                   "orchestration-v2.limit-recovery.blocked-continue-failed",
                   { threadId: shell.id, cause },
-                ).pipe(Effect.as(false));
+                ).pipe(
+                  Effect.as(
+                    failed.get(shell.id)! < LIMIT_BLOCKED_ATTEMPTS
+                      ? ("held" as const)
+                      : ("skip" as const),
+                  ),
+                );
               }),
             );
-          if (sent) {
+          if (outcome === "held") again = true;
+          if (outcome === "sent") {
             sentTo = shell.id;
+            yield* Ref.update(
+              accountResumedAt,
+              (previous) => new Map([...previous, [instance, nowMs]]),
+            );
             break;
           }
         }
         yield* save({
           ...progress,
+          readFailures: 0,
           sent: sentTo === null ? progress.sent : new Set([...progress.sent, sentTo]),
           failed,
-          // Done once a pass sends nothing and leaves nothing to try again.
-          done: sentTo === null && !retry,
+          // Done once a pass sends nothing and leaves nothing to look at again.
+          done: sentTo === null && !again,
         });
       }
     },
@@ -897,8 +925,14 @@ export const makeSweep = Effect.gen(function* () {
                   subscriptionChangeMs === null &&
                   accountChangeArmOf(current.limitRecovery?.requestId) !== null &&
                   !policyResumes
-                )
+                ) {
+                  // Once the old limit no longer holds the thread, the arm is
+                  // taken back, so the thread never shows a resume that will
+                  // not come. The person continues it.
+                  const lapse = accountChangeArmLapse(current, at);
+                  if (lapse !== null) yield* send(lapse);
                   return null;
+                }
                 // The observed stop may have changed during the probe. Any new
                 // policy arm uses the same settings/commit ordering as above.
                 if (next?.type === "thread.metadata.update") {

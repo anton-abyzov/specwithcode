@@ -17,7 +17,12 @@ import {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import type { ProjectionLimitRecoveryCandidate } from "./ProjectionStore.ts";
-import { accountChangeOf, isLimitRecoveryCandidate } from "./usageLimitRecovery.ts";
+import {
+  LIMIT_REARM_MAX_DELAY_MS,
+  accountChangeOf,
+  isLimitRecoveryCandidate,
+  limitStopMs,
+} from "./usageLimitRecovery.ts";
 
 const POLICY_ARM_PREFIX = "limit-arm:";
 const ACCOUNT_ARM = /^limit-arm:.*:acct:(\d+)$/;
@@ -62,6 +67,43 @@ export function accountChangeArmCommand(
       // the new account ends it early (see recoverySnoozeBlocks).
       snooze: own === true && recovery?.snooze === true && resetMs > nowMs,
     },
+  };
+}
+
+/**
+ * Takes back an `accountChangeArmCommand` arm that can no longer resume: the
+ * change it was made for is no longer proven (the new account filled up, or
+ * the project now asks first) and the old limit stopped holding the thread
+ * (its reset passed, or for a stop without one, the longest re-arm wait).
+ * Left armed, the thread would show an automatic resume that never comes.
+ * Null for any other arm, and while the old limit still holds.
+ */
+export function accountChangeArmLapse(
+  thread: ProjectionLimitRecoveryCandidate,
+  nowMs: number,
+): Extract<OrchestrationV2ServerCommand, { type: "thread.metadata.update" }> | null {
+  const recovery = thread.limitRecovery;
+  if (
+    !thread.latestRunId ||
+    recovery?.runId !== thread.latestRunId ||
+    !recovery.autoResume ||
+    accountChangeArmOf(recovery.requestId) === null
+  )
+    return null;
+  const resetMs = Date.parse(recovery.resetAt ?? "");
+  if (
+    Number.isFinite(resetMs)
+      ? resetMs > nowMs
+      : nowMs - limitStopMs(thread) < LIMIT_REARM_MAX_DELAY_MS
+  )
+    return null;
+  return {
+    type: "thread.metadata.update",
+    commandId: CommandId.make(`${recovery.requestId}:lapsed`),
+    threadId: thread.id,
+    // A rule's write, never the person's choice.
+    limitRecoveryPolicyArm: true,
+    limitRecovery: { runId: thread.latestRunId, resetAt: recovery.resetAt, autoResume: false },
   };
 }
 
@@ -144,33 +186,50 @@ export function limitLiftedResumeText(
 /**
  * Whether a report's blocker is a provider usage limit: a closed set of
  * wordings, so a question about anything else, or a limit of another kind (a
- * file size, an API's rate limit, a storage quota), is not taken for one.
+ * file size, an API's rate limit, a context window, a storage quota), is not
+ * taken for one. Judged one sentence at a time.
  */
 export function blockerNamesUsageLimit(blocker: string): boolean {
-  return USAGE_LIMIT_WORDING.test(blocker);
+  return blocker.split(SENTENCE_END).some(
+    (sentence) =>
+      USAGE_LIMIT_WORDING.test(sentence) ||
+      // A provider or model named with a limit that is spent or resets
+      // ("the limit on Codex resets Friday"), or with a quota.
+      (LIMIT_OWNER.test(sentence) &&
+        ((USAGE_LIMIT.test(sentence) && LIMIT_SPENT.test(sentence)) ||
+          /\bquota\b/i.test(sentence))),
+  );
 }
 
-/** Providers, model families and the word a plan's limit is named by. */
-const LIMIT_OWNER = String.raw`(?:claude|codex|fable|opus|sonnet|haiku|gpt|copilot|gemini|cursor|grok|muse|devin|opencode|subscription)`;
+/** The end of a sentence; the dot of a version ("5.2") is not one. */
+const SENTENCE_END = /[?!\n]|\.(?!\d)/;
 
-/** Any character that does not end a sentence; the dot of a version ("5.2") does not. */
-const IN_SENTENCE = String.raw`(?:[^.?!\n]|\.(?=\d))`;
+/** Providers and model families a plan's limit is named by. */
+const LIMIT_OWNER =
+  /\b(?:claude|codex|fable|opus|sonnet|haiku|gpt|copilot|gemini|cursor|grok|muse|devin|opencode)\b/i;
+
+/** "limit" as a noun that is not a limit of another kind ("rate limit", "file size limit"). */
+const USAGE_LIMIT_NOUN = String.raw`(?<!\b(?:rate|size|line|lines|file|character|length|token|context|time|timeout|page|pages|upload|request|requests|concurrency|connection|memory|storage)\s)\blimits?\b`;
+const USAGE_LIMIT = new RegExp(USAGE_LIMIT_NOUN, "i");
+
+/** How a spent or returning limit is described; "limit" as a verb has none of these. */
+const LIMIT_SPENT = /\b(?:reached|hit|used up|exhausted|spent|ran out|run out|resets?)\b/i;
 
 const USAGE_LIMIT_WORDING = new RegExp(
   [
-    // "usage limit", "out of usage", "usage credits", "extra usage", "usage quota"
+    // "usage limit", "usage credits", "usage quota", "out of (extra) usage"
     String.raw`\busage\s+(?:limits?|caps?|credits|quota)\b`,
     String.raw`\bout of (?:extra )?usage\b`,
     String.raw`\b(?:plan|subscription)(?:'s)?\s+quota\b`,
-    // "weekly Fable 5.2 limit", "5-hour limit": windows only a plan has
-    String.raw`\b(?:weekly|5[- ]hour|five[- ]hour)\s+(?:\S+\s+){0,2}limits?\b`,
-    // "Claude's limit", "the limit on Codex", within one sentence
-    String.raw`\b${LIMIT_OWNER}\b${IN_SENTENCE}{0,40}\blimits?\b`,
-    String.raw`\blimits?\b${IN_SENTENCE}{0,40}\b${LIMIT_OWNER}\b`,
-    // "hit your limit", "reached its session limit": a limit that is someone's
-    String.raw`\b(?:hit|reached|exhausted)\s+(?:your|its|their|our|my)\s+(?:\S+\s+){0,2}limits?\b`,
-    // "the session limit is used up": spent, where another kind of limit is "reached"
-    String.raw`\blimits?\s+(?:is|are|was|were|has been|have been)\s+(?:used up|exhausted|spent)\b`,
+    String.raw`\bexceeded your (?:current )?quota\b`,
+    // "weekly limit", "5-hour limit", "plan limit": only a plan has these
+    String.raw`\b(?:weekly|5[- ]hour|five[- ]hour|plan)\s+limits?\b`,
+    // "session limit reached", where a limit of connections is "the session limit of 5"
+    String.raw`\bsession\s+limits?\s+(?:(?:is|was|has been)\s+)?(?:reached|hit|used up|exhausted|spent)\b`,
+    // "hit your limit", "reached its weekly limit": a limit that is someone's
+    String.raw`\b(?:hit|reached|exhausted)\s+(?:your|its|their|our|my)\s+(?:\S+\s+){0,2}?${USAGE_LIMIT_NOUN}`,
+    // "the limit is used up": spent, where another kind of limit is "reached"
+    String.raw`${USAGE_LIMIT_NOUN}\s+(?:is|are|was|were|has been|have been)\s+(?:used up|exhausted|spent)\b`,
   ].join("|"),
   "i",
 );

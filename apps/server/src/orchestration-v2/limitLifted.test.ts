@@ -14,6 +14,7 @@ import {
   LIMIT_BLOCKED_MAX_AGE_MS,
   LIMIT_LIFTED_SENTENCE,
   accountChangeArmCommand,
+  accountChangeArmLapse,
   accountChangeArmOf,
   blockerNamesUsageLimit,
   isLimitBlockedThread,
@@ -100,6 +101,55 @@ describe("accountChangeArmCommand", () => {
     expect(accountChangeArmOf(`limit-arm:claude-limited:failed-run:${RESET}:policy-on`)).toBeNull();
     expect(accountChangeArmOf("web:acct:12")).toBeNull();
     expect(accountChangeArmOf(undefined)).toBeNull();
+  });
+});
+
+describe("accountChangeArmLapse", () => {
+  const armId = `limit-arm:claude-limited:failed-run:${RESET}:acct:${HOUR}`;
+  const armed = stopWith(recovery({ autoResume: true, requestId: armId }));
+
+  it("takes the arm back once the old reset passed", () => {
+    const lapse = accountChangeArmLapse(armed, RESET + 1);
+    expect(lapse?.commandId).toBe(`${armId}:lapsed`);
+    expect(lapse?.limitRecoveryPolicyArm).toBe(true);
+    expect(lapse?.limitRecovery).toEqual({
+      runId: stop.latestRunId,
+      resetAt,
+      autoResume: false,
+    });
+    // The write reads as a rule's, never as the person turning the resume off.
+    expect(accountChangeArmOf(lapse?.commandId)).toBeNull();
+    expect(String(lapse?.commandId).startsWith("limit-arm:")).toBe(true);
+  });
+
+  it("keeps the arm while the old reset is ahead", () => {
+    expect(accountChangeArmLapse(armed, RESET - 1)).toBeNull();
+  });
+
+  it("leaves any other arm, and a stop that is not armed", () => {
+    expect(
+      accountChangeArmLapse(
+        stopWith(
+          recovery({ autoResume: true, requestId: `limit-arm:claude-limited:failed-run:${RESET}` }),
+        ),
+        RESET + 1,
+      ),
+    ).toBeNull();
+    expect(
+      accountChangeArmLapse(
+        stopWith(recovery({ autoResume: true, requestId: "web:auto-resume-on" })),
+        RESET + 1,
+      ),
+    ).toBeNull();
+    expect(accountChangeArmLapse(stopWith(recovery({ requestId: armId })), RESET + 1)).toBeNull();
+    expect(
+      accountChangeArmLapse(
+        stopWith(
+          recovery({ autoResume: true, runId: RunId.make("earlier-run"), requestId: armId }),
+        ),
+        RESET + 1,
+      ),
+    ).toBeNull();
   });
 });
 
@@ -238,6 +288,11 @@ describe("blockerNamesUsageLimit", () => {
     "You've hit your limit · resets 3pm",
     "Out of extra usage, wait or switch?",
     "The limit on Codex resets Friday; wait for it?",
+    "Session limit reached, resets 9pm",
+    "Max plan limit reached",
+    "Copilot premium requests quota exceeded",
+    "You exceeded your current quota",
+    "The worker stopped. Claude hit its limit and it resets Thursday.",
   ])("takes %s for a usage limit", (blocker) => {
     expect(blockerNamesUsageLimit(blocker)).toBe(true);
   });
@@ -256,6 +311,23 @@ describe("blockerNamesUsageLimit", () => {
     "Reached the session limit of 5 concurrent connections",
     "Needs your decision on the daily limit for transfers",
     "The upload limit was reached",
+    // A provider's name beside "limit" that is not its usage limit.
+    "Claude should limit the change to the server",
+    "I will limit the Cursor rules file to 50 lines",
+    "The subscription form has a character limit",
+    "the 500 line limit for the Claude settings file",
+    "The opus file exceeds the size limit",
+    "the Codex CLI hit a rate limit from the GitHub API",
+    "The Gemini API rate limit returned 429",
+    "Claude hit the context limit, start a new thread?",
+    "The weekly report limit is 5 pages",
+    "weekly deploy limit of the CI",
+    "limit the scope to Codex support only",
+    "YouTube Data API quota exceeded",
+    "Instagram daily post limit reached",
+    "monthly Supabase egress limit",
+    // The provider is named in one sentence, another limit in the next.
+    "Codex finished the patch. The upload limit was reached.",
   ])("leaves %s alone", (blocker) => {
     expect(blockerNamesUsageLimit(blocker)).toBe(false);
   });

@@ -334,6 +334,60 @@ describe("a thread blocked on a usage-limit report, after the account changes", 
     }),
   );
 
+  it.effect("a project paused at the change gets the message once it runs again", () =>
+    Effect.gen(function* () {
+      const h = yield* afterSwitch([coordinator]);
+      h.state.projectPaused = true;
+      const running = yield* h.running;
+      yield* running;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.deepEqual(sent(h.state.commands), []);
+      h.state.projectPaused = false;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.lengthOf(sent(h.state.commands), 1);
+    }),
+  );
+
+  it.effect("a thread held by a handoff gets the message once the hold ends", () =>
+    Effect.gen(function* () {
+      const h = yield* afterSwitch([coordinator]);
+      h.state.handoffBlocked = true;
+      const running = yield* h.running;
+      yield* running;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.deepEqual(sent(h.state.commands), []);
+      h.state.handoffBlocked = false;
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.lengthOf(sent(h.state.commands), 1);
+    }),
+  );
+
+  it.effect("a blocked thread and a limit stop on one instance leave one at a time", () =>
+    Effect.gen(function* () {
+      const h = yield* afterSwitch([coordinator], {
+        harness: { thread: claudeLimitStop(5 * HOUR), globalAutoResume: true },
+      });
+      const running = yield* h.running;
+      yield* running;
+      yield* running;
+      // The blocked thread took the instance's turn; the stop's resume waits for the next.
+      assert.deepEqual(
+        sent(h.state.commands).map((command) => command.threadId),
+        [ThreadId.make("coordinator")],
+      );
+      yield* TestClock.adjust("5 seconds");
+      yield* running;
+      assert.deepEqual(
+        sent(h.state.commands).map((command) => command.threadId),
+        [ThreadId.make("coordinator"), ThreadId.make("claude-limited")],
+      );
+    }),
+  );
+
   it.effect("a reply that lands after the snapshot was read wins", () =>
     Effect.gen(function* () {
       let reads = 0;

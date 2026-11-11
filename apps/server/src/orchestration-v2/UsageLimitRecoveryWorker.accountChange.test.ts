@@ -240,7 +240,37 @@ describe("usage-limit recovery after the account changes", () => {
         h.state.snapshot = snapshot(6 * HOUR);
         yield* h.sweep;
         yield* h.sweep;
+        yield* h.sweep;
         assert.deepEqual(resumes(h.state.commands), []);
+        // The arm is taken back once, so the thread shows no resume that will not come.
+        assert.lengthOf(h.state.commands, 2);
+        const lapse = h.state.commands[1]!;
+        assert.equal(
+          lapse.commandId,
+          `limit-arm:claude-limited:failed-run:${RESET}:acct:${HOUR}:lapsed`,
+        );
+        assert.equal(h.state.current.limitRecovery?.autoResume, false);
+        assert.equal(h.state.current.limitRecovery?.explicitArm, false);
+      }),
+    );
+
+    it.effect("the arm stays while the old reset is ahead, for a new account that gets room", () =>
+      Effect.gen(function* () {
+        let spent = false;
+        const snapshot = (at: number) =>
+          claudeRead(at, { changedAt: HOUR, ...(spent ? { usedPercent: 100 } : {}) });
+        const h = yield* unarmedAfterSwitch({ provider: snapshot });
+        yield* h.sweep;
+        spent = true;
+        h.state.snapshot = snapshot(HOUR);
+        yield* h.sweep;
+        assert.lengthOf(h.state.commands, 1);
+        assert.equal(h.state.current.limitRecovery?.autoResume, true);
+        spent = false;
+        yield* TestClock.adjust("10 minutes");
+        h.state.snapshot = snapshot(HOUR + 10 * 60_000);
+        yield* h.sweep;
+        assert.lengthOf(resumes(h.state.commands), 1);
       }),
     );
 
