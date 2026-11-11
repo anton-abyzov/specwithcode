@@ -109,7 +109,8 @@ describe("isHarnessMarkupTitle", () => {
     '<relay from="coordinator" thread="thr_1">Report back</relay>',
     "<task-notification>",
     "<scheduled-task>Post the weekly digest</scheduled-task>",
-    "<wake",
+    "<image name=[Image #1]>",
+    "<image>",
   ])("flags %s", (title) => {
     expect(isHarnessMarkupTitle(title)).toBe(true);
   });
@@ -125,6 +126,11 @@ describe("isHarnessMarkupTitle", () => {
     "<instructions>Refactor the parser</instructions>",
     "<wakeup> handler never fires",
     "<Wake>",
+    // A block name that is also a word, without the attribute its harness writes.
+    "<wake> handler never fires",
+    "<image src=hero.png> does not load",
+    "<relay> station notes",
+    "<wake",
   ])("keeps %s", (title) => {
     expect(isHarnessMarkupTitle(title)).toBe(false);
   });

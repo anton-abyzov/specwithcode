@@ -97,7 +97,8 @@ export function importedThreadRepair(
   for (const message of messages) {
     if (message.role !== "user") continue;
     const title = humanPromptTitle(message.text);
-    if (title !== "") return { type: "rename", title, updatedAt };
+    // A typed line that itself reads like markup is already the title: nothing to write.
+    if (title !== "") return title === thread.title ? null : { type: "rename", title, updatedAt };
   }
   return untouched && messages.length < MAX_IMPORTED_MESSAGES
     ? { type: "archive" }

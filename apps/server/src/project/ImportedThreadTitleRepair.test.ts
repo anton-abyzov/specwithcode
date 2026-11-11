@@ -158,6 +158,12 @@ describe("importedThreadRepair", () => {
     ).toEqual({ type: "rename", title: "Ship it", updatedAt: importedAt });
   });
 
+  it("writes nothing when the typed line is the title already", () => {
+    // Typed, however much it looks like a harness line: text follows the tag on its line.
+    const typed = '<wake reason="timer"> is how the harness wakes a thread, explain it';
+    expect(importedThreadRepair(imported(typed), [message("user", typed)], idle)).toBeNull();
+  });
+
   it("leaves a thread with no stored user message", () => {
     expect(
       importedThreadRepair(imported("<environment_context>"), [message("assistant", "Hi")], idle),

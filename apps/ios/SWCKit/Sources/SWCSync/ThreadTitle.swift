@@ -24,8 +24,15 @@ public enum ThreadTitle {
     let name = rest.prefix { $0.isASCII && ($0.isLetter || $0.isNumber || "_:-".contains($0)) }
     // The name ends the title (cut off by its length) or the tag goes on.
     if let next = rest.dropFirst(name.count).first, !">/ \t".contains(next) { return false }
+    if let attribute = harnessAttribute[String(name)] {
+      return trimmed == "<\(name)>" || trimmed.hasPrefix("<\(name) \(attribute)")
+    }
     return harnessBlocks.contains(String(name)) || name.hasPrefix("command-")
   }
+
+  /// Block names that are also words a person types count only with the attribute
+  /// their harness always writes, or as the whole title.
+  private static let harnessAttribute = ["wake": "reason=", "relay": "from=", "image": "name="]
 
   /// Blocks a harness writes and a person does not, in the case every harness writes them.
   private static let harnessBlocks: Set<String> = [

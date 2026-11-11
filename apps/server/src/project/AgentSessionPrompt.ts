@@ -69,6 +69,16 @@ const AGENTS_HEADING = /^#+ AGENTS\.md instructions[^\n]*(?:\n|$)/;
 const AGENTS_BLOCK = "<INSTRUCTIONS>";
 const AGENTS_BLOCK_END = "</INSTRUCTIONS>";
 const MAX_BLOCKS = 64;
+/**
+ * Block names that are also words a person types. In a title they count as
+ * harness markup only with the attribute the harness always writes, or as the
+ * whole title: `<wake reason="mention" …` is, `<wake> handler never fires` is not.
+ */
+const HARNESS_ATTRIBUTE = new Map([
+  ["wake", "reason="],
+  ["relay", "from="],
+  ["image", "name="],
+]);
 
 function isHarnessBlock(name: string): boolean {
   return HARNESS_BLOCKS.has(name) || name.startsWith("command-");
@@ -152,6 +162,9 @@ export function isHarnessMarkupTitle(title: string): boolean {
   const tag = TAG_NAME.exec(trimmed);
   if (!tag) return false;
   const [, name = "", next = ""] = tag;
+  const attribute = HARNESS_ATTRIBUTE.get(name);
+  if (attribute !== undefined)
+    return trimmed === `<${name}>` || trimmed.startsWith(`<${name} ${attribute}`);
   const ends = next === "" || next === ">" || next === "/" || next === " " || next === "\t";
   return ends && isHarnessBlock(name);
 }
