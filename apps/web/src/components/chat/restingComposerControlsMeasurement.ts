@@ -91,13 +91,24 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
   return { natural, iconOnly: Math.min(natural, iconOnly) };
 }
 
-/** The machine chip and its separator, each with the gap it takes in the row. */
+/**
+ * The machine chip and its separator, each with the gap it takes in the row. The chip
+ * counts at its icon: its name is the first thing in the row to give way (it shrinks to
+ * an ellipsis, then to nothing), so no control folds into the overflow menu while the
+ * name still shows. The color, the icon and the tooltip keep naming the machine.
+ */
 function machineChipWidth(controls: HTMLElement, gap: number): number {
   let width = 0;
   for (const selector of ["[data-thread-machine-chip]", "[data-thread-machine-separator]"]) {
     const element = controls.querySelector<HTMLElement>(selector);
     const outer = element ? elementOuterWidth(element) : 0;
-    if (outer > 0) width += outer + gap;
+    if (outer <= 0) continue;
+    const name = element?.querySelector?.<HTMLElement>("[data-thread-machine-name]");
+    const nameWidth = name
+      ? name.getBoundingClientRect().width +
+        (Number.parseFloat(getComputedStyle(element!).columnGap) || 0)
+      : 0;
+    width += Math.max(0, outer - nameWidth) + gap;
   }
   return width;
 }
@@ -127,7 +138,7 @@ export function measureRestingComposerControls(
   const separatorWidth = separator ? elementOuterWidth(separator) : 0;
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
-  // The machine chip keeps its name at every fit, so the rest of the row gives way to it.
+  // The machine chip gives up its name before any block folds (see machineChipWidth).
   const machineWidth = machineChipWidth(controls, gap);
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   const widths = blocks.map(controlBlockWidths);

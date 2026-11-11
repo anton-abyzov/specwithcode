@@ -6,10 +6,12 @@ import { createContext, useLayoutEffect, useState } from "react";
  * model name, a state suffix (`ModelStateTag`) and the usage meter. It gives up room in
  * one order on every surface, so the model name stays readable for as long as it fits:
  *
- * - `full`: `Codex · GPT-6.1-Sol ↳ next: Opus 5.5 ◔ 27%`, and a spent limit's
- *   `Limit · resets in 5d 23h`
- * - `model`: the provider's name goes (its mark stays), the state shortens to a word
- *   and a spent limit's detail goes; the ring and the number stay
+ * - `full`: `[mark] GPT-6.1-Sol ↳ next: Opus 5.5 ◔`, and a spent limit's
+ *   `Limit · resets in 5d 23h`. The provider's name is never printed: its mark names
+ *   it, and the tooltip and accessible name spell it out. The usage number joins the
+ *   ring only at 80% used or a limit.
+ * - `model`: the state shortens to a word and a spent limit's detail goes; the ring
+ *   and the number stay
  * - `short`: the state is its glyph alone and the usage number goes (its ring stays)
  * - `name`: the usage ring and the provider mark go, so a narrow toolbar still names the
  *   model; the mark gives way before the name is cut short, and a long or custom name
