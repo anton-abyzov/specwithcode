@@ -66,6 +66,7 @@ export function SkillMachineInstall({
   projectId,
   reachable,
   blocked = null,
+  unread = false,
 }: {
   controls: SkillControls;
   machineId: string;
@@ -75,6 +76,8 @@ export function SkillMachineInstall({
   projectId: ProjectId | null;
   reachable: boolean;
   blocked?: string | null;
+  /** True when that machine's copies were not read, so an existing pin there is unknown. */
+  unread?: boolean;
 }) {
   const push = useAtomCommand(projectWorkspace.skillFleetPush, { reportFailure: false });
   const skillId = controls.row.lock?.skillId ?? null;
@@ -85,10 +88,13 @@ export function SkillMachineInstall({
     pickedScope ??
     installedScope ??
     (controls.row.lock?.lockScope === "user" || !projectId ? "user" : "project");
-  // Keep an existing pin unless the user clears it; the confirm line says which.
+  // A row reports one lock: the project one when a project copy exists. So the pin is known
+  // for the scope the row reports, for a project scope next to a user-only copy, and when
+  // a successful read found no copy. Otherwise the user chooses; nothing is assumed.
   const [pickedPin, setPin] = useState<boolean | null>(null);
-  const pinned = row?.lock?.pinnedVersion ?? null;
-  const pin = pickedPin ?? Boolean(pinned);
+  const pinKnown = !unread && (!row || installedScope === scope || installedScope === "user");
+  const pinned = pinKnown && installedScope === scope ? (row?.lock?.pinnedVersion ?? null) : null;
+  const pin = pickedPin ?? (pinKnown ? Boolean(pinned) : null);
   const [preview, setPreview] = useState<{ key: string; expectedHash: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +112,11 @@ export function SkillMachineInstall({
     projectId,
     reachable,
     canPush: controls.canPush,
-    blocked,
+    blocked:
+      blocked ??
+      (pin === null
+        ? "This machine's copy in that scope was not read, so any pin there is unknown. Choose whether to pin."
+        : null),
   });
   const key = JSON.stringify([skillId, plan.version, scope, pin, projectId]);
   const current = preview?.key === key ? preview : null;
@@ -127,7 +137,7 @@ export function SkillMachineInstall({
           projectId: controls.projectId,
           skillId,
           version: plan.version,
-          pin,
+          pin: pin === true,
           preview: !confirm,
           targets: [
             confirm && current ? { ...target, expectedHash: current.expectedHash } : target,
@@ -190,6 +200,7 @@ export function SkillMachineInstall({
             checked={scope === "user"}
             onChange={() => {
               setScope("user");
+              setPin(null);
               setPreview(null);
               setDone(null);
             }}
@@ -203,6 +214,7 @@ export function SkillMachineInstall({
             disabled={!projectId}
             onChange={() => {
               setScope("project");
+              setPin(null);
               setPreview(null);
               setDone(null);
             }}
@@ -210,26 +222,38 @@ export function SkillMachineInstall({
           This project only
         </label>
       </div>
-      <label className="flex items-center gap-1.5">
-        <input
-          type="checkbox"
-          checked={pin}
-          onChange={(event) => {
-            setPin(event.target.checked);
-            setPreview(null);
-          }}
-        />
-        {pinned
-          ? `Keep pinned (now pinned at ${pinned}; unticking removes the pin)`
-          : "Pin this version (updates stop until unpinned)"}
-      </label>
+      <div className="flex flex-wrap items-center gap-3" role="radiogroup" aria-label="Pin">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="radio"
+            checked={pin === true}
+            onChange={() => {
+              setPin(true);
+              setPreview(null);
+            }}
+          />
+          {pinned ? `Keep pinned (now pinned at ${pinned})` : "Pin this version"}
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="radio"
+            checked={pin === false}
+            onChange={() => {
+              setPin(false);
+              setPreview(null);
+            }}
+          />
+          {pinned ? "Remove the pin" : "Don't pin, take later updates"}
+        </label>
+      </div>
       {plan.reason ? <p className="text-muted-foreground">{plan.reason}</p> : null}
       {current ? (
         <div className="flex flex-wrap items-center gap-2">
           <span>
             Install {skillId}@{plan.version} for {scopeLabel(scope).toLowerCase()} on {label}
-            {pin ? ", pinned" : pinned ? ", removing the pin" : ""}? vskill installs what the
-            registry serves for this version.
+            {pin ? ", pinned" : pinned ? ", removing the pin" : ", not pinned"}
+            {pinKnown ? "" : " (replaces any pin there)"}? vskill installs what the registry serves
+            for this version.
           </span>
           <Button size="xs" onClick={() => void send(true)}>
             Confirm

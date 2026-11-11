@@ -118,6 +118,83 @@ describe("one machine install", () => {
     });
     expect(host.textContent).toContain("Installed v1.3.0 on M1");
   });
+  it("asks for a pin choice where the pin is unknown and refreshes after a failed confirm", async () => {
+    const { refreshSkillAvailability } = await import("./SkillAvailability");
+    push
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { preview: true, results: [{ machineId: "m4", ok: true, expectedHash: "h" }] },
+      })
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { results: [{ machineId: "m4", ok: false, reason: "outcome_unknown" }] },
+      });
+    const controls = {
+      environmentId: "local",
+      projectId: "local-project",
+      canPush: true,
+      row: { lock: { skillId: "owner/repo/obsidian-brain", lockScope: "project" } },
+      versions: { data: { versions: [{ version: "1.3.0" }], outdated: null } },
+    } as unknown as SkillControls;
+    // The row reports the project copy, pinned; the user scope's pin is not visible.
+    const projectRow = {
+      lock: { lockScope: "project", version: "1.1.0", pinnedVersion: "1.1.0" },
+    } as unknown as ProjectSkillRow;
+    await act(async () =>
+      root.render(
+        <SkillMachineInstall
+          controls={controls}
+          machineId="m4"
+          label="M4"
+          row={projectRow}
+          projectId={ProjectId.make("m4-project")}
+          reachable
+        />,
+      ),
+    );
+    const radio = (text: string) =>
+      [...host.querySelectorAll("label")]
+        .find((node) => node.textContent?.startsWith(text))
+        ?.querySelector("input") as HTMLInputElement;
+    expect(radio("Keep pinned").checked).toBe(true);
+    await act(async () => radio("User, all projects").click());
+    expect(host.textContent).toContain("Choose whether to pin");
+    expect(button("Install v1.3.0").disabled).toBe(true);
+    await act(async () => radio("Don't pin").click());
+    await act(async () => button("Install v1.3.0").click());
+    expect(push.mock.calls[0]?.[0].input).toMatchObject({
+      pin: false,
+      targets: [{ machineId: "m4", scope: "user" }],
+    });
+    expect(host.textContent).toContain("replaces any pin there");
+    await act(async () => button("Confirm").click());
+    expect(refreshSkillAvailability).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+  });
+  it("requires a pin choice on a machine that was not read", async () => {
+    const controls = {
+      environmentId: "local",
+      projectId: "local-project",
+      canPush: true,
+      row: { lock: { skillId: "owner/repo/obsidian-brain", lockScope: "user" } },
+      versions: { data: { versions: [{ version: "1.3.0" }], outdated: null } },
+    } as unknown as SkillControls;
+    await act(async () =>
+      root.render(
+        <SkillMachineInstall
+          controls={controls}
+          machineId="m5"
+          label="M5"
+          row={null}
+          projectId={null}
+          reachable
+          unread
+        />,
+      ),
+    );
+    expect(button("Install v1.3.0").disabled).toBe(true);
+    expect(host.textContent).toContain("Choose whether to pin");
+  });
   it("keeps a remote pin and follows a user-level skill's scope by default", async () => {
     push.mockResolvedValueOnce({
       _tag: "Success",

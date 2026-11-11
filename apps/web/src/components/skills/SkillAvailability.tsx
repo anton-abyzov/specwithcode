@@ -152,7 +152,7 @@ function AvailabilityMachine({
       >
         <span className="font-medium">{label}</span>
         <span className="break-words text-muted-foreground">{text}</span>
-        {state.row?.lock?.lockScope ? (
+        {state.row?.lock?.lockScope && state.row.lock.skillId === controls.row.lock?.skillId ? (
           <span className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">
             {scopeLabel(state.row.lock.lockScope)}
             {state.row.lock.pinnedVersion ? ` · pinned ${state.row.lock.pinnedVersion}` : ""}
@@ -216,6 +216,7 @@ function AvailabilityMachine({
                       ? "Checking this machine…"
                       : null
               }
+              unread={!projectId || !connected || !query.isSuccess || Boolean(query.error)}
               projectId={projectId}
               reachable={reachable}
             />
