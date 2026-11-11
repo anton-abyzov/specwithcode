@@ -136,7 +136,8 @@ export const repairImportedThreadTitles = Effect.fn("ImportedThreadTitleRepair.r
     let renamed = 0;
     let archived = 0;
     let failed = 0;
-    for (const shell of importedThreadsToRepair(snapshot.threads)) {
+    const candidates = importedThreadsToRepair(snapshot.threads);
+    for (const shell of candidates) {
       // Read just before the write: provider writes share this path and take no command lock either.
       const repairOne = Effect.gen(function* () {
         const records = yield* threads.getThreadRecords(shell.id, ["messages"]);
@@ -172,6 +173,13 @@ export const repairImportedThreadTitles = Effect.fn("ImportedThreadTitleRepair.r
       );
       yield* Effect.yieldNow;
     }
+    // On the span, so a machine's trace shows the outcome even when nothing needed repair.
+    yield* Effect.annotateCurrentSpan({
+      "imported_thread_repair.candidates": candidates.length,
+      "imported_thread_repair.renamed": renamed,
+      "imported_thread_repair.archived": archived,
+      "imported_thread_repair.failed": failed,
+    });
     if (renamed + archived + failed > 0)
       yield* Effect.logInfo("Repaired imported thread titles", { renamed, archived, failed });
     return { renamed, archived, failed };
