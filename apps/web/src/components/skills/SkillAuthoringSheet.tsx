@@ -63,6 +63,9 @@ const blank: SkillAuthoringContent = {
 
 export const skillMarkdown = skillAuthoringMarkdown;
 export const PUBLICATION_POLL_MS = 20_000;
+/** Background checks pause after this many failures in a row, or after 30 minutes. */
+export const PUBLICATION_POLL_MAX_FAILURES = 3;
+const PUBLICATION_POLL_MAX_TICKS = 90;
 
 export function SkillAuthoringSheet(props: SkillAuthoringSheetProps) {
   const [hasOpened, setHasOpened] = useState(props.open);
@@ -184,6 +187,11 @@ export function SkillAuthoringForm({
   const defaultModel =
     defaultProvider?.models.find((model) => model.slug === initialModel) ??
     defaultProvider?.models[0];
+  const threadModelMissing =
+    Boolean(initialModel) &&
+    !content.modelSelection &&
+    defaultProvider?.instanceId === initialInstanceId &&
+    !defaultProvider?.models.some((model) => model.slug === initialModel);
   const selection =
     content.modelSelection ??
     (defaultProvider && defaultModel
@@ -321,21 +329,46 @@ export function SkillAuthoringForm({
       setBusy(null);
     }
   };
-  // Follow the review queue while the sheet is open; Check status stays for an immediate look.
-  const executeRef = useRef(execute);
+  // Follow the review queue while the sheet is open. Background checks are quiet: they never
+  // disable the form or raise the error banner, and they pause after repeated failures or
+  // 30 minutes. Check status stays for an immediate look and reports its own errors.
+  const [autoPaused, setAutoPaused] = useState(false);
+  const pollFailures = useRef(0);
+  const poll = async () => {
+    // Stop at the cap even before the paused state renders.
+    if (busyRef.current || !draft || pollFailures.current >= PUBLICATION_POLL_MAX_FAILURES) return;
+    busyRef.current = true;
+    try {
+      sync(await request({ operation: "status", draftId: draft.id, revision: draft.revision }));
+      pollFailures.current = 0;
+    } catch {
+      pollFailures.current += 1;
+      if (pollFailures.current >= PUBLICATION_POLL_MAX_FAILURES) setAutoPaused(true);
+    } finally {
+      busyRef.current = false;
+    }
+  };
+  const pollRef = useRef(poll);
   useEffect(() => {
-    executeRef.current = execute;
+    pollRef.current = poll;
   });
-  const following =
+  const inReview =
     open &&
     !dirty &&
     publication !== undefined &&
     ["submitting", "queued", "reviewing"].includes(publication.state);
+  const following = inReview && !autoPaused;
   useEffect(() => {
     if (!following) return;
-    const timer = window.setInterval(() => {
-      if (!busyRef.current) void executeRef.current("status");
-    }, PUBLICATION_POLL_MS);
+    pollFailures.current = 0;
+    let ticks = 0;
+    const tick = () => {
+      ticks += 1;
+      if (ticks > PUBLICATION_POLL_MAX_TICKS) setAutoPaused(true);
+      else void pollRef.current();
+    };
+    tick();
+    const timer = window.setInterval(tick, PUBLICATION_POLL_MS);
     return () => window.clearInterval(timer);
   }, [following]);
   const importSeed = async () => {
@@ -571,6 +604,12 @@ export function SkillAuthoringForm({
                     <p className="text-xs text-muted-foreground">
                       Only this description goes to the selected model. No fallback model is used.
                     </p>
+                    {threadModelMissing && defaultModel ? (
+                      <p className="text-xs text-muted-foreground">
+                        This thread's model is not offered for skill generation here, so{" "}
+                        {defaultModel.name} is selected.
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -727,8 +766,12 @@ export function SkillAuthoringForm({
                 <SkillPublicationStatus
                   publication={{ ...publication, status: publication.state }}
                   following={following}
+                  paused={inReview && autoPaused}
                   busy={inProgress || !canApply}
-                  onRefresh={() => void execute("status")}
+                  onRefresh={() => {
+                    setAutoPaused(false);
+                    void execute("status");
+                  }}
                 />
               ) : null}
               {!frozen && (publication?.state !== "published" || dirty) ? (

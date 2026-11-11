@@ -10,6 +10,7 @@ import {
 } from "@specweave-studio/contracts";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
+  PUBLICATION_POLL_MAX_FAILURES,
   PUBLICATION_POLL_MS,
   SkillAuthoringForm,
   skillMarkdown,
@@ -220,7 +221,12 @@ describe("skill authoring", () => {
     expect(host.textContent).toContain("Queued for review");
     expect(button("3. Apply").disabled).toBe(true);
     await click("Check status");
-    expect(request.mock.calls.map(([input]) => input.operation)).toEqual(["read", "status"]);
+    // One background check on open, then the manual one.
+    expect(request.mock.calls.map(([input]) => input.operation)).toEqual([
+      "read",
+      "status",
+      "status",
+    ]);
     expect(host.textContent).not.toContain("Publish for review");
   });
   it("generates with the thread's provider and model without a manual choice", async () => {
@@ -259,6 +265,50 @@ describe("skill authoring", () => {
       ),
     );
     expect(host.textContent).toContain("No provider is ready on Fixture machine.");
+    expect(button("Generate draft").disabled).toBe(true);
+  });
+  it("prefers the thread's model, and a saved draft's model over both", async () => {
+    const twoModels = {
+      ...agent,
+      models: [
+        { slug: "chosen-model", name: "Chosen model", isCustom: false, capabilities: null },
+        { slug: "thread-model", name: "Thread model", isCustom: false, capabilities: null },
+      ],
+    } as unknown as ProviderInstanceEntry;
+    const render = async (saved: SkillAuthoringDraft | null) => {
+      const request = vi.fn(async (input: AuthoringRequest) => ({
+        draft: input.operation === "read" ? saved : { ...fixtureDraft, ...input.draft },
+      }));
+      await act(async () =>
+        root.render(
+          <SkillAuthoringForm
+            key={saved ? "saved" : "new"}
+            open
+            onOpenChange={vi.fn()}
+            machineLabel="Fixture machine"
+            initialInstanceId="codex"
+            initialModel="thread-model"
+            agents={[twoModels]}
+            request={request}
+            canWrite
+            canGenerate
+            canPublish
+          />,
+        ),
+      );
+      await click("1. Describe");
+      await fill("What should this skill do?", "Greet me");
+      await click("Generate draft");
+      return request.mock.calls.find(([input]) => input.operation === "generate")?.[0].draft
+        ?.modelSelection;
+    };
+    expect(await render(null)).toEqual({ instanceId: "codex", model: "thread-model" });
+    expect(
+      await render({
+        ...fixtureDraft,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "chosen-model" },
+      }),
+    ).toEqual({ instanceId: "codex", model: "chosen-model" });
   });
   it("follows the review queue and shows the current step", async () => {
     vi.useFakeTimers();
@@ -283,8 +333,63 @@ describe("skill authoring", () => {
           ?.textContent,
       ).toContain("Automated security and quality scans");
       expect(host.textContent).toContain("Checked automatically every 20 seconds");
-      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS));
       expect(request.mock.calls.map(([input]) => input.operation)).toEqual(["read", "status"]);
+      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS));
+      expect(request).toHaveBeenCalledTimes(3);
+      await act(async () =>
+        root.render(
+          <SkillAuthoringForm
+            open={false}
+            onOpenChange={vi.fn()}
+            machineLabel="Fixture machine"
+            initialInstanceId="codex"
+            agents={[agent]}
+            request={request}
+            canWrite
+            canGenerate
+            canPublish
+          />,
+        ),
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS * 3));
+      expect(request).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("keeps failed background checks quiet and pauses them", async () => {
+    vi.useFakeTimers();
+    try {
+      const draft = {
+        ...fixtureDraft,
+        publication: {
+          state: "queued" as const,
+          contentHash: "hash",
+          version: "1.0.0",
+          skillId: "fixture/skills/review-code",
+          skillPath: "skills/review-code/SKILL.md",
+          repository: "fixture/skills",
+          visibility: "public" as const,
+          submissionId: "receipt",
+        },
+      };
+      const request = vi.fn(async (input: AuthoringRequest) => {
+        if (input.operation === "status") throw new Error("Machine offline");
+        return { draft };
+      });
+      await mount(request);
+      await act(async () =>
+        vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS * PUBLICATION_POLL_MAX_FAILURES),
+      );
+      const statuses = () =>
+        request.mock.calls.filter(([input]) => input.operation === "status").length;
+      expect(statuses()).toBe(PUBLICATION_POLL_MAX_FAILURES);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(button("Check status").disabled).toBe(false);
+      expect(host.textContent).toContain("Automatic checks are paused");
+      expect(request.mock.calls.filter(([input]) => input.operation === "read")).toHaveLength(1);
+      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS * 3));
+      expect(statuses()).toBe(PUBLICATION_POLL_MAX_FAILURES);
     } finally {
       vi.useRealTimers();
     }
