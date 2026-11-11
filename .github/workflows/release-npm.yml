@@ -1,0 +1,364 @@
+name: Release npm
+
+# Publishes the `specwithcode` npm package for a SpecWithCode release, so `npm i -g specwithcode`
+# installs the release that was just published. The package is built from the release's own
+# runtime archive (studio-X.Y.Z-<sha12>.tar.gz, the one the fleet installer verifies) by
+# scripts/studio-fleet/npm-package.mjs: nothing is compiled here, and npm gets the same bytes.
+#
+# Runs:
+#   on publish: a published X.Y.Z release in this repository is packaged and published to npm.
+#     A pre-release is left alone.
+#   dry run (workflow_dispatch, the default): downloads, verifies, builds and installs the
+#     package for `version`, then runs `npm publish --dry-run`. Nothing reaches npm.
+#   real (workflow_dispatch from main, dry_run false): the same, and publishes.
+#
+# What a run does:
+#   1. Waits until vX.Y.Z is published with its runtime archive and a SHA256SUMS that lists it,
+#      for up to an hour: a release published before release.sh has attached them is waited
+#      for, not failed. The per-platform CLI archives (studio-X.Y.Z-linux-<arch>-<sha12>.tar.gz,
+#      studio-X.Y.Z-win32-<arch>.zip) and studio-X.Y.Z-deployment-helpers-<sha12>.tar.gz are
+#      never used.
+#   2. Checks the archive against its SHA256SUMS line.
+#   3. Builds specwithcode-X.Y.Z.tgz, checks its name, version and commands, installs it and
+#      runs both commands.
+#   4. Skips, without failing, a version that is already on npm, and refuses a version older
+#      than npm's `latest`: publishing it would move `latest` back.
+#   5. `npm publish <tarball> --access public` (`--dry-run` in a dry run).
+#   6. Waits for `npm view specwithcode@X.Y.Z version` to answer with the version.
+#
+# Authentication is npm trusted publishing (OIDC): no token and no secret. On npmjs.com the
+# package's trusted publisher is this repository and this workflow file name, so the file must
+# stay release-npm.yml. It needs `id-token: write` (the publish job only) and npm 11.5.1 or
+# newer, which the pinned Node 24 ships. `--provenance` is not passed: trusted publishing
+# attaches provenance itself. NODE_AUTH_TOKEN is never set: with a token npm stops using OIDC.
+#
+# The tools come from this workflow's own commit (the release tag on publish, the chosen branch
+# on a manual run), fetched one file at a time: no checkout, and no dependency install.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (X.Y.Z); packages the runtime archive of vX.Y.Z
+        required: true
+        type: string
+      dry_run:
+        description: Build and check only; npm publish runs with --dry-run
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# No workflow-wide concurrency group: a run waiting an hour for its own release would hold back
+# every other version. Only the publish job is serialized.
+
+env:
+  NPM_PACKAGE: specwithcode
+
+jobs:
+  package:
+    name: Build npm package
+    # The package names this repository as its source, and npm checks that against the run.
+    if: >-
+      github.repository == 'anton-abyzov/specwithcode' &&
+      (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease)
+    runs-on: ubuntu-24.04
+    # An hour of waiting for the release, then a few minutes of work.
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+      tarball_sha256: ${{ steps.tarball.outputs.tarball_sha256 }}
+    steps:
+      - name: Resolve version
+        id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = release ]; then
+            version="${RELEASE_TAG#v}" dry_run=false
+          else
+            version="$(printf '%s' "$INPUT_VERSION" | tr -d '[:space:]')"
+            version="${version#v}" dry_run="$INPUT_DRY_RUN"
+          fi
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$version' is not an X.Y.Z release version; prerelease and preview builds are not published to npm."
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            # A real run uses the tools on main, the ones a release would use.
+            if [ "$dry_run" != true ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "::error::Publish from main (got $GITHUB_REF), or leave dry_run on."
+              exit 1
+            fi
+            # A mistyped version stops here instead of waiting an hour for a release.
+            if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" --silent; then
+              echo "::error::v$version is not tagged on $GITHUB_REPOSITORY; release.sh tags it when it publishes the release."
+              exit 1
+            fi
+          fi
+          {
+            echo "version=$version"
+            echo "dry_run=$dry_run"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### $NPM_PACKAGE $version for npm"
+            echo ""
+            echo "- Mode: $([ "$dry_run" = true ] && echo "dry run, nothing is published" || echo "publish to npm")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.2
+          # Nothing is installed from a lockfile here, and a publishing run reads no shared cache.
+          package-manager-cache: false
+
+      - name: Fetch release tools
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/release-tools"
+          mkdir -p "$tools"
+          for file in npm-package.mjs npm-release.mjs; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$GITHUB_REPOSITORY/contents/scripts/studio-fleet/$file?ref=$GITHUB_SHA" > "$tools/$file"
+          done
+          echo "TOOLS=$tools" >> "$GITHUB_ENV"
+
+      # Waits for the release to hold both files (npm-release.mjs fetch), then downloads them.
+      - name: Download the runtime archive and SHA256SUMS
+        id: fetch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          node "$TOOLS/npm-release.mjs" fetch --repo "$GITHUB_REPOSITORY" --version "$VERSION" \
+            --dir "$RUNNER_TEMP/release-assets"
+
+      # Read from SHA256SUMS again here, independently of the tool that chose the archive.
+      - name: Verify the runtime archive against SHA256SUMS
+        id: verify
+        shell: bash
+        env:
+          ARCHIVE: ${{ steps.fetch.outputs.archive }}
+          EXPECTED: ${{ steps.fetch.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release-assets"
+          awk -v name="$ARCHIVE" '$2 == name' SHA256SUMS | sort -u > "$RUNNER_TEMP/runtime.sha256"
+          if [ "$(wc -l < "$RUNNER_TEMP/runtime.sha256")" -ne 1 ]; then
+            echo "::error::SHA256SUMS does not list $ARCHIVE exactly once."
+            exit 1
+          fi
+          sha256sum -c "$RUNNER_TEMP/runtime.sha256"
+          sha256="$(cut -d' ' -f1 "$RUNNER_TEMP/runtime.sha256")"
+          if [ "$sha256" != "$EXPECTED" ]; then
+            echo "::error::SHA256SUMS changed while this run read it; run it again."
+            exit 1
+          fi
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Build the npm tarball
+        shell: bash
+        env:
+          ARCHIVE: ${{ steps.fetch.outputs.archive }}
+          SHA256: ${{ steps.verify.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          node "$TOOLS/npm-package.mjs" --archive "$RUNNER_TEMP/release-assets/$ARCHIVE" \
+            --sha256 "$SHA256" --output-dir "$RUNNER_TEMP/npm"
+
+      - name: Check the tarball
+        id: tarball
+        shell: bash
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          node "$TOOLS/npm-release.mjs" check-tarball \
+            --tarball "$RUNNER_TEMP/npm/$NPM_PACKAGE-$VERSION.tgz" --version "$VERSION"
+
+      # A published version cannot be replaced, so the tarball is installed and run first.
+      - name: Install the tarball and run both commands
+        shell: bash
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/npm-prefix"
+          cd "$RUNNER_TEMP"
+          npm install --global --prefix "$prefix" "$RUNNER_TEMP/npm/$NPM_PACKAGE-$VERSION.tgz"
+          for bin in specwithcode specweave-studio; do
+            seen="$("$prefix/bin/$bin" --version)"
+            echo "$seen"
+            if [[ "$seen" != *"v$VERSION" ]]; then
+              echo "::error::$bin --version printed '$seen', not $VERSION."
+              exit 1
+            fi
+          done
+          "$prefix/bin/specwithcode" fleet invite --help > /dev/null
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-package-${{ steps.plan.outputs.version }}
+          path: ${{ runner.temp }}/npm/${{ env.NPM_PACKAGE }}-${{ steps.plan.outputs.version }}.tgz
+          if-no-files-found: error
+          # Only the publish job reads it; it can be rebuilt from the release at any time.
+          retention-days: 3
+          # Already gzip: storing it is faster than compressing it again.
+          compression-level: 0
+
+  publish:
+    name: Publish to npm
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # npm trusted publishing: the run's OIDC token is the only credential.
+      id-token: write
+    # One real publish at a time: the check against npm's `latest` and the publish that moves it
+    # are then never interleaved with another version's. A dry run publishes nothing and gets a
+    # group of its own, so it can neither wait behind a real run nor displace one that waits.
+    # GitHub keeps one waiting run per group: a third release published while one publishes and
+    # one waits cancels the waiting one, which then needs a manual run.
+    concurrency:
+      group: release-npm-publish${{ needs.package.outputs.dry_run == 'true' && format('-dry-run-{0}', github.run_id) || '' }}
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.package.outputs.version }}
+      DRY_RUN: ${{ needs.package.outputs.dry_run }}
+    steps:
+      # registry-url as in anton-abyzov/specweave's release.yml, which publishes the same way.
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.2
+          # Nothing is installed from a lockfile here, and a publishing run reads no shared cache.
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      # An older npm does not fail: it quietly falls back to token auth and gets a 401.
+      - name: Require an npm with trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_version="$(npm --version)"
+          echo "npm $npm_version"
+          if [ "$(printf '%s\n%s\n' 11.5.1 "$npm_version" | sort -V | head -n 1)" != 11.5.1 ]; then
+            echo "::error::npm $npm_version is older than 11.5.1, the first with trusted publishing."
+            exit 1
+          fi
+
+      - name: Fetch release tools
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/release-tools"
+          mkdir -p "$tools"
+          for file in npm-package.mjs npm-release.mjs; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$GITHUB_REPOSITORY/contents/scripts/studio-fleet/$file?ref=$GITHUB_SHA" > "$tools/$file"
+          done
+          echo "TOOLS=$tools" >> "$GITHUB_ENV"
+
+      - name: Download the tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-package-${{ needs.package.outputs.version }}
+          path: ${{ runner.temp }}/npm
+
+      - name: Check the tarball is the one that was built
+        shell: bash
+        env:
+          TARBALL_SHA256: ${{ needs.package.outputs.tarball_sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/npm"
+          echo "$TARBALL_SHA256  $NPM_PACKAGE-$VERSION.tgz" | sha256sum -c -
+
+      # Already on npm: publish=false and the run goes on to the registry check. Older than
+      # npm's latest: this step fails (a dry run only warns).
+      - name: Decide whether to publish
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$DRY_RUN" = true ]; then flags=(--dry-run); fi
+          node "$TOOLS/npm-release.mjs" plan --version "$VERSION" ${flags[@]+"${flags[@]}"}
+
+      # No NODE_AUTH_TOKEN and no --provenance: see the top of this file. A dry run names
+      # another tag because npm refuses the default one for a version below `latest`.
+      - name: Publish to npm (OIDC trusted publishing)
+        if: steps.plan.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          if [ "$DRY_RUN" = true ]; then
+            npm publish "$RUNNER_TEMP/npm/$NPM_PACKAGE-$VERSION.tgz" --access public --dry-run --tag dry-run
+          else
+            npm publish "$RUNNER_TEMP/npm/$NPM_PACKAGE-$VERSION.tgz" --access public
+          fi
+
+      # npm can accept an upload while the registry still answers 404 for it. `latest` must not
+      # be older than this version either, or `npm i -g specwithcode` would not install it.
+      - name: Check the version on npm
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          seen="" latest="" errors="$RUNNER_TEMP/npm-view.log"
+          for attempt in $(seq 1 40); do
+            seen="$(npm view "$NPM_PACKAGE@$VERSION" version 2> "$errors" || true)"
+            latest="$(npm view "$NPM_PACKAGE" dist-tags.latest 2>> "$errors" || true)"
+            if [ "$seen" = "$VERSION" ] && [ -n "$latest" ] &&
+              [ "$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -n 1)" = "$latest" ]; then
+              echo "$NPM_PACKAGE@$VERSION is on npm; latest is $latest."
+              echo "- npm: [$NPM_PACKAGE@$VERSION](https://www.npmjs.com/package/$NPM_PACKAGE/v/$VERSION), latest is $latest" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "npm answers '${seen:-nothing}' for $NPM_PACKAGE@$VERSION and '${latest:-nothing}' for latest (attempt $attempt of 40)."
+            sleep 15
+          done
+          cat "$errors"
+          if [ "$seen" != "$VERSION" ]; then
+            echo "::error::npm view $NPM_PACKAGE@$VERSION version answered '${seen:-nothing}' after 10 minutes."
+          else
+            echo "::error::$NPM_PACKAGE@$VERSION is on npm but latest is '${latest:-unknown}'. Move it by hand: npm dist-tag add $NPM_PACKAGE@$VERSION latest"
+          fi
+          exit 1
+
+      - name: Summarize a dry run
+        if: env.DRY_RUN == 'true'
+        shell: bash
+        env:
+          PUBLISH: ${{ steps.plan.outputs.publish }}
+          LATEST: ${{ steps.plan.outputs.latest }}
+        run: |
+          set -euo pipefail
+          if [ "$PUBLISH" = true ]; then
+            echo "- Dry run: \`npm publish --dry-run\` accepted the tarball; npm latest is ${LATEST:-unknown}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Dry run: $VERSION is already on npm, so there was nothing to rehearse." >> "$GITHUB_STEP_SUMMARY"
+          fi

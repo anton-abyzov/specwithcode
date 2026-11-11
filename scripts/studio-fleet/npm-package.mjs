@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 export const NPM_PACKAGE_NAME = "specwithcode";
@@ -177,7 +178,9 @@ export function build({ archive, sha256, outputDir }) {
   return { tarball, packageDir: pkg, version: release.version, packages: layout.length };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// The real path: reached through a link (macOS /tmp), a plain comparison never matched and the
+// command exited 0 without building anything.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({
     options: {
       archive: { type: "string" },
