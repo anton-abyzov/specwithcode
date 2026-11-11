@@ -4086,4 +4086,8 @@ export const ko: PhraseCatalog = {
   "Reply needed": "회신 필요",
   "Sign-in needed": "로그인 필요",
   "Usage limit reached": "사용 한도 도달",
+  "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
+    "새 스레드마다 자체 브랜치와 worktree가 생기므로 병렬 스레드가 체크아웃을 공유하지 않습니다. 끄기: 스레드가 프로젝트 폴더에서 작업합니다.",
+  "Recommended here: on": "여기서 권장: 켜기",
+  "Recommended here: off": "여기서 권장: 끄기",
 };

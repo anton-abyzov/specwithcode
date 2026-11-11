@@ -281,7 +281,7 @@ describe("project Use worktrees switch", () => {
     state.target = resolveProjectSettings(state.environment, project, null, null);
     const toggle = renderUseWorktrees();
     expect(toggle.props.checked).toBe(true);
-    expect(JSON.stringify(renderer!.toJSON())).toContain("including ones the coordinator starts");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("never share a checkout");
     act(() => toggle.props.onCheckedChange(false));
     expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "local" });
     act(() => toggle.props.onCheckedChange(true));
@@ -327,7 +327,7 @@ describe("Use worktrees recommendation", () => {
     });
     const toggle = renderUseWorktrees();
     expect(state.checkedProject).toMatchObject({ id: "project", environmentId: "worker" });
-    expect(text()).toContain("Recommended for this folder: off.");
+    expect(text()).toContain("Recommended here: off.");
     expect(text()).toContain("an umbrella holding 2 repositories");
     expect(toggle.props.checked).toBe(false);
     expect(state.update).not.toHaveBeenCalled();
@@ -337,13 +337,14 @@ describe("Use worktrees recommendation", () => {
     state.scope = "project";
     state.folderCheck = layout({});
     renderUseWorktrees();
-    expect(text()).toContain("Recommended for this folder: on.");
+    expect(text()).toContain("Recommended here: on");
+    expect(text()).toContain("never share a checkout");
   });
 
   it("says nothing before the folder is checked", () => {
     state.scope = "project";
     renderUseWorktrees();
-    expect(text()).not.toContain("Recommended for this folder");
+    expect(text()).not.toContain("Recommended here");
   });
 });
 

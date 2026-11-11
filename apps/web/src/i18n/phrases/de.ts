@@ -4150,4 +4150,8 @@ export const de: PhraseCatalog = {
   "Reply needed": "Rückmeldung nötig",
   "Sign-in needed": "Anmeldung nötig",
   "Usage limit reached": "Nutzungslimit erreicht",
+  "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
+    "Jeder neue Thread bekommt einen eigenen Branch und Worktree, sodass parallele Threads nie einen Checkout teilen. Aus: Threads arbeiten im Projektordner.",
+  "Recommended here: on": "Hier empfohlen: an",
+  "Recommended here: off": "Hier empfohlen: aus",
 };

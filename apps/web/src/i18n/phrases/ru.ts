@@ -4126,4 +4126,8 @@ export const ru: PhraseCatalog = {
   "Reply needed": "Ждёт ответа",
   "Sign-in needed": "Нужен вход",
   "Usage limit reached": "Лимит использования исчерпан",
+  "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
+    "Каждый новый тред получает свою ветку и worktree, поэтому параллельные треды не делят один checkout. Выкл.: треды работают в папке проекта.",
+  "Recommended here: on": "Рекомендуется здесь: вкл.",
+  "Recommended here: off": "Рекомендуется здесь: выкл.",
 };

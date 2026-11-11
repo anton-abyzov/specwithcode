@@ -3975,4 +3975,8 @@ export const zh: PhraseCatalog = {
   "Reply needed": "需要回复",
   "Sign-in needed": "需要登录",
   "Usage limit reached": "已达用量上限",
+  "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
+    "每个新线程都有自己的分支和 worktree，并行线程不会共用同一个检出。关闭：线程在项目文件夹中工作。",
+  "Recommended here: on": "此处建议：开启",
+  "Recommended here: off": "此处建议：关闭",
 };

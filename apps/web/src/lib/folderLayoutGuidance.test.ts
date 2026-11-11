@@ -93,9 +93,9 @@ describe("workspace recommendation by folder layout", () => {
   });
 
   it("words the settings line as on or off", () => {
-    expect(worktreesSettingRecommendation(umbrella)).toMatch(/^Recommended for this folder: off\./);
-    expect(worktreesSettingRecommendation(layout())).toMatch(/^Recommended for this folder: on\./);
-    expect(worktreesSettingRecommendation({ ...umbrella, truncated: true })).toContain(
+    expect(worktreesSettingRecommendation(umbrella)).toMatchObject({ on: false });
+    expect(worktreesSettingRecommendation(layout())).toEqual({ on: true, detail: null });
+    expect(worktreesSettingRecommendation({ ...umbrella, truncated: true })?.detail).toContain(
       "3 or more repositories",
     );
   });
