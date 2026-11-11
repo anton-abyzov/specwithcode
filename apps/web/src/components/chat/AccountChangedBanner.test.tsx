@@ -131,6 +131,8 @@ it("promises a continue only when the server would send one", () => {
     autoApprove: true,
     runId: "run-1" as RunId,
     limitRecovery: { runId: "run-1" as RunId, autoResume: true },
+    resetAt: iso(5 * HOUR),
+    stoppedAtMs: 0,
     settledOverride: null,
     snoozedUntil: null,
     pendingRequest: false,
@@ -144,9 +146,9 @@ it("promises a continue only when the server would send one", () => {
     { driver: undefined },
     // The project asks first: the person confirms the change.
     { autoApprove: false },
-    { limitRecovery: null },
-    { limitRecovery: { runId: "run-0" as RunId, autoResume: true } },
+    // The person turned this stop's resume off, or stopped the thread.
     { limitRecovery: { runId: "run-1" as RunId, autoResume: false } },
+    { limitRecovery: { runId: "run-1" as RunId, autoResume: false, requestId: "web:off" } },
     { settledOverride: "settled" },
     { snoozedUntil: iso(2 * HOUR) },
     // A question or approval waiting on the person: the server refuses the resume.
@@ -155,6 +157,30 @@ it("promises a continue only when the server would send one", () => {
     { project: { paused: false, archived: true } },
   ])
     expect(accountChangeAutoContinues({ ...armed, ...blocked })).toBe(false);
+  // Auto-continue at the reset is off: the server arms the stop for the change itself.
+  for (const unarmed of [
+    { limitRecovery: null },
+    { limitRecovery: undefined },
+    // An earlier stop's choice says nothing about this one.
+    { limitRecovery: { runId: "run-0" as RunId, autoResume: false, requestId: "web:off" } },
+    // A rule's arm with auto-continue off (a snooze until the reset).
+    {
+      limitRecovery: {
+        runId: "run-1" as RunId,
+        autoResume: false,
+        requestId: "limit-arm:thread:run-1:1",
+      },
+    },
+  ])
+    expect(accountChangeAutoContinues({ ...armed, ...unarmed })).toBe(true);
+  // The server arms a stop only while its old limit still holds it; an armed
+  // stop resumes at the reset anyway.
+  const notArmed = { ...armed, limitRecovery: null };
+  expect(accountChangeAutoContinues({ ...notArmed, resetAt: iso(HOUR - 1) })).toBe(false);
+  expect(accountChangeAutoContinues({ ...armed, resetAt: iso(HOUR - 1) })).toBe(true);
+  // A stop that reported no reset: within five hours of it.
+  expect(accountChangeAutoContinues({ ...notArmed, resetAt: null })).toBe(true);
+  expect(accountChangeAutoContinues({ ...notArmed, resetAt: null, nowMs: 6 * HOUR })).toBe(false);
   // A snooze that already ran out holds nothing.
   expect(accountChangeAutoContinues({ ...armed, snoozedUntil: iso(HOUR - 1) })).toBe(true);
 });

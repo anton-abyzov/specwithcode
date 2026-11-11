@@ -11076,6 +11076,10 @@ export default function ChatView(props: ChatViewProps) {
             autoApprove: limitRule.autoApproveSubscriptionChange !== false,
             runId: activeThreadShell.latestRun.runId,
             limitRecovery: activeThreadShell.limitRecovery,
+            resetAt: serverRuntime?.usageLimitResetAt,
+            stoppedAtMs: Date.parse(
+              activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
+            ),
             settledOverride: activeThreadShell.settledOverride,
             snoozedUntil: activeThreadShell.snoozedUntil,
             pendingRequest:
