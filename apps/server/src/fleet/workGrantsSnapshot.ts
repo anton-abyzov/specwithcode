@@ -172,7 +172,8 @@ export const workGrantsSnapshot = (input: {
             running.has(origin.threadId),
         ).length,
         legacy: policy.legacy,
-        routines: policy.legacy || policy.routines === true,
+        routines:
+          policy.legacy || WorkGrants.routinesAllowed(policy, grantKindOf(policy, managers)),
         kind: grantKindOf(policy.legacy ? { ...policy, owner: "self" } : policy, managers),
       };
     });

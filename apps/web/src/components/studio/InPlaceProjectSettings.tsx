@@ -111,11 +111,11 @@ function InPlaceProjectSettingsDialog({
       focusName={target === null}
       onClose={closeInPlaceProjectSettings}
       onSaved={query.refresh}
-      onOpenThread={(threadId) => {
+      onOpenThread={(threadId, environmentId) => {
         closeInPlaceProjectSettings();
         void navigate({
           to: "/$environmentId/$threadId",
-          params: { environmentId: project.environmentId, threadId },
+          params: { environmentId: environmentId ?? project.environmentId, threadId },
         });
       }}
       canOperate={canOperate && connected}

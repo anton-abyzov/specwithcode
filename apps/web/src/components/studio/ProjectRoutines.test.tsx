@@ -229,7 +229,7 @@ describe("Personal routines", () => {
     expect(container.textContent).toContain("tax/{period}-prep.md");
     expect(button("Pause")).toBeUndefined();
     await click("Open thread");
-    expect(openThread).toHaveBeenCalledWith("routine-thread-1");
+    expect(openThread).toHaveBeenCalledWith("routine-thread-1", "host");
   });
   it("saves a template as a hand-run, prepare-only routine with its own thread", async () => {
     state.tasks = [];
@@ -285,7 +285,7 @@ describe("Personal routines", () => {
     await render(true, false, true);
     expect(container.textContent).toContain("Own thread");
     await click("Open thread");
-    expect(openThread).toHaveBeenCalledWith("worker-thread");
+    expect(openThread).toHaveBeenCalledWith("worker-thread", "host");
   });
   it("offers no templates outside a personal project", async () => {
     await render();
@@ -366,6 +366,27 @@ describe("a linked copy whose routines run on another machine", () => {
       environmentId: "host",
       input: { id: "ci" },
     });
+  });
+  it("opens a routine's thread on the machine that holds it", async () => {
+    state.tasks = [
+      { ...state.tasks[0]!, threadId: "runner-thread" },
+      {
+        id: "ci",
+        projectId: "project",
+        title: "CI wake",
+        enabled: true,
+        threadId: "worker-thread",
+        schedule: { type: "manual" },
+      },
+    ];
+    await render();
+    openThread.mockClear();
+    for (const open of container.querySelectorAll<HTMLButtonElement>("[data-routine-thread]"))
+      await act(async () => open.click());
+    expect(openThread.mock.calls).toEqual([
+      ["runner-thread", "ministorm"],
+      ["worker-thread", "host"],
+    ]);
   });
   it("keeps them operable while the runner is offline and its copies read-only", async () => {
     state.runnerState = "offline";

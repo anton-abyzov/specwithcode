@@ -22,6 +22,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import { RESTING_ROUTINE_CHANGE_REFUSAL } from "./ScheduledTaskCoordinatorGate.ts";
 import * as Service from "./ScheduledTaskService.ts";
 import { routineProject } from "./ScheduledTaskService.test-fixtures.ts";
 
@@ -393,8 +394,10 @@ it.effect("keeps migrated project routines fenced after transfer, including afte
         state.transferred = true;
         const refusal = yield* Effect.flip(runNow(service, "transferred-legacy"));
         assert.include(refusal.message, "handed off");
-        // Saving the migrated routine must not lose the ownership fence.
-        yield* service.upsert(taskInput({ title: "Updated title" }));
+        // Saving the migrated routine would make it the coordinator's own here: refused on a
+        // resting copy, and the ownership fence stays.
+        const edit = yield* Effect.flip(service.upsert(taskInput({ title: "Updated title" })));
+        assert.equal(edit.message, RESTING_ROUTINE_CHANGE_REFUSAL);
         const editedRefusal = yield* Effect.flip(runNow(service, "transferred-edited"));
         assert.include(editedRefusal.message, "handed off");
         assert.equal(state.launches.length, 0);
