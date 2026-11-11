@@ -631,7 +631,8 @@ public protocol AppEngine: AnyObject {
   /// Where to fetch an attachment shown in the transcript. Nil when it cannot be shown.
   func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL?
   /// A signed URL for a file on the machine of `target`, by absolute path. Nil when it cannot be shown.
-  func hostFileURL(path: String, for target: ChatTarget) async throws -> URL?
+  /// `thumbnail` asks for a downscaled copy of a picture; a machine that cannot resize serves the file.
+  func hostFileURL(path: String, thumbnail: Bool, for target: ChatTarget) async throws -> URL?
   /// Every thread each machine holds, for resolving links. Nil to use the model's lists.
   func threadLinkMachines() -> [ThreadLinkResolver.Machine]?
   func archivedThreadLinkMachines() async -> [ThreadLinkResolver.Machine]
@@ -683,7 +684,10 @@ extension AppEngine {
   }
 
   public func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL? { nil }
-  public func hostFileURL(path: String, for target: ChatTarget) async throws -> URL? { nil }
+  public func hostFileURL(path: String, thumbnail: Bool, for target: ChatTarget) async throws -> URL? { nil }
+  public func hostFileURL(path: String, for target: ChatTarget) async throws -> URL? {
+    try await hostFileURL(path: path, thumbnail: false, for: target)
+  }
 
   public func threadLinkMachines() -> [ThreadLinkResolver.Machine]? { nil }
   public func archivedThreadLinkMachines() async -> [ThreadLinkResolver.Machine] { [] }

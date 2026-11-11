@@ -11,6 +11,7 @@ public struct MarkdownText: View {
   let collapsedHeight: CGFloat
   let onOpenLink: ((URL) -> Void)?
   let streaming: Bool
+  let mediaFallback: Bool
 
   @State private var expanded = false
   @State private var fullHeight: CGFloat = 0
@@ -20,8 +21,11 @@ public struct MarkdownText: View {
   ///     and a "Show more" button.
   ///   - streaming: The text is still arriving. Each partial reply is parsed
   ///     once and not cached, so it cannot push finished replies out.
-  public init(_ markdown: String, collapsible: Bool = false, collapsedHeight: CGFloat = 420, streaming: Bool = false, onOpenLink: ((URL) -> Void)? = nil) {
+  ///   - mediaFallback: A finished reply that names a picture only by path
+  ///     shows that one picture as a thumbnail under its text.
+  public init(_ markdown: String, collapsible: Bool = false, collapsedHeight: CGFloat = 420, streaming: Bool = false, mediaFallback: Bool = false, onOpenLink: ((URL) -> Void)? = nil) {
     self.streaming = streaming
+    self.mediaFallback = mediaFallback
     self.markdown = markdown
     self.collapsible = collapsible
     self.collapsedHeight = collapsedHeight
@@ -73,6 +77,10 @@ public struct MarkdownText: View {
         .buttonStyle(.plain)
         .frame(minHeight: WeaveSize.minTap)
         .contentShape(Rectangle())
+      }
+      if mediaFallback, !streaming, let path = MarkdownMedia.fallbackImage(for: markdown) {
+        MarkdownImageView(alt: (path as NSString).lastPathComponent, source: .host(path), isFallback: true)
+          .padding(.top, collapsible && !expanded && isLong ? WeaveSpacing.s2 : 0)
       }
     }
   }
@@ -145,6 +153,8 @@ struct MarkdownBlockView: View, Equatable {
       Text(MarkdownInline.render(text, dynamicTypeSize: dynamicTypeSize))
         .weaveFont(.body)
         .foregroundStyle(Color.weave.ink)
+    case let .image(alt, source):
+      MarkdownImageView(alt: alt, source: source)
     case let .list(items):
       MarkdownListView(items: items)
     case let .quote(blocks):
@@ -463,6 +473,8 @@ public nonisolated enum MarkdownCollapse {
     case let .quote(blocks): blocks.reduce(0) { $0 + length($1) }
     case let .table(header, rows): (header + rows.flatMap { $0 }).reduce(0) { $0 + $1.count }
     case .rule: 1
+    // A picture takes about a third of a collapsed reply.
+    case .image: 500
     }
   }
 
@@ -473,6 +485,7 @@ public nonisolated enum MarkdownCollapse {
     case let .quote(blocks): blocks.map(plainText).joined(separator: "\n")
     case let .table(header, rows): ([header] + rows).map { $0.joined(separator: " | ") }.joined(separator: "\n")
     case .rule: ""
+    case let .image(alt, _): alt
     }
   }
 

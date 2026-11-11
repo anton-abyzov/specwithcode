@@ -634,16 +634,19 @@ extension LiveEngine {
 
   /// An absolute `media-file` URL for a file a reply links to. The machine checks
   /// the path (protected files, allowed types) and signs the URL; the path is
-  /// absolute, so the thread only labels the request.
-  public func hostFileURL(path: String, for target: ChatTarget) async throws -> URL? {
+  /// absolute, so the thread only labels the request. `thumbnail` asks for a
+  /// downscaled copy of a picture, which an older machine ignores.
+  public func hostFileURL(path: String, thumbnail: Bool, for target: ChatTarget) async throws -> URL? {
     let environmentId = target.environmentId
     guard let entry = machines[environmentId], entry.status.route != nil else { return nil }
     let threadId = threadId(for: target, entry: entry) ?? "artifact"
-    let payload: JSONValue = .object(["resource": .object([
+    var input: [String: JSONValue] = ["resource": .object([
       "_tag": .string("media-file"),
       "threadId": .string(threadId),
       "path": .string(path),
-    ])])
+    ])]
+    if thumbnail { input["variant"] = .string("thumb") }
+    let payload: JSONValue = .object(input)
     return try await withRetry(environmentId) { socket in
       let result = try await Self.decode(AssetURLResult.self, from: socket.call(tag: RpcMethod.assetsCreateUrl.rawValue, payload: payload))
       guard let route = await entry.connection.route(of: socket) else { throw TransportError.closed }
