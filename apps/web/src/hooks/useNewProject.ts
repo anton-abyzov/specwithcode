@@ -157,20 +157,21 @@ export function useNewProject() {
         ),
       );
       if (input.specweave === true && input.kind !== "personal") {
-        if (existing === true) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "info",
-              title: "SpecWeave was not added to an existing folder",
-              description: "Set it up from Project settings > General when you want it.",
-            }),
-          );
-        } else if (specweaveError !== undefined) {
+        const { specweaveAdded } = result.value;
+        if (specweaveError !== undefined) {
           toastManager.add(
             stackedThreadToast({
               type: "warning",
               title: "SpecWeave was not set up",
               description: `${specweaveError.replace(/[.\s]*$/, ".")} You can retry from Project settings > General.`,
+            }),
+          );
+        } else if (existing === true && specweaveAdded === true) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "success",
+              title: "SpecWeave was added to the existing folder",
+              description: "Its files are in the folder, not committed yet.",
             }),
           );
         }

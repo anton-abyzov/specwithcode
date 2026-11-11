@@ -7,7 +7,10 @@ import {
   classifyProjectTreeSession,
   compactAge,
   PROJECT_TREE_OTHER_KEY,
+  PROJECT_TREE_PROJECT_PAGE,
   resolveProjectTreeExpanded,
+  routeProjectTreeKey,
+  visibleProjectTree,
 } from "./SidebarProjectTree.logic";
 
 function group(key: string, name: string, projectIds: string[]): SidebarProjectSnapshot {
@@ -90,6 +93,35 @@ describe("buildProjectTree", () => {
       { orderByActivity: true },
     );
     expect(tree.map((g) => g.key)).toEqual(["acme", "umb", "idle"]);
+  });
+
+  it("puts a project made after the last activity first, before it has a session", () => {
+    const fresh = {
+      ...group("fresh", "carbon-test", ["p-fresh"]),
+      createdAt: "2026-10-11T00:00:00Z",
+    };
+    const tree = buildProjectTree(
+      [...groups, fresh],
+      [shell("a", { updatedAt: "2026-10-09T00:00:00Z" })],
+      { orderByActivity: true },
+    );
+    expect(tree[0]?.key).toBe("fresh");
+  });
+
+  it("keeps the project of the open draft listed when it sorts past the first page", () => {
+    const many = Array.from({ length: PROJECT_TREE_PROJECT_PAGE + 5 }, (_, index) =>
+      group(`g${index}`, `project-${index}`, [`p-${index}`]),
+    );
+    const tree = buildProjectTree(many, []);
+    const last = tree.at(-1)!;
+    expect(visibleProjectTree(tree, new Set(), false)).not.toContain(last);
+    const key = routeProjectTreeKey(tree, null, {
+      environmentId: last.project!.memberProjectRefs[0]!.environmentId,
+      projectId: last.project!.memberProjectRefs[0]!.projectId,
+    });
+    expect(key).toBe(last.key);
+    expect(visibleProjectTree(tree, new Set([key!]), false)).toContain(last);
+    expect(visibleProjectTree(tree, new Set(), true)).toHaveLength(tree.length);
   });
 
   it("collects sessions of unregistered projects under Other sessions", () => {

@@ -102,9 +102,13 @@ it("lists folders only after Browse… and fills the field from a pick", async (
     entries: [{ name: "product", fullPath: "/home/me/Projects/product" }],
   };
   await render({});
-  expect(container.querySelector('[aria-label="Remote folders"]')).toBeNull();
+  expect(
+    container.querySelector('[data-slot="handoff-folder-browser"] [role="listbox"]'),
+  ).toBeNull();
   await act(async () => button("Browse…").click());
-  expect(container.querySelector('[aria-label="Remote folders"]')).not.toBeNull();
+  expect(
+    container.querySelector('[data-slot="handoff-folder-browser"] [role="listbox"]'),
+  ).not.toBeNull();
   await act(async () => button("product").click());
   expect(field()?.value).toBe("/home/me/Projects/product");
 });

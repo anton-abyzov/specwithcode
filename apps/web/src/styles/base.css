@@ -1153,3 +1153,36 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     animation-play-state: var(--visible-animation-state, paused);
   }
 }
+
+/* Folder browser: the list slides in from the side you moved toward, and the
+   new-folder row grows into place. Nothing moves under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-folder-enter="forward"] {
+    animation: folder-enter-forward 170ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  [data-folder-enter="back"] {
+    animation: folder-enter-back 170ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  [data-folder-new] {
+    transform-origin: top;
+    animation: folder-new-row 150ms ease-out;
+  }
+}
+@keyframes folder-enter-forward {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+@keyframes folder-enter-back {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+@keyframes folder-new-row {
+  from {
+    opacity: 0;
+    transform: scaleY(0.6);
+  }
+}

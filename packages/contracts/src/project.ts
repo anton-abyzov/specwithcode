@@ -848,6 +848,8 @@ export const ProjectCreateNewResult = Schema.Struct({
   existing: Schema.optionalKey(Schema.Boolean),
   /** Why `specweave init` did not run or failed. The project exists either way. */
   specweaveError: Schema.optionalKey(TrimmedNonEmptyString),
+  /** SpecWeave was set up in an existing folder that had none. Absent from older servers. */
+  specweaveAdded: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
 
