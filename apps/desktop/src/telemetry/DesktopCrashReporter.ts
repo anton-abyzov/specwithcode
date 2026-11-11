@@ -27,11 +27,16 @@ import {
   crashReportsEnabledFromEnv,
   encodeCrashReport,
   parseCrashReport,
+  settingsTextAllowsCrashReports,
   CRASH_REPORT_URL_ENV,
   CRASH_REPORTS_ENV,
   type CrashReport,
   type CrashReportKind,
 } from "@specweave-studio/shared/crashReport";
+import {
+  teamRulesExportAllowedByText,
+  teamRulesMachinePath,
+} from "@specweave-studio/shared/teamRules";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -53,7 +58,6 @@ export const CRASH_PENDING_PREFIX = "desktop-";
 export const CRASH_REPORT_SELF_TEST_ENV = "STUDIO_CRASH_REPORT_SELF_TEST";
 
 export const SEND_TIMEOUT = Duration.seconds(5);
-export const SETTINGS_CACHE_MS = 30_000;
 export const FOLD_WINDOW_MS = 10 * 60_000;
 export const HOURLY_CAP = 20;
 const HOUR_MS = 60 * 60_000;
@@ -158,17 +162,33 @@ export function unhandledRejectionsThrow(
   return false;
 }
 
-/** Reads the server settings switch leniently: anything but an explicit `false` is on. */
+/**
+ * Reads the server settings switch the way the server's fatal hook does: a
+ * missing file is the default (on), and only an explicit `false` turns it off.
+ */
 export function readCrashReportsSetting(settingsPath: string): boolean {
+  let raw: string;
   try {
-    const parsed: unknown = JSON.parse(NodeFS.readFileSync(settingsPath, "utf8"));
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      return (parsed as Record<string, unknown>)["crashReportsEnabled"] !== false;
-    }
-    return true;
+    raw = NodeFS.readFileSync(settingsPath, "utf8");
   } catch {
     return true;
   }
+  return settingsTextAllowsCrashReports(raw);
+}
+
+/**
+ * The machine's team rules. No rules file allows reports; `telemetry.export:
+ * false` refuses them, and so does a file that cannot be read or parsed.
+ */
+export function teamRulesAllowCrashReports(rulesPath: string): boolean {
+  let text: string;
+  try {
+    text = NodeFS.readFileSync(rulesPath, "utf8");
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+    return code === "ENOENT" || code === "ENOTDIR";
+  }
+  return teamRulesExportAllowedByText(text);
 }
 
 /** A pending report file, validated like the relay does; null when unreadable. */
@@ -226,8 +246,9 @@ export function readOrCreateInstallId(baseDir: string): string {
   return readInstallIdFile(filePath) ?? created;
 }
 
-export function hostnameHash(hostname: string): string {
-  return NodeCrypto.createHash("sha256").update(hostname).digest("hex");
+/** Salted with the install id, so it cannot be matched against likely hostnames. */
+export function machineHash(installId: string, hostname: string): string {
+  return NodeCrypto.createHash("sha256").update(`${installId}\n${hostname}`).digest("hex");
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +266,8 @@ export interface DesktopCrashReporterOptions {
   readonly osVersion: string;
   readonly hostname: string;
   readonly homeDir: string;
+  /** The machine's team rules file; tests pass their own. */
+  readonly teamRulesPath?: string;
   /** Where process hooks attach; tests pass an EventEmitter. */
   readonly processHooks?: NodeJS.EventEmitter | null;
   readonly execArgv?: ReadonlyArray<string>;
@@ -269,25 +292,18 @@ export const makeWith = Effect.fn("DesktopCrashReporter.make")(function* (
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const now = options.now ?? Date.now;
-  const envEnabled = crashReportsEnabledFromEnv(options.env[CRASH_REPORTS_ENV]);
-  const endpoint = crashReportEndpoint(options.env[CRASH_REPORT_URL_ENV]);
-  const machine = crashReportMachineLabel(
-    options.platform,
-    options.arch,
-    hostnameHash(options.hostname),
-  );
+  const teamRulesPath = options.teamRulesPath ?? teamRulesMachinePath(options.platform);
   const limiter = new CrashReportLimiter();
-  let settingCache: { readonly at: number; readonly value: boolean } | null = null;
   let installId: string | null = null;
 
-  const enabled = (): boolean => {
-    if (!envEnabled) return false;
-    const at = now();
-    if (settingCache === null || at - settingCache.at >= SETTINGS_CACHE_MS) {
-      settingCache = { at, value: readCrashReportsSetting(options.serverSettingsPath) };
-    }
-    return settingCache.value;
-  };
+  // Read on every use. The env is read late because a Dock launch only gets
+  // shell variables once the login shell has been probed; the files are read
+  // fresh so turning reports off applies to the very next failure.
+  const enabled = (): boolean =>
+    crashReportsEnabledFromEnv(options.env[CRASH_REPORTS_ENV]) &&
+    teamRulesAllowCrashReports(teamRulesPath) &&
+    readCrashReportsSetting(options.serverSettingsPath);
+  const endpoint = () => crashReportEndpoint(options.env[CRASH_REPORT_URL_ENV]);
 
   /** Synchronous so process hooks can use it before the process may die. */
   const prepare = (event: DesktopCrashEvent): PreparedReport | null => {
@@ -300,7 +316,11 @@ export const makeWith = Effect.fn("DesktopCrashReporter.make")(function* (
       }
       const draft = buildCrashReport({
         installId,
-        machine,
+        machine: crashReportMachineLabel(
+          options.platform,
+          options.arch,
+          machineHash(installId, options.hostname),
+        ),
         surface: "desktop",
         kind: event.kind,
         category: event.category ?? null,
@@ -327,7 +347,9 @@ export const makeWith = Effect.fn("DesktopCrashReporter.make")(function* (
   const send = (body: string): Effect.Effect<boolean> =>
     client
       .execute(
-        HttpClientRequest.post(endpoint).pipe(HttpClientRequest.bodyText(body, "application/json")),
+        HttpClientRequest.post(endpoint()).pipe(
+          HttpClientRequest.bodyText(body, "application/json"),
+        ),
       )
       .pipe(
         // Settled: accepted, or refused for good (4xx other than 429), so a
@@ -390,7 +412,13 @@ export const makeWith = Effect.fn("DesktopCrashReporter.make")(function* (
 
   /** Sends what an earlier run left behind. One attempt each; failures wait for the next launch. */
   const flushPending = Effect.gen(function* () {
-    if (!enabled()) return;
+    if (!enabled()) {
+      // Turned off since they were written: they are never sent, so they go.
+      for (const name of pendingFiles()) {
+        yield* removeFile(NodePath.join(options.pendingDir, name));
+      }
+      return;
+    }
     for (const name of pendingFiles()) {
       const filePath = NodePath.join(options.pendingDir, name);
       const stamp = Number(/^desktop-(\d+)-/u.exec(name)?.[1] ?? Number.NaN);
@@ -492,9 +520,7 @@ export const makeWith = Effect.fn("DesktopCrashReporter.make")(function* (
     },
   );
 
-  if (envEnabled) {
-    yield* Effect.sleep(PENDING_FLUSH_DELAY).pipe(Effect.andThen(flushPending), Effect.forkScoped);
-  }
+  yield* Effect.sleep(PENDING_FLUSH_DELAY).pipe(Effect.andThen(flushPending), Effect.forkScoped);
   if (options.env[CRASH_REPORT_SELF_TEST_ENV] === "1") {
     yield* Effect.sleep(SELF_TEST_DELAY).pipe(
       Effect.andThen(

@@ -91,8 +91,9 @@ Limits use Cloudflare Rate Limiting bindings, keyed with the stage prepended:
 | `CRASH_REPORT_GLOBAL_RATE_LIMIT` | 1004      | one shared key            | 600 per 60s |
 | `SITE_EVENT_RATE_LIMIT`          | 1005      | SHA-256 of the client IP  | 30 per 60s  |
 
-The shared crash report budget is checked first, so minting fresh install ids cannot flood the
-logs. The edge per-IP rule from `infra/relay/scripts/edge-rules.mjs` also covers both paths. If a
+The per-install limit is checked first, so one install cannot spend the shared budget; the shared
+budget then stops a flood of fresh install ids. Such a flood can still use up the shared 600 per
+minute and drop other installs' reports for that minute, which is accepted. The edge per-IP rule from `infra/relay/scripts/edge-rules.mjs` also covers both paths. If a
 limiter errors, the request goes through, the relay logs `Report rate limiter unavailable`, and
 the span carries `relay.crash.rate_limiter_failed_open` or
 `relay.site_event.rate_limiter_failed_open`.

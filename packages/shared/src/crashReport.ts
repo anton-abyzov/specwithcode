@@ -100,11 +100,17 @@ function safeModelId(value: string | null | undefined, homeDir: string | null): 
     model = model.split(/[\\/]/u).pop() ?? "";
   }
   if (model.includes("@")) model = model.slice(model.lastIndexOf("@") + 1);
-  return shortToken(redactDiagnosticText(model), 120);
+  // `ft:gpt-4o:acme-corp:payroll-bot:AbC123` names an organisation and a project;
+  // `llama3:8b` is a tag. Two parts keep the tag and drop the rest.
+  model = model.split(":").slice(0, 2).join(":");
+  const redacted = redactDiagnosticText(model);
+  return MODEL_PATTERN.test(redacted.slice(0, 120)) ? redacted.slice(0, 120) : undefined;
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-const SHORT_TOKEN_PATTERN = /^[A-Za-z0-9._:+/@-]+$/u;
+// No `/` or `@`: a short token is an enum-like word, never a path or an address.
+const SHORT_TOKEN_PATTERN = /^[A-Za-z0-9._:+-]+$/u;
+const MODEL_PATTERN = /^[A-Za-z0-9._:+/-]+$/u;
 const MACHINE_PATTERN = /^[a-z0-9_]{1,24}-[a-z0-9_]{1,16}-[0-9a-f]{12}$/u;
 
 /** True unless the value explicitly turns reports off. Unset means on. */
@@ -112,6 +118,21 @@ export function crashReportsEnabledFromEnv(value: string | undefined | null): bo
   if (value === undefined || value === null) return true;
   const normalized = value.trim().toLowerCase();
   return !["false", "0", "off", "no", "disabled"].includes(normalized);
+}
+
+/**
+ * Reads only `crashReportsEnabled` from the text of `settings.json`. Only an
+ * explicit `false` turns reports off. A file cut short while it is rewritten
+ * does not parse, so the raw field is matched instead.
+ */
+export function settingsTextAllowsCrashReports(raw: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return true;
+    return (parsed as Record<string, unknown>).crashReportsEnabled !== false;
+  } catch {
+    return !/"crashReportsEnabled"\s*:\s*false/u.test(raw);
+  }
 }
 
 /** Resolves the full report endpoint, falling back to the production relay. */
@@ -133,7 +154,11 @@ function normalizeHttpsOrigin(value: string | null | undefined): string | null {
   }
 }
 
-/** `<os>-<arch>-<hash12>`; the caller hashes the hostname with its own crypto. */
+/**
+ * `<os>-<arch>-<hash12>`. The caller hashes the install id together with the
+ * hostname, so the label tells one installation's machines apart and cannot be
+ * matched against a list of likely hostnames.
+ */
 export function crashReportMachineLabel(os: string, arch: string, hostnameHashHex: string): string {
   const hash = hostnameHashHex
     .toLowerCase()
@@ -184,15 +209,10 @@ export function stripHomePaths(text: string, homeDir?: string | null): string {
 
 const SECRET_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   // URL credentials, query strings and fragments.
-  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/giu, "$1<redacted>@"],
-  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#'"]+)[?#][^\s'"]*/giu, "$1?<redacted>"],
+  [/\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/@'"]{1,500}@/giu, "$1<redacted>@"],
+  [/(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s?#'"]{1,2000})[?#][^\s'"]*/giu, "$1?<redacted>"],
   // Authorization values.
   [/\b(Bearer|Basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/giu, "$1 <redacted>"],
-  // key=value and JSON secret fields.
-  [
-    /(["']?(?:[a-z_-]*(?:token|secret|password|passwd|api[_-]?key|apikey|credential|authorization|cookie|session)[a-z_-]*)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}&]+)/giu,
-    "$1<redacted>",
-  ],
   // Well-known token shapes.
   [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}/gu, "<redacted-key>"],
   [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/gu, "<redacted-key>"],
@@ -203,7 +223,7 @@ const SECRET_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:grok_|xai[_-]|crsr_|vsk_|sw_)[A-Za-z0-9_-]{12,}/gu, "<redacted-key>"],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/gu, "<redacted-jwt>"],
   // Emails.
-  [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gu, "<email>"],
+  [/\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/gu, "<email>"],
   // Long opaque blobs (hex or base64) that look like keys or ids.
   [/\b[A-Fa-f0-9]{32,}\b/gu, "<hex>"],
   [/\b[A-Za-z0-9+_-]{40,}={0,2}/gu, "<blob>"],
@@ -216,8 +236,43 @@ const SECRET_RULES: ReadonlyArray<readonly [RegExp, string]> = [
 // eslint-disable-next-line no-control-regex -- stripping control characters is the point
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
 
+// The whole dotted name goes, so `git.internal.acme-corp.com` leaves no company domain.
 const LOCAL_HOST_PATTERN =
-  /\b[A-Za-z0-9][A-Za-z0-9-]*\.(?:local|lan|home|internal|localdomain)\b/giu;
+  /(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]{1,63}\.){1,8}(?:local|lan|home|internal|localdomain)(?:\.[A-Za-z0-9-]{1,63}){0,8}(?![A-Za-z0-9-])/giu;
+
+/** Longest text the redaction rules ever scan; a report is capped at 16 KiB anyway. */
+const REDACT_INPUT_MAX_CHARS = 16_384;
+
+const SECRET_KEY_WORD =
+  /token|secret|password|passwd|api[_-]?key|apikey|credential|authorization|cookie|session/iu;
+// A key is one whole run of name characters, found from its first character
+// only, so a long run costs one bounded attempt and not one per position.
+const FIELD_KEY_PATTERN = /(?<![A-Za-z0-9_-])["']?([A-Za-z0-9_-]{1,80})["']?\s{0,8}[:=]\s{0,8}/gu;
+const FIELD_VALUE_PATTERN = /"[^"\n]{0,4000}"|'[^'\n]{0,4000}'|[^\s,;}&]{1,4000}/uy;
+
+/** Redacts the value of `key=value` and JSON fields whose key names a secret. */
+function redactSecretFields(text: string): string {
+  let result = "";
+  let copied = 0;
+  FIELD_KEY_PATTERN.lastIndex = 0;
+  for (;;) {
+    const match = FIELD_KEY_PATTERN.exec(text);
+    if (match === null) break;
+    const key = match[1] ?? "";
+    if (!SECRET_KEY_WORD.test(key)) {
+      // Look again right after the key: its value can hold a field of its own.
+      FIELD_KEY_PATTERN.lastIndex = match.index + match[0].indexOf(key) + key.length;
+      continue;
+    }
+    const valueStart = FIELD_KEY_PATTERN.lastIndex;
+    FIELD_VALUE_PATTERN.lastIndex = valueStart;
+    if (FIELD_VALUE_PATTERN.exec(text) === null) continue;
+    result += `${text.slice(copied, valueStart)}<redacted>`;
+    copied = FIELD_VALUE_PATTERN.lastIndex;
+    FIELD_KEY_PATTERN.lastIndex = copied;
+  }
+  return result + text.slice(copied);
+}
 
 /**
  * Words that identify this machine or user (hostname, account name). Each is
@@ -256,12 +311,16 @@ export function redactDiagnosticText(
 ): string {
   // JSON nested in a JSON string escapes its quotes (\"token\":\"x\"); unescape so the
   // key/value rules see the field names.
-  let result = text.replace(CONTROL_CHARACTERS, "").replace(/\\+(["'])/gu, "$1");
+  let result = text
+    .slice(0, REDACT_INPUT_MAX_CHARS)
+    .replace(CONTROL_CHARACTERS, "")
+    .replace(/\\{1,8}(["'])/gu, "$1");
   result = stripHomePaths(result, homeDir);
   for (const term of identifyingTerms(homeDir, terms)) {
     result = result.replace(new RegExp(escapeRegExp(term), "giu"), "<redacted>");
   }
   result = result.replace(LOCAL_HOST_PATTERN, "<host>");
+  result = redactSecretFields(result);
   for (const [pattern, replacement] of SECRET_RULES) {
     result = result.replace(pattern, replacement);
   }
@@ -276,18 +335,65 @@ const ABSOLUTE_PATH_PATTERN = new RegExp(
   "gu",
 );
 
+const FILE_EXTENSIONS =
+  "jsonl?|md|txt|pdf|docx?|xlsx?|pptx?|csv|ya?ml|toml|env|pem|key|sqlite|db|log|zip|png|jpe?g|gif|mp4|mov|gguf|tsx?|jsx?|mjs|cjs|py|rb|go|rs|sh|html|css|swift|kt|java|cpp|ini|conf|plist|lock";
+
+// Applied to messages only, in order, after secrets and absolute paths are gone.
+const MESSAGE_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  // A failed command line can carry anything: arguments, commit text, a prompt.
+  [/\b(Command failed(?: with exit code \d+)?:)[^\n]*/giu, "$1 <command>"],
+  // URLs keep their scheme; the host can be a company's own server.
+  [/\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s'"\x60<>)]{1,2000}/giu, "$1<host>"],
+  // The host a network error names.
+  [
+    /\b(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EHOSTDOWN)\s+[^\s,;)]{1,300}/gu,
+    "$1 <host>",
+  ],
+  // IPv6: four or more groups, or any form with `::`.
+  [
+    /(?<![A-Za-z0-9:.])(?:(?:[0-9A-Fa-f]{1,4}:){3,7}[0-9A-Fa-f]{1,4}|[0-9A-Fa-f:]{0,39}::[0-9A-Fa-f:]{0,39})(?![A-Za-z0-9:])/gu,
+    "<ip>",
+  ],
+  // Relative paths, then bare file names.
+  [
+    /(?<![A-Za-z0-9_:/\\.<>@-])[A-Za-z0-9_.@-]{1,100}(?:[\\/][A-Za-z0-9_.@-]{1,100}){1,40}(?![A-Za-z0-9_>])/gu,
+    "<path>",
+  ],
+  [
+    new RegExp(
+      String.raw`(?<![A-Za-z0-9_./\\<@-])[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,100}\.(?:${FILE_EXTENSIONS})(?![A-Za-z0-9_])`,
+      "gu",
+    ),
+    "<file>",
+  ],
+];
+
+// Quoted text is a file name, an argument or a user's words more often than
+// not. A plain identifier ('length', "ENOENT") stays; anything else goes.
+const QUOTED_PATTERN = /(?<![A-Za-z0-9])(["'\x60])([^"'\x60\n]{1,400})\1/gu;
+const PLAIN_QUOTED_PATTERN = /^(?:[A-Za-z_$][A-Za-z0-9_$]{0,60}|<[a-z-]{1,20}>)$/u;
+
 /**
  * Error messages from fs and spawn often name user files. Messages keep the
- * error text but every path is replaced, so no file or folder name leaves.
+ * error text, but paths, file names, quoted text, command lines and hosts are
+ * replaced, so no file, folder or server name leaves.
  */
 export function sanitizeErrorMessage(
   message: string,
   homeDir?: string | null,
   terms?: ReadonlyArray<string | null | undefined>,
 ): string {
-  const redacted = redactDiagnosticText(message, homeDir, terms).replace(
+  // Cut before the rules run, so their cost never depends on what an error holds.
+  const input = message.slice(0, CRASH_REPORT_MAX_MESSAGE_CHARS * 4);
+  let redacted = redactDiagnosticText(input, homeDir, terms).replace(
     ABSOLUTE_PATH_PATTERN,
     "<path>",
+  );
+  for (const [pattern, replacement] of MESSAGE_RULES) {
+    redacted = redacted.replace(pattern, replacement);
+  }
+  redacted = redacted.replace(QUOTED_PATTERN, (match, quote: string, inner: string) =>
+    PLAIN_QUOTED_PATTERN.test(inner) ? match : `${quote}<redacted>${quote}`,
   );
   return truncate(redacted.trim(), CRASH_REPORT_MAX_MESSAGE_CHARS);
 }
@@ -330,7 +436,11 @@ export function sanitizeStack(
   homeDir?: string | null,
   terms?: ReadonlyArray<string | null | undefined>,
 ): string {
-  const lines = redactDiagnosticText(stack, homeDir, terms)
+  const lines = redactDiagnosticText(
+    stack.slice(0, CRASH_REPORT_MAX_STACK_CHARS * 2),
+    homeDir,
+    terms,
+  )
     .split(/\r?\n/u)
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0)
@@ -346,10 +456,20 @@ function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
-function shortToken(value: unknown, max = CRASH_REPORT_MAX_SHORT_CHARS): string | undefined {
+/**
+ * An enum-like word (category, provider, error name, OS version). A value the
+ * redaction rules would change, such as an id, a host or a user name, is dropped.
+ */
+function shortToken(
+  value: unknown,
+  max = CRASH_REPORT_MAX_SHORT_CHARS,
+  homeDir?: string | null,
+  terms?: ReadonlyArray<string | null | undefined>,
+): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim().slice(0, max);
   if (trimmed.length === 0 || !SHORT_TOKEN_PATTERN.test(trimmed)) return undefined;
+  if (redactDiagnosticText(trimmed, homeDir, terms) !== trimmed) return undefined;
   return trimmed;
 }
 
@@ -414,11 +534,12 @@ export function buildCrashReport(input: CrashReportInput): CrashReport {
   const parts = errorParts(input.error);
   const homeDir = input.homeDir ?? null;
   const terms = [input.hostname];
-  const category = shortToken(input.category) ?? input.kind;
-  const provider = shortToken(input.provider);
+  const short = (value: unknown, max?: number) => shortToken(value, max, homeDir, terms);
+  const category = short(input.category) ?? input.kind;
+  const provider = short(input.provider);
   const model = safeModelId(input.model, homeDir);
-  const errorName = shortToken(parts.name);
-  const osVersion = shortToken(input.osVersion, 40);
+  const errorName = short(parts.name);
+  const osVersion = short(input.osVersion, 40);
   // Provider errors for a failed turn can quote the prompt or the reply (a
   // content-policy or validation error), so a turn failure carries only its
   // category, code and provider, never its message.

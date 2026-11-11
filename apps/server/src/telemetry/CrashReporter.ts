@@ -55,6 +55,8 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
+import { teamRulesExportAllowed } from "@specweave-studio/shared/teamRules";
+
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
@@ -194,7 +196,8 @@ export const make = Effect.gen(function* () {
   const budget = makeCrashReportBudget();
 
   const teamRulesRefuse = currentTeamRules.pipe(
-    Effect.map((rules) => rules.status === "active" && rules.rules.telemetry?.export === false),
+    // A rules file that cannot be read could be hiding `export: false`.
+    Effect.map((rules) => !teamRulesExportAllowed(rules)),
     Effect.orElseSucceed(() => false),
   );
   // A settings read that fails counts as off: never report on a guess.
@@ -229,7 +232,10 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.map((response): CrashReportDelivery => {
           if (response.status >= 200 && response.status < 300) return "sent";
-          if (response.status >= 400 && response.status < 500) return "rejected";
+          // 429 is the relay's rate limit: keep the report for a later start.
+          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+            return "rejected";
+          }
           return "failed";
         }),
         Effect.timeout(CRASH_REPORT_SEND_TIMEOUT),

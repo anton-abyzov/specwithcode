@@ -97,12 +97,13 @@ const sections = [
               it sends a short report to us at{" "}<code>relay.spec-weave.com</code>{" "}so we can
               find and fix the problem. A report contains a random install ID created on your
               machine (not your account ID), a coarse machine label made from the operating
-              system, the processor type and a one-way hash of the machine name, the app version,
-              the part of SpecWithCode that failed (desktop, server, mobile, or web), the coding
+              system, the processor type and a hash of the install ID and the machine name, the app version,
+              the part of SpecWithCode that failed (desktop, server, or mobile), the coding
               agent provider and model when the error involved one, the kind of failure, and the
-              error name, message, and stack trace. Before a report leaves your machine, home
-              folder paths, file paths, email addresses, IP addresses, IDs, keys, and tokens are
-              removed from it. Reports never include your prompts, agent responses, file
+              error name, message, and stack trace. Before a report leaves your machine, file and
+              folder paths, file names, server names, command lines, quoted text, your user name,
+              the computer's name, email addresses, IP addresses, IDs, keys, and tokens are removed
+              from it. A failed agent turn sends no error message or stack trace. Reports never include your prompts, agent responses, file
               contents, authentication tokens, conversation, thread, or project IDs, or full file
               paths. See “Crash and Error Reports” under Your Choices below to turn them off.
             </li>
@@ -418,8 +419,9 @@ const sections = [
             information while your account or the relevant feature is active and for as long as
             reasonably necessary to provide the Services, protect them from abuse, comply with law,
             and resolve disputes. Operational diagnostic traces are configured to expire after 30
-            days. Crash and error reports are kept only as long as needed to find and fix the problems they
-            describe. Download counts are kept only as totals. Some records may remain longer in backups or where retention is required for
+            days. Crash and error reports, and the record of each download click (platform, file, page and
+            country), are kept only as log lines for as long as our hosting provider's log retention
+            keeps them, and are then deleted. Some records may remain longer in backups or where retention is required for
             security, fraud prevention, or legal compliance.
           </p>
           <p>

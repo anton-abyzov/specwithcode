@@ -26,11 +26,16 @@ import {
   buildCrashReport,
   CRASH_REPORTS_ENV,
   crashReportMachineLabel,
+  settingsTextAllowsCrashReports,
   crashReportsEnabledFromEnv,
   type CrashReport,
   type CrashReportKind,
 } from "@specweave-studio/shared/crashReport";
 import { studioDefaultHome } from "@specweave-studio/shared/studioIdentity";
+import {
+  teamRulesExportAllowedByText,
+  teamRulesMachinePath,
+} from "@specweave-studio/shared/teamRules";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -101,15 +106,13 @@ function safeHostname(): string | null {
   }
 }
 
-/** `<os>-<arch>-<12 hex of sha256(hostname)>`; the hostname itself never leaves. */
-export function serverCrashMachineLabel(): string {
-  let hostname = "";
-  try {
-    hostname = NodeOS.hostname();
-  } catch {
-    hostname = "";
-  }
-  const hash = NodeCrypto.createHash("sha256").update(hostname).digest("hex");
+/**
+ * `<os>-<arch>-<12 hex of sha256(install id, hostname)>`. Salted with the
+ * install id, so the label cannot be matched against likely hostnames.
+ */
+export function serverCrashMachineLabel(installId: string): string {
+  const hostname = safeHostname() ?? "";
+  const hash = NodeCrypto.createHash("sha256").update(`${installId}\n${hostname}`).digest("hex");
   return crashReportMachineLabel(HOST_PLATFORM, HOST_ARCH, hash);
 }
 
@@ -144,7 +147,7 @@ export interface ServerCrashReportInput {
 export function buildServerCrashReport(input: ServerCrashReportInput): CrashReport {
   return buildCrashReport({
     installId: input.installId,
-    machine: serverCrashMachineLabel(),
+    machine: serverCrashMachineLabel(input.installId),
     surface: "server",
     kind: input.kind,
     category: input.category ?? null,
@@ -173,22 +176,36 @@ export function settingsFileAllowsCrashReports(settingsPath: string): boolean {
   } catch {
     return true;
   }
+  return settingsTextAllowsCrashReports(raw);
+}
+
+/**
+ * The machine's team rules, read without Effect for the fatal hook. No rules
+ * file allows reports; `telemetry.export: false` refuses them, and so does a
+ * file that cannot be read or parsed, since it could be hiding `false`.
+ */
+export function teamRulesFileAllowsCrashReports(
+  rulesPath: string = teamRulesMachinePath(process.platform),
+): boolean {
+  let text: string;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return true;
-    return (parsed as Record<string, unknown>).crashReportsEnabled !== false;
-  } catch {
-    // A file being rewritten may be cut short; fall back to the raw field.
-    return !/"crashReportsEnabled"\s*:\s*false/u.test(raw);
+    text = NodeFS.readFileSync(rulesPath, "utf8");
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+    return code === "ENOENT" || code === "ENOTDIR";
   }
+  return teamRulesExportAllowedByText(text);
 }
 
 export function crashReportsEnabledSync(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly settingsPath: string;
+  /** Tests pass a rules file; the default is the machine's. */
+  readonly teamRulesPath?: string;
 }): boolean {
   return (
     crashReportsEnabledFromEnv(input.env[CRASH_REPORTS_ENV]) &&
+    teamRulesFileAllowsCrashReports(input.teamRulesPath) &&
     settingsFileAllowsCrashReports(input.settingsPath)
   );
 }
@@ -277,9 +294,16 @@ export function recordFatalCrashReportSync(input: {
   readonly paths: CrashReportPaths;
   readonly env: NodeJS.ProcessEnv;
   readonly category?: string;
+  readonly teamRulesPath?: string;
 }): boolean {
   try {
-    if (!crashReportsEnabledSync({ env: input.env, settingsPath: input.paths.settingsPath })) {
+    if (
+      !crashReportsEnabledSync({
+        env: input.env,
+        settingsPath: input.paths.settingsPath,
+        ...(input.teamRulesPath === undefined ? {} : { teamRulesPath: input.teamRulesPath }),
+      })
+    ) {
       return false;
     }
     const installId = readOrCreateCrashInstallId(input.paths.baseDir);

@@ -149,6 +149,90 @@ describe("review hardening", () => {
   });
 });
 
+describe("second review hardening", () => {
+  it("stays fast on text built to make the rules backtrack", () => {
+    const inputs = [
+      "session-".repeat(2_000),
+      "token".repeat(4_000),
+      "user_session_token_".repeat(900),
+      "a".repeat(16_000),
+      "a.".repeat(8_000),
+      "a/".repeat(8_000),
+      "/a b".repeat(4_000),
+      "'".repeat(16_000),
+      "a@".repeat(8_000),
+      "1:".repeat(8_000),
+      `{"k":${'{"token":'.repeat(1_500)}1`,
+    ];
+    for (const input of inputs) {
+      const started = performance.now();
+      sanitizeErrorMessage(input, "/Users/anton", ["antons-mbp"]);
+      sanitizeStack(`Error: ${input}\n    at run (${input}:1:2)`, "/Users/anton");
+      parseCrashReport({ ...buildCrashReport(base), message: input, stack: input });
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }
+  });
+
+  it("removes file names, quoted text, command lines and hosts from messages", () => {
+    const home = "/Users/Anton Abyzov";
+    const clean = (text: string) => sanitizeErrorMessage(text, home);
+    expect(clean("ENOENT: no such file or directory, open 'Taxes 2025.pdf'")).not.toContain(
+      "Taxes",
+    );
+    expect(clean("ENOENT: no such file or directory, scandir 'Clients/Acme'")).not.toMatch(
+      /Clients|Acme/u,
+    );
+    expect(clean("error: pathspec client-acme/notes.md did not match")).not.toMatch(/acme|notes/u);
+    expect(clean("Unexpected token } in JSON at position 4 in acme-secret.json")).not.toContain(
+      "acme",
+    );
+    const command = clean(
+      'Command failed: git -C /Users/Anton Abyzov/Projects/acme commit -m "fix payroll bug for Maria"',
+    );
+    expect(command).toBe("Command failed: <command>");
+    expect(clean('spawn claude --prompt "write poem about Maria" ENOENT')).not.toContain("Maria");
+    expect(clean("getaddrinfo ENOTFOUND git.internal.acme-corp.com")).not.toContain("acme");
+    expect(clean("connect ECONNREFUSED build.acme-corp.com:443")).not.toContain("acme");
+    expect(clean("fetch https://git.acme-corp.com/team/repo.git failed")).not.toMatch(
+      /acme|team|repo/u,
+    );
+    expect(clean("connect to fe80::1ff:fe23:4567:890a and 2001:db8:0:0:0:0:2:1")).not.toMatch(
+      /fe80|2001/u,
+    );
+    // What a failure is still found by.
+    expect(clean("Cannot read properties of undefined (reading 'length')")).toContain("'length'");
+    expect(clean("connect ECONNREFUSED 127.0.0.1:8319")).toContain("ECONNREFUSED");
+  });
+
+  it("finds a secret field nested under an ordinary key", () => {
+    expect(sanitizeErrorMessage('{"config":{"api_key":"k-123456"},"a":1}')).not.toContain(
+      "k-123456",
+    );
+  });
+
+  it("drops short tokens that hold a path, an address or an id", () => {
+    const report = buildCrashReport({
+      ...base,
+      category: "/Users/anton/secret",
+      provider: "anton@host",
+      osVersion: "antons-mbp",
+      hostname: "antons-mbp",
+      error: { name: "Err/Maria@x.com", message: "x" },
+    });
+    expect(report.category).toBe(report.kind);
+    expect(report.provider).toBeUndefined();
+    expect(report.errorName).toBeUndefined();
+    expect(report.osVersion).toBeUndefined();
+  });
+
+  it("keeps a model tag and drops fine-tune owner parts", () => {
+    expect(buildCrashReport({ ...base, model: "llama3:8b" }).model).toBe("llama3:8b");
+    expect(
+      buildCrashReport({ ...base, model: "ft:gpt-4o:acme-corp:payroll-bot:AbC123" }).model,
+    ).toBe("ft:gpt-4o");
+  });
+});
+
 describe("site events", () => {
   it("validates download clicks", () => {
     expect(

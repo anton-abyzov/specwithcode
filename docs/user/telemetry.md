@@ -36,15 +36,17 @@ Each report is a small JSON object with these fields:
 - `installId`: a random id created once per installation and kept in a file in the app's data
   folder. It is not your account id and is not linked to it.
 - `machine`: a coarse label made of the OS, the architecture and the first characters of a hash
-  of the machine name. The machine name itself is not sent.
-- `surface` (desktop, server, mobile or web), `kind` (for example uncaught exception, renderer
+  of the install id together with the machine name. The machine name itself is not sent, and the
+  label cannot be matched against a list of likely names.
+- `surface` (desktop, server or mobile), `kind` (for example uncaught exception, renderer
   gone or turn failed) and `category`, the failure category.
 - `appVersion`, `os`, `osVersion` and `arch`.
 - `provider` and `model`, only when the failure came from an agent turn.
-- `errorName`, `message` and `stack`: the sanitized error. Paths in messages become `<path>`,
-  a stack line keeps the function name and the code file (not the folder it is in), and your
-  user name, the computer's name, secrets, email addresses, ids and IP addresses are replaced
-  before anything leaves the machine. A failed turn sends no `message` or `stack` at all,
+- `errorName`, `message` and `stack`: the sanitized error. In messages, paths become `<path>`,
+  file names `<file>`, server names and URLs `<host>`, a failed command line `<command>`, and
+  quoted text other than a plain identifier `<redacted>`. A stack line keeps the function name
+  and the code file (not the folder it is in). Your user name, the computer's name, secrets,
+  email addresses, ids and IP addresses are replaced before anything leaves the machine. A failed turn sends no `message` or `stack` at all,
   because a provider's error text can quote a prompt or a reply.
 - `detail`, a few short values such as an exit code, and `count`, how many identical reports were
   folded into this one.
@@ -64,4 +66,6 @@ error reports automatically**. You can also set `STUDIO_CRASH_REPORTS=false` in 
 environment and restart it; the switch then shows as off and cannot be turned on. The desktop app
 reads `STUDIO_CRASH_REPORTS` from your shell profile like the other variables above, so export it
 there and restart the app. On Windows, set it as a user environment variable. When reports are
-off, nothing is sent and no report files are written.
+off, nothing is sent and no report files are written. Team rules with `telemetry.export: false`
+turn reports off as well, on the server and in the desktop app, and so does a rules file that
+cannot be read.

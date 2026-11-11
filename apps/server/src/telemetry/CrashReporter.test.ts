@@ -116,14 +116,34 @@ it("stores a fatal report only when reports are on, up to the pending cap", () =
       homeDir: NodeOS.homedir(),
     });
     const dir = pendingCrashReportsDir(paths.stateDir);
+    // Never the machine's own rules file.
+    const teamRulesPath = NodePath.join(baseDir, "team-rules.json");
     assert.isFalse(
       recordFatalCrashReportSync({
         kind: "uncaught_exception",
         error: leakyError(),
         paths,
         env: { STUDIO_CRASH_REPORTS: "off" },
+        teamRulesPath,
       }),
     );
+    // Team rules that turn export off, or that cannot be parsed, write nothing either.
+    for (const rules of [
+      JSON.stringify({ version: 1, owner: "Acme", telemetry: { export: false } }),
+      "{ not valid",
+    ]) {
+      NodeFS.writeFileSync(teamRulesPath, rules);
+      assert.isFalse(
+        recordFatalCrashReportSync({
+          kind: "fatal",
+          error: leakyError(),
+          paths,
+          env: {},
+          teamRulesPath,
+        }),
+      );
+    }
+    NodeFS.rmSync(teamRulesPath);
     assert.isFalse(NodeFS.existsSync(dir));
     assert.isFalse(NodeFS.existsSync(crashInstallIdPath(baseDir)));
 
@@ -133,6 +153,7 @@ it("stores a fatal report only when reports are on, up to the pending cap", () =
         error: leakyError(),
         paths,
         env: {},
+        teamRulesPath,
       });
     }
     const files = NodeFS.readdirSync(dir);
@@ -147,7 +168,13 @@ it("stores a fatal report only when reports are on, up to the pending cap", () =
     NodeFS.writeFileSync(paths.settingsPath, JSON.stringify({ crashReportsEnabled: false }));
     NodeFS.rmSync(dir, { recursive: true, force: true });
     assert.isFalse(
-      recordFatalCrashReportSync({ kind: "fatal", error: leakyError(), paths, env: {} }),
+      recordFatalCrashReportSync({
+        kind: "fatal",
+        error: leakyError(),
+        paths,
+        env: {},
+        teamRulesPath,
+      }),
     );
     assert.isFalse(NodeFS.existsSync(dir));
   } finally {

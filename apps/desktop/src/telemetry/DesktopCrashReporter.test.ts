@@ -65,6 +65,7 @@ const setup = (input: {
   readonly home: string;
   readonly env?: Record<string, string | undefined>;
   readonly status?: number;
+  readonly teamRulesPath?: string;
 }) =>
   Effect.gen(function* () {
     const sent = yield* Queue.unbounded<SentRequest>();
@@ -95,6 +96,8 @@ const setup = (input: {
       osVersion: "25.0.0",
       hostname: "Antons-Secret-Host.local",
       homeDir: "/Users/someone",
+      // Never the machine's own rules file.
+      teamRulesPath: input.teamRulesPath ?? NodePath.join(input.home, "no-team-rules.json"),
       processHooks: hooks,
       execArgv: [],
       now: () => clock,
@@ -145,20 +148,48 @@ describe("DesktopCrashReporter", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("rereads the setting after the cache window", () =>
+  it.effect("follows the setting on the very next report, both ways", () =>
     Effect.gen(function* () {
       const home = makeTempHome({ crashReportsEnabled: false });
-      const { reporter, sent, advance } = yield* setup({ home });
+      const settingsPath = NodePath.join(home, "userdata", "settings.json");
+      const { reporter, sent } = yield* setup({ home });
       yield* reporter.report({ kind: "fatal", error: new Error("first") });
-      NodeFS.writeFileSync(
-        NodePath.join(home, "userdata", "settings.json"),
-        JSON.stringify({ crashReportsEnabled: true }),
-      );
-      yield* reporter.report({ kind: "fatal", error: new Error("second") });
       assert.strictEqual(yield* Queue.size(sent), 0);
-      advance(DesktopCrashReporter.SETTINGS_CACHE_MS);
+      NodeFS.writeFileSync(settingsPath, JSON.stringify({ crashReportsEnabled: true }));
+      yield* reporter.report({ kind: "fatal", error: new Error("second") });
+      assert.strictEqual(yield* Queue.size(sent), 1);
+      // A file cut short while it is rewritten still says off.
+      NodeFS.writeFileSync(settingsPath, '{"crashReportsEnabled": false, "x": ');
       yield* reporter.report({ kind: "fatal", error: new Error("third") });
       assert.strictEqual(yield* Queue.size(sent), 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends nothing when team rules turn telemetry export off or cannot be read", () =>
+    Effect.gen(function* () {
+      for (const rules of [
+        JSON.stringify({ version: 1, owner: "Acme", telemetry: { export: false } }),
+        "{ not valid",
+      ]) {
+        const home = makeTempHome({});
+        const teamRulesPath = NodePath.join(home, "team-rules.json");
+        NodeFS.writeFileSync(teamRulesPath, rules);
+        const { reporter, sent } = yield* setup({ home, teamRulesPath });
+        yield* reporter.report({ kind: "fatal", error: new Error("boom") });
+        assert.strictEqual(yield* Queue.size(sent), 0);
+        assert.isFalse(NodeFS.existsSync(NodePath.join(home, "crash-install-id")));
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads the env switch late, after a shell probe sets it", () =>
+    Effect.gen(function* () {
+      const home = makeTempHome({});
+      const env: Record<string, string | undefined> = {};
+      const { reporter, sent } = yield* setup({ home, env });
+      env.STUDIO_CRASH_REPORTS = "false";
+      yield* reporter.report({ kind: "fatal", error: new Error("boom") });
+      assert.strictEqual(yield* Queue.size(sent), 0);
     }).pipe(Effect.scoped),
   );
 
