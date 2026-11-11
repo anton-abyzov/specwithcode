@@ -36,16 +36,17 @@ describe("buildStarterSuggestions", () => {
   });
 
   it("asks for the first commit when a repository has files and no commit", () => {
-    const first = buildStarterSuggestions(signals({ uncommittedFiles: 2 })).find(
-      (entry) => entry.id === "changes",
-    );
+    const first = buildStarterSuggestions(
+      signals({ uncommittedFiles: 2, hasNoCommits: true }),
+    ).find((entry) => entry.id === "changes");
     expect(first?.title).toBe("Make the first commit");
     expect(first?.detail).toContain("2 files are waiting");
     expect(first?.prompt).toContain("never invent an identity");
+    // An unreadable log is not proof of an empty history.
     expect(
-      buildStarterSuggestions(
-        signals({ uncommittedFiles: 2, recentCommitSubjects: ["Initial commit"] }),
-      ).find((entry) => entry.id === "changes")?.title,
+      buildStarterSuggestions(signals({ uncommittedFiles: 2 })).find(
+        (entry) => entry.id === "changes",
+      )?.title,
     ).toBe("Review 2 uncommitted changes");
   });
 

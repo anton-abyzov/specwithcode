@@ -87,16 +87,12 @@ const make = Effect.gen(function* () {
   };
   const usualDirs = vskillSearchDirs({ home, pathEnv, platform, appData });
   // Read on each request: Node can be installed or switched while the app runs.
-  const searchDirsNow = nodeToolDirs({
+  const managerDirsNow = nodeToolDirs({
     home,
     platform,
     execPath: process.execPath,
     ...managerEnv,
-  }).pipe(
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(Path.Path, path),
-    Effect.map((dirs) => [...new Set([...usualDirs, ...dirs])]),
-  );
+  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
   const findIn = (dirs: ReadonlyArray<string>, name: string) =>
     resolveCommandPath(name, { env: { PATH: dirs.join(delimiter), PATHEXT: pathExt } }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -177,7 +173,8 @@ const make = Effect.gen(function* () {
       } as const;
     }
     // Resolved on each request: the CLI can be installed while the app runs.
-    const searchDirs = yield* searchDirsNow;
+    const managerDirs = yield* managerDirsNow;
+    const searchDirs = [...new Set([...usualDirs, ...managerDirs])];
     let specweave = yield* findIn(searchDirs, "specweave");
     if (specweave === null) {
       const npmBin = yield* npmGlobalBin(searchDirs);
@@ -205,9 +202,12 @@ const make = Effect.gen(function* () {
         timeoutBehavior: "timedOutResult",
         maxOutputBytes: 256 * 1024,
         outputMode: "truncate",
-        // A node script: its own folder first, so its `node` is found.
+        // A node script: its own folder first, so its `node` is found, then a
+        // version manager's Node ahead of an older one the system may carry.
         env: {
-          PATH: [path.dirname(command), ...searchDirs].filter(Boolean).join(delimiter),
+          PATH: [...new Set([path.dirname(command), ...managerDirs, ...usualDirs])]
+            .filter(Boolean)
+            .join(delimiter),
           NO_COLOR: "1",
         },
       })

@@ -28,6 +28,8 @@ export interface ProjectStarterSignals {
   /** Newest first. */
   readonly recentCommitSubjects: readonly string[];
   readonly uncommittedFiles: number;
+  /** Git answered that the repository has no commit; false when it could not say. */
+  readonly hasNoCommits: boolean;
   /** Open SpecWeave increments, newest first. */
   readonly openIncrements: ReadonlyArray<{ readonly id: string; readonly title: string }>;
   readonly hasRecentHandoff: boolean;
@@ -55,6 +57,7 @@ export const UNREAD_STARTER_SIGNALS: ProjectStarterSignals = {
   todoCountIsFloor: false,
   recentCommitSubjects: [],
   uncommittedFiles: 0,
+  hasNoCommits: false,
   openIncrements: [],
   hasRecentHandoff: false,
   handoffIncrement: null,
@@ -185,7 +188,7 @@ function repositorySuggestions(signals: ProjectStarterSignals): ProjectStarterSu
   const goal = goalSuggestion(signals);
   if (goal) found.push(goal);
   // Files but no commit at all: the first commit failed or was never made.
-  if (signals.uncommittedFiles > 0 && signals.recentCommitSubjects.length === 0)
+  if (signals.uncommittedFiles > 0 && signals.hasNoCommits)
     found.push({
       id: "changes",
       topic: "changes",

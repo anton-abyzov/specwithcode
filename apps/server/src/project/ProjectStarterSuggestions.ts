@@ -310,12 +310,15 @@ const make = Effect.gen(function* () {
         return {
           recentCommitSubjects: [],
           uncommittedFiles: 0,
+          hasNoCommits: false,
           todoCount: 0,
           todoCountIsFloor: false,
           frequentlyChangedFiles: [],
         };
-      const [log, status, todos, changed] = yield* Effect.all(
+      const [head, log, status, todos, changed] = yield* Effect.all(
         [
+          // Exits 1, quietly, only when the repository has no commit yet.
+          git(root, ["rev-parse", "--verify", "--quiet", "HEAD"], 128),
           git(root, ["log", "-5", "--format=%s"], 4_096),
           git(root, ["status", "--porcelain"], 65_536),
           // -I skips binaries, -w matches whole words, -c prints one count per file.
@@ -340,9 +343,10 @@ const make = Effect.gen(function* () {
             HOT_FILE_LOG_BYTES,
           ),
         ],
-        { concurrency: 4 },
+        { concurrency: 5 },
       );
       return {
+        hasNoCommits: head?.code === 1,
         recentCommitSubjects:
           log?.code === 0 ? log.text.split("\n").filter((line) => line.trim() !== "") : [],
         uncommittedFiles:
@@ -468,6 +472,7 @@ const make = Effect.gen(function* () {
         : {
             recentCommitSubjects: [],
             uncommittedFiles: 0,
+            hasNoCommits: false,
             todoCount: 0,
             todoCountIsFloor: false,
             frequentlyChangedFiles: [],
