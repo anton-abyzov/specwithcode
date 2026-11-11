@@ -196,11 +196,14 @@ export interface FolderPlace {
 
 /**
  * Places offered beside the folder list: the machine's projects folder, home,
- * then the folders its existing projects sit in.
+ * then recent folders. With `recent` (folders confirmed in an address bar,
+ * newest first) the Recent list holds up to five: those, then the folders the
+ * existing projects sit in.
  */
 export function projectPlaces(input: {
   readonly projectsFolder: string | null;
   readonly projectRoots: readonly string[];
+  readonly recent?: readonly string[];
 }): FolderPlace[] {
   const places: FolderPlace[] = [];
   if (input.projectsFolder !== null) {
@@ -212,8 +215,18 @@ export function projectPlaces(input: {
   }
   places.push({ kind: "home", label: "Home", path: "~/" });
   const skip = input.projectsFolder === null ? [] : [input.projectsFolder];
-  for (const parent of recentParents(input.projectRoots, skip)) {
-    places.push({ kind: "recent", label: baseName(parent), path: parent });
+  if (input.recent === undefined) {
+    for (const parent of recentParents(input.projectRoots, skip)) {
+      places.push({ kind: "recent", label: baseName(parent), path: parent });
+    }
+    return places;
   }
+  const recent: string[] = [];
+  for (const path of [...input.recent, ...recentParents(input.projectRoots, skip, 5)]) {
+    if ([...skip, ...recent].some((taken) => sameFolder(taken, path))) continue;
+    recent.push(path);
+    if (recent.length === 5) break;
+  }
+  for (const path of recent) places.push({ kind: "recent", label: baseName(path), path });
   return places;
 }

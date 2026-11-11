@@ -77,6 +77,10 @@ export type ElectronDialogError = typeof ElectronDialogError.Type;
 export interface ElectronDialogPickFolderInput {
   readonly owner: Option.Option<Electron.BrowserWindow>;
   readonly defaultPath: Option.Option<string>;
+  /** Window title on Windows and Linux, and the message line on macOS, which shows no title. */
+  readonly title?: string | undefined;
+  /** The confirm button's words. */
+  readonly buttonLabel?: string | undefined;
 }
 
 export interface ElectronDialogPickFilesInput {
@@ -110,15 +114,14 @@ export const make = ElectronDialog.of({
       onSome: (owner) => owner.id,
     });
     const defaultPath = Option.getOrNull(input.defaultPath);
-    const openDialogOptions: Electron.OpenDialogOptions = Option.match(input.defaultPath, {
-      onNone: () => ({
-        properties: ["openDirectory", "createDirectory"],
-      }),
-      onSome: (defaultPath) => ({
-        properties: ["openDirectory", "createDirectory"],
-        defaultPath,
-      }),
-    });
+    const title = input.title?.trim();
+    const buttonLabel = input.buttonLabel?.trim();
+    const openDialogOptions: Electron.OpenDialogOptions = {
+      properties: ["openDirectory", "createDirectory"],
+      ...(Option.isSome(input.defaultPath) ? { defaultPath: input.defaultPath.value } : {}),
+      ...(title ? { title, message: title } : {}),
+      ...(buttonLabel ? { buttonLabel } : {}),
+    };
     const result = yield* Effect.tryPromise({
       try: () =>
         Option.match(input.owner, {

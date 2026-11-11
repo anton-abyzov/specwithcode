@@ -52,6 +52,44 @@ describe("ElectronDialog", () => {
     }).pipe(Effect.provide(ElectronDialog.layer)),
   );
 
+  it.effect("titles the folder picker and names its confirm button when asked", () =>
+    Effect.gen(function* () {
+      showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ["/workspace/app"] });
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      const picked = yield* dialog.pickFolder({
+        owner: Option.none(),
+        defaultPath: Option.some("/workspace"),
+        title: " Choose a project folder ",
+        buttonLabel: "Add project",
+      });
+
+      assert.deepStrictEqual(picked, Option.some("/workspace/app"));
+      assert.deepStrictEqual(showOpenDialogMock.mock.calls[0], [
+        {
+          properties: ["openDirectory", "createDirectory"],
+          defaultPath: "/workspace",
+          title: "Choose a project folder",
+          message: "Choose a project folder",
+          buttonLabel: "Add project",
+        },
+      ]);
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
+  it.effect("keeps the system's own title and button when none are given", () =>
+    Effect.gen(function* () {
+      showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] });
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      yield* dialog.pickFolder({ owner: Option.none(), defaultPath: Option.none(), title: "  " });
+
+      assert.deepStrictEqual(showOpenDialogMock.mock.calls[0], [
+        { properties: ["openDirectory", "createDirectory"] },
+      ]);
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
   it.effect("opens a single-file picker when multiple selections are disabled", () =>
     Effect.gen(function* () {
       showOpenDialogMock.mockResolvedValue({

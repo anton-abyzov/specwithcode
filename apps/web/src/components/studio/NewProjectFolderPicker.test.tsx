@@ -214,6 +214,35 @@ it("moves with the keyboard: arrows, open, parent and typed letters", async () =
   expect(onSelect).toHaveBeenLastCalledWith(HOME);
 });
 
+it("turns the breadcrumb into the address bar on a click in its empty part", async () => {
+  const onSelect = vi.fn();
+  await render({ onSelect, defaultPath: `${HOME}/Projects` });
+  await act(async () =>
+    container.querySelector<HTMLElement>('nav[aria-label^="Current folder"]')!.click(),
+  );
+  const path = () => container.querySelector<HTMLInputElement>('input[aria-label="Folder path"]')!;
+  expect(path().value).toBe(`${HOME}/Projects`);
+  // Typing completes from the folder being shown.
+  await type(path(), `${HOME}/Projects/no`);
+  expect(path().value).toBe(`${HOME}/Projects/notes`);
+  await key(path(), "Enter");
+  expect(onSelect).toHaveBeenLastCalledWith(`${HOME}/Projects/notes`);
+});
+
+it("takes a pasted path anywhere in the browser", async () => {
+  const onSelect = vi.fn();
+  await render({ onSelect, defaultPath: `${HOME}/Projects` });
+  await act(async () => {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.assign(event, { clipboardData: { getData: () => `"${HOME}/Projects/acme"\n` } });
+    list().dispatchEvent(event);
+  });
+  const path = () => container.querySelector<HTMLInputElement>('input[aria-label="Folder path"]')!;
+  expect(path().value).toBe(`${HOME}/Projects/acme`);
+  await key(path(), "Enter");
+  expect(onSelect).toHaveBeenLastCalledWith(`${HOME}/Projects/acme`);
+});
+
 it("jumps to a place", async () => {
   const onSelect = vi.fn();
   await render({
