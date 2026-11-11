@@ -88,11 +88,13 @@ export function SkillMachineInstall({
     pickedScope ??
     installedScope ??
     (controls.row.lock?.lockScope === "user" || !projectId ? "user" : "project");
-  // A row reports one lock: the project one when a project copy exists. So the pin is known
-  // for the scope the row reports, for a project scope next to a user-only copy, and when
-  // a successful read found no copy. Otherwise the user chooses; nothing is assumed.
+  // A row reports one lock, so a pin is known only for the scope whose lock was read: the
+  // row's own scope, or a scope a successful read showed empty. A user-level read never sees
+  // a project lock, and a user-lock row can sit beside a project lock entry. Otherwise the
+  // user chooses; nothing is assumed.
   const [pickedPin, setPin] = useState<boolean | null>(null);
-  const pinKnown = !unread && (!row || installedScope === scope || installedScope === "user");
+  const projectLockUnread = scope === "project" && controls.userLevel;
+  const pinKnown = !unread && (installedScope === scope || (!row && !projectLockUnread));
   const pinned = pinKnown && installedScope === scope ? (row?.lock?.pinnedVersion ?? null) : null;
   const pin = pickedPin ?? (pinKnown ? Boolean(pinned) : null);
   const [preview, setPreview] = useState<{ key: string; expectedHash: string } | null>(null);
@@ -167,6 +169,8 @@ export function SkillMachineInstall({
         return;
       }
       setPreview(null);
+      // The next action starts from the pin the machine now reports.
+      setPin(null);
       setDone(
         `Installed v${receipt.installedVersion ?? plan.version} on ${label} for ${scopeLabel(scope).toLowerCase()}${pin ? ", pinned" : ""}.`,
       );

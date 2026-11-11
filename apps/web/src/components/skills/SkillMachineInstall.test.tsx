@@ -171,6 +171,43 @@ describe("one machine install", () => {
     expect(refreshSkillAvailability).toHaveBeenCalledTimes(1);
     expect(host.querySelector('[role="alert"]')).not.toBeNull();
   });
+  it("asks for a pin choice for a project install beside a user-lock row or from a user-level view", async () => {
+    const controls = (userLevel: boolean) =>
+      ({
+        environmentId: "local",
+        projectId: "local-project",
+        canPush: true,
+        userLevel,
+        row: { lock: { skillId: "owner/repo/obsidian-brain", lockScope: "user" } },
+        versions: { data: { versions: [{ version: "1.3.0" }], outdated: null } },
+      }) as unknown as SkillControls;
+    const userRow = { lock: { lockScope: "user", version: "1.1.0" } } as unknown as ProjectSkillRow;
+    const radio = (text: string) =>
+      [...host.querySelectorAll("label")]
+        .find((node) => node.textContent?.startsWith(text))
+        ?.querySelector("input") as HTMLInputElement;
+    for (const [key, userLevel, row] of [
+      ["user-row", false, userRow],
+      ["user-level", true, null],
+    ] as const) {
+      await act(async () =>
+        root.render(
+          <SkillMachineInstall
+            key={key}
+            controls={controls(userLevel)}
+            machineId="m6"
+            label="M6"
+            row={row}
+            projectId={ProjectId.make("m6-project")}
+            reachable
+          />,
+        ),
+      );
+      await act(async () => radio("This project only").click());
+      expect(host.textContent).toContain("Choose whether to pin");
+      expect(button("Install v1.3.0").disabled).toBe(true);
+    }
+  });
   it("requires a pin choice on a machine that was not read", async () => {
     const controls = {
       environmentId: "local",
