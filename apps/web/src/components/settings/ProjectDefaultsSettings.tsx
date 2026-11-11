@@ -985,15 +985,14 @@ export function UseWorktreesSetting() {
       title="Use worktrees"
       description={
         <>
-          New threads in this project, including ones the coordinator starts, open in their own git
-          worktree off the project's current branch. A thread working an increment gets one folder
-          with a worktree of each repository the increment changes, on one branch. In a folder
-          holding other repositories, such as an umbrella, threads without an increment stay in the
-          folder. Off or not set: new threads work in the project folder. There is no machine-wide
-          workspace default.
+          {tx(
+            "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.",
+          )}
           {worktreesRecommendation ? (
             <span className="mt-1 block text-foreground" data-workspace-recommendation="">
-              {worktreesRecommendation}
+              {worktreesRecommendation.on
+                ? tx("Recommended here: on")
+                : `${tx("Recommended here: off")}. ${worktreesRecommendation.detail ?? ""}`.trim()}
             </span>
           ) : null}
         </>

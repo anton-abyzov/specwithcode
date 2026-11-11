@@ -4153,4 +4153,8 @@ export const es: PhraseCatalog = {
   "Reply needed": "Falta tu respuesta",
   "Sign-in needed": "Hay que iniciar sesión",
   "Usage limit reached": "Límite de uso alcanzado",
+  "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
+    "Cada hilo nuevo recibe su propia rama y worktree, así los hilos en paralelo nunca comparten un checkout. Desactivado: los hilos trabajan en la carpeta del proyecto.",
+  "Recommended here: on": "Recomendado aquí: activado",
+  "Recommended here: off": "Recomendado aquí: desactivado",
 };

@@ -70,9 +70,15 @@ export function workspaceGuidance(layout: FolderLayout): WorkspaceGuidance | nul
   };
 }
 
-/** One line for the Use worktrees setting: the recommendation and why. */
-export function worktreesSettingRecommendation(layout: FolderLayout): string | null {
+/**
+ * The Use worktrees recommendation for this folder. The reason is shown only
+ * for "off", since the setting's own description already says why "on" helps.
+ */
+export function worktreesSettingRecommendation(
+  layout: FolderLayout,
+): { readonly on: boolean; readonly detail: string | null } | null {
   const guidance = workspaceGuidance(layout);
   if (guidance === null) return null;
-  return `Recommended for this folder: ${guidance.recommended === "worktree" ? "on" : "off"}. ${guidance.detail}`;
+  const on = guidance.recommended === "worktree";
+  return { on, detail: on ? null : guidance.detail };
 }

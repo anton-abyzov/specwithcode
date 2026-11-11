@@ -4127,4 +4127,8 @@ export const ja: PhraseCatalog = {
   "Reply needed": "返信が必要",
   "Sign-in needed": "サインインが必要",
   "Usage limit reached": "利用上限に到達",
+  "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
+    "新しいスレッドはそれぞれ専用のブランチと worktree を持つため、並行するスレッドがチェックアウトを共有することはありません。オフ：スレッドはプロジェクトフォルダで作業します。",
+  "Recommended here: on": "ここでの推奨：オン",
+  "Recommended here: off": "ここでの推奨：オフ",
 };
