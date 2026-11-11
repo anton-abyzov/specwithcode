@@ -4130,4 +4130,10 @@ export const ru: PhraseCatalog = {
     "Каждый новый тред получает свою ветку и worktree, поэтому параллельные треды не делят один checkout. Выкл.: треды работают в папке проекта.",
   "Recommended here: on": "Рекомендуется здесь: вкл.",
   "Recommended here: off": "Рекомендуется здесь: выкл.",
+  "Adding a machine to this one?": "Добавляете машину к этой?",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Агенты на {here} уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на {here}. Чтобы вместо этого добавить новую машину к {here}, откройте SpecWithCode на новой машине, выберите там «Присоединиться к главной машине» и вставьте её строку здесь, в разделе «Добавить машину».",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Агенты на этой машине уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на этой. Чтобы вместо этого добавить новую машину к этой, откройте SpecWithCode на новой машине, выберите там «Присоединиться к главной машине» и вставьте её строку здесь, в разделе «Добавить машину».",
+  "{count} more": "ещё {count}",
 };

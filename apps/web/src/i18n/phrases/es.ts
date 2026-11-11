@@ -4157,4 +4157,10 @@ export const es: PhraseCatalog = {
     "Cada hilo nuevo recibe su propia rama y worktree, así los hilos en paralelo nunca comparten un checkout. Desactivado: los hilos trabajan en la carpeta del proyecto.",
   "Recommended here: on": "Recomendado aquí: activado",
   "Recommended here: off": "Recomendado aquí: desactivado",
+  "Adding a machine to this one?": "¿Vas a añadir un equipo a este?",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Los agentes de {here} ya inician trabajo en {machines}. Una línea creada aquí permite que el equipo que elijas inicie trabajo en {here}. Para añadir un equipo nuevo a {here}, abre SpecWithCode en el equipo nuevo, elige allí «Unirse a un equipo principal» y pega su línea aquí, en «Añadir un equipo».",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Los agentes de este equipo ya inician trabajo en {machines}. Una línea creada aquí permite que el equipo que elijas inicie trabajo en este. Para añadir un equipo nuevo a este, abre SpecWithCode en el equipo nuevo, elige allí «Unirse a un equipo principal» y pega su línea aquí, en «Añadir un equipo».",
+  "{count} more": "{count} más",
 };

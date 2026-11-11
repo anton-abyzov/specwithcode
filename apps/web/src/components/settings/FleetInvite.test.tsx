@@ -482,7 +482,10 @@ it("requires explicit coordinator approval and shows the local identity for enro
 });
 
 describe("a join line made on a machine that already starts work on others", () => {
-  const machine = (label: string, status?: "allowed" | "expiring" | "not_allowed" | "revoked") => ({
+  const machine = (
+    label: string,
+    status?: "allowed" | "expiring" | "not_allowed" | "revoked" | "expired",
+  ) => ({
     environmentId: EnvironmentId.make(`env-${label}`),
     label,
     ...(status === undefined
@@ -499,6 +502,7 @@ describe("a join line made on a machine that already starts work on others", () 
           machine("M3", "expiring"),
           machine("Listed", "not_allowed"),
           machine("Revoked", "revoked"),
+          machine("Expired", "expired"),
           machine("Old server"),
           { ...machine("twin", "allowed"), label: " M1 " },
         ],
@@ -512,10 +516,20 @@ describe("a join line made on a machine that already starts work on others", () 
     expect(fleetMachineNameList([" "])).toBeNull();
     expect(fleetMachineNameList(["M1"])).toBe("M1");
     expect(fleetMachineNameList(["M1", "M3"])).toBe("M1 and M3");
-    expect(fleetMachineNameList(["M1", "M3", "Mini"])).toBe("M1, M3 and Mini");
-    expect(fleetMachineNameList(["M1", "M3", "Mini", "Air"])).toBe("M1, M3, Mini and Air");
-    expect(fleetMachineNameList(["M1", "M3", "Mini", "Air", "M2"])).toBe("M1, M3, Mini and 2 more");
+    expect(fleetMachineNameList(["M1", "M3", "Mini"])).toBe("M1, M3, and Mini");
+    expect(fleetMachineNameList(["M1", "M3", "Mini", "Air"])).toBe("M1, M3, Mini, and Air");
+    expect(fleetMachineNameList(["M1", "M3", "Mini", "Air", "M2"])).toBe(
+      "M1, M3, Mini, and 2 more",
+    );
     expect(fleetMachineNameList(["M1", "M1"])).toBe("M1");
+  });
+
+  it("joins the names the way the language does", () => {
+    expect(fleetMachineNameList(["M1", "M3"], "ru")).toBe("M1 и M3");
+    expect(fleetMachineNameList(["M1", "M3"], "de")).toBe("M1 und M3");
+    expect(
+      fleetMachineNameList(["M1", "M3", "Mini", "Air", "M2"], "es", (count) => `${count} más`),
+    ).toBe("M1, M3, Mini y 2 más");
   });
 
   it("says nothing on a machine that starts work on no other", () => {
@@ -540,7 +554,8 @@ describe("a join line made on a machine that already starts work on others", () 
 
   it("names this machine in plain words when it has no name", () => {
     const shown = text(panel(render(), { managedMachines: ["M1"], defaultName: null }));
-    expect(shown).toContain("Agents on this machine already start work on M1.");
+    expect(shown).toContain("Agents here already start work on M1.");
+    expect(shown).toContain("start work on this one. To add a new machine to this one instead");
   });
 });
 
