@@ -9,10 +9,12 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
 import {
   criteriaWithState,
+  evidencedRoots,
   hasSpecweaveConfig,
   isSpecweaveProject,
   linkedIncrementRoot,
   listProjectIncrements,
+  queryProjectIncrements,
   readRequireIncrementMode,
   readIncrementProgress,
   readThreadIncrementProgress,
@@ -22,6 +24,7 @@ import {
   specweaveThreadSessionPath,
   threadDeclaredSmallFix,
   writeLaunchBinding,
+  type ThreadWorkEvidence,
 } from "./ThreadIncrementProgress.ts";
 
 const roots: string[] = [];
@@ -570,6 +573,227 @@ describe("registered checkouts of the project's repository", () => {
     expect(await resolveRegisteredIncrementRef(project, null, "1010")).toMatchObject({
       kind: "not_found",
       root: project,
+    });
+  });
+});
+
+/** What the service reads from the projection: the folders and specs the thread itself wrote. */
+function evidence(input: {
+  readonly changed?: ReadonlyArray<string>;
+  readonly specs?: ReadonlyArray<string>;
+}): ThreadWorkEvidence & { readonly asked: string[][] } {
+  const asked: string[][] = [];
+  return {
+    asked,
+    workedIn: async (roots) => {
+      asked.push([...roots]);
+      return (input.changed ?? []).some((path) =>
+        roots.some((root) => path.startsWith(`${root}${NodePath.sep}`)),
+      );
+    },
+    writtenSpecs: async () => input.specs ?? [],
+  };
+}
+
+describe("an increment planned outside the project folder", () => {
+  // The SpecOS thread: project in one folder, a new repository made elsewhere by the agent.
+  async function outside() {
+    const project = await NodeFSP.realpath(await temp("studio-plan-project-"));
+    const elsewhere = await NodeFSP.realpath(await temp("studio-plan-elsewhere-"));
+    const home = await temp("studio-plan-home-");
+    const folder = await increment(elsewhere, "0001-specos-desktop", LEDGER);
+    return { project, elsewhere, home, folder, spec: NodePath.join(folder, "spec.md") };
+  }
+  const thread = { threadId: "t1", title: "Build SpecOS on Linux", branch: null } as const;
+
+  it("accepts a claim there once the thread itself changed files in that folder", async () => {
+    const { project, elsewhere, home, folder } = await outside();
+    await writeClaim(home, "t1", elsewhere, "0001-specos-desktop");
+    const source = { ...thread, worktreePath: null, home };
+
+    // The claim file alone is a file in the user's home: not enough.
+    expect(await readThreadIncrementProgress(project, [source], NOW)).toEqual([]);
+    const elsewhereOnly = evidence({ changed: [NodePath.join(project, "src/a.ts")] });
+    expect(
+      await readThreadIncrementProgress(project, [{ ...source, evidence: elsewhereOnly }], NOW),
+    ).toEqual([]);
+    expect(elsewhereOnly.asked).toEqual([[elsewhere]]);
+
+    const worked = evidence({ changed: [NodePath.join(elsewhere, "server/src/app.ts")] });
+    const [progress] = await readThreadIncrementProgress(
+      project,
+      [{ ...source, evidence: worked }],
+      NOW,
+    );
+    expect(progress).toMatchObject({
+      threadId: "t1",
+      incrementId: "0001-specos-desktop",
+      binding: "claim",
+      boundTaskId: "T-02",
+      incrementPath: folder,
+    });
+    expect(progress!.tasks.map((task) => [task.id, task.status])).toEqual([
+      ["T-01", "done"],
+      ["T-02", "claimed"],
+      ["T-03", "planned"],
+      ["T-04", "skipped"],
+    ]);
+  });
+
+  it("never asks for evidence when the claim already lies in the project", async () => {
+    const { project, home } = await outside();
+    await increment(project, "0930-studio-plan-card", LEDGER);
+    await writeClaim(home, "t1", project, "0930-studio-plan-card");
+    const unused = evidence({});
+    const [progress] = await readThreadIncrementProgress(
+      project,
+      [{ ...thread, worktreePath: null, home, evidence: unused }],
+      NOW,
+    );
+    expect(progress).toMatchObject({ incrementId: "0930-studio-plan-card", binding: "claim" });
+    expect(unused.asked).toEqual([]);
+  });
+
+  it("binds a thread to the spec it wrote before any ledger write, the newest first", async () => {
+    const { project, elsewhere, home, spec, folder } = await outside();
+    const older = await increment(elsewhere, "0002-older", "");
+    const gone = NodePath.join(elsewhere, ".specweave/increments/0003-removed/spec.md");
+    const wrote = evidence({
+      specs: [gone, spec, NodePath.join(older, "spec.md"), "not/an/increment/spec.md"],
+    });
+    const [progress] = await readThreadIncrementProgress(
+      project,
+      [{ ...thread, worktreePath: null, home, evidence: wrote }],
+      NOW,
+    );
+    // Reported as a claim so an older client still decodes the reply; no task yet.
+    expect(progress).toMatchObject({
+      incrementId: "0001-specos-desktop",
+      binding: "claim",
+      boundTaskId: null,
+      incrementPath: folder,
+    });
+    expect(wrote.asked).toEqual([]);
+  });
+
+  it("takes a relative spec path from the thread's checkout", async () => {
+    const { project, home } = await outside();
+    const folder = await increment(project, "0007-in-project", "");
+    const [progress] = await readThreadIncrementProgress(
+      project,
+      [
+        {
+          ...thread,
+          worktreePath: null,
+          home,
+          evidence: evidence({ specs: [".specweave/increments/0007-in-project/spec.md"] }),
+        },
+      ],
+      NOW,
+    );
+    expect(progress).toMatchObject({ incrementId: "0007-in-project", incrementPath: folder });
+  });
+
+  it("keeps a hand-made link, a claim file, a branch and a name above a written spec", async () => {
+    const { project, elsewhere, home, spec } = await outside();
+    await increment(project, "0930-studio-plan-card", LEDGER);
+    await increment(project, "0931-other", "");
+    const wrote = { evidence: evidence({ specs: [spec], changed: [spec] }) };
+
+    // A thread named for one increment that also edits another's spec keeps its own.
+    const named = evidence({ specs: [spec] });
+    const byName = await readThreadIncrementProgress(
+      project,
+      [{ ...thread, title: "0931 other work", worktreePath: null, home, evidence: named }],
+      NOW,
+    );
+    expect(byName[0]).toMatchObject({ incrementId: "0931-other", binding: "name" });
+
+    const byBranch = await readThreadIncrementProgress(
+      project,
+      [{ ...thread, branch: "inc/0931-other", worktreePath: null, home, ...wrote }],
+      NOW,
+    );
+    expect(byBranch[0]).toMatchObject({ incrementId: "0931-other", binding: "branch" });
+
+    const byHand = await readThreadIncrementProgress(
+      project,
+      [
+        {
+          ...thread,
+          worktreePath: null,
+          home,
+          ...wrote,
+          link: { incrementId: "0930-studio-plan-card" },
+        },
+      ],
+      NOW,
+    );
+    expect(byHand[0]).toMatchObject({ incrementId: "0930-studio-plan-card", binding: "manual" });
+
+    await increment(elsewhere, "0004-claimed", LEDGER);
+    await writeClaim(home, "t1", elsewhere, "0004-claimed");
+    const byClaim = await readThreadIncrementProgress(
+      project,
+      [{ ...thread, worktreePath: null, home, ...wrote }],
+      NOW,
+    );
+    expect(byClaim[0]).toMatchObject({ incrementId: "0004-claimed", boundTaskId: "T-02" });
+  });
+
+  it("reads on as if nothing were proven when the evidence lookup fails", async () => {
+    const { project, elsewhere, home } = await outside();
+    await writeClaim(home, "t1", elsewhere, "0001-specos-desktop");
+    const broken: ThreadWorkEvidence = {
+      workedIn: () => Promise.reject(new Error("database is locked")),
+      writtenSpecs: () => Promise.reject(new Error("database is locked")),
+    };
+    await increment(project, "0930-studio-plan-card", LEDGER);
+    const read = (title: string) =>
+      readThreadIncrementProgress(
+        project,
+        [{ ...thread, title, worktreePath: null, home, evidence: broken }],
+        NOW,
+      );
+    expect(await read("Build SpecOS on Linux")).toEqual([]);
+    // What needs no evidence still binds.
+    expect((await read("0930 plan card"))[0]).toMatchObject({ binding: "name" });
+    expect(
+      await evidencedRoots(project, { ...thread, worktreePath: null, home, evidence: broken }),
+    ).toEqual([]);
+  });
+
+  it("lists and links the increments of the folders the thread worked in, and no others", async () => {
+    const { project, elsewhere, home, spec } = await outside();
+    const stranger = await NodeFSP.realpath(await temp("studio-plan-stranger-"));
+    await increment(stranger, "0009-not-yours", "");
+    await increment(project, "0930-studio-plan-card", "");
+    const source = { ...thread, worktreePath: null, home, evidence: evidence({ specs: [spec] }) };
+
+    const worked = await evidencedRoots(project, source);
+    expect(worked).toEqual([elsewhere]);
+    expect(await evidencedRoots(project, { ...thread, worktreePath: null, home })).toEqual([]);
+
+    const listed = await queryProjectIncrements(project, null, {}, worked);
+    expect(listed.increments.map((entry) => entry.incrementId)).toEqual([
+      "0930-studio-plan-card",
+      "0001-specos-desktop",
+    ]);
+    expect(listed.total).toBe(2);
+
+    expect(await linkedIncrementRoot(project, null, "0001-specos-desktop", worked)).toBe(elsewhere);
+    expect(await linkedIncrementRoot(project, null, "0001-specos-desktop")).toBeNull();
+    expect(await linkedIncrementRoot(project, null, "0009-not-yours", worked)).toBeNull();
+
+    // A link made by hand reads the increment where the thread planned it.
+    const [progress] = await readThreadIncrementProgress(
+      project,
+      [{ ...source, link: { incrementId: "0001-specos-desktop" } }],
+      NOW,
+    );
+    expect(progress).toMatchObject({
+      binding: "manual",
+      incrementPath: NodePath.join(elsewhere, ".specweave/increments/0001-specos-desktop"),
     });
   });
 });

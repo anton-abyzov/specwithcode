@@ -7,6 +7,7 @@ import type { ProjectAttention } from "@specweave-studio/client-runtime/state/pr
  */
 import type { DesignSummary, EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import { scopeThreadRef, scopedThreadKey } from "@specweave-studio/client-runtime/environment";
 import type { AttentionReason } from "@specweave-studio/shared/projectAttention";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
 import { useRouter } from "@tanstack/react-router";
@@ -89,6 +90,7 @@ import { ThreadModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge"
 import { PlanProgressChip } from "../PlanProgressChip";
 import { compactThreadPlan } from "../../../studio/threadPlanProgress";
 import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncrementProgress";
+import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
 import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads";
@@ -374,6 +376,15 @@ export function ThreadsPane({
   } = useProjectThreadIncrementProgress(props.environmentId, allThreads);
   const isUnplanned = (thread: EnvironmentThreadShell) =>
     thread.environmentId === props.environmentId && unplanned.has(thread.id);
+  // A thread on another machine works on an increment there: its progress is
+  // read from that machine with one query per machine and project, the way
+  // the sidebar reads its own rows.
+  const threadsElsewhere = useMemo(
+    () => allThreads.filter((thread) => thread.environmentId !== props.environmentId),
+    [allThreads, props.environmentId],
+  );
+  const { plans: plansElsewhere, loaders: planLoadersElsewhere } =
+    useSidebarThreadPlans(threadsElsewhere);
   // Increments are recommended, not required. Dismissing the notice acknowledges
   // the threads it counts, and it comes back only for a thread it has not
   // counted; the sort menu switch turns the notice and the row chips off for good.
@@ -512,6 +523,7 @@ export function ThreadsPane({
 
   return (
     <>
+      {planLoadersElsewhere}
       <ProjectPaneBar
         {...bar}
         tools={
@@ -971,12 +983,15 @@ export function ThreadsPane({
                     const machine = multiMachine || location.moved ? location : null;
                     const showDot = threadToneShowsDot(tone);
                     const pullRequest = threadPullRequest(thread);
-                    const plan = compactThreadPlan(
+                    const plan =
                       thread.environmentId === props.environmentId
-                        ? (incrementProgress.get(thread.id) ?? null)
-                        : null,
-                      thread.planProgress,
-                    );
+                        ? compactThreadPlan(
+                            incrementProgress.get(thread.id) ?? null,
+                            thread.planProgress,
+                          )
+                        : (plansElsewhere.get(
+                            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                          ) ?? null);
                     return (
                       <div key={`${thread.environmentId}:${thread.id}`}>
                         <article

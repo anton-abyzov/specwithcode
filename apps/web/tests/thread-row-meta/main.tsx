@@ -63,12 +63,14 @@ function thread(
     approval?: boolean;
     pullRequest?: ReturnType<typeof pr>;
     minutes: number;
+    /** Another machine the thread runs on, with that machine's own project id. */
+    elsewhere?: { environmentId: string; projectId: string };
   },
 ): EnvironmentThreadShell {
   return {
     id,
-    environmentId: host,
-    projectId: "project",
+    environmentId: options.elsewhere?.environmentId ?? host,
+    projectId: options.elsewhere?.projectId ?? "project",
     title,
     createdBy: "agent",
     runtime: null,
@@ -158,6 +160,12 @@ const threads = [
     kind: "fallback",
     input: true,
     minutes: 12,
+  }),
+  // November 11: a thread on another machine works an increment its agent planned there.
+  thread("specos", "Build SpecOS on Linux", {
+    model: opus,
+    minutes: 16,
+    elsewhere: { environmentId: "env-mini", projectId: "project-mini" },
   }),
   // The longest status word beside a fallback.
   thread("approval", "Approve the migration run", {
