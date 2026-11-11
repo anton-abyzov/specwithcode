@@ -59,7 +59,7 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { unreachableMachines } from "../../cloud/connectRoutePlan";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { ConnectReachBanner } from "./ConnectReachBanner";
-import { FleetInviteArea } from "./FleetInvite";
+import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
 import { MachineTerminal, MachineTerminalButton, useCloseMachineTerminal } from "./MachineTerminal";
 import { ConnectionReason } from "./ConnectionReason";
@@ -563,6 +563,7 @@ export function StudioFleetConnections({
           canManage={canManageWorkers}
           open={inviteOpen}
           onOpenChange={setInviteOpen}
+          managedMachines={fleetInviteManagedMachines(snapshot?.machines ?? [], environmentId)}
         />
       }
       machineStatuses={machineStatuses}
