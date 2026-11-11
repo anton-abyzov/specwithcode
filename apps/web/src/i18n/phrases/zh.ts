@@ -3979,4 +3979,10 @@ export const zh: PhraseCatalog = {
     "每个新线程都有自己的分支和 worktree，并行线程不会共用同一个检出。关闭：线程在项目文件夹中工作。",
   "Recommended here: on": "此处建议：开启",
   "Recommended here: off": "此处建议：关闭",
+  "Adding a machine to this one?": "要把电脑添加到这台电脑吗？",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "{here} 上的智能体已经可以在 {machines} 上开始工作。在这里生成的加入命令会让你选择的电脑在 {here} 上开始工作。如果是要把新电脑添加到 {here}，请在新电脑上打开 SpecWithCode，在那里选择“加入主电脑”，然后把它的加入命令粘贴到这里的“添加电脑”中。",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "这台电脑上的智能体已经可以在 {machines} 上开始工作。在这里生成的加入命令会让你选择的电脑在这台电脑上开始工作。如果是要把新电脑添加到这台电脑，请在新电脑上打开 SpecWithCode，在那里选择“加入主电脑”，然后把它的加入命令粘贴到这里的“添加电脑”中。",
+  "{count} more": "另外 {count} 台",
 };

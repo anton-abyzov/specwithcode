@@ -16,9 +16,11 @@ const runtime = vi.hoisted(() => ({
   environments: [] as Array<{ readonly entry: unknown }>,
   removeSupported: true,
   closeTerminal: vi.fn(),
+  nicknames: {} as Record<string, string>,
 }));
 vi.mock("../../studio/machineNickname", () => ({
-  useMachineNicknames: () => (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) =>
+    runtime.nicknames[id] ?? label ?? "",
 }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -890,5 +892,37 @@ describe("inviting this machine from its own roster", () => {
     hooks.beginRender();
     const opened = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
     expect((opened.props.inviteDialog as { props: { open: boolean } }).props.open).toBe(true);
+  });
+  it("tells the join dialog which machines agents here may start work on, by nickname", () => {
+    const workers = (status: "allowed" | "expired") => ({
+      status,
+      access: null,
+      expiresAt: null,
+      renewable: true,
+      problem: null,
+    });
+    hooks.reset();
+    runtime.snapshot = {
+      ...snapshot,
+      machines: [
+        { ...snapshot.machines[0]!, workers: workers("allowed") },
+        { ...snapshot.machines[1]!, workers: workers("allowed") },
+        {
+          ...snapshot.machines[1]!,
+          id: "m3",
+          environmentId: EnvironmentId.make("env-m3"),
+          label: "Mac M3",
+          workers: workers("expired"),
+        },
+      ],
+    };
+    runtime.environments = [];
+    runtime.nicknames = { "env-m1": "Studio Mac" };
+    hooks.beginRender();
+    const tree = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    runtime.nicknames = {};
+    const dialog = tree.props.inviteDialog as { props: { managedMachines: string[] } };
+    // Not this machine, not the expired grant, and the name the person gave it.
+    expect(dialog.props.managedMachines).toEqual(["Studio Mac"]);
   });
 });
