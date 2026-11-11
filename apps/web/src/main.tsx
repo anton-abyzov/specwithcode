@@ -13,6 +13,7 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { applyPlatform, platformOf } from "./lib/platformConventions";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 import {
   raiseErrorStackTraceLimit,
@@ -26,6 +27,9 @@ prepareProviderAuthDelivery();
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
+
+// Styles and key labels follow the system in the desktop app and in a browser.
+applyPlatform(document.documentElement, platformOf(navigator.platform, navigator.userAgent));
 
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);
