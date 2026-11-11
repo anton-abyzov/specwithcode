@@ -1,4 +1,4 @@
-import type { AssetResource } from "@specweave-studio/contracts";
+import type { AssetResource, AssetVariant } from "@specweave-studio/contracts";
 import {
   AssetAttachmentNotFoundError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -60,6 +60,7 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import { assetThumbnail, isThumbnailableExtension } from "./AssetThumbnails.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -111,6 +112,8 @@ const AssetClaimsSchema = Schema.Union([
     filePath: Schema.String,
     device: Schema.String,
     inode: Schema.String,
+    /** Signed in at mint time for images only, so the same file has a full and a thumb URL. */
+    variant: Schema.optionalKey(Schema.Literal("thumb")),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -378,6 +381,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     readonly requestedPath: string;
     readonly resource: AssetResource;
     readonly expiresAt: number;
+    readonly variant?: AssetVariant | undefined;
   }) {
     const path = yield* Path.Path;
     const canonicalFile = yield* resolveCanonicalFile(input.requestedPath).pipe(
@@ -420,6 +424,9 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         kind: "media-file-exact" as const,
         filePath: canonicalFile,
         ...opened.identity,
+        ...(input.variant === "thumb" && isThumbnailableExtension(path.extname(canonicalFile))
+          ? { variant: "thumb" as const }
+          : {}),
         expiresAt: input.expiresAt,
       },
       fileName: path.basename(canonicalFile),
@@ -512,6 +519,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
 
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
+  /** A downscaled copy; only image `media-file` resources have one. */
+  readonly variant?: AssetVariant | undefined;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
   /** The project's clone has not landed, so its icon is reported missing without a lookup. */
@@ -549,6 +558,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         requestedPath,
         resource: input.resource,
         expiresAt,
+        variant: input.variant,
       });
       claims = finalized.claims;
       fileName = finalized.fileName;
@@ -1072,6 +1082,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => null),
     );
+    if (file && claims.variant === "thumb") {
+      // Any miss (no resizer, an image that is small already, a failure) serves the original.
+      const thumbnail = yield* assetThumbnail({ filePath: canonicalFile, file });
+      if (thumbnail !== null) {
+        return { kind: "file", path: thumbnail, mimeType: "image/jpeg" } satisfies ResolvedAsset;
+      }
+    }
     return file
       ? ({
           kind: "file",

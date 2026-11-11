@@ -3283,6 +3283,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const markdown = (
     <ChatMarkdown
       formatDates
+      mediaFallback
       text={linkedText}
       cwd={ctx.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}

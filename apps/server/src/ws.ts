@@ -2940,7 +2940,7 @@ const layerWsRpc = (
               input.resource._tag === "github-media" ||
               (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
             ) {
-              return yield* issueAssetUrl({ resource: input.resource });
+              return yield* issueAssetUrl({ resource: input.resource, variant: input.variant });
             }
             if (input.resource._tag === "design-asset") {
               return yield* designLayers.issueAssetUrl(currentSession, input.resource);
@@ -3011,6 +3011,7 @@ const layerWsRpc = (
             }
             return yield* issueAssetUrl({
               resource: input.resource,
+              variant: input.variant,
               workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
             });
           }),

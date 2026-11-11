@@ -7,6 +7,7 @@ import {
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_HEADLESS_INSTRUCTIONS,
+  STUDIO_MEDIA_INSTRUCTIONS,
   STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
   STUDIO_PRESENTATION_INSTRUCTIONS,
   STUDIO_WRITING_INSTRUCTIONS,
@@ -265,6 +266,18 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS);
     expect(instructions).not.toContain(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS);
     expect(responseStyleInstructions("detailed")).toContain("Never shorten errors");
+  });
+
+  it("asks every harness for one embedded image or video and paths for the rest", () => {
+    // A path in backticks is only a chip; on a phone it shows no picture of the work.
+    expect(STUDIO_MEDIA_INSTRUCTIONS).toContain("one representative image or video");
+    expect(STUDIO_MEDIA_INSTRUCTIONS).toContain("![caption](/absolute/path)");
+    expect(STUDIO_MEDIA_INSTRUCTIONS).toContain("list the other files as paths");
+    for (const harness of ["Claude Code", "Codex", "Cursor", "OpenCode"]) {
+      expect(buildRuntimeInstructions({ harness })).toContain(
+        `${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>`,
+      );
+    }
   });
 
   it.each([undefined, "", "auto", "default"])("omits unresolved model %s", (model) => {
