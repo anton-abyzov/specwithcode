@@ -16,13 +16,14 @@
  *   2. branch — the thread's worktree branch is `inc/NNNN-*` and exactly one
  *      `NNNN-*` increment exists, or an event in a recent increment's ledger
  *      has a `by` that names the branch. Nothing is written for it.
- *   2b. written spec — the thread itself wrote an increment's `spec.md`
+ *   3. checkpoint / name — the report resolver: SpecWeave's session checkpoint
+ *      pointer, then an increment number or folder in the title or branch.
+ *   4. written spec — when none of the above names one: the thread itself
+ *      completed a write of an increment's `spec.md`
  *      (`ThreadWorkEvidence.writtenSpecs`), the newest first. It covers an
  *      increment made mid-run before its first ledger write and providers
  *      that never get the thread id. Reported as `claim`, with no task, so
  *      an older client on another machine still decodes the reply.
- *   3. checkpoint / name — the report resolver: SpecWeave's session checkpoint
- *      pointer, then an increment number or folder in the title or branch.
  * Only folders that exist count. Without a claim the increment is read from
  * the thread's worktree when that checkout has its own `.specweave/increments`,
  * because the agent appends to the ledger there before anything is merged.
@@ -74,9 +75,9 @@ const COMMIT_SHA = /^[0-9a-f]{7,40}$/u;
  * alone (a file in the user's home) is trusted for.
  */
 export interface ThreadWorkEvidence {
-  /** Whether the thread itself changed a file inside one of `roots` (spellings of one folder). */
+  /** Whether a completed edit of the thread itself lies inside one of `roots` (spellings of one folder). */
   readonly workedIn: (roots: ReadonlyArray<string>) => Promise<boolean>;
-  /** The increment `spec.md` paths the thread itself wrote, newest first, as its provider named them. */
+  /** The increment `spec.md` paths the thread itself finished writing, newest first, as its provider named them. */
   readonly writtenSpecs: () => Promise<ReadonlyArray<string>>;
 }
 
@@ -720,22 +721,15 @@ export async function readThreadIncrementProgress(
       } else {
         root = await incrementRootFor(workspaceRoot, thread.worktreePath);
         const byBranch = await branchBoundIncrement(root, thread.branch);
-        const [written] =
-          byBranch === null ? await writtenSpecIncrements(workspaceRoot, thread) : [];
-        if (written !== undefined) {
-          // The thread's own write, like a claim; its task is not known yet.
-          ({ root, incrementId } = written);
-          binding = "claim";
-        } else {
-          const resolved =
-            byBranch ??
-            (await resolveReportIncrement(root, {
-              threadId: thread.threadId,
-              title: thread.title,
-              branch: thread.branch,
-              ...(thread.home === undefined ? {} : { home: thread.home }),
-            }));
-          if (resolved === null) return null;
+        const resolved =
+          byBranch ??
+          (await resolveReportIncrement(root, {
+            threadId: thread.threadId,
+            title: thread.title,
+            branch: thread.branch,
+            ...(thread.home === undefined ? {} : { home: thread.home }),
+          }));
+        if (resolved !== null) {
           incrementId = resolved;
           binding =
             byBranch !== null
@@ -743,6 +737,13 @@ export async function readThreadIncrementProgress(
               : (await checkpointNames(thread, incrementId))
                 ? "checkpoint"
                 : "name";
+        } else {
+          // Nothing names an increment: the newest one whose spec the thread
+          // wrote itself, like a claim; its task is not known yet.
+          const [written] = await writtenSpecIncrements(workspaceRoot, thread);
+          if (written === undefined) return null;
+          ({ root, incrementId } = written);
+          binding = "claim";
         }
       }
       const key = `${root}\u0000${incrementId}`;

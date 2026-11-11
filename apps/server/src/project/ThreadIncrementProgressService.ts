@@ -190,6 +190,10 @@ export function fileChangeKind(
  * arrived since.
  */
 const FIRST_EVIDENCE_SCAN = 1_000;
+/** File changes still in progress that a thread's trail waits for; older ones are let go. */
+const PENDING_KEPT = 50;
+/** A file change in one of these states may still complete. */
+const IN_PROGRESS = new Set(["idle", "pending", "running", "waiting"]);
 /** Threads and folders whose evidence is remembered; the oldest is dropped first. */
 const EVIDENCE_KEPT = 5_000;
 /** Specs remembered per thread, newest first. */
@@ -221,10 +225,36 @@ export function isIncrementSpecPath(path: string): boolean {
   return /(?:^|\/)\.specweave\/increments\/[^/]+\/spec\.md$/u.test(slashed(path));
 }
 
-/** Whether `path` lies inside one of `roots`. */
+/**
+ * `path` absolute, with forward slashes and `.`/`..` resolved; null when it is
+ * relative, since nothing here knows the folder a provider meant it from.
+ */
+function absolutePath(path: string): string | null {
+  const text = slashed(path);
+  const drive = /^[A-Za-z]:(?=\/)/u.exec(text)?.[0] ?? "";
+  if (drive === "" && !text.startsWith("/")) return null;
+  const parts: string[] = [];
+  for (const part of text.slice(drive.length).split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return `${drive.toLowerCase()}/${parts.join("/")}`;
+}
+
+/**
+ * Whether `path` lies inside one of `roots`, compared as text after resolving
+ * `.` and `..`. A relative path, a link or another spelling of a folder
+ * answers no: evidence only ever widens what a thread may read.
+ */
 export function isInsideAny(path: string, roots: ReadonlyArray<string>): boolean {
-  const normalized = slashed(path);
-  return roots.some((root) => normalized.startsWith(`${slashed(root).replace(/\/+$/u, "")}/`));
+  const target = absolutePath(path);
+  if (target === null) return false;
+  return roots.some((root) => {
+    const base = absolutePath(root);
+    // A drive or filesystem root is never a planning folder.
+    return base !== null && !base.endsWith("/") && target.startsWith(`${base}/`);
+  });
 }
 
 /** Sets `key` as the newest entry of a bounded memo. */
@@ -368,48 +398,40 @@ export const make = Effect.gen(function* () {
   const fileChanges = new Map<string, { readonly runKey: string; readonly kind: ChangeKind }>();
 
   // ── What a thread's own turns prove (ThreadWorkEvidence) ──────────────────
-  // Ordinals are per thread and never change once given, so each thread is
-  // read up to a watermark and later reads take only what came after it. The
-  // watermark stops before the oldest item still in progress, whose path may
-  // not be final yet.
+  // Only a completed file change counts: a failed, cancelled or interrupted
+  // edit was never applied. A rolled-back run still counts, because the
+  // question is whether this thread itself wrote there, not whether the edit
+  // survived; the reader separately needs the increment folder to exist.
+  //
+  // Ordinals are per thread and never change once given. A thread is read up
+  // to its newest ordinal, and a later read takes only the items after that
+  // plus the few file changes that had not settled, so a poll of a quiet
+  // thread costs one index seek whatever the thread's length.
 
-  /** The ordinal up to which a thread's items are final, and where a first scan starts. */
-  const evidenceWindow = (threadId: string) =>
-    Effect.gen(function* () {
-      const [bounds] = yield* sql<{
-        readonly newest: number | null;
-        readonly active: number | null;
-        readonly floor: number | null;
-      }>`
-        SELECT
-          (
-            SELECT MAX(ordinal) FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${threadId}
-          ) AS newest,
-          (
-            SELECT MIN(ordinal) FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${threadId} AND status IN ('pending', 'running', 'waiting')
-          ) AS active,
-          (
-            SELECT MIN(ordinal) FROM (
-              SELECT ordinal FROM orchestration_v2_projection_turn_items
-              WHERE thread_id = ${threadId} AND type = 'file_change'
-              ORDER BY ordinal DESC LIMIT ${FIRST_EVIDENCE_SCAN}
-            )
-          ) AS floor
-      `;
-      const newest = bounds?.newest ?? -1;
-      const active = bounds?.active ?? null;
-      return {
-        settled: active === null ? newest : Math.min(newest, active - 1),
-        start: (bounds?.floor ?? 0) - 1,
-      };
-    });
+  interface Trail {
+    /** Every item up to this ordinal was looked at. */
+    readonly through: number;
+    /** File changes at or before `through` that had not settled, oldest first. */
+    readonly pending: ReadonlyArray<number>;
+  }
 
-  /** A thread's file changes after `after`, oldest first; with `specs`, only rows naming `.specweave`. */
-  const fileChangesAfter = (threadId: string, after: number, specs: boolean) =>
-    sql<FileChangeRow>`
-      SELECT item.ordinal AS ordinal, item.turn_item_id AS "itemId",
+  interface EvidenceRow {
+    readonly ordinal: number;
+    readonly status: string;
+    readonly updatedAt: string;
+    readonly fileName: string | null;
+    readonly paths: string | null;
+  }
+
+  /**
+   * A thread's first read: its newest file changes, found through the
+   * `thread_id, type` index (`+ordinal`, in the order too, keeps the planner
+   * off the ordinal index, which would walk every item of a thread with few
+   * file changes).
+   */
+  const newestFileChanges = (threadId: string, through: number, specs: boolean) =>
+    sql<EvidenceRow>`
+      SELECT item.ordinal AS ordinal, item.status AS status, item.updated_at AS "updatedAt",
         json_extract(item.payload_json, '$.fileName') AS "fileName",
         (
           SELECT json_group_array(json_array(
@@ -419,67 +441,155 @@ export const make = Effect.gen(function* () {
           FROM json_each(item.payload_json, '$.changes') change
         ) AS paths
       FROM orchestration_v2_projection_turn_items item
-      WHERE item.thread_id = ${threadId} AND item.ordinal > ${after}
-        AND item.type = 'file_change'
-        AND (${specs ? 1 : 0} = 0 OR instr(item.payload_json, '.specweave') > 0)
-      ORDER BY item.ordinal, item.turn_item_id
+      WHERE item.thread_id = ${threadId} AND item.type = 'file_change'
+        AND +item.ordinal <= ${through}
+        AND +item.ordinal >= (
+          SELECT MIN(ordinal) FROM (
+            SELECT ordinal FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadId} AND type = 'file_change'
+            ORDER BY +ordinal DESC LIMIT ${FIRST_EVIDENCE_SCAN}
+          )
+        )
+        AND (
+          ${specs ? 1 : 0} = 0 OR item.status <> 'completed'
+          OR instr(item.payload_json, '.specweave') > 0
+        )
+      ORDER BY +item.ordinal
     `;
 
-  interface SpecTrail {
-    readonly through: number;
-    /** Newest first. */
-    readonly specs: ReadonlyArray<{ readonly ordinal: number; readonly path: string }>;
-  }
-  const specTrails = new Map<string, SpecTrail>();
+  /**
+   * The file changes among the items after `after`, through the ordinal index
+   * (`+type` keeps the planner on it): only what arrived since the last read.
+   */
+  const fileChangesBetween = (threadId: string, after: number, through: number, specs: boolean) =>
+    sql<EvidenceRow>`
+      SELECT item.ordinal AS ordinal, item.status AS status, item.updated_at AS "updatedAt",
+        json_extract(item.payload_json, '$.fileName') AS "fileName",
+        (
+          SELECT json_group_array(json_array(
+            json_extract(change.value, '$.path'),
+            json_extract(change.value, '$.oldPath')
+          ))
+          FROM json_each(item.payload_json, '$.changes') change
+        ) AS paths
+      FROM orchestration_v2_projection_turn_items item
+      WHERE item.thread_id = ${threadId}
+        AND item.ordinal > ${after} AND item.ordinal <= ${through}
+        AND +item.type = 'file_change'
+        AND (
+          ${specs ? 1 : 0} = 0 OR item.status <> 'completed'
+          OR instr(item.payload_json, '.specweave') > 0
+        )
+      ORDER BY item.ordinal
+    `;
 
-  /** The increment specs one thread wrote, newest first, with the ordinal of each write. */
+  /** The file changes at `ordinals`: the ones an earlier read found unsettled. */
+  const fileChangesAt = (threadId: string, ordinals: ReadonlyArray<number>, specs: boolean) =>
+    sql<EvidenceRow>`
+      SELECT item.ordinal AS ordinal, item.status AS status, item.updated_at AS "updatedAt",
+        json_extract(item.payload_json, '$.fileName') AS "fileName",
+        (
+          SELECT json_group_array(json_array(
+            json_extract(change.value, '$.path'),
+            json_extract(change.value, '$.oldPath')
+          ))
+          FROM json_each(item.payload_json, '$.changes') change
+        ) AS paths
+      FROM orchestration_v2_projection_turn_items item
+      WHERE item.thread_id = ${threadId} AND item.ordinal IN ${sql.in(ordinals)}
+        AND +item.type = 'file_change'
+        AND (
+          ${specs ? 1 : 0} = 0 OR item.status <> 'completed'
+          OR instr(item.payload_json, '.specweave') > 0
+        )
+      ORDER BY item.ordinal
+    `;
+
+  /**
+   * The file changes of one thread that completed since `trail`, oldest first,
+   * and the trail to read from next time. With `specs`, a completed change
+   * must name `.specweave` to be returned.
+   */
+  const completedSince = (threadId: string, trail: Trail | undefined, specs: boolean) =>
+    Effect.gen(function* () {
+      const [bounds] = yield* sql<{ readonly newest: number | null }>`
+        SELECT MAX(ordinal) AS newest FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId}
+      `;
+      const newest = bounds?.newest ?? null;
+      if (newest === null) return { completed: [] as EvidenceRow[], trail: trail ?? null };
+      const rows =
+        trail === undefined
+          ? yield* newestFileChanges(threadId, newest, specs)
+          : [
+              ...(trail.pending.length === 0
+                ? []
+                : yield* fileChangesAt(threadId, trail.pending, specs)),
+              ...(trail.through >= newest
+                ? []
+                : yield* fileChangesBetween(threadId, trail.through, newest, specs)),
+            ];
+      const pending = [
+        ...new Set(rows.filter((row) => IN_PROGRESS.has(row.status)).map((row) => row.ordinal)),
+      ];
+      return {
+        completed: rows.filter((row) => row.status === "completed"),
+        trail: {
+          through: Math.max(newest, trail?.through ?? newest),
+          pending: pending.slice(-PENDING_KEPT),
+        } satisfies Trail,
+      };
+    });
+
+  interface WrittenSpec {
+    /** When the write completed. */
+    readonly at: string;
+    readonly ordinal: number;
+    readonly path: string;
+  }
+  /** Newest write first, each path once. */
+  const newestSpecs = (entries: ReadonlyArray<WrittenSpec>): WrittenSpec[] => {
+    const paths = new Set<string>();
+    return entries
+      .toSorted((left, right) => right.at.localeCompare(left.at) || right.ordinal - left.ordinal)
+      .filter((entry) => !paths.has(entry.path) && paths.add(entry.path))
+      .slice(0, SPECS_KEPT);
+  };
+
+  const specTrails = new Map<string, Trail & { readonly specs: ReadonlyArray<WrittenSpec> }>();
+
+  /** The increment specs one thread finished writing, newest first. */
   const specsWrittenBy = (threadId: string) =>
     Effect.gen(function* () {
-      const window = yield* evidenceWindow(threadId);
-      const trail = specTrails.get(threadId);
-      const rows = yield* fileChangesAfter(threadId, trail?.through ?? window.start, true);
-      const seen = rows.flatMap((row) =>
-        fileChangePaths(row.fileName, row.paths)
-          .filter(isIncrementSpecPath)
-          .map((path) => ({ ordinal: row.ordinal, path })),
-      );
-      const newestFirst = (entries: ReadonlyArray<{ ordinal: number; path: string }>) => {
-        const paths = new Set<string>();
-        return entries
-          .toSorted((left, right) => right.ordinal - left.ordinal)
-          .filter((entry) => !paths.has(entry.path) && paths.add(entry.path))
-          .slice(0, SPECS_KEPT);
-      };
-      const through = Math.max(trail?.through ?? window.start, window.settled);
-      remember(specTrails, threadId, {
-        through,
-        specs: newestFirst([
-          ...(trail?.specs ?? []),
-          ...seen.filter((entry) => entry.ordinal <= through),
-        ]),
-      });
-      return newestFirst([...(trail?.specs ?? []), ...seen]);
+      const known = specTrails.get(threadId);
+      const { completed, trail } = yield* completedSince(threadId, known, true);
+      const specs = newestSpecs([
+        ...(known?.specs ?? []),
+        ...completed.flatMap((row) =>
+          fileChangePaths(row.fileName, row.paths)
+            .filter(isIncrementSpecPath)
+            .map((path) => ({ at: row.updatedAt, ordinal: row.ordinal, path })),
+        ),
+      ]);
+      if (trail !== null) remember(specTrails, threadId, { ...trail, specs });
+      return specs;
     });
 
   // A yes is kept: a change inside a folder cannot be taken back. A no keeps
   // only how far the thread was read.
-  const workTrails = new Map<string, { readonly through: number; readonly inside: boolean }>();
+  const workTrails = new Map<string, Trail & { readonly inside: boolean }>();
 
-  /** Whether one thread changed a file inside one of `roots`. */
+  /** Whether one thread completed a file change inside one of `roots`. */
   const changedInside = (threadId: string, roots: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const key = [threadId, ...roots.toSorted()].join("\u0000");
-      const trail = workTrails.get(key);
-      if (trail?.inside === true) return true;
-      const window = yield* evidenceWindow(threadId);
-      const rows = yield* fileChangesAfter(threadId, trail?.through ?? window.start, false);
-      const inside = rows.some((row) =>
+      const known = workTrails.get(key);
+      if (known?.inside === true) return true;
+      const { completed, trail } = yield* completedSince(threadId, known, false);
+      const inside = completed.some((row) =>
         fileChangePaths(row.fileName, row.paths).some((path) => isInsideAny(path, roots)),
       );
-      remember(workTrails, key, {
-        through: Math.max(trail?.through ?? window.start, window.settled),
-        inside,
-      });
+      if (trail !== null) remember(workTrails, key, { ...trail, inside });
       return inside;
     });
 
@@ -510,17 +620,22 @@ export const make = Effect.gen(function* () {
             if (yield* changedInside(own, roots)) return true;
           }
           return false;
-        }).pipe(Effect.orElseSucceed(() => false)),
+        }).pipe(
+          Effect.tapError((cause) => Effect.logDebug("thread work evidence lookup failed", cause)),
+          Effect.orElseSucceed(() => false),
+        ),
       ),
     writtenSpecs: () =>
       runEvidence(
         Effect.gen(function* () {
           const own = yield* ownThreads(threadId);
-          // One thread: its ordinals order its writes. With subagents the
-          // parent's own writes come first, then each child's.
+          // The parent's and its subagents' writes in one order, by when each completed.
           const written = yield* Effect.forEach(own, specsWrittenBy);
-          return [...new Set(written.flat().map((entry) => entry.path))];
-        }).pipe(Effect.orElseSucceed(() => [] as string[])),
+          return newestSpecs(written.flat()).map((entry) => entry.path);
+        }).pipe(
+          Effect.tapError((cause) => Effect.logDebug("thread work evidence lookup failed", cause)),
+          Effect.orElseSucceed(() => [] as string[]),
+        ),
       ),
   });
 

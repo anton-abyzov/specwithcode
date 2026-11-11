@@ -377,7 +377,8 @@ export function ThreadsPane({
   const isUnplanned = (thread: EnvironmentThreadShell) =>
     thread.environmentId === props.environmentId && unplanned.has(thread.id);
   // A thread on another machine works on an increment there: its progress is
-  // read from that machine, one query per machine, as the sidebar reads it.
+  // read from that machine with one query per machine and project, the way
+  // the sidebar reads its own rows.
   const threadsElsewhere = useMemo(
     () => allThreads.filter((thread) => thread.environmentId !== props.environmentId),
     [allThreads, props.environmentId],

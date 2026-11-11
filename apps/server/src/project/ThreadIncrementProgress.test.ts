@@ -694,11 +694,20 @@ describe("an increment planned outside the project folder", () => {
     expect(progress).toMatchObject({ incrementId: "0007-in-project", incrementPath: folder });
   });
 
-  it("keeps a hand-made link, a claim file and a branch above a written spec", async () => {
+  it("keeps a hand-made link, a claim file, a branch and a name above a written spec", async () => {
     const { project, elsewhere, home, spec } = await outside();
     await increment(project, "0930-studio-plan-card", LEDGER);
     await increment(project, "0931-other", "");
     const wrote = { evidence: evidence({ specs: [spec], changed: [spec] }) };
+
+    // A thread named for one increment that also edits another's spec keeps its own.
+    const named = evidence({ specs: [spec] });
+    const byName = await readThreadIncrementProgress(
+      project,
+      [{ ...thread, title: "0931 other work", worktreePath: null, home, evidence: named }],
+      NOW,
+    );
+    expect(byName[0]).toMatchObject({ incrementId: "0931-other", binding: "name" });
 
     const byBranch = await readThreadIncrementProgress(
       project,
@@ -730,6 +739,28 @@ describe("an increment planned outside the project folder", () => {
       NOW,
     );
     expect(byClaim[0]).toMatchObject({ incrementId: "0004-claimed", boundTaskId: "T-02" });
+  });
+
+  it("reads on as if nothing were proven when the evidence lookup fails", async () => {
+    const { project, elsewhere, home } = await outside();
+    await writeClaim(home, "t1", elsewhere, "0001-specos-desktop");
+    const broken: ThreadWorkEvidence = {
+      workedIn: () => Promise.reject(new Error("database is locked")),
+      writtenSpecs: () => Promise.reject(new Error("database is locked")),
+    };
+    await increment(project, "0930-studio-plan-card", LEDGER);
+    const read = (title: string) =>
+      readThreadIncrementProgress(
+        project,
+        [{ ...thread, title, worktreePath: null, home, evidence: broken }],
+        NOW,
+      );
+    expect(await read("Build SpecOS on Linux")).toEqual([]);
+    // What needs no evidence still binds.
+    expect((await read("0930 plan card"))[0]).toMatchObject({ binding: "name" });
+    expect(
+      await evidencedRoots(project, { ...thread, worktreePath: null, home, evidence: broken }),
+    ).toEqual([]);
   });
 
   it("lists and links the increments of the folders the thread worked in, and no others", async () => {

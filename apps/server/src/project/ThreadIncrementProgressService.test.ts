@@ -574,9 +574,10 @@ it.layer(layerTest)("ThreadIncrementProgressService", (it) => {
     ordinal: number,
     path: string,
     status = "completed",
+    at = "2026-11-11T19:00:00Z",
   ) {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${`${threadId}:change:${ordinal}`}, ${threadId}, NULL, ${ordinal}, 'file_change', ${status}, '2026-11-11T19:00:00Z', ${JSON.stringify({ fileName: path })})`;
+    yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${`${threadId}:change:${ordinal}`}, ${threadId}, NULL, ${ordinal}, 'file_change', ${status}, ${at}, ${JSON.stringify({ fileName: path })})`;
   });
   const evidenceOf = (
     service: ThreadIncrementProgressService.ThreadIncrementProgressService["Service"],
@@ -683,4 +684,108 @@ it.layer(layerTest)("ThreadIncrementProgressService", (it) => {
       assert.isTrue(yield* Effect.promise(() => evidence.workedIn(["/work"])));
     }),
   );
+
+  it.effect("counts only edits that completed, and waits for the ones still running", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:status");
+      const spec = "/srv/never/.specweave/increments/0001-never/spec.md";
+      yield* addChange(thread, 1, "/srv/never/a.ts", "failed");
+      yield* addChange(thread, 2, spec, "cancelled");
+      yield* addChange(thread, 3, "/srv/never/b.ts", "interrupted");
+      // Stuck for good, like an edit whose provider process died.
+      yield* addChange(thread, 4, "/srv/stuck/a.ts", "running");
+      yield* addChange(thread, 5, "/srv/waiting/a.ts", "pending");
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+      const inside = (root: string) =>
+        Effect.gen(function* () {
+          const source = yield* evidence(thread);
+          return yield* Effect.promise(() => source.workedIn([root]));
+        });
+
+      // An edit that failed, was cancelled or was cut off was never applied.
+      assert.isFalse(yield* inside("/srv/never"));
+      assert.isFalse(yield* inside("/srv/stuck"));
+      assert.isFalse(yield* inside("/srv/waiting"));
+      const first = yield* evidence(thread);
+      assert.deepStrictEqual(yield* Effect.promise(() => first.writtenSpecs()), []);
+
+      // The stuck one never hides what comes after it, and the waiting one counts once it lands.
+      const sql = yield* SqlClient.SqlClient;
+      yield* addChange(thread, 6, "/srv/later/a.ts");
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'completed' WHERE thread_id = ${thread} AND ordinal = 5`;
+      assert.isTrue(yield* inside("/srv/later"));
+      assert.isTrue(yield* inside("/srv/waiting"));
+      assert.isFalse(yield* inside("/srv/stuck"));
+      // An edit that settles as failed stops being waited for.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'failed' WHERE thread_id = ${thread} AND ordinal = 4`;
+      assert.isFalse(yield* inside("/srv/stuck"));
+    }),
+  );
+
+  it.effect("keeps a rolled-back run's edits as proof of where the thread worked", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:rolled-back");
+      yield* addRun(thread, { status: "rolled_back", changed: false });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('thread:evidence:rolled-back:edit', ${thread}, ${`${thread}:run:1`}, 1, 'file_change', 'completed', '2026-11-11T19:00:00Z', ${JSON.stringify({ fileName: "/srv/undone/.specweave/increments/0001-undone/spec.md" })})`;
+      const { service } = yield* makeService();
+      const evidence = yield* evidenceOf(service)(thread);
+      // The thread did write there; whether the folder is still there is the reader's check.
+      assert.isTrue(yield* Effect.promise(() => evidence.workedIn(["/srv/undone"])));
+      assert.deepStrictEqual(yield* Effect.promise(() => evidence.writtenSpecs()), [
+        "/srv/undone/.specweave/increments/0001-undone/spec.md",
+      ]);
+    }),
+  );
+
+  it.effect("orders a subagent's specs with its parent's by when each was written", () =>
+    Effect.gen(function* () {
+      const parent = yield* addThread("thread:evidence:order:parent");
+      const child = yield* addThread("thread:evidence:order:child", {
+        providerChild: true,
+        parent: "thread:evidence:order:parent",
+      });
+      const specOf = (id: string) => `/srv/plan/.specweave/increments/${id}/spec.md`;
+      yield* addChange(
+        parent,
+        40,
+        specOf("0001-parent-early"),
+        "completed",
+        "2026-11-11T10:00:00Z",
+      );
+      yield* addChange(child, 1, specOf("0002-child-later"), "completed", "2026-11-11T12:00:00Z");
+      yield* addChange(parent, 41, specOf("0003-parent-last"), "completed", "2026-11-11T13:00:00Z");
+      const { service } = yield* makeService();
+      const evidence = yield* evidenceOf(service)(parent);
+      assert.deepStrictEqual(yield* Effect.promise(() => evidence.writtenSpecs()), [
+        specOf("0003-parent-last"),
+        specOf("0002-child-later"),
+        specOf("0001-parent-early"),
+      ]);
+    }),
+  );
+
+  it("compares paths after resolving dots, and proves nothing from a relative one", () => {
+    const inside = ThreadIncrementProgressService.isInsideAny;
+    assert.isTrue(inside("/home/a/live/spec-os/src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isTrue(inside("/home/a/live/spec-os/src/app.ts", ["/home/a/live/spec-os/"]));
+    // Climbing out of the folder is outside it, wherever the path starts.
+    assert.isFalse(inside("/home/a/live/spec-os/../other/app.ts", ["/home/a/live/spec-os"]));
+    assert.isTrue(inside("/home/a/live/spec-os/../other/app.ts", ["/home/a/live/other"]));
+    assert.isTrue(inside("/home/a/live/./spec-os//src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("/home/a/live/spec-os-two/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("/home/a/live/spec-os", ["/home/a/live/spec-os"]));
+    // Windows spellings: either separator, any drive-letter case.
+    assert.isTrue(inside("C:\\work\\spec-os\\src\\app.ts", ["c:/work/spec-os"]));
+    assert.isFalse(inside("C:\\work\\spec-os\\..\\x.ts", ["C:\\work\\spec-os"]));
+    assert.isFalse(inside("D:/work/spec-os/app.ts", ["C:/work/spec-os"]));
+    // Nothing here knows which folder a relative path was meant from.
+    assert.isFalse(inside("src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("../spec-os/src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("/home/a/app.ts", ["live/spec-os"]));
+    // A filesystem or drive root is never a planning folder.
+    assert.isFalse(inside("/etc/hosts", ["/"]));
+    assert.isFalse(inside("C:/Windows/system.ini", ["C:/"]));
+  });
 });
