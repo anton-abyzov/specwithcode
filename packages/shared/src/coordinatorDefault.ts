@@ -12,6 +12,7 @@ import {
   type ServerProviderModel,
 } from "@specweave-studio/contracts";
 
+import { effortRank, findEffortDescriptor } from "./effortLevel.ts";
 import { canTakeTurn, isClaudeApiKeyProvider, isPerTokenProvider } from "./providerFallback.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 
@@ -252,8 +253,10 @@ function hasOption(model: ServerProviderModel, id: string, value?: string): bool
  * The options a coordinator or a worker runs with when nobody chose them:
  * Thinking on (adaptive thinking, which the Claude adapter already asks for
  * while the option is unset, now saved so the picker says so) and, for a
- * coordinator on Opus 5.5, Medium effort. Only options the model offers are
- * named, and an option already in `chosen` is never touched.
+ * coordinator on any model that lists it, Medium effort: it routes and replies,
+ * and the hard work goes to threads. Only options the model offers are named,
+ * and an option already in `chosen` is never touched; a model without Medium
+ * keeps its provider default.
  */
 export function defaultModelOptions(
   model: ServerProviderModel | undefined,
@@ -262,13 +265,86 @@ export function defaultModelOptions(
 ): Array<{ id: string; value: string | boolean }> {
   if (!model) return [];
   const has = (id: string) => chosen.some((option) => option.id === id);
-  const opus55 = PREFERRED_MODEL.test(model.slug) || PREFERRED_MODEL.test(model.name);
+  const effort = findEffortDescriptor(model.capabilities?.optionDescriptors);
+  const medium = effort?.options.find((option) => effortRank(option.id) === MEDIUM_RANK);
   return [
-    ...(role === "coordinator" && opus55 && !has("effort") && hasOption(model, "effort", "medium")
-      ? [{ id: "effort", value: "medium" }]
+    ...(role === "coordinator" && effort && medium && !has(effort.id)
+      ? [{ id: effort.id, value: medium.id }]
       : []),
     ...(!has("thinking") && hasOption(model, "thinking") ? [{ id: "thinking", value: true }] : []),
   ];
+}
+
+const MEDIUM_RANK = 3;
+/** The highest effort a coordinator runs at: High on the shared ladder. */
+const COORDINATOR_EFFORT_CAP_RANK = 4;
+export const COORDINATOR_EFFORT_CAP_LABEL = "High";
+
+/** An effort value's place on the ladder; a value off it (Ultracode, Ultrathink) is above the cap. */
+const coordinatorEffortRank = (option: { readonly id: string; readonly label?: string }) =>
+  effortRank(option.id) ?? (option.label ? effortRank(option.label) : undefined) ?? Infinity;
+
+/**
+ * A model as the coordinator may run it: its effort choices stop at High. The
+ * settings control offers these, so nobody can pick what would be capped.
+ */
+export function coordinatorEffortModel(model: ServerProviderModel): ServerProviderModel {
+  const descriptors = model.capabilities?.optionDescriptors;
+  const effort = findEffortDescriptor(descriptors);
+  if (!descriptors || !effort) return model;
+  const options = effort.options.filter(
+    (option) => coordinatorEffortRank(option) <= COORDINATOR_EFFORT_CAP_RANK,
+  );
+  if (options.length === effort.options.length || options.length === 0) return model;
+  return {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      optionDescriptors: descriptors.map((descriptor) =>
+        descriptor === effort ? { ...effort, options } : descriptor,
+      ),
+    },
+  };
+}
+
+/**
+ * The selection a coordinator turn runs on: a saved effort above High runs at
+ * High (or the highest level under it the model lists). Applied when a turn
+ * picks its model, never to the saved settings, so lifting the cap later needs
+ * no migration. Returns the same object when nothing is above the cap.
+ */
+export function capCoordinatorEffort(
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const effort = findEffortDescriptor(
+    findModel(providers, selection)?.capabilities?.optionDescriptors,
+  );
+  if (!effort) return selection;
+  const chosen = selectedOptions(selection).find((option) => option.id === effort.id);
+  if (!chosen || typeof chosen.value !== "string") return selection;
+  const chosenOption = effort.options.find((option) => option.id === chosen.value);
+  const rank = coordinatorEffortRank(chosenOption ?? { id: chosen.value });
+  if (rank <= COORDINATOR_EFFORT_CAP_RANK) return selection;
+  const allowed = effort.options
+    .filter((option) => coordinatorEffortRank(option) <= COORDINATOR_EFFORT_CAP_RANK)
+    .sort((a, b) => coordinatorEffortRank(b) - coordinatorEffortRank(a))[0];
+  // A model whose every level is above High keeps what was chosen.
+  if (!allowed) return selection;
+  return {
+    ...selection,
+    options: selectedOptions(selection).map((option) =>
+      option.id === effort.id ? { ...option, value: allowed.id } : option,
+    ),
+  };
+}
+
+/** Whether a saved coordinator effort is above the cap, so the popover can say so once. */
+export function coordinatorEffortIsCapped(
+  selection: ModelSelection | null | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+): boolean {
+  return selection != null && capCoordinatorEffort(selection, providers) !== selection;
 }
 
 function findModel(

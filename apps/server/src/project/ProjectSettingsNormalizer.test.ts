@@ -466,11 +466,14 @@ it.effect("gives every project Opus 5.5 with Thinking on and keeps what was chos
       assert.deepEqual(yield* defaultOf(ids.scratch), opusThinking);
       assert.deepEqual(yield* defaultOf(ids.instructions), sonnet);
       assert.isNull(yield* defaultOf(ids.deleted));
-      // The assistant's saved Sonnet coordinator keeps its model and gains Thinking only:
-      // Medium effort is the Opus 5.5 coordinator default.
+      // The assistant's saved Sonnet coordinator keeps its model and gains the coordinator
+      // defaults: Medium effort on any model that lists it, and Thinking.
       assert.deepEqual(yield* modelOf(ids.assistant), {
         ...sonnet,
-        options: [{ id: "thinking", value: true }],
+        options: [
+          { id: "effort", value: "medium" },
+          { id: "thinking", value: true },
+        ],
       });
       assert.equal(summary.coordinatorOptions, 1);
 

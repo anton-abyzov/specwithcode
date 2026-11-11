@@ -8,6 +8,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   coordinatorSelectionProblem,
   defaultCoordinatorModelSelection,
+  capCoordinatorEffort,
+  coordinatorEffortIsCapped,
+  coordinatorEffortModel,
   defaultModelOptions,
   defaultProjectModelSelection,
   defaultWorkerModelSelection,
@@ -307,9 +310,54 @@ describe("withDefaultModelOptions", () => {
     expect(withDefaultModelOptions(off, [claudeWithOptions], "coordinator")).toBe(off);
   });
 
-  it("sets Medium effort only for Opus 5.5", () => {
+  it("sets Medium effort on every coordinator model that lists it", () => {
     const sonnet = { ...thinkingOpus, slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" };
-    expect(defaultModelOptions(sonnet, "coordinator")).toEqual([{ id: "thinking", value: true }]);
+    expect(defaultModelOptions(sonnet, "coordinator")).toEqual([
+      { id: "effort", value: "medium" },
+      { id: "thinking", value: true },
+    ]);
+    // Codex names the knob differently; the default follows the model's own id.
+    const gpt = {
+      ...thinkingOpus,
+      slug: "gpt-6.1",
+      name: "GPT-6.1",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select" as const,
+            options: [
+              { id: "medium", label: "Medium" },
+              { id: "xhigh", label: "Extra High" },
+            ],
+          },
+        ],
+      },
+    };
+    expect(defaultModelOptions(gpt, "coordinator")).toEqual([
+      { id: "reasoningEffort", value: "medium" },
+    ]);
+  });
+
+  it("leaves a model without Medium on its provider default", () => {
+    const noMedium = {
+      ...thinkingOpus,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select" as const,
+            options: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
+      },
+    };
+    expect(defaultModelOptions(noMedium, "coordinator")).toEqual([]);
   });
 
   it("leaves a model it cannot find as it is", () => {
@@ -366,5 +414,67 @@ describe("clean-profile coordinator prerequisites", () => {
         { ...codex, instanceId: ProviderInstanceId.make("gemini-vertex") },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("coordinator effort cap", () => {
+  const wideOpus = {
+    ...thinkingOpus,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          options: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium", isDefault: true },
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra High" },
+            { id: "max", label: "Max" },
+            { id: "ultracode", label: "Ultracode" },
+          ],
+        },
+      ],
+    },
+  };
+  const wide = provider("claudeAgent", "claudeAgent", [], { models: [wideOpus] });
+  const pick = (value: string) => ({
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-opus-5-5",
+    options: [
+      { id: "effort", value },
+      { id: "thinking", value: true },
+    ],
+  });
+
+  it("runs a saved effort above High at High and keeps the other options", () => {
+    for (const value of ["xhigh", "max", "ultracode"]) {
+      expect(capCoordinatorEffort(pick(value), [wide]).options).toEqual([
+        { id: "effort", value: "high" },
+        { id: "thinking", value: true },
+      ]);
+      expect(coordinatorEffortIsCapped(pick(value), [wide])).toBe(true);
+    }
+  });
+
+  it("leaves Low, Medium and High, and a selection without effort, untouched", () => {
+    for (const value of ["low", "medium", "high"]) {
+      const selection = pick(value);
+      expect(capCoordinatorEffort(selection, [wide])).toBe(selection);
+    }
+    const bare = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    expect(capCoordinatorEffort(bare, [wide])).toBe(bare);
+    expect(coordinatorEffortIsCapped(null, [wide])).toBe(false);
+  });
+
+  it("offers the coordinator only the levels up to High", () => {
+    const effort = coordinatorEffortModel(wideOpus).capabilities?.optionDescriptors?.[0];
+    expect(effort?.type === "select" ? effort.options.map((option) => option.id) : []).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(coordinatorEffortModel(thinkingOpus)).toBe(thinkingOpus);
   });
 });
