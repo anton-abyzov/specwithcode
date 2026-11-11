@@ -292,6 +292,9 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
   const assistantLock = yield* Semaphore.make(1);
+  // One code project at a time: two creates for the same empty folder must not
+  // both find it empty and scaffold over each other.
+  const namedLock = yield* Semaphore.make(1);
   // Optional so hosts without a process runner still create projects; a
   // request for SpecWeave then says it could not run.
   const specweaveSetup = yield* Effect.serviceOption(SpecweaveSetup.SpecweaveSetup);
@@ -742,15 +745,24 @@ const make = Effect.gen(function* () {
         input.name,
         input.kind === "personal" ? undefined : input.parentPath,
       ));
-    // A folder the person made themselves is emptied again, never removed.
-    const removeFolder = fileSystem
-      .remove(workspaceRoot, { recursive: true })
-      .pipe(
-        Effect.andThen(
-          emptyFolder === undefined ? Effect.void : fileSystem.makeDirectory(workspaceRoot),
-        ),
-        Effect.ignore,
-      );
+    // A folder the person made themselves is never removed or emptied: only the
+    // starter files written here are taken back, so nothing that appeared in it
+    // meanwhile is lost. Anything SpecWeave wrote stays for the next attempt.
+    const removeFolder =
+      emptyFolder === undefined
+        ? fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore)
+        : Effect.forEach(
+            [
+              { entry: ".git", recursive: true },
+              { entry: "README.md", recursive: false },
+              { entry: path.join("assets", "icon.svg"), recursive: false },
+              // Fails, and is left, when it holds anything else.
+              { entry: "assets", recursive: false },
+            ],
+            ({ entry, recursive }) =>
+              fileSystem.remove(path.join(workspaceRoot, entry), { recursive }).pipe(Effect.ignore),
+            { discard: true },
+          );
     // Until the create is dispatched nothing else can use the folder, so any
     // exit but success removes it, an interrupt included.
     const prepared = yield* Effect.all([
@@ -841,7 +853,7 @@ const make = Effect.gen(function* () {
     createNamedProject: (input) =>
       input.kind === "personal"
         ? assistantLock.withPermits(1)(createNamedProject(input))
-        : createNamedProject(input),
+        : namedLock.withPermits(1)(createNamedProject(input)),
   });
 });
 
