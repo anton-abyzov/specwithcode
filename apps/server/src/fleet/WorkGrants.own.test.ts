@@ -60,6 +60,14 @@ describe("own and team work grants", () => {
     expect(grantKindOf({ owner: "self", coordinatorEnvironmentId: LAPTOP }, managers)).toBe("team");
   });
 
+  it.effect("reports the coordinators that manage this machine", () =>
+    Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      // The management pairing counts; a worker grant's session does not.
+      expect([...(yield* grants.managers)]).toEqual([MINISTORM]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("turns routines on for a new own grant and leaves a team grant off", () =>
     Effect.gen(function* () {
       const grants = yield* WorkGrants.WorkGrants;

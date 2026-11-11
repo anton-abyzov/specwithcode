@@ -20,8 +20,10 @@ import { decodeRoutineGrantJson } from "./ScheduledTaskStorage.ts";
  * A routine another machine's coordinator made or changed here under its work
  * grant records that grant (`run_policy_json.grantedBy`), in the same write
  * that saves the routine. It runs later as work of that grant, so before every
- * fire the grant is read again: once it is revoked, gone, no longer allows
- * routines, no longer covers the project, no longer allows the routine's
+ * fire the grant is read again, with the coordinators that manage this
+ * machine now (routines a grant got only for being the owner's own machine
+ * stop counting once it no longer is): once it is revoked, gone, no longer
+ * allows routines, no longer covers the project, no longer allows the routine's
  * sign-in or caps runs below the routine's mode, the routine is turned off
  * with a note and never fires again. When the check itself fails, the fire is
  * skipped with a note (fail closed) and the routine tries again next time.
@@ -52,6 +54,8 @@ type GrantProject = Parameters<typeof projectInGrant>[2];
 export function routineGrantRefusal(input: {
   readonly coordinatorEnvironmentId: string;
   readonly policy: WorkGrantPolicyRecord | undefined;
+  /** The coordinators that manage this machine now (`WorkGrants.managers`). */
+  readonly managers: ReadonlySet<string>;
   readonly project: GrantProject | undefined;
   /** The routine as it would run; omitted, its sign-in and mode are not checked. */
   readonly task?: Pick<ScheduledTask, "runtimeMode" | "modelSelection"> | undefined;
@@ -60,7 +64,7 @@ export function routineGrantRefusal(input: {
 }): string | null {
   if (input.policy === undefined) return ROUTINE_GRANT_GONE_NOTE;
   if (input.policy.revokedAt !== null) return ROUTINE_GRANT_REVOKED_NOTE;
-  const grant = effectiveGrant(input.policy);
+  const grant = effectiveGrant(input.policy, input.managers);
   if (grant.legacy !== true && !grant.routines) return ROUTINE_GRANT_NO_ROUTINES_NOTE;
   if (
     input.project === undefined ||
@@ -161,10 +165,13 @@ export const makeRoutineGrantGate =
         const coordinator = recorded.coordinatorEnvironmentId;
         const policies = yield* deps.grants.policies;
         const policy = policies.find((record) => record.coordinatorEnvironmentId === coordinator);
+        // This machine's own sessions, no network; unreadable skips the fire.
+        const managers = yield* deps.grants.managers;
         const row = yield* deps.projects.get(task.projectId);
         const note = routineGrantRefusal({
           coordinatorEnvironmentId: coordinator,
           policy,
+          managers,
           project: Option.isNone(row)
             ? undefined
             : { id: row.value.projectId, workspaceSettings: row.value.workspaceSettings ?? null },
@@ -175,7 +182,7 @@ export const makeRoutineGrantGate =
           return {
             kind: "run",
             coordinatorEnvironmentId: coordinator,
-            accounts: effectiveGrant(policy!).accounts,
+            accounts: effectiveGrant(policy!, managers).accounts,
           } as const;
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* deps.sql`
