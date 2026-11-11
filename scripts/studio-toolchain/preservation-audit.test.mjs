@@ -389,7 +389,7 @@ test("every reviewed change was written by the merged commit it names", () => {
 });
 
 test("reviewed patch entries pin their patch file bytes", () => {
-  assert.equal(verifyReviewedPatches(root, reviewed), 4);
+  assert.equal(verifyReviewedPatches(root, reviewed), 5);
   const patch = reviewed.find((c) => c.patchFile);
   const temp = mkdtempSync(join(tmpdir(), "lock-patch-"));
   try {
