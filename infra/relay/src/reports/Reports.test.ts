@@ -155,7 +155,6 @@ describe("crash reports", () => {
         provider: "codex",
         model: "gpt-5.5",
         errorName: "Error",
-        message: "Request to <path> failed",
         detail: { exitCode: 1 },
         count: 1,
         machine: "darwin-arm64-0123456789ab",
@@ -163,7 +162,9 @@ describe("crash reports", () => {
         bytes: new TextEncoder().encode(body).length,
       });
       expect(fields.installIdHash).toMatch(/^[0-9a-f]{16}$/);
-      expect(fields.stack).toContain("at run");
+      // A failed turn carries its category and provider, never provider error text.
+      expect(fields.message).toBeUndefined();
+      expect(fields.stack).toBeUndefined();
       expect(JSON.stringify(harness.logs)).not.toContain(INSTALL_ID);
       // The limiter sees a full hash, never the install id.
       expect(harness.installKeys).toHaveLength(1);
@@ -266,12 +267,13 @@ describe("crash reports", () => {
     }),
   );
 
-  it.effect("returns 429 without spending an install budget when the global one is spent", () =>
+  it.effect("returns 429 when the shared budget is spent, after the install check", () =>
     Effect.gen(function* () {
       const harness = makeHarness({ allowGlobal: Effect.succeed(false) });
       const response = yield* harness.send(crashRequest(encodeCrashReport(report())));
       expect(response.status).toBe(429);
-      expect(harness.installKeys).toHaveLength(0);
+      expect(harness.installKeys).toHaveLength(1);
+      expect(crashLogs(harness.logs)).toHaveLength(0);
       expect(harness.spanAttribute("relay.crash.rate_limit")).toBe("global");
     }),
   );

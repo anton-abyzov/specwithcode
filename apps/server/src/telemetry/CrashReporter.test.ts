@@ -166,12 +166,19 @@ it("resolves the same folders as the CLI", () => {
   });
   assert.equal(explicit.baseDir, NodePath.resolve(home, "studio"));
   assert.equal(explicit.stateDir, NodePath.join(explicit.baseDir, "userdata"));
-  const dev = resolveCrashReportPathsSync({
+  // STUDIO_HOME is explicit too, exactly like --base-dir.
+  const fromEnv = resolveCrashReportPathsSync({
     argv: [],
     env: { STUDIO_HOME: "/srv/studio", VITE_DEV_SERVER_URL: "http://localhost:5173" },
     homeDir: home,
   });
-  assert.equal(dev.stateDir, NodePath.join(NodePath.resolve("/srv/studio"), "dev"));
+  assert.equal(fromEnv.stateDir, NodePath.join(NodePath.resolve("/srv/studio"), "userdata"));
+  const dev = resolveCrashReportPathsSync({
+    argv: [],
+    env: { VITE_DEV_SERVER_URL: "http://localhost:5173" },
+    homeDir: home,
+  });
+  assert.equal(dev.stateDir, NodePath.join(defaults.baseDir, "dev"));
   assert.equal(dev.settingsPath, NodePath.join(dev.stateDir, "settings.json"));
 });
 
@@ -249,9 +256,9 @@ it.layer(NodeServices.layer)("CrashReporter", (it) => {
         assert.equal(body.installId, installId);
         const text = JSON.stringify(body);
         assert.notInclude(text, "alice");
-        // Messages lose every path; stacks keep code locations with the home folder as ~.
-        assert.notInclude(body.message ?? "", "secret-app");
-        assert.include(body.stack ?? "", "~/");
+        // Messages lose every path; stack frames keep only the code location.
+        assert.notInclude(text, "secret-app");
+        assert.include(body.stack ?? "", "at readNotes (notes.ts:10:3)");
         assert.notInclude(text, "abcdefgh12345678");
         assert.include(body.message ?? "", "<path>");
 

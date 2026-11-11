@@ -63,8 +63,10 @@ sanitizing, the 16 KiB cap and relay validation live in
 `buildCrashReport` and `encodeCrashReport`, and the relay calls `parseCrashReport`
 again before writing one Workers Logs line. Never add a field there that can hold
 prompts, responses, file contents, tokens, account, conversation, thread or project
-ids, or raw paths. Free text goes through the sanitizer, which turns home paths into
-`~`, other paths in messages into `<path>`, and redacts secrets, emails, uuids and IPs.
+ids, or raw paths. Free text goes through the sanitizer, which turns paths in messages into
+`<path>`, trims stack frames to a code location, and redacts the user name, the
+hostname, secrets, emails, uuids and IPs. A `turn_failed` report carries no message
+or stack, and a model id keeps only its last path part.
 
 Senders:
 

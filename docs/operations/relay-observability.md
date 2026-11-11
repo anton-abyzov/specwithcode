@@ -72,7 +72,8 @@ the payload format and sanitizing rules are in
 with `parseCrashReport`, then logs a warning with the message `crash_report` and these fields:
 `log` (always `crash_report`), `surface`, `kind`, `category`, `appVersion`, `os`, `osVersion`,
 `arch`, `provider`, `model`, `errorName`, `message`, `stack`, `detail`, `count`, `machine`,
-`installIdHash`, `country` and `bytes`. Optional fields are left out when the report has none.
+`installIdHash`, `country` and `bytes`. Optional fields are left out when the report has none; a `turn_failed` report never has `message`
+or `stack`. The per-install limit is checked before the shared one.
 `installIdHash` is the first 16 hex characters of the install id's SHA-256 digest, so repeats from
 one installation group together without the raw id being logged. Reports never carry prompts,
 responses, file contents, tokens, account, thread or project ids, or raw paths.

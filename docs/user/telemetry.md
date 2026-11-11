@@ -41,9 +41,11 @@ Each report is a small JSON object with these fields:
   gone or turn failed) and `category`, the failure category.
 - `appVersion`, `os`, `osVersion` and `arch`.
 - `provider` and `model`, only when the failure came from an agent turn.
-- `errorName`, `message` and `stack`: the sanitized error. Your home folder becomes `~`, other
-  paths in messages become `<path>`, and secrets, email addresses, ids and IP addresses are
-  replaced before anything leaves the machine.
+- `errorName`, `message` and `stack`: the sanitized error. Paths in messages become `<path>`,
+  a stack line keeps the function name and the code file (not the folder it is in), and your
+  user name, the computer's name, secrets, email addresses, ids and IP addresses are replaced
+  before anything leaves the machine. A failed turn sends no `message` or `stack` at all,
+  because a provider's error text can quote a prompt or a reply.
 - `detail`, a few short values such as an exit code, and `count`, how many identical reports were
   folded into this one.
 
