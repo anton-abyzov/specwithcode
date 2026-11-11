@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   compareVersions,
+  listedReport,
   parseStableVersion,
   publishPlan,
   readRegistry,
@@ -9,6 +10,9 @@ import {
   runtimeArchiveState,
   sumsDigest,
   tarballProblems,
+  VERSIONS_PAGE,
+  viewVersion,
+  waitForListedVersion,
   waitForRuntimeArchive,
 } from "./npm-release.mjs";
 
@@ -269,4 +273,195 @@ test("the registry read bypasses the cache, retries, and fails closed", async ()
     }),
     /unexpected registry document/,
   );
+});
+
+// What `npm view` exits with: npm 11.19.1's stderr for a version it does not list, and for a
+// registry it cannot reach.
+function npmError(stderr) {
+  return Object.assign(new Error("Command failed: npm view"), { stderr });
+}
+const NOT_LISTED = "npm error code E404\nnpm error 404 No match found for version 1.0.233\n";
+const UNREACHABLE = "npm error code ECONNREFUSED\nnpm error syscall connect\n";
+
+test("one look at npm tells a version it does not list from a registry that fails", () => {
+  const calls = [];
+  const listed = viewVersion({
+    version: "1.0.233",
+    run: (args) => {
+      calls.push(args);
+      return args[1] === "version" ? "1.0.233\n" : "1.0.233\n";
+    },
+  });
+  assert.deepEqual(listed, { seen: "1.0.233", latest: "1.0.233" });
+  assert.deepEqual(calls, [
+    ["specwithcode@1.0.233", "version"],
+    ["specwithcode", "dist-tags.latest"],
+  ]);
+
+  const hidden = viewVersion({
+    version: "1.0.233",
+    run: (args) => {
+      if (args[1] === "version") throw npmError(NOT_LISTED);
+      return "1.0.47\n";
+    },
+  });
+  assert.deepEqual(hidden, { seen: null, latest: "1.0.47" });
+
+  assert.throws(
+    () =>
+      viewVersion({
+        version: "1.0.233",
+        run: () => {
+          throw npmError(UNREACHABLE);
+        },
+      }),
+    /npm error code ECONNREFUSED; npm error syscall connect/,
+  );
+  // A 404 for the version only means "not listed" while the package itself can be read.
+  assert.throws(
+    () =>
+      viewVersion({
+        version: "1.0.233",
+        run: () => {
+          throw npmError("npm error code E404\nnpm error 404 Not Found - GET specwithcode\n");
+        },
+      }),
+    /npm error code E404; npm error 404 Not Found/,
+  );
+  assert.throws(
+    () => viewVersion({ version: "1.0.233", run: (args) => (args[1] === "version" ? "" : "") }),
+    /no latest version/,
+  );
+});
+
+/** Runs the wait against a scripted registry; the last answer repeats. */
+async function listedWait({ answers, accepted, ...options }) {
+  const lines = [];
+  let slept = 0;
+  let polls = 0;
+  const outcome = waitForListedVersion({
+    version: "1.0.233",
+    accepted,
+    view: () => {
+      const answer = answers[Math.min(polls, answers.length - 1)];
+      polls += 1;
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
+    sleep: async (ms) => void (slept += ms),
+    log: (line) => lines.push(line),
+    ...options,
+  });
+  return { outcome, lines, minutes: () => slept / 60_000, polls: () => polls };
+}
+const HIDDEN = { seen: null, latest: "1.0.47" };
+const LISTED = { seen: "1.0.233", latest: "1.0.233" };
+
+test("a version npm lists with latest at or past it passes at once", async () => {
+  const run = await listedWait({ answers: [LISTED], accepted: true });
+  assert.deepEqual(await run.outcome, { listed: true, latest: "1.0.233" });
+  assert.equal(run.minutes(), 0);
+  // Skipped as already on npm, with a newer latest: still listed.
+  const older = await listedWait({
+    answers: [{ seen: "1.0.233", latest: "1.0.240" }],
+    accepted: false,
+  });
+  assert.deepEqual(await older.outcome, { listed: true, latest: "1.0.240" });
+});
+
+test("a version npm accepted is waited for while its review hides it", async () => {
+  // Twenty minutes of 404, as 1.0.233 gave, then the listing.
+  const run = await listedWait({ answers: [...Array(40).fill(HIDDEN), LISTED], accepted: true });
+  assert.deepEqual(await run.outcome, { listed: true, latest: "1.0.233" });
+  assert.equal(run.minutes(), 20);
+  assert.equal(
+    run.lines[0],
+    "npm accepted specwithcode@1.0.233 and does not list it yet; waited 0 of 60 min.",
+  );
+});
+
+test("a version npm accepted and still hides after an hour ends without failing", async () => {
+  const run = await listedWait({ answers: [HIDDEN], accepted: true });
+  assert.deepEqual(await run.outcome, { listed: false, minutes: 60 });
+  assert.equal(run.minutes(), 60);
+  assert.equal(run.polls(), 121);
+  assert.match(
+    VERSIONS_PAGE,
+    /^https:\/\/www\.npmjs\.com\/package\/specwithcode\?activeTab=versions$/,
+  );
+});
+
+test("a version this run did not publish must be listed within ten minutes", async () => {
+  const run = await listedWait({ answers: [HIDDEN], accepted: false });
+  await assert.rejects(
+    run.outcome,
+    /specwithcode@1\.0\.233 is not on npm after 10 minutes, and this run did not publish it/,
+  );
+  assert.equal(run.minutes(), 10);
+  assert.equal(run.lines[0], "specwithcode@1.0.233 is not listed yet; waited 0 of 10 min.");
+});
+
+test("a registry that stops answering fails even for an accepted version", async () => {
+  const down = new Error("npm error code ECONNREFUSED");
+  const never = await listedWait({ answers: [down], accepted: true });
+  await assert.rejects(
+    never.outcome,
+    /npm did not answer for specwithcode@1\.0\.233 after 60 minutes: npm error code ECONNREFUSED/,
+  );
+  // Hidden for most of the hour, then five polls in a row without an answer at the end.
+  const late = await listedWait({
+    answers: [...Array(116).fill(HIDDEN), down],
+    accepted: true,
+  });
+  await assert.rejects(late.outcome, /npm did not answer .* after 60 minutes/);
+  // One missed poll at the very end is not an outage: the last answer still stands.
+  const blip = await listedWait({
+    answers: [...Array(120).fill(HIDDEN), down],
+    accepted: true,
+  });
+  assert.deepEqual(await blip.outcome, { listed: false, minutes: 60 });
+  assert.match(blip.lines.at(-1), /^npm accepted specwithcode@1\.0\.233 and does not list it yet/);
+});
+
+test("a listed version that latest stays behind fails after ten more minutes", async () => {
+  const behind = { seen: "1.0.233", latest: "1.0.47" };
+  const stuck = await listedWait({ answers: [behind], accepted: true });
+  await assert.rejects(
+    stuck.outcome,
+    /specwithcode@1\.0\.233 is on npm but latest is 1\.0\.47\. Move it by hand: npm dist-tag add specwithcode@1\.0\.233 latest/,
+  );
+  // Accepted keeps its hour; the ten minutes only ever extend the wait.
+  assert.equal(stuck.minutes(), 60);
+  // Listed in the last minute of the hour: latest still gets its ten minutes to follow.
+  const late = await listedWait({
+    answers: [...Array(119).fill(HIDDEN), ...Array(10).fill(behind), LISTED],
+    accepted: true,
+  });
+  assert.deepEqual(await late.outcome, { listed: true, latest: "1.0.233" });
+  assert.equal(late.minutes(), 64.5);
+  assert.match(late.lines.at(-1), /is listed but latest is 1\.0\.47; waited 64 of 70 min\.$/);
+  // A latest the check cannot compare is behind, not an exception.
+  const odd = await listedWait({
+    answers: [{ seen: "1.0.233", latest: "2.0.0-rc.1" }],
+    accepted: false,
+  });
+  await assert.rejects(odd.outcome, /is on npm but latest is 2\.0\.0-rc\.1/);
+  assert.equal(odd.minutes(), 10);
+});
+
+test("the outcome is reported as a link when listed and as a warning while npm validates", () => {
+  const listed = listedReport({ version: "1.0.233", result: { listed: true, latest: "1.0.233" } });
+  assert.equal(listed.log, "specwithcode@1.0.233 is on npm; latest is 1.0.233.");
+  assert.equal(
+    listed.summary,
+    "- npm: [specwithcode@1.0.233](https://www.npmjs.com/package/specwithcode/v/1.0.233), latest is 1.0.233",
+  );
+  const hidden = listedReport({ version: "1.0.233", result: { listed: false, minutes: 60 } });
+  // A warning annotation, not an error: the run stays green.
+  assert.match(hidden.log, /^::warning title=npm is still validating specwithcode@1\.0\.233::/);
+  assert.match(hidden.log, /after 60 minutes/);
+  for (const text of [hidden.log, hidden.summary]) {
+    assert.ok(text.includes("specwithcode@1.0.233"));
+    assert.ok(text.includes("https://www.npmjs.com/package/specwithcode?activeTab=versions"));
+  }
 });

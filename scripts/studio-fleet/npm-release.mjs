@@ -2,15 +2,18 @@
 /**
  * The decisions .github/workflows/release-npm.yml makes around npm-package.mjs: which release
  * asset is the runtime archive, whether the release has it yet, what the built tarball must
- * hold, and whether this version may go to npm.
+ * hold, whether this version may go to npm, and whether npm lists it afterwards.
  *
  *   node npm-release.mjs fetch --repo <owner/name> --version <X.Y.Z> --dir <new dir>
  *   node npm-release.mjs check-tarball --tarball <specwithcode-X.Y.Z.tgz> --version <X.Y.Z>
  *   node npm-release.mjs plan --version <X.Y.Z> [--dry-run]
+ *   node npm-release.mjs await-listed --version <X.Y.Z> [--accepted]
  *
  * `fetch` waits (up to an hour) for a published release to hold its runtime archive and a
  * SHA256SUMS that lists it, then downloads both. `fetch`, `check-tarball` and `plan` append
- * their results to $GITHUB_OUTPUT when it is set.
+ * their results to $GITHUB_OUTPUT when it is set. `await-listed` waits for npm to list the
+ * version and writes the outcome to $GITHUB_STEP_SUMMARY; `--accepted` says this run's
+ * `npm publish` succeeded.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -21,6 +24,9 @@ import { parseArgs } from "node:util";
 import { NPM_BINS, NPM_PACKAGE_NAME } from "./npm-package.mjs";
 
 export const REGISTRY = "https://registry.npmjs.org";
+export const VERSIONS_PAGE = `https://www.npmjs.com/package/${NPM_PACKAGE_NAME}?activeTab=versions`;
+// This many polls in a row without an answer mean npm is unreachable, not that it hides a version.
+const UNANSWERED_POLLS = 5;
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const SUMS_LINE = /^([0-9a-fA-F]{64}) [ *](.+)$/;
 
@@ -194,6 +200,108 @@ export async function readRegistry({ fetchImpl = fetch, attempts = 3, sleep = wa
   throw new Error(`Cannot read ${NPM_PACKAGE_NAME} from npm: ${failure.message}`);
 }
 
+/**
+ * One look at npm for `version`, through `run` (`npm view <args>`): `seen` is the version npm
+ * lists, or null when npm answers that it has none (E404). The `latest` read must succeed too,
+ * so a version only counts as not listed while the package itself is readable. Any other
+ * failure of either read throws.
+ */
+export function viewVersion({ version, run }) {
+  const failure = (error) =>
+    new Error(
+      `${error.stderr ?? ""}`.split("\n").filter(Boolean).slice(0, 2).join("; ") || error.message,
+    );
+  let seen = null;
+  try {
+    seen = run([`${NPM_PACKAGE_NAME}@${version}`, "version"]).trim() || null;
+  } catch (error) {
+    if (!/\bE404\b/.test(`${error.stderr ?? ""}`)) throw failure(error);
+  }
+  let latest;
+  try {
+    latest = run([NPM_PACKAGE_NAME, "dist-tags.latest"]).trim();
+  } catch (error) {
+    throw failure(error);
+  }
+  if (!latest) throw new Error("npm named no latest version");
+  return { seen, latest };
+}
+
+function atLeast(latest, version) {
+  return STABLE_VERSION.test(latest ?? "") && compareVersions(latest, version) >= 0;
+}
+
+/**
+ * Waits until npm lists `version` with `latest` at or past it, polling `view` (see viewVersion).
+ *
+ * npm accepts an upload, then reviews it before the registry shows it: until the review is done
+ * every read answers 404. So a version this run published (`accepted`) is waited for an hour,
+ * and one still hidden after that returns `{ listed: false }`: npm has it, which is all this run
+ * can prove. A version this run did not publish gets ten minutes and must be listed.
+ *
+ * Everything else throws: npm not answering, a version that is not listed and was not published
+ * here, and a listed version that `latest` stays behind (it gets ten minutes from the moment it
+ * is first listed).
+ */
+export async function waitForListedVersion({
+  version,
+  accepted,
+  view,
+  sleep,
+  log = () => {},
+  acceptedMs = 60 * 60_000,
+  otherMs = 10 * 60_000,
+  latestMs = 10 * 60_000,
+  intervalMs = 30_000,
+}) {
+  const id = `${NPM_PACKAGE_NAME}@${version}`;
+  let limit = accepted ? acceptedMs : otherMs;
+  let waited = 0;
+  let answer = null;
+  let unanswered = 0;
+  let failure = "";
+  let listedAt = null;
+  for (;;) {
+    try {
+      answer = view();
+      unanswered = 0;
+    } catch (error) {
+      unanswered += 1;
+      failure = error.message;
+    }
+    const listed = unanswered === 0 && answer.seen === version;
+    if (listed && atLeast(answer.latest, version)) return { listed: true, latest: answer.latest };
+    if (listed && listedAt === null) {
+      listedAt = waited;
+      limit = Math.max(limit, waited + latestMs);
+    }
+    if (waited >= limit) break;
+    const progress = `waited ${Math.round(waited / 60_000)} of ${Math.round(limit / 60_000)} min.`;
+    if (unanswered > 0) log(`npm did not answer (${failure}); ${progress}`);
+    else if (listed) log(`${id} is listed but latest is ${answer.latest}; ${progress}`);
+    else if (accepted) log(`npm accepted ${id} and does not list it yet; ${progress}`);
+    else log(`${id} is not listed yet; ${progress}`);
+    await sleep(intervalMs);
+    waited += intervalMs;
+  }
+  const minutes = Math.round(waited / 60_000);
+  if (answer === null || unanswered >= UNANSWERED_POLLS) {
+    throw new Error(`npm did not answer for ${id} after ${minutes} minutes: ${failure}`);
+  }
+  if (answer.seen === version) {
+    throw new Error(
+      `${id} is on npm but latest is ${answer.latest}. Move it by hand: npm dist-tag add ${id} latest`,
+    );
+  }
+  if (answer.seen !== null) throw new Error(`npm answered ${answer.seen} for ${id}`);
+  if (!accepted) {
+    throw new Error(
+      `${id} is not on npm after ${minutes} minutes, and this run did not publish it.`,
+    );
+  }
+  return { listed: false, minutes };
+}
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -277,6 +385,39 @@ async function planCommand({ version, dryRun }) {
   output({ publish: plan.publish, latest: plan.latest ?? "" });
 }
 
+/** The log line and the step-summary line for the outcome of waitForListedVersion. */
+export function listedReport({ version, result }) {
+  const id = `${NPM_PACKAGE_NAME}@${version}`;
+  if (result.listed) {
+    return {
+      log: `${id} is on npm; latest is ${result.latest}.`,
+      summary: `- npm: [${id}](https://www.npmjs.com/package/${NPM_PACKAGE_NAME}/v/${version}), latest is ${result.latest}`,
+    };
+  }
+  return {
+    log: `::warning title=npm is still validating ${id}::npm accepted ${id}, but its review still hides the version after ${result.minutes} minutes. It is listed at ${VERSIONS_PAGE} once the review completes.`,
+    summary: `- npm: ${id} was published and accepted, but npm's review still hides it after ${result.minutes} minutes. It appears under [Versions](${VERSIONS_PAGE}) once the review completes; until then \`npm i -g ${NPM_PACKAGE_NAME}\` installs the previous version.`,
+  };
+}
+
+async function awaitListedCommand({ version, accepted }) {
+  parseStableVersion(version);
+  const npmView = (args) =>
+    execFileSync("npm", ["view", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const result = await waitForListedVersion({
+    version,
+    accepted,
+    view: () => viewVersion({ version, run: npmView }),
+    sleep: wait,
+    log: console.log,
+  });
+  const report = listedReport({ version, result });
+  console.log(report.log);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report.summary}\n`);
+  }
+}
+
 async function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({
@@ -287,6 +428,7 @@ async function main(argv) {
       dir: { type: "string" },
       tarball: { type: "string" },
       "dry-run": { type: "boolean", default: false },
+      accepted: { type: "boolean", default: false },
     },
   });
   if (command === "fetch" && values.repo && values.version && values.dir) {
@@ -299,11 +441,14 @@ async function main(argv) {
     checkTarballCommand({ tarball: values.tarball, version: values.version });
   } else if (command === "plan" && values.version) {
     await planCommand({ version: values.version, dryRun: values["dry-run"] });
+  } else if (command === "await-listed" && values.version) {
+    await awaitListedCommand({ version: values.version, accepted: values.accepted });
   } else {
     console.error(
       "usage: npm-release.mjs fetch --repo <owner/name> --version <X.Y.Z> --dir <new dir>\n" +
         "       npm-release.mjs check-tarball --tarball <tgz> --version <X.Y.Z>\n" +
-        "       npm-release.mjs plan --version <X.Y.Z> [--dry-run]",
+        "       npm-release.mjs plan --version <X.Y.Z> [--dry-run]\n" +
+        "       npm-release.mjs await-listed --version <X.Y.Z> [--accepted]",
     );
     process.exitCode = 2;
   }

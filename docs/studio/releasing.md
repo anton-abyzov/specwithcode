@@ -394,6 +394,16 @@ publishes, and then waits for `npm view specwithcode@X.Y.Z version` to answer. A
 npm is skipped without failing. A version older than npm's `latest` is refused, since publishing it
 would move `latest` back. Pre-releases are not published.
 
+npm reviews an upload before the registry lists it (npmjs.com shows the version as "Validating"),
+and every read answers 404 until the review is done. The **Check the version on npm** job waits up
+to an hour for a version the run published. If npm still hides it then, the run ends green with a
+warning and a summary note linking the package's
+[versions page](https://www.npmjs.com/package/specwithcode?activeTab=versions); `npm i -g
+specwithcode` installs the previous version until the review completes. Anything else fails the
+run: npm not answering, a version the run did not publish that npm does not list, or a listed
+version that `latest` stays behind. The registry does not show a version under review, so running
+the workflow again for it attempts a second publish: wait for the review instead.
+
 It signs in with npm trusted publishing (OIDC), with no token or secret: on npmjs.com, the
 `specwithcode` package's trusted publisher is `anton-abyzov/specwithcode` with the workflow file
 `release-npm.yml`, so that file name must not change. Trusted publishing needs npm 11.5.1 or newer

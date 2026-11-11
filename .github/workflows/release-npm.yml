@@ -24,7 +24,10 @@ name: Release npm
 #   4. Skips, without failing, a version that is already on npm, and refuses a version older
 #      than npm's `latest`: publishing it would move `latest` back.
 #   5. `npm publish <tarball> --access public` (`--dry-run` in a dry run).
-#   6. Waits for `npm view specwithcode@X.Y.Z version` to answer with the version.
+#   6. Waits for `npm view specwithcode@X.Y.Z version` to answer with the version. npm reviews an
+#      upload before the registry lists it, and answers 404 until then: a version this run
+#      published is waited for an hour, and one npm still hides after that ends the run green
+#      with a warning and a note in the summary. Every other outcome fails the run.
 #
 # Authentication is npm trusted publishing (OIDC): no token and no secret. On npmjs.com the
 # package's trusted publisher is this repository and this workflow file name, so the file must
@@ -233,11 +236,15 @@ jobs:
       contents: read
       # npm trusted publishing: the run's OIDC token is the only credential.
       id-token: write
+    outputs:
+      # True only when this run's own `npm publish` succeeded for real: npm has accepted the version.
+      accepted: ${{ steps.publish.outcome == 'success' && needs.package.outputs.dry_run != 'true' }}
     # One real publish at a time: the check against npm's `latest` and the publish that moves it
     # are then never interleaved with another version's. A dry run publishes nothing and gets a
     # group of its own, so it can neither wait behind a real run nor displace one that waits.
     # GitHub keeps one waiting run per group: a third release published while one publishes and
-    # one waits cancels the waiting one, which then needs a manual run.
+    # one waits cancels the waiting one, which then needs a manual run. The wait for npm to list
+    # the version is a job of its own (listed) so that it never holds this group.
     concurrency:
       group: release-npm-publish${{ needs.package.outputs.dry_run == 'true' && format('-dry-run-{0}', github.run_id) || '' }}
       cancel-in-progress: false
@@ -295,7 +302,7 @@ jobs:
           cd "$RUNNER_TEMP/npm"
           echo "$TARBALL_SHA256  $NPM_PACKAGE-$VERSION.tgz" | sha256sum -c -
 
-      # Already on npm: publish=false and the run goes on to the registry check. Older than
+      # Already on npm: publish=false and the run goes on to the listed job. Older than
       # npm's latest: this step fails (a dry run only warns).
       - name: Decide whether to publish
         id: plan
@@ -309,6 +316,7 @@ jobs:
       # No NODE_AUTH_TOKEN and no --provenance: see the top of this file. A dry run names
       # another tag because npm refuses the default one for a version below `latest`.
       - name: Publish to npm (OIDC trusted publishing)
+        id: publish
         if: steps.plan.outputs.publish == 'true'
         shell: bash
         run: |
@@ -319,35 +327,6 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/npm/$NPM_PACKAGE-$VERSION.tgz" --access public
           fi
-
-      # npm can accept an upload while the registry still answers 404 for it. `latest` must not
-      # be older than this version either, or `npm i -g specwithcode` would not install it.
-      - name: Check the version on npm
-        if: env.DRY_RUN != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP"
-          seen="" latest="" errors="$RUNNER_TEMP/npm-view.log"
-          for attempt in $(seq 1 40); do
-            seen="$(npm view "$NPM_PACKAGE@$VERSION" version 2> "$errors" || true)"
-            latest="$(npm view "$NPM_PACKAGE" dist-tags.latest 2>> "$errors" || true)"
-            if [ "$seen" = "$VERSION" ] && [ -n "$latest" ] &&
-              [ "$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -n 1)" = "$latest" ]; then
-              echo "$NPM_PACKAGE@$VERSION is on npm; latest is $latest."
-              echo "- npm: [$NPM_PACKAGE@$VERSION](https://www.npmjs.com/package/$NPM_PACKAGE/v/$VERSION), latest is $latest" >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "npm answers '${seen:-nothing}' for $NPM_PACKAGE@$VERSION and '${latest:-nothing}' for latest (attempt $attempt of 40)."
-            sleep 15
-          done
-          cat "$errors"
-          if [ "$seen" != "$VERSION" ]; then
-            echo "::error::npm view $NPM_PACKAGE@$VERSION version answered '${seen:-nothing}' after 10 minutes."
-          else
-            echo "::error::$NPM_PACKAGE@$VERSION is on npm but latest is '${latest:-unknown}'. Move it by hand: npm dist-tag add $NPM_PACKAGE@$VERSION latest"
-          fi
-          exit 1
 
       - name: Summarize a dry run
         if: env.DRY_RUN == 'true'
@@ -362,3 +341,52 @@ jobs:
           else
             echo "- Dry run: $VERSION is already on npm, so there was nothing to rehearse." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # npm accepts an upload, then reviews it before the registry lists it; until the review is done
+  # `npm view` answers 404 for the version (1.0.233 was "Validating" on npmjs.com for longer than
+  # the ten minutes this check first allowed). npm-release.mjs await-listed decides:
+  #   listed, with `latest` at or past it: pass.
+  #   published by this run and still hidden after 60 minutes: pass, with a warning and a summary
+  #     note that names the version and links the package's versions page.
+  #   anything else (npm not answering, a version this run did not publish and npm does not list,
+  #     a listed version that `latest` stays behind): fail.
+  listed:
+    name: Check the version on npm
+    needs: [package, publish]
+    if: needs.package.outputs.dry_run != 'true'
+    runs-on: ubuntu-24.04
+    # An hour of waiting for npm's review, ten minutes for `latest` to follow, and the setup.
+    timeout-minutes: 80
+    env:
+      VERSION: ${{ needs.package.outputs.version }}
+      ACCEPTED: ${{ needs.publish.outputs.accepted }}
+    steps:
+      # No registry-url: these are anonymous reads.
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.2
+          package-manager-cache: false
+
+      - name: Fetch release tools
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/release-tools"
+          mkdir -p "$tools"
+          for file in npm-package.mjs npm-release.mjs; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$GITHUB_REPOSITORY/contents/scripts/studio-fleet/$file?ref=$GITHUB_SHA" > "$tools/$file"
+          done
+          echo "TOOLS=$tools" >> "$GITHUB_ENV"
+
+      - name: Wait for npm to list the version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          flags=()
+          if [ "$ACCEPTED" = true ]; then flags=(--accepted); fi
+          node "$TOOLS/npm-release.mjs" await-listed --version "$VERSION" ${flags[@]+"${flags[@]}"}
