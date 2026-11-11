@@ -1148,90 +1148,96 @@ const layerMakeServer = Layer.unwrap(
         yield* startup.markHttpListening;
       }),
     );
+    // Both layers park outside acquireRelease: its acquire cannot be interrupted, and a stop
+    // signal that arrives before activation must still end the launch.
     const layerRuntimeState = Layer.effectDiscard(
-      Effect.acquireRelease(
-        Effect.gen(function* () {
-          yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
-          yield* awaitActivation;
-          const server = yield* HttpServer.HttpServer;
-          const address = server.address;
-          if (typeof address === "string" || !("port" in address)) {
-            return;
-          }
+      ServerActivation.parkUntilActivation(runtimeStateParked, awaitActivation).pipe(
+        Effect.andThen(
+          Effect.acquireRelease(
+            Effect.gen(function* () {
+              const server = yield* HttpServer.HttpServer;
+              const address = server.address;
+              if (typeof address === "string" || !("port" in address)) {
+                return;
+              }
 
-          const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
-          const state = yield* makePersistedServerRuntimeState({
-            config,
-            port: address.port,
-            serviceManaged: launcher.managed,
-          });
-          yield* persistServerRuntimeState({
-            path: config.serverRuntimeStatePath,
-            state,
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to persist server runtime state", { cause }),
-            ),
-          );
-        }),
-        () =>
-          clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to clear server runtime state", { cause }),
-            ),
+              const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+              const state = yield* makePersistedServerRuntimeState({
+                config,
+                port: address.port,
+                serviceManaged: launcher.managed,
+              });
+              yield* persistServerRuntimeState({
+                path: config.serverRuntimeStatePath,
+                state,
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to persist server runtime state", { cause }),
+                ),
+              );
+            }),
+            () =>
+              clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to clear server runtime state", { cause }),
+                ),
+              ),
           ),
+        ),
       ),
     );
     const layerTailscaleServe = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
-          Effect.acquireRelease(
-            Effect.gen(function* () {
-              yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
-              yield* awaitActivation;
-              const server = yield* HttpServer.HttpServer;
-              const address = server.address;
-              if (typeof address === "string" || !("port" in address)) {
-                return null;
-              }
+          ServerActivation.parkUntilActivation(tailscaleParked, awaitActivation).pipe(
+            Effect.andThen(
+              Effect.acquireRelease(
+                Effect.gen(function* () {
+                  const server = yield* HttpServer.HttpServer;
+                  const address = server.address;
+                  if (typeof address === "string" || !("port" in address)) {
+                    return null;
+                  }
 
-              const localPort = address.port;
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost: "127.0.0.1",
-              }).pipe(
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
+                  const localPort = address.port;
+                  return yield* ensureTailscaleServe({
                     localPort,
                     servePort: config.tailscaleServePort,
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
-                ),
-              );
-            }),
-            (configured) =>
-              configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
+                    localHost: "127.0.0.1",
+                  }).pipe(
+                    Effect.as({ localPort, servePort: config.tailscaleServePort }),
                     Effect.tap(() =>
-                      Effect.logInfo("Tailscale Serve disabled", {
-                        servePort: configured.servePort,
+                      Effect.logInfo("Tailscale Serve configured", {
+                        localPort,
+                        servePort: config.tailscaleServePort,
                       }),
                     ),
                     Effect.catch((cause) =>
-                      Effect.logWarning("Failed to disable Tailscale Serve", {
+                      Effect.logWarning("Failed to configure Tailscale Serve", {
                         cause,
-                        servePort: configured.servePort,
-                      }),
+                        localPort,
+                        servePort: config.tailscaleServePort,
+                      }).pipe(Effect.as(null)),
                     ),
-                  )
-                : Effect.void,
+                  );
+                }),
+                (configured) =>
+                  configured
+                    ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
+                        Effect.tap(() =>
+                          Effect.logInfo("Tailscale Serve disabled", {
+                            servePort: configured.servePort,
+                          }),
+                        ),
+                        Effect.catch((cause) =>
+                          Effect.logWarning("Failed to disable Tailscale Serve", {
+                            cause,
+                            servePort: configured.servePort,
+                          }),
+                        ),
+                      )
+                    : Effect.void,
+              ),
+            ),
           ),
         )
       : Layer.empty;

@@ -294,6 +294,7 @@ patchedDependencies:
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
   app-builder-lib@26.15.6: patches/app-builder-lib@26.15.6.patch
+  "@effect/platform-node-shared@4.0.1": patches/@effect__platform-node-shared@4.0.1.patch
 
 peerDependencyRules:
   allowAny:
