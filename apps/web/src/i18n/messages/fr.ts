@@ -342,7 +342,7 @@ export const fr: Messages = {
     "Quand l’utilisation qui a atteint la limite ou le seuil se réinitialise dans ce délai, rien ne bascule, rien n’est utilisé ni dépensé : le fil attend et reprend sur le même fournisseur à la réinitialisation. Une fenêtre hebdomadaire elle aussi épuisée empêche cette attente.",
   "limitSettings.subscription.title": "Continuer automatiquement sur un nouvel abonnement",
   "limitSettings.subscription.description":
-    "Quand un fil avec reprise automatique attend une limite et que sa CLI est connectée à un autre abonnement qui a de la marge, le fil continue là sans demander. Si désactivé, ou si la reprise automatique est désactivée : le fil affiche le changement et attend votre confirmation. Le fournisseur et le modèle restent les mêmes.",
+    "Quand un fil attend une limite d’utilisation et que sa CLI est connectée à un autre abonnement qui a de la marge, le fil continue là sans demander, que la reprise automatique soit activée ou non. Un fil dont le dernier rapport était bloqué par une limite d’utilisation est aussi informé du changement. Un fil que vous avez arrêté reste arrêté. Si désactivé : le fil affiche le changement et attend votre confirmation. Le fournisseur et le modèle restent les mêmes.",
   "limitSettings.redeem.title": "Utiliser d’abord une réinitialisation en réserve",
   "limitSettings.redeem.description":
     "Quand un tour s’arrête sur la limite et qu’une nouvelle lecture confirme que le compte l’a atteinte, utiliser une des réinitialisations en réserve du compte (Claude et Codex en accordent) et continuer sur le même fournisseur avant tout secours. Au plus une par fenêtre de limite, jamais pendant une simulation de limites.",

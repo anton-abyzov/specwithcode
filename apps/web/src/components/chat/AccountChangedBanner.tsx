@@ -40,12 +40,14 @@ const SUBSCRIPTION_CHANGE_DRIVERS = new Set(["claudeAgent", "codex"]);
  * Whether the server will continue this stop by itself on the new
  * subscription, so the notice may say "continues shortly". The early resume
  * (UsageLimitRecoveryWorker) needs the project to approve subscription changes
- * by itself (`autoApproveSubscriptionChange`, on by default) and keeps the
- * same gates as the reset-time resume: recovery armed for this stop with
- * auto-continue on, not settled, not snoozed, no approval or question waiting
- * on the person (the server refuses the resume while one blocks), and a
- * project that is neither paused nor archived. Anything else asks the person
- * to confirm.
+ * by itself (`autoApproveSubscriptionChange`, on by default). Auto-continue
+ * at the reset need not be on: the server arms the stop for the change
+ * itself (`accountChangeArmCommand`), unless the person chose for this stop,
+ * by turning its resume off or stopping the thread. It keeps the other gates
+ * of the reset-time resume: not settled, not snoozed, no approval or question
+ * waiting on the person (the server refuses the resume while one blocks), and
+ * a project that is neither paused nor archived. Anything else asks the
+ * person to confirm.
  */
 export function accountChangeAutoContinues(input: {
   readonly driver: string | undefined;
@@ -53,7 +55,12 @@ export function accountChangeAutoContinues(input: {
   readonly autoApprove: boolean;
   readonly runId: RunId;
   readonly limitRecovery:
-    | { readonly runId: RunId; readonly autoResume: boolean }
+    | {
+        readonly runId: RunId;
+        readonly autoResume: boolean;
+        /** The command that made the choice; a rule's arm starts with `limit-arm:`. */
+        readonly requestId?: string | undefined;
+      }
     | null
     | undefined;
   readonly settledOverride: string | null | undefined;
@@ -67,13 +74,32 @@ export function accountChangeAutoContinues(input: {
     input.driver !== undefined &&
     SUBSCRIPTION_CHANGE_DRIVERS.has(input.driver) &&
     input.autoApprove &&
-    input.limitRecovery?.runId === input.runId &&
-    input.limitRecovery.autoResume &&
+    !personChoseForStop(input.limitRecovery, input.runId) &&
     input.settledOverride !== "settled" &&
     !(input.snoozedUntil != null && Date.parse(input.snoozedUntil) > input.nowMs) &&
     !input.pendingRequest &&
     input.project?.paused !== true &&
     input.project?.archived !== true
+  );
+}
+
+/** A person turned this stop's resume off, or stopped the thread: only they continue it. */
+function personChoseForStop(
+  recovery:
+    | {
+        readonly runId: RunId;
+        readonly autoResume: boolean;
+        readonly requestId?: string | undefined;
+      }
+    | null
+    | undefined,
+  runId: RunId,
+): boolean {
+  return (
+    recovery != null &&
+    recovery.runId === runId &&
+    !recovery.autoResume &&
+    !(recovery.requestId ?? "").startsWith("limit-arm:")
   );
 }
 

@@ -144,9 +144,9 @@ it("promises a continue only when the server would send one", () => {
     { driver: undefined },
     // The project asks first: the person confirms the change.
     { autoApprove: false },
-    { limitRecovery: null },
-    { limitRecovery: { runId: "run-0" as RunId, autoResume: true } },
+    // The person turned this stop's resume off, or stopped the thread.
     { limitRecovery: { runId: "run-1" as RunId, autoResume: false } },
+    { limitRecovery: { runId: "run-1" as RunId, autoResume: false, requestId: "web:off" } },
     { settledOverride: "settled" },
     { snoozedUntil: iso(2 * HOUR) },
     // A question or approval waiting on the person: the server refuses the resume.
@@ -155,6 +155,22 @@ it("promises a continue only when the server would send one", () => {
     { project: { paused: false, archived: true } },
   ])
     expect(accountChangeAutoContinues({ ...armed, ...blocked })).toBe(false);
+  // Auto-continue at the reset is off: the server arms the stop for the change itself.
+  for (const unarmed of [
+    { limitRecovery: null },
+    { limitRecovery: undefined },
+    // An earlier stop's choice says nothing about this one.
+    { limitRecovery: { runId: "run-0" as RunId, autoResume: false, requestId: "web:off" } },
+    // A rule's arm with auto-continue off (a snooze until the reset).
+    {
+      limitRecovery: {
+        runId: "run-1" as RunId,
+        autoResume: false,
+        requestId: "limit-arm:thread:run-1:1",
+      },
+    },
+  ])
+    expect(accountChangeAutoContinues({ ...armed, ...unarmed })).toBe(true);
   // A snooze that already ran out holds nothing.
   expect(accountChangeAutoContinues({ ...armed, snoozedUntil: iso(HOUR - 1) })).toBe(true);
 });

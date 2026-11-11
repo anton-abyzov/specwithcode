@@ -340,7 +340,7 @@ export const pt: Messages = {
     "Quando o uso que atingiu o limite ou o patamar reinicia dentro desse tempo, nada troca, resgata ou gasta: a thread espera e continua no mesmo provedor no reinício. Uma janela semanal também esgotada impede essa espera.",
   "limitSettings.subscription.title": "Continuar automaticamente em uma nova assinatura",
   "limitSettings.subscription.description":
-    "Quando uma thread com continuar automaticamente está esperando um limite e a CLI dela está conectada a outra assinatura com espaço, a thread continua lá sem perguntar. Desligado, ou com continuar automaticamente desligado: a thread mostra a mudança e espera sua confirmação. O provedor e o modelo continuam os mesmos.",
+    "Quando uma thread está esperando um limite de uso e a CLI dela está conectada a outra assinatura com espaço, a thread continua lá sem perguntar, com continuar automaticamente ligado ou não. Uma thread cujo último relatório ficou bloqueado por um limite de uso também é avisada da mudança. Uma thread que você parou continua parada. Desligado: a thread mostra a mudança e espera sua confirmação. O provedor e o modelo continuam os mesmos.",
   "limitSettings.redeem.title": "Resgatar primeiro um reinício guardado",
   "limitSettings.redeem.description":
     "Quando um turno para no limite e uma nova leitura de uso confirma que a conta está nele, usar um dos reinícios guardados da conta (o Claude e o Codex os concedem) e continuar no mesmo provedor antes de qualquer fallback. No máximo um por janela de limite, nunca enquanto os limites estiverem simulados.",

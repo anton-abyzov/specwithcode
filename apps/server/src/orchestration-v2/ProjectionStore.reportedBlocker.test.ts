@@ -17,4 +17,16 @@ describe("shellReportedBlocker", () => {
       shellReportedBlocker({ text, reportedAt, latestUserMessageAt: "2026-11-02T10:00:01.000Z" }),
     ).toBeNull();
   });
+
+  it("clears on a server continuation too: any later user-role message ends it", () => {
+    // The message a subscription change sends a limit-blocked thread is
+    // stamped at or after the report it answers.
+    expect(shellReportedBlocker({ text, reportedAt, latestUserMessageAt: reportedAt })).toBeNull();
+  });
+
+  it("holds a report with no message before it", () => {
+    expect(shellReportedBlocker({ text, reportedAt, latestUserMessageAt: null })).toContain(
+      "Pair Chrome",
+    );
+  });
 });

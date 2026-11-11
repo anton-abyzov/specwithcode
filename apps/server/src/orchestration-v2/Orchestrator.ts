@@ -21,6 +21,7 @@ import { fallbackMove } from "./providerOpenFailure.ts";
 import { delegatedCompletionWakeText } from "./DelegatedCompletionText.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { guardProjectCreation } from "../project/ProjectCommandAdmission.ts";
+import { limitLiftedResumeText } from "./limitLifted.ts";
 import {
   accountChangeOf,
   applyLimitObservation,
@@ -6181,9 +6182,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   : [],
               ),
             );
+      // A resume the account change allowed says the limit is gone, and
+      // repeats a message the limit kept from the provider.
+      const commandText = limitLiftedResumeText(command, projection) ?? command.text;
       const dispatchText =
         delegatedCompletion === undefined
-          ? `${handoffContext === null ? "" : `${handoffContext}\n\n---\n\n`}${command.text}${questionReminder}`
+          ? `${handoffContext === null ? "" : `${handoffContext}\n\n---\n\n`}${commandText}${questionReminder}`
           : delegatedCompletionWakeText(delegatedCompletion.taskIds);
       const sourcePlanProjection =
         command.sourcePlanRef === undefined
