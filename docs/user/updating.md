@@ -10,9 +10,16 @@ notice.
 Server updates restart the connection and can interrupt active agents and
 terminal commands. Saved threads, settings, and project files remain.
 
-**Settings → General → Continue threads after restarts** is off by default.
-Enable it to resume supported active threads after an update, crash, or machine
-restart. Changes are saved to connected environments that support this setting;
+**Settings → General → Continue threads after restarts** is on by default.
+It resumes supported active threads after an update, crash, or machine
+restart. A thread that had ended its turn while a background command, subagent
+or Workflow was still running is continued too: that work stops with the
+provider's process and never reports back, so the server starts one turn that
+lists what was lost and tells the agent to check what finished and carry on.
+This also happens without a restart, about two minutes after the provider's
+process ends between turns. It reads **Resumed after restart** in the thread.
+A thread you stopped, settled or archived, a paused project and a loss older
+than 24 hours are left alone. Changes are saved to connected environments that support this setting;
 update older servers first. If a supported environment was offline or has a
 different value, use **Apply to all** in Settings after it connects.
 SpecWithCode must start again on that machine;

@@ -1871,7 +1871,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // On by default: a thread a usage limit stopped goes on at the reset by
+  // itself when no other model takes it over.
+  autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   providerLimitAction: ProviderLimitAction.pipe(
     Schema.withDecodingDefault(Effect.succeed("switch" as const)),
   ),

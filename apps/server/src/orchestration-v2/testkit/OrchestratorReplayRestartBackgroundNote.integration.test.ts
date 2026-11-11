@@ -12,6 +12,12 @@ import {
   makeClaudeRestartReplayHarness,
 } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import * as LostBackgroundWorkWake from "../LostBackgroundWorkWake.ts";
+import * as Orchestrator from "../Orchestrator.ts";
+import * as ProjectionStore from "../ProjectionStore.ts";
+import * as ProjectStore from "../ProjectStore.ts";
+import * as ThreadManagement from "../ThreadManagementService.ts";
+import * as Settings from "../../serverSettings.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
@@ -136,6 +142,8 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   readonly resumedPrompts: ReadonlyArray<string>;
   readonly userMessagesAfterRestart: ReadonlyArray<string>;
   readonly continueThreadsAfterServerUpdate: boolean;
+  /** Run the lost-work sweep once after recovery, as the scheduler would. */
+  readonly sweepAfterRestart?: boolean;
 }) {
   const transcript = yield* readRestartTranscript(input.resumedPrompts);
   const workspace = yield* checkpointWorkspace(SCENARIO);
@@ -194,21 +202,58 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     Effect.gen(function* () {
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* worker.drain();
-      return yield* runOrchestratorV2Scenario(restartScenario);
+      if (input.sweepAfterRestart === true) {
+        // The sweep reads the same database and sends through the orchestrator.
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sweeper = yield* LostBackgroundWorkWake.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
+                Layer.provide(layerDatabase),
+              ),
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                dispatch: (command) => orchestrator.dispatch(command) as never,
+              }),
+              Settings.layerTest({
+                continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
+              }),
+            ),
+          ),
+        );
+        assert.deepEqual(yield* sweeper.sweep(), {
+          cleared: 0,
+          woken: input.continueThreadsAfterServerUpdate ? 1 : 0,
+        });
+        // Once per source run.
+        assert.deepEqual(yield* sweeper.sweep(), { cleared: 0, woken: 0 });
+        yield* worker.drain();
+      }
+      return yield* runOrchestratorV2Scenario(
+        input.sweepAfterRestart === true && input.continueThreadsAfterServerUpdate
+          ? scenario("restarted", phase1Steps.slice(-1))
+          : restartScenario,
+      );
     }).pipe(
       Effect.provide(
-        ProviderReplayHarness.layerProviderReplay(restartScenario, harness, {
-          databaseLayer: layerDatabase,
-          recoverOnStartup: true,
-          continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
-        }),
+        // As layerProviderReplay, with the session manager the sweep asks in its type.
+        ProviderReplayHarness.layerWithRegistry(
+          restartScenario,
+          harness.makeProviderAdapterRegistryLayer(restartScenario.transcript),
+          {
+            databaseLayer: layerDatabase,
+            recoverOnStartup: true,
+            continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
+          },
+        ),
       ),
     ),
   );
   const recovered = projectionFor(restarted, SCENARIO);
   assert.deepEqual(
     recovered.runs.map((run) => run.status),
-    ["completed"],
+    input.sweepAfterRestart === true && input.continueThreadsAfterServerUpdate
+      ? ["completed", "completed"]
+      : ["completed"],
   );
   assert.equal(recovered.subagents[0]?.status, "interrupted");
   assert.equal(recovered.runs[0]?.restartCancelledBackgroundWork?.[0]?.kind, "subagent");
@@ -262,5 +307,52 @@ describe("restart-cancelled background work", () => {
           Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
         ),
       ),
+  );
+
+  it.effect("starts a turn by itself for the work a settled thread was waiting on (1302)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const wake = LostBackgroundWorkWake.lostWorkWakeText("claudeAgent");
+        const projection = yield* runRestart({
+          // Nobody asks: the server's own message carries the note, once.
+          resumedPrompts: [`${NOTE}\n\nUser message:\n${wake}`],
+          userMessagesAfterRestart: [],
+          continueThreadsAfterServerUpdate: true,
+          sweepAfterRestart: true,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed"],
+        );
+        assert.strictEqual(
+          projection.runs[1]?.userMessageId,
+          `message:restart-continuation:${projection.runs[0]?.id}`,
+        );
+        assert.isFalse(projection.runs.some((run) => run.restartContinuationOfRunId !== undefined));
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+      ),
+    ),
+  );
+
+  it.effect("starts no turn when the project does not continue threads after a restart", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projection = yield* runRestart({
+          resumedPrompts: [`${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`],
+          userMessagesAfterRestart: [FIRST_AFTER_RESTART],
+          continueThreadsAfterServerUpdate: false,
+          sweepAfterRestart: true,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed"],
+        );
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+      ),
+    ),
   );
 });

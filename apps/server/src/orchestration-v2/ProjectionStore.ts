@@ -168,7 +168,9 @@ export type ProjectionRecoveryKind =
   // A service update cancelled queued messages that the restart queues again.
   | "update-requeue"
   // Open provider-native subagent state: rows, items, or a child's runless root turn.
-  | "stranded-subagents";
+  | "stranded-subagents"
+  // A roster of background work, or a settled latest run that lost some (see LostBackgroundWorkWake).
+  | "lost-background-work";
 
 /** Persisted state needed for limit recovery, without transcript or fork history. */
 /** A pending request with the detail that tells whether it holds the thread. */
@@ -570,6 +572,10 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2Run>, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
+    options?: {
+      /** `lost-background-work`: the oldest run end still considered. Default: a day ago. */
+      readonly since?: DateTime.Utc | undefined;
+    },
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getUnreadableThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
@@ -703,6 +709,26 @@ function needsRecovery(
               ["pending", "running", "waiting"].includes(node.status),
           ))
       );
+    case "lost-background-work": {
+      const latest = projection.runs.reduce<(typeof projection.runs)[number] | undefined>(
+        (found, run) =>
+          run.status !== "rolled_back" && (found === undefined || run.ordinal > found.ordinal)
+            ? run
+            : found,
+        undefined,
+      );
+      return (
+        projection.providerThreads.some(
+          (thread) =>
+            thread.ownerNodeId === null && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ) ||
+        (latest !== undefined &&
+          (((latest.status === "completed" || latest.status === "cancelled") &&
+            (latest.restartCancelledBackgroundWork?.length ?? 0) > 0) ||
+            (latest.status === "failed" &&
+              latest.userMessageId.startsWith("message:restart-continuation:"))))
+      );
+    }
     case "runtime":
       return (
         projection.runs.some(
@@ -4147,7 +4173,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     const getRecoveryThreadIds = Effect.fn("ProjectionStore.getRecoveryThreadIds")(
-      function* (kind: ProjectionRecoveryKind) {
+      function* (
+        kind: ProjectionRecoveryKind,
+        options?: { readonly since?: DateTime.Utc | undefined },
+      ) {
         const candidates = (() => {
           switch (kind) {
             case "deferred-resolutions":
@@ -4294,6 +4323,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND node.status IN ('pending', 'running', 'waiting')
                   )
               `;
+            case "lost-background-work":
+              return sql`
+                SELECT latest.thread_id FROM orchestration_v2_projection_runs AS latest
+                WHERE latest.status IN ('completed', 'cancelled', 'failed')
+                  -- Older losses wait for a person, like turns an update cut off.
+                  AND latest.completed_at >= ${
+                    options?.since === undefined
+                      ? sql`strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')`
+                      : DateTime.formatIso(options.since)
+                  }
+                  -- Lost work on a settled run, or the automatic turn for it that failed to start.
+                  -- The text test keeps the JSON parse to the few rows that can match.
+                  AND CASE
+                    WHEN latest.status = 'failed'
+                      THEN instr(latest.payload_json, '"userMessageId":"message:restart-continuation:') > 0
+                    WHEN instr(latest.payload_json, '"restartCancelledBackgroundWork"') > 0
+                      AND json_valid(latest.payload_json)
+                      THEN json_array_length(latest.payload_json, '$.restartCancelledBackgroundWork') > 0
+                    ELSE 0 END
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS later
+                    WHERE later.thread_id = latest.thread_id
+                      AND later.ordinal > latest.ordinal
+                      -- A rolled-back run left no turn behind.
+                      AND later.status <> 'rolled_back'
+                  )
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_provider_threads
+                WHERE owner_node_id IS NULL
+                  AND instr(payload_json, '"pendingBackgroundTasks":[]') = 0
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                    ELSE 0 END
+              `;
             case "runtime":
               return sql`
                 WITH pending_provider_threads AS MATERIALIZED (
@@ -4361,7 +4424,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT thread_id FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL
             AND thread_id IN (${candidates})
-            ${kind === "queued-runs" || kind === "update-interrupted" || kind === "update-requeue" ? sql`AND archived_at IS NULL` : sql``}
+            ${kind === "queued-runs" || kind === "update-interrupted" || kind === "update-requeue" || kind === "lost-background-work" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
         `;
         return rows.map((row) => ThreadId.make(row.thread_id));
