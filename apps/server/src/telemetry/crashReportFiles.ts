@@ -185,7 +185,7 @@ export function settingsFileAllowsCrashReports(settingsPath: string): boolean {
  * file that cannot be read or parsed, since it could be hiding `false`.
  */
 export function teamRulesFileAllowsCrashReports(
-  rulesPath: string = teamRulesMachinePath(process.platform),
+  rulesPath: string = teamRulesMachinePath(HOST_PLATFORM),
 ): boolean {
   let text: string;
   try {
