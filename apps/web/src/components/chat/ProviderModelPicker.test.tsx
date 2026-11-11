@@ -325,8 +325,10 @@ describe("model chip", () => {
       expect(button(markup)).toContain(
         'aria-label="Model: Codex · GPT-6.1-Sol, next message uses Claude Code · Opus 5.5. Change model"',
       );
-      // Every part stays mounted, so the next measurement can read it.
-      expect(markup).toMatch(/data-model-chip-part="provider"[^>]*>Codex/);
+      // The provider's name is in the accessible name and the tooltip, never printed:
+      // its mark names it. Every other part stays mounted for the next measurement.
+      expect(markup).not.toContain('data-model-chip-part="provider"');
+      expect(markup).toContain('data-model-chip-part="mark"');
       expect(markup).toMatch(/data-model-chip-part="model"[^>]*>GPT-6.1-Sol/);
       expect(markup).toMatch(/data-model-chip-part="state-full"[^>]*>next: Opus 5.5/);
       expect(markup).toMatch(/data-model-chip-part="state-short"[^>]*>next</);

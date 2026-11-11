@@ -1,6 +1,9 @@
 /**
- * The coordinator's model and effort, chosen under the composer. Both are
- * project settings, so a choice saves at once and every window follows it.
+ * The coordinator's model chip under its composer. Clicking it opens the
+ * project's Models popover (coordinator model, model and effort for new
+ * threads, the machines it runs on); each is a project setting, so a choice
+ * saves at once and every window follows it. The coordinator's effort is not
+ * set here: it runs at Medium, capped at High, from Project settings.
  */
 import {
   type CoordinatorFolderPolicy,
@@ -28,11 +31,11 @@ import { serverEnvironment } from "../../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../../state/session";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useMachineNickname } from "../../../studio/machineNickname";
-import { COORDINATOR_RECOMMENDED_TRAITS, modelLabel } from "../../../studio/shellModel";
+import { modelLabel } from "../../../studio/shellModel";
 import { fallbackModelState, modelStateText, type ModelState } from "../../chat/ModelStateTag";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator";
-import { TraitsPicker, useTraitsEffortControl } from "../../chat/TraitsPicker";
+import { ProjectModelsPopover, type ProjectThreadModel } from "./ProjectModelsPopover";
 import { ModelBadge } from "./ModelBadge";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
@@ -134,6 +137,15 @@ export function CoordinatorModelPicker(props: {
   onOpenSettings: () => void;
   /** Opens the project's Usage tab from the menu's limits view. */
   onOpenProjectUsage?: () => void;
+  /**
+   * The model new threads start on. With it, the chip opens the Models popover;
+   * without it (a host that cannot save it), the chip opens the model list.
+   */
+  threads?: ProjectThreadModel | null;
+  /** The machines the project runs on, its coordinator's first. */
+  machines?: ReadonlyArray<{ readonly environmentId: string; readonly label?: string }>;
+  /** The project's name, beside the choice a picker names. */
+  projectTitle?: string;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
@@ -275,25 +287,6 @@ export function CoordinatorModelPicker(props: {
     // Effort and other traits belong to the model they were chosen for.
     props.onChange(createModelSelection(id, model));
   };
-
-  // The picker's effort strip edits the saved model's effort, as the control beside it does.
-  const effort = useTraitsEffortControl(
-    value && active && !running
-      ? {
-          provider: active.driverKind,
-          instanceId: value.instanceId,
-          models: active.models,
-          model: value.model,
-          prompt: "",
-          onPromptChange: () => {},
-          modelOptions: value.options ?? [],
-          allowPromptInjectedEffort: false,
-          planModeEnabled: settings.planModeEnabled,
-          onModelOptionsChange: (traits) =>
-            props.onChange(createModelSelection(value.instanceId, value.model, traits)),
-        }
-      : null,
-  );
 
   const content = () => {
     if (!shown) {
@@ -439,7 +432,30 @@ export function CoordinatorModelPicker(props: {
           disabled={props.saving}
           getModelDisabledReason={getModelDisabledReason}
           usage={usage}
-          {...(effort ? { effort } : {})}
+          title="Coordinator model"
+          {...(props.projectTitle ? { titleContext: props.projectTitle } : {})}
+          {...(props.threads
+            ? {
+                frontView: {
+                  render: ({ openPicker, close }) => (
+                    <ProjectModelsPopover
+                      environmentId={props.environmentId}
+                      entries={entries}
+                      providers={providers}
+                      modelOptionsByInstance={options}
+                      coordinator={value ?? current}
+                      onChooseCoordinator={openPicker}
+                      threads={props.threads!}
+                      machines={props.machines ?? []}
+                      planModeEnabled={settings.planModeEnabled}
+                      disabled={props.saving}
+                      onOpenSettings={props.onOpenSettings}
+                      onClose={close}
+                    />
+                  ),
+                },
+              }
+            : {})}
           secondaryView={{
             label: "Limits by account",
             render: ({ back, close }) => (
@@ -465,51 +481,32 @@ export function CoordinatorModelPicker(props: {
           onInstanceModelChange={changeModel}
         />
         {recovery}
-        {/* Effort belongs to the saved model, which is not the one running now. */}
-        {value && active && !running ? (
-          <TraitsPicker
-            provider={active.driverKind}
-            instanceId={value.instanceId}
-            models={active.models}
-            model={value.model}
-            prompt=""
-            onPromptChange={() => {}}
-            modelOptions={value.options ?? []}
-            allowPromptInjectedEffort={false}
-            planModeEnabled={settings.planModeEnabled}
-            triggerClassName="sws-model-trigger sws-effort-trigger"
-            triggerAriaLabelPrefix="Coordinator effort"
-            recommendedOptionValues={COORDINATOR_RECOMMENDED_TRAITS}
-            disabled={props.saving}
-            onModelOptionsChange={(traits) =>
-              props.onChange(createModelSelection(value.instanceId, value.model, traits))
-            }
-          />
-        ) : null}
       </span>
     );
   };
+  const folderProblem = props.requiresFolderGrants
+    ? coordinatorFolderCompatibility(
+        true,
+        active?.driverKind,
+        props.folderPolicy,
+        active?.snapshot?.supportedRuntimeModes,
+      )
+    : null;
   return (
     <span
       className="inline-flex min-w-0 flex-col items-start gap-1"
       data-coordinator-model-controls=""
     >
       {content()}
-      {props.requiresFolderGrants ? (
+      {/* Only a problem is said here. That additional folders need Codex, Claude or Muse
+          Code is said where folders are added, in Project settings > Environment. */}
+      {folderProblem ? (
         <span
           className="max-w-xl text-xs leading-relaxed text-muted-foreground"
           role="status"
           data-coordinator-folder-guidance=""
         >
-          {coordinatorFolderCompatibility(
-            true,
-            active?.driverKind,
-            props.folderPolicy,
-            active?.snapshot?.supportedRuntimeModes,
-          ) ??
-            (active?.driverKind === "acpRegistry"
-              ? "Project folders use this coordinator’s existing full-access permissions."
-              : "Additional folders are available with Codex, Claude and Muse Code.")}
+          {folderProblem}
         </span>
       ) : null}
     </span>
