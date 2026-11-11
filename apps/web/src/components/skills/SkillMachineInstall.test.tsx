@@ -38,7 +38,13 @@ describe("machine install plan", () => {
       "This machine is offline.",
     );
     expect(machineInstallPlan({ ...base, canPush: false }).reason).toContain("permission");
-    expect(machineInstallPlan({ ...base, latest: null }).reason).toContain("No registry version");
+    expect(machineInstallPlan({ ...base, latest: null }).reason).toContain("registry version");
+    expect(machineInstallPlan({ ...base, latest: "1.4.0-beta.1" }).reason).toContain(
+      "registry version",
+    );
+    expect(machineInstallPlan({ ...base, blocked: "Checking this machine…" }).reason).toBe(
+      "Checking this machine…",
+    );
   });
 });
 
@@ -110,6 +116,57 @@ describe("one machine install", () => {
       preview: false,
       targets: [{ machineId: "m1", scope: "user", expectedHash: "hash" }],
     });
-    expect(host.textContent).toContain("Installing v1.3.0 on M1");
+    expect(host.textContent).toContain("Installed v1.3.0 on M1");
+  });
+  it("keeps a remote pin and follows a user-level skill's scope by default", async () => {
+    push.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { results: [{ machineId: "m2", ok: false, reason: "outcome_unknown" }] },
+    });
+    const { refreshSkillAvailability } = await import("./SkillAvailability");
+    const controls = {
+      environmentId: "local",
+      projectId: "local-project",
+      canPush: true,
+      row: { lock: { skillId: "owner/repo/obsidian-brain", lockScope: "user" } },
+      versions: { data: { versions: [{ version: "1.3.0" }], outdated: { latest: "9.9.9" } } },
+    } as unknown as SkillControls;
+    const pinnedRow = {
+      lock: { lockScope: "project", version: "1.1.0", pinnedVersion: "1.1.0" },
+    } as unknown as ProjectSkillRow;
+    await act(async () =>
+      root.render(
+        <SkillMachineInstall
+          controls={controls}
+          machineId="m2"
+          label="M2"
+          row={pinnedRow}
+          projectId={ProjectId.make("m2-project")}
+          reachable
+        />,
+      ),
+    );
+    await act(async () => button("Update to v1.3.0").click());
+    expect(push.mock.calls[0]?.[0].input).toMatchObject({
+      version: "1.3.0",
+      pin: true,
+      targets: [{ machineId: "m2", scope: "project", projectId: "m2-project" }],
+    });
+    expect(refreshSkillAvailability).not.toHaveBeenCalled();
+    await act(async () =>
+      root.render(
+        <SkillMachineInstall
+          key="fresh"
+          controls={controls}
+          machineId="m3"
+          label="M3"
+          row={null}
+          projectId={ProjectId.make("m3-project")}
+          reachable
+        />,
+      ),
+    );
+    const checked = host.querySelector<HTMLInputElement>('input[type="radio"]:checked');
+    expect(checked?.parentElement?.textContent).toContain("User, all projects on M3");
   });
 });

@@ -30,6 +30,8 @@ export function machineInstallPlan(input: {
   readonly projectId: ProjectId | null;
   readonly reachable: boolean;
   readonly canPush: boolean;
+  /** Why this machine's copy cannot be judged yet, e.g. still checking or another skill. */
+  readonly blocked?: string | null;
 }): MachineInstallPlan {
   const sameScope = input.installedScope === input.scope;
   const kind =
@@ -42,11 +44,13 @@ export function machineInstallPlan(input: {
     ? "Needs permission to maintain machines."
     : !input.reachable
       ? "This machine is offline."
-      : !input.latest
-        ? "No registry version is known for this skill."
-        : input.scope === "project" && !input.projectId
-          ? "This project is not added on that machine. Add it there, or install for the user."
-          : null;
+      : input.blocked
+        ? input.blocked
+        : !input.latest || !/^\d+\.\d+\.\d+$/.test(input.latest)
+          ? "No released registry version is known for this skill."
+          : input.scope === "project" && !input.projectId
+            ? "This project is not added on that machine. Add it there, or install for the user."
+            : null;
   return { kind, version: kind === "current" ? input.installed : input.latest, reason };
 }
 
@@ -61,28 +65,38 @@ export function SkillMachineInstall({
   row,
   projectId,
   reachable,
+  blocked = null,
 }: {
   controls: SkillControls;
   machineId: string;
   label: string;
+  /** That machine's copy of this exact registry skill, or null when it has none or was not read. */
   row: ProjectSkillRow | null;
   projectId: ProjectId | null;
   reachable: boolean;
+  blocked?: string | null;
 }) {
   const push = useAtomCommand(projectWorkspace.skillFleetPush, { reportFailure: false });
   const skillId = controls.row.lock?.skillId ?? null;
   const installedScope = row?.lock?.lockScope ?? null;
-  const [scope, setScope] = useState<SkillInstallScope>(
-    installedScope ?? (projectId ? "project" : "user"),
-  );
-  const [pin, setPin] = useState(false);
+  // Follow the machine's copy, then this machine's scope, until the user picks.
+  const [pickedScope, setScope] = useState<SkillInstallScope | null>(null);
+  const scope: SkillInstallScope =
+    pickedScope ??
+    installedScope ??
+    (controls.row.lock?.lockScope === "user" || !projectId ? "user" : "project");
+  // Keep an existing pin unless the user clears it; the confirm line says which.
+  const [pickedPin, setPin] = useState<boolean | null>(null);
+  const pinned = row?.lock?.pinnedVersion ?? null;
+  const pin = pickedPin ?? Boolean(pinned);
   const [preview, setPreview] = useState<{ key: string; expectedHash: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // The same newest version the Version badge shows.
   const latest =
-    controls.versions.data?.outdated?.latest ??
     controls.versions.data?.versions[0]?.version ??
+    controls.versions.data?.outdated?.latest ??
     null;
   const plan = machineInstallPlan({
     installed: row?.lock?.version ?? null,
@@ -92,6 +106,7 @@ export function SkillMachineInstall({
     projectId,
     reachable,
     canPush: controls.canPush,
+    blocked,
   });
   const key = JSON.stringify([skillId, plan.version, scope, pin, projectId]);
   const current = preview?.key === key ? preview : null;
@@ -122,12 +137,15 @@ export function SkillMachineInstall({
       if (result._tag !== "Success") {
         setError(skillActionErrorText(squashAtomCommandFailure(result)));
         setPreview(null);
+        if (confirm) refreshSkillAvailability(controls.environmentId, skillId);
         return;
       }
       const receipt = result.value.results.find((entry) => entry.machineId === machineId);
       if (!receipt?.ok) {
         setError(receipt?.message ?? "The machine did not confirm the request.");
         setPreview(null);
+        // An unknown outcome may still have installed; read the machine again.
+        if (confirm) refreshSkillAvailability(controls.environmentId, skillId);
         return;
       }
       if (!confirm) {
@@ -140,12 +158,13 @@ export function SkillMachineInstall({
       }
       setPreview(null);
       setDone(
-        `Installing v${receipt.installedVersion ?? plan.version} on ${label}. The card refreshes when it finishes.`,
+        `Installed v${receipt.installedVersion ?? plan.version} on ${label} for ${scopeLabel(scope).toLowerCase()}${pin ? ", pinned" : ""}.`,
       );
       refreshSkillAvailability(controls.environmentId, skillId);
     } catch {
       setError("The machine did not confirm the request. Preview again before retrying.");
       setPreview(null);
+      if (confirm) refreshSkillAvailability(controls.environmentId, skillId);
     } finally {
       setBusy(false);
     }
@@ -172,6 +191,7 @@ export function SkillMachineInstall({
             onChange={() => {
               setScope("user");
               setPreview(null);
+              setDone(null);
             }}
           />
           User, all projects on {label}
@@ -184,6 +204,7 @@ export function SkillMachineInstall({
             onChange={() => {
               setScope("project");
               setPreview(null);
+              setDone(null);
             }}
           />
           This project only
@@ -198,13 +219,17 @@ export function SkillMachineInstall({
             setPreview(null);
           }}
         />
-        Pin this version (updates stop until unpinned)
+        {pinned
+          ? `Keep pinned (now pinned at ${pinned}; unticking removes the pin)`
+          : "Pin this version (updates stop until unpinned)"}
       </label>
       {plan.reason ? <p className="text-muted-foreground">{plan.reason}</p> : null}
       {current ? (
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            Install {skillId}@{plan.version} for {scopeLabel(scope).toLowerCase()} on {label}?
+            Install {skillId}@{plan.version} for {scopeLabel(scope).toLowerCase()} on {label}
+            {pin ? ", pinned" : pinned ? ", removing the pin" : ""}? vskill installs what the
+            registry serves for this version.
           </span>
           <Button size="xs" onClick={() => void send(true)}>
             Confirm

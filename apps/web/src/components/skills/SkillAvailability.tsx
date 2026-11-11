@@ -202,7 +202,20 @@ function AvailabilityMachine({
               controls={controls}
               machineId={machineId}
               label={label}
-              row={state.row}
+              row={
+                state.row?.lock?.skillId && state.row.lock.skillId === controls.row.lock?.skillId
+                  ? state.row
+                  : null
+              }
+              blocked={
+                !projectId
+                  ? null
+                  : state.row && state.row.lock?.skillId !== controls.row.lock?.skillId
+                    ? "That machine has a different skill with this name. Not changing it from here."
+                    : query.isPending
+                      ? "Checking this machine…"
+                      : null
+              }
               projectId={projectId}
               reachable={reachable}
             />
