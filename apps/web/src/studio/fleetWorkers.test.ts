@@ -35,7 +35,36 @@ describe("fleet workers row", () => {
     expect(fleetWorkersView({ ...base, renewable: false })).toMatchObject({ codeNeeded: true });
     const rejected = fleetWorkersView({ ...base, problem: "pairing_code_rejected" });
     expect(rejected.codeNeeded).toBe(true);
-    expect(rejected.problem).toContain("did not accept the pairing code");
+    expect(rejected.problem).toContain("did not accept the code");
+  });
+
+  it("offers Allow without a code for a machine added by a join line", () => {
+    // A join line gives this server a key there, but its grant does not renew by itself.
+    const joined = { ...base, renewable: false };
+    expect(fleetWorkersView(joined, true)).toMatchObject({ action: "allow", codeNeeded: false });
+    for (const status of ["revoked", "expired"] as const)
+      expect(fleetWorkersView({ ...joined, status }, true).codeNeeded).toBe(false);
+    expect(
+      fleetWorkersView({ ...joined, status: "expiring", access: "full-access" }, true),
+    ).toMatchObject({ changeCodeNeeded: false });
+  });
+
+  it("asks for a code once the key there could not make one, and says where to go instead", () => {
+    for (const problem of ["pairing_unavailable", "pairing_code_rejected"] as const) {
+      const view = fleetWorkersView({ ...base, renewable: false, problem }, true);
+      expect(view.codeNeeded).toBe(true);
+      expect(view.problem).toContain("Allow another machine to run work here");
+    }
+    expect(
+      fleetWorkersView(
+        { ...base, status: "allowed", access: "auto", problem: "pairing_unavailable" },
+        true,
+      ).changeCodeNeeded,
+    ).toBe(true);
+    expect(
+      fleetWorkersView({ ...base, renewable: false, problem: "pairing_code_rejected" }, true)
+        .problem,
+    ).toContain("A code from Create link does not work here");
   });
 
   it("shows the access ceiling and offers Stop once allowed", () => {

@@ -169,7 +169,7 @@ export function FleetWorkersRow({
   const tx = useTx();
   const workers = machine.workers;
   if (!workers) return null;
-  const view = fleetWorkersView(workers);
+  const view = fleetWorkersView(workers, machine.pairingConfigured);
   const busy = disabled || !canManage;
   // Allowed rows change their access by allowing again with the new ceiling.
   const allowed = view.action === "stop";
@@ -251,7 +251,7 @@ export function FleetWorkersRow({
             <input
               aria-label={`Pairing code made on ${machine.label}`}
               className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
-              placeholder={`Pairing code from ${machine.label} (Operate threads)`}
+              placeholder={`Code made on ${machine.label} for this machine`}
               autoComplete="off"
               spellCheck={false}
               value={draft.pairingCode}
@@ -850,7 +850,9 @@ export function StudioFleetRoster({
             const connected = current || (saved && own?.connected === true);
             const ready = canCheckReadiness && connected;
             const terminalOpen = connected && terminalFor === machine.id;
-            const workersView = machine.workers ? fleetWorkersView(machine.workers) : null;
+            const workersView = machine.workers
+              ? fleetWorkersView(machine.workers, machine.pairingConfigured)
+              : null;
             const busy = pending !== null || failed;
             const canStop = !current && onWorkers !== undefined && workersView?.action === "stop";
             const canRemove = !current && onRemove !== undefined && canManageWorkers;
