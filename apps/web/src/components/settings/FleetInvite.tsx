@@ -1,5 +1,5 @@
 import { renderRich } from "../../i18n/rich";
-import { useTx } from "../../i18n";
+import { useLocale, useTx } from "../../i18n";
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/react";
 import { CheckIcon, CopyIcon } from "lucide-react";
@@ -331,13 +331,19 @@ export function fleetInviteManagedMachines(
   return [...new Set(names)];
 }
 
-/** "M1", "M1 and M3", "M1, M3, Mini and Air", "M1, M3, Mini and 2 more"; null for none. */
-export function fleetMachineNameList(machines: ReadonlyArray<string>): string | null {
+/**
+ * Up to four names joined the way `locale` writes a list ("M1 and M3"); past
+ * four, the first three and `more(count)` for the rest. Null for none.
+ */
+export function fleetMachineNameList(
+  machines: ReadonlyArray<string>,
+  locale: string = "en",
+  more: (count: number) => string = (count) => `${count} more`,
+): string | null {
   const names = [...new Set(machines.map((name) => name.trim()).filter((name) => name !== ""))];
   if (names.length === 0) return null;
-  if (names.length === 1) return names[0]!;
-  if (names.length > 4) return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]!}`;
+  const shown = names.length > 4 ? [...names.slice(0, 3), more(names.length - 3)] : names;
+  return new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(shown);
 }
 
 /** The name field, the line once made, and plain-words problems. Layout belongs to the caller. */
@@ -380,21 +386,31 @@ export function FleetInvitePanel({
   readonly managedMachines?: ReadonlyArray<string>;
 }) {
   const tx = useTx();
+  const locale = useLocale();
   const { name, setName, pending, invitation, revoked, problem } = controller;
   // A line made here lets the chosen machine start work on this one. On a
   // machine that already starts work on others, that is often the wrong way round.
-  const managed = fleetMachineNameList(managedMachines);
-  const here = defaultName?.trim() || tx("this machine");
+  const managed = fleetMachineNameList(managedMachines, locale, (count) =>
+    tx("{count} more", { count }),
+  );
+  // A machine with no name gets its own sentence: "this machine" changes form
+  // by position in most languages, so it cannot be dropped into the named one.
+  const here = defaultName?.trim() ?? "";
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {managed ? (
         <Alert variant="warning" role="status" aria-label={tx("Adding a machine to this one?")}>
           <AlertTitle>{tx("Adding a machine to this one?")}</AlertTitle>
           <AlertDescription>
-            {tx(
-              "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.",
-              { here, machines: managed },
-            )}
+            {here === ""
+              ? tx(
+                  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.",
+                  { machines: managed },
+                )
+              : tx(
+                  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.",
+                  { here, machines: managed },
+                )}
           </AlertDescription>
         </Alert>
       ) : null}

@@ -4154,4 +4154,10 @@ export const de: PhraseCatalog = {
     "Jeder neue Thread bekommt einen eigenen Branch und Worktree, sodass parallele Threads nie einen Checkout teilen. Aus: Threads arbeiten im Projektordner.",
   "Recommended here: on": "Hier empfohlen: an",
   "Recommended here: off": "Hier empfohlen: aus",
+  "Adding a machine to this one?": "Einen Rechner zu diesem hinzufügen?",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Agents auf {here} starten bereits Arbeit auf {machines}. Eine hier erstellte Zeile erlaubt dem gewählten Rechner, Arbeit auf {here} zu starten. Um stattdessen einen neuen Rechner zu {here} hinzuzufügen, öffne SpecWithCode auf dem neuen Rechner, wähle dort „Einem Hauptrechner beitreten“ und füge dessen Zeile hier unter „Rechner hinzufügen“ ein.",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Agents auf diesem Rechner starten bereits Arbeit auf {machines}. Eine hier erstellte Zeile erlaubt dem gewählten Rechner, Arbeit auf diesem zu starten. Um stattdessen einen neuen Rechner zu diesem hinzuzufügen, öffne SpecWithCode auf dem neuen Rechner, wähle dort „Einem Hauptrechner beitreten“ und füge dessen Zeile hier unter „Rechner hinzufügen“ ein.",
+  "{count} more": "{count} weitere",
 };
