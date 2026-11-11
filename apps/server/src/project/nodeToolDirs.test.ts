@@ -28,29 +28,32 @@ describe("pickNvmVersion", () => {
 });
 
 describe("nodeToolDirs", () => {
-  it.live("lists fnm, nvm, volta and npm folders under the home, after the Node binary's own", () =>
-    Effect.gen(function* () {
-      const home = yield* Effect.promise(tempHome);
-      const versions = NodePath.join(home, ".nvm", "versions", "node");
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(NodePath.join(versions, "v20.11.1", "bin"), { recursive: true });
-        await NodeFSP.mkdir(NodePath.join(versions, "v24.22.0", "bin"), { recursive: true });
-        await NodeFSP.mkdir(NodePath.join(home, ".nvm", "alias"), { recursive: true });
-        await NodeFSP.writeFile(NodePath.join(home, ".nvm", "alias", "default"), "20\n");
-      });
-      const execPath = NodePath.join(home, "runtime", "node");
+  it.live(
+    "lists fnm, nvm, volta and npm folders under the home, ahead of the Node binary's own",
+    () =>
+      Effect.gen(function* () {
+        const home = yield* Effect.promise(tempHome);
+        const versions = NodePath.join(home, ".nvm", "versions", "node");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(NodePath.join(versions, "v20.11.1", "bin"), { recursive: true });
+          await NodeFSP.mkdir(NodePath.join(versions, "v24.22.0", "bin"), { recursive: true });
+          await NodeFSP.mkdir(NodePath.join(home, ".nvm", "alias"), { recursive: true });
+          await NodeFSP.writeFile(NodePath.join(home, ".nvm", "alias", "default"), "20\n");
+        });
+        const execPath = NodePath.join(home, "runtime", "node");
 
-      const dirs = yield* nodeToolDirs({ home, platform: "linux", execPath });
+        const dirs = yield* nodeToolDirs({ home, platform: "linux", execPath });
 
-      expect(dirs[0]).toBe(NodePath.join(home, "runtime"));
-      expect(dirs).toContain(
-        NodePath.join(home, ".local", "share", "fnm", "aliases", "default", "bin"),
-      );
-      expect(dirs).toContain(NodePath.join(versions, "v20.11.1", "bin"));
-      expect(dirs).not.toContain(NodePath.join(versions, "v24.22.0", "bin"));
-      expect(dirs).toContain(NodePath.join(home, ".volta", "bin"));
-      expect(dirs).toContain(NodePath.join(home, ".npm-global", "bin"));
-    }).pipe(Effect.provide(NodeServices.layer)),
+        // The service's Node is the last resort, so the person's Node runs their CLI.
+        expect(dirs.at(-1)).toBe(NodePath.join(home, "runtime"));
+        expect(dirs).toContain(
+          NodePath.join(home, ".local", "share", "fnm", "aliases", "default", "bin"),
+        );
+        expect(dirs).toContain(NodePath.join(versions, "v20.11.1", "bin"));
+        expect(dirs).not.toContain(NodePath.join(versions, "v24.22.0", "bin"));
+        expect(dirs).toContain(NodePath.join(home, ".volta", "bin"));
+        expect(dirs).toContain(NodePath.join(home, ".npm-global", "bin"));
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("honours FNM_DIR, NVM_DIR and VOLTA_HOME, and ignores relative values", () =>

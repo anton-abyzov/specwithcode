@@ -49,7 +49,7 @@ export function pickNvmVersion(
   return (named ?? versions[0])?.name ?? null;
 }
 
-/** Folders to search after PATH, most specific first. Missing ones are harmless. */
+/** Folders to search after PATH: version managers, then the service's own Node. Missing ones are harmless. */
 export const nodeToolDirs = Effect.fn("nodeToolDirs")(function* (input: NodeToolDirsInput) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -81,13 +81,14 @@ export const nodeToolDirs = Effect.fn("nodeToolDirs")(function* (input: NodeTool
       );
 
   const dirs = [
-    ...(input.execPath && path.isAbsolute(input.execPath) ? [path.dirname(input.execPath)] : []),
     ...fnm,
     ...(nvmVersion === null ? [] : [path.join(nvmVersions, nvmVersion, "bin")]),
     path.join(set(input.voltaHome)[0] ?? path.join(home, ".volta"), "bin"),
     path.join(home, ".npm-global", "bin"),
     path.join(home, ".asdf", "shims"),
     path.join(home, ".local", "share", "mise", "shims"),
+    // Last: the person's own Node comes before the one this service runs on.
+    ...(input.execPath && path.isAbsolute(input.execPath) ? [path.dirname(input.execPath)] : []),
   ];
   return [...new Set(dirs)] as ReadonlyArray<string>;
 });
