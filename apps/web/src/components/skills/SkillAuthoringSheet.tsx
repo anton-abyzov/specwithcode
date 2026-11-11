@@ -187,11 +187,16 @@ export function SkillAuthoringForm({
   const defaultModel =
     defaultProvider?.models.find((model) => model.slug === initialModel) ??
     defaultProvider?.models[0];
+  // Say so whenever the thread's provider or model is not what Generate will use.
   const threadModelMissing =
-    Boolean(initialModel) &&
     !content.modelSelection &&
-    defaultProvider?.instanceId === initialInstanceId &&
-    !defaultProvider?.models.some((model) => model.slug === initialModel);
+    defaultProvider !== undefined &&
+    ((initialInstanceId !== undefined && defaultProvider.instanceId !== initialInstanceId) ||
+      (initialModel !== undefined &&
+        !(
+          defaultProvider.instanceId === initialInstanceId &&
+          defaultProvider.models.some((model) => model.slug === initialModel)
+        )));
   const selection =
     content.modelSelection ??
     (defaultProvider && defaultModel
@@ -291,10 +296,14 @@ export function SkillAuthoringForm({
     setApplication(null);
     setNotice(null);
   };
+  const pollInFlight = useRef<Promise<void> | null>(null);
+  const pollFailures = useRef(0);
   const execute = async (
     operation: AuthoringRequest["operation"],
     extra: Partial<AuthoringRequest> = {},
   ) => {
+    // A background check holds the lock without disabling the form; wait for it.
+    if (busyRef.current && pollInFlight.current) await pollInFlight.current;
     if (busyRef.current) return null;
     busyRef.current = true;
     setBusy(operation);
@@ -309,6 +318,7 @@ export function SkillAuthoringForm({
       });
       sync(result);
       if (operation === "save") setNotice("Draft saved on this machine.");
+      if (operation === "status") pollFailures.current = 0;
       if (operation === "generate") setStep("review");
       return result;
     } catch (cause) {
@@ -332,25 +342,37 @@ export function SkillAuthoringForm({
   // Follow the review queue while the sheet is open. Background checks are quiet: they never
   // disable the form or raise the error banner, and they pause after repeated failures or
   // 30 minutes. Check status stays for an immediate look and reports its own errors.
-  const [autoPaused, setAutoPaused] = useState(false);
-  const pollFailures = useRef(0);
+  // A pause belongs to one submission; a new draft, version or submission starts unpaused.
+  const submissionKey = draft
+    ? `${draft.id}:${publication?.version ?? ""}:${publication?.submissionId ?? ""}`
+    : null;
+  const [pausedFor, setPausedFor] = useState<string | null>(null);
+  const autoPaused = submissionKey !== null && pausedFor === submissionKey;
   const poll = async () => {
     // Stop at the cap even before the paused state renders.
     if (busyRef.current || !draft || pollFailures.current >= PUBLICATION_POLL_MAX_FAILURES) return;
     busyRef.current = true;
-    try {
-      sync(await request({ operation: "status", draftId: draft.id, revision: draft.revision }));
-      pollFailures.current = 0;
-    } catch {
-      pollFailures.current += 1;
-      if (pollFailures.current >= PUBLICATION_POLL_MAX_FAILURES) setAutoPaused(true);
-    } finally {
-      busyRef.current = false;
-    }
+    const key = submissionKey;
+    const run = (async () => {
+      try {
+        sync(await request({ operation: "status", draftId: draft.id, revision: draft.revision }));
+        pollFailures.current = 0;
+      } catch {
+        pollFailures.current += 1;
+        if (pollFailures.current >= PUBLICATION_POLL_MAX_FAILURES) setPausedFor(key);
+      } finally {
+        busyRef.current = false;
+        pollInFlight.current = null;
+      }
+    })();
+    pollInFlight.current = run;
+    await run;
   };
   const pollRef = useRef(poll);
+  const submissionKeyRef = useRef(submissionKey);
   useEffect(() => {
     pollRef.current = poll;
+    submissionKeyRef.current = submissionKey;
   });
   const inReview =
     open &&
@@ -364,7 +386,7 @@ export function SkillAuthoringForm({
     let ticks = 0;
     const tick = () => {
       ticks += 1;
-      if (ticks > PUBLICATION_POLL_MAX_TICKS) setAutoPaused(true);
+      if (ticks > PUBLICATION_POLL_MAX_TICKS) setPausedFor(submissionKeyRef.current);
       else void pollRef.current();
     };
     tick();
@@ -769,7 +791,7 @@ export function SkillAuthoringForm({
                   paused={inReview && autoPaused}
                   busy={inProgress || !canApply}
                   onRefresh={() => {
-                    setAutoPaused(false);
+                    setPausedFor(null);
                     void execute("status");
                   }}
                 />

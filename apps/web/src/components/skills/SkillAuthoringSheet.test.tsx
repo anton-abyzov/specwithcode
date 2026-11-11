@@ -394,6 +394,96 @@ describe("skill authoring", () => {
       vi.useRealTimers();
     }
   });
+  it("caps background checks, resumes on Check status and resets failures on success", async () => {
+    vi.useFakeTimers();
+    try {
+      let submissionId = "first";
+      const publication = () => ({
+        state: "queued" as const,
+        contentHash: "hash",
+        version: "1.0.0",
+        skillId: "fixture/skills/review-code",
+        skillPath: "skills/review-code/SKILL.md",
+        repository: "fixture/skills",
+        visibility: "public" as const,
+        submissionId,
+      });
+      let failing = false;
+      const request = vi.fn(async (input: AuthoringRequest) => {
+        if (input.operation === "status" && failing) throw new Error("offline");
+        return { draft: { ...fixtureDraft, publication: publication() } };
+      });
+      const statuses = () =>
+        request.mock.calls.filter(([input]) => input.operation === "status").length;
+      await mount(request);
+      // 90 checks over 30 minutes, then a pause.
+      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS * 95));
+      expect(statuses()).toBe(90);
+      expect(host.textContent).toContain("Automatic checks are paused");
+      await click("Check status");
+      expect(host.textContent).toContain("Checked automatically every 20 seconds");
+      // A manual success resets the failure count: two failures, then one more, do not pause.
+      failing = true;
+      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS * 2));
+      failing = false;
+      submissionId = "second";
+      await click("Check status");
+      failing = true;
+      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS));
+      expect(host.textContent).toContain("Checked automatically every 20 seconds");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("runs Check status after an in-flight background check instead of dropping it", async () => {
+    let release: () => void = () => {};
+    const draft = {
+      ...fixtureDraft,
+      publication: {
+        state: "reviewing" as const,
+        contentHash: "hash",
+        version: "1.0.0",
+        skillId: "fixture/skills/review-code",
+        skillPath: "skills/review-code/SKILL.md",
+        repository: "fixture/skills",
+        visibility: "public" as const,
+        submissionId: "receipt",
+      },
+    };
+    let held = true;
+    const request = vi.fn(async (input: AuthoringRequest) => {
+      if (input.operation === "status" && held) {
+        held = false;
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      return { draft };
+    });
+    await mount(request);
+    const clicked = act(async () => button("Check status").click());
+    await act(async () => release());
+    await clicked;
+    expect(request.mock.calls.filter(([input]) => input.operation === "status")).toHaveLength(2);
+  });
+  it("notes when the thread's provider is not ready", async () => {
+    const request = vi.fn(async (_input: AuthoringRequest) => ({ draft: null }));
+    await act(async () =>
+      root.render(
+        <SkillAuthoringForm
+          open
+          onOpenChange={vi.fn()}
+          machineLabel="Fixture machine"
+          initialInstanceId="claudeAgent"
+          initialModel="claude-opus"
+          agents={[agent]}
+          request={request}
+          canWrite
+          canGenerate
+          canPublish
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("This thread's model is not offered for skill generation");
+  });
   it("invalidates a preview when scope changes and sends the selected instance", async () => {
     const draft = {
       ...fixtureDraft,

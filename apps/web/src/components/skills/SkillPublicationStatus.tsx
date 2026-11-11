@@ -79,9 +79,7 @@ export function SkillPublicationStatus({
                   {done ? <CheckIcon className="size-3" /> : null}
                 </span>
                 {step.label}
-                <span className="sr-only">
-                  {done ? " (done)" : active ? " (current step)" : " (upcoming)"}
-                </span>
+                <span className="sr-only">{done ? " (done)" : active ? "" : " (upcoming)"}</span>
               </li>
             );
           })}
