@@ -63,6 +63,9 @@ const blank: SkillAuthoringContent = {
 
 export const skillMarkdown = skillAuthoringMarkdown;
 export const PUBLICATION_POLL_MS = 20_000;
+/** Background checks pause after this many failures in a row, or after 30 minutes. */
+export const PUBLICATION_POLL_MAX_FAILURES = 3;
+const PUBLICATION_POLL_MAX_TICKS = 90;
 
 export function SkillAuthoringSheet(props: SkillAuthoringSheetProps) {
   const [hasOpened, setHasOpened] = useState(props.open);
@@ -184,6 +187,16 @@ export function SkillAuthoringForm({
   const defaultModel =
     defaultProvider?.models.find((model) => model.slug === initialModel) ??
     defaultProvider?.models[0];
+  // Say so whenever the thread's provider or model is not what Generate will use.
+  const threadModelMissing =
+    !content.modelSelection &&
+    defaultProvider !== undefined &&
+    ((initialInstanceId !== undefined && defaultProvider.instanceId !== initialInstanceId) ||
+      (initialModel !== undefined &&
+        !(
+          defaultProvider.instanceId === initialInstanceId &&
+          defaultProvider.models.some((model) => model.slug === initialModel)
+        )));
   const selection =
     content.modelSelection ??
     (defaultProvider && defaultModel
@@ -283,10 +296,14 @@ export function SkillAuthoringForm({
     setApplication(null);
     setNotice(null);
   };
+  const pollInFlight = useRef<Promise<void> | null>(null);
+  const pollFailures = useRef(0);
   const execute = async (
     operation: AuthoringRequest["operation"],
     extra: Partial<AuthoringRequest> = {},
   ) => {
+    // A background check holds the lock without disabling the form; wait for it.
+    if (busyRef.current && pollInFlight.current) await pollInFlight.current;
     if (busyRef.current) return null;
     busyRef.current = true;
     setBusy(operation);
@@ -301,6 +318,7 @@ export function SkillAuthoringForm({
       });
       sync(result);
       if (operation === "save") setNotice("Draft saved on this machine.");
+      if (operation === "status") pollFailures.current = 0;
       if (operation === "generate") setStep("review");
       return result;
     } catch (cause) {
@@ -321,21 +339,58 @@ export function SkillAuthoringForm({
       setBusy(null);
     }
   };
-  // Follow the review queue while the sheet is open; Check status stays for an immediate look.
-  const executeRef = useRef(execute);
+  // Follow the review queue while the sheet is open. Background checks are quiet: they never
+  // disable the form or raise the error banner, and they pause after repeated failures or
+  // 30 minutes. Check status stays for an immediate look and reports its own errors.
+  // A pause belongs to one submission; a new draft, version or submission starts unpaused.
+  const submissionKey = draft
+    ? `${draft.id}:${publication?.version ?? ""}:${publication?.submissionId ?? ""}`
+    : null;
+  const [pausedFor, setPausedFor] = useState<string | null>(null);
+  const autoPaused = submissionKey !== null && pausedFor === submissionKey;
+  const poll = async () => {
+    // Stop at the cap even before the paused state renders.
+    if (busyRef.current || !draft || pollFailures.current >= PUBLICATION_POLL_MAX_FAILURES) return;
+    busyRef.current = true;
+    const key = submissionKey;
+    const run = (async () => {
+      try {
+        sync(await request({ operation: "status", draftId: draft.id, revision: draft.revision }));
+        pollFailures.current = 0;
+      } catch {
+        pollFailures.current += 1;
+        if (pollFailures.current >= PUBLICATION_POLL_MAX_FAILURES) setPausedFor(key);
+      } finally {
+        busyRef.current = false;
+        pollInFlight.current = null;
+      }
+    })();
+    pollInFlight.current = run;
+    await run;
+  };
+  const pollRef = useRef(poll);
+  const submissionKeyRef = useRef(submissionKey);
   useEffect(() => {
-    executeRef.current = execute;
+    pollRef.current = poll;
+    submissionKeyRef.current = submissionKey;
   });
-  const following =
+  const inReview =
     open &&
     !dirty &&
     publication !== undefined &&
     ["submitting", "queued", "reviewing"].includes(publication.state);
+  const following = inReview && !autoPaused;
   useEffect(() => {
     if (!following) return;
-    const timer = window.setInterval(() => {
-      if (!busyRef.current) void executeRef.current("status");
-    }, PUBLICATION_POLL_MS);
+    pollFailures.current = 0;
+    let ticks = 0;
+    const tick = () => {
+      ticks += 1;
+      if (ticks > PUBLICATION_POLL_MAX_TICKS) setPausedFor(submissionKeyRef.current);
+      else void pollRef.current();
+    };
+    tick();
+    const timer = window.setInterval(tick, PUBLICATION_POLL_MS);
     return () => window.clearInterval(timer);
   }, [following]);
   const importSeed = async () => {
@@ -571,6 +626,12 @@ export function SkillAuthoringForm({
                     <p className="text-xs text-muted-foreground">
                       Only this description goes to the selected model. No fallback model is used.
                     </p>
+                    {threadModelMissing && defaultModel ? (
+                      <p className="text-xs text-muted-foreground">
+                        This thread's model is not offered for skill generation here, so{" "}
+                        {defaultModel.name} is selected.
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -727,8 +788,12 @@ export function SkillAuthoringForm({
                 <SkillPublicationStatus
                   publication={{ ...publication, status: publication.state }}
                   following={following}
+                  paused={inReview && autoPaused}
                   busy={inProgress || !canApply}
-                  onRefresh={() => void execute("status")}
+                  onRefresh={() => {
+                    setPausedFor(null);
+                    void execute("status");
+                  }}
                 />
               ) : null}
               {!frozen && (publication?.state !== "published" || dirty) ? (

@@ -34,11 +34,13 @@ export function SkillPublicationStatus({
   busy,
   onRefresh,
   following = false,
+  paused = false,
 }: {
   publication: PublicationView;
   busy: boolean;
   onRefresh: () => void;
   following?: boolean;
+  paused?: boolean;
 }) {
   const current = steps.findIndex((step) => step.key === publication.status);
   return (
@@ -70,13 +72,14 @@ export function SkillPublicationStatus({
                     done
                       ? "flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground"
                       : active
-                        ? "size-4 animate-pulse rounded-full border-2 border-primary"
+                        ? "size-4 animate-pulse rounded-full border-2 border-primary motion-reduce:animate-none"
                         : "size-4 rounded-full border"
                   }
                 >
                   {done ? <CheckIcon className="size-3" /> : null}
                 </span>
                 {step.label}
+                <span className="sr-only">{done ? " (done)" : active ? "" : " (upcoming)"}</span>
               </li>
             );
           })}
@@ -92,7 +95,11 @@ export function SkillPublicationStatus({
       ) : null}
       {publication.status !== "published" ? (
         <p className="text-sm text-muted-foreground">
-          {following ? "Checked automatically every 20 seconds while this sheet is open. " : ""}
+          {following
+            ? "Checked automatically every 20 seconds while this sheet is open. "
+            : paused
+              ? "Automatic checks are paused. Use Check status to look again. "
+              : ""}
           You can close this sheet and return to check the review. Publication does not apply the
           skill.
         </p>
