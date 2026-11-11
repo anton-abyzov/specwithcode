@@ -53,9 +53,9 @@ describe("the routines capability of a work grant", () => {
       interruptedAt: null,
     });
     expect(record.routines).toBeUndefined();
-    expect(WorkGrants.effectiveGrant(record).routines).toBe(false);
+    expect(WorkGrants.effectiveGrant(record, new Set()).routines).toBe(false);
     // A legacy grant allows routines, as it managed them before grants had scopes.
-    expect(WorkGrants.effectiveGrant({ ...record, legacy: true }).routines).toBe(true);
+    expect(WorkGrants.effectiveGrant({ ...record, legacy: true }, new Set()).routines).toBe(true);
   });
 
   it.effect("starts off for a new grant and follows the owner's edits", () =>
@@ -84,7 +84,7 @@ describe("the routines capability of a work grant", () => {
         projects: { kind: "linked" },
       });
       expect(edited.legacy).toBe(false);
-      expect(WorkGrants.effectiveGrant(edited).routines).toBe(true);
+      expect(WorkGrants.effectiveGrant(edited, new Set()).routines).toBe(true);
       yield* grants.update({ coordinatorEnvironmentId: M4, routines: false });
       expect((yield* grants.forCoordinator(M4)).routines).toBe(false);
     }).pipe(Effect.provide(layer)),

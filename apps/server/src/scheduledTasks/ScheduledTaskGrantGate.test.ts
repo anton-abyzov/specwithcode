@@ -57,13 +57,16 @@ const task = {
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "fixture" },
 } as Parameters<typeof routineGrantRefusal>[0]["task"];
 
+const NO_MANAGERS: ReadonlySet<string> = new Set();
 const grantsOf = (
   current: () => WorkGrants.WorkGrantPolicyRecord,
   origins: Array<readonly [string, WorkOrigin]> = [],
+  managers: () => ReadonlySet<string> = () => NO_MANAGERS,
 ): WorkGrants.WorkGrantsShape => ({
   ...WorkGrants.WorkGrants.defaultValue(),
   enabled: true,
   policies: Effect.sync(() => [current()]),
+  managers: Effect.sync(managers),
   recordOrigin: (threadId, origin) =>
     Effect.sync(() => {
       origins.push([threadId, origin]);
@@ -72,10 +75,18 @@ const grantsOf = (
 
 describe("routineGrantRefusal", () => {
   it("lets a routine run while its grant allows routines, its project, sign-in and mode", () => {
-    assert.isNull(routineGrantRefusal({ coordinatorEnvironmentId: M4, policy: policy(), project }));
     assert.isNull(
       routineGrantRefusal({
         coordinatorEnvironmentId: M4,
+        policy: policy(),
+        managers: NO_MANAGERS,
+        project,
+      }),
+    );
+    assert.isNull(
+      routineGrantRefusal({
+        coordinatorEnvironmentId: M4,
+        managers: NO_MANAGERS,
         policy: policy({
           runtimeCap: "auto",
           accounts: { kind: "listed", instanceIds: [ProviderInstanceId.make("codex")] },
@@ -88,15 +99,40 @@ describe("routineGrantRefusal", () => {
     assert.isNull(
       routineGrantRefusal({
         coordinatorEnvironmentId: M4,
+        managers: NO_MANAGERS,
         policy: policy({ legacy: true, routines: false }),
         project,
       }),
     );
   });
 
+  it("refuses routines a grant got for being own once its coordinator stops managing here", () => {
+    const refusal = (record: WorkGrants.WorkGrantPolicyRecord, managers: ReadonlySet<string>) =>
+      routineGrantRefusal({ coordinatorEnvironmentId: M4, policy: record, managers, project });
+    const upgraded = policy({ routinesAutoGranted: true, routinesSettledAt: AT });
+    // Its management session is gone (revoked or expired): a team grant, routines off.
+    assert.equal(refusal(upgraded, NO_MANAGERS), ROUTINE_GRANT_NO_ROUTINES_NOTE);
+    assert.equal(refusal(upgraded, new Set(["env-other"])), ROUTINE_GRANT_NO_ROUTINES_NOTE);
+    // Still managing this machine: it fires.
+    assert.isNull(refusal(upgraded, new Set([M4])));
+    // Marked another person's, it is a team grant whoever manages.
+    assert.equal(
+      refusal({ ...upgraded, owner: "other" }, new Set([M4])),
+      ROUTINE_GRANT_NO_ROUTINES_NOTE,
+    );
+    // Routines the owner turned on by hand stay on after the demotion.
+    assert.isNull(refusal(policy({ routinesSettledAt: AT }), NO_MANAGERS));
+  });
+
   it("turns it off once the grant is gone, revoked, without routines or without the project", () => {
     const refusal = (input: Partial<Parameters<typeof routineGrantRefusal>[0]>) =>
-      routineGrantRefusal({ coordinatorEnvironmentId: M4, policy: policy(), project, ...input });
+      routineGrantRefusal({
+        coordinatorEnvironmentId: M4,
+        policy: policy(),
+        managers: NO_MANAGERS,
+        project,
+        ...input,
+      });
     assert.equal(refusal({ policy: undefined }), ROUTINE_GRANT_GONE_NOTE);
     assert.equal(refusal({ policy: policy({ revokedAt: AT }) }), ROUTINE_GRANT_REVOKED_NOTE);
     assert.equal(refusal({ policy: policy({ routines: false }) }), ROUTINE_GRANT_NO_ROUTINES_NOTE);
@@ -115,6 +151,7 @@ describe("routineGrantRefusal", () => {
       routineGrantRefusal({
         coordinatorEnvironmentId: M4,
         policy: policy(),
+        managers: NO_MANAGERS,
         project,
         task,
         ...input,
@@ -345,6 +382,97 @@ describe("a routine made under a work grant", () => {
           grantsOf(() => policy({ routines: false })),
         ),
       );
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  );
+
+  it.effect("stops an own grant's routine at the fire after its management session goes", () =>
+    Effect.gen(function* () {
+      const { state, run, sql } = yield* harness;
+      yield* TestClock.setTime(Date.parse(AT));
+      const managing = { current: new Set([M4]) as ReadonlySet<string> };
+      yield* run((service) =>
+        Effect.gen(function* () {
+          yield* service.upsert(taskInput({ id: "granted" }), { grantedBy: GRANTED_BY });
+          // While its coordinator manages this machine the upgraded grant fires.
+          yield* sql`UPDATE scheduled_tasks SET next_run_at = ${DUE}`;
+          yield* state.due;
+          assert.equal(state.launches, 1);
+          assert.equal((yield* rowOf("granted"))?.enabled, 1);
+
+          // The management pairing is revoked or expires: the record still says
+          // routines are on, and the next fire turns the routine off.
+          managing.current = NO_MANAGERS;
+          yield* sql`UPDATE scheduled_tasks SET next_run_at = ${DUE}`;
+          yield* state.due;
+          assert.equal(state.launches, 1);
+          const off = yield* rowOf("granted");
+          assert.equal(off?.enabled, 0);
+          assert.isNull(off?.next_run_at);
+          assert.equal(off?.last_run_error, ROUTINE_GRANT_NO_ROUTINES_NOTE);
+
+          // Run now is refused for the same reason.
+          yield* sql`UPDATE scheduled_tasks SET enabled = 1 WHERE task_id = 'granted'`;
+          const refused = yield* service
+            .runNow({ id: "granted" as ScheduledTaskId })
+            .pipe(Effect.flip);
+          assert.equal(refused.message, ROUTINE_GRANT_NO_ROUTINES_NOTE);
+          assert.equal(state.launches, 1);
+        }),
+      ).pipe(
+        Effect.provideService(
+          WorkGrants.WorkGrants,
+          grantsOf(
+            () => policy({ routinesAutoGranted: true, routinesSettledAt: AT }),
+            [],
+            () => managing.current,
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  );
+
+  it.effect("keeps firing after the demotion when the owner turned routines on by hand", () =>
+    Effect.gen(function* () {
+      const { state, run, sql } = yield* harness;
+      yield* TestClock.setTime(Date.parse(AT));
+      yield* run((service) =>
+        Effect.gen(function* () {
+          yield* service.upsert(taskInput({ id: "granted" }), { grantedBy: GRANTED_BY });
+          yield* sql`UPDATE scheduled_tasks SET next_run_at = ${DUE}`;
+          yield* state.due;
+          assert.equal(state.launches, 1);
+          const row = yield* rowOf("granted");
+          assert.equal(row?.enabled, 1);
+          assert.isNull(row?.last_run_error);
+        }),
+      ).pipe(
+        Effect.provideService(
+          WorkGrants.WorkGrants,
+          grantsOf(() => policy({ routinesSettledAt: AT })),
+        ),
+      );
+    }).pipe(Effect.provide(Sqlite.layerMemory)),
+  );
+
+  it.effect("skips a fire, without turning it off, when the managing machines cannot be read", () =>
+    Effect.gen(function* () {
+      const { state, run, sql } = yield* harness;
+      yield* TestClock.setTime(Date.parse(AT));
+      const failing: WorkGrants.WorkGrantsShape = {
+        ...grantsOf(() => policy({ routinesAutoGranted: true, routinesSettledAt: AT })),
+        managers: Effect.fail(new WorkGrants.WorkGrantsError({ reason: "storage" } as never)),
+      };
+      yield* run((service) =>
+        Effect.gen(function* () {
+          yield* service.upsert(taskInput({ id: "granted" }), { grantedBy: GRANTED_BY });
+          yield* sql`UPDATE scheduled_tasks SET next_run_at = ${DUE}`;
+          yield* state.due;
+          assert.equal(state.launches, 0);
+          const skipped = yield* rowOf("granted");
+          assert.equal(skipped?.enabled, 1);
+          assert.equal(skipped?.last_run_error, ROUTINE_GRANT_CHECK_FAILED_NOTE);
+        }),
+      ).pipe(Effect.provideService(WorkGrants.WorkGrants, failing));
     }).pipe(Effect.provide(Sqlite.layerMemory)),
   );
 });

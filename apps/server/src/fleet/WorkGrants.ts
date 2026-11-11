@@ -144,6 +144,12 @@ export interface WorkGrantsShape {
   /** Drops a thread's own origin record, as when the move that recorded it failed. */
   readonly forgetOrigin: (threadId: ThreadId) => Effect.Effect<void, WorkGrantsError>;
   readonly policies: Effect.Effect<ReadonlyArray<WorkGrantPolicyRecord>, WorkGrantsError>;
+  /**
+   * The coordinators that manage this machine now (the owner's own machines),
+   * read from this machine's sessions: what makes a grant `own`. Fails rather
+   * than guess when the sessions cannot be read.
+   */
+  readonly managers: Effect.Effect<ReadonlySet<string>, WorkGrantsError>;
   readonly origins: Effect.Effect<ReadonlyArray<WorkOriginRecord>, WorkGrantsError>;
   readonly update: (
     input: StudioWorkGrantUpdateInput,
@@ -169,6 +175,7 @@ const disabled: WorkGrantsShape = {
   recordOrigin: () => Effect.void,
   forgetOrigin: () => Effect.void,
   policies: Effect.succeed([]),
+  managers: Effect.succeed(new Set<string>()),
   origins: Effect.succeed([]),
   update: () => Effect.fail(new WorkGrantsError({ reason: "storage" })),
   revoke: () => Effect.fail(new WorkGrantsError({ reason: "storage" })),
@@ -195,22 +202,21 @@ export const routinesAllowed = (
 
 /**
  * The grant `record` allows; `managers` are the coordinators that manage this
- * machine. Without them (a routine's fire, which only reads what the record
- * says) an upgraded grant's routines are not withdrawn.
+ * machine, which decide whether it is `own` and so whether an upgraded
+ * grant's routines still count.
  */
 export const effectiveGrant = (
   record: WorkGrantPolicyRecord,
-  managers?: ReadonlySet<string>,
+  managers: ReadonlySet<string>,
 ): EffectiveWorkGrant => {
-  const known = managers ?? new Set<string>();
   if (record.legacy)
     return {
       ...unscopedGrant(EnvironmentId.make(record.coordinatorEnvironmentId)),
       legacy: true,
       revoked: record.revokedAt !== null,
-      kind: grantKindOf({ ...record, owner: "self" }, known),
+      kind: grantKindOf({ ...record, owner: "self" }, managers),
     };
-  const kind = grantKindOf(record, known);
+  const kind = grantKindOf(record, managers);
   return {
     coordinatorEnvironmentId: EnvironmentId.make(record.coordinatorEnvironmentId),
     projects: record.projects,
@@ -218,7 +224,7 @@ export const effectiveGrant = (
     owner: record.owner,
     hopLimit: workGrantHopLimit(record.owner),
     revoked: record.revokedAt !== null,
-    routines: managers === undefined ? record.routines === true : routinesAllowed(record, kind),
+    routines: routinesAllowed(record, kind),
     kind,
   };
 };
@@ -274,12 +280,14 @@ export const make = Effect.gen(function* () {
   );
 
   /** Coordinators holding a management pairing here: the owner's own machines. */
-  const managers = auth.listSessions().pipe(
-    Effect.map((sessions) =>
-      managingCoordinators(sessions, EnvironmentAuth.FLEET_INVITATION_SUBJECT),
-    ),
-    Effect.orElseSucceed((): ReadonlySet<string> => new Set()),
-  );
+  const readManagers = auth
+    .listSessions()
+    .pipe(
+      Effect.map((sessions) =>
+        managingCoordinators(sessions, EnvironmentAuth.FLEET_INVITATION_SUBJECT),
+      ),
+    );
+  const managers = readManagers.pipe(Effect.orElseSucceed((): ReadonlySet<string> => new Set()));
 
   const write = (file: StoreFile) =>
     Effect.gen(function* () {
@@ -592,6 +600,7 @@ export const make = Effect.gen(function* () {
     recordOrigin,
     forgetOrigin,
     policies: lock.withPermit(read).pipe(Effect.map((file) => file.policies)),
+    managers: readManagers.pipe(Effect.mapError(storageError)),
     origins: lock.withPermit(read).pipe(Effect.map((file) => file.origins)),
     update,
     revoke,
