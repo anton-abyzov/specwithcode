@@ -153,7 +153,13 @@ export function SkillAuthoringForm({
   const [paste, setPaste] = useState("");
   const [pasteMode, setPasteMode] = useState(false);
   const [content, setContent] = useState<SkillAuthoringContent>(blank);
-  const [draft, setDraft] = useState<SkillAuthoringDraft | null>(null);
+  const [draft, setDraftState] = useState<SkillAuthoringDraft | null>(null);
+  // The latest draft, for requests that start after awaiting another one.
+  const draftRef = useRef<SkillAuthoringDraft | null>(null);
+  const setDraft = (next: SkillAuthoringDraft | null) => {
+    draftRef.current = next;
+    setDraftState(next);
+  };
   const [dirty, setDirty] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -312,7 +318,9 @@ export function SkillAuthoringForm({
     try {
       const result = await request({
         operation,
-        ...(draft ? { draftId: draft.id, revision: draft.revision } : {}),
+        ...(draftRef.current
+          ? { draftId: draftRef.current.id, revision: draftRef.current.revision }
+          : {}),
         ...(["save", "generate"].includes(operation) ? { draft: content } : {}),
         ...extra,
       });
