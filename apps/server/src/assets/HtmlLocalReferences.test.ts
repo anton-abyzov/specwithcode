@@ -62,6 +62,8 @@ describe("localReferencePath", () => {
       "",
       "javascript:alert(1)",
       "file://fileserver/share/a.png",
+      "file:///tmp/a%00.png",
+      "/tmp/a%00.png",
     ]) {
       expect(localReferencePath(value, page, posix)).toBeNull();
       expect(localReferencePath(value, windowsPage, NodePath.win32)).toBeNull();

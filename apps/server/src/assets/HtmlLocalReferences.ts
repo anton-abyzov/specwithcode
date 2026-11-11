@@ -48,7 +48,8 @@ export function localReferencePath(
       url.host = "";
       url.search = "";
       url.hash = "";
-      return rules.normalize(fileURLToPath(url, { windows }));
+      const filePath = fileURLToPath(url, { windows });
+      return filePath.includes("\0") ? null : rules.normalize(filePath);
     } catch {
       return null;
     }
