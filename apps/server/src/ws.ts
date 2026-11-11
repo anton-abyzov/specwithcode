@@ -1881,6 +1881,9 @@ const layerWsRpc = (
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            ...(managedFolders.suggestedProjectsRoot === undefined
+              ? {}
+              : { suggestedProjectsRoot: managedFolders.suggestedProjectsRoot }),
             ...Option.match(storage, {
               onNone: () => ({}),
               onSome: (status) => ({ storage: status }),
@@ -2919,6 +2922,7 @@ const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.filesystemCreateDirectory]: (input) => workspaceEntries.createDirectory(input),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,

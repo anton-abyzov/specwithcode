@@ -31,7 +31,7 @@ export function ProjectCreationAction({
         : !hasName
           ? "Enter a project name at the top."
           : kind === "code" && !hasFolder
-            ? "Choose a project location, then select Use this folder."
+            ? "Open the folder for the project under Project location."
             : "Ready to create. Click below, or press Enter in the name field.";
   return (
     <div

@@ -1,5 +1,7 @@
 import { useCallback, useState } from "react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { FolderPlace } from "../components/studio/FolderBrowser";
+import { sameFolder, type KnownProject } from "../components/studio/folderBrowser.logic";
 import { NewProjectFolderPicker } from "../components/studio/NewProjectFolderPicker";
 
 const REMEMBERED_KEY = "studio:new-project-parent:v1";
@@ -26,6 +28,31 @@ function writeRemembered(choices: Record<string, string>): void {
   }
 }
 
+const NO_PLACES: readonly FolderPlace[] = [];
+
+/** Adds the folder used last time to the Recent places, unless it is listed already. */
+export function withRememberedPlace(
+  places: readonly FolderPlace[],
+  remembered: string | undefined,
+): readonly FolderPlace[] {
+  if (
+    remembered === undefined ||
+    // App storage and other hidden folders are not places to suggest.
+    /[\\/]\.[^\\/]+([\\/]|$)/.test(remembered) ||
+    places.some((place) => sameFolder(place.path, remembered))
+  ) {
+    return places;
+  }
+  const label =
+    remembered
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || remembered;
+  const firstRecent = places.findIndex((place) => place.kind === "recent");
+  const at = firstRecent < 0 ? places.length : firstRecent;
+  return [...places.slice(0, at), { kind: "recent", label, path: remembered }, ...places.slice(at)];
+}
+
 /**
  * One chosen parent folder per machine, so switching machines and back keeps
  * each choice. With `remember`, the last folder a person chose on a machine is
@@ -39,6 +66,12 @@ export function useProjectFolderChoice(
     readonly defaultPath?: string | null;
     /** The machine being browsed, named in the picker so its folders are never taken for this device's. */
     readonly machineLabel?: string | null;
+    /** The project's name, so the picker can say exactly which folder is made. */
+    readonly projectName?: string;
+    readonly places?: readonly FolderPlace[];
+    /** Projects already on the machine, marked in the folder list. */
+    readonly projects?: readonly KnownProject[];
+    readonly canCreateFolder?: boolean;
     readonly nativePicker?: {
       readonly label: string;
       readonly pick: (initialPath: string | null) => Promise<string | null>;
@@ -46,12 +79,35 @@ export function useProjectFolderChoice(
   } = {},
 ) {
   const remember = options.remember === true;
-  const [choices, setChoices] = useState<Record<string, string>>(() =>
+  // A folder counts as chosen once the picker has listed it, so a remembered
+  // folder that has since gone is never created into blind.
+  const [choices, setChoices] = useState<Record<string, string>>({});
+  // Where each machine's picker opens: the folder last shown there, or the
+  // one remembered from an earlier project.
+  const [lastShown, setLastShown] = useState<Record<string, string>>(() =>
     remember ? readRemembered() : {},
   );
-  const reset = useCallback(() => setChoices({}), []);
+  // The folder chosen for an earlier project on each machine, kept as a place
+  // to return to after browsing away from it.
+  const [remembered, setRemembered] = useState<Record<string, string>>(() =>
+    remember ? readRemembered() : {},
+  );
+  const [generation, setGeneration] = useState(0);
+  const reset = useCallback(() => {
+    setChoices({});
+    setGeneration((value) => value + 1);
+    setLastShown(remember ? readRemembered() : {});
+    setRemembered(remember ? readRemembered() : {});
+  }, [remember]);
   const path = environmentId === null ? null : (choices[environmentId] ?? null);
-  const select = (target: EnvironmentId, chosen: string) => {
+  // Null means the folder shown cannot be chosen right now (loading, or
+  // unreadable). The remembered folder stays, to be offered again next time.
+  const select = (target: EnvironmentId, chosen: string | null) => {
+    if (chosen === null) {
+      setChoices(({ [target]: _dropped, ...rest }) => rest);
+      return;
+    }
+    setLastShown((previous) => ({ ...previous, [target]: chosen }));
     if (remember) writeRemembered({ ...readRemembered(), [target]: chosen });
     setChoices((previous) => ({ ...previous, [target]: chosen }));
   };
@@ -61,12 +117,16 @@ export function useProjectFolderChoice(
     picker:
       environmentId === null ? null : (
         <NewProjectFolderPicker
-          key={environmentId}
+          key={`${environmentId}:${generation}`}
           environmentId={environmentId}
-          selectedPath={path}
+          selectedPath={path ?? lastShown[environmentId] ?? null}
           defaultPath={options.defaultPath ?? null}
           machineLabel={options.machineLabel ?? null}
           nativePickerLabel={options.nativePicker?.label ?? null}
+          places={withRememberedPlace(options.places ?? NO_PLACES, remembered[environmentId])}
+          projects={options.projects ?? []}
+          canCreateFolder={options.canCreateFolder === true}
+          {...(options.projectName === undefined ? {} : { projectName: options.projectName })}
           disabled={busy}
           onSelect={(chosen) => select(environmentId, chosen)}
           {...(options.nativePicker ? { onPickNatively: options.nativePicker.pick } : {})}

@@ -729,6 +729,13 @@ button.sws-subagent-row:focus-visible {
   font-size: 12px;
   color: var(--muted-foreground);
 }
+.sws-routines-group {
+  display: grid;
+  gap: 6px;
+}
+.sws-routines-group .sws-routines-summary {
+  margin: 0;
+}
 .sws-routines-head-actions {
   display: flex;
   flex-wrap: wrap;

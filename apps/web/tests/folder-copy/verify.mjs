@@ -279,7 +279,7 @@ const intent = (page) =>
     .getByRole("group", { name: "What to do" })
     .locator('button[aria-pressed="true"]')
     .textContent();
-const COPY_TITLE = "Copy SpecWeave";
+const COPY_TITLE = "Copy local files: SpecWeave";
 const MOVE_TITLE = "Hand off SpecWeave";
 const DONE_TITLE = "SpecWeave is on ministorm";
 // A copy of files only leaves the project here: its Done says copied, not on.

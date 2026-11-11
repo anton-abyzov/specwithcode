@@ -79,12 +79,22 @@ export function useNewProject() {
         }
         return;
       }
+      const { repository, status } = result.value;
       toastManager.add(
-        stackedThreadToast({
-          type: "success",
-          title: "Published to GitHub",
-          description: result.value.repository.nameWithOwner,
-        }),
+        stackedThreadToast(
+          // Without a first commit the server only adds the remote.
+          status === "remote_added"
+            ? {
+                type: "warning",
+                title: "GitHub repository created, nothing pushed yet",
+                description: `${repository.nameWithOwner} is empty until the project has a first commit. Commit, then push from the Git menu.`,
+              }
+            : {
+                type: "success",
+                title: "Published to GitHub",
+                description: repository.nameWithOwner,
+              },
+        ),
       );
     },
     [publishRepository],
@@ -157,20 +167,21 @@ export function useNewProject() {
         ),
       );
       if (input.specweave === true && input.kind !== "personal") {
-        if (existing === true) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "info",
-              title: "SpecWeave was not added to an existing folder",
-              description: "Set it up from Project settings > General when you want it.",
-            }),
-          );
-        } else if (specweaveError !== undefined) {
+        const { specweaveAdded } = result.value;
+        if (specweaveError !== undefined) {
           toastManager.add(
             stackedThreadToast({
               type: "warning",
               title: "SpecWeave was not set up",
               description: `${specweaveError.replace(/[.\s]*$/, ".")} You can retry from Project settings > General.`,
+            }),
+          );
+        } else if (existing === true && specweaveAdded === true) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "success",
+              title: "SpecWeave was added to the existing folder",
+              description: "Its files are in the folder, not committed yet.",
             }),
           );
         }

@@ -962,29 +962,218 @@ it.effect("keeps a real repository's branches and remote when binding it", () =>
   ),
 );
 
-it.effect("binds a chosen folder named like the project, or an existing child repository", () =>
+it.effect(
+  "binds a chosen folder with files named like the project, or an existing child repository",
+  () =>
+    withScratch(
+      ({ baseDir }) =>
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const named = path.join(baseDir, "pinball-stats");
+          yield* fs.makeDirectory(named);
+          yield* fs.writeFileString(path.join(named, "notes.txt"), "mine");
+          const byName = yield* folders.createNamedProject({
+            name: "Pinball Stats",
+            parentPath: named,
+          });
+          assert.equal(byName.workspaceRoot, named);
+          assert.isTrue(byName.existing);
+          assert.deepEqual(yield* fs.readDirectory(named), ["notes.txt"]);
+
+          const parent = path.join(baseDir, "code");
+          const child = path.join(parent, "scores");
+          yield* fs.makeDirectory(path.join(child, ".specweave"), { recursive: true });
+          const byChild = yield* folders.createNamedProject({ name: "Scores", parentPath: parent });
+          assert.equal(byChild.workspaceRoot, child);
+          assert.isTrue(byChild.existing);
+          assert.isFalse(yield* fs.exists(path.join(parent, "scores-2")));
+        }),
+      { git: noGitDriver },
+    ),
+);
+
+it.effect("starts a full project in an empty folder named like it", () =>
+  withScratch(
+    ({ baseDir }) =>
+      withGitEnv(
+        TEST_IDENTITY,
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const empty = path.join(baseDir, "carbon-test");
+          yield* fs.makeDirectory(empty);
+          const result = yield* folders.createNamedProject({
+            name: "carbon-test",
+            parentPath: empty,
+            specweave: true,
+          });
+          assert.equal(result.workspaceRoot, empty);
+          assert.isUndefined(result.existing);
+          assert.isUndefined(result.specweaveError);
+          assert.isUndefined(result.commitError);
+          for (const file of [".git", "README.md", ".specweave/config.json"]) {
+            assert.isTrue(yield* fs.exists(path.join(empty, file)), file);
+          }
+          assert.equal(yield* gitOutput(empty, ["status", "--porcelain"]), "");
+
+          // The same folder again is now a project and is opened, not rebuilt.
+          const again = yield* folders.createNamedProject({
+            name: "carbon-test",
+            parentPath: empty,
+          });
+          assert.equal(again.projectId, result.projectId);
+          assert.isTrue(again.existing);
+        }),
+      ),
+    { specweave: fakeSpecweaveInit },
+  ),
+);
+
+it.effect("takes back only its starter files when a create in a person's folder fails", () =>
+  withScratch(
+    ({ baseDir }) =>
+      withGitEnv(
+        TEST_IDENTITY,
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const empty = path.join(baseDir, "carbon-test");
+          yield* fs.makeDirectory(empty);
+
+          const failure = yield* Effect.flip(
+            folders.createNamedProject({ name: "carbon-test", parentPath: empty, specweave: true }),
+          );
+
+          assert.equal(failure._tag, "NamedProjectCreateError");
+          // The folder is still there, with everything that was not a starter file.
+          assert.deepEqual((yield* fs.readDirectory(empty)).toSorted(), [
+            ".gitignore",
+            ".specweave",
+            "AGENTS.md",
+            "assets",
+          ]);
+          assert.deepEqual(yield* fs.readDirectory(path.join(empty, "assets")), ["notes.txt"]);
+        }),
+      ),
+    {
+      // Stands in for files that appear in the folder while the project is made.
+      specweave: Layer.effect(
+        SpecweaveSetup.SpecweaveSetup,
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          return SpecweaveSetup.SpecweaveSetup.of({
+            setUp: (cwd) =>
+              Effect.gen(function* () {
+                yield* fileSystem.makeDirectory(path.join(cwd, ".specweave"));
+                yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "\n");
+                yield* fileSystem.writeFileString(path.join(cwd, "AGENTS.md"), "# Agents\n");
+                yield* fileSystem.writeFileString(path.join(cwd, "assets", "notes.txt"), "mine");
+                return { ok: true, alreadySetUp: false } as const;
+              }).pipe(Effect.orDie),
+          });
+        }),
+      ).pipe(Layer.provide(NodeServices.layer)),
+      projects: (real) =>
+        ProjectService.ProjectService.of({
+          ...real,
+          create: (input) =>
+            Effect.fail(
+              new ProjectService.ProjectOperationError({
+                operation: "dispatch-project-command",
+                projectId: input.projectId,
+                cause: "store unavailable",
+              }),
+            ),
+        }),
+    },
+  ),
+);
+
+it.effect("makes one project when the same empty folder is asked for twice at once", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const empty = path.join(baseDir, "twice");
+        yield* fs.makeDirectory(empty);
+        const create = folders.createNamedProject({ name: "twice", parentPath: empty });
+
+        const [first, second] = yield* Effect.all([create, create], { concurrency: 2 });
+
+        assert.equal(first.projectId, second.projectId);
+        assert.deepEqual([first.existing, second.existing].toSorted(), [true, undefined]);
+        assert.lengthOf((yield* projects.snapshot).projects, 1);
+        assert.equal(yield* gitOutput(empty, ["log", "--format=%s"]), "Initial commit");
+        assert.isTrue(yield* fs.exists(path.join(empty, "assets", "icon.svg")));
+      }),
+    ),
+  ),
+);
+
+it.effect("adds SpecWeave to an existing folder that has none when asked", () =>
   withScratch(
     ({ baseDir }) =>
       Effect.gen(function* () {
         const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const named = path.join(baseDir, "pinball-stats");
-        yield* fs.makeDirectory(named);
-        const byName = yield* folders.createNamedProject({
-          name: "Pinball Stats",
-          parentPath: named,
-        });
-        assert.equal(byName.workspaceRoot, named);
-        assert.deepEqual(yield* fs.readDirectory(named), []);
+        const repo = path.join(baseDir, "existing");
+        yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+        yield* fs.writeFileString(path.join(repo, "keep.txt"), "untouched");
 
-        const parent = path.join(baseDir, "code");
-        const child = path.join(parent, "scores");
-        yield* fs.makeDirectory(path.join(child, ".specweave"), { recursive: true });
-        const byChild = yield* folders.createNamedProject({ name: "Scores", parentPath: parent });
-        assert.equal(byChild.workspaceRoot, child);
-        assert.isTrue(byChild.existing);
-        assert.isFalse(yield* fs.exists(path.join(parent, "scores-2")));
+        const plain = yield* folders.createNamedProject({ name: "Other", parentPath: repo });
+        assert.isTrue(plain.existing);
+        assert.isUndefined(plain.specweaveAdded);
+        assert.isFalse(yield* fs.exists(path.join(repo, ".specweave")));
+
+        const added = yield* folders.createNamedProject({
+          name: "Other",
+          parentPath: repo,
+          specweave: true,
+        });
+        assert.equal(added.projectId, plain.projectId);
+        assert.isTrue(added.existing);
+        assert.isTrue(added.specweaveAdded);
+        assert.isTrue(yield* fs.exists(path.join(repo, ".specweave", "config.json")));
+        assert.equal(yield* fs.readFileString(path.join(repo, "keep.txt")), "untouched");
+
+        const already = yield* folders.createNamedProject({
+          name: "Other",
+          parentPath: repo,
+          specweave: true,
+        });
+        assert.isUndefined(already.specweaveAdded);
+        assert.isUndefined(already.specweaveError);
+      }),
+    { git: noGitDriver, specweave: fakeSpecweaveInit },
+  ),
+);
+
+it.effect("says why SpecWeave could not be added to an existing folder", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repo = path.join(baseDir, "existing");
+        yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+        const result = yield* folders.createNamedProject({
+          name: "Other",
+          parentPath: repo,
+          specweave: true,
+        });
+        assert.isTrue(result.existing);
+        assert.equal(result.specweaveError, "SpecWeave setup is not available on this machine.");
       }),
     { git: noGitDriver },
   ),

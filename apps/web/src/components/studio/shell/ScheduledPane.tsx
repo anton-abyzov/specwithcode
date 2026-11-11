@@ -18,7 +18,7 @@ export function ScheduledPane(props: {
   personal: boolean;
   modelSelection: ModelSelection | null;
   machineLabel: string | null;
-  onOpenThread: (threadId: ThreadId) => void;
+  onOpenThread: (threadId: ThreadId, environmentId: EnvironmentId) => void;
   bar: ProjectPaneBarProps;
 }) {
   return (

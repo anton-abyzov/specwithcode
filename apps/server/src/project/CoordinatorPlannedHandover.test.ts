@@ -232,7 +232,7 @@ const pair = Effect.gen(function* () {
           }),
         ],
         runStates: routineRuns,
-      }),
+      }).pipe(Effect.tap(() => check("gather"))),
     send,
     releaseWorkers: (_project, reason) => Effect.sync(() => void released.push(reason)),
     // Ministorm's status route, read from its copy's binding.
@@ -307,6 +307,9 @@ describe("planned coordinator handover", () => {
         m4: false,
         ms: false,
       });
+      // What travels is gathered after this copy gave way, when it no longer takes changes.
+      expect(fleet.seen.map((state) => state.step).slice(1, 3)).toEqual(["give-way", "gather"]);
+      expect(fleet.seen.find((state) => state.step === "gather")?.m4).toBe(false);
       expect(fleet.released).toEqual(["Handed to Ministorm for Away."]);
       // Routines and their run state were kept before the target coordinated.
       expect(fleet.kept).toEqual([

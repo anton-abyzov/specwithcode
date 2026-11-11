@@ -64,6 +64,11 @@ export const WorkGrantPolicyRecord = Schema.Struct({
    * owner. After it is set nothing turns routines on by itself again.
    */
   routinesSettledAt: Schema.optionalKey(Schema.String),
+  /**
+   * Routines are on only because the grant became `own`, not by the owner's
+   * choice: they count while it stays `own`. The owner's own choice clears it.
+   */
+  routinesAutoGranted: Schema.optionalKey(Schema.Boolean),
   runtimeCap: Schema.NullOr(StudioFleetWorkerAccess),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -177,28 +182,46 @@ export class WorkGrants extends Context.Reference<WorkGrantsShape>("studio/fleet
 const isWorkGrantsError = Schema.is(WorkGrantsError);
 const decodeWorkerAccess = Schema.decodeUnknownOption(StudioFleetWorkerAccess);
 
-/** The grant `record` allows; `managers` are the coordinators that manage this machine. */
+/**
+ * Whether a scoped grant lets its coordinator manage routines: on by the
+ * owner's choice, or on by the one-time `own` upgrade while it is still
+ * `own`. A grant upgraded that way and since become `team` (its management
+ * pairing was revoked or expired) is off again.
+ */
+export const routinesAllowed = (
+  record: Pick<WorkGrantPolicyRecord, "routines" | "routinesAutoGranted">,
+  kind: "own" | "team",
+): boolean => record.routines === true && (record.routinesAutoGranted !== true || kind === "own");
+
+/**
+ * The grant `record` allows; `managers` are the coordinators that manage this
+ * machine. Without them (a routine's fire, which only reads what the record
+ * says) an upgraded grant's routines are not withdrawn.
+ */
 export const effectiveGrant = (
   record: WorkGrantPolicyRecord,
-  managers: ReadonlySet<string> = new Set(),
-): EffectiveWorkGrant =>
-  record.legacy
-    ? {
-        ...unscopedGrant(EnvironmentId.make(record.coordinatorEnvironmentId)),
-        legacy: true,
-        revoked: record.revokedAt !== null,
-        kind: grantKindOf({ ...record, owner: "self" }, managers),
-      }
-    : {
-        coordinatorEnvironmentId: EnvironmentId.make(record.coordinatorEnvironmentId),
-        projects: record.projects,
-        accounts: record.accounts,
-        owner: record.owner,
-        hopLimit: workGrantHopLimit(record.owner),
-        revoked: record.revokedAt !== null,
-        routines: record.routines === true,
-        kind: grantKindOf(record, managers),
-      };
+  managers?: ReadonlySet<string>,
+): EffectiveWorkGrant => {
+  const known = managers ?? new Set<string>();
+  if (record.legacy)
+    return {
+      ...unscopedGrant(EnvironmentId.make(record.coordinatorEnvironmentId)),
+      legacy: true,
+      revoked: record.revokedAt !== null,
+      kind: grantKindOf({ ...record, owner: "self" }, known),
+    };
+  const kind = grantKindOf(record, known);
+  return {
+    coordinatorEnvironmentId: EnvironmentId.make(record.coordinatorEnvironmentId),
+    projects: record.projects,
+    accounts: record.accounts,
+    owner: record.owner,
+    hopLimit: workGrantHopLimit(record.owner),
+    revoked: record.revokedAt !== null,
+    routines: managers === undefined ? record.routines === true : routinesAllowed(record, kind),
+    kind,
+  };
+};
 
 /**
  * Turns routines on once for a scoped grant that has become `own`, and
@@ -213,7 +236,14 @@ export const withOwnRoutines = (
   !record.legacy &&
   record.routinesSettledAt === undefined &&
   grantKindOf(record, managers) === "own"
-    ? { ...record, routines: true, routinesSettledAt: now, updatedAt: now }
+    ? {
+        ...record,
+        routines: true,
+        routinesSettledAt: now,
+        // Already on by the owner's choice: nothing was granted by itself.
+        ...(record.routines === true ? {} : { routinesAutoGranted: true }),
+        updatedAt: now,
+      }
     : record;
 
 const isoOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
@@ -351,7 +381,8 @@ export const make = Effect.gen(function* () {
 
   /**
    * Settles one coordinator's policy: `change`, then the one-time routines
-   * upgrade when it has become `own`, logged as the audit line.
+   * upgrade when it has become `own`, logged as the audit line. The record
+   * keeps it too (`routinesSettledAt`, `routinesAutoGranted`).
    */
   const settle = (
     coordinatorEnvironmentId: string,
@@ -464,8 +495,13 @@ export const make = Effect.gen(function* () {
             : record.accounts);
         // A legacy grant allowed routines, so leaving legacy keeps them unless turned off.
         const routines = input.routines ?? (record.legacy || record.routines === true);
+        // The owner's own choice replaces the one-time upgrade.
+        const { routinesAutoGranted, ...kept } = record;
         return {
-          ...record,
+          ...kept,
+          ...(input.routines === undefined && routinesAutoGranted !== undefined
+            ? { routinesAutoGranted }
+            : {}),
           ...(input.routines === undefined || record.routinesSettledAt !== undefined
             ? {}
             : { routinesSettledAt: isoOf(now) }),

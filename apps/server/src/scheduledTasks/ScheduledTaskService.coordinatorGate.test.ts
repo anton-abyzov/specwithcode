@@ -8,6 +8,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import {
   HANDOFF_ROUTINE_WAIT,
+  HANDOVER_ROUTINE_CHANGE_REFUSAL,
   RESTING_ROUTINE_CHANGE_REFUSAL,
   RESTING_ROUTINE_NOTE,
   makeRoutineCoordinatorGate,
@@ -275,6 +276,58 @@ it.effect("refuses changes to a resting copy: its runner's copy is the only one 
         // This copy takes over: changes are made here again.
         state.role = ACTIVE;
         yield* service.setEnabled({ id: "routine" as never, enabled: true });
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("refuses changes while the coordinator is being handed over, then takes them again", () =>
+  Effect.gen(function* () {
+    const { state, run } = yield* harness;
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(taskInput());
+        state.role = { active: false, epoch: 1, state: "transferring" };
+        const refused = [
+          yield* service.upsert(taskInput({ title: "Edited meanwhile" })).pipe(Effect.flip),
+          yield* service.setEnabled({ id: "routine" as never, enabled: false }).pipe(Effect.flip),
+          yield* service.delete({ id: "routine" as never }).pipe(Effect.flip),
+          yield* service.upsert(taskInput({ id: undefined })).pipe(Effect.flip),
+        ];
+        for (const error of refused) assert.equal(error.message, HANDOVER_ROUTINE_CHANGE_REFUSAL);
+        // A fenced coordinator that is not handing over still takes changes.
+        state.role = ACTIVE;
+        state.fence = "Fenced: not heard from the standby.";
+        yield* service.setEnabled({ id: "routine" as never, enabled: false });
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("judges what a save would become, not only the stored row, on a resting copy", () =>
+  Effect.gen(function* () {
+    const { state, run, seedThread } = yield* harness;
+    yield* seedThread("worker-thread", "project-a");
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(taskInput({ threadId: "worker-thread" }));
+        state.role = TRANSFERRED;
+        const refused = [
+          // An id this copy has no row for would start a coordinator routine here.
+          yield* service.upsert(taskInput({ id: "unknown" })).pipe(Effect.flip),
+          // A worker's routine may not become the coordinator's here.
+          yield* service
+            .upsert(taskInput({ threadId: "worker-thread", ownThread: true }))
+            .pipe(Effect.flip),
+          yield* service.upsert(taskInput({ threadId: null })).pipe(Effect.flip),
+        ];
+        for (const error of refused) assert.equal(error.message, RESTING_ROUTINE_CHANGE_REFUSAL);
+        // It stays a worker's routine, and is still changed here.
+        const kept = yield* service.upsert(
+          taskInput({ threadId: "worker-thread", title: "Renamed" }),
+        );
+        assert.equal(kept.task.title, "Renamed");
+        assert.equal(kept.task.threadId, "worker-thread");
       }),
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),

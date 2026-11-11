@@ -385,7 +385,7 @@ export function remoteFailure(
     case "unsupported":
       return failure(
         "machine_unsupported",
-        `${label} runs a SpecWithCode version without remote workers.`,
+        `${label} needs a newer SpecWithCode for this. Update SpecWithCode on ${label} and try again.`,
       );
     case "refused":
       return failure("capability_denied", "That tool is not available on other machines.");

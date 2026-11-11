@@ -229,7 +229,7 @@ describe("Personal routines", () => {
     expect(container.textContent).toContain("tax/{period}-prep.md");
     expect(button("Pause")).toBeUndefined();
     await click("Open thread");
-    expect(openThread).toHaveBeenCalledWith("routine-thread-1");
+    expect(openThread).toHaveBeenCalledWith("routine-thread-1", "host");
   });
   it("saves a template as a hand-run, prepare-only routine with its own thread", async () => {
     state.tasks = [];
@@ -285,7 +285,7 @@ describe("Personal routines", () => {
     await render(true, false, true);
     expect(container.textContent).toContain("Own thread");
     await click("Open thread");
-    expect(openThread).toHaveBeenCalledWith("worker-thread");
+    expect(openThread).toHaveBeenCalledWith("worker-thread", "host");
   });
   it("offers no templates outside a personal project", async () => {
     await render();
@@ -310,9 +310,113 @@ describe("a linked copy whose routines run on another machine", () => {
         projectId: "remote",
         title: "IG post",
         enabled: true,
+        ownThread: true,
         schedule: { type: "fixed_time", timeOfDay: "09:00" },
       },
     ];
+  });
+  it("keeps this machine's worker-thread and webhook routines listed and operable", async () => {
+    state.tasks.push(
+      {
+        id: "ci",
+        projectId: "project",
+        title: "CI wake",
+        enabled: true,
+        threadId: "worker-thread",
+        schedule: { type: "manual" },
+      },
+      {
+        id: "hook",
+        projectId: "project",
+        title: "Deploy hook",
+        enabled: true,
+        ownThread: true,
+        schedule: { type: "webhook" },
+      },
+      {
+        id: "resting",
+        projectId: "project",
+        title: "Resting copy",
+        enabled: true,
+        ownThread: true,
+        schedule: { type: "manual" },
+      },
+      {
+        id: "remote-worker",
+        projectId: "remote",
+        title: "Remote worker routine",
+        enabled: true,
+        schedule: { type: "manual" },
+      },
+    );
+    await render();
+    expect(container.textContent).toContain("Runs on Ministorm");
+    expect(container.textContent).toContain("IG post");
+    expect(container.textContent).not.toContain("Resting copy");
+    expect(container.textContent).not.toContain("Remote worker routine");
+    const here = container.querySelector('[data-routine-group="here"]')!;
+    expect(here.textContent).toContain("Runs on M4");
+    expect(here.textContent).toContain("CI wake");
+    expect(here.textContent).toContain("Deploy hook");
+    expect(here.textContent).not.toContain("IG post");
+    await act(async () =>
+      [...here.querySelectorAll("button")].find((b) => b.textContent === "Run now")!.click(),
+    );
+    expect(state.run.mock.calls[0]![0]).toMatchObject({
+      environmentId: "host",
+      input: { id: "ci" },
+    });
+  });
+  it("opens a routine's thread on the machine that holds it", async () => {
+    state.tasks = [
+      { ...state.tasks[0]!, threadId: "runner-thread" },
+      {
+        id: "ci",
+        projectId: "project",
+        title: "CI wake",
+        enabled: true,
+        threadId: "worker-thread",
+        schedule: { type: "manual" },
+      },
+    ];
+    await render();
+    openThread.mockClear();
+    for (const open of container.querySelectorAll<HTMLButtonElement>("[data-routine-thread]"))
+      await act(async () => open.click());
+    expect(openThread.mock.calls).toEqual([
+      ["runner-thread", "ministorm"],
+      ["worker-thread", "host"],
+    ]);
+  });
+  it("keeps them operable while the runner is offline and its copies read-only", async () => {
+    state.runnerState = "offline";
+    state.tasks = [
+      { ...state.tasks[0]!, projectId: "project" },
+      {
+        id: "ci",
+        projectId: "project",
+        title: "CI wake",
+        enabled: true,
+        threadId: "worker-thread",
+        schedule: { type: "manual" },
+      },
+    ];
+    await render();
+    expect(button("Run now").disabled).toBe(true);
+    const here = container.querySelector('[data-routine-group="here"]')!;
+    const runHere = [...here.querySelectorAll("button")].find((b) => b.textContent === "Run now")!;
+    expect(runHere.disabled).toBe(false);
+    await act(async () => runHere.click());
+    expect(state.run.mock.calls[0]![0].environmentId).toBe("host");
+  });
+  it("shows a coordinating copy its own routines beside another coordinating copy", async () => {
+    state.projects = [linked("host", "project", true), linked("ministorm", "remote", true)];
+    state.tasks = [{ ...state.tasks[0]!, projectId: "project" }];
+    await render();
+    expect(container.textContent).not.toContain("Runs on Ministorm");
+    expect(container.textContent).toContain("IG post");
+    await click("Run now");
+    expect(state.run.mock.calls[0]![0].environmentId).toBe("host");
   });
   it("shows and changes the runner's routines", async () => {
     await render();

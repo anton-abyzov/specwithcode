@@ -43,6 +43,8 @@ export interface SkillAuthoringSheetProps {
   userLevel?: boolean | undefined;
   machineLabel: string;
   initialInstanceId?: string | undefined;
+  /** The thread's model, used for Generate until another model is chosen. */
+  initialModel?: string | undefined;
   seed?: SkillAuthoringSeed | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -60,6 +62,7 @@ const blank: SkillAuthoringContent = {
 };
 
 export const skillMarkdown = skillAuthoringMarkdown;
+export const PUBLICATION_POLL_MS = 20_000;
 
 export function SkillAuthoringSheet(props: SkillAuthoringSheetProps) {
   const [hasOpened, setHasOpened] = useState(props.open);
@@ -121,12 +124,20 @@ export function SkillAuthoringForm({
   machineLabel,
   cwd,
   initialInstanceId,
+  initialModel,
   seed,
   userLevel = false,
   canApply = canPublish,
 }: Pick<
   SkillAuthoringSheetProps,
-  "open" | "onOpenChange" | "machineLabel" | "cwd" | "initialInstanceId" | "userLevel" | "seed"
+  | "open"
+  | "onOpenChange"
+  | "machineLabel"
+  | "cwd"
+  | "initialInstanceId"
+  | "initialModel"
+  | "userLevel"
+  | "seed"
 > & {
   agents: readonly ProviderInstanceEntry[];
   request: (input: AuthoringRequest) => Promise<SkillAuthoringResult>;
@@ -165,12 +176,30 @@ export function SkillAuthoringForm({
   const applySelection = selectedAgents.filter((id) =>
     applyAgents.some((agent) => agent.instanceId === id),
   );
-  const selectedProvider = agents.find(
-    (agent) => agent.instanceId === content.modelSelection?.instanceId,
-  );
-  const selectedModel = selectedProvider?.models.find(
-    (model) => model.slug === content.modelSelection?.model,
-  );
+  // Until a model is chosen, generate with the thread's model, else the machine's default provider.
+  const defaultProvider =
+    readyAgents.find((agent) => agent.instanceId === initialInstanceId) ??
+    readyAgents.find((agent) => agent.isDefault) ??
+    readyAgents[0];
+  const defaultModel =
+    defaultProvider?.models.find((model) => model.slug === initialModel) ??
+    defaultProvider?.models[0];
+  const selection =
+    content.modelSelection ??
+    (defaultProvider && defaultModel
+      ? { instanceId: defaultProvider.instanceId, model: defaultModel.slug }
+      : undefined);
+  const selectedProvider = agents.find((agent) => agent.instanceId === selection?.instanceId);
+  const selectedModel = selectedProvider?.models.find((model) => model.slug === selection?.model);
+  const generateBlocker = !canGenerate
+    ? "You do not have permission to run agents on this machine."
+    : readyAgents.length === 0
+      ? `No provider is ready on ${machineLabel}. Set one up in Settings, Providers.`
+      : !selectedModel || !selectedProvider?.isAvailable
+        ? "Choose a provider and model that is ready on this machine."
+        : !content.prompt.trim()
+          ? "Describe what the skill should do."
+          : null;
   const modelOptions = useMemo(
     () => new Map(agents.map((agent) => [agent.instanceId, agent.models])),
     [agents],
@@ -292,6 +321,23 @@ export function SkillAuthoringForm({
       setBusy(null);
     }
   };
+  // Follow the review queue while the sheet is open; Check status stays for an immediate look.
+  const executeRef = useRef(execute);
+  useEffect(() => {
+    executeRef.current = execute;
+  });
+  const following =
+    open &&
+    !dirty &&
+    publication !== undefined &&
+    ["submitting", "queued", "reviewing"].includes(publication.state);
+  useEffect(() => {
+    if (!following) return;
+    const timer = window.setInterval(() => {
+      if (!busyRef.current) void executeRef.current("status");
+    }, PUBLICATION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [following]);
   const importSeed = async () => {
     if (!seed || frozen || busyRef.current) return;
     if (
@@ -497,19 +543,18 @@ export function SkillAuthoringForm({
                     <p className="text-sm font-medium">Generate with</p>
                     <ProviderModelPicker
                       activeInstanceId={
-                        content.modelSelection?.instanceId ??
+                        selection?.instanceId ??
                         ProviderInstanceId.make(initialInstanceId ?? "studio_no_provider")
                       }
-                      model={content.modelSelection?.model ?? ""}
+                      model={selection?.model ?? ""}
                       instanceEntries={readyAgents}
                       modelOptionsByInstance={modelOptions}
                       lockedProvider={null}
                       isComposerOwned={false}
-                      unset={!content.modelSelection}
+                      unset={!selection}
                       disabled={inProgress || frozen}
-                      {...(!content.modelSelection
-                        ? { triggerLabel: "Choose provider and model" }
-                        : {})}
+                      triggerClassName="border border-input bg-background px-2.5"
+                      {...(!selection ? { triggerLabel: "Choose provider and model" } : {})}
                       onInstanceModelChange={(instanceId, model) =>
                         edit({ modelSelection: { instanceId, model } })
                       }
@@ -530,14 +575,7 @@ export function SkillAuthoringForm({
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
-                      disabled={
-                        inProgress ||
-                        frozen ||
-                        !canGenerate ||
-                        !content.prompt.trim() ||
-                        !selectedModel ||
-                        !selectedProvider?.isAvailable
-                      }
+                      disabled={inProgress || frozen || generateBlocker !== null}
                       onClick={() => {
                         if (
                           (content.name || content.description || content.instructions) &&
@@ -546,7 +584,12 @@ export function SkillAuthoringForm({
                           )
                         )
                           return;
-                        void execute("generate");
+                        void execute("generate", {
+                          draft: {
+                            ...content,
+                            ...(selection ? { modelSelection: selection } : {}),
+                          },
+                        });
                       }}
                     >
                       {busy === "generate" ? "Generating draft…" : "Generate draft"}
@@ -555,6 +598,11 @@ export function SkillAuthoringForm({
                       Write myself
                     </Button>
                   </div>
+                  {generateBlocker && !inProgress && !frozen ? (
+                    <p className="text-xs text-muted-foreground" data-generate-blocker="">
+                      {generateBlocker}
+                    </p>
+                  ) : null}
                 </>
               )}
               <fieldset disabled={inProgress} className="space-y-2 rounded-lg border p-3 text-sm">
@@ -678,6 +726,7 @@ export function SkillAuthoringForm({
               {publication && !dirty ? (
                 <SkillPublicationStatus
                   publication={{ ...publication, status: publication.state }}
+                  following={following}
                   busy={inProgress || !canApply}
                   onRefresh={() => void execute("status")}
                 />

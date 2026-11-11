@@ -3,6 +3,7 @@ import {
   defaultProjectMachine,
   newProjectNameNotice,
   resolveNewProjectName,
+  projectMachineReason,
   suggestProjectMachine,
 } from "./projectCreation";
 describe("project execution machine defaults", () => {
@@ -75,5 +76,37 @@ describe("newProjectNameNotice", () => {
   it("explains names that cannot become a folder name", () => {
     expect(newProjectNameNotice("Проект")).toContain('"project"');
     expect(newProjectNameNotice("x".repeat(80))).toContain("shortened");
+  });
+});
+
+describe("projectMachineReason", () => {
+  const reason = (
+    selected: string,
+    suggested: string | null,
+    thisDevice: string | null = "m4",
+    loadBalancingEnabled = false,
+  ) =>
+    projectMachineReason({
+      selected,
+      selectedLabel: selected,
+      suggested,
+      thisDevice,
+      loadBalancingEnabled,
+    });
+  it("says this device is the default", () => {
+    expect(reason("m4", "m4")).toContain("New projects start on this device");
+  });
+  it("says a pick in the dialog is not kept", () => {
+    expect(reason("m1", "m4")).toBe(
+      "You picked m1. The next new project starts on this device again.",
+    );
+    expect(reason("m4", "m1")).toBe("You picked this device.");
+  });
+  it("names load balancing or an unavailable device when another machine is preselected", () => {
+    expect(reason("m1", "m1", "m4", true)).toContain("load balancing");
+    expect(reason("m1", "m1", "m4")).toBe(
+      "This device is not available: it is offline or cannot create projects right now. m1 is selected instead.",
+    );
+    expect(reason("m1", "m1", null)).toContain("This device is not available: it cannot hold");
   });
 });

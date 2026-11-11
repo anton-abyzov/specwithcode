@@ -104,6 +104,44 @@ test("accepts the actual lock: identity map, exact SDK promotion and reviewed ch
   );
 });
 
+test("ignores registry deprecation notes, which pnpm adds and drops on a refresh", () => {
+  const note =
+    "    deprecated: |-\n      Deprecated for a test.\n        Second line of the note.\n";
+  const at = current.indexOf("    resolution: {integrity: ", current.indexOf("\npackages:\n"));
+  const lineEnd = current.indexOf("\n", at) + 1;
+  const end = current.indexOf("\n", lineEnd) + 1;
+  const noted = current.slice(0, end) + note + current.slice(end);
+  assert.notEqual(noted, current);
+  verify(noted);
+  verify(noted.replace(note, "    deprecated: Single-line note\n"));
+  assert.equal(
+    canonicalLockSections(noted, registry),
+    canonicalLockSections(current, registry),
+  );
+  // The resolution of the entry that carries the note is still compared.
+  const resolution = current.slice(at, lineEnd);
+  refused(noted.replace(resolution, resolution.replace("sha512-", "sha512-A")));
+});
+
+test("compares a dependency, snapshot edge or override named deprecated", () => {
+  // Only a field of a packages: entry is advice; these are resolution data.
+  refused(
+    intoServer(
+      current,
+      "dependencies",
+      "      deprecated:\n        specifier: link:../evil\n        version: link:../evil\n",
+    ),
+  );
+  const snapshots = current.indexOf("\nsnapshots:\n");
+  const edges = current.indexOf("\n    dependencies:\n", snapshots) + "\n    dependencies:\n".length;
+  refused(current.slice(0, edges) + "      deprecated: 1.0.0\n" + current.slice(edges));
+  refused(change(current, "\noverrides:\n", "\noverrides:\n  deprecated: 9.9.9\n"));
+  // Nor is a line that only starts with the word.
+  const at = current.indexOf("    resolution: {integrity: ", current.indexOf("\npackages:\n"));
+  const end = current.indexOf("\n", current.indexOf("\n", at) + 1) + 1;
+  refused(current.slice(0, end) + "    deprecated:x: 1\n" + current.slice(end));
+});
+
 test("compares registry data with the reviewed f0b6d13fb lock without trusting the identity map", () => {
   // An identity map widened to rewrite registry data would change the baseline
   // and the lock alike, so only the direct comparison can refuse it.

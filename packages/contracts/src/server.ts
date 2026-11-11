@@ -845,6 +845,12 @@ export const ServerConfig = Schema.Struct({
    */
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
+   * The folder this machine's owner keeps projects in (such as ~/Projects),
+   * offered first when choosing where a new project goes. It may not exist
+   * yet. Present only on servers that also answer filesystem.createDirectory.
+   */
+  suggestedProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Palettes published by this environment's machine. Never sent in a config
    * snapshot: the theme stream emits the current set before any change, so a
    * snapshot carrying it too would hand every subscriber the same array twice

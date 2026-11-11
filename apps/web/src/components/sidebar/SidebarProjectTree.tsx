@@ -29,6 +29,8 @@ import {
   PROJECT_TREE_PROJECT_PAGE,
   PROJECT_TREE_SESSION_PAGE,
   resolveProjectTreeExpanded,
+  routeProjectTreeKey,
+  visibleProjectTree,
   type ProjectTreeGroup,
   type ProjectTreeSession,
 } from "./SidebarProjectTree.logic";
@@ -86,6 +88,8 @@ export function SidebarProjectTree(props: {
   projectGroups: readonly SidebarProjectSnapshot[];
   threads: readonly EnvironmentThreadShell[];
   routeThreadKey: string | null;
+  /** The project of the open draft, which has no session row yet. */
+  routeProject: { readonly environmentId: string; readonly projectId: string } | null;
   /** On for the "updated" project sort; manual and created orders stay as given. */
   orderByActivity: boolean;
   onOpenThread: (threadRef: ScopedThreadRef) => void;
@@ -113,17 +117,23 @@ export function SidebarProjectTree(props: {
     () => resolveProjectTreeExpanded(tree, saved, props.routeThreadKey),
     [props.routeThreadKey, saved, tree],
   );
-  const visibleTree =
-    showAllProjects || tree.length <= PROJECT_TREE_PROJECT_PAGE + 2
-      ? tree
-      : tree.filter(
-          (group, index) =>
-            index < PROJECT_TREE_PROJECT_PAGE ||
-            group.attentionCount > 0 ||
-            group.workingCount > 0 ||
-            group.key === activeProjectKey,
-        );
+  const routeProjectKey = useMemo(
+    () => routeProjectTreeKey(tree, props.routeThreadKey, props.routeProject),
+    [props.routeProject, props.routeThreadKey, tree],
+  );
+  const visibleTree = useMemo(
+    () =>
+      visibleProjectTree(
+        tree,
+        new Set([activeProjectKey, routeProjectKey].filter((key) => key !== null)),
+        showAllProjects,
+      ),
+    [activeProjectKey, routeProjectKey, showAllProjects, tree],
+  );
   const hiddenProjects = tree.length - visibleTree.length;
+  // A draft has no session row to highlight, so its project row carries it.
+  const selectedProjectKey =
+    activeProjectKey ?? (props.routeProject === null ? null : routeProjectKey);
 
   const toggle = (key: string) =>
     setSaved((previous) => ({ ...previous, [key]: !expanded.has(key) }));
@@ -141,13 +151,13 @@ export function SidebarProjectTree(props: {
               key={group.key}
               role="treeitem"
               aria-expanded={open}
-              aria-selected={group.key === activeProjectKey}
+              aria-selected={group.key === selectedProjectKey}
               className="list-none"
             >
               <ProjectRow
                 group={group}
                 open={open}
-                active={group.key === activeProjectKey}
+                active={group.key === selectedProjectKey}
                 onToggle={() => toggle(group.key)}
                 onOpenProject={props.onOpenProject}
                 onNewSession={props.onNewSession}

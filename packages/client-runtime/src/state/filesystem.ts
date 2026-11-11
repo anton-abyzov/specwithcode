@@ -21,7 +21,7 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 export function resolveFilesystemReadAccess(input: {
   readonly isCatalogReady: boolean;
@@ -118,6 +118,11 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+    }),
+    /** Makes one folder on the machine. Servers before 1.0.231 do not answer it. */
+    createDirectory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:filesystem:create-directory",
+      tag: WS_METHODS.filesystemCreateDirectory,
     }),
   };
 }
