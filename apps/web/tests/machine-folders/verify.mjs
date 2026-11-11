@@ -85,10 +85,10 @@ try {
     await page.getByText("Found this project on MacBook Pro M3.", { exact: false }).waitFor();
     assert.equal(await page.locator("details").count(), 0);
     assert.equal(await page.locator("select").count(), 0);
-    await page.getByText("2 uncommitted files on MacBook Pro M4.", { exact: false }).waitFor();
+    await page.getByText("2 uncommitted files stay on MacBook Pro M4.", { exact: false }).waitFor();
     assert.equal(await page.getByRole("checkbox", { name: /Remember/ }).count(), 0);
     assert.equal(
-      await page.getByRole("button", { name: "Hand off to MacBook Pro M3" }).isDisabled(),
+      await page.getByRole("button", { name: "Move project to MacBook Pro M3" }).isDisabled(),
       true,
     );
     await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
@@ -121,7 +121,7 @@ try {
       await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
       "/Users/you/Projects/another-project",
     );
-    await page.getByRole("button", { name: "Hand off to MacBook Pro M3", exact: true }).click();
+    await page.getByRole("button", { name: "Move project to MacBook Pro M3", exact: true }).click();
     await page.getByText("Committed work only.", { exact: false }).waitFor();
     assert.equal(await page.locator('[data-slot="machine-option"]').count(), 0);
     const overflow = await page.evaluate(

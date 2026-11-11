@@ -79,12 +79,22 @@ export function useNewProject() {
         }
         return;
       }
+      const { repository, status } = result.value;
       toastManager.add(
-        stackedThreadToast({
-          type: "success",
-          title: "Published to GitHub",
-          description: result.value.repository.nameWithOwner,
-        }),
+        stackedThreadToast(
+          // Without a first commit the server only adds the remote.
+          status === "remote_added"
+            ? {
+                type: "warning",
+                title: "GitHub repository created, nothing pushed yet",
+                description: `${repository.nameWithOwner} is empty until the project has a first commit. Commit, then push from the Git menu.`,
+              }
+            : {
+                type: "success",
+                title: "Published to GitHub",
+                description: repository.nameWithOwner,
+              },
+        ),
       );
     },
     [publishRepository],
