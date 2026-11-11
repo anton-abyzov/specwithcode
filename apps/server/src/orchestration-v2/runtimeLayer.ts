@@ -31,6 +31,7 @@ import * as ThreadReportService from "../project/ThreadReportService.ts";
 import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgressService.ts";
 import * as AdversarialReviewService from "../review/AdversarialReviewService.ts";
 import * as UsageLimitAvailability from "./UsageLimitAvailability.ts";
+import * as LostBackgroundWorkWake from "./LostBackgroundWorkWake.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderFallbackWorker from "./ProviderFallbackWorker.ts";
 import * as ContextOverflowRecoveryWorker from "./ContextOverflowRecoveryWorker.ts";
@@ -638,6 +639,19 @@ export const layerProduction = Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,
         layerMachineLimitHandoffProvided,
+      ),
+    ),
+  ),
+  // Starts a turn on a thread whose awaited background work was cut off.
+  LostBackgroundWorkWake.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        IdAllocator.layer,
+        ProjectStore.layer,
+        ProjectionStore.layer,
+        layerProviderSessionManagerProvided,
+        layerThreadManagementProvided,
       ),
     ),
   ),
