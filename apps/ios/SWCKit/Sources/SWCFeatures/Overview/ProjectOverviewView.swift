@@ -274,7 +274,7 @@ struct ProjectOverviewView: View {
         .frame(maxWidth: .infinity)
         .padding(.top, WeaveSpacing.s8)
     } else {
-      EmptyState(systemName: "bubble.left.and.bubble.right", title: isAssistant ? "No topics yet" : "No threads yet", message: isAssistant ? "Topics you ask Aide for show up here." : "Threads this project starts show up here.")
+      EmptyState(systemName: "bubble.left.and.bubble.right", title: isAssistant ? "No topics yet" : "No threads yet", message: isAssistant ? "Topics you ask \(model.project(project)?.title ?? "your assistant") for show up here." : "Threads this project starts show up here.")
         .frame(maxWidth: .infinity)
         .padding(.top, WeaveSpacing.s8)
     }

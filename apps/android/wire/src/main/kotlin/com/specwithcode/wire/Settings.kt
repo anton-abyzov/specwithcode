@@ -16,7 +16,7 @@ data class ServerSettings(
     val environmentIcon: String? = null,
     /** The user's short names for every machine in the fleet, by environment id. Older servers omit it. */
     val machineNicknames: Map<String, MachineNicknameEntry> = emptyMap(),
-    /** Whether Aide, the personal assistant, is shown. Off by default; older servers omit it. */
+    /** Whether the personal assistant (default name Percy) is shown. Off by default; older servers omit it. */
     val aideEnabled: Boolean = false,
     /** Suggested prompts: "all", "native" (the provider's own only) or "off". */
     val promptSuggestions: String = "all",

@@ -642,7 +642,7 @@ public enum ShellSummaries {
     let title = project.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     var summary = ProjectSummary(
       ref: ProjectRef(environmentId: environmentId, projectId: project.id),
-      title: title.isEmpty ? (personal ? "Aide" : "Project") : title,
+      title: title.isEmpty ? (personal ? AideSetting.defaultName : "Project") : title,
       icon: icon(project.projectIcon ?? (personal ? .personalAssistant : nil)),
       kind: personal ? .personal : .code,
       machineLabel: machineLabel,

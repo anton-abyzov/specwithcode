@@ -424,7 +424,7 @@ export function useInboxSidebarEnabled(): boolean {
 }
 
 /**
- * Whether the personal assistant (Aide) is shown (Settings → General → Personal
+ * Whether the personal assistant (default name Percy) is shown (Settings → General → Personal
  * assistant). Saved per machine on the primary server and on by default; while
  * off, its sidebar rows, setup offers and pages are hidden, and nothing is deleted.
  * Stays off until the primary's saved value arrives, and where primary settings

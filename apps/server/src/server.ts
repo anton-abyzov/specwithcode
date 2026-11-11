@@ -237,6 +237,7 @@ import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
 import * as AideBriefingSetup from "./project/AideBriefingSetup.ts";
+import * as PercyRename from "./project/PercyRename.ts";
 import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
 import * as ImportedThreadTitleRepair from "./project/ImportedThreadTitleRepair.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
@@ -882,6 +883,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(AideBriefingSetup.start).pipe(
     Layer.provideMerge(GoogleAccountService.layer.pipe(Layer.provide(GoogleApi.layer))),
   ),
+  // Renames an assistant still called "Aide" (the old default) to "Percy", once.
+  Layer.effectDiscard(PercyRename.start).pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,

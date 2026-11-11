@@ -543,8 +543,8 @@ export const ko: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "diff 패널에서 공백만 바뀐 수정을 기본적으로 무시할지 설정합니다.",
   "Shared Codex config, sessions, and state.": "공유되는 Codex 구성, 세션, 상태입니다.",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "이 컴퓨터 전용 비서인 Aide를 사이드바와 명령 팔레트에 표시합니다. 끄면 채팅을 삭제하지 않고 숨깁니다.",
+  "Show {name}, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "이 컴퓨터 전용 비서인 {name}를 사이드바와 명령 팔레트에 표시합니다. 끄면 채팅을 삭제하지 않고 숨깁니다.",
   "Show a gentle cue on the captured window.": "캡처한 창에 은은한 신호를 표시합니다.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "이 앱에 포커스가 있을 때 다른 스레드가 끝나거나, 실패하거나, 입력이나 승인이 필요하면 토스트를 표시합니다.",
@@ -1100,8 +1100,8 @@ export const ko: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "지금은 {b}에 있습니다. 여기서는 다른 컴퓨터인 {b2}의 Chrome을 설정합니다. 그 페어링 코드는 이곳의 Chrome에서 작동하지 않습니다.",
   "Set up Chrome on {thisComputer}": "{thisComputer}에서 Chrome 설정",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "{machine}의 모든 채팅, 프로젝트 스레드, Aide는 제공업체와 관계없이 페어링된 Chrome 프로필을 동시에 사용합니다. 각각 파란색 SpecWithCode 탭 그룹 안의 자기 탭에서 작업합니다. 여기서 해당 컴퓨터를 허용하면 연결된 다른 컴퓨터의 스레드도 사용할 수 있습니다.",
+  "Every chat, project thread and {assistant} on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "{machine}의 모든 채팅, 프로젝트 스레드, {assistant}는 제공업체와 관계없이 페어링된 Chrome 프로필을 동시에 사용합니다. 각각 파란색 SpecWithCode 탭 그룹 안의 자기 탭에서 작업합니다. 여기서 해당 컴퓨터를 허용하면 연결된 다른 컴퓨터의 스레드도 사용할 수 있습니다.",
   "Test connection": "연결 테스트",
   Reconnect: "다시 연결",
   "This device can view {machine}'s Chrome but not pair or test it.":

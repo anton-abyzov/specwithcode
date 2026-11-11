@@ -79,6 +79,12 @@ struct PhoneHandoffResult: Decodable, Sendable {
 }
 
 extension LiveEngine {
+  /// Why a personal assistant's thread cannot move, in the assistant's own name.
+  static func privateAssistantNotice(_ assistant: ProjectSummary?) -> String {
+    let name = assistant?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return "\(name.isEmpty ? "Your assistant" : name) stays private to its machine and cannot be handed off."
+  }
+
   static let handedOffReason = "This copy was handed off. Open the continued thread on its machine to send messages."
 
   static func handoffBlock(_ thread: ThreadShell?) -> String? {
@@ -93,7 +99,7 @@ extension LiveEngine {
     let shell = source.thread(thread.threadId)
     let project = model?.thread(thread)?.projectRef.flatMap { model?.project($0) }
     if project?.kind == .personal || (model?.aide?.ref.environmentId == thread.environmentId && shell != nil && shell?.projectId == model?.aide?.ref.projectId) {
-      return HandoffOptions(badge: nil, destinations: [], notices: ["Aide stays private to its machine and cannot be handed off."])
+      return HandoffOptions(badge: nil, destinations: [], notices: [Self.privateAssistantNotice(project?.kind == .personal ? project : model?.aide)])
     }
     var badge: String?
     var destinations: [HandoffDestination] = []
@@ -159,7 +165,7 @@ extension LiveEngine {
     if let pending = handoffJournal[thread] { throw HandoffUncertain(detail: pending) }
     let project = model?.thread(thread)?.projectRef.flatMap { model?.project($0) }
     if project?.kind == .personal || (model?.aide?.ref.environmentId == thread.environmentId && machines[thread.environmentId]?.thread(thread.threadId)?.projectId != nil && machines[thread.environmentId]?.thread(thread.threadId)?.projectId == model?.aide?.ref.projectId) {
-      return HandoffCheck(allowed: false, messages: ["Aide stays private to its machine and cannot be handed off."])
+      return HandoffCheck(allowed: false, messages: [Self.privateAssistantNotice(project?.kind == .personal ? project : model?.aide)])
     }
     guard let entry = machines[destination.id], entry.isOnline, entry.canOperate else { throw SyncError.unknownMachine }
     if destination.usesReplica {

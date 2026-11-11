@@ -701,6 +701,7 @@ export function ProjectWorkspaceSettings({
                   projectId={project.id}
                   memory={snapshot.memory}
                   personal={snapshot.settings.kind === "personal"}
+                  assistantName={projectTitle}
                   disabled={disabled}
                   onSaved={onSaved}
                   onDirtyChange={setMemoryDirty}
@@ -763,6 +764,7 @@ export function ProjectWorkspaceSettings({
                   disabled={disabled}
                   admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
                   onOpenEnvironment={() => setTab("environment")}
+                  assistantName={projectTitle}
                 />
               )}
               {tab === "usage" && (

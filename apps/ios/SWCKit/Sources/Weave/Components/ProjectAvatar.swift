@@ -251,7 +251,7 @@ private struct ProjectAvatarPreview: View {
   var body: some View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s4) {
       HStack(spacing: WeaveSpacing.s3) {
-        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide")
+        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Percy")
         ProjectAvatar(icon: .lucide(name: "dna", tint: "amber"), title: "specweave")
         ProjectAvatar(icon: .lucide(name: "globe", tint: "violet"), title: "Site")
         ProjectAvatar(icon: .lucide(name: "wrench", tint: "red"), title: "Tools")

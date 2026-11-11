@@ -209,7 +209,7 @@ function ChatRouteLayout() {
   });
   // A hidden personal assistant's chat (Settings → General) has no page: links,
   // notifications, history and reloads that name it land on Overview. Nothing is
-  // deleted; turning Aide back on opens the same chat again.
+  // deleted; turning the assistant back on opens the same chat again.
   const aideHidden = useHiddenAideThread(
     threadTarget?.kind === "server" ? threadTarget.threadRef : null,
   );

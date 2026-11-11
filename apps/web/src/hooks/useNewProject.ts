@@ -126,7 +126,7 @@ export function useNewProject() {
             stackedThreadToast({
               type: "error",
               title: "Could not create the project",
-              // Machines keep their own Aide switch: name the one that refused.
+              // Machines keep their own assistant switch: name the one that refused.
               description: isPersonalAssistantDisabledError(failure)
                 ? personalAssistantDisabledMessage(
                     environments.find(

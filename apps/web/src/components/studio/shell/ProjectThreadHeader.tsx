@@ -96,6 +96,8 @@ export function ProjectThreadHeader(props: {
   thread: EnvironmentThreadShell;
   /** The personal assistant says topics where a project says threads. */
   personal?: boolean;
+  /** The assistant's title, where the header names it instead of "the coordinator". */
+  assistantName?: string | undefined;
   /** Subagents this thread started, for the chip and popover beside the title. */
   subagents: readonly SubagentEntry[];
   /** Opens a subagent's read-only transcript over this thread. */
@@ -203,7 +205,7 @@ export function ProjectThreadHeader(props: {
     });
   };
 
-  const say = paneWords(props.personal);
+  const say = paneWords(props.personal, props.assistantName);
   return (
     <div className={cn("sws-pane-head sws-thread-head", isElectron && "drag-region")}>
       <Tip label={say("Back to threads (Esc)")}>

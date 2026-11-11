@@ -19,6 +19,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Switch } from "../ui/switch";
+import { assistantNameOr } from "../../studio/assistantTerms";
 
 const GOOGLE_ROWS: ReadonlyArray<{ service: GoogleService; name: string; summary: string }> = [
   { service: "gmail", name: "Email", summary: "Read your Gmail" },
@@ -102,6 +103,7 @@ function PresetRow({
   disabled,
   admissionBlocked,
   onChanged,
+  assistantName,
 }: {
   preset: ServicePreset;
   connection: ProjectConnection | undefined;
@@ -110,6 +112,7 @@ function PresetRow({
   disabled: boolean;
   admissionBlocked: boolean;
   onChanged: () => void;
+  assistantName: string;
 }) {
   const tokenId = useId();
   const save = useAtomCommand(projectWorkspace.connectionSave, { reportFailure: false });
@@ -291,7 +294,7 @@ function PresetRow({
       ) : null}
       {state === "ready" && connection ? (
         <fieldset className="assistant-service-tools" disabled={blocked}>
-          <legend>What Aide may use</legend>
+          <legend>What {assistantName} may use</legend>
           <small className="project-muted">
             This is what {preset.name} offers. Its first use confirms the token.
           </small>
@@ -334,13 +337,17 @@ export function AssistantServices({
   disabled,
   admissionBlocked,
   onOpenEnvironment,
+  assistantName,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   disabled: boolean;
   admissionBlocked: boolean;
   onOpenEnvironment: () => void;
+  /** The assistant's title, so the copy calls it by its name. */
+  assistantName?: string | undefined;
 }) {
+  const called = assistantNameOr(assistantName);
   const query = useEnvironmentQuery(
     projectWorkspace.connections({ environmentId, input: { projectId } }),
   );
@@ -349,8 +356,8 @@ export function AssistantServices({
     <section className="project-settings-section assistant-services">
       <h2>Services</h2>
       <p className="project-muted">
-        The accounts Aide may use for you. Sign-ins and tokens stay on this machine, and you choose
-        what each one may do.
+        The accounts {called} may use for you. Sign-ins and tokens stay on this machine, and you
+        choose what each one may do.
       </p>
       <h3>Google</h3>
       <ul>
@@ -368,6 +375,7 @@ export function AssistantServices({
             disabled={disabled}
             admissionBlocked={admissionBlocked}
             onChanged={query.refresh}
+            assistantName={called}
           />
         ))}
       </ul>

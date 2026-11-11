@@ -780,6 +780,46 @@ it.effect("reuses one Personal assistant for concurrent requests without invokin
   ),
 );
 
+it.effect("names a Personal assistant Percy when an older client still sends Aide", () =>
+  withScratch(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const created = yield* folders.createNamedProject({ name: " Aide ", kind: "personal" });
+      const project = Option.getOrThrow(yield* projects.getById(created.projectId));
+      assert.equal(project.title, "Percy");
+    }),
+  ),
+);
+
+it.effect("keeps a custom Personal assistant name", () =>
+  withScratch(() =>
+    Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const created = yield* folders.createNamedProject({ name: "Aider", kind: "personal" });
+      const project = Option.getOrThrow(yield* projects.getById(created.projectId));
+      assert.equal(project.title, "Aider");
+    }),
+  ),
+);
+
+it("maps only a personal create named exactly Aide", () => {
+  assert.equal(
+    ManagedProjectFolders.personalCreateName({ name: "Aide", kind: "personal" as const }).name,
+    "Percy",
+  );
+  assert.equal(
+    ManagedProjectFolders.personalCreateName({ name: "Aide", kind: "code" as const }).name,
+    "Aide",
+  );
+  assert.equal(ManagedProjectFolders.personalCreateName({ name: "Aide" }).name, "Aide");
+  assert.equal(
+    ManagedProjectFolders.personalCreateName({ name: "aide", kind: "personal" as const }).name,
+    "aide",
+  );
+});
+
 it.effect("refuses a new Personal assistant while Aide is off, leaving no folder", () =>
   withScratch(() =>
     Effect.gen(function* () {

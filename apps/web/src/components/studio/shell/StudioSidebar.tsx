@@ -15,7 +15,9 @@ import {
 import {
   isExtraAssistant,
   machineNeedsAssistantSetup,
+  otherMachineAssistant,
   PERSONAL_ASSISTANT_PER_MACHINE_LINE,
+  separateAssistantLine,
   threadsVisibleWithAide,
 } from "../../../studio/personalAssistant";
 import { useAtomValue } from "@effect/atom-react";
@@ -921,6 +923,16 @@ export default function StudioSidebar() {
         .filter((member) => member.workspaceSettings?.kind === "personal"),
       ownEnvironmentId: primaryEnvironmentId,
     });
+  // Set up here makes a separate assistant: say so when another machine's is listed.
+  const otherAssistant = offerOwnAssistant
+    ? otherMachineAssistant(assistantMembers, primaryEnvironmentId)
+    : undefined;
+  const setupLine = otherAssistant
+    ? separateAssistantLine(
+        otherAssistant.title,
+        machineLabels.get(otherAssistant.environmentId) ?? null,
+      )
+    : tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE);
   const automatedWaiting = automatedProjects.reduce(
     (sum, group) =>
       projectShowsWaitingCount(notificationsFor(group))
@@ -965,10 +977,7 @@ export default function StudioSidebar() {
               <span className="sws-side-row-label">{tx("Overview")}</span>
             </Link>
             {offerOwnAssistant ? (
-              <Tip
-                side="right"
-                label={`${tx(PERSONAL_ASSISTANT_DESCRIPTION)} ${tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE)}`}
-              >
+              <Tip side="right" label={`${tx(PERSONAL_ASSISTANT_DESCRIPTION)} ${setupLine}`}>
                 <button
                   type="button"
                   className="sws-side-row sws-side-row-quiet"

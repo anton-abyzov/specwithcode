@@ -5,9 +5,11 @@ import { ProjectCreationAction } from "./studio/ProjectCreationAction";
 import {
   findMachineAssistant,
   machineOffersAssistant,
+  otherMachineAssistant,
   PERSONAL_ASSISTANT_PER_MACHINE_LINE,
   personalAssistantDisabledMessage,
   personalAssistantSetupStep,
+  separateAssistantLine,
   threadsVisibleWithAide,
   visibleWithAide,
 } from "../studio/personalAssistant";
@@ -2088,7 +2090,7 @@ function OpenCommandPaletteDialog(props: {
   const newProjectEnvironmentOptions = addProjectEnvironmentOptions.filter(
     (option) => option.isConnected && newProjectsRootFor(option.environmentId) !== null,
   );
-  // Each machine saves its own Aide switch and they can disagree, so Set up is
+  // Each machine saves its own assistant switch and they can disagree, so Set up is
   // gated by the target machine's own settings, not only this device's.
   const aideEnabledOnMachine = (environmentId: EnvironmentId): boolean =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
@@ -3613,6 +3615,17 @@ function OpenCommandPaletteDialog(props: {
             isConnected: option.isConnected,
             icon: <EnvironmentMachineIcon kind={option.machine} className="size-3.5" />,
           }));
+  // A new assistant is separate from another machine's: say so before it is named.
+  const otherAssistant =
+    newProjectFlow?.kind === "personal"
+      ? otherMachineAssistant(projects, newProjectFlow.environmentId)
+      : undefined;
+  const newAssistantNote = otherAssistant
+    ? separateAssistantLine(
+        otherAssistant.title,
+        environmentLabelById.get(otherAssistant.environmentId) ?? null,
+      )
+    : null;
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (newProjectFlow !== null) {
     displayedGroups = projectCreationGroups({
@@ -4187,6 +4200,7 @@ function OpenCommandPaletteDialog(props: {
           path={newProjectPathPreview}
           root={newProjectsRoot}
           machine={newProjectEnvironmentLabel}
+          note={newAssistantNote}
         />
       ) : null}
       {newProjectFlow !== null ? (

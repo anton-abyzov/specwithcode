@@ -242,7 +242,7 @@ private struct OfflineMachinesView: View {
         EmptyState(
           systemName: "wifi.slash",
           title: title,
-          message: "Aide and your projects appear when \(offline.count == 1 ? "it reconnects" : "they reconnect").",
+          message: "Your assistant and projects appear when \(offline.count == 1 ? "it reconnects" : "they reconnect").",
           actionTitle: model.connect != nil ? "SpecWithCode Connect" : offline.contains(where: \.canRetryConnection) ? "Reconnect" : nil,
           action: model.connect != nil ? { router.sheet = .globalSettings } : reconnect
         )
@@ -289,9 +289,9 @@ private struct SetUpAideView: View {
     ScrollView {
       EmptyState(
         systemName: WeaveLucide.assistantSystemName,
-        title: "Set up Aide",
-        message: "Aide is your personal assistant. It answers questions and starts work in your projects on \(machineName).",
-        actionTitle: working ? nil : "Set up Aide",
+        title: "Set up \(AideSetting.defaultName)",
+        message: "\(AideSetting.defaultName) is your personal assistant. It answers questions and starts work in your projects on \(machineName).",
+        actionTitle: working ? nil : "Set up \(AideSetting.defaultName)",
         action: working ? nil : { setUp() }
       )
       .padding(.top, WeaveSpacing.s8 * 2)
@@ -299,7 +299,7 @@ private struct SetUpAideView: View {
       if working {
         ProgressView()
           .padding(.top, WeaveSpacing.s4)
-          .accessibilityLabel("Setting up Aide")
+          .accessibilityLabel("Setting up \(AideSetting.defaultName)")
       }
     }
     .screenChrome {

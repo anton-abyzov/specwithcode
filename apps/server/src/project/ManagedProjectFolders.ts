@@ -11,7 +11,9 @@
  */
 import {
   CommandId,
+  DEFAULT_PERSONAL_ASSISTANT_NAME,
   PERSONAL_ASSISTANT_PROJECT_ICON,
+  PREVIOUS_PERSONAL_ASSISTANT_NAME,
   ProjectId,
   type ThreadId,
 } from "@specweave-studio/contracts";
@@ -100,7 +102,7 @@ export class NamedProjectCreateError extends Schema.TaggedError<NamedProjectCrea
   }
 }
 
-/** A new personal assistant while Settings keeps Aide off. */
+/** A new personal assistant while Settings keeps the assistant off. */
 export class PersonalAssistantDisabledError extends Schema.TaggedError<PersonalAssistantDisabledError>()(
   "PersonalAssistantDisabledError",
   {},
@@ -160,7 +162,7 @@ export class ManagedProjectFolders extends Context.Service<
      * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
      * README, an icon, and a first commit, then creates the project. Personal
      * projects return this machine's assistant when it has one; a new one is
-     * refused while Settings keeps Aide off, and otherwise claims a private
+     * refused while Settings keeps the assistant off, and otherwise claims a private
      * managed folder without invoking Git. With `specweave`, a new code
      * project also runs `specweave init` before the first commit, so its
      * files land in that commit; a failed init keeps the project and returns
@@ -188,6 +190,19 @@ export class ManagedProjectFolders extends Context.Service<
     >;
   }
 >()("specweave-studio/project/ManagedProjectFolders") {}
+
+/**
+ * Clients older than the Percy rename still suggest the previous default, so a
+ * personal create named exactly "Aide" gets "Percy". Remove after January 31, 2027.
+ */
+export const personalCreateName = <
+  T extends { readonly name: string; readonly kind?: string | undefined },
+>(
+  input: T,
+): T =>
+  input.kind === "personal" && input.name.trim() === PREVIOUS_PERSONAL_ASSISTANT_NAME
+    ? { ...input, name: DEFAULT_PERSONAL_ASSISTANT_NAME }
+    : input;
 
 // Only [a-z0-9] reaches a folder name, so it stays one path segment, and the
 // words are capped so a pasted blob cannot outgrow a file name.
@@ -721,7 +736,8 @@ const make = Effect.gen(function* () {
 
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
-  )(function* (input) {
+  )(function* (requested) {
+    const input = personalCreateName(requested);
     if (input.kind === "personal") {
       const existing = yield* existingAssistant;
       if (existing) return { projectId: existing.id, workspaceRoot: existing.workspaceRoot };

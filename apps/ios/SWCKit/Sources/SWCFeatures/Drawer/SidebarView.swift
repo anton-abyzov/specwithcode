@@ -360,7 +360,7 @@ struct SidebarView: View {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       Section {
-        SidebarRow(title: "Aide", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel) {
+        SidebarRow(title: aide.title, subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel) {
           ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
         } trailing: {
           ProjectStatusGlyphs(project: aide)
@@ -371,8 +371,8 @@ struct SidebarView: View {
     } else if model.allMachinesLoaded {
       Section {
         Button(action: setUpAide) {
-          SidebarRow(title: "Set up Aide", subtitle: "Your personal assistant") {
-            ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+          SidebarRow(title: "Set up \(AideSetting.defaultName)", subtitle: "Your personal assistant") {
+            ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: AideSetting.defaultName, size: 24, style: .plain)
           } trailing: {
             if settingUpAide { ProgressView().controlSize(.small) }
           }

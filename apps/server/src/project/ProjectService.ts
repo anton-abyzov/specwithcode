@@ -79,13 +79,13 @@ export function createdOrigin(input: Pick<ProjectCreateInput, "origin" | "tempor
   return input.temporarySessionId !== undefined ? { origin: "automated" } : {};
 }
 
-/** Why a new personal assistant is refused while Settings keeps Aide off. */
+/** Why a new personal assistant is refused while Settings keeps the assistant off. */
 export const PERSONAL_ASSISTANT_DISABLED_MESSAGE =
   "The personal assistant is turned off. Turn it on in Settings > General.";
 
 /**
  * Whether a new personal assistant may be created: only while Settings turns
- * Aide on. Settings that cannot be read count as off. A host without a
+ * the assistant on. Settings that cannot be read count as off. A host without a
  * settings service (a test double) is not gated. Existing assistants are
  * never affected; this only guards creation.
  */
@@ -672,7 +672,7 @@ export const make = Effect.gen(function* () {
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
       // Every create path (RPC, MCP, managed folders, older clients) ends here,
-      // so a hidden Aide cannot be brought back by creating a new one.
+      // so a hidden assistant cannot be brought back by creating a new one.
       if (input.kind === "personal" && !(yield* personalAssistantEnabled)) {
         return yield* new ProjectRequestDeniedError({
           projectId: input.projectId,

@@ -60,9 +60,20 @@ vi.mock("../../state/entities", () => ({
   useThreadShell: ({ threadId }: { threadId: string }) =>
     ({ "thread-7": { title: "Publish the launch post" }, aide: { title: "Aide" } })[threadId] ??
     null,
+  // This machine's assistant, renamed by its owner.
+  useProjects: () => [
+    {
+      id: "assistant",
+      environmentId: "m4",
+      title: "Jarvis",
+      createdAt: "2026-11-01T00:00:00.000Z",
+      workspaceSettings: { kind: "personal" },
+    },
+  ],
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({ connection: { phase: state.connected ? "connected" : "disconnected" } }),
+  usePrimaryEnvironmentId: () => "m4",
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => {
@@ -218,7 +229,8 @@ describe("BrowserExtensionCard", () => {
     expect(text()).toContain("Add to Chrome");
     // Servers that predate fromStore send no flag: no hand-loaded warning.
     expect(text()).not.toContain("Loaded by hand");
-    expect(text()).toContain("Every chat, project thread and Aide");
+    // The machine's assistant by its own name.
+    expect(text()).toContain('"Every chat, project thread and ","Jarvis"," on "');
     expect(text()).toContain("Ready · 2 Chrome profiles paired");
     expect(text()).toContain("Marketing");
     // Threads by title, never by id.

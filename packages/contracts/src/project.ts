@@ -116,7 +116,9 @@ export const PERSONAL_ASSISTANT_LABEL = "Personal assistant";
 export const PERSONAL_ASSISTANT_DESCRIPTION =
   "Your own agent with memory, routines and tools. No Git required.";
 /** The name a new assistant starts with. It is a display name the owner can change. */
-export const DEFAULT_PERSONAL_ASSISTANT_NAME = "Aide";
+export const DEFAULT_PERSONAL_ASSISTANT_NAME = "Percy";
+/** The default name before Percy. Clients older than the rename still send it. */
+export const PREVIOUS_PERSONAL_ASSISTANT_NAME = "Aide";
 /** The icon a new assistant starts with, so it stands apart from code projects. */
 export const PERSONAL_ASSISTANT_PROJECT_ICON: ProjectIconOverride = {
   kind: "lucide",

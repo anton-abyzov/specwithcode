@@ -56,11 +56,11 @@ extension SyncError: LocalizedError {
     case .noMachineConnected:
       "No computer is connected. Open SpecWithCode on one of your computers and try again."
     case .machinesNotLoaded:
-      "Aide may already be on a computer that hasn't connected yet. Reconnect your computers, then try again."
+      "Your assistant may already be on a computer that hasn't connected yet. Reconnect your computers, then try again."
     case .aideDisabled:
-      "Aide is turned off. Turn it on in SpecWithCode's settings on your computer."
+      "Your assistant is turned off. Turn it on in SpecWithCode's settings on your computer."
     case let .aideDisabledOn(label):
-      "Aide is turned off on \(label.isEmpty ? "that computer" : label). Turn it on in SpecWithCode's settings there."
+      "Your assistant is turned off on \(label.isEmpty ? "that computer" : label). Turn it on in SpecWithCode's settings there."
     case .projectNotFound:
       "This project no longer exists on that computer."
     case .nothingRunning:

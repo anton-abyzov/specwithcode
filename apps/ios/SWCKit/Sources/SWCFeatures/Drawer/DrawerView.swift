@@ -71,7 +71,7 @@ struct DrawerView: View {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       let target = ChatTarget.aide(aide.ref)
-      WeaveRow("Aide", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
+      WeaveRow(aide.title, subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
         ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
           .frame(width: 28)
           .accessibilityHidden(true)
@@ -82,8 +82,8 @@ struct DrawerView: View {
       .drawerSelection(isSelected(target))
     } else if model.allMachinesLoaded {
       // Only once every machine has answered: an offline one may hold Aide.
-      WeaveRow("Set up Aide", subtitle: "Your personal assistant", action: setUpAide) {
-        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+      WeaveRow("Set up \(AideSetting.defaultName)", subtitle: "Your personal assistant", action: setUpAide) {
+        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: AideSetting.defaultName, size: 24, style: .plain)
           .frame(width: 28)
           .accessibilityHidden(true)
       } trailing: {
@@ -99,11 +99,11 @@ struct DrawerView: View {
       .disabled(settingUpAide)
     } else if !model.machines.isEmpty, !model.isLoading, model.aide == nil {
       HStack(spacing: WeaveSpacing.s3) {
-        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: AideSetting.defaultName, size: 24, style: .plain)
           .frame(width: 28)
           .opacity(0.5)
           .accessibilityHidden(true)
-        Text("Aide appears when your machines reconnect")
+        Text("Your assistant appears when your machines reconnect")
           .weaveFont(.callout)
           .foregroundStyle(Color.weave.muted)
           .frame(maxWidth: .infinity, alignment: .leading)

@@ -481,15 +481,15 @@ public final class FixtureEngine: AppEngine {
     // offline ones included, and creates nothing while a machine is offline:
     // that machine may already hold Aide.
     guard let machine = model.machines.min(by: { $0.id < $1.id }) else {
-      throw FixtureFailure("Connect a machine before setting up Aide.")
+      throw FixtureFailure("Connect a machine before setting up your assistant.")
     }
     guard model.machines.allSatisfy({ $0.status.isOnline }) else {
-      throw FixtureFailure("Aide may already be on a machine that's offline. Reconnect your machines, then try again.")
+      throw FixtureFailure("Your assistant may already be on a machine that's offline. Reconnect your machines, then try again.")
     }
     await pause(latency)
     let ref = ProjectRef(environmentId: machine.id, projectId: "aide")
-    model.aide = ProjectSummary(ref: ref, title: "Aide", icon: .symbol(name: "concierge-bell", color: "violet"), kind: .personal, machineLabel: machine.label, machineOnline: true)
-    transcripts[.aide(ref)] = [row("a", .assistant(markdown: "Hi, I'm Aide. Ask me anything, or tell me what to start. I can open threads in any project on \(machine.label).", streaming: false))]
+    model.aide = ProjectSummary(ref: ref, title: AideSetting.defaultName, icon: .symbol(name: "concierge-bell", color: "violet"), kind: .personal, machineLabel: machine.label, machineOnline: true)
+    transcripts[.aide(ref)] = [row("a", .assistant(markdown: "Hi, I'm \(AideSetting.defaultName). Ask me anything, or tell me what to start. I can open threads in any project on \(machine.label).", streaming: false))]
     recompute()
     return ref
   }
@@ -971,7 +971,7 @@ private enum FixtureSample {
 
   static let aide = ProjectSummary(
     ref: ProjectRef(environmentId: studio, projectId: "aide"),
-    title: "Aide",
+    title: "Percy",
     icon: .symbol(name: "concierge-bell", color: "violet"),
     kind: .personal,
     machineLabel: "Office Mac",
@@ -1040,7 +1040,7 @@ private enum FixtureSample {
       thread("t-search-index", docs, "Docs site", "Travel laptop", "Rebuild the search index", .idle, "Index rebuilt; 1,284 pages", updated: 2880),
       thread("t-links", docs, "Docs site", "Travel laptop", "Fix broken links after the move", .idle, "12 links fixed; 3 need a decision", updated: 5760),
       // Aide's own thread: a long research prompt and a reply with a table.
-      thread("t-aide-research", aide.ref, "Aide", "Office Mac", "Rail pass research", .idle, "Compared five rail passes", updated: 15),
+      thread("t-aide-research", aide.ref, aide.title, "Office Mac", "Rail pass research", .idle, "Compared five rail passes", updated: 15),
     ]
   }
 

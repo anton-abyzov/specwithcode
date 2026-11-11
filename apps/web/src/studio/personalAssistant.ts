@@ -18,6 +18,45 @@ export const PERSONAL_ASSISTANT_PER_MACHINE_LINE =
   "Each machine has its own private assistant. Nothing transfers between them.";
 
 /**
+ * Another machine's assistant, when this machine has none yet: the first one
+ * listed whose machine is not `ownEnvironmentId`. Setup names it so the person
+ * knows a new one here is separate and nothing carries over.
+ */
+export function otherMachineAssistant<T extends AssistantCandidate>(
+  projects: readonly T[],
+  ownEnvironmentId: string | null | undefined,
+): T | undefined {
+  if (ownEnvironmentId == null || findMachineAssistant(projects, ownEnvironmentId))
+    return undefined;
+  const machines = [
+    ...new Set(
+      projects
+        .filter((project) => project.workspaceSettings?.kind === "personal")
+        .flatMap((project) =>
+          project.environmentId && project.environmentId !== ownEnvironmentId
+            ? [project.environmentId]
+            : [],
+        ),
+    ),
+  ];
+  for (const machine of machines) {
+    const assistant = findMachineAssistant(projects, machine);
+    if (assistant) return assistant;
+  }
+  return undefined;
+}
+
+/** "Percy on Anna's MacBook stays there. This creates a separate Percy for this machine." */
+export function separateAssistantLine(
+  title: string,
+  machineLabel: string | null | undefined,
+): string {
+  const name = title.trim() || "Your assistant";
+  const where = machineLabel?.trim() || "another machine";
+  return `${name} on ${where} stays there. This creates a separate ${name} for this machine.`;
+}
+
+/**
  * One machine's personal assistant. Each machine has its own, private to it:
  * another machine's assistant is never opened, reused or merged in its place.
  * A duplicate from before that rule keeps its history; the earliest one is
@@ -73,7 +112,7 @@ export type PersonalAssistantSetupStep<T> =
 /**
  * What Set up does: on this window's own machine, or without one the machine
  * in context (or the only connected one), open its assistant or make it one.
- * Looking at another machine's project never turns Aide into that machine's.
+ * Looking at another machine's project never turns the assistant into that machine's.
  * Otherwise the user picks the machine; nothing crosses between them.
  */
 export function personalAssistantSetupStep<T extends AssistantCandidate>(input: {
@@ -97,7 +136,7 @@ export function personalAssistantSetupStep<T extends AssistantCandidate>(input: 
   return assistant ? { kind: "open", assistant } : { kind: "create", environmentId: target };
 }
 
-/** "Aide · Anna's MacBook" once more than one machine is connected; the plain name otherwise. */
+/** "Percy · Anna's MacBook" once more than one machine is connected; the plain name otherwise. */
 export function assistantDisplayTitle(
   title: string,
   machineLabel: string | null | undefined,
@@ -122,7 +161,7 @@ export function visibleWithAide<T extends Parameters<typeof isPersonalAssistantP
 /**
  * `visibleWithAide` for a picker that has a saved choice: a hidden personal
  * project stays listed while it is the one saved or selected (`keepIds`), so
- * hiding Aide never silently changes or blanks what a setting points at.
+ * hiding the assistant never silently changes or blanks what a setting points at.
  */
 export function visibleWithAideKeeping<
   T extends Parameters<typeof isPersonalAssistantProject>[0] & { readonly id: string },
@@ -162,7 +201,7 @@ export function threadsVisibleWithAide<
 /**
  * Whether Set up may make an assistant on this machine. The switch is saved on
  * each machine, and a change reaches only the machines connected at the time,
- * so machines can disagree: only one whose own settings turn Aide on (or that
+ * so machines can disagree: only one whose own settings turn the assistant on (or that
  * already has its assistant, which is then opened) is offered.
  */
 export function machineOffersAssistant<T extends AssistantCandidate>(input: {
@@ -176,14 +215,14 @@ export function machineOffersAssistant<T extends AssistantCandidate>(input: {
   );
 }
 
-/** Why Set up was refused, naming the machine that keeps Aide off. */
+/** Why Set up was refused, naming the machine that keeps the assistant off. */
 export function personalAssistantDisabledMessage(machineLabel: string | null | undefined): string {
   return machineLabel
     ? `The personal assistant is turned off on ${machineLabel}. Turn it on in Settings > General while ${machineLabel} is connected.`
     : "The personal assistant is turned off on this machine. Turn it on in Settings > General.";
 }
 
-/** Whether a failed create is the server refusing a personal assistant because Aide is off there. */
+/** Whether a failed create is the server refusing a personal assistant because it is off there. */
 export function isPersonalAssistantDisabledError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const reason = (error as { readonly reason?: unknown }).reason;

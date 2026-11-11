@@ -139,7 +139,8 @@ extension LiveEngine {
     let nicknames = fleetNicknames
     let targetId = try AideSetting.target(enabled.map { aideMachine($0, nicknames: nicknames) }, readOnlyReason: Self.readOnlyReason)
     guard let entry = machines[targetId] else { throw SyncError.unknownMachine }
-    let input = CreateNewProjectInput(name: "Aide", kind: .personal)
+    // Never empty: older servers reject an empty name.
+    let input = CreateNewProjectInput(name: AideSetting.defaultName, kind: .personal)
     let result = try await withRetry(entry.environmentId) { socket in
       try await Self.decode(CreateNewProjectResult.self, from: socket.call(tag: RpcMethod.createNewProject.rawValue, payload: JSONValue.from(input)))
     }

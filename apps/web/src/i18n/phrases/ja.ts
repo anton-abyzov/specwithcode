@@ -543,8 +543,8 @@ export const ja: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "差分パネルで空白だけの変更を既定で無視するかを設定します。",
   "Shared Codex config, sessions, and state.": "共有の Codex 設定、セッション、状態です。",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "このマシン専用のアシスタント Aide をサイドバーとコマンドパレットに表示します。「オフ」にするとチャットを削除せずに非表示にします。",
+  "Show {name}, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "このマシン専用のアシスタント {name} をサイドバーとコマンドパレットに表示します。「オフ」にするとチャットを削除せずに非表示にします。",
   "Show a gentle cue on the captured window.":
     "キャプチャしたウィンドウに控えめな合図を表示します。",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
@@ -1107,8 +1107,8 @@ export const ja: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "現在 {b} にいます。ここでは別のコンピューター {b2} の Chrome を設定します。そのペアリングコードはこの Chrome では使えません。",
   "Set up Chrome on {thisComputer}": "{thisComputer} の Chrome を設定",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "{machine} のすべてのチャット、プロジェクトのスレッド、Aide は、どのプロバイダーでも、ペアリング済みの Chrome プロファイルを同時に使います。それぞれ青い SpecWithCode のタブグループ内の自分のタブで作業します。ここで許可すれば、接続済みの他のマシンのスレッドも使えます。",
+  "Every chat, project thread and {assistant} on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "{machine} のすべてのチャット、プロジェクトのスレッド、{assistant} は、どのプロバイダーでも、ペアリング済みの Chrome プロファイルを同時に使います。それぞれ青い SpecWithCode のタブグループ内の自分のタブで作業します。ここで許可すれば、接続済みの他のマシンのスレッドも使えます。",
   "Test connection": "接続をテスト",
   Reconnect: "再接続",
   "This device can view {machine}'s Chrome but not pair or test it.":

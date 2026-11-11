@@ -23,7 +23,7 @@ describe("project execution machine defaults", () => {
 });
 describe("new project names", () => {
   it("gives an unnamed assistant its default name and keeps a typed one", () => {
-    expect(resolveNewProjectName("personal", "   ")).toBe("Aide");
+    expect(resolveNewProjectName("personal", "   ")).toBe("Percy");
     expect(resolveNewProjectName("personal", " Margo ")).toBe("Margo");
   });
   it("never invents a name for a code project", () => {

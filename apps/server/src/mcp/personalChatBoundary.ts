@@ -4,9 +4,9 @@ import * as Option from "effect/Option";
 import * as ProjectService from "../project/ProjectService.ts";
 
 export const PERSONAL_CHAT_PUSH_REFUSAL =
-  "Project chats cannot send messages into the personal assistant. Keep the result in its project; when the user asks Aide for a report, Aide can read it there.";
+  "Project chats cannot send messages into the personal assistant. Keep the result in its project; when the user asks the personal assistant for a report, it can read it there.";
 export const PERSONAL_CHAT_ROUTE_REFUSAL =
-  "Use studio_project_route for work the user explicitly asks Aide to send to a project. For requested status, feedback or reports, read the project without posting into its chat.";
+  "Use studio_project_route for work the user explicitly asks the personal assistant to send to a project. For requested status, feedback or reports, read the project without posting into its chat.";
 
 /** Only generic agent sends use this guard. Explicit user routing has its own provenance checks. */
 export const assertPersonalChatBoundary = Effect.fn("mcp.assertPersonalChatBoundary")(function* (

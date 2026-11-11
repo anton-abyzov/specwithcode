@@ -345,21 +345,21 @@ class FixtureEngine(
         model.aide?.let { return it.ref }
         // Every client puts Aide on the machine with the lowest environment id, offline ones
         // included, and creates nothing while a machine is offline: that machine may hold Aide.
-        val machine = model.machines.minByOrNull { it.id } ?: throw FixtureFailure("Connect a machine before setting up Aide.")
+        val machine = model.machines.minByOrNull { it.id } ?: throw FixtureFailure("Connect a machine before setting up your assistant.")
         if (!model.machines.all { it.status.isOnline }) {
-            throw FixtureFailure("Aide may already be on a machine that's offline. Reconnect your machines, then try again.")
+            throw FixtureFailure("Your assistant may already be on a machine that's offline. Reconnect your machines, then try again.")
         }
         pause(latencyMs)
         val ref = ProjectRef(machine.id, "aide")
         model.update {
             it.copy(
                 aide = ProjectSummary(
-                    ref, "Aide", ProjectIcon.Symbol("concierge-bell", "violet"), ProjectKind.Personal, machine.label, machineOnline = true,
+                    ref, "Percy", ProjectIcon.Symbol("concierge-bell", "violet"), ProjectKind.Personal, machine.label, machineOnline = true,
                 ),
             )
         }
         transcripts[ChatTarget.Aide(ref)] = mutableListOf(
-            row("a", Kind.Assistant("Hi, I'm Aide. Ask me anything, or tell me what to start. I can open threads in any project on ${machine.label}.", streaming = false)),
+            row("a", Kind.Assistant("Hi, I'm Percy. Ask me anything, or tell me what to start. I can open threads in any project on ${machine.label}.", streaming = false)),
         )
         recompute()
         return ref

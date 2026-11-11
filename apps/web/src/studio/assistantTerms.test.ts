@@ -1,19 +1,32 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
-import { paneWords, withPinnedTopics } from "./assistantTerms";
+import { assistantComposerPlaceholder, paneWords, withPinnedTopics } from "./assistantTerms";
 
 const thread = (id: string, pinnedAt: string | null) =>
   ({ id, pinnedAt }) as unknown as EnvironmentThreadShell;
 
 describe("paneWords", () => {
   it("says topic in the assistant", () => {
-    const say = paneWords(true);
+    const say = paneWords(true, "Percy");
     expect(say("Threads")).toBe("Topics");
     expect(say("Find a thread (/)")).toBe("Find a topic (/)");
     expect(say("No threads yet. Ask the coordinator to start one.")).toBe(
-      "No topics yet. Ask Aide to start one.",
+      "No topics yet. Ask Percy to start one.",
     );
     expect(say("1 thread is waiting on you")).toBe("1 topic is waiting on you");
+  });
+
+  it("calls the assistant by its own name, as typed", () => {
+    expect(paneWords(true, "Thread Keeper")("Ask the coordinator for a thread")).toBe(
+      "Ask Thread Keeper for a topic",
+    );
+    expect(paneWords(true, " ")("Ask the coordinator")).toBe("Ask your assistant");
+    expect(paneWords(true)("Ask the coordinator")).toBe("Ask your assistant");
+  });
+
+  it("names the assistant in the composer placeholder", () => {
+    expect(assistantComposerPlaceholder("Jarvis")).toBe("Ask Jarvis anything");
+    expect(assistantComposerPlaceholder(undefined)).toBe("Ask your assistant anything");
   });
 
   it("leaves a project's words alone", () => {

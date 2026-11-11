@@ -144,12 +144,15 @@ export function ProjectCreationPreview({
   path,
   root,
   machine,
+  note,
 }: {
   kind: NewProjectKind;
   name: string;
   path: string | null;
   root: string | null;
   machine: string | null;
+  /** Shown before naming, such as that another machine's assistant stays there. */
+  note?: string | null | undefined;
 }) {
   return (
     <div className="p-2 pb-0">
@@ -175,6 +178,11 @@ export function ProjectCreationPreview({
                   : "A code project in the location chosen below"}
             {machine === null ? "" : ` on ${machine}`}
           </span>
+          {note ? (
+            <span role="note" className="break-words text-xs text-muted-foreground">
+              {note}
+            </span>
+          ) : null}
           {kind === "code" && newProjectNameNotice(name) ? (
             <span role="note" className="break-words text-xs text-warning-foreground">
               {newProjectNameNotice(name)}

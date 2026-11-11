@@ -77,7 +77,7 @@ struct CommandEncodeTests {
         workspaceSettings: WorkspacePatch(expectedRevision: 3, goal: "Ship", instructions: "Small PRs", coordinatorModelSelection: .null, paused: true, archived: false)))),
       ("projectUpdate.icon", try encodeToJSON(ProjectUpdateCommand(commandId: "c62", projectId: "proj_1", projectIcon: .value(.emoji("\u{1F9EA}"))))),
       ("projectUpdate.clearIcon", try encodeToJSON(ProjectUpdateCommand(commandId: "c63", projectId: "proj_1", projectIcon: .null))),
-      ("createNew", try encodeToJSON(CreateNewProjectInput(name: "Aide", kind: .personal))),
+      ("createNew", try encodeToJSON(CreateNewProjectInput(name: "Percy", kind: .personal))),
       ("updateSettings.mode", try encodeToJSON(UpdateServerSettingsInput(patch: ServerSettingsPatch(defaultRuntimeMode: .auto, defaultModelSelection: .value(model))))),
       ("updateSettings.clearModel", try encodeToJSON(UpdateServerSettingsInput(patch: ServerSettingsPatch(defaultModelSelection: .null)))),
       ("subscribeShell.resume", try encodeToJSON(SubscribeShellInput(afterSequence: 42))),

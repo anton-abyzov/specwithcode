@@ -5,6 +5,10 @@ import Foundation
 /// only to the machines connected at the time. Pure, so it is tested without
 /// sockets.
 public enum AideSetting {
+  /// The name a new personal assistant gets. The person can rename it; copy
+  /// shows the assistant's own title wherever one is known.
+  public static let defaultName = "Percy"
+
   /// What one paired machine says about Aide.
   public struct Machine: Sendable, Hashable {
     public var environmentId: String

@@ -335,7 +335,7 @@ import SWCWire
     let aide = try await h.engine.setupAide()
     #expect(aide == ProjectRef(environmentId: env, projectId: "aide_1"))
     let create = try #require(h.machine.payloads("projects.createNew").first)
-    #expect(create["name"] == .string("Aide"))
+    #expect(create["name"] == .string("Percy"))
     #expect(create["kind"] == .string("personal"))
   }
 

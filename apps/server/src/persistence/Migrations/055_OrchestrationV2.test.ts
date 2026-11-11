@@ -46,6 +46,7 @@ layer("055_OrchestrationV2", (it) => {
         [72, "RetentionHorizon"],
         [73, "TeamRulesRecords"],
         [74, "ShellReadIndexes"],
+        [75, "PercyRenamePending"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -86,6 +87,7 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 72, name: "RetentionHorizon" },
         { migration_id: 73, name: "TeamRulesRecords" },
         { migration_id: 74, name: "ShellReadIndexes" },
+        { migration_id: 75, name: "PercyRenamePending" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

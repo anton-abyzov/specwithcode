@@ -46,8 +46,8 @@ Limit 4000. Count: 1977.
 ```text
 SpecWithCode for iPhone is a companion to SpecWithCode on your computers. Pair your phone once, then follow and steer your work from wherever you are.
 
-Talk to Aide
-Aide is your personal assistant in SpecWithCode. Ask what needs you today, get a summary across all your machines, or ask it to remind you about something later.
+Talk to your assistant
+Your personal assistant in SpecWithCode is called Percy by default, and you can rename it. Ask what needs you today, get a summary across all your machines, or ask it to remind you about something later.
 
 Chat with each project's coordinator
 Every project opens as a chat with its coordinator. Ask for status, hand over a new task or change direction without opening a laptop.
@@ -143,7 +143,7 @@ No account or sign-in is needed. SpecWithCode for iPhone is a remote control for
 To review without a computer, use the built-in sample data:
 1. Launch the app. The welcome screen opens.
 2. Tap "Explore with sample data" at the bottom of the screen. A "Sample data" bar stays at the top; tap Exit there to leave.
-3. Aide, the personal assistant, opens as a chat. Tap the menu button (top left) for the drawer with projects, recent threads and settings (gear, bottom left).
+3. Percy, the personal assistant, opens as a chat. Tap the menu button (top left) for the drawer with projects, recent threads and settings (gear, bottom left).
 4. Tap SpecWeave to open its coordinator chat, then the Threads button (top right) to see threads grouped as Needs you, Working and Idle.
 5. Open "Release 3.1 checklist" to see an approval card with Approve, For session and Deny. The ... menu has Pin, Resolve, Mark unread and Archive.
 6. Tap the project title at the top of a project chat for project settings. Tap the gear in the drawer for global settings and the list of machines.
@@ -164,7 +164,7 @@ This is the first TestFlight build of SpecWithCode for iPhone.
 
 Please try:
 - Pairing: on your computer, open SpecWithCode, go to Settings > Machines and choose Pair a phone, then scan the QR code or paste the link.
-- Aide: ask what needs you and check that the answer arrives.
+- Percy (the personal assistant): ask what needs you and check that the answer arrives.
 - A project: open it from the drawer, send its coordinator a message, then open Threads.
 - A thread: send a message while it runs (it queues), stop a run, answer an approval, then pin, resolve and reopen it.
 - Settings: change a project's goal or instructions, pause and resume its coordinator, and change the default machine, approval mode and appearance.
@@ -181,8 +181,8 @@ To send feedback, take a screenshot in the app and tap Share Beta Feedback.
 
 6.9-inch display (1320 x 2868), six per appearance, made from fixture data on an iPhone 17 Pro Max simulator with a 9:41 status bar. Upload one set; the light set is the default.
 
-1. `01-aide-chat`: Aide's morning summary across machines
-2. `02-drawer-projects`: drawer with Aide, projects and recent threads
+1. `01-aide-chat`: Percy's morning summary across machines
+2. `02-drawer-projects`: drawer with Percy, projects and recent threads
 3. `03-thread-approval`: a thread with an approval card
 4. `04-threads-overview`: a project's threads grouped as Needs you, Working and Idle
 5. `05-project-settings`: project name, goal, instructions and pause

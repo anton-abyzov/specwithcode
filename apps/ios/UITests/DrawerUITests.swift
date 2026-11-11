@@ -27,7 +27,7 @@ final class DrawerUITests: SWCUITestCase {
     openDrawer()
     attachScreenshot("Drawer")
 
-    for title in ["Aide", "SpecWeave", "Verified Skill", "Recipe app", "Docs site"] {
+    for title in ["Percy", "SpecWeave", "Verified Skill", "Recipe app", "Docs site"] {
       XCTAssertTrue(hittableButton(titled(title)).exists, "Drawer is missing \(title)")
     }
     waitFor(app.staticTexts["Projects"])
@@ -47,15 +47,15 @@ final class DrawerUITests: SWCUITestCase {
     launch(aide: false)
     waitForHome()
     openDrawer(firstRow: "SpecWeave")
-    XCTAssertFalse(app.buttons.matching(titled("Aide")).firstMatch.exists, "Aide shows while its switch is off")
-    XCTAssertFalse(app.buttons.matching(titled("Set up Aide")).firstMatch.exists, "Set up Aide shows while its switch is off")
+    XCTAssertFalse(app.buttons.matching(titled("Percy")).firstMatch.exists, "Percy shows while its switch is off")
+    XCTAssertFalse(app.buttons.matching(titled("Set up Percy")).firstMatch.exists, "Set up Percy shows while its switch is off")
     attachScreenshot("Drawer without Aide")
   }
 
   func testTappingAProjectOpensItsCoordinatorChat() throws {
     launch()
     waitForHome()
-    XCTAssertTrue(button(startingWith: "Aide, Coordinator").exists, "Home should be the Aide chat")
+    XCTAssertTrue(button(startingWith: "Percy, Coordinator").exists, "Home should be the Percy chat")
 
     openDrawer()
     hittableButton(titled("Recipe app")).tap()
@@ -101,6 +101,6 @@ final class DrawerUITests: SWCUITestCase {
     }
     waitForGone(close, "Close menu should close the drawer")
     waitForHittable(button("Menu"))
-    XCTAssertTrue(button(startingWith: "Aide, Coordinator").isHittable, "The chat should be usable again")
+    XCTAssertTrue(button(startingWith: "Percy, Coordinator").isHittable, "The chat should be usable again")
   }
 }

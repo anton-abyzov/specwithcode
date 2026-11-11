@@ -440,7 +440,7 @@ object ShellSummaries {
         val title = project.displayTitle.trim()
         return ProjectSummary(
             ref = ProjectRef(environmentId, project.id),
-            title = title.ifEmpty { if (personal) "Aide" else "Project" },
+            title = title.ifEmpty { if (personal) "Percy" else "Project" },
             icon = icon(project.projectIcon ?: if (personal) ProjectIconOverride.PersonalAssistant else null),
             kind = if (personal) ProjectKind.Personal else ProjectKind.Code,
             machineLabel = machineLabel,

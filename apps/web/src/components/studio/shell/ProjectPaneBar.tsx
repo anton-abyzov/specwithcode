@@ -52,11 +52,13 @@ export interface ProjectPaneBarProps {
   onClose: () => void;
   /** The personal assistant says topics where a project says threads. */
   personal?: boolean;
+  /** The assistant's title, where the pane names it instead of "the coordinator". */
+  assistantName?: string | undefined;
 }
 
 export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tools?: ReactNode }) {
   const tabRefs = useRef(new Map<ProjectPaneTab, HTMLButtonElement>());
-  const say = paneWords(props.personal);
+  const say = paneWords(props.personal, props.assistantName);
   // Arrow keys move between tabs, as a tablist does; Tab leaves the list.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;

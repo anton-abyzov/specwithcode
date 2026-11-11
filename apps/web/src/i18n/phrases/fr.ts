@@ -548,8 +548,8 @@ export const fr: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "Choisissez si le panneau de diff ignore par défaut les modifications d’espaces uniquement.",
   "Shared Codex config, sessions, and state.": "Configuration, sessions et état partagés de Codex.",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Afficher Aide, un assistant privé pour cette machine, dans la barre latérale et la palette de commandes. Désactivé le masque sans supprimer ses discussions.",
+  "Show {name}, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Afficher {name}, un assistant privé pour cette machine, dans la barre latérale et la palette de commandes. Désactivé le masque sans supprimer ses discussions.",
   "Show a gentle cue on the captured window.": "Afficher un léger signal sur la fenêtre capturée.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "Afficher une notification quand un autre fil se termine, échoue ou attend une saisie ou une approbation pendant que cette app est au premier plan.",
@@ -1112,8 +1112,8 @@ export const fr: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Vous êtes sur {b}. Ceci configure Chrome sur {b2}, un autre ordinateur ; son code d'association ne fonctionne pas dans le Chrome d'ici.",
   "Set up Chrome on {thisComputer}": "Configurer Chrome sur {thisComputer}",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "Chaque discussion, fil de projet et Aide sur {machine}, avec n'importe quel fournisseur, utilise en même temps le profil Chrome associé. Chacun travaille dans ses propres onglets, dans le groupe d'onglets bleu SpecWithCode. Les fils de vos autres machines connectées peuvent aussi l'utiliser, une fois cette machine autorisée ici.",
+  "Every chat, project thread and {assistant} on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "Chaque discussion, fil de projet et {assistant} sur {machine}, avec n'importe quel fournisseur, utilise en même temps le profil Chrome associé. Chacun travaille dans ses propres onglets, dans le groupe d'onglets bleu SpecWithCode. Les fils de vos autres machines connectées peuvent aussi l'utiliser, une fois cette machine autorisée ici.",
   "Test connection": "Tester la connexion",
   Reconnect: "Reconnecter",
   "This device can view {machine}'s Chrome but not pair or test it.":

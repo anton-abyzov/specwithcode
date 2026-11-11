@@ -38,6 +38,7 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { useMachineAssistantName } from "../../studio/useMachineAssistantName";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -110,6 +111,7 @@ export function BrowserExtensionCard({
   onSwitchToThisComputer?: (() => void) | undefined;
 }) {
   const tx = useTx();
+  const assistantName = useMachineAssistantName(environmentId);
   const otherComputer = thisComputer !== null;
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
@@ -392,9 +394,9 @@ export function BrowserExtensionCard({
             <p className="text-sm text-muted-foreground">
               {renderRich(
                 tx(
-                  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.",
+                  "Every chat, project thread and {assistant} on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.",
                 ),
-                { machine: machine },
+                { machine: machine, assistant: assistantName },
               )}
             </p>
           </div>

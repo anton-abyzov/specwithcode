@@ -408,9 +408,14 @@ private struct ChatScreen: View {
     }
   }
 
+  /// The assistant's own title; the person may have renamed it.
+  private var assistantName: String {
+    session.title.isEmpty ? "your assistant" : session.title
+  }
+
   private var emptyMessage: String {
     switch target {
-    case .aide: "Ask a question or tell Aide what to start on your machines."
+    case .aide: "Ask a question or tell \(assistantName) what to start on your machines."
     case .project: "Tell the coordinator what to work on. It plans the work and starts threads."
     case .thread: "Messages you send here go to this thread on \(session.machineLabel)."
     }
@@ -938,7 +943,7 @@ private struct ChatScreen: View {
 
   private var placeholder: String {
     switch target {
-    case .aide: "Ask Aide anything…"
+    case .aide: "Ask \(assistantName) anything…"
     case let .project(project):
       // With a thread from another machine beside it, say whose coordinator this is.
       if isBesideCoordinator, OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1, !session.machineLabel.isEmpty {

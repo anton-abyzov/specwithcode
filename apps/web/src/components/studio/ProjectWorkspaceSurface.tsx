@@ -889,13 +889,13 @@ export function ProjectWorkspaceSurface({
     setError(null);
     setNotice(
       project.workspaceSettings?.kind === "personal"
-        ? "Ask Aide for a new topic. It starts the topic and links it here."
+        ? `Ask ${logicalProjectTitle(project)} for a new topic. It starts the topic and links it here.`
         : "Ask the coordinator for a new thread. It starts the thread and links it here.",
     );
     requestAnimationFrame(() => {
       focusCoordinatorPrompt();
     });
-  }, [phone, setOverviewOpen, setSelected]);
+  }, [phone, project, setOverviewOpen, setSelected]);
   // The header's Designs button and `?pane=designs` land on the panel's Designs tab.
   const showPaneTab = useCallback(
     (tab: ProjectPaneTab) => {
@@ -1283,6 +1283,7 @@ export function ProjectWorkspaceSurface({
     workers.length > 0,
     starters.suggestions,
     snapshot?.settings.kind === "personal",
+    projectTitle,
   );
   // Stop and continue every worker at once, from the Threads pane or the composer's `/` commands.
   const bulk = useBulkThreadControl();
@@ -1518,6 +1519,7 @@ export function ProjectWorkspaceSurface({
   );
   const paneBar: ProjectPaneBarProps = {
     personal: snapshot?.settings.kind === "personal",
+    assistantName: projectTitle,
     tab: paneTab,
     onTabChange: setPaneTab,
     counts: {
@@ -2036,6 +2038,7 @@ export function ProjectWorkspaceSurface({
                   }
                   header={{
                     personal: snapshot?.settings.kind === "personal",
+                    assistantName: projectTitle,
                     thread: selectedThread,
                     subagents,
                     onPeekSubagent: (subagentId) => peekSubagent(selectedThread.id, subagentId),
@@ -2183,6 +2186,7 @@ export function ProjectWorkspaceSurface({
                       <ProjectThreadAvailability
                         scopes={executionScopes}
                         personal={snapshot?.settings.kind === "personal"}
+                        assistantName={projectTitle}
                       />
                       {remoteWorkerCount > 0 ? (
                         <RemoteWorkerCards

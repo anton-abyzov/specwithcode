@@ -770,7 +770,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "aide-enabled",
     title: "Personal assistant",
     to: "/settings/general",
-    searchTerms: ["aide assistant private routines briefing show hide"],
+    searchTerms: ["percy aide assistant private routines briefing show hide"],
   },
   {
     id: "legacy-plan-mode",

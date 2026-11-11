@@ -147,20 +147,20 @@ final class LiveServerTests: XCTestCase {
       XCTAssertTrue(goalField.waitForNonExistence(timeout: 5))
     }
 
-    step("Set up Aide") {
+    step("Set up Percy") {
       openDrawer()
-      let setUp = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Set up Aide")).firstMatch
+      let setUp = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Set up Percy")).firstMatch
       if setUp.waitForExistence(timeout: 5) {
         setUp.tap()
-        let aide = coordinatorCapsule("Aide")
-        XCTAssertTrue(aide.waitForExistence(timeout: 30), "Aide chat did not open: \(errorText())")
+        let aide = coordinatorCapsule("Percy")
+        XCTAssertTrue(aide.waitForExistence(timeout: 30), "Percy chat did not open: \(errorText())")
         sleep(2)
         capture("aide-chat")
         openDrawer()
-        XCTAssertTrue(drawerRow("Aide").waitForExistence(timeout: 10))
+        XCTAssertTrue(drawerRow("Percy").waitForExistence(timeout: 10))
         capture("drawer-with-aide")
       } else {
-        XCTContext.runActivity(named: "LIVE Set up Aide not offered") { _ in }
+        XCTContext.runActivity(named: "LIVE Set up Percy not offered") { _ in }
       }
     }
 

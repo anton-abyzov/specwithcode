@@ -548,8 +548,8 @@ export const pt: PhraseCatalog = {
     "Defina se o painel de diff ignora por padrão edições só de espaços.",
   "Shared Codex config, sessions, and state.":
     "Configuração, sessões e estado compartilhados do Codex.",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Mostrar o Aide, um assistente privado desta máquina, na barra lateral e na paleta de comandos. Desligado o esconde sem excluir os chats dele.",
+  "Show {name}, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Mostrar {name}, um assistente privado desta máquina, na barra lateral e na paleta de comandos. Desligado o esconde sem excluir os chats dele.",
   "Show a gentle cue on the captured window.": "Mostrar um sinal discreto na janela capturada.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "Mostrar um aviso quando outra thread terminar, falhar ou precisar de resposta ou aprovação enquanto este app estiver em foco.",
@@ -1112,8 +1112,8 @@ export const pt: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Você está em {b}. Isto configura o Chrome em {b2}, outro computador; o código de pareamento dele não funciona no Chrome daqui.",
   "Set up Chrome on {thisComputer}": "Configurar o Chrome em {thisComputer}",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "Todo chat, thread de projeto e Aide em {machine}, com qualquer provedor, usa o perfil do Chrome pareado ao mesmo tempo. Cada um trabalha nas próprias abas, no grupo de abas azul do SpecWithCode. Threads nas suas outras máquinas conectadas também podem usá-lo, depois que você permitir essa máquina aqui.",
+  "Every chat, project thread and {assistant} on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "Todo chat, thread de projeto e {assistant} em {machine}, com qualquer provedor, usa o perfil do Chrome pareado ao mesmo tempo. Cada um trabalha nas próprias abas, no grupo de abas azul do SpecWithCode. Threads nas suas outras máquinas conectadas também podem usá-lo, depois que você permitir essa máquina aqui.",
   "Test connection": "Testar conexão",
   Reconnect: "Reconectar",
   "This device can view {machine}'s Chrome but not pair or test it.":

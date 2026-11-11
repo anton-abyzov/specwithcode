@@ -146,12 +146,15 @@ const RAW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
 export function ProjectThreadAvailability({
   scopes,
   personal,
+  assistantName,
 }: {
   scopes: readonly ProjectExecutionScope[];
   /** The personal assistant says topics where a project says threads. */
   personal?: boolean;
+  /** The assistant's title, where the notice names it instead of "the coordinator". */
+  assistantName?: string | undefined;
 }) {
-  const say = paneWords(personal);
+  const say = paneWords(personal, assistantName);
   const { environments } = useNamedEnvironments();
   const nickname = useMachineNicknames();
   const stillChecking = useMachineStillChecking();

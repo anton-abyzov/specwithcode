@@ -5,23 +5,45 @@
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import type { ThreadPaneGroup } from "./shellModel";
 
-export const ASSISTANT_COMPOSER_PLACEHOLDER = "Ask Aide anything";
+/** What the assistant is called where its own title is not at hand. */
+export const ASSISTANT_FALLBACK_NAME = "your assistant";
+
+/** The assistant's title, or "your assistant" when it has none here. */
+export function assistantNameOr(name: string | null | undefined): string {
+  const trimmed = name?.trim();
+  return trimmed ? trimmed : ASSISTANT_FALLBACK_NAME;
+}
+
+/** The composer placeholder in the assistant, with its own name. */
+export function assistantComposerPlaceholder(name: string | null | undefined): string {
+  return `Ask ${assistantNameOr(name)} anything`;
+}
 
 const REPLACEMENTS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\bthe coordinator\b/g, "Aide"],
   [/\bThreads\b/g, "Topics"],
   [/\bthreads\b/g, "topics"],
   [/\bThread\b/g, "Topic"],
   [/\bthread\b/g, "topic"],
 ];
 
-function inAssistantWords(text: string): string {
-  return REPLACEMENTS.reduce((result, [from, to]) => result.replace(from, to), text);
+function inAssistantWords(text: string, name: string): string {
+  // The name goes in after the thread words, so a title like "Thread" stays as typed.
+  return text
+    .split(/\bthe coordinator\b/g)
+    .map((part) => REPLACEMENTS.reduce((piece, [from, to]) => piece.replace(from, to), part))
+    .join(name);
 }
 
-/** A function that rewords a label for the personal assistant, and leaves a project's alone. */
-export function paneWords(personal: boolean | undefined): (text: string) => string {
-  return personal ? inAssistantWords : (text) => text;
+/**
+ * A function that rewords a label for the personal assistant, calling it by
+ * `name` (its title), and leaves a project's alone.
+ */
+export function paneWords(
+  personal: boolean | undefined,
+  name?: string | null | undefined,
+): (text: string) => string {
+  const called = assistantNameOr(name);
+  return personal ? (text) => inAssistantWords(text, called) : (text) => text;
 }
 
 const isPinned = (thread: EnvironmentThreadShell) => thread.pinnedAt != null;

@@ -50,7 +50,7 @@ struct ColumnHeader<Actions: View, ModeTrailing: View>: View {
   private var currentTitle: String? {
     guard !router.sidebarShowsAllProjects else { return nil }
     if let scope = router.sidebarScope(in: model).flatMap({ model.project($0) }) { return scope.title }
-    if case .aide? = router.besideCoordinator(in: model) { return "Aide" }
+    if case let .aide(ref)? = router.besideCoordinator(in: model) { return model.project(ref)?.title ?? model.aide?.title ?? AideSetting.defaultName }
     return nil
   }
 

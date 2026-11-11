@@ -527,8 +527,8 @@ export const zh: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "设置差异面板是否默认忽略仅空白的修改。",
   "Shared Codex config, sessions, and state.": "共享的 Codex 配置、会话和状态。",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "在侧边栏和命令面板中显示 Aide（这台电脑的私人助手）。“关闭”会隐藏它，但不删除其聊天。",
+  "Show {name}, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "在侧边栏和命令面板中显示 {name}（这台电脑的私人助手）。“关闭”会隐藏它，但不删除其聊天。",
   "Show a gentle cue on the captured window.": "在截取的窗口上显示轻微提示。",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "当此应用处于焦点时，若其他会话完成、失败或需要输入或批准，显示一条提示。",
@@ -1071,8 +1071,8 @@ export const zh: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "你当前在 {b} 上。这里设置的是另一台电脑 {b2} 上的 Chrome；它的配对码在这里的 Chrome 中无效。",
   "Set up Chrome on {thisComputer}": "在 {thisComputer} 上设置 Chrome",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "{machine} 上的每个对话、项目会话和 Aide，无论使用哪个提供方，都同时使用已配对的 Chrome 配置文件。每个都在自己的标签页中工作，位于蓝色的 SpecWithCode 标签组内。在这里允许你的其他已连接电脑后，那些电脑上的会话也可以使用它。",
+  "Every chat, project thread and {assistant} on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "{machine} 上的每个对话、项目会话和 {assistant}，无论使用哪个提供方，都同时使用已配对的 Chrome 配置文件。每个都在自己的标签页中工作，位于蓝色的 SpecWithCode 标签组内。在这里允许你的其他已连接电脑后，那些电脑上的会话也可以使用它。",
   "Test connection": "测试连接",
   Reconnect: "重新连接",
   "This device can view {machine}'s Chrome but not pair or test it.":

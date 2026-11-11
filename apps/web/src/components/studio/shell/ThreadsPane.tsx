@@ -189,7 +189,7 @@ export function ThreadsPane({
 }) {
   const entriesByEnvironment = useProviderEntriesByEnvironment();
   const router = useRouter();
-  const say = paneWords(props.personal);
+  const say = paneWords(props.personal, bar.assistantName);
   const now = nowFromMinute(useNowMinute());
   const [sortBy, setSortBy] = useLocalStorage<ThreadSort, ThreadSort>(
     SORT_STORAGE_KEY,

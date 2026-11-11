@@ -4,7 +4,9 @@ import {
   findMachineAssistant,
   isExtraAssistant,
   machineNeedsAssistantSetup,
+  otherMachineAssistant,
   personalAssistantSetupStep,
+  separateAssistantLine,
   threadsVisibleWithAide,
   visibleWithAide,
   visibleWithAideKeeping,
@@ -126,6 +128,26 @@ describe("Set up", () => {
     expect(assistantDisplayTitle("Aide", "Anna's MacBook", 2)).toBe("Aide · Anna's MacBook");
     expect(assistantDisplayTitle("Aide", "Anna's MacBook", 1)).toBe("Aide");
     expect(assistantDisplayTitle("Aide", null, 3)).toBe("Aide");
+  });
+});
+
+describe("setting up beside another machine's assistant", () => {
+  it("names another machine's assistant only while this machine has none", () => {
+    expect(otherMachineAssistant([ownM4, studio], "ministorm")?.id).toBe("aide-m4");
+    expect(otherMachineAssistant([ownAnna, studio], "m4")?.id).toBe("aide-anna");
+    expect(otherMachineAssistant([ownM4, ownAnna], "m4")).toBeUndefined();
+    expect(otherMachineAssistant([ownM4], "m4")).toBeUndefined();
+    expect(otherMachineAssistant([studio], "ministorm")).toBeUndefined();
+    expect(otherMachineAssistant([ownM4], null)).toBeUndefined();
+  });
+
+  it("says the other one stays there and a separate one is made here", () => {
+    expect(separateAssistantLine("Percy", "M4")).toBe(
+      "Percy on M4 stays there. This creates a separate Percy for this machine.",
+    );
+    expect(separateAssistantLine("Jarvis", null)).toBe(
+      "Jarvis on another machine stays there. This creates a separate Jarvis for this machine.",
+    );
   });
 });
 

@@ -115,7 +115,7 @@
     "sequence": 53,
     "project": {
       "id": "proj_aide",
-      "title": "Aide",
+      "title": "Percy",
       "workspaceRoot": "/Users/x/projects/aide",
       "repositoryIdentity": {
         "canonicalKey": "github.com/acme/web",

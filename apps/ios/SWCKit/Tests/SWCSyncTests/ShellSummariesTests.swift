@@ -861,7 +861,7 @@ import SWCWire
   @Test func targetNamesTheMachineThatRefuses() {
     let machines = [M(environmentId: "b", displayName: "Mac mini", aideEnabled: false), M(environmentId: "a", displayName: "M4", aideEnabled: false)]
     #expect(throws: SyncError.aideDisabledOn(label: "M4")) { try AideSetting.target(machines, readOnlyReason: "ro") }
-    #expect(SyncError.aideDisabledOn(label: "M4").localizedDescription == "Aide is turned off on M4. Turn it on in SpecWithCode's settings there.")
+    #expect(SyncError.aideDisabledOn(label: "M4").localizedDescription == "Your assistant is turned off on M4. Turn it on in SpecWithCode's settings there.")
     #expect(throws: SyncError.aideDisabled) { try AideSetting.target([], readOnlyReason: "ro") }
   }
 

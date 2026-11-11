@@ -10,7 +10,7 @@ Watch live progress
 See which threads need you, which are working and which are idle, grouped by project and machine. Open a thread to read its progress as it happens, including the commands it runs and how far its plan has come.
 
 Stay in control
-Send a message, stop a run, or start a new thread on the machine and project you choose. Talk to each project's coordinator, or ask Aide what needs you today. Pin, rename, resolve and archive threads.
+Send a message, stop a run, or start a new thread on the machine and project you choose. Talk to each project's coordinator, or ask your personal assistant what needs you today. Pin, rename, resolve and archive threads.
 
 Private by design
 The app has no ads and no tracking. It talks only to your own machines, directly or through Connect, and your machines pass your messages to the coding tools you set up there. Pairing credentials are sealed with the Android Keystore on this phone and are left out of backups.
