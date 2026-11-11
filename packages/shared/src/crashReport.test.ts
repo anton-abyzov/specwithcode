@@ -259,10 +259,38 @@ describe("second review hardening", () => {
     );
   });
 
-  it("keeps a WSL kernel release as the OS version", () => {
-    expect(
-      buildCrashReport({ ...base, osVersion: "5.15.133.1-microsoft-standard-WSL2" }).osVersion,
-    ).toBe("5.15.133.1-microsoft-standard-WSL2");
+  it("keeps only the numbers of an OS release, and marks WSL", () => {
+    const version = (osVersion: string) => buildCrashReport({ ...base, osVersion }).osVersion;
+    expect(version("5.15.133.1-microsoft-standard-WSL2")).toBe("5.15.133.1-wsl");
+    expect(version("6.1.0-acme-ws042")).toBe("6.1.0");
+    expect(version("25.1.0")).toBe("25.1.0");
+  });
+
+  it("redacts file names whatever follows them", () => {
+    for (const text of [
+      "error reading client-list.csv (line 3)",
+      "Taxes-Acme.pdf is not a valid PDF",
+      "Maria-Payroll.xlsx is undefined",
+      "cannot read acme-payroll.json.gz",
+      "unable to open client-list.csv.bak",
+      "cannot parse Maria-Payroll.xlsx(",
+      "notes.md is not valid",
+    ]) {
+      expect(sanitizeErrorMessage(text)).not.toMatch(/client|Taxes|Acme|Maria|Payroll|acme|notes/u);
+    }
+  });
+
+  it("redacts a header line whole, quotes included, and keeps error codes after a label", () => {
+    for (const text of [
+      'Cookie: a="b c"; csrf=xyz98765',
+      "Cookie: theme='dark'; sid=abcd1234",
+      'Authorization: Digest username="bob", realm="acme", nonce="abc", response="deadbeef"',
+    ]) {
+      expect(sanitizeErrorMessage(text)).not.toMatch(/xyz98765|abcd1234|bob|acme|deadbeef/u);
+    }
+    expect(sanitizeErrorMessage('{"cookie":"sid=abcd1234","code":"E_AUTH"}')).toContain("E_AUTH");
+    expect(sanitizeErrorMessage("failed to reach server: ECONNREFUSED")).toContain("ECONNREFUSED");
+    expect(sanitizeErrorMessage("Error from server: rate_limited")).toContain("rate_limited");
   });
 
   it("drops short tokens that hold a path, an address or an id", () => {

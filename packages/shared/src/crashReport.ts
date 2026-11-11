@@ -251,7 +251,7 @@ const SECRET_KEY_WORD =
 const FIELD_KEY_PATTERN = /(?<![A-Za-z0-9_-])["']?([A-Za-z0-9_-]{1,2000})["']?\s{0,8}[:=]\s{0,8}/gu;
 // A header value runs to the end of its line: `Bearer <token>`, `sid=a; csrf=b`.
 const HEADER_KEY_WORD = /authorization|cookie/iu;
-const LINE_REST_PATTERN = /[^\n"']{0,4000}/uy;
+const LINE_REST_PATTERN = /[^\n]{0,4000}/uy;
 const SCHEME_REST_PATTERN = /[ \t]{1,8}[^\s,;}&"']{1,4000}/uy;
 const FIELD_VALUE_PATTERN = /"[^"\n]{0,4000}"|'[^'\n]{0,4000}'|[^\s,;}&]{1,4000}/uy;
 
@@ -274,7 +274,9 @@ function redactSecretFields(text: string): string {
     const value = FIELD_VALUE_PATTERN.exec(text);
     if (value === null) continue;
     let end = FIELD_VALUE_PATTERN.lastIndex;
-    if (HEADER_KEY_WORD.test(key) && !/^["']/u.test(value[0])) {
+    // A bare header name (`Cookie: a="b c"; csrf=x`) owns its whole line, quotes
+    // included. A quoted key is a JSON field, whose value ends at its own quote.
+    if (HEADER_KEY_WORD.test(key) && !/^["']/u.test(match[0])) {
       LINE_REST_PATTERN.lastIndex = valueStart;
       if (LINE_REST_PATTERN.exec(text) !== null) end = Math.max(end, LINE_REST_PATTERN.lastIndex);
     } else if (/^(?:bearer|basic|token)$/iu.test(value[0])) {
@@ -365,7 +367,8 @@ const MESSAGE_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/(<email>|<redacted>@[A-Za-z0-9.-]{1,255}):[^\s'"\x60]{1,500}/gu, "<email>:<path>"],
   // A host named after a label: `Could not resolve host: x`, `Host: x`, `DNS:x`.
   [
-    /\b(host|hostname|server|DNS|altnames?)\s{0,4}[:=]\s{0,4}(?!<)[A-Za-z0-9.-]{1,255}/giu,
+    // The value must look like a name or an address, not an error code.
+    /\b(host|hostname|server|DNS|altnames?)\s{0,4}[:=]\s{0,4}(?!<)(?=[A-Za-z0-9-]{0,63}[.\d-])[A-Za-z0-9.-]{1,255}/giu,
     "$1: <host>",
   ],
   // Domain names: any name of three or more labels under a common ending, and
@@ -385,20 +388,34 @@ const MESSAGE_RULES: ReadonlyArray<readonly [RegExp, string]> = [
     /(?<![A-Za-z0-9:.])(?:(?:[0-9A-Fa-f]{1,4}:){3,7}[0-9A-Fa-f]{1,4}|[0-9A-Fa-f:]{0,39}::[0-9A-Fa-f:]{0,39})(?![A-Za-z0-9:])/gu,
     "<ip>",
   ],
-  // Relative paths, then bare file names.
+  // Relative paths; bare file names follow in `redactFileNames`.
   [
     /(?<![A-Za-z0-9_:/\\.<>@-])[A-Za-z0-9_.@-]{1,100}(?:[\\/][A-Za-z0-9_.@-]{1,100}){1,40}(?![A-Za-z0-9_>])/gu,
     "<path>",
   ],
-  [
-    new RegExp(
-      // Not a member access: `console.log is not a function`, `res.json(`, `process.env.X`.
-      String.raw`(?<![A-Za-z0-9_./\\<@-])[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,100}\.(?:${FILE_EXTENSIONS})(?![A-Za-z0-9_]|\.[A-Za-z_$]|\s{0,2}\(|\s{1,2}is\s{1,2}(?:not|undefined|null)\b)`,
-      "gu",
-    ),
-    "<file>",
-  ],
 ];
+
+const FILE_NAME_PATTERN = new RegExp(
+  String.raw`(?<![A-Za-z0-9_./\\<@-])[A-Za-z0-9_@-][A-Za-z0-9_.@-]{0,100}\.(?:${FILE_EXTENSIONS})(?![A-Za-z0-9_])`,
+  "gu",
+);
+// `console.log is not a function`, `res.json(`, `process.env.X`: a member access
+// reads like a file name. It is kept only when every part is a plain identifier,
+// the last part is a word that is also a common property, and what follows is
+// how code, not a file, is talked about.
+const MEMBER_CHAIN_PATTERN =
+  /^[A-Za-z_$][A-Za-z0-9_$]{0,40}(?:\.[A-Za-z_$][A-Za-z0-9_$]{0,40}){0,4}\.(?:log|json|env|key|db|go|sh|lock|css|html|conf)$/u;
+const MEMBER_USE_PATTERN =
+  /^(?:\.[A-Za-z_$]|\s{0,2}\(|\s{1,2}is\s{1,2}(?:not\s{1,2}(?:a\s{1,2}function|defined|iterable|a\s{1,2}constructor)|undefined|null)\b)/u;
+
+function redactFileNames(text: string): string {
+  return text.replace(FILE_NAME_PATTERN, (match: string, offset: number) =>
+    MEMBER_CHAIN_PATTERN.test(match) &&
+    MEMBER_USE_PATTERN.test(text.slice(offset + match.length, offset + match.length + 40))
+      ? match
+      : "<file>",
+  );
+}
 
 // Quoted text is a file name, an argument or a user's words more often than
 // not. A plain identifier ('length', "ENOENT") stays; anything else goes.
@@ -425,6 +442,7 @@ export function sanitizeErrorMessage(
   for (const [pattern, replacement] of MESSAGE_RULES) {
     redacted = redacted.replace(pattern, replacement);
   }
+  redacted = redactFileNames(redacted);
   redacted = redacted.replace(QUOTED_PATTERN, (match, quote: string, inner: string) =>
     PLAIN_QUOTED_PATTERN.test(inner) ? match : `${quote}<redacted>${quote}`,
   );
@@ -563,6 +581,18 @@ function sanitizeDetail(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+/**
+ * Only the numbers of an OS release, plus `-wsl` for a WSL kernel. A kernel
+ * release can end in a locally chosen name (`6.1.0-acme-ws042`), so the rest
+ * of it never leaves.
+ */
+function safeOsVersion(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const numbers = /^\d{1,6}(?:\.\d{1,6}){0,4}/u.exec(value.trim())?.[0];
+  if (numbers === undefined) return undefined;
+  return /microsoft|wsl/iu.test(value.slice(0, 200)) ? `${numbers}-wsl` : numbers;
+}
+
 /** Normalizes and sanitizes a report. Every surface goes through this. */
 export function buildCrashReport(input: CrashReportInput): CrashReport {
   const parts = errorParts(input.error);
@@ -573,12 +603,7 @@ export function buildCrashReport(input: CrashReportInput): CrashReport {
   const provider = short(input.provider);
   const model = safeModelId(input.model, homeDir);
   const errorName = short(parts.name);
-  // A kernel release such as `5.15.133.1-microsoft-standard-WSL2` looks like an
-  // IP address to the redaction rules, so this one is checked by shape alone.
-  const osVersion =
-    typeof input.osVersion === "string" && /^[A-Za-z0-9._+-]{1,40}$/u.test(input.osVersion.trim())
-      ? input.osVersion.trim()
-      : undefined;
+  const osVersion = safeOsVersion(input.osVersion);
   // Provider errors for a failed turn can quote the prompt or the reply (a
   // content-policy or validation error), so a turn failure carries only its
   // category, code and provider, never its message.
