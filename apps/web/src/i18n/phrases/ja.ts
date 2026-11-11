@@ -3331,7 +3331,6 @@ export const ja: PhraseCatalog = {
   "1 provider": "1 プロバイダー",
   "Hide older": "古いものを隠す",
   "Connection: {connection}": "接続: {connection}",
-  "Account limits:": "アカウントの制限:",
   "Reset, not read since": "リセット済み、次の時点以降未取得",
   "Shared by every model": "すべてのモデルで共有",
   "Limits for one model family": "1 つのモデルファミリーの制限",
@@ -3521,7 +3520,6 @@ export const ja: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'プロンプトの本文に "ultrathink" が含まれています。この設定を変えるには削除してください。',
   "Not set: follows the Claude workflow mode": "未設定: Claude のワークフローモードに従う",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Ultrafast モードがオン",
   "Fast mode on": "高速モードがオン",
   "Turning into project...": "プロジェクトに変換中...",

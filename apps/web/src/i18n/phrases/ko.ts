@@ -3303,7 +3303,6 @@ export const ko: PhraseCatalog = {
   "1 provider": "제공업체 1개",
   "Hide older": "이전 항목 숨기기",
   "Connection: {connection}": "연결: {connection}",
-  "Account limits:": "계정 한도:",
   "Reset, not read since": "재설정됨, 다음 이후로 읽지 않음",
   "Shared by every model": "모든 모델이 공유",
   "Limits for one model family": "한 모델 계열의 한도",
@@ -3494,7 +3493,6 @@ export const ko: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '프롬프트 텍스트에 "ultrathink"가 포함되어 있습니다. 이 옵션을 바꾸려면 제거하세요.',
   "Not set: follows the Claude workflow mode": "설정 안 됨: Claude 워크플로 모드를 따름",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Ultrafast 모드 켜짐",
   "Fast mode on": "빠른 모드 켜짐",
   "Turning into project...": "프로젝트로 전환하는 중...",

@@ -3218,7 +3218,6 @@ export const zh: PhraseCatalog = {
   "1 provider": "1 个提供方",
   "Hide older": "隐藏较早的",
   "Connection: {connection}": "连接：{connection}",
-  "Account limits:": "账户限额：",
   "Reset, not read since": "已重置，自以下时间起未读取",
   "Shared by every model": "所有模型共用",
   "Limits for one model family": "单个模型系列的限额",
@@ -3403,7 +3402,6 @@ export const zh: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '你的提示词文本中包含 "ultrathink"。移除后才能更改此选项。',
   "Not set: follows the Claude workflow mode": "未设置：跟随 Claude 工作流模式",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Ultrafast 模式已开启",
   "Fast mode on": "快速模式已开启",
   "Turning into project...": "正在转为项目...",
