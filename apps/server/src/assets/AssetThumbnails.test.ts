@@ -103,6 +103,7 @@ describe("AssetThumbnails", () => {
   it.effect("resizes once, then serves the cached thumb until the file changes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const filePath = yield* writeImage("wide.png", png(1600, 40));
       const calls: Array<{ width: number; copied: number }> = [];
       const resizer: ThumbnailResizer = ({ source, target, width }) =>
@@ -112,7 +113,7 @@ describe("AssetThumbnails", () => {
         });
 
       const first = yield* thumbnailOf(filePath, resizer);
-      expect(first).toMatch(/asset-thumbnails\/[0-9a-f]{64}\.jpg$/);
+      expect(first).toMatch(/asset-thumbnails[\\/][0-9a-f]{64}\.jpg$/);
       expect(yield* fs.readFileString(first!)).toBe("thumb");
       // The resizer reads a private copy of the validated bytes, at the capped width.
       expect(calls).toEqual([
@@ -128,7 +129,7 @@ describe("AssetThumbnails", () => {
       expect(second).not.toBe(first);
       expect(calls).toHaveLength(2);
       // No temporary copy is left behind.
-      const names = yield* fs.readDirectory(first!.slice(0, first!.lastIndexOf("/")));
+      const names = yield* fs.readDirectory(path.dirname(first!));
       expect(names.filter((name) => name.startsWith("."))).toEqual([]);
     }).pipe(Effect.provide(layerTest)),
   );
