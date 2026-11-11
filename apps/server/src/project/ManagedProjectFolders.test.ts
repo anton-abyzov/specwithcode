@@ -495,6 +495,7 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
         const result = yield* folders.createNamedProject({ name: "No Identity" });
 
         assert.include(result.commitError ?? "", "no name or email");
+        assert.include(result.commitError ?? "", "git config --global user.email");
         assert.isTrue(Option.isSome(yield* projects.getById(result.projectId)));
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, "README.md")));
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, ".git")));
@@ -582,7 +583,7 @@ it.effect("keeps the project and says why when SpecWeave cannot be set up", () =
           const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
           const projects = yield* ProjectService.ProjectService;
           const result = yield* folders.createNamedProject({ name: "No CLI", specweave: true });
-          assert.include(result.specweaveError ?? "", "npm i -g specweave");
+          assert.include(result.specweaveError ?? "", "neither specweave nor npx");
           assert.isTrue(Option.isSome(yield* projects.getById(result.projectId)));
           assert.equal(
             yield* gitOutput(result.workspaceRoot, ["log", "--format=%s"]),
@@ -596,8 +597,7 @@ it.effect("keeps the project and says why when SpecWeave cannot be set up", () =
           Effect.succeed({
             ok: false,
             reason: "unavailable",
-            detail:
-              "SpecWeave is not installed and npx was not found. Install it with npm i -g specweave, then try again.",
+            detail: SpecweaveSetup.specweaveUnavailableDetail("linux"),
           } as const),
       }),
     },

@@ -274,7 +274,7 @@ function namedProjectReadme(name: string): string {
 // Otherwise its last line ("error: gpg failed to sign the data") says enough.
 function describeCommitFailure(stderr: string): string {
   if (/identity unknown|tell me who you are|no (name|email) was given/i.test(stderr)) {
-    return "Git has no name or email on this machine. Set user.name and user.email, then commit.";
+    return 'Git has no name or email on this machine, so the first commit was not made. Run git config --global user.name "Your Name" and git config --global user.email "you@example.com", then commit.';
   }
   const lines = stderr
     .split("\n")

@@ -290,6 +290,19 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
     }),
   );
 
+  it.effect("asks for the first commit when files are staged and nothing is committed", () =>
+    Effect.gen(function* () {
+      const fixture = yield* project();
+      yield* fixture.git("init");
+      yield* fixture.write("README.md", "# Fixture\n");
+      yield* fixture.git("add", ".");
+      const result = yield* fixture.read;
+      const changes = result.suggestions.find((entry) => entry.id === "changes");
+      assert.equal(changes?.title, "Make the first commit");
+      assert.include(changes?.detail, "1 file is waiting");
+    }),
+  );
+
   it.effect("counts TODO notes and recent commits once the larger findings are settled", () =>
     Effect.gen(function* () {
       const fixture = yield* project();
