@@ -336,7 +336,7 @@ export const es: Messages = {
     "Si el uso que alcanzó el límite o el umbral se reinicia dentro de este tiempo, nada cambia, se canjea ni se gasta: el hilo espera y continúa en el mismo proveedor al reiniciarse. Si una ventana semanal también está llena, la espera no se aplica.",
   "limitSettings.subscription.title": "Continuar en una nueva suscripción automáticamente",
   "limitSettings.subscription.description":
-    "Cuando un hilo con continuación automática espera por un límite y su CLI inició sesión en otra suscripción con margen, continúa el hilo allí sin preguntar. Desactivado, o con la continuación automática desactivada: el hilo muestra el cambio y espera tu confirmación. El proveedor y el modelo no cambian.",
+    "Cuando un hilo espera por un límite de uso y su CLI inició sesión en otra suscripción con margen, continúa el hilo allí sin preguntar, esté o no activada la continuación automática. Un hilo cuyo último informe quedó bloqueado por un límite de uso también recibe el aviso del cambio. Un hilo que detuviste sigue detenido. Desactivado: el hilo muestra el cambio y espera tu confirmación. El proveedor y el modelo no cambian.",
   "limitSettings.redeem.title": "Canjear primero un reinicio guardado",
   "limitSettings.redeem.description":
     "Cuando un turno se detiene en el límite y una lectura de uso reciente confirma que la cuenta lo alcanzó, usa uno de los reinicios guardados de la cuenta (Claude y Codex los otorgan) y continúa en el mismo proveedor antes de cualquier respaldo. Como máximo uno por ventana de límite, nunca mientras se simulan límites.",
