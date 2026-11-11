@@ -377,7 +377,29 @@ Signed builds that update through electron-updater never see pre-releases.
 `npm i -g specwithcode` installs the published runtime archive (`studio-<version>-<sha12>.tar.gz`)
 as one package with the `specwithcode` and `specweave-studio` commands. It runs on Node.js 22.16 or
 newer (23.11+, or 24.10+) on macOS and Linux, x64 and arm64: the archive's native dependencies carry
-prebuilds for all of them. Build it from the release's own assets and publish the tarball as written:
+prebuilds for all of them.
+
+**Release npm** (`.github/workflows/release-npm.yml`) publishes it for every release. A published
+`X.Y.Z` release starts a run by itself; a manual run takes `version` and is a dry run unless
+`dry_run` is off and it runs from `main`:
+
+```sh
+gh workflow run release-npm.yml -f version=1.0.233                   # dry run: npm publish --dry-run
+gh workflow run release-npm.yml -f version=1.0.233 -f dry_run=false  # publish
+```
+
+A run waits up to an hour for the release to hold its runtime archive and a `SHA256SUMS` that lists
+it, checks the archive against that line, builds the tarball, installs it and runs both commands,
+publishes, and then waits for `npm view specwithcode@X.Y.Z version` to answer. A version already on
+npm is skipped without failing. A version older than npm's `latest` is refused, since publishing it
+would move `latest` back. Pre-releases are not published.
+
+It signs in with npm trusted publishing (OIDC), with no token or secret: on npmjs.com, the
+`specwithcode` package's trusted publisher is `anton-abyzov/specwithcode` with the workflow file
+`release-npm.yml`, so that file name must not change. Trusted publishing needs npm 11.5.1 or newer
+(the workflow's Node 24 ships it) and adds provenance by itself.
+
+By hand, build it from the release's own assets and publish the tarball as written:
 
 ```sh
 sha=$(grep " studio-1.0.43-043e9db88a6e.tar.gz$" SHA256SUMS | cut -d' ' -f1)

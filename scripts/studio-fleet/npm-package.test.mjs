@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -12,8 +12,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { build, dependencyClosure, flatLayout, NPM_NODE_ENGINES } from "./npm-package.mjs";
 
 /** A pnpm-style store: node_modules/<root> links into .pnpm/<id>/node_modules/<name>. */
@@ -154,4 +155,19 @@ test("the npm range matches the server package's own engines", () => {
     readFileSync(new URL("../../apps/server/package.json", import.meta.url), "utf8"),
   );
   assert.equal(NPM_NODE_ENGINES, server.engines.node);
+});
+
+test("the command runs when the script is reached through a link", () => {
+  const root = mkdtempSync(join(tmpdir(), "npm-package-"));
+  try {
+    // macOS /tmp is such a link: the command used to exit 0 there without building anything.
+    symlinkSync(dirname(fileURLToPath(import.meta.url)), join(root, "scripts"));
+    const run = spawnSync(process.execPath, [join(root, "scripts", "npm-package.mjs")], {
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 2);
+    assert.match(run.stderr, /usage: npm-package\.mjs/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
