@@ -546,10 +546,35 @@ const make = Effect.gen(function* () {
 
   // A row naming this machine itself (a line added while the server was down, or a copied
   // file) is never a remote machine: it would list as needing a grant and resolve to itself.
-  const everyRow = targets.load.pipe(
-    Effect.map((config) => config?.machines ?? []),
-    Effect.mapError(() =>
-      failure("orchestration_error", "Private machine configuration could not be read securely."),
+  /** The names the owner gave machines in Settings, by environment id. */
+  const nicknames = Effect.gen(function* () {
+    const names = new Map<string, string>();
+    if (Option.isNone(settings)) return names;
+    const read = yield* settings.value.getSettings.pipe(Effect.option);
+    for (const [environmentId, entry] of Object.entries(
+      (Option.isSome(read) ? read.value.machineNicknames : undefined) ?? {},
+    )) {
+      const name = normalizeMachineNickname(entry.name);
+      if (name !== "") names.set(environmentId, name);
+    }
+    return names;
+  });
+  // Rows carry the owner's name for a machine, so agents see and resolve the name the app
+  // shows. The name saved when a machine joined is its host name, which can equal this one's.
+  const everyRow = Effect.all([
+    targets.load.pipe(
+      Effect.map((config) => config?.machines ?? []),
+      Effect.mapError(() =>
+        failure("orchestration_error", "Private machine configuration could not be read securely."),
+      ),
+    ),
+    nicknames,
+  ]).pipe(
+    Effect.map(([rows, names]) =>
+      rows.map((row) => {
+        const name = names.get(row.environmentId);
+        return name === undefined ? row : { ...row, label: name };
+      }),
     ),
   );
   const machines = Effect.all([everyRow, environment.getEnvironmentId]).pipe(
@@ -560,6 +585,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const descriptor = yield* environment.getDescriptor;
       if (descriptor.label.toLowerCase() === lower) return true;
+      if ((yield* nicknames).get(descriptor.environmentId)?.toLowerCase() === lower) return true;
       return (yield* everyRow).some(
         (machine) =>
           machine.environmentId === descriptor.environmentId &&
@@ -579,15 +605,7 @@ const make = Effect.gen(function* () {
       const labels = new Map<string, string>(
         configured.map((machine) => [machine.environmentId, machine.label]),
       );
-      if (Option.isSome(settings)) {
-        const read = yield* settings.value.getSettings.pipe(Effect.option);
-        for (const [environmentId, entry] of Object.entries(
-          Option.isSome(read) ? read.value.machineNicknames : {},
-        )) {
-          const name = normalizeMachineNickname(entry.name);
-          if (name !== "") labels.set(environmentId, name);
-        }
-      }
+      for (const [environmentId, name] of yield* nicknames) labels.set(environmentId, name);
       const hereLabel = labels.get(descriptor.environmentId) ?? descriptor.label;
       return {
         hereLabel,
@@ -794,7 +812,7 @@ const make = Effect.gen(function* () {
       return {
         local: {
           id: "local" as const,
-          label: descriptor.label,
+          label: (yield* nicknames).get(descriptor.environmentId) ?? descriptor.label,
           environmentId: descriptor.environmentId,
         },
         machines: rows,

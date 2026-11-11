@@ -11,7 +11,9 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
 import * as RemoteWorkers from "./RemoteWorkers.ts";
@@ -501,6 +503,40 @@ describe("RemoteWorkers", () => {
       expect(codex).not.toHaveProperty("paidModels");
       expect(pi?.paidModels).toEqual(["openrouter/anthropic/claude-sonnet-5"]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("lists and resolves machines by the name the owner gave them", () => {
+    // The second machine joined under its host name, which is what this machine is called.
+    const { layer } = setup(
+      {},
+      {},
+      { extraTargets: [{ ...target, id: "m4-2", label: "m4", environmentId: "env-m5" as never }] },
+    );
+    const named = Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Effect.succeed({
+        machineNicknames: {
+          "env-m4": { name: "m4", updatedAt: "2026-10-27T00:00:00.000Z" },
+          "env-m5": { name: "m5", updatedAt: "2026-11-11T00:00:00.000Z" },
+          "env-m1": { name: "  ", updatedAt: "2026-11-11T00:00:00.000Z" },
+        },
+      } as never),
+    });
+    return Effect.gen(function* () {
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const listed = yield* workers.listMachines({ projectId: undefined, probe: false });
+      expect(listed.local.label).toBe("m4");
+      expect(listed.machines.map((machine) => [machine.id, machine.label])).toEqual([
+        ["m1", M1.label],
+        ["m4-2", "m5"],
+      ]);
+      const m5 = { id: "m4-2", label: "m5", environmentId: "env-m5" };
+      expect(yield* workers.resolveMachine("m5")).toEqual({ kind: "remote", machine: m5 });
+      expect(yield* workers.resolveMachine("M5")).toEqual({ kind: "remote", machine: m5 });
+      expect(yield* workers.resolveMachine("m4-2")).toEqual({ kind: "remote", machine: m5 });
+      // The name this machine goes by no longer reaches the machine that joined under it.
+      expect(yield* workers.resolveMachine("m4")).toEqual({ kind: "local" });
+      expect((yield* workers.machineLabels).get("env-m5")).toBe("m5");
+    }).pipe(Effect.provide(layer.pipe(Layer.provide(named))));
   });
 
   it.live("resolves machines by id, label, environment and thread link", () => {
