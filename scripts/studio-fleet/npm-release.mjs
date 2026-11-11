@@ -25,7 +25,7 @@ import { NPM_BINS, NPM_PACKAGE_NAME } from "./npm-package.mjs";
 
 export const REGISTRY = "https://registry.npmjs.org";
 export const VERSIONS_PAGE = `https://www.npmjs.com/package/${NPM_PACKAGE_NAME}?activeTab=versions`;
-// This many polls in a row without an answer mean npm is unreachable, not that it hides a version.
+// This many reads in a row without an answer, at the end of the wait, mean npm is unreachable.
 const UNANSWERED_POLLS = 5;
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const SUMS_LINE = /^([0-9a-fA-F]{64}) [ *](.+)$/;
@@ -242,12 +242,17 @@ function atLeast(latest, version) {
  * Everything else throws: npm not answering, a version that is not listed and was not published
  * here, and a listed version that `latest` stays behind (it gets ten minutes from the moment it
  * is first listed).
+ *
+ * The limits are on the clock (`now`), so the time the reads themselves take counts. The
+ * verdict always rests on a read npm answered: when the limit falls on a failed read, polling
+ * goes on until npm answers or has failed UNANSWERED_POLLS times in a row.
  */
 export async function waitForListedVersion({
   version,
   accepted,
   view,
   sleep,
+  now = Date.now,
   log = () => {},
   acceptedMs = 60 * 60_000,
   otherMs = 10 * 60_000,
@@ -255,12 +260,14 @@ export async function waitForListedVersion({
   intervalMs = 30_000,
 }) {
   const id = `${NPM_PACKAGE_NAME}@${version}`;
+  const minutesOf = (ms) => Math.floor(ms / 60_000);
+  const started = now();
   let limit = accepted ? acceptedMs : otherMs;
   let waited = 0;
   let answer = null;
   let unanswered = 0;
   let failure = "";
-  let listedAt = null;
+  let everListed = false;
   for (;;) {
     try {
       answer = view();
@@ -269,25 +276,28 @@ export async function waitForListedVersion({
       unanswered += 1;
       failure = error.message;
     }
+    waited = now() - started;
     const listed = unanswered === 0 && answer.seen === version;
     if (listed && atLeast(answer.latest, version)) return { listed: true, latest: answer.latest };
-    if (listed && listedAt === null) {
-      listedAt = waited;
+    if (listed && !everListed) {
+      everListed = true;
       limit = Math.max(limit, waited + latestMs);
     }
-    if (waited >= limit) break;
-    const progress = `waited ${Math.round(waited / 60_000)} of ${Math.round(limit / 60_000)} min.`;
+    if (unanswered >= UNANSWERED_POLLS && waited >= limit) {
+      throw new Error(
+        `npm did not answer for ${id} after ${minutesOf(waited)} minutes: ${failure}`,
+      );
+    }
+    if (unanswered === 0 && waited >= limit) break;
+    const progress = `waited ${minutesOf(waited)} of ${minutesOf(limit)} min.`;
     if (unanswered > 0) log(`npm did not answer (${failure}); ${progress}`);
     else if (listed) log(`${id} is listed but latest is ${answer.latest}; ${progress}`);
     else if (accepted) log(`npm accepted ${id} and does not list it yet; ${progress}`);
     else log(`${id} is not listed yet; ${progress}`);
-    await sleep(intervalMs);
-    waited += intervalMs;
+    // The last read of the wait lands on the limit, not up to an interval past it.
+    await sleep(waited < limit ? Math.min(intervalMs, limit - waited) : intervalMs);
   }
-  const minutes = Math.round(waited / 60_000);
-  if (answer === null || unanswered >= UNANSWERED_POLLS) {
-    throw new Error(`npm did not answer for ${id} after ${minutes} minutes: ${failure}`);
-  }
+  const minutes = minutesOf(waited);
   if (answer.seen === version) {
     throw new Error(
       `${id} is on npm but latest is ${answer.latest}. Move it by hand: npm dist-tag add ${id} latest`,
@@ -402,8 +412,13 @@ export function listedReport({ version, result }) {
 
 async function awaitListedCommand({ version, accepted }) {
   parseStableVersion(version);
+  // A read that hangs is a read npm did not answer.
   const npmView = (args) =>
-    execFileSync("npm", ["view", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync("npm", ["view", ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60_000,
+    });
   const result = await waitForListedVersion({
     version,
     accepted,

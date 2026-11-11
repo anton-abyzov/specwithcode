@@ -334,10 +334,13 @@ test("one look at npm tells a version it does not list from a registry that fail
   );
 });
 
-/** Runs the wait against a scripted registry; the last answer repeats. */
-async function listedWait({ answers, accepted, ...options }) {
+/**
+ * Runs the wait against a scripted registry on a scripted clock; the last answer repeats. Each
+ * read takes `readMs` of that clock, and sleeping is the only other thing that moves it.
+ */
+async function listedWait({ answers, accepted, readMs = 0, ...options }) {
   const lines = [];
-  let slept = 0;
+  let clock = 0;
   let polls = 0;
   const outcome = waitForListedVersion({
     version: "1.0.233",
@@ -345,17 +348,20 @@ async function listedWait({ answers, accepted, ...options }) {
     view: () => {
       const answer = answers[Math.min(polls, answers.length - 1)];
       polls += 1;
+      clock += readMs;
       if (answer instanceof Error) throw answer;
       return answer;
     },
-    sleep: async (ms) => void (slept += ms),
+    sleep: async (ms) => void (clock += ms),
+    now: () => clock,
     log: (line) => lines.push(line),
     ...options,
   });
-  return { outcome, lines, minutes: () => slept / 60_000, polls: () => polls };
+  return { outcome, lines, minutes: () => clock / 60_000, polls: () => polls };
 }
 const HIDDEN = { seen: null, latest: "1.0.47" };
 const LISTED = { seen: "1.0.233", latest: "1.0.233" };
+const DOWN = new Error("npm error code ECONNREFUSED");
 
 test("a version npm lists with latest at or past it passes at once", async () => {
   const run = await listedWait({ answers: [LISTED], accepted: true });
@@ -391,6 +397,16 @@ test("a version npm accepted and still hides after an hour ends without failing"
   );
 });
 
+test("the hour is an hour on the clock however long the reads take", async () => {
+  // Seven seconds a read, as two `npm view` calls took: by counting sleeps alone the wait ran
+  // 74 minutes.
+  const run = await listedWait({ answers: [HIDDEN], accepted: true, readMs: 7_000 });
+  assert.deepEqual(await run.outcome, { listed: false, minutes: 60 });
+  // The last read starts on the hour, so the wait ends one read past it.
+  assert.equal(run.minutes() * 60_000, 60 * 60_000 + 7_000);
+  assert.ok(run.polls() < 121);
+});
+
 test("a version this run did not publish must be listed within ten minutes", async () => {
   const run = await listedWait({ answers: [HIDDEN], accepted: false });
   await assert.rejects(
@@ -402,25 +418,56 @@ test("a version this run did not publish must be listed within ten minutes", asy
 });
 
 test("a registry that stops answering fails even for an accepted version", async () => {
-  const down = new Error("npm error code ECONNREFUSED");
-  const never = await listedWait({ answers: [down], accepted: true });
+  const never = await listedWait({ answers: [DOWN], accepted: true });
   await assert.rejects(
     never.outcome,
     /npm did not answer for specwithcode@1\.0\.233 after 60 minutes: npm error code ECONNREFUSED/,
   );
-  // Hidden for most of the hour, then five polls in a row without an answer at the end.
-  const late = await listedWait({
-    answers: [...Array(116).fill(HIDDEN), down],
+  assert.equal(never.minutes(), 60);
+  // Hidden for most of the hour, then five reads in a row without an answer up to its end.
+  const late = await listedWait({ answers: [...Array(116).fill(HIDDEN), DOWN], accepted: true });
+  await assert.rejects(late.outcome, /npm did not answer .* after 60 minutes/);
+  // Down from the last read of the hour on: four more reads are tried before giving up.
+  const atTheEnd = await listedWait({
+    answers: [...Array(120).fill(HIDDEN), DOWN],
     accepted: true,
   });
-  await assert.rejects(late.outcome, /npm did not answer .* after 60 minutes/);
-  // One missed poll at the very end is not an outage: the last answer still stands.
+  await assert.rejects(atTheEnd.outcome, /npm did not answer .* after 62 minutes/);
+  assert.equal(atTheEnd.polls(), 125);
+  // The same for a version this run did not publish.
+  const other = await listedWait({ answers: [DOWN], accepted: false });
+  await assert.rejects(other.outcome, /npm did not answer .* after 10 minutes/);
+});
+
+test("the verdict rests on a read npm answered, not on a stale one", async () => {
+  // One failed read on the hour: the next read answers, and that answer decides.
   const blip = await listedWait({
-    answers: [...Array(120).fill(HIDDEN), down],
+    answers: [...Array(120).fill(HIDDEN), DOWN, HIDDEN],
     accepted: true,
   });
   assert.deepEqual(await blip.outcome, { listed: false, minutes: 60 });
-  assert.match(blip.lines.at(-1), /^npm accepted specwithcode@1\.0\.233 and does not list it yet/);
+  assert.equal(blip.minutes(), 60.5);
+  assert.match(
+    blip.lines.at(-1),
+    /^npm did not answer \(npm error code ECONNREFUSED\); waited 60 of 60/,
+  );
+  // Four failed reads, then the version is listed after all: that is a pass, not a warning.
+  const recovered = await listedWait({
+    answers: [...Array(120).fill(HIDDEN), DOWN, DOWN, DOWN, DOWN, LISTED],
+    accepted: true,
+  });
+  assert.deepEqual(await recovered.outcome, { listed: true, latest: "1.0.233" });
+  // Failed and hidden reads in turn never add up to an outage, and end on an answered read.
+  const turns = Array.from({ length: 130 }, (_, index) => (index % 2 === 0 ? DOWN : HIDDEN));
+  const alternating = await listedWait({ answers: turns, accepted: true });
+  assert.deepEqual(await alternating.outcome, { listed: false, minutes: 60 });
+  assert.equal(alternating.polls() % 2, 0);
+  // Without --accepted the same answered read is a failure.
+  const unpublished = await listedWait({
+    answers: [...Array(20).fill(HIDDEN), DOWN, HIDDEN],
+    accepted: false,
+  });
+  await assert.rejects(unpublished.outcome, /is not on npm after 10 minutes/);
 });
 
 test("a listed version that latest stays behind fails after ten more minutes", async () => {
@@ -439,7 +486,14 @@ test("a listed version that latest stays behind fails after ten more minutes", a
   });
   assert.deepEqual(await late.outcome, { listed: true, latest: "1.0.233" });
   assert.equal(late.minutes(), 64.5);
-  assert.match(late.lines.at(-1), /is listed but latest is 1\.0\.47; waited 64 of 70 min\.$/);
+  assert.match(late.lines.at(-1), /is listed but latest is 1\.0\.47; waited 64 of 69 min\.$/);
+  // ...and fails when it never does, ten minutes after it was first listed.
+  const lateStuck = await listedWait({
+    answers: [...Array(119).fill(HIDDEN), behind],
+    accepted: true,
+  });
+  await assert.rejects(lateStuck.outcome, /is on npm but latest is 1\.0\.47/);
+  assert.equal(lateStuck.minutes(), 69.5);
   // A latest the check cannot compare is behind, not an exception.
   const odd = await listedWait({
     answers: [{ seen: "1.0.233", latest: "2.0.0-rc.1" }],

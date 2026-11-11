@@ -355,8 +355,9 @@ jobs:
     needs: [package, publish]
     if: needs.package.outputs.dry_run != 'true'
     runs-on: ubuntu-24.04
-    # An hour of waiting for npm's review, ten minutes for `latest` to follow, and the setup.
-    timeout-minutes: 80
+    # An hour for npm's review, ten minutes for `latest` to follow a version listed at the end
+    # of it, a few more reads when npm stops answering at the limit, and the setup.
+    timeout-minutes: 100
     env:
       VERSION: ${{ needs.package.outputs.version }}
       ACCEPTED: ${{ needs.publish.outputs.accepted }}
