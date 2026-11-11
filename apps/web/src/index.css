@@ -2519,3 +2519,144 @@ video.artifact-viewer-media {
     transform: none;
   }
 }
+
+/* Machine identity (studio/machineIdentity.ts). Each machine wears one of eight
+   hues, named by id so no hex is ever stored. One value per hue serves both
+   themes: against a light or a dark canvas it keeps 3:1 as a border and edge,
+   and white text on it keeps 4.5:1 (the Send button). Chip text is the hue
+   mixed toward the foreground, so it stays readable on its own tint. The
+   machine's name or icon always shows with the color. */
+[data-machine-color="violet"] {
+  --machine: #7357e6;
+}
+[data-machine-color="teal"] {
+  --machine: #0e8177;
+}
+[data-machine-color="amber"] {
+  --machine: #a8650a;
+}
+[data-machine-color="rose"] {
+  --machine: #cc3a66;
+}
+[data-machine-color="blue"] {
+  --machine: #2f6fd6;
+}
+[data-machine-color="green"] {
+  --machine: #2f8040;
+}
+[data-machine-color="orange"] {
+  --machine: #c2561a;
+}
+[data-machine-color="slate"] {
+  --machine: #5d6878;
+}
+[data-machine-color] {
+  --machine-text: color-mix(in srgb, var(--machine) 42%, var(--foreground));
+  --machine-surface: color-mix(in srgb, var(--machine) 14%, transparent);
+  --machine-edge: color-mix(in srgb, var(--machine) 72%, var(--border));
+}
+/* A chip that names a machine: icon and name in its color on its own tint. */
+.machine-chip[data-machine-color] {
+  border: 1px solid var(--machine-edge);
+  background: var(--machine-surface);
+  color: var(--machine-text);
+}
+.machine-chip[data-machine-color]:hover {
+  background: color-mix(in srgb, var(--machine) 20%, transparent);
+}
+/* A machine's name in its color where a chip would be too much (thread and sidebar rows). */
+.machine-mark[data-machine-color] {
+  color: var(--machine-text);
+}
+/* The sidebar's column has no icon: a small square of the color leads the name. */
+.sws-row-machine.machine-mark[data-machine-color] {
+  width: calc(min(var(--sws-chat-machine-col, 6ch), 9.5ch) + 10px);
+}
+.sws-row-machine.machine-mark[data-machine-color]::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--machine);
+}
+/* The message box of a chat that runs on the machine: a tinted border, a 3px
+   leading edge and a faint halo. */
+.machine-composer[data-machine-color] {
+  border-color: var(--machine-edge);
+  box-shadow:
+    inset 3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent);
+}
+[dir="rtl"] .machine-composer[data-machine-color] {
+  box-shadow:
+    inset -3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent);
+}
+[data-slot="composer-shell"][data-machine-color] [data-slot="composer-host"]::after {
+  border-color: var(--machine-edge);
+  box-shadow:
+    inset 3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent);
+}
+[dir="rtl"] [data-slot="composer-shell"][data-machine-color] [data-slot="composer-host"]::after {
+  box-shadow:
+    inset -3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent);
+}
+/* Focus keeps the machine's color and deepens the halo instead of swapping to the ring. */
+.sws-composer-card.machine-composer[data-machine-color]:focus-within {
+  border-color: var(--machine);
+  box-shadow:
+    inset 3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 26%, transparent);
+}
+/* No halo where motion or soft contrast is unwanted: the border and edge stay. */
+@media (prefers-reduced-motion: reduce), (prefers-contrast: more) {
+  .machine-composer[data-machine-color] {
+    box-shadow: inset 3px 0 0 var(--machine);
+  }
+  [data-slot="composer-shell"][data-machine-color] [data-slot="composer-host"]::after {
+    box-shadow: inset 3px 0 0 var(--machine);
+  }
+}
+/* Send, when the message goes to another machine: its color, with its name on the button. */
+.machine-send[data-machine-color]:not(:disabled) {
+  background: var(--machine);
+  color: #fff;
+}
+/* The coordinator's Send with a machine's name on it. */
+.sws-send.sws-send-target {
+  width: auto;
+  gap: 5px;
+  padding: 0 11px 0 8px;
+  border-radius: 9999px;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.sws-send.sws-send-target::after {
+  content: attr(data-send-label);
+  max-width: 9rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@media (max-width: 520px) {
+  .sws-send.sws-send-target {
+    width: 32px;
+    padding: 0;
+  }
+  .sws-send.sws-send-target::after {
+    content: none;
+  }
+}
+/* The color choices where a machine is renamed. */
+.machine-swatch[data-machine-color] {
+  border: 2px solid transparent;
+  background: var(--machine);
+  background-clip: padding-box;
+}
+.machine-swatch-on[data-machine-color] {
+  border-color: var(--background);
+  box-shadow: 0 0 0 2px var(--machine);
+}

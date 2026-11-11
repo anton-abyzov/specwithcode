@@ -1,6 +1,7 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
-import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
+import { memo, use, type MouseEventHandler, type PointerEventHandler } from "react";
+import { MachineSendTargetContext } from "~/studio/machineIdentity";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, PlayIcon } from "lucide-react";
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -112,6 +113,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   const tx = useTx();
+  const sendTarget = use(MachineSendTargetContext);
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -279,7 +281,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           ? "Steer message"
           : showCreditLabel
             ? "Send with credits"
-            : "Submit message";
+            : sendTarget
+              ? `Send to ${sendTarget.name}`
+              : "Submit message";
+  // A plain send to another machine wears that machine's color and names it.
+  const namesTarget =
+    sendTarget !== null &&
+    !showResume &&
+    !isEditingQueuedMessage &&
+    !isRunning &&
+    !showCreditLabel &&
+    !stageBackdropVariant;
   const submitStatus = waitingFor
     ? `Waiting for ${waitingFor}`
     : isEnvironmentUnavailable
@@ -306,6 +318,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       className={cn(
         "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:opacity-(--disabled-opacity) disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
         showCreditLabel && "w-auto gap-1.5 px-3 text-sm sm:w-auto",
+        namesTarget &&
+          "machine-send w-auto gap-1.5 px-3 text-sm font-semibold sm:w-auto @max-[520px]/composer-surface:w-9 @max-[520px]/composer-surface:px-0 sm:@max-[520px]/composer-surface:w-8",
         stageBackdropVariant
           ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
@@ -320,6 +334,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         (!hasSendableContent && !showResume)
       }
       aria-label={submitStatus ?? submitLabel}
+      {...(namesTarget ? { "data-machine-color": sendTarget.color, "data-send-target": "" } : {})}
     >
       {stageBackdropVariant ? (
         <span className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
@@ -346,6 +361,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </svg>
       )}
       {showCreditLabel ? <span>{tx("Send with credits")}</span> : null}
+      {namesTarget ? (
+        <span className="max-w-32 truncate @max-[520px]/composer-surface:hidden" aria-hidden>
+          Send to {sendTarget.name}
+        </span>
+      ) : null}
     </button>
   );
 

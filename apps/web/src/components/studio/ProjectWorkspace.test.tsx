@@ -1444,9 +1444,7 @@ describe("project coordinator surface", () => {
     state.connected = false;
     await render();
     await prompt("New work");
-    expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Send to coordinator"]')!.disabled,
-    ).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>("button.sws-send")!.disabled).toBe(true);
     expect(state.send).not.toHaveBeenCalled();
   });
   it("lays the panel out as Threads, Designs, Library, PRs and Routines tabs", async () => {

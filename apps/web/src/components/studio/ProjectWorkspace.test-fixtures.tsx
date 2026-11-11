@@ -977,8 +977,7 @@ const sized = (name: string, bytes: number) => {
   Object.defineProperty(file, "size", { value: bytes });
   return file;
 };
-const sendButton = () =>
-  container.querySelector<HTMLButtonElement>("[aria-label='Send to coordinator']")!;
+const sendButton = () => container.querySelector<HTMLButtonElement>("button.sws-send")!;
 const alertText = () => container.querySelector(".sws-composer [role='alert']")?.textContent ?? "";
 function recreateRoot() {
   root = createRoot(container);

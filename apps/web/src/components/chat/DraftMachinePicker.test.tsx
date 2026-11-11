@@ -19,11 +19,25 @@ const runtime = vi.hoisted(() => ({
   scratch: vi.fn(),
   retry: vi.fn(),
   nicknames: new Map<string, string>(),
+  colors: new Map<string, string>(),
   dialogs: {} as Record<string, any>,
 }));
 vi.mock("~/studio/machineNickname", () => ({
   useMachineNicknames: () => (id: string, label?: string | null) =>
     runtime.nicknames.get(id) ?? label ?? "Machine",
+}));
+vi.mock("../../studio/machineIdentity", () => ({
+  machineColorProps: (identity: { color: string } | null) =>
+    identity ? { "data-machine-color": identity.color } : {},
+  useMachineIdentity: (id: string | null) =>
+    id === null
+      ? null
+      : {
+          environmentId: id,
+          name: runtime.nicknames.get(id) ?? "Machine",
+          color: runtime.colors.get(id) ?? "slate",
+          icon: "laptop",
+        },
 }));
 vi.mock("./AddToMachineDialog", () => ({
   AddToMachineDialog: (props: any) => {
@@ -143,6 +157,7 @@ beforeEach(() => {
   runtime.scratch.mockReset();
   runtime.retry.mockReset().mockResolvedValue({ _tag: "Success" });
   runtime.nicknames = new Map();
+  runtime.colors = new Map();
   runtime.dialogs = {};
   onPendingChange.mockClear();
   sendInFlightRef.current = false;
@@ -703,4 +718,14 @@ it("shows every machine in a flat list for a draft without a project", async () 
   expect(document.body.textContent).not.toContain("Add to another machine…");
   expect(button("M1Connected")).toBeTruthy();
   expect(button("M3Connected")).toBeTruthy();
+});
+
+it("wears the color of the machine the draft will run on", async () => {
+  runtime.colors.set(m4, "violet");
+  await render();
+  const trigger = button("Run onM4");
+  expect(trigger.getAttribute("data-machine-color")).toBe("violet");
+  expect(trigger.className).toContain("machine-chip");
+  // The name stays beside the color: color is never the only cue.
+  expect(trigger.textContent).toContain("M4");
 });

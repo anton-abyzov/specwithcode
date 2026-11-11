@@ -49,6 +49,7 @@ import {
   type ThreadPaneFacts,
 } from "../../../studio/threadPaneFilters";
 import { useMachineNicknames } from "../../../studio/machineNickname";
+import { useMachineIdentities } from "../../../studio/machineIdentity";
 import { withRunningSubagents } from "../../../studio/threadSubagents";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
 import {
@@ -217,6 +218,7 @@ export function ThreadsPane({
   const unreachable = useUnreachableHosts();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
+  const machineIdentity = useMachineIdentities();
   // A row names where a thread lives and runs ("M4", "M4 → Minis") by nickname; the
   // tooltip keeps the host label. Machines this device reaches name themselves, and
   // project members fill in the ones it does not.
@@ -1074,8 +1076,11 @@ export function ThreadsPane({
                                 <TooltipTrigger
                                   render={
                                     <span
-                                      className="sws-thread-machine"
+                                      className="sws-thread-machine machine-mark"
                                       data-machine-id={machine.executionMachineId}
+                                      data-machine-color={
+                                        machineIdentity(machine.executionMachineId).color
+                                      }
                                       data-execution={machine.state}
                                       data-moved={machine.moved || undefined}
                                     />
