@@ -129,7 +129,7 @@ describe("DesktopClerk", () => {
       name: "packaged Windows",
       isDevelopment: false,
       platform: "win32" as const,
-      userData: "/tmp/app-data/studio-v2",
+      userData: "/tmp/app-data/SpecWithCode",
     },
     {
       name: "development",

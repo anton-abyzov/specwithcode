@@ -23,12 +23,34 @@ it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
       const path = yield* Path.Path;
       const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-pre-ready-fs-" });
       yield* fileSystem.makeDirectory(path.join(root, "SpecWeave Studio (Alpha)"));
-      yield* fileSystem.writeFileString(path.join(root, "SpecWeave Studio (Alpha)", "Local State"), "keys");
+      yield* fileSystem.writeFileString(
+        path.join(root, "SpecWeave Studio (Alpha)", "Local State"),
+        "keys",
+      );
 
       const userData = yield* resolveWindowsUserData(root);
 
-      assert.equal(userData, path.join(root, "studio-v2"));
+      assert.equal(userData, path.join(root, "SpecWithCode"));
       assert.equal(yield* fileSystem.readFileString(path.join(userData, "Local State")), "keys");
+    }),
+  );
+
+  it.effect("renames the studio-v2 profile and links the old name to it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-pre-ready-fs-" });
+      yield* fileSystem.makeDirectory(path.join(root, "studio-v2"));
+      yield* fileSystem.writeFileString(path.join(root, "studio-v2", "Local State"), "keys");
+
+      const userData = yield* resolveWindowsUserData(root);
+
+      assert.equal(userData, path.join(root, "SpecWithCode"));
+      assert.equal(yield* fileSystem.readFileString(path.join(userData, "Local State")), "keys");
+      assert.equal(
+        yield* fileSystem.readFileString(path.join(root, "studio-v2", "Local State")),
+        "keys",
+      );
     }),
   );
 
