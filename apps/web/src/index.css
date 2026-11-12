@@ -2668,6 +2668,9 @@ video.artifact-viewer-media {
 @media (prefers-contrast: more) {
   .machine-window-tint[data-machine-color] {
     background: var(--machine);
+    @variant dark {
+      background: var(--machine);
+    }
   }
 }
 @media print {

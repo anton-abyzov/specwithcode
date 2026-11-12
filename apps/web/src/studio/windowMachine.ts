@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useLayoutEffect, useSyncExternalStore } from "react";
 
 /**
  * The machine doing the work in the view on screen. A coordinator or thread
@@ -61,7 +61,8 @@ export function useClaimWindowMachine(
   environmentId: string | null | undefined,
   rank: WindowMachineClaimRank = "thread",
 ): void {
-  useEffect(
+  // Before paint, so a project on another machine never flashes this window's color.
+  useLayoutEffect(
     () => (environmentId ? windowMachineClaims.claim(environmentId, rank) : undefined),
     [environmentId, rank],
   );

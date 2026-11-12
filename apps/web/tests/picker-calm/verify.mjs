@@ -358,7 +358,7 @@ try {
       assert.equal(
         await page.locator("[data-machine-window-tint]").getAttribute("data-machine-color"),
         "teal",
-        "the window edge shows the window's machine, not the coordinator's",
+        "the window edge should show the coordinator's machine (M1), not the window's (M4)",
       );
       await shot(`window-edge-${tag}`);
     }
