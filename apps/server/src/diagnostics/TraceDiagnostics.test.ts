@@ -8,6 +8,13 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  DEFAULT_TRACE_SAMPLING,
+  makeTraceSink,
+  TRACE_SAMPLING_SUMMARY_SPAN,
+  type EffectTraceRecord,
+} from "@specweave-studio/shared/observability";
 
 import * as TraceDiagnostics from "./TraceDiagnostics.ts";
 
@@ -350,4 +357,104 @@ describe("TraceDiagnostics", () => {
       );
     }),
   );
+});
+
+describe("TraceDiagnostics over a sampled trace file", () => {
+  const span = (input: {
+    readonly name: string;
+    readonly spanId: string;
+    readonly parentSpanId?: string;
+    readonly startMs: number;
+    readonly durationMs: number;
+    readonly exit?: EffectTraceRecord["exit"];
+  }): EffectTraceRecord => ({
+    type: "effect-span",
+    name: input.name,
+    traceId: "trace-sampled",
+    spanId: input.spanId,
+    ...(input.parentSpanId === undefined ? {} : { parentSpanId: input.parentSpanId }),
+    sampled: true,
+    kind: "internal",
+    startTimeUnixNano: ns(input.startMs),
+    endTimeUnixNano: ns(input.startMs + input.durationMs),
+    durationMs: input.durationMs,
+    attributes: {},
+    events: [],
+    links: [],
+    exit: input.exit ?? { _tag: "Success" },
+  });
+
+  it.layer(NodeServices.layer)("node services", (it) => {
+    it.effect("reads a slow parent whose fast children were sampled", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "studio-trace-diagnostics-",
+          });
+          const tracePath = `${tempDir}/server.trace.ndjson`;
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 4 * 1024 * 1024,
+            maxFiles: 1,
+            batchWindowMs: 1_000,
+            sampling: DEFAULT_TRACE_SAMPLING,
+          });
+          // Children end before their parent, as they do in a live trace.
+          for (let index = 0; index < 200; index += 1) {
+            sink.push(
+              span({
+                name: "sql.execute",
+                spanId: `child-${index}`,
+                parentSpanId: "parent",
+                startMs: 1_000 + index,
+                durationMs: 1,
+              }),
+            );
+          }
+          sink.push(
+            span({
+              name: "sql.execute",
+              spanId: "child-failed",
+              parentSpanId: "parent",
+              startMs: 1_300,
+              durationMs: 2,
+              exit: { _tag: "Failure", cause: "SQLITE_BUSY" },
+            }),
+          );
+          sink.push(
+            span({ name: "sweep.parent", spanId: "parent", startMs: 1_000, durationMs: 2_500 }),
+          );
+          yield* sink.close();
+
+          const diagnostics = yield* TraceDiagnostics.readTraceDiagnostics({
+            traceFilePath: tracePath,
+            maxFiles: 1,
+            readAt,
+          }).pipe(Effect.provide(TraceDiagnostics.layer));
+
+          assert.equal(diagnostics.parseErrorCount, 0);
+          assert.isTrue(Option.isNone(diagnostics.error));
+          // 5 in the burst, 3 of the next 195, the failure, the parent, the summary.
+          assert.equal(diagnostics.recordCount, 11);
+          assert.equal(diagnostics.slowSpanCount, 1);
+          assert.equal(diagnostics.slowestSpans[0]?.name, "sweep.parent");
+          assert.equal(diagnostics.failureCount, 1);
+          assert.deepStrictEqual(
+            diagnostics.latestFailures.map((failure) => [failure.name, failure.cause]),
+            [["sql.execute", "SQLITE_BUSY"]],
+          );
+          const summary = diagnostics.topSpansByCount.find(
+            (entry) => entry.name === TRACE_SAMPLING_SUMMARY_SPAN,
+          );
+          assert.equal(summary?.count, 1);
+          assert.equal(summary?.maxDurationMs, 0);
+          assert.equal(
+            diagnostics.topSpansByCount.find((entry) => entry.name === "sql.execute")?.count,
+            9,
+          );
+        }),
+      ),
+    );
+  });
 });

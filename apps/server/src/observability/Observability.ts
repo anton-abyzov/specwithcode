@@ -56,11 +56,15 @@ export const layer = Layer.unwrap(
 
     const layerTracer = Layer.unwrap(
       Effect.gen(function* () {
+        const sampling = yield* ServerConfig.traceSampling.pipe(
+          Effect.orElseSucceed(() => SharedObservability.DEFAULT_TRACE_SAMPLING),
+        );
         const sink = yield* makeTraceSink({
           filePath: config.serverTracePath,
           maxBytes: config.traceMaxBytes,
           maxFiles: config.traceMaxFiles,
           batchWindowMs: config.traceBatchWindowMs,
+          sampling,
           onFlush: (stats) =>
             attribution.record({
               component: "server-trace",

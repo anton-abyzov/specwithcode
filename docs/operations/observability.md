@@ -600,6 +600,13 @@ Local trace file:
 - `STUDIO_TRACE_MAX_FILES`: rotated file count, default `10`
 - `STUDIO_TRACE_BATCH_WINDOW_MS`: flush window, default `1000`
 - `STUDIO_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
+- `STUDIO_TRACE_SAMPLE_RATE`: of the fast successful spans of one name, the file keeps the first 5
+  each minute and then one in this many, default `50`; `1` writes every span. Spans that failed or
+  were interrupted, ran 200 ms or longer, carry a log, exception or slow-statement event, or belong
+  to an update, restart, release, install or provider session are always written. Each minute with
+  spans left out ends with one `trace.sampling.summary` record whose `sampling.dropped` maps each
+  span name to `[count, total ms]`, so counts read from the file (`trace summary`, Settings >
+  Diagnostics) cover written spans only. OTLP export is not sampled.
 - `STUDIO_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
 OTLP export:
