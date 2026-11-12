@@ -692,7 +692,7 @@ describe("only the device in use pops up", () => {
     expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
   });
 
-  it("on an older server or a timeout, pops up only on the thread's own machine", async () => {
+  it("with no target but an app known on the thread's machine, pops up only there", async () => {
     state.targetRead = () => Promise.resolve({ status: "unknown", ownerAppConnected: true });
     state.primary = "env-2";
     await askInBackground();
@@ -711,7 +711,7 @@ describe("only the device in use pops up", () => {
     expect(state.notification).toHaveBeenCalledTimes(1);
   });
 
-  it("with no app on the thread's machine, or no target at all, every app pops up as before", async () => {
+  it("on an older server or a timeout, or with no app on the thread's machine, every app pops up", async () => {
     state.primary = "env-2";
     state.targetRead = () => Promise.resolve({ status: "unknown", ownerAppConnected: false });
     await askInBackground();
