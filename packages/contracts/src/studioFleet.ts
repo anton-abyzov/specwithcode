@@ -143,6 +143,16 @@ export const StudioFleetWorkersSelfAllowInput = exactStruct({
 export type StudioFleetWorkersSelfAllowInput = typeof StudioFleetWorkersSelfAllowInput.Type;
 
 /**
+ * Another machine of the same SpecWithCode Connect account hands this one its
+ * invitation line: this machine adds it and lets its own agents work there.
+ */
+export const StudioFleetWorkersAccountJoinInput = exactStruct({
+  invitation: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384)),
+  access: StudioFleetWorkerAccess,
+});
+export type StudioFleetWorkersAccountJoinInput = typeof StudioFleetWorkersAccountJoinInput.Type;
+
+/**
  * Asks this server to let a machine in its fleet run workers here, through
  * the management token it holds on that machine.
  */

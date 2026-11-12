@@ -3,6 +3,7 @@ import {
   AuthAccessWriteScope,
   type AuthEnvironmentScope,
   type EnvironmentId,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   EnvironmentHttpForbiddenError,
@@ -17,6 +18,7 @@ import {
 import type { TeamRulesRefusal } from "@specweave-studio/contracts";
 import {
   type StudioFleetInviteInput,
+  type StudioFleetWorkerAccess,
   StudioFleetWorkersResult,
   StudioFleetWorkersSelfAllowInput,
 } from "@specweave-studio/contracts/studioFleet";
@@ -28,6 +30,7 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
 import { currentTeamRules } from "./teamRules/TeamRules.ts";
+import { isConnectSubject } from "./teamRules/TeamRulesReach.ts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -353,6 +356,31 @@ export const layer = HttpApiBuilder.group(
           Effect.orElseSucceed(() => "kept" as const),
         ),
       );
+    /**
+     * Adds the machine a line names and allows its workers. Adding spends the
+     * line for a management token there, so a machine this call added leaves
+     * again, token revoked, when allowing fails.
+     */
+    const addAndAllowWorkers = (invitation: string, access: StudioFleetWorkerAccess) =>
+      Effect.gen(function* () {
+        const added = yield* addMachine(invitation);
+        const workers = yield* grants.allow({ machineId: added.id, access }).pipe(
+          Effect.mapError(grantFailure),
+          Effect.tapError(() =>
+            added.change === "added"
+              ? Effect.promise(() =>
+                  removeFleetMachineEverywhere({
+                    baseDir: config.baseDir,
+                    machine: added.id,
+                    fetcher: fleetLink,
+                    revokeWorkerAccess,
+                  }).catch(() => undefined),
+                )
+              : Effect.void,
+          ),
+        );
+        return { added, workers };
+      });
     /**
      * The line hands out the invite scopes, so only a caller holding all of
      * them may make one: never more than the maker holds.
@@ -715,29 +743,43 @@ export const layer = HttpApiBuilder.group(
                   "This line names a different machine. A main machine can add and allow only itself here.",
               });
             yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
-            const added = yield* addMachine(payload.invitation);
-            // Adding spent the line for a management token there: a machine
-            // this call added leaves again, token revoked, when allowing fails.
-            const workers = yield* grants
-              .allow({ machineId: added.id, access: payload.access })
-              .pipe(
-                Effect.mapError(grantFailure),
-                Effect.tapError(() =>
-                  added.change === "added"
-                    ? Effect.promise(() =>
-                        removeFleetMachineEverywhere({
-                          baseDir: config.baseDir,
-                          machine: added.id,
-                          fetcher: fleetLink,
-                          revokeWorkerAccess,
-                        }).catch(() => undefined),
-                      )
-                    : Effect.void,
-                ),
-              );
+            const { added, workers } = yield* addAndAllowWorkers(
+              payload.invitation,
+              payload.access,
+            );
             yield* Effect.logInfo("A main machine added itself and allowed its workers here.", {
               coordinatorEnvironmentId: principal.environmentId,
               machine: added.id,
+              change: added.change,
+            });
+            return { id: added.id, workers };
+          }),
+        )
+        // The owner, on another machine of the same SpecWithCode Connect
+        // account, lets this machine's agents work there: that app made the
+        // line on its own machine and hands it over through its Connect
+        // sign-in here. The relay proved that sign-in is this machine's own
+        // account, and it already carries terminal and file access here, so
+        // the line needs no second approval on this machine.
+        .handle("accountJoinFleetWorkers", ({ payload }) =>
+          Effect.gen(function* () {
+            // The line holds a credential: never cached, never logged.
+            yield* noStore;
+            const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+            if (!isConnectSubject(session.subject) || session.principal !== undefined)
+              return yield* new EnvironmentHttpForbiddenError({
+                message:
+                  "Only a sign-in through this machine's own SpecWithCode Connect account can add a machine this way. Use Join a main machine on the other machine, then Add a machine here.",
+              });
+            yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
+            yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "connect"));
+            const { added, workers } = yield* addAndAllowWorkers(
+              payload.invitation,
+              payload.access,
+            );
+            yield* Effect.logInfo("A machine of this Connect account joined and was allowed.", {
+              machine: added.id,
+              environmentId: added.environmentId,
               change: added.change,
             });
             return { id: added.id, workers };

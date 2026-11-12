@@ -22,6 +22,7 @@ import {
   StudioFleetTailscaleSignInResult,
   StudioFleetTailscaleStatus,
   StudioFleetRemoteWorkersResult,
+  StudioFleetWorkersAccountJoinInput,
   StudioFleetWorkersAllowInput,
   StudioFleetWorkersIncomingInput,
   StudioFleetWorkersResult,
@@ -1215,6 +1216,23 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
     HttpApiEndpoint.post("selfAllowFleetWorkers", "/api/studio/fleet/workers/self-allow", {
       headers: OptionalBearerHeaders,
       payload: StudioFleetWorkersSelfAllowInput,
+      success: StudioFleetWorkersResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * A sign-in through this account's SpecWithCode Connect hands over another
+     * machine's invitation line: this machine adds it and allows its workers.
+     */
+    HttpApiEndpoint.post("accountJoinFleetWorkers", "/api/studio/fleet/workers/account-join", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetWorkersAccountJoinInput,
       success: StudioFleetWorkersResult,
       error: [
         ...EnvironmentScopedOperationErrors,

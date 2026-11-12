@@ -2,7 +2,11 @@ import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@specweave-studio/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+} from "@specweave-studio/contracts";
 import type {
   StudioFleetAddResult,
   StudioFleetWorkersResult,
@@ -11,9 +15,16 @@ vi.mock("../../studio/fleet", () => ({
   addVisibleMachineToStudioFleet: vi.fn(),
   allowIncomingStudioFleetWorkers: vi.fn(),
   allowStudioFleetWorkers: vi.fn(),
+  joinAccountMachineForWorkers: vi.fn(),
   readStudioFleetMachines: vi.fn(),
 }));
-vi.mock("../../state/environments", () => ({ useEnvironments: vi.fn() }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: vi.fn(),
+  useRelayEnvironmentDiscovery: vi.fn(),
+}));
+vi.mock("../../connection/catalog", () => ({ environmentCatalog: {} }));
+vi.mock("../../state/relay", () => ({ relayEnvironmentDiscovery: {} }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
 vi.mock("../../studio/machineNickname", () => ({ useMachineNicknames: vi.fn() }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
@@ -24,9 +35,11 @@ import {
   addVisibleMachineToStudioFleet,
   allowIncomingStudioFleetWorkers,
   allowStudioFleetWorkers,
+  joinAccountMachineForWorkers,
   readStudioFleetMachines,
 } from "../../studio/fleet";
 import {
+  accountMachinesToOffer,
   IncomingWorkerAction,
   IncomingWorkerSaved,
   setUpIncomingWorkers,
@@ -194,8 +207,23 @@ describe("incoming worker setup", () => {
   });
 });
 
+describe("the account's machines the card offers", () => {
+  const record = (id: string) => ({ environmentId: EnvironmentId.make(id), label: id });
+  it("lists machines this app has not opened, never this one or one already known", () => {
+    expect(
+      accountMachinesToOffer({
+        discovered: [record("m4"), record("m1"), record("m3"), record("m5")],
+        here,
+        known: [coordinator, EnvironmentId.make("m3")],
+      }),
+    ).toEqual([record("m5")]);
+  });
+  it("offers nothing when the account has no other machine", () => {
+    expect(accountMachinesToOffer({ discovered: [record("m4")], here, known: [] })).toEqual([]);
+  });
+});
 describe("incoming worker setup view", () => {
-  const action = (connected = true, coordinatorFleetId?: string) =>
+  const action = (connected = true, coordinatorFleetId?: string, accountJoin?: boolean) =>
     renderToStaticMarkup(
       <IncomingWorkerAction
         here={here}
@@ -204,9 +232,93 @@ describe("incoming worker setup view", () => {
         coordinatorLabel="m1"
         connected={connected}
         coordinatorFleetId={coordinatorFleetId}
+        accountJoin={accountJoin}
         onGranted={vi.fn()}
       />,
     );
+  /** This app manages access here and holds only a SpecWithCode Connect sign-in on m1. */
+  const connectSignInThere = (environmentId: EnvironmentId, scope: string) =>
+    environmentId === here || scope === AuthOrchestrationOperateScope;
+  it("enables Allow through the shared Connect account when m1 takes its line that way", () => {
+    vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
+    const html = action(true, undefined, true);
+    expect(html).toMatch(/<button(?![^>]* disabled="")[^>]*>Allow m1<\/button>/);
+    expect(html).not.toContain("Join a main machine");
+  });
+  it("keeps the join line path for an older m1 or a sign-in that cannot operate there", () => {
+    vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
+    expect(action(true, undefined, false)).toContain("Join a main machine");
+    vi.mocked(useEnvironmentScope).mockImplementation(
+      ((environmentId: EnvironmentId, scope: string) =>
+        environmentId === here && scope === AuthAccessWriteScope) as never,
+    );
+    const html = action(true, undefined, true);
+    expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
+    expect(html).toContain("Join a main machine");
+  });
+  it("hands this machine's line to m1 through the Connect sign-in after one confirmation", async () => {
+    vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
+    vi.mocked(requestConfirmDialog).mockResolvedValue(true);
+    vi.mocked(addVisibleMachineToStudioFleet).mockClear();
+    vi.mocked(allowStudioFleetWorkers).mockClear();
+    vi.mocked(allowIncomingStudioFleetWorkers).mockClear();
+    vi.mocked(joinAccountMachineForWorkers).mockResolvedValue(allowed);
+    const onGranted = vi.fn();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerAction
+          here={here}
+          coordinator={coordinator}
+          hereLabel="m4"
+          coordinatorLabel="m1"
+          connected
+          accountJoin
+          onGranted={onGranted}
+        />,
+      );
+    });
+    await act(async () => renderer!.root.findByType("button").props.onClick());
+    expect(joinAccountMachineForWorkers).toHaveBeenCalledExactlyOnceWith({
+      here,
+      coordinator,
+      coordinatorLabel: "m1",
+      access: "full-access",
+    });
+    expect(addVisibleMachineToStudioFleet).not.toHaveBeenCalled();
+    expect(allowStudioFleetWorkers).not.toHaveBeenCalled();
+    expect(allowIncomingStudioFleetWorkers).not.toHaveBeenCalled();
+    expect(onGranted).toHaveBeenCalledExactlyOnceWith({ access: "full-access", expiresAt: null });
+    await act(async () => renderer!.unmount());
+  });
+  it("reports an account join m1 did not confirm and grants nothing", async () => {
+    vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
+    vi.mocked(requestConfirmDialog).mockResolvedValue(true);
+    vi.mocked(joinAccountMachineForWorkers).mockRejectedValue(
+      new Error("m1 did not answer. Check that it is online, then retry."),
+    );
+    const onGranted = vi.fn();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerAction
+          here={here}
+          coordinator={coordinator}
+          hereLabel="m4"
+          coordinatorLabel="m1"
+          connected
+          accountJoin
+          onGranted={onGranted}
+        />,
+      );
+    });
+    await act(async () => renderer!.root.findByType("button").props.onClick());
+    expect(onGranted).not.toHaveBeenCalled();
+    expect(renderer!.root.findByProps({ role: "alert" }).props.children).toBe(
+      "m1 did not answer. Check that it is online, then retry.",
+    );
+    await act(async () => renderer!.unmount());
+  });
   it("says the one manual path when m1 is neither managed here nor in this machine's list", () => {
     vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
     const html = action();

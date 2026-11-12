@@ -1,19 +1,32 @@
 import { renderRich } from "../../i18n/rich";
 import { useLocale, useTx } from "../../i18n";
-import { useState } from "react";
-import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
+import { useEffect, useState } from "react";
+import {
+  RelayConnectionRegistration,
+  RelayConnectionTarget,
+} from "@specweave-studio/client-runtime/connection";
+import { isAtomCommandInterrupted } from "@specweave-studio/client-runtime/state/runtime";
+import {
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+} from "@specweave-studio/contracts";
 import type {
   StudioFleetWorkerAccess,
   StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
+import { environmentCatalog } from "../../connection/catalog";
 import { isElectron } from "../../env";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   addVisibleMachineToStudioFleet,
   allowIncomingStudioFleetWorkers,
   allowStudioFleetWorkers,
+  joinAccountMachineForWorkers,
   readStudioFleetMachines,
 } from "../../studio/fleet";
 import {
@@ -95,6 +108,21 @@ export async function setUpIncomingWorkers(
   }
 }
 
+/**
+ * The account's machines the card offers beside the ones this app already
+ * opened: never this machine, and never one already listed or allowed.
+ */
+export function accountMachinesToOffer<
+  Record extends { readonly environmentId: EnvironmentId },
+>(input: {
+  readonly discovered: ReadonlyArray<Record>;
+  readonly here: EnvironmentId;
+  readonly known: ReadonlyArray<EnvironmentId>;
+}): Record[] {
+  const skip = new Set<EnvironmentId>([input.here, ...input.known]);
+  return input.discovered.filter((record) => !skip.has(record.environmentId));
+}
+
 export function IncomingWorkerSetup({
   environmentId,
   snapshot,
@@ -106,8 +134,19 @@ export function IncomingWorkerSetup({
 }) {
   const tx = useTx();
   const { environments } = useEnvironments();
+  const discovery = useRelayEnvironmentDiscovery();
+  const openEnvironment = useAtomCommand(environmentCatalog.register, { reportFailure: false });
+  const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refresh, {
+    reportFailure: false,
+  });
   const name = useMachineNicknames();
   const [selected, setSelected] = useState<EnvironmentId | null>(null);
+  const [opening, setOpening] = useState<EnvironmentId | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  // The account's machines are read when the card shows, so a new machine lists them at once.
+  useEffect(() => {
+    void refreshDiscovery();
+  }, [refreshDiscovery]);
   // Kept here, not in the action: a granted machine leaves the candidates once
   // the snapshot refreshes, which unmounts the action.
   const [saved, setSaved] = useState<{
@@ -119,15 +158,62 @@ export function IncomingWorkerSetup({
   const savedGrant = saved
     ? snapshot.grants.find((grant) => grant.coordinatorEnvironmentId === saved.coordinator)
     : undefined;
+  const granted = (id: EnvironmentId) =>
+    snapshot.grants.some((grant) => grant.coordinatorEnvironmentId === id);
   const candidates = environments.filter(
     (environment) =>
-      environment.environmentId !== environmentId &&
-      !snapshot.grants.some(
-        (grant) => grant.coordinatorEnvironmentId === environment.environmentId,
-      ),
+      environment.environmentId !== environmentId && !granted(environment.environmentId),
   );
+  // Machines of this SpecWithCode Connect account that this app has not opened yet.
+  const accountOnly = accountMachinesToOffer({
+    discovered: [...discovery.environments.values()].map((entry) => entry.environment),
+    here: environmentId,
+    known: [
+      ...environments.map((environment) => environment.environmentId),
+      ...snapshot.grants.map((grant) => grant.coordinatorEnvironmentId),
+    ],
+  });
   const chosen = candidates.find((environment) => environment.environmentId === selected);
   const here = environments.find((environment) => environment.environmentId === environmentId);
+  async function choose(value: string) {
+    setOpenError(null);
+    const record = accountOnly.find((item) => item.environmentId === value);
+    setSelected(
+      record?.environmentId ??
+        candidates.find((item) => item.environmentId === value)?.environmentId ??
+        null,
+    );
+    if (!record || opening) return;
+    // Choosing an account machine opens it through SpecWithCode Connect; Allow follows.
+    setOpening(record.environmentId);
+    const result = await openEnvironment(
+      new RelayConnectionRegistration({
+        target: new RelayConnectionTarget({
+          environmentId: record.environmentId,
+          label: record.label,
+        }),
+      }),
+    );
+    setOpening(null);
+    if (result._tag !== "Success" && !isAtomCommandInterrupted(result))
+      setOpenError(
+        tx(
+          "Could not open {label} through SpecWithCode Connect. Check that it is online, then choose it again.",
+          { label: record.label },
+        ),
+      );
+  }
+  const selectable = [
+    ...candidates.map((environment) => ({
+      environmentId: environment.environmentId,
+      label: name(environment.environmentId, environment.label),
+    })),
+    ...accountOnly.map((record) => ({
+      environmentId: record.environmentId,
+      label: name(record.environmentId, record.label),
+    })),
+  ];
+  const openingLabel = selectable.find((item) => item.environmentId === opening)?.label;
   return (
     <div className="space-y-2 border-t border-border/60 px-3 py-3 sm:px-4">
       <p className="text-sm font-medium">{tx("Allow another machine to run work here")}</p>
@@ -142,18 +228,16 @@ export function IncomingWorkerSetup({
             <select
               aria-label={tx("Machine sending work")}
               className="min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1"
-              value={chosen?.environmentId ?? ""}
-              onChange={(event) =>
-                setSelected(
-                  candidates.find((item) => item.environmentId === event.target.value)
-                    ?.environmentId ?? null,
-                )
+              value={
+                selectable.find((item) => item.environmentId === selected)?.environmentId ?? ""
               }
+              disabled={opening !== null}
+              onChange={(event) => void choose(event.target.value)}
             >
               <option value="">{tx("Choose a machine")}</option>
-              {candidates.map((environment) => (
-                <option key={environment.environmentId} value={environment.environmentId}>
-                  {name(environment.environmentId, environment.label)}
+              {selectable.map((item) => (
+                <option key={item.environmentId} value={item.environmentId}>
+                  {item.label}
                 </option>
               ))}
             </select>
@@ -167,10 +251,21 @@ export function IncomingWorkerSetup({
           expiresAt={saved.expiresAt ?? savedGrant?.expiresAt ?? null}
         />
       ) : null}
-      {!candidates.length && !saved ? (
+      {opening !== null && openingLabel ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {tx("Opening {label} through SpecWithCode Connect…", { label: openingLabel })}
+        </p>
+      ) : null}
+      {openError ? (
+        <p role="alert" className="text-xs text-destructive-foreground">
+          {openError}
+        </p>
+      ) : null}
+      {!selectable.length && !saved ? (
         <p className="text-xs text-muted-foreground">
-          Connect the other machine in Settings &gt; Machines first. Machines already listed above
-          use their existing access controls.
+          {tx(
+            "No other machine to choose yet. Sign in to SpecWithCode Connect with the same account on this machine and on the one that sends work, and it is listed here. For a machine on another account, use Join a main machine.",
+          )}
         </p>
       ) : null}
       {chosen ? (
@@ -181,6 +276,9 @@ export function IncomingWorkerSetup({
           hereLabel={name(environmentId, here?.label ?? "this machine")}
           coordinatorLabel={name(chosen.environmentId, chosen.label)}
           connected={chosen.connection.phase === "connected"}
+          accountJoin={
+            chosen.serverConfig?.environment.capabilities.fleetAccountJoinWorkers === true
+          }
           onGranted={(grant) => {
             setSaved({
               coordinator: chosen.environmentId,
@@ -244,6 +342,7 @@ export function IncomingWorkerAction({
   coordinatorLabel,
   connected,
   coordinatorFleetId,
+  accountJoin,
   actionLabel,
   onGranted,
 }: {
@@ -258,6 +357,13 @@ export function IncomingWorkerAction({
    * with Manage access is needed there.
    */
   coordinatorFleetId?: string | undefined;
+  /**
+   * The coordinator takes this machine's line from a sign-in through its own
+   * SpecWithCode Connect account (`fleetAccountJoinWorkers`). With neither a
+   * sign-in that manages access there nor a fleet line, this app hands the
+   * line over through its Connect sign-in.
+   */
+  accountJoin?: boolean | undefined;
   /** The button's words where the card already names the direction; "Allow <machine>" otherwise. */
   actionLabel?: string;
   onGranted: (grant: { access: StudioFleetWorkerAccess; expiresAt: string | null }) => void;
@@ -265,18 +371,22 @@ export function IncomingWorkerAction({
   const tx = useTx();
   const manageHere = useEnvironmentScope(here, AuthAccessWriteScope);
   const manageThere = useEnvironmentScope(coordinator, AuthAccessWriteScope);
+  const operateThere = useEnvironmentScope(coordinator, AuthOrchestrationOperateScope);
   const [access, setAccess] = useState<StudioFleetWorkerAccess>(DEFAULT_FLEET_WORKER_ACCESS);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Without a sign-in there, this machine's server asks the coordinator itself.
   const fromHere = !manageThere && coordinatorFleetId !== undefined;
+  // With neither, the two machines' shared SpecWithCode Connect account carries the line.
+  const throughAccount =
+    !manageThere && coordinatorFleetId === undefined && accountJoin === true && operateThere;
   const unavailable = !isElectron
     ? tx("Open the installed desktop app to set this up.")
     : !connected
       ? tx("Connect to {coordinatorLabel} first.", { coordinatorLabel })
       : !manageHere
         ? tx("Manage access is needed on {hereLabel}.", { hereLabel })
-        : !manageThere && coordinatorFleetId === undefined
+        : !manageThere && coordinatorFleetId === undefined && !throughAccount
           ? tx(
               "On {hereLabel}, open Settings > Machines > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.",
               { hereLabel, coordinatorLabel },
@@ -284,6 +394,19 @@ export function IncomingWorkerAction({
           : null;
   async function allowIncomingFromHere(fleetId: string) {
     const result = await allowIncomingStudioFleetWorkers(here, fleetId, access);
+    if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
+      throw new Error(
+        `${coordinatorLabel} added ${hereLabel}, but worker access was not confirmed. Refresh, then retry.`,
+      );
+    return result;
+  }
+  async function allowThroughAccount() {
+    const result = await joinAccountMachineForWorkers({
+      here,
+      coordinator,
+      coordinatorLabel,
+      access,
+    });
     if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
       throw new Error(
         `${coordinatorLabel} added ${hereLabel}, but worker access was not confirmed. Refresh, then retry.`,
@@ -299,8 +422,9 @@ export function IncomingWorkerAction({
         `Allow ${coordinatorLabel} to run work on ${hereLabel}?\n${coordinatorLabel} receives a management key to ${hereLabel} for a year, including access, update and skill management, plus worker access capped at ${FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access}. Existing project and sign-in limits stay in force. Each secret transfer still needs your approval.`,
       );
       if (confirmed !== true) return;
-      const result =
-        fromHere && coordinatorFleetId !== undefined
+      const result = throughAccount
+        ? await allowThroughAccount()
+        : fromHere && coordinatorFleetId !== undefined
           ? await allowIncomingFromHere(coordinatorFleetId)
           : await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
       onGranted({ access, expiresAt: result.workers.expiresAt });
