@@ -20,6 +20,7 @@ import {
   PROVIDER_ADAPTER_PROCESS_CHAINS,
   PROVIDER_PROCESS_SPAWN_SITES,
 } from "../apps/server/src/provider/providerSpawnSites.ts";
+import { isUpstreamUpdateFeed } from "../apps/desktop/src/updates/updateFeedGate.ts";
 import { sourceVersion } from "./studio-projects/version.mjs";
 import { auditPreservedPayloads } from "./studio-toolchain/preservation-audit.mjs";
 import {
@@ -243,6 +244,26 @@ check("self update only from an owned feed and original update endpoints absent"
     );
   }
   assert.match(gate, /if \(args.feedIsUpstream\) \{\s*return "/);
+  // The gate is run, not only read: upstream's repository, hosts and update
+  // domain are refused in every position, and the app's own feed is not.
+  for (const feed of [
+    { owner: "pingdotgg", repo: "t3code" },
+    { owner: "PingDotGG", repo: "anything" },
+    { owner: "someone", repo: "T3Code" },
+    { url: "https://github.com/pingdotgg/t3code/releases/latest" },
+    { url: "https://updates.t3.codes/latest.yml" },
+    { url: "https://t3code.example.com/latest.yml" },
+    { url: "https://downloads.t3tools.com/feed" },
+  ]) {
+    assert.equal(isUpstreamUpdateFeed(feed), true, `refuses ${JSON.stringify(feed)}`);
+  }
+  for (const feed of [
+    undefined,
+    { owner: "anton-abyzov", repo: "specwithcode" },
+    { url: "https://github.com/anton-abyzov/specwithcode/releases/latest" },
+  ]) {
+    assert.equal(isUpstreamUpdateFeed(feed), false, `accepts ${JSON.stringify(feed)}`);
+  }
   const updates = read("apps/desktop/src/updates/DesktopUpdates.ts");
   assert.match(updates, /getAutoUpdateDisabledReason\(\{/);
   assert.match(updates, /feedIsUpstream: isUpstreamUpdateFeed\(/);

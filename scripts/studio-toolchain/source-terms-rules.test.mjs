@@ -44,6 +44,16 @@ test("an altered inherited licence is rejected", () => {
   }
 });
 
+test("an inherited licence that does not start its own paragraph is rejected", () => {
+  for (const lead of ["This is not the ", "## Inherited code\nNot the ", ""]) {
+    assert.throws(
+      () => assertInheritedNoticeRetained(`${lead}${upstreamLicense}\n## Next\n`, upstreamLicense),
+      /must start its own paragraph/,
+      JSON.stringify(lead),
+    );
+  }
+});
+
 test("a missing or repeated inherited licence is rejected", () => {
   assert.throws(() => assertInheritedNoticeRetained(intro, upstreamLicense), /missing/);
   assert.throws(
@@ -90,7 +100,14 @@ test("a missing, reworded or misattributed project licence is rejected", () => {
   );
   rejects(projectLicense.replace("free of charge", "for a fee"), /unchanged MIT text/);
   rejects(`${projectLicense}\nAdditional terms apply.\n`, /unchanged MIT text/);
-  rejects(projectLicense.replace("MIT License", "Proprietary License"), /unchanged MIT text/);
+  rejects(
+    `${upstreamLicense.replace("Copyright (c) 2026 Upstream Inc.\n", "")}Copyright (c) 2026 Project Owner\n`,
+    /must open with the MIT title and the copyright line/,
+  );
+  rejects(
+    projectLicense.replace("MIT License", "Proprietary License"),
+    /must open with the MIT title/,
+  );
   rejects(projectLicense.replace("Project Owner", "Someone Else"), /must name the project owner/);
 });
 

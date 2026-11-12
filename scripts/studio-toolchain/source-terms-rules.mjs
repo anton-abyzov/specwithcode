@@ -14,6 +14,10 @@ export function assertInheritedNoticeRetained(notices, upstreamLicense) {
   assert.ok(upstreamLicense.startsWith("MIT License\n"), "Upstream licence is not the MIT text");
   const start = notices.indexOf("MIT License\n");
   assert.ok(start >= 0, "The inherited licence is missing from the notices");
+  assert.ok(
+    start >= 2 && notices.slice(start - 2, start) === "\n\n",
+    "The inherited licence must start its own paragraph in the notices",
+  );
   assert.equal(
     notices.slice(start, start + upstreamLicense.length),
     upstreamLicense,
@@ -38,6 +42,10 @@ export function assertProjectLicense(license, upstreamLicense, owner) {
   assert.equal(typeof license, "string", "LICENSE is missing");
   const upstreamCopyright = COPYRIGHT_LINE.exec(upstreamLicense)?.[0];
   assert.ok(upstreamCopyright, "Upstream licence has no copyright line");
+  assert.ok(
+    license.startsWith("MIT License\n\nCopyright (c) "),
+    "LICENSE must open with the MIT title and the copyright line",
+  );
   const copyrights = license.match(new RegExp(COPYRIGHT_LINE.source, "gm")) ?? [];
   assert.equal(copyrights.length, 1, "LICENSE must carry exactly one copyright line");
   assert.match(

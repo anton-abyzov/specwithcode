@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export const FIXTURE_UPSTREAM = "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631";
@@ -278,19 +278,28 @@ export function verifyFixtureTree(root, baseline, approvals) {
     );
     ownedFixtures++;
   }
+  // Every inherited protected root is walked: nothing may be added to a
+  // reference tree, and a fixture directory may hold no file Git ignores, since
+  // the brand audit could not read it.
+  const visible = new Set(currentPaths);
   const roots = [
-    ...new Set(
-      [...baseline.keys()].filter((path) => path.startsWith(".repos/")).map(protectedRoot),
-    ),
+    ...new Set([...baseline.keys(), ...currentPaths.filter(isProtectedPath)].map(protectedRoot)),
   ].sort();
   function walk(path) {
     if (baseline.get(path)?.mode === "160000") return;
     const stat = checkedStat(path);
     if (stat.isDirectory() && !stat.isSymbolicLink()) {
       for (const name of readdirSync(join(root, path))) walk(`${path}/${name}`);
-    } else assert.ok(baseline.has(path), `Unlisted reference file: ${path}`);
+    } else if (path.startsWith(".repos/")) {
+      assert.ok(baseline.has(path), `Unlisted reference file: ${path}`);
+    } else {
+      assert.ok(
+        baseline.has(path) || visible.has(path),
+        `Ignored file in a fixture directory: ${path}`,
+      );
+    }
   }
-  for (const path of roots) walk(path);
+  for (const path of roots) if (existsSync(join(root, path))) walk(path);
   return {
     referenceEntriesPreserved: references,
     referenceGitlinksPreserved: gitlinks,

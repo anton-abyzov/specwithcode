@@ -44,13 +44,17 @@ const REFUSED_UPDATE_FEED_DIGESTS = new Set([
   "e6c67ade29a30e00ac361616629808bf30a61556535a7be8a41b63934ba0efe1",
 ]);
 
-// Each word of the value, and each dot suffix of a dotted word, so that a host
-// such as updates.example.com is compared as example.com too.
+// Each word of the value, each dot suffix of a dotted word and each of its
+// labels, so that a host such as updates.example.com is compared as example.com
+// and as example too.
 function updateFeedTerms(value: string): string[] {
   return value
     .toLowerCase()
     .split(/[^a-z0-9.]+/)
-    .flatMap((word) => word.split(".").map((_, index, parts) => parts.slice(index).join(".")))
+    .flatMap((word) => {
+      const labels = word.split(".");
+      return [...labels.map((_, index) => labels.slice(index).join(".")), ...labels];
+    })
     .filter((term) => term !== "");
 }
 

@@ -136,6 +136,15 @@ for (const kind of ["tracked", "untracked"])
     assert.equal(f.run().studioFixtureFilesRead, 2);
     assert.equal(f.run().unlistedFixtureFilesPreserved, 2);
   });
+test("a file Git ignores cannot sit in a fixture directory", (t) => {
+  const f = fixture(t);
+  f.put("app/fixtures/ignored.ndjson", "unread\n");
+  assert.throws(f.run, /Ignored file in a fixture directory: app\/fixtures\/ignored/);
+  const g = fixture(t);
+  g.put("new-app/fixtures/kept.ndjson", "studio recording\n");
+  g.put("new-app/fixtures/ignored.ndjson", "unread\n");
+  assert.throws(g.run, /Ignored file in a fixture directory: new-app\/fixtures\/ignored/);
+});
 test("a Studio fixture cannot be a symlink", (t) => {
   const f = fixture(t);
   f.put("elsewhere.ndjson", "studio recording\n");
