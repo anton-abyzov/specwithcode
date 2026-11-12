@@ -360,7 +360,9 @@ export const layer = HttpApiBuilder.group(
     /**
      * Adds the machine a line names and allows its workers. Adding spends the
      * line for a management token there, so a machine this call added leaves
-     * again, token revoked, when allowing fails.
+     * again, token revoked, when allowing fails. Runs to its end even when the
+     * caller hangs up: stopped between the two steps it would leave the machine
+     * listed with no grant and nothing taken back.
      */
     const addAndAllowWorkers = (
       invitation: string,
@@ -385,7 +387,7 @@ export const layer = HttpApiBuilder.group(
           ),
         );
         return { added, workers };
-      });
+      }).pipe(Effect.uninterruptible);
     /**
      * The line hands out the invite scopes, so only a caller holding all of
      * them may make one: never more than the maker holds.
