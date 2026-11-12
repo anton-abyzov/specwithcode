@@ -46,6 +46,9 @@ export const ADMIN_TUNNEL_STATUS_TIMEOUT = Duration.seconds(3);
  */
 export const ADMIN_TUNNEL_STATUS_MAX = 25;
 
+/** Longest search text the relay reads; the rest is cut off. */
+const ADMIN_SEARCH_MAX_LENGTH = 200;
+
 /** What a Clerk user id looks like; a search for anything else goes to Clerk. */
 const CLERK_USER_ID = /^user_[A-Za-z0-9]+$/u;
 
@@ -68,9 +71,8 @@ export const layerAdminAuth = Layer.effect(
     const ownerOf = Effect.fnUntraced(
       function* (token: string) {
         // Only an interactive Clerk session of an owner: a session JWT for the
-        // relay's audience. The headless CLI's OAuth token is never sent to
-        // Clerk from here, so a guess costs no Clerk call and takes no longer
-        // than a path the relay does not have.
+        // relay's audience. Nothing here calls Clerk's API for the headless
+        // CLI's OAuth token, an empty credential or text that is not a JWT.
         if (token === "") return null;
         const verified = yield* verifyClerkBearerToken(config, token);
         if (
@@ -84,7 +86,8 @@ export const layerAdminAuth = Layer.effect(
         if (sid) {
           // The token names its Clerk session: one removed with a phone is
           // refused, and so is one the relay cannot check. A token without a
-          // session id (the relay's own JWT template) lives a minute at most.
+          // session id (the relay's own JWT template) is not checked here; it
+          // stops working when it expires.
           const session = yield* PhoneRemovalApi.clerkSessionStatus({
             userId: verified.sub,
             clerkSessionId: sid,
@@ -203,27 +206,37 @@ export const layerApi = HttpApiBuilder.group(
       .handle(
         "listAccounts",
         Effect.fn("relay.api.admin.listAccounts")(function* ({ query }) {
-          const search = query.query?.trim() ?? "";
+          const listed = yield* queries
+            .listAccounts({ limit: RELAY_ADMIN_ACCOUNTS_PAGE_SIZE, cursor: query.cursor })
+            .pipe(Effect.catch(() => unavailable("persistence_failed")));
+          return {
+            ...(yield* identify(listed.accounts)),
+            nextCursor: listed.nextCursor,
+            searchTruncated: false,
+          };
+        }),
+      )
+      .handle(
+        "searchAccounts",
+        Effect.fn("relay.api.admin.searchAccounts")(function* ({ payload }) {
+          const search = payload.query.trim().slice(0, ADMIN_SEARCH_MAX_LENGTH);
           // An id is matched as it is; anything else is an email or name Clerk looks up.
           const found =
             search === ""
-              ? undefined
+              ? { userIds: [], truncated: false }
               : CLERK_USER_ID.test(search)
                 ? { userIds: [search], truncated: false }
                 : yield* identities
                     .search(search)
                     .pipe(Effect.catch(() => unavailable("identity_lookup_failed")));
+          // A search reads at most one page of people, so its result is one page.
           const listed = yield* queries
-            .listAccounts({
-              limit: RELAY_ADMIN_ACCOUNTS_PAGE_SIZE,
-              cursor: query.cursor,
-              userIds: found?.userIds,
-            })
+            .listAccounts({ limit: RELAY_ADMIN_ACCOUNTS_PAGE_SIZE, userIds: found.userIds })
             .pipe(Effect.catch(() => unavailable("persistence_failed")));
           return {
             ...(yield* identify(listed.accounts)),
-            nextCursor: listed.nextCursor,
-            searchTruncated: found?.truncated ?? false,
+            nextCursor: null,
+            searchTruncated: found.truncated,
           };
         }),
       )

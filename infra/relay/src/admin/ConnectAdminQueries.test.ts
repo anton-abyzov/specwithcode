@@ -167,6 +167,15 @@ describe("the Connect admin's read of the relay database", () => {
           })).accounts,
         ),
       ).toEqual(["user_free", "user_owner"]);
+      // A full page of ids, most of them unknown, still fits one statement.
+      const many = Array.from({ length: 49 }, (_, n) => `user_unknown${n}`);
+      expect(
+        ids((yield* queries.listAccounts({ limit: 50, userIds: [...many, "user_key"] })).accounts),
+      ).toEqual(["user_key"]);
+      // An id is data, never SQL.
+      expect(
+        (yield* queries.listAccounts({ limit: 50, userIds: [`x') OR 1=1 --`, '"]'] })).accounts,
+      ).toEqual([]);
       expect(yield* queries.listAccounts({ limit: 50, userIds: [] })).toEqual({
         accounts: [],
         nextCursor: null,

@@ -3,11 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { RelayApi } from "@specweave-studio/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Tracer from "effect/Tracer";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
-import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as OpenApi from "effect/http-api/OpenApi";
@@ -17,7 +14,6 @@ import * as PhoneRemovals from "../agentActivity/PhoneRemovals.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
-import { traceRelayHttpRequestWith } from "../http/Api.ts";
 import { clearClerkOAuthVerificationCache } from "../http/ClerkBearer.ts";
 import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
 import {
@@ -92,7 +88,13 @@ const KNOWN: ReadonlyMap<string, AdminIdentities.AdminIdentity> = new Map([
 const withAdmin = <A, E>(
   world: World,
   use: (
-    call: (path: string, token?: string, scheme?: string) => Effect.Effect<Response>,
+    /** A GET, or a POST of `body` when one is given. */
+    call: (
+      path: string,
+      token?: string,
+      scheme?: string,
+      body?: unknown,
+    ) => Effect.Effect<Response>,
   ) => Effect.Effect<A, E, never>,
 ) =>
   Effect.gen(function* () {
@@ -150,16 +152,22 @@ const withAdmin = <A, E>(
       ),
       (handler) => Effect.promise(() => handler.dispose()),
     );
-    return yield* use((path, token, scheme = "Bearer") =>
+    return yield* use((path, token, scheme = "Bearer", body) =>
       Effect.promise(() =>
         app.handler(
           new Request(`https://relay.example.test${path}`, {
-            headers: token === undefined ? {} : { authorization: `${scheme} ${token}`.trim() },
+            ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }),
+            headers: {
+              ...(token === undefined ? {} : { authorization: `${scheme} ${token}`.trim() }),
+              ...(body === undefined ? {} : { "content-type": "application/json" }),
+            },
           }),
         ),
       ),
     );
   }).pipe(Effect.scoped);
+
+const SEARCH = "/v1/admin/accounts/search";
 
 const json = (response: Response) => Effect.promise(() => response.json() as Promise<unknown>);
 const text = (response: Response) => Effect.promise(() => response.text());
@@ -223,6 +231,10 @@ describe("who may use the Connect admin routes", () => {
           yield* expectHidden(yield* call(route, "owner-session", "DPoP"));
           yield* expectHidden(yield* call(route, "owner-session", "Basic"));
         }
+        // A search is hidden the same way, also one whose body the route would refuse.
+        yield* expectHidden(yield* call(SEARCH, "other-session", "Bearer", { query: "a" }));
+        yield* expectHidden(yield* call(SEARCH, undefined, "Bearer", { query: "a" }));
+        yield* expectHidden(yield* call(SEARCH, "other-session", "Bearer", { nonsense: 1 }));
         // None of these guesses reached Clerk's API.
         expect(createClerkClient).not.toHaveBeenCalled();
       }),
@@ -387,35 +399,58 @@ describe("what a Connect owner reads", () => {
       },
       (call) =>
         Effect.gen(function* () {
-          const found = (path: string) =>
-            call(path, "owner-session").pipe(
-              Effect.flatMap(json),
-              Effect.map((body) =>
-                (body as { accounts: ReadonlyArray<{ userId: string }> }).accounts.map(
-                  (account) => account.userId,
-                ),
-              ),
+          const found = (query: string) =>
+            call(SEARCH, "owner-session", "Bearer", { query }).pipe(
+              Effect.flatMap((response) => {
+                expect(response.status).toBe(200);
+                expect(response.headers.get("cache-control")).toBe("no-store");
+                return json(response);
+              }),
+              Effect.map((body) => {
+                const page = body as {
+                  accounts: ReadonlyArray<{ userId: string }>;
+                  nextCursor: string | null;
+                };
+                // A search is one page.
+                expect(page.nextCursor).toBeNull();
+                return page.accounts.map((account) => account.userId);
+              }),
             );
-          expect(yield* found("/v1/admin/accounts?query=user_founder")).toEqual(["user_founder"]);
+          expect(yield* found("user_founder")).toEqual(["user_founder"]);
           // An id is matched by the relay; Clerk is not asked.
           expect(searched).toEqual([]);
-          expect(yield* found("/v1/admin/accounts?query=%20free%40example.test%20")).toEqual([
-            "user_free",
-          ]);
+          expect(yield* found(" free@example.test ")).toEqual(["user_free"]);
           expect(searched).toEqual(["free@example.test"]);
-          expect(yield* found("/v1/admin/accounts?query=nobody%40example.test")).toEqual([]);
-          expect(yield* found("/v1/admin/accounts?query=user_nobody")).toEqual([]);
+          expect(yield* found("nobody@example.test")).toEqual([]);
+          expect(yield* found("user_nobody")).toEqual([]);
           // An email that only starts like an id is still an email.
           searched.length = 0;
-          yield* found("/v1/admin/accounts?query=user_free%40example.test");
+          yield* found("user_free@example.test");
           expect(searched).toEqual(["user_free@example.test"]);
+          // Nothing to look for finds nothing, and asks nobody.
+          searched.length = 0;
+          expect(yield* found("   ")).toEqual([]);
+          expect(searched).toEqual([]);
         }),
     );
   });
 
+  it.effect("the whole list, whatever a URL says to search for", () =>
+    withAdmin({ owners: ["user_owner"] }, (call) =>
+      Effect.gen(function* () {
+        // A search never travels in a URL, where request logs would keep it.
+        const body = (yield* json(
+          yield* call("/v1/admin/accounts?query=free%40example.test", "owner-session"),
+        )) as { accounts: ReadonlyArray<unknown>; searchTruncated: boolean };
+        expect(body.accounts).toHaveLength(5);
+        expect(body.searchTruncated).toBe(false);
+      }),
+    ),
+  );
+
   it.effect("that a search matched more people than it read", () =>
     Effect.gen(function* () {
-      const truncated = (path: string, clerkHasMore: boolean) =>
+      const truncated = (query: string, clerkHasMore: boolean) =>
         withAdmin(
           {
             owners: ["user_owner"],
@@ -424,16 +459,15 @@ describe("what a Connect owner reads", () => {
             },
           },
           (call) =>
-            call(path, "owner-session").pipe(
+            call(SEARCH, "owner-session", "Bearer", { query }).pipe(
               Effect.flatMap(json),
               Effect.map((body) => (body as { searchTruncated: boolean }).searchTruncated),
             ),
         );
-      expect(yield* truncated("/v1/admin/accounts?query=example.test", true)).toBe(true);
-      expect(yield* truncated("/v1/admin/accounts?query=example.test", false)).toBe(false);
-      // A plain list and a search by id never read Clerk's search.
-      expect(yield* truncated("/v1/admin/accounts", true)).toBe(false);
-      expect(yield* truncated("/v1/admin/accounts?query=user_free", true)).toBe(false);
+      expect(yield* truncated("example.test", true)).toBe(true);
+      expect(yield* truncated("example.test", false)).toBe(false);
+      // A search by id never reads Clerk's search.
+      expect(yield* truncated("user_free", true)).toBe(false);
     }),
   );
 
@@ -450,7 +484,7 @@ describe("what a Connect owner reads", () => {
       },
       (call) =>
         Effect.gen(function* () {
-          const response = yield* call("/v1/admin/accounts?query=someone", "owner-session");
+          const response = yield* call(SEARCH, "owner-session", "Bearer", { query: "someone" });
           expect(response.status).toBe(503);
           expect(yield* json(response)).toMatchObject({
             _tag: "RelayAdminUnavailableError",
@@ -640,37 +674,6 @@ describe("what nobody else learns about the Connect admin routes", () => {
     expect(described).not.toContain("/v1/admin");
     expect(described).not.toContain("Owner-only");
   });
-
-  it.effect("a search's email or name stays out of the request trace", () =>
-    Effect.gen(function* () {
-      const spans: Array<Tracer.NativeSpan> = [];
-      const tracer = Tracer.make({
-        span: (options) => {
-          const span = new Tracer.NativeSpan(options);
-          spans.push(span);
-          return span;
-        },
-      });
-      let handled = "";
-      const handler = Effect.gen(function* () {
-        handled = (yield* HttpServerRequest.HttpServerRequest).url;
-        return HttpServerResponse.empty({ status: 204 });
-      });
-      yield* traceRelayHttpRequestWith(handler, Layer.succeed(Tracer.Tracer, tracer)).pipe(
-        Effect.provideService(
-          HttpServerRequest.HttpServerRequest,
-          HttpServerRequest.fromWeb(
-            new Request("https://relay.test/v1/admin/accounts?query=alice%40example.test"),
-          ),
-        ),
-      );
-      // The route still gets the search it was sent.
-      expect(handled).toContain("alice%40example.test");
-      expect(spans[0]?.attributes.get("url.path")).toBe("/v1/admin/accounts");
-      const recorded = JSON.stringify(spans.map((span) => [...span.attributes.entries()]));
-      expect(recorded).not.toContain("alice");
-    }),
-  );
 });
 
 describe("what a Connect owner never reads", () => {

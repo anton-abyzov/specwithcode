@@ -126,6 +126,13 @@ const seenUsers = (where: SQL = sql``) => sql`
 /** Only the accounts named in the `wanted` list the statement starts with. */
 const ONLY_WANTED = sql`WHERE user_id IN (SELECT user_id FROM wanted)`;
 
+/**
+ * The `wanted` list: the ids as one JSON text, so a statement binds one value
+ * for them however many there are.
+ */
+const wantedUsers = (userIds: ReadonlyArray<string>): SQL =>
+  sql`WITH wanted(user_id) AS (SELECT value FROM json_each(${JSON.stringify(userIds)}))`;
+
 const inList = (values: ReadonlyArray<string>): SQL =>
   sql.join(
     values.map((value) => sql`${value}`),
@@ -276,13 +283,7 @@ export const make = Effect.gen(function* () {
     // A cursor this relay did not make ends the list; it never restarts it.
     if (input.cursor && cursor === null) return { accounts: [], nextCursor: null };
     // The ids are bound once, and each table is then read by user id.
-    const wanted =
-      input.userIds === undefined
-        ? sql``
-        : sql`WITH wanted(user_id) AS (VALUES ${sql.join(
-            input.userIds.map((userId) => sql`(${userId})`),
-            sql`, `,
-          )})`;
+    const wanted = input.userIds === undefined ? sql`` : wantedUsers(input.userIds);
     const having =
       cursor === null
         ? sql``

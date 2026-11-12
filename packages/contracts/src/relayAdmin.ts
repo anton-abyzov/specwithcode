@@ -110,8 +110,15 @@ export type RelayAdminOverviewResponse = typeof RelayAdminOverviewResponse.Type;
 export const RelayAdminAccountsQuery = Schema.Struct({
   /** `nextCursor` of the page before. */
   cursor: Schema.optionalKey(Schema.String),
+});
+
+/**
+ * A search travels in the request body. In a URL, a customer's email would
+ * land in the relay's request logs.
+ */
+export const RelayAdminAccountsSearchRequest = Schema.Struct({
   /** A Clerk user id (`user_...`), or an email or name to look up in Clerk. */
-  query: Schema.optionalKey(Schema.String),
+  query: Schema.String,
 });
 
 export const RelayAdminAccountsResponse = Schema.Struct({
@@ -119,7 +126,7 @@ export const RelayAdminAccountsResponse = Schema.Struct({
   nextCursor: Schema.NullOr(Schema.String),
   /** "unavailable": Clerk did not answer, so this page has ids only. */
   identities: Schema.Literals(["read", "unavailable"]),
-  /** True when more people matched `query` than one search reads: narrow it. */
+  /** True when more people matched a search than it reads: narrow it. */
   searchTruncated: Schema.Boolean,
 });
 export type RelayAdminAccountsResponse = typeof RelayAdminAccountsResponse.Type;
@@ -191,6 +198,11 @@ export const RelayAdminGroup = HttpApiGroup.make("admin")
       success: RelayAdminAccountsResponse,
       error: RelayAdminUnavailableError,
     }).annotate(OpenApi.Summary, "List Connect accounts, newest first"),
+    HttpApiEndpoint.post("searchAccounts", "/v1/admin/accounts/search", {
+      payload: RelayAdminAccountsSearchRequest,
+      success: RelayAdminAccountsResponse,
+      error: RelayAdminUnavailableError,
+    }).annotate(OpenApi.Summary, "Find accounts by id, email or name"),
     HttpApiEndpoint.get("account", "/v1/admin/accounts/:userId", {
       params: RelayAdminAccountParams,
       success: RelayAdminAccountResponse,

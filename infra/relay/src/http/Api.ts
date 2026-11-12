@@ -269,10 +269,7 @@ export const traceRelayHttpRequest = <E, R>(
     const traced = appendRelayTraceContextResponseHeader.pipe(
       Effect.andThen(relayRequestDeadline(httpEffect, relayRequestDeadlineMs(request))),
     );
-    const hook = isRelayHookPath(request.url);
-    // An admin search carries a customer's email or name in its query.
-    const adminSearch = request.url.startsWith("/v1/admin/") && request.url.includes("?");
-    if (!hook && !adminSearch) {
+    if (!isRelayHookPath(request.url)) {
       return yield* HttpMiddleware.tracer(traced).pipe(
         // The worker turns its own request span off; this one is ours.
         Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
@@ -284,21 +281,19 @@ export const traceRelayHttpRequest = <E, R>(
     // request, while the route itself still receives the original. A webhook
     // sender's trace context is dropped, so it cannot pick the trace our relay
     // and environment spans land in.
-    const redacted = hook
-      ? request.modify({
-          url: redactRelayHookUrl(request.url),
-          headers: Headers.removeMany(
-            request.headers,
-            Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
-          ),
-        })
-      : request.modify({ url: request.url.split("?", 1)[0] ?? request.url });
+    const redacted = request.modify({
+      url: redactRelayHookUrl(request.url),
+      headers: Headers.removeMany(
+        request.headers,
+        Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+      ),
+    });
     return yield* HttpMiddleware.tracer(
       appendRelayTraceContextResponseHeader.pipe(
         Effect.andThen(
           relayRequestDeadline(
             httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-            hook ? RELAY_HOOK_REQUEST_DEADLINE_MS : relayRequestDeadlineMs(request),
+            RELAY_HOOK_REQUEST_DEADLINE_MS,
           ),
         ),
       ),
