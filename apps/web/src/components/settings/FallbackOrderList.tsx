@@ -295,7 +295,7 @@ export function ModelOrderList(props: {
               <button
                 type="button"
                 aria-expanded={alternatesOpen}
-                aria-label={tr("fallback.sameModelAria", { label: rowLabel })}
+                aria-label={`${tr("fallback.sameModelAria", { label: rowLabel })} (${step.alternates.length})`}
                 data-alternates-toggle={rowLabel}
                 className="mt-1.5 ml-[1.375rem] flex items-center gap-1.5 rounded-full border border-border/70 py-0.5 pr-2 pl-1.5 text-xs text-muted-foreground hover:text-foreground"
                 onClick={() =>

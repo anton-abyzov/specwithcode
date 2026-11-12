@@ -3141,7 +3141,11 @@ export function GeneralSettingsPanel() {
           />
         </SettingsCollapsibleSection>
 
-        <SettingsCollapsibleSection id="confirmations" title="Confirmations" count={4}>
+        <SettingsCollapsibleSection
+          id="confirmations"
+          title="Confirmations"
+          count={isElectron ? 4 : 3}
+        >
           <SettingsRow
             {...searchableSetting("unpin-confirmation")}
             description="Ask before unpinning a thread from the pinned section."

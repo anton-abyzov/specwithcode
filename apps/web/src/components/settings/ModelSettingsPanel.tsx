@@ -1,6 +1,7 @@
 import { AuthSettingsWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useEnvironmentSessionState } from "../../state/session";
+import { resolveRemoteOperateAccess } from "./ProviderSettingsPanel.logic";
 import { AdversarialReviewSettings } from "./AdversarialReviewSettings";
 import { DecisionModelSettings } from "./DecisionModelSettings";
 import { ModelLanesSettings } from "./ModelLanesSettings";
@@ -22,6 +23,14 @@ export function ModelSettingsPanel(props: { readonly environment: EnvironmentPre
   const { environments } = useNamedEnvironments();
   const environmentLabel = settingsScopeEnvironmentLabel(environment, environments);
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  // A remote session without operate access reads these, as it does on Providers.
+  const sessionState = useEnvironmentSessionState(environmentId);
+  const operateDenied =
+    resolveRemoteOperateAccess({
+      session: sessionState.data,
+      isPending: sessionState.isPending,
+      hasError: sessionState.hasError,
+    }) === "denied";
   return (
     <SettingsPageContainer width="wide" className="gap-8">
       <SettingsSection title="Model tiers" reach={{ kind: "machine", name: environmentLabel }}>
@@ -37,7 +46,10 @@ export function ModelSettingsPanel(props: { readonly environment: EnvironmentPre
       </SettingsSection>
 
       <SettingsSection title="Decision model" reach={{ kind: "machine", name: environmentLabel }}>
-        <DecisionModelSettings environmentId={environmentId} readOnly={!canWriteSettings} />
+        <DecisionModelSettings
+          environmentId={environmentId}
+          readOnly={operateDenied || !canWriteSettings}
+        />
       </SettingsSection>
 
       <SettingsSection

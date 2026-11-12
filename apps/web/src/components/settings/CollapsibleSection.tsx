@@ -49,17 +49,18 @@ export function CollapsibleSection({
       open={open}
       data-slot="settings-collapsible-section"
       className={cn("group/section space-y-2.5", className)}
-      onToggle={(event) => {
-        const next = event.currentTarget.open;
-        setOpen(next);
-        try {
-          window.localStorage.setItem(SECTION_OPEN_STORAGE_PREFIX + id, next ? "1" : "0");
-        } catch {
-          // Private windows refuse storage; the section still opens and closes.
-        }
-      }}
+      // A search that reveals a row opens the section for now; only a person's
+      // own click on the heading is remembered.
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary
+        onClick={() => {
+          try {
+            window.localStorage.setItem(SECTION_OPEN_STORAGE_PREFIX + id, open ? "0" : "1");
+          } catch {
+            // Private windows refuse storage; the section still opens and closes.
+          }
+        }}
         data-settings-scroll-target
         className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-foreground focus-visible:outline-2 focus-visible:outline-ring sm:px-4 [&::-webkit-details-marker]:hidden"
       >
