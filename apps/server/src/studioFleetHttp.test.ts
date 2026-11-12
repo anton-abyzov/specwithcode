@@ -913,9 +913,14 @@ describe("a machine of this Connect account handing over its line", () => {
       });
       const fleet = (await (await main.request()).json()) as {
         machines: Array<{ id: string; label: string }>;
+        accountJoins?: Array<{ id: string; label: string; joinedAt: string }>;
       };
       // Listed under the name the line carries, which the machine reports for itself.
       expect(fleet.machines).toContainEqual(expect.objectContaining({ id: "m2", label: "M2" }));
+      // Noted for the notice this machine's app shows; nothing to accept.
+      expect(fleet.accountJoins).toEqual([
+        { id: "m2", label: "M2", joinedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/u) },
+      ]);
     } finally {
       await main.dispose();
     }

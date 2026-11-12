@@ -44,6 +44,7 @@ import { CoordinatorSync } from "../components/studio/CoordinatorSync";
 import { LinkedMemorySync } from "../components/studio/LinkedMemorySync";
 import { LinkedPlanSync } from "../components/studio/LinkedPlanSync";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
+import { FleetJoinNotice } from "../components/FleetJoinNotice";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
@@ -286,6 +287,7 @@ function RootRouteView() {
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}
+          {primaryEnvironmentAuthenticated ? <FleetJoinNotice /> : null}
           <ProjectCloneToastCoordinator />
           <AddToMachineJobRunner />
           <HostedStaticEnvironmentBootstrap />

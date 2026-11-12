@@ -36,7 +36,9 @@ otherwise use the steps below.
 
 Two machines signed in to the same SpecWithCode Connect account need none of
 this: on the machine that should take work, choose the other one under **Let
-another of your machines run work here** and press **Allow**. The join line
+another of your machines run work here** and press **Allow**. Nothing has to
+be accepted on the other machine: it shows a notice that the machine joined,
+and you can change or remove it there in **Settings → Machines**. The join line
 steps below are for a machine on another account, or one that cannot reach
 SpecWithCode Connect. In **Settings → Machines** they sit under **Another
 account, or no Connect**: choose **Show** to open **Add a machine** and **Join

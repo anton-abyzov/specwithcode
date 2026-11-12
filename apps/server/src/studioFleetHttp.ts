@@ -57,6 +57,7 @@ import {
 } from "./auth/CredentialFailureLimiter.ts";
 import { requestRemoteAddress } from "./auth/utils.ts";
 import * as Config from "./config.ts";
+import { readAccountJoins, recordAccountJoin } from "./fleet/accountJoins.ts";
 import * as FleetDiskRoom from "./fleet/fleetDiskRoom.ts";
 import * as FleetSkills from "./fleet/fleetSkills.ts";
 import * as FleetUpdate from "./fleet/fleetUpdate.ts";
@@ -505,7 +506,12 @@ export const layer = HttpApiBuilder.group(
                 Effect.map(grants.status(machine.id), (workers) => ({ ...machine, workers })),
               { concurrency: 4 },
             );
-            return { ...snapshot, machines };
+            const accountJoins = yield* Effect.promise(() => readAccountJoins(config.baseDir));
+            return {
+              ...snapshot,
+              machines,
+              ...(accountJoins.length === 0 ? {} : { accountJoins }),
+            };
           }),
         )
         // The release runs this machine recorded, for the Releases view; read-only.
@@ -759,6 +765,13 @@ export const layer = HttpApiBuilder.group(
               machine: added.id,
               change: added.change,
             });
+            // For the notice this machine's app shows. Only a notice: failing
+            // to write it leaves the join as it is.
+            yield* Effect.promise(() =>
+              recordAccountJoin(config.baseDir, { id: added.id, label: added.label }).catch(
+                () => undefined,
+              ),
+            );
             return { id: added.id, workers };
           }),
         )
@@ -801,6 +814,13 @@ export const layer = HttpApiBuilder.group(
               environmentId: added.environmentId,
               change: added.change,
             });
+            // For the notice this machine's app shows. Only a notice: failing
+            // to write it leaves the join as it is.
+            yield* Effect.promise(() =>
+              recordAccountJoin(config.baseDir, { id: added.id, label: added.label }).catch(
+                () => undefined,
+              ),
+            );
             return { id: added.id, workers };
           }),
         )
