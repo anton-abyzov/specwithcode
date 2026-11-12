@@ -7,6 +7,11 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 
 const store = vi.hoisted(() => ({ values: new Map<string, unknown>() }));
+// Where a link into Settings landed: the id the page is asked to reach, and the elements that took it.
+const landing = vi.hoisted(() => ({
+  targetId: null as string | null,
+  reached: [] as Array<string>,
+}));
 vi.mock("@clerk/react", () => ({ useAuth: vi.fn(), useUser: vi.fn() }));
 vi.mock("../../cloud/primaryCloudLinkState", () => ({ usePrimaryCloudLinkState: vi.fn() }));
 vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: vi.fn() }));
@@ -48,6 +53,13 @@ vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
 vi.mock("../../studio/machineNickname", () => ({ useMachineNicknames: vi.fn() }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
 vi.mock("../../env", () => ({ isElectron: true }));
+vi.mock("./settingsLayout", () => ({
+  useSettingsSearchTargetId: () => landing.targetId,
+  // The real hook scrolls to and focuses the element when it mounts as the target.
+  useSettingsSearchTarget: (id: string) => (node: { readonly id: string } | null) => {
+    if (node && id === landing.targetId) landing.reached.push(node.id);
+  },
+}));
 
 import { useAuth, useUser } from "@clerk/react";
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
@@ -65,7 +77,11 @@ import {
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { AccountJoinCard, AccountJoinCardBody } from "./AccountJoinCard";
-import { JOIN_CARD_FOLDED_STORAGE_KEY, type JoinCardConnect } from "./AccountJoinCard.logic";
+import {
+  JOIN_CARD_ANCHOR,
+  JOIN_CARD_FOLDED_STORAGE_KEY,
+  type JoinCardConnect,
+} from "./AccountJoinCard.logic";
 
 const here = EnvironmentId.make("m4");
 const m1 = EnvironmentId.make("m1");
@@ -167,10 +183,10 @@ function textOf(node: ReactTestInstance | string): string {
   return typeof node === "string" ? node : node.children.map(textOf).join("");
 }
 
-async function mount(element: React.ReactElement) {
+async function mount(element: React.ReactElement, options?: Parameters<typeof create>[1]) {
   let renderer: ReturnType<typeof create> | null = null;
   await act(async () => {
-    renderer = create(element);
+    renderer = create(element, options);
   });
   const root = () => renderer!.root;
   return {
@@ -193,6 +209,8 @@ const body = (
 
 beforeEach(() => {
   store.values.clear();
+  landing.targetId = null;
+  landing.reached = [];
   vi.mocked(requestConfirmDialog).mockReset();
   vi.mocked(joinAccountMachineForWorkers).mockReset();
 });
@@ -482,6 +500,71 @@ describe("allowing the chosen machine", () => {
     await act(async () => view.radio("m1").props.onChange());
     expect(view.button("Allow M1")?.props.disabled).toBe(true);
     expect(view.text()).toContain("Connect to M1 first.");
+    await view.unmount();
+  });
+});
+
+describe("landing on the card from the account menu", () => {
+  // Elements stand in for DOM nodes, so the card's ref has something to reach.
+  const nodes: NonNullable<Parameters<typeof create>[1]> = {
+    createNodeMock: (element) => ({ id: (element.props as { id?: string }).id ?? "" }),
+  };
+
+  it("is not a destination until a link names it", async () => {
+    world({ discovered: [discoveredMachine(m5, "M5")] });
+    const view = await mount(body(), nodes);
+    expect(view.root().findByProps({ id: JOIN_CARD_ANCHOR })).toBeDefined();
+    expect(landing.reached).toEqual([]);
+    await view.unmount();
+  });
+
+  it("is reached when it appears after the page, once who can run work here is known", async () => {
+    world({ discovered: [discoveredMachine(m5, "M5")] });
+    landing.targetId = JOIN_CARD_ANCHOR;
+    const grants = { snapshot: null as typeof snapshot | null, loading: true, failed: false };
+    vi.mocked(useMachineWorkGrants).mockImplementation(
+      () => ({ ...grants, refresh: vi.fn() }) as never,
+    );
+    const view = await mount(<AccountJoinCard environmentId={here} />, nodes);
+    // Nothing to land on yet: the card is not drawn while the list is being read.
+    expect(view.root().findAllByProps({ id: JOIN_CARD_ANCHOR })).toHaveLength(0);
+    expect(landing.reached).toEqual([]);
+    grants.snapshot = snapshot;
+    grants.loading = false;
+    await act(async () => view.rerender(<AccountJoinCard environmentId={here} />));
+    expect(landing.reached).toContain(JOIN_CARD_ANCHOR);
+    expect(view.radio("m5")).toBeDefined();
+    await view.unmount();
+  });
+
+  it("opens a card that was folded with Not now, and keeps it open", async () => {
+    world({ discovered: [discoveredMachine(m5, "M5")] });
+    store.values.set(JOIN_CARD_FOLDED_STORAGE_KEY, { environments: [here] });
+    landing.targetId = JOIN_CARD_ANCHOR;
+    const view = await mount(body(), nodes);
+    expect(landing.reached).toContain(JOIN_CARD_ANCHOR);
+    expect(view.radio("m5").props.checked).toBe(false);
+    expect(store.values.get(JOIN_CARD_FOLDED_STORAGE_KEY)).toEqual({ environments: [] });
+    await view.unmount();
+  });
+
+  it("leaves a folded card folded when the link points somewhere else", async () => {
+    world({ discovered: [discoveredMachine(m5, "M5")] });
+    store.values.set(JOIN_CARD_FOLDED_STORAGE_KEY, { environments: [here] });
+    landing.targetId = "private-machines-device-code";
+    const view = await mount(body(), nodes);
+    expect(view.root().findAllByProps({ type: "radio" })).toHaveLength(0);
+    expect(landing.reached).toEqual([]);
+    await view.unmount();
+  });
+
+  it("never unfolds a first-run step, which has no fold", async () => {
+    world({ discovered: [discoveredMachine(m5, "M5")] });
+    store.values.set(JOIN_CARD_FOLDED_STORAGE_KEY, { environments: [here] });
+    landing.targetId = JOIN_CARD_ANCHOR;
+    const view = await mount(body(signedIn, { variant: "first-run" }), nodes);
+    expect(view.radio("m5")).toBeDefined();
+    expect(store.values.get(JOIN_CARD_FOLDED_STORAGE_KEY)).toEqual({ environments: [here] });
     await view.unmount();
   });
 });

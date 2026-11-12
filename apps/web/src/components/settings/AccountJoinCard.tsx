@@ -33,6 +33,7 @@ import { Button } from "../ui/button";
 import {
   canChooseJoinCardMachine,
   EMPTY_JOIN_CARD_FOLDED_STATE,
+  JOIN_CARD_ANCHOR,
   JOIN_CARD_FOLDED_STORAGE_KEY,
   joinCardConnect,
   JoinCardFoldedSchema,
@@ -46,6 +47,7 @@ import {
   IncomingWorkerSaved,
   useIncomingWorkerAllow,
 } from "./IncomingWorkerSetup";
+import { useSettingsSearchTarget, useSettingsSearchTargetId } from "./settingsLayout";
 
 const NO_CONNECT: JoinCardConnect = { kind: "none" };
 
@@ -162,6 +164,14 @@ export function AccountJoinCardBody({
   const folded = !firstRun && foldedState.environments.includes(environmentId);
   const setFolded = (next: boolean) =>
     setFoldedState((state) => withJoinCardFolded(state, environmentId, next));
+  // A link that lands here (the account menu's "Add a device or machine") scrolls
+  // to the card when it appears, which can be after the page, and opens it.
+  const targetRef = useSettingsSearchTarget<HTMLElement>(JOIN_CARD_ANCHOR);
+  const landedOn = useSettingsSearchTargetId() === JOIN_CARD_ANCHOR;
+  useEffect(() => {
+    if (landedOn && folded)
+      setFoldedState((state) => withJoinCardFolded(state, environmentId, false));
+  }, [environmentId, folded, landedOn, setFoldedState]);
   // The account's machines are read when the card shows, so a new machine lists them at once.
   useEffect(() => {
     void refreshDiscovery();
@@ -293,8 +303,10 @@ export function AccountJoinCardBody({
   if (folded)
     return (
       <section
-        id="machines-join-card"
-        className="flex items-center justify-between gap-4 rounded-xl border border-border/60 bg-card/60 px-3 py-2.5 sm:px-4"
+        id={JOIN_CARD_ANCHOR}
+        ref={targetRef}
+        tabIndex={-1}
+        className="flex items-center justify-between gap-4 rounded-xl border border-border/60 bg-card/60 px-3 py-2.5 outline-none sm:px-4"
       >
         <p className="min-w-0 text-sm">{tx("Let another of your machines run work here")}</p>
         <Button size="xs" variant="outline" onClick={() => setFolded(false)}>
@@ -418,11 +430,14 @@ export function AccountJoinCardBody({
 }
 
 function JoinCardFrame({ accent = false, children }: { accent?: boolean; children: ReactNode }) {
+  const targetRef = useSettingsSearchTarget<HTMLElement>(JOIN_CARD_ANCHOR);
   return (
     <section
-      id="machines-join-card"
+      id={JOIN_CARD_ANCHOR}
+      ref={targetRef}
+      tabIndex={-1}
       className={cn(
-        "rounded-xl border bg-card/60 px-3 py-3 sm:px-4 sm:py-4",
+        "rounded-xl border bg-card/60 px-3 py-3 outline-none sm:px-4 sm:py-4",
         accent ? "border-primary/40 ring-2 ring-primary/15" : "border-border/60",
       )}
     >

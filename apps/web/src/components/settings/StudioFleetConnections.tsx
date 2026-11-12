@@ -63,7 +63,11 @@ import { ConnectDeregisterHint, fleetRemoveConnectNote } from "./ConnectDeregist
 import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
-import { AddDeviceWithCodeRow, useCanAddDeviceWithCode } from "./AddDeviceWithCodeRow";
+import {
+  ADD_DEVICE_WITH_CODE_ROW_ID,
+  AddDeviceWithCodeRow,
+  useCanAddDeviceWithCode,
+} from "./AddDeviceWithCodeRow";
 import { OtherAccountJoinFold } from "./OtherAccountJoinFold";
 import { MachineTerminal, MachineTerminalButton, useCloseMachineTerminal } from "./MachineTerminal";
 import { ConnectionReason } from "./ConnectionReason";
@@ -1198,6 +1202,7 @@ export function StudioFleetRoster({
           targetIds={[
             searchableSetting("private-machines-add").id,
             searchableSetting("private-machines-invite").id,
+            ...(deviceCodeRow ? [ADD_DEVICE_WITH_CODE_ROW_ID] : []),
           ]}
         >
           {onAddMachine && onInvitationChange ? (

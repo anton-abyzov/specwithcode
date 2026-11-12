@@ -6,9 +6,13 @@ import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentAcceptsBrowserSignIn, useEnvironmentScope } from "../../state/session";
 import { SignInAnotherDeviceDialog } from "../account/SignInAnotherDeviceDialog";
 import { Button } from "../ui/button";
+import { JOIN_CARD_ANCHOR } from "./AccountJoinCard.logic";
 
 /** Where the account menu's "Add a device or machine" lands in Settings > Machines. */
-export const ADD_DEVICE_OR_MACHINE_ANCHOR = "machines-join-card";
+export const ADD_DEVICE_OR_MACHINE_ANCHOR = JOIN_CARD_ANCHOR;
+
+/** The row's element id, so a link or a settings jump can open the fold around it. */
+export const ADD_DEVICE_WITH_CODE_ROW_ID = "private-machines-device-code";
 
 /**
  * Whether Settings > Machines offers the code path for `environmentId`: only
@@ -22,9 +26,9 @@ export function useCanAddDeviceWithCode(environmentId: EnvironmentId | null): bo
 }
 
 /**
- * "Add a device with a code" inside "Another account, or no Connect": a phone
- * or another computer opens this machine's own address, asks to sign in, and
- * the owner types its code here. It never goes through SpecWithCode Connect,
+ * "Add a device with a code" inside "Another account, or no Connect": a browser
+ * on a phone or another computer opens this machine's own address, asks to sign
+ * in, and the owner types its code here. It never goes through SpecWithCode Connect,
  * which is why it is the way in when Connect is off or cannot be reached.
  */
 export function AddDeviceWithCodeRow() {
@@ -47,7 +51,7 @@ export function AddDeviceWithCodeRowView({ onOpen }: { readonly onOpen: () => vo
   const tx = useTx();
   return (
     <div
-      id="private-machines-device-code"
+      id={ADD_DEVICE_WITH_CODE_ROW_ID}
       tabIndex={-1}
       className="flex min-w-0 flex-col gap-2 border-t border-border/60 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
     >
@@ -55,7 +59,7 @@ export function AddDeviceWithCodeRowView({ onOpen }: { readonly onOpen: () => vo
         <span className="block text-sm">{tx("Add a device with a code")}</span>
         <span className="block text-xs text-muted-foreground">
           {tx(
-            "Use this machine from a phone or another computer when SpecWithCode Connect is off or cannot be reached. With Connect, sign in on the other device with the same account instead; no code is needed.",
+            "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.",
           )}
         </span>
       </span>

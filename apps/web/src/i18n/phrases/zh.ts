@@ -9,8 +9,8 @@ export const zh: PhraseCatalog = {
   "Accounts & integrations": "账户与集成",
   Actions: "操作",
   "Add a device with a code": "用代码添加设备",
-  "Use this machine from a phone or another computer when SpecWithCode Connect is off or cannot be reached. With Connect, sign in on the other device with the same account instead; no code is needed.":
-    "当 SpecWithCode Connect 已关闭或无法连接时，可从手机或另一台电脑使用这台电脑。使用 Connect 时，请在另一台设备上用同一账户登录，无需代码。",
+  "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
+    "可从手机或另一台电脑的浏览器使用这台电脑，SpecWithCode Connect 已关闭或无法连接时也可以。用同一 Connect 账户登录的 SpecWithCode 应用无需代码。",
   "Add a device": "添加设备",
   "Add a machine": "添加电脑",
   "Add project starts in": "添加项目的起始文件夹",

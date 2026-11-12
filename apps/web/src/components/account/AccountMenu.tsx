@@ -19,8 +19,8 @@ import { cn } from "../../lib/utils";
 import { usePrimaryEnvironment, usePullRequestsSupported } from "../../state/environments";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
-import { ADD_DEVICE_OR_MACHINE_ANCHOR } from "../settings/AddDeviceWithCodeRow";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
+import { ADD_DEVICE_OR_MACHINE_ANCHOR } from "../settings/AddDeviceWithCodeRow";
 import {
   Menu,
   MenuGroup,
@@ -184,8 +184,9 @@ export function AccountMenuView({
 /**
  * One account button in place of the footer's row of icons, like Claude's:
  * Settings, Usage and Pull Requests live in its menu, along with the way to
- * Settings > Machines for adding a device or a machine. On Settings, Usage or Pull Requests it shrinks to its avatar beside
- * the Back button. `connect` is null in builds without SpecWithCode Connect.
+ * Settings > Machines for adding a device or a machine. On Settings, Usage or
+ * Pull Requests it shrinks to its avatar beside the Back button. `connect` is
+ * null in builds without SpecWithCode Connect.
  */
 export function AccountMenu({
   compact,

@@ -98,8 +98,10 @@ another link to share.
 Once a machine has an HTTPS address (for example through Tailscale HTTPS below),
 another device can sign in without a pairing token:
 
-1. On a signed-in window, open the account button at the bottom of the sidebar
-   and choose **Add a device with a code**. It shows the address and a QR code.
+1. On a signed-in window, open **Settings → Machines** (the account button's
+   **Add a device or machine** opens it), open **Another account, or no
+   Connect**, and choose **Add a device** beside **Add a device with a code**.
+   It shows the address and a QR code.
 2. Open that address on the new device and choose **Ask to sign in**. It shows a
    six-character code.
 3. Type that code into **Code shown on the other device** and choose

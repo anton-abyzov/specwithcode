@@ -60,6 +60,7 @@ vi.mock("../../studio/fleet", () => ({
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: runtime.confirm }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("./AddDeviceWithCodeRow", () => ({
+  ADD_DEVICE_WITH_CODE_ROW_ID: "private-machines-device-code",
   AddDeviceWithCodeRow: function AddDeviceWithCodeRow() {
     return null;
   },
@@ -1130,6 +1131,8 @@ describe("inviting this machine from its own roster", () => {
       const alone = fold(render({ deviceCodeRow: row }))!;
       expect(label(alone.props.children)).toBe("Add a device with a code");
       expect(alone.props.openFor).toBe(false);
+      // A link to the row opens the fold around it, like the two rows above it.
+      expect(alone.props.targetIds).toContain("private-machines-device-code");
       const outside = label(render({ ...both, deviceCodeRow: row })).replace(inside, "");
       expect(outside).not.toContain("Add a device with a code");
     });

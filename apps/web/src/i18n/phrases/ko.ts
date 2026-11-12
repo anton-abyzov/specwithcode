@@ -9,8 +9,8 @@ export const ko: PhraseCatalog = {
   "Accounts & integrations": "계정 및 연동",
   Actions: "작업",
   "Add a device with a code": "코드로 기기 추가",
-  "Use this machine from a phone or another computer when SpecWithCode Connect is off or cannot be reached. With Connect, sign in on the other device with the same account instead; no code is needed.":
-    "SpecWithCode Connect가 꺼져 있거나 연결할 수 없을 때 휴대폰이나 다른 컴퓨터에서 이 컴퓨터를 사용합니다. Connect를 쓰는 경우에는 다른 기기에서 같은 계정으로 로그인하세요. 코드는 필요 없습니다.",
+  "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
+    "휴대폰이나 다른 컴퓨터의 브라우저에서 이 컴퓨터를 사용합니다. SpecWithCode Connect가 꺼져 있거나 연결할 수 없을 때도 쓸 수 있습니다. 같은 Connect 계정으로 로그인한 SpecWithCode 앱에는 코드가 필요 없습니다.",
   "Add a device": "기기 추가",
   "Add a machine": "컴퓨터 추가",
   "Add project starts in": "프로젝트 추가 시작 폴더",

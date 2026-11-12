@@ -9,8 +9,8 @@ export const es: PhraseCatalog = {
   "Accounts & integrations": "Cuentas e integraciones",
   Actions: "Acciones",
   "Add a device with a code": "Añadir un dispositivo con un código",
-  "Use this machine from a phone or another computer when SpecWithCode Connect is off or cannot be reached. With Connect, sign in on the other device with the same account instead; no code is needed.":
-    "Usa este equipo desde un teléfono u otro ordenador cuando SpecWithCode Connect está desactivado o no se puede alcanzar. Con Connect, inicia sesión en el otro dispositivo con la misma cuenta; no hace falta ningún código.",
+  "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
+    "Usa este equipo desde el navegador de un teléfono u otro ordenador, también cuando SpecWithCode Connect está desactivado o no se puede alcanzar. La app de SpecWithCode con la misma cuenta de Connect no necesita ningún código.",
   "Add a device": "Añadir un dispositivo",
   "Add a machine": "Añadir un equipo",
   "Add project starts in": "Carpeta inicial al añadir proyectos",

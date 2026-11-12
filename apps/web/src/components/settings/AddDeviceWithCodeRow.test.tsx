@@ -55,15 +55,18 @@ beforeEach(() => {
 });
 
 describe("Add a device with a code, in Settings > Machines", () => {
-  it("says when the code path is the one to use and that Connect needs no code", async () => {
+  it("says the code path is for a browser and that the app on the same account needs no code", async () => {
     const onOpen = vi.fn();
     const renderer = await mount(<AddDeviceWithCodeRowView onOpen={onOpen} />);
     const text = textOf(renderer.root);
     expect(text).toContain("Add a device with a code");
-    expect(text).toContain("when SpecWithCode Connect is off or cannot be reached");
+    expect(text).toContain("from a browser on a phone or another computer");
+    expect(text).toContain("also when SpecWithCode Connect is off or cannot be reached");
     expect(text).toContain(
-      "With Connect, sign in on the other device with the same account instead; no code is needed.",
+      "The SpecWithCode app signed in to the same Connect account needs no code.",
     );
+    // A browser that opens this machine's address always needs the code, with Connect too.
+    expect(text).not.toContain("With Connect, sign in on the other device");
     const button = renderer.root.findByType("button");
     expect(textOf(button)).toBe("Add a device");
     await act(async () => button.props.onClick());

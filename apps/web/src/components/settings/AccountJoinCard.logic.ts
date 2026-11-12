@@ -120,6 +120,9 @@ export function canChooseJoinCardMachine(machine: JoinCardMachine): boolean {
   return machine.state !== "not-answering";
 }
 
+/** The card's element id: what a link into Settings > Machines lands on. */
+export const JOIN_CARD_ANCHOR = "machines-join-card";
+
 /** Machines whose card the owner folded with "Not now", on this device. */
 export const JOIN_CARD_FOLDED_STORAGE_KEY = "studio:machines-join-card-folded:v1";
 
