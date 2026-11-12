@@ -158,17 +158,28 @@ export async function openOwnedProject(page, project) {
   const link = page.locator('a[href*="/projects/"]').filter({ hasText: project.title }).first();
   const next = page.getByRole("button", { name: "Continue", exact: true });
   const skip = page.getByRole("button", { name: "Do not import projects", exact: true });
+  // The access step: keep what the machine has, so the checks after setup run as before.
+  const keepAccess = page.getByRole("button", { name: /^Keep (Supervised|current access)$/ });
   let continues = 0,
-    skipped = false;
-  for (let step = 0; step < 5; step++) {
+    skipped = false,
+    accessKept = false;
+  for (let step = 0; step < 6; step++) {
     // DOMContentLoaded precedes React hydration. Wait for a real control before choosing it.
     await Promise.any(
-      [link, next, skip].map((control) => control.waitFor({ state: "visible", timeout: 30000 })),
+      [link, next, keepAccess, skip].map((control) =>
+        control.waitFor({ state: "visible", timeout: 30000 }),
+      ),
     );
     if (await next.isVisible()) {
       assert.ok(continues < 3, "Unexpected extra onboarding step");
       continues++;
       await next.click();
+      continue;
+    }
+    if (await keepAccess.isVisible()) {
+      assert.equal(accessKept, false, "Repeated access prompt refused");
+      accessKept = true;
+      await keepAccess.click();
       continue;
     }
     if (await skip.isVisible()) {
