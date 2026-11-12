@@ -20,6 +20,8 @@ const runtime = vi.hoisted(() => ({
   closeTerminal: vi.fn(),
   nicknames: {} as Record<string, string>,
   cloud: true,
+  canAddDeviceWithCode: true,
+  deviceCodeAskedFor: [] as Array<string | null>,
 }));
 vi.mock("../../cloud/publicConfig", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../cloud/publicConfig")>()),
@@ -57,6 +59,16 @@ vi.mock("../../studio/fleet", () => ({
 }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: runtime.confirm }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("./AddDeviceWithCodeRow", () => ({
+  ADD_DEVICE_WITH_CODE_ROW_ID: "private-machines-device-code",
+  AddDeviceWithCodeRow: function AddDeviceWithCodeRow() {
+    return null;
+  },
+  useCanAddDeviceWithCode: (environmentId: string | null) => {
+    runtime.deviceCodeAskedFor.push(environmentId);
+    return runtime.canAddDeviceWithCode;
+  },
+}));
 vi.mock("./MachineReadinessChecklist", () => ({ MachineReadinessChecklist: () => null }));
 vi.mock("./ProvisionMachineSheet", () => ({ ProvisionMachineButton: () => null }));
 vi.mock("./MachineTerminal", () => ({
@@ -1107,6 +1119,41 @@ describe("inviting this machine from its own roster", () => {
     it("is left out where neither path is offered", () => {
       expect(fold(render())).toBeNull();
       expect(fold(render({ onInvite: vi.fn() }))).not.toBeNull();
+    });
+    it("holds the code path as the third way in, also where it is the only one offered", () => {
+      const row = <p>Add a device with a code</p>;
+      const inside = label(fold(render({ ...both, deviceCodeRow: row }))!.props.children);
+      expect(inside).toContain("Add a device with a code");
+      // After the join line and the join code: Connect first, the code path last.
+      expect(inside.indexOf("Join a main machine")).toBeLessThan(
+        inside.indexOf("Add a device with a code"),
+      );
+      const alone = fold(render({ deviceCodeRow: row }))!;
+      expect(label(alone.props.children)).toBe("Add a device with a code");
+      expect(alone.props.openFor).toBe(false);
+      // A link to the row opens the fold around it, like the two rows above it.
+      expect(alone.props.targetIds).toContain("private-machines-device-code");
+      const outside = label(render({ ...both, deviceCodeRow: row })).replace(inside, "");
+      expect(outside).not.toContain("Add a device with a code");
+    });
+    it("gets the code row only where this window may offer it, asked about the viewed machine", () => {
+      const row = () => {
+        hooks.reset();
+        runtime.snapshot = snapshot;
+        runtime.environments = [];
+        runtime.deviceCodeAskedFor = [];
+        hooks.beginRender();
+        return StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] }).props
+          .deviceCodeRow as { type: { name: string } } | null;
+      };
+      try {
+        expect(row()?.type.name).toBe("AddDeviceWithCodeRow");
+        expect(runtime.deviceCodeAskedFor).toEqual([m4]);
+        runtime.canAddDeviceWithCode = false;
+        expect(row()).toBeNull();
+      } finally {
+        runtime.canAddDeviceWithCode = true;
+      }
     });
     it("is told when Make a join line opened its dialog", () => {
       hooks.reset();

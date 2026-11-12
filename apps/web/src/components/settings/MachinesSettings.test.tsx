@@ -34,6 +34,8 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("./settingsLayout", () => ({
+  useSettingsSearchTarget: () => () => undefined,
+  useSettingsSearchTargetId: () => null,
   TeamRulesLabel: ({ children }: { children: ReactNode }) => <em>{children}</em>,
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <main>{children}</main>,
   SettingsSection: ({

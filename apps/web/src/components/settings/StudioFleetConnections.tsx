@@ -63,6 +63,11 @@ import { ConnectDeregisterHint, fleetRemoveConnectNote } from "./ConnectDeregist
 import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
+import {
+  ADD_DEVICE_WITH_CODE_ROW_ID,
+  AddDeviceWithCodeRow,
+  useCanAddDeviceWithCode,
+} from "./AddDeviceWithCodeRow";
 import { OtherAccountJoinFold } from "./OtherAccountJoinFold";
 import { MachineTerminal, MachineTerminalButton, useCloseMachineTerminal } from "./MachineTerminal";
 import { ConnectionReason } from "./ConnectionReason";
@@ -338,6 +343,7 @@ export function StudioFleetConnections({
     environmentId,
     snapshot?.connectPermission ?? AuthAccessWriteScope,
   );
+  const canAddDeviceWithCode = useCanAddDeviceWithCode(environmentId);
   const connect = useAtomCommand(connectPairing, { reportFailure: false });
   const sentSecrets = useAtomCommand(machineHandoff.sentSecrets, { reportFailure: false });
   const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
@@ -573,6 +579,7 @@ export function StudioFleetConnections({
       onAddMachine={() => void addMachine()}
       onInvite={() => setInviteOpen(true)}
       inviteOpen={inviteOpen}
+      deviceCodeRow={canAddDeviceWithCode ? <AddDeviceWithCodeRow /> : null}
       inviteDialog={
         <FleetInviteArea
           environmentId={environmentId}
@@ -758,6 +765,7 @@ export function StudioFleetRoster({
   onInvite,
   inviteOpen = false,
   inviteDialog = null,
+  deviceCodeRow = null,
   machineStatuses = NO_MACHINE_STATUSES,
   canCheckReadiness = false,
   banner = null,
@@ -807,6 +815,8 @@ export function StudioFleetRoster({
   inviteOpen?: boolean;
   /** The invitation dialog `onInvite` opens. */
   inviteDialog?: ReactNode;
+  /** "Add a device with a code", the third path, when this window may offer it. */
+  deviceCodeRow?: ReactNode;
   /** This browser's own connection to each saved machine, keyed by environment id. */
   machineStatuses?: Readonly<Record<string, FleetMachineConnection>>;
   /** Offers each connected machine's sign-in and repository-access checklist. */
@@ -1179,7 +1189,7 @@ export function StudioFleetRoster({
           </TeamRulesInert>
         </label>
       ) : null}
-      {(onAddMachine && onInvitationChange) || onInvite ? (
+      {(onAddMachine && onInvitationChange) || onInvite || deviceCodeRow ? (
         <OtherAccountJoinFold
           // A typed line, a running add and the open dialog all live inside; a build without
           // SpecWithCode Connect has no other way to join machines.
@@ -1192,6 +1202,7 @@ export function StudioFleetRoster({
           targetIds={[
             searchableSetting("private-machines-add").id,
             searchableSetting("private-machines-invite").id,
+            ...(deviceCodeRow ? [ADD_DEVICE_WITH_CODE_ROW_ID] : []),
           ]}
         >
           {onAddMachine && onInvitationChange ? (
@@ -1328,6 +1339,7 @@ export function StudioFleetRoster({
               {inviteDialog}
             </div>
           ) : null}
+          {deviceCodeRow}
         </OtherAccountJoinFold>
       ) : null}
       {!canPair &&
