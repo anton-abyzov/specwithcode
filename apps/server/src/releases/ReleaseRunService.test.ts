@@ -289,6 +289,9 @@ describe("install timings", () => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const service = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
+          // The receipts are read in the background, never while a request waits.
+          expect((yield* service.list()).installs).toEqual([]);
+          yield* service.refreshInstalls;
           const first = yield* service.list();
           expect(first.installs).toEqual([
             {
@@ -340,6 +343,66 @@ describe("install timings", () => {
       }),
     ),
   );
+
+  it.effect("never parses a receipt the history holds again, after a restart too", () =>
+    withReceipts(
+      {
+        "update-1.0.99-20261111T090000000001Z.json": receipt("verified", { total: 18000 }),
+      },
+      (files) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* (yield* ReleaseRuns.makeWithDirectory(files.runs, files)).refreshInstalls;
+          expect(yield* fs.readFileString(files.historyFile)).toContain(
+            "update-1.0.99-20261111T090000000001Z.json",
+          );
+          // A changed receipt under a name already read is not read again.
+          yield* fs.writeFileString(
+            path.join(files.receiptsDirectory, "update-1.0.99-20261111T090000000001Z.json"),
+            receipt("verified", { total: 99000 }),
+          );
+          const restarted = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
+          expect((yield* restarted.refreshInstalls).map((install) => install.totalMs)).toEqual([
+            18000,
+          ]);
+        }),
+    ),
+  );
+
+  it.effect("keeps a newer service's history as it is, and replaces a damaged one", () =>
+    withReceipts(
+      { "update-1.0.9-20261111T090000000001Z.json": receipt("verified", { total: 5000 }) },
+      (files) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const newer = '{"schemaVersion":2,"installs":[],"runs":[]}\n';
+          yield* fs.writeFileString(files.historyFile, newer);
+          const read = yield* (yield* ReleaseRuns.makeWithDirectory(files.runs, files))
+            .refreshInstalls;
+          expect(read.map((install) => install.version)).toEqual(["1.0.9"]);
+          assert.strictEqual(yield* fs.readFileString(files.historyFile), newer);
+          yield* fs.writeFileString(files.historyFile, '{"schemaVersion":1,"inst');
+          yield* (yield* ReleaseRuns.makeWithDirectory(files.runs, files)).refreshInstalls;
+          expect(yield* fs.readFileString(files.historyFile)).toContain('"version":"1.0.9"');
+          assert.isFalse(yield* fs.exists(`${files.historyFile}.tmp`));
+        }),
+    ),
+  );
+
+  it("orders receipts by their time, not by the version in the name", () => {
+    expect(
+      ReleaseRuns.newestReceiptsFirst([
+        "update-1.0.99-20261101T090000Z.json",
+        "update-1.0.258-20261112T090000123456Z.json",
+        "update-1.0.100-20261105T090000Z.json",
+      ]),
+    ).toEqual([
+      "update-1.0.258-20261112T090000123456Z.json",
+      "update-1.0.100-20261105T090000Z.json",
+      "update-1.0.99-20261101T090000Z.json",
+    ]);
+  });
 
   it("parses only update receipts of verified installs", () => {
     const verified = receipt("verified", { total: 5000, odd: -1, alsoOdd: 1.5 });

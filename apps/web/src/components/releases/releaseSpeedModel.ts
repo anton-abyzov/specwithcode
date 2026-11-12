@@ -84,6 +84,20 @@ export interface SpeedRow {
 export interface ReleaseSpeedRow extends SpeedRow {
   readonly state: ReleaseRunTiming["state"];
   readonly channel: string;
+  /**
+   * Start to end of the run as its record has them, pauses before a resume
+   * included; null while it runs. `totalSeconds` is stage time, which leaves
+   * those pauses out and counts stages that ran side by side once.
+   */
+  readonly wallSeconds: number | null;
+}
+
+/** Start to end of a finished run, in whole seconds; null without both. */
+export function releaseWallSeconds(timing: ReleaseRunTiming): number | null {
+  const started = Date.parse(timing.startedAt);
+  const ended = Date.parse(timing.endedAt ?? "");
+  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started) return null;
+  return Math.round((ended - started) / 1000);
 }
 
 const deltaOf = (now: number | null, then: number | null) =>
@@ -131,9 +145,12 @@ export function releaseTimings(
 
 /**
  * One row per version, newest first: its newest released run, else its newest
- * run of any state. A row is compared with the next older version that was
- * released; a stage only when it passed in both, the total only when both runs
- * were released, so a run still going never reads as faster.
+ * run of any state. A row is compared with the newest released run of an older
+ * version on the same channel, started the same way (release.sh on a machine,
+ * or the release.yml graph in CI): the candidate channel has stages the github
+ * one does not, and a CI run shards what a local one runs in one go. A stage is
+ * compared only when it passed in both, the total only when both runs were
+ * released, so a run still going never reads as faster.
  */
 export function releaseSpeedRows(
   timings: ReadonlyArray<ReleaseRunTiming>,
@@ -154,8 +171,16 @@ export function releaseSpeedRows(
       newest.findIndex((timing) => timing.version === left.version) -
       newest.findIndex((timing) => timing.version === right.version),
   );
-  return chosen.slice(0, limit).map((timing, index) => {
-    const previous = chosen.slice(index + 1).find((entry) => entry.state === "done") ?? null;
+  return chosen.slice(0, limit).map((timing) => {
+    const previous =
+      newest.find(
+        (entry) =>
+          entry.state === "done" &&
+          entry.version !== timing.version &&
+          entry.channel === timing.channel &&
+          entry.createdBy === timing.createdBy &&
+          entry.startedAt < timing.startedAt,
+      ) ?? null;
     const passed = (entry: ReleaseRunTiming) =>
       new Map(
         entry.stages.map((stage) => [stage.id, stage.state === "passed" ? stage.seconds : null]),
@@ -178,6 +203,7 @@ export function releaseSpeedRows(
       state: timing.state,
       channel: timing.channel,
       totalSeconds: timing.totalSeconds,
+      wallSeconds: releaseWallSeconds(timing),
       previousVersion: previous?.version ?? null,
       delta:
         timing.state === "done" && previous

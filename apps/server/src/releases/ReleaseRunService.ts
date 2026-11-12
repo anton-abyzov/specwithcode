@@ -15,7 +15,10 @@
  * `updates/receipts/update-<version>-<stamp>.json`, which the update keeps
  * only its last few of; the timings are copied into a small history file of
  * their own (`updates/install-timings.json`, newest INSTALL_HISTORY_LIMIT) so
- * an install stays comparable after its receipt is pruned.
+ * an install stays comparable after its receipt is pruned. Receipts are read
+ * in the background, never while a request waits: `list` answers the history
+ * as it stands and starts a read when none runs; the next refresh has it. A
+ * receipt the history already holds is never parsed again, after a restart too.
  */
 import {
   ReleaseInstallTiming,
@@ -49,8 +52,8 @@ export const RELEASE_TIMINGS_LIMIT = 30;
 export const INSTALL_RECEIPT = /^update-(.+)-(\d{8})T(\d{6})(\d{0,6})Z\.json$/;
 /** install_progress.expected_ms reads no larger receipt either. */
 export const INSTALL_RECEIPT_MAX_BYTES = 16 << 20;
-/** Receipts read, newest by name; the update keeps about ten. */
-export const INSTALL_RECEIPTS_READ = 50;
+/** Receipts read, newest by name; the update keeps ten (release_retention.RECEIPTS_KEPT). */
+export const INSTALL_RECEIPTS_READ = 12;
 /** Verified installs kept in the history file and answered, newest first. */
 export const INSTALL_HISTORY_LIMIT = 30;
 export const INSTALL_HISTORY_FILE = "install-timings.json";
@@ -61,8 +64,15 @@ const decodeRun = Schema.decodeUnknownOption(Schema.fromJsonString(ReleaseRun));
 const InstallHistory = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   installs: Schema.Array(ReleaseInstallTiming),
+  /** Receipt names whose install is in `installs`, so a restart does not parse them again. */
+  receipts: Schema.optionalKey(Schema.Array(Schema.String)),
 });
+type InstallHistory = typeof InstallHistory.Type;
 const decodeHistory = Schema.decodeUnknownOption(Schema.fromJsonString(InstallHistory));
+/** Only the version, to tell a newer service's history (kept as it is) from a damaged one. */
+const decodeHistoryVersion = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ schemaVersion: Schema.Number })),
+);
 const encodeHistory = Schema.encodeSync(Schema.fromJsonString(InstallHistory));
 
 /** The few fields of an update receipt this reads; the rest of it is never decoded. */
@@ -113,6 +123,17 @@ export function parseInstallReceipt(
     totalMs: total,
     ...(Object.keys(phases).length > 0 ? { phases } : {}),
   });
+}
+
+/** Receipt names by their stamp, newest first: the version in a name does not sort by time. */
+export function newestReceiptsFirst(names: ReadonlyArray<string>): ReadonlyArray<string> {
+  const stampOf = (name: string) => {
+    const match = INSTALL_RECEIPT.exec(name);
+    return match ? `${match[2]}${match[3]}${match[4]!.padEnd(6, "0")}` : "";
+  };
+  return [...names].sort(
+    (left, right) => stampOf(right).localeCompare(stampOf(left)) || right.localeCompare(left),
+  );
 }
 
 const installKey = (install: ReleaseInstallTiming) => `${install.version}@${install.installedAt}`;
@@ -173,7 +194,10 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
       string,
       { readonly stamp: string; readonly install: Option.Option<ReleaseInstallTiming> }
     >();
-    let history: ReadonlyArray<ReleaseInstallTiming> | null = null;
+    let history: InstallHistory | null = null;
+    /** False once the file on disk is a newer service's history: it is read, never replaced. */
+    let historyWritable = true;
+    let scanning = false;
 
     const readReceipt = (directory: string, name: string) =>
       Effect.gen(function* () {
@@ -190,61 +214,113 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
         return install;
       }).pipe(Effect.orElseSucceed(() => Option.none<ReleaseInstallTiming>()));
 
+    const emptyHistory: InstallHistory = { schemaVersion: 1, installs: [] };
+
+    /** The history on disk; a missing, damaged or oversized file reads as none and is replaced. */
     const readHistory = (file: string) =>
       Effect.gen(function* () {
         const info = yield* fileSystem.stat(file);
-        if (info.type !== "File" || Number(info.size) > INSTALL_HISTORY_MAX_BYTES) return [];
-        const decoded = decodeHistory(yield* fileSystem.readFileString(file));
-        return Option.isSome(decoded) ? decoded.value.installs : [];
-      }).pipe(Effect.orElseSucceed((): ReadonlyArray<ReleaseInstallTiming> => []));
+        if (info.type !== "File" || Number(info.size) > INSTALL_HISTORY_MAX_BYTES) {
+          return { history: emptyHistory, writable: true };
+        }
+        const text = yield* fileSystem.readFileString(file);
+        const decoded = decodeHistory(text);
+        if (Option.isSome(decoded)) return { history: decoded.value, writable: true };
+        const version = decodeHistoryVersion(text);
+        return {
+          history: emptyHistory,
+          writable: !(Option.isSome(version) && version.value.schemaVersion > 1),
+        };
+      }).pipe(Effect.orElseSucceed(() => ({ history: emptyHistory, writable: true })));
+
+    const loadHistory = (file: string) =>
+      Effect.gen(function* () {
+        const loaded = yield* readHistory(file);
+        if (!loaded.writable) historyWritable = false;
+        history ??= loaded.history;
+        return history;
+      });
 
     /**
      * A new file beside it, renamed over it: a reader sees the old history or the new one.
      * Writes run one at a time (installLock), so the one temporary name is enough.
      */
-    const writeHistory = (file: string, installs: ReadonlyArray<ReleaseInstallTiming>) =>
+    const writeHistory = (file: string, value: InstallHistory) =>
       Effect.gen(function* () {
         const temporary = `${file}.tmp`;
-        yield* fileSystem.writeFileString(
-          temporary,
-          `${encodeHistory({ schemaVersion: 1, installs })}\n`,
-          { mode: 0o600 },
-        );
+        yield* fileSystem.writeFileString(temporary, `${encodeHistory(value)}\n`, { mode: 0o600 });
         yield* fileSystem.rename(temporary, file);
       }).pipe(Effect.ignore);
 
-    const installs = (files: InstallTimingFiles) =>
+    /** Reads the receipts the history does not hold yet and keeps their installs. */
+    const scanInstalls = (files: InstallTimingFiles) =>
       installLock.withPermits(1)(
         Effect.gen(function* () {
-          const names = (yield* fileSystem
+          const present = (yield* fileSystem
             .readDirectory(files.receiptsDirectory)
-            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
-            .filter((name) => INSTALL_RECEIPT.test(name))
-            .sort((left, right) => right.localeCompare(left))
-            .slice(0, INSTALL_RECEIPTS_READ);
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((name) =>
+            INSTALL_RECEIPT.test(name),
+          );
+          const names = newestReceiptsFirst(present).slice(0, INSTALL_RECEIPTS_READ);
           for (const name of receiptCache.keys()) {
             if (!names.includes(name)) receiptCache.delete(name);
           }
+          const current = history ?? (yield* loadHistory(files.historyFile));
+          const known = new Set(current.receipts ?? []);
+          const fresh = names.filter((name) => !known.has(name));
           const read = yield* Effect.forEach(
-            names,
-            (name) => readReceipt(files.receiptsDirectory, name),
+            fresh,
+            (name) =>
+              readReceipt(files.receiptsDirectory, name).pipe(
+                Effect.map((install) => [name, install] as const),
+              ),
             { concurrency: 4 },
           );
-          const kept = history ?? (yield* readHistory(files.historyFile));
+          const found = read.flatMap(([name, install]) =>
+            Option.isSome(install) ? [[name, install.value] as const] : [],
+          );
           const merged = mergeInstalls(
-            kept,
-            read.flatMap((entry) => (Option.isSome(entry) ? [entry.value] : [])),
+            current.installs,
+            found.map(([, install]) => install),
+          );
+          const stillPresent = new Set(present);
+          const receipts = [...new Set([...found.map(([name]) => name), ...known])].filter((name) =>
+            stillPresent.has(name),
           );
           const changed =
-            merged.length !== kept.length ||
-            merged.some((install, index) => installKey(install) !== installKey(kept[index]!));
-          history = merged;
-          if (changed) {
-            yield* writeHistory(files.historyFile, merged);
-          }
+            merged.length !== current.installs.length ||
+            merged.some(
+              (install, index) => installKey(install) !== installKey(current.installs[index]!),
+            ) ||
+            receipts.length !== known.size;
+          const next: InstallHistory = { schemaVersion: 1, installs: merged, receipts };
+          history = next;
+          if (changed && historyWritable) yield* writeHistory(files.historyFile, next);
           return merged;
         }),
       );
+
+    /**
+     * The installs the history holds now. A receipt read runs in the background, one at a
+     * time, so a request never waits on receipts; the next refresh answers what it found.
+     */
+    const installs = (files: InstallTimingFiles) =>
+      Effect.gen(function* () {
+        const current = history ?? (yield* loadHistory(files.historyFile));
+        if (!scanning) {
+          scanning = true;
+          yield* scanInstalls(files).pipe(
+            Effect.ignore,
+            Effect.ensuring(
+              Effect.sync(() => {
+                scanning = false;
+              }),
+            ),
+            Effect.forkDetach,
+          );
+        }
+        return current.installs;
+      });
 
     const readOne = (name: string) =>
       Effect.gen(function* () {
@@ -277,7 +353,13 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
         } satisfies ReleaseRunsSnapshot;
       });
 
-    return ReleaseRunService.of({ list });
+    return {
+      ...ReleaseRunService.of({ list }),
+      /** Reads the receipts now and answers the installs kept; what `list` starts in the background. */
+      refreshInstalls: installFiles
+        ? scanInstalls(installFiles)
+        : Effect.succeed<ReadonlyArray<ReleaseInstallTiming>>([]),
+    };
   });
 
 export const layer = Layer.effect(
@@ -286,9 +368,12 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
     const updates = path.join(config.baseDir, "updates");
-    return yield* makeWithDirectory(path.join(updates, "runs"), {
+    const service = yield* makeWithDirectory(path.join(updates, "runs"), {
       receiptsDirectory: path.join(updates, "receipts"),
       historyFile: path.join(updates, INSTALL_HISTORY_FILE),
     });
+    // Startup never waits on it: the first Releases view usually finds it done.
+    yield* service.refreshInstalls.pipe(Effect.ignore, Effect.forkDetach);
+    return ReleaseRunService.of({ list: service.list });
   }),
 );

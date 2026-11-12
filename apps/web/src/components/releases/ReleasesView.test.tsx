@@ -341,6 +341,45 @@ describe("speed by version", () => {
     expect(releaseSpeedRows([history.at(-1)!])[0]!.delta).toBeNull();
   });
 
+  it("compares a run only with a released run on the same channel, started the same way", () => {
+    const candidate = {
+      ...timing("1.0.198", 11, { resolve: 1, "test.server": 40 }),
+      channel: "candidate",
+      runId: "candidate-198",
+    };
+    const ci = {
+      ...timing("1.0.197", 10, { resolve: 1, "test.server": 5 }),
+      createdBy: "release.yml",
+      runId: "ci-197",
+    };
+    const rows = releaseSpeedRows([
+      timing("1.0.199", 12, { resolve: 1, "test.server": 20 }),
+      candidate,
+      ci,
+      timing("1.0.196", 9, { resolve: 1, "test.server": 16 }),
+    ]);
+    expect(rows.map((row) => [row.version, row.previousVersion])).toEqual([
+      ["1.0.199", "1.0.196"],
+      ["1.0.198", null],
+      ["1.0.197", null],
+      ["1.0.196", null],
+    ]);
+    expect(rows[0]!.delta).toMatchObject({ seconds: 4 * 60, verdict: "same" });
+    expect(rows[1]!.delta).toBeNull();
+  });
+
+  it("tells stage time from the wall clock a run took", () => {
+    const [done, running] = [
+      releaseSpeedRows([history[2]!])[0]!,
+      releaseSpeedRows([history[0]!])[0]!,
+    ];
+    expect([done.totalSeconds, done.wallSeconds]).toEqual([31 * 60, 60 * 60]);
+    expect(running.wallSeconds).toBeNull();
+    const html = render({ timings: [history[2]!], installs: [] });
+    expect(html).toContain("Stage time");
+    expect(html).toContain("wall clock 1h 00m");
+  });
+
   it("compares installs on this machine by version and phase", () => {
     const rows = installSpeedRows([
       {

@@ -131,11 +131,13 @@ function SpeedRowItem({
   partLabel,
   open,
   badge,
+  detail,
 }: {
   row: SpeedRow;
   partLabel: "stage" | "phase";
   open: boolean;
   badge?: ReactNode;
+  detail?: ReactNode;
 }) {
   return (
     <li className="min-w-0 border-border border-t first:border-t-0">
@@ -146,6 +148,7 @@ function SpeedRowItem({
               <span className="font-medium text-sm tabular-nums">{row.version}</span>
               {badge}
               <span className="text-muted-foreground text-xs">{formatWhen(row.at)}</span>
+              {detail}
             </span>
             <span className="text-right font-medium text-sm tabular-nums" data-speed-total>
               {row.totalSeconds === null ? "—" : formatSeconds(row.totalSeconds)}
@@ -213,9 +216,12 @@ export function ReleaseSpeed({ timings, installs }: ReleaseSpeedProps) {
         <div className="min-w-0" data-speed-releases>
           <h4 className="mb-1 font-medium text-sm">Release</h4>
           <p className="mb-1 text-muted-foreground text-xs">
-            The time stages ran, waits before a resume left out.
+            Stage time is the time stages ran: stages that ran side by side count once and waits
+            before a resume are left out, so it is shorter than the wall clock (start to end, as the
+            release script prints it), shown beside the date. Changes compare runs on the same
+            channel, started the same way.
           </p>
-          <SpeedHeader first="Version" last="Took" />
+          <SpeedHeader first="Version" last="Stage time" />
           <ul className="min-w-0">
             {releases.map((row, index) => (
               <SpeedRowItem
@@ -223,6 +229,13 @@ export function ReleaseSpeed({ timings, installs }: ReleaseSpeedProps) {
                 row={row}
                 partLabel="stage"
                 open={index === 0}
+                detail={
+                  row.wallSeconds === null ? null : (
+                    <span className="text-muted-foreground text-xs" data-speed-wall>
+                      wall clock {formatSeconds(row.wallSeconds)}
+                    </span>
+                  )
+                }
                 badge={
                   row.state === "done" ? null : (
                     <span
