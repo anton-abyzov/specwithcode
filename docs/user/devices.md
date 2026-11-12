@@ -103,6 +103,19 @@ app. Devices allowed with **Always on this machine** are listed under
 **Settings → Integrations → Devices**, where **Remove** takes one back. Your
 own Device panel is unaffected either way.
 
+## Run on device card
+
+After an agent lists or opens devices in a thread, the thread shows a **Run on
+device** card at the latest of those calls. It lists the simulators,
+emulators and phones from the agent's most recent device list, iOS and
+Android alike, up to six; the rest are in the Device panel. Choose **Show**
+next to a running device, or **Start** next to a stopped one, to open its live
+view in the Device panel, the same way the panel's own picker does. A device
+already open in the thread is marked **Open** and comes to the front. If device setup is not finished, the Device panel's setup opens
+instead. When this machine cannot run iOS Simulators, the card says which
+connected Macs can. The card only opens devices: the agent still builds,
+installs and launches the app.
+
 ## Remote connections
 
 The device stream goes through the environment server, so it works over the
