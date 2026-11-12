@@ -182,6 +182,11 @@ On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.
 
+Before you type, the palette lists up to 8 projects first: the current project,
+then the projects with the newest thread activity, then the rest in sidebar order.
+Return opens the first one. Actions and recent threads follow. Type to search all
+projects together with commands and threads.
+
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request
 link when available, otherwise its thread ID. See [keybindings](./keybindings.md)

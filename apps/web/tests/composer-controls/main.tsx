@@ -56,14 +56,24 @@ function App() {
                     role: "workers",
                     canStart: true,
                   },
+                  {
+                    key: "mini:p",
+                    machine: "Linux mini",
+                    folder: "/workspace/project",
+                    role: "coordinator",
+                    canStart: false,
+                  },
                 ]}
                 unknown={[]}
                 savedMachineMissing={false}
                 onView={() => {}}
                 onMove={() => {}}
-                onStart={null}
-                onAllowWorkers={null}
+                onStart={() => {}}
+                onAllowWorkers={() => {}}
+                onMigrate={() => {}}
+                onAdd={() => {}}
                 onMoveElsewhere={() => {}}
+                onLeave={() => {}}
               />
               <ComposerVoiceMenu dictation={dictation} call={call} />
               <span className="text-xs text-muted-foreground">Working</span>

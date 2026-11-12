@@ -913,25 +913,14 @@ async function main() {
   await page.goto(`${m4.origin}/projects/${encodeURIComponent(`logical-project:${logicalId}`)}`);
   await region.getByText("M4 fixture coordinator history").waitFor({ timeout: 45000 });
 
-  // Match the host suffix after the switcher removes the possessive owner prefix.
-  const m4ViewLabel = new RegExp(
-    `View .*${m4.selfLabel
-      .split(/\s+/)
-      .at(-1)
-      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'s orchestrator`,
-  );
   await switcher.click();
   const menu = page.getByRole("menu");
-  for (const text of [
-    m4ViewLabel,
-    "View Minis fixture's orchestrator",
-    "Hand off coordinator to Minis fixture…",
-    /(Migrate|Move) .*threads…/,
-  ])
+  assert.ok((await menu.locator("[data-orchestrator-view]").count()) >= 2);
+  for (const text of ["Minis fixture", "Move to Minis fixture…", "Move running threads…"])
     await menu.getByText(text, { exact: false }).first().waitFor({ timeout: 15000 });
   await shot("01-switcher-three-actions.png");
   await page.keyboard.press("Escape");
-  check("The switcher offers View, Move coordinator and Migrate threads as separate actions");
+  check("The switcher offers View, Move and Move running threads as separate actions");
 
   // ── AC-10 / AC-11 online: viewing Minis reads Minis's server live ──
   await view(minisKey);

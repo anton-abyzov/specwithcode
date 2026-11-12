@@ -4572,4 +4572,13 @@ export const es: PhraseCatalog = {
   "Older releases were not counted.": "Las versiones más antiguas no se contaron.",
   "Installs from npm could not be read.": "No se pudieron leer las instalaciones desde npm.",
   "Installs from npm": "Instalaciones desde npm",
+  "View this project on": "Ver este proyecto en",
+  "Move to {machine}…": "Mover a {machine}…",
+  "Start a coordinator on {machine}": "Iniciar un coordinador en {machine}",
+  "Machine access settings": "Ajustes de acceso entre equipos",
+  "{machine} offline": "{machine} sin conexión",
+  "workers only": "solo workers",
+  "move pending": "traslado pendiente",
+  "separate project": "proyecto aparte",
+  "not synced here": "sin sincronizar aquí",
 };

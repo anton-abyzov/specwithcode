@@ -368,10 +368,11 @@ jobs:
           fi
           # Match this version's own run by title (release-windows-linux.yml's run-name), not by
           # time: release runs overlap, and a build dispatched for another version while this one
-          # ran made 1.0.265 skip its own. A failed or cancelled run does not count.
+          # ran made 1.0.265 skip its own. Only a run still going or one that succeeded counts; a failed,
+          # cancelled, timed-out or never-started one leaves the version to build again.
           started="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-windows-linux.yml \
             --event workflow_dispatch --limit 50 --json displayTitle,conclusion \
-            --jq "[.[] | select(.displayTitle == \"Release Windows and Linux $VERSION\" and .conclusion != \"failure\" and .conclusion != \"cancelled\")] | length")"
+            --jq "[.[] | select(.displayTitle == \"Release Windows and Linux $VERSION\" and (.conclusion == \"\" or .conclusion == \"success\"))] | length")"
           if [ "$started" -gt 0 ]; then
             echo "The Windows and Linux build for $VERSION was already started"
             exit 0

@@ -323,7 +323,7 @@ describe("switching the coordinator machine", () => {
       root.render(<ProjectWorkspace projectKey="atlas" onSelectCheckout={onSelectCheckout} />),
     );
     await openSwitcher();
-    await act(async () => menuItem("menuitemradio", "View laptop's orchestrator")!.click());
+    await act(async () => menuItem("menuitemradio", "laptop")!.click());
     expect(onSelectCheckout).toHaveBeenCalledWith("laptop:project");
     expect(state.savedMachines).toEqual({ atlas: "laptop:project" });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -346,7 +346,7 @@ describe("switching the coordinator machine", () => {
     await renderOpen();
     expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
     await openSwitcher();
-    await act(async () => menuItem("menuitem", "Move coordinator to laptop")!.click());
+    await act(async () => menuItem("menuitem", "Move to laptop…")!.click());
     expect(state.savedMachines).toEqual({});
     await renderOpen();
     expect(onSelectThread).not.toHaveBeenCalled();

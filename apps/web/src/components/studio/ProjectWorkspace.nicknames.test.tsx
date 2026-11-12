@@ -36,8 +36,8 @@ it("names each orchestrator by its nickname, as typed", async () => {
   await act(async () =>
     container.querySelector<HTMLButtonElement>('[aria-label^="Viewing Studio M4"]')!.click(),
   );
-  expect(menuItem("menuitemradio", "View Studio M4's orchestrator")).toBeDefined();
-  expect(menuItem("menuitemradio", "View Anna's Air's orchestrator")).toBeDefined();
+  expect(menuItem("menuitemradio", "Studio M4")).toBeDefined();
+  expect(menuItem("menuitemradio", "Anna's Air")).toBeDefined();
 });
 
 it("says which nicknamed machine is unreachable", async () => {

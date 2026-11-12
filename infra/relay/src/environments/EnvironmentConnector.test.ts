@@ -14,7 +14,10 @@ import {
 } from "@specweave-studio/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import { RELAY_HEALTH_RESPONSE_TYP, RELAY_MINT_RESPONSE_TYP } from "@specweave-studio/shared/relayJwt";
+import {
+  RELAY_HEALTH_RESPONSE_TYP,
+  RELAY_MINT_RESPONSE_TYP,
+} from "@specweave-studio/shared/relayJwt";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -207,6 +210,7 @@ function makeAllocations(
     claimRelease: () => Effect.die("unused"),
     withClaimedTunnel: () => Effect.die("unused"),
     claimDeprovision: () => Effect.die("unused"),
+    clearClaimedDns: () => Effect.die("unused"),
     remove: () => Effect.die("unused"),
     removeClaimed: () => Effect.die("unused"),
   };

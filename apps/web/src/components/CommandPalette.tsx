@@ -223,6 +223,7 @@ import {
   buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
   buildRootGroups,
+  buildRootProjectItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   buildCommandPaletteRows,
@@ -1605,6 +1606,25 @@ function OpenCommandPaletteDialog(props: {
       projectGroupByTargetKey,
     ],
   );
+  // The empty palette leads with projects: the current one, then by latest thread activity.
+  const rootProjectItems = useMemo(
+    () =>
+      buildRootProjectItems({
+        projects: listedPickerProjects,
+        items: projectSearchItems,
+        groupByKey: projectGroupByTargetKey,
+        contextualProject:
+          projectPickerEntries.find((entry) => entry.isPreferred)?.targetProject ?? null,
+        threads,
+      }),
+    [
+      listedPickerProjects,
+      projectGroupByTargetKey,
+      projectPickerEntries,
+      projectSearchItems,
+      threads,
+    ],
+  );
 
   const projectThreadItems = useMemo(() => {
     const isScratch = (project: CommandPaletteProject) =>
@@ -2975,7 +2995,11 @@ function OpenCommandPaletteDialog(props: {
     }
   }
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
+  const rootGroups = buildRootGroups({
+    projectItems: rootProjectItems,
+    actionItems,
+    recentThreadItems,
+  });
   // Sections the query names lead as roots, then the rows of each section.
   const settingsSearchItems: CommandPaletteActionItem[] = searchSettingsBySection(
     deferredQuery,
