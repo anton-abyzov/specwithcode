@@ -173,7 +173,11 @@ import {
 import { withManualWorktreeGuard } from "../../provider/ManualWorktreeGuard.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
-import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+  redactProviderFailureText,
+} from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
@@ -7964,7 +7968,14 @@ export function makeClaudeAdapterV2(
               });
             }
           }
-          return describeBackgroundWork(work);
+          // Provider-written names reach a note and an error message.
+          return describeBackgroundWork(
+            work.map(({ kind, description }) => ({
+              kind,
+              description:
+                description == null ? description : redactProviderFailureText(description),
+            })),
+          );
         });
 
         // Subagents still running in the registry when a new process opens ran

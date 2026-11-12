@@ -37,9 +37,16 @@ export function useBackgroundWorkBlockRecovery(input: {
   const { threadKey, backgroundWorkRunning, continueRun, stopBackgroundWork } = input;
   // The thread whose stop was accepted and whose continue is still owed.
   const [continueOwedKey, setContinueOwedKey] = useState<string | null>(null);
-  const continueOwed = continueOwedKey !== null && continueOwedKey === threadKey;
+  const applies = input.enabled && isBackgroundWorkBlockFailureCode(input.failureCode);
+  const continueOwed = applies && continueOwedKey !== null && continueOwedKey === threadKey;
   useEffect(() => {
-    if (!continueOwed) return;
+    if (continueOwedKey === null) return;
+    // The person moved on (another thread, another message, a run that can
+    // no longer continue): the continue is dropped, never replayed later.
+    if (!continueOwed) {
+      setContinueOwedKey(null);
+      return;
+    }
     const finish = () => {
       setContinueOwedKey(null);
       continueRun();
@@ -52,14 +59,14 @@ export function useBackgroundWorkBlockRecovery(input: {
     }
     const timer = window.setTimeout(finish, STOP_SETTLE_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [continueOwed, backgroundWorkRunning, continueRun]);
+  }, [continueOwedKey, continueOwed, backgroundWorkRunning, continueRun]);
   const onStopAndContinue = useCallback(() => {
     if (threadKey === null) return;
     void stopBackgroundWork().then((accepted) => {
       if (accepted) setContinueOwedKey(threadKey);
     });
   }, [threadKey, stopBackgroundWork]);
-  if (!input.enabled || !isBackgroundWorkBlockFailureCode(input.failureCode)) return undefined;
+  if (!applies) return undefined;
   if (!backgroundWorkRunning && !continueOwed) return undefined;
   return { onStopAndContinue, busy: input.stopping || continueOwed };
 }

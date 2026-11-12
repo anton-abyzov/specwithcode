@@ -54,7 +54,12 @@ export function describeBackgroundWork(
   if (work.length === 0) return null;
   const names = work.slice(0, MAX_NAMED_BACKGROUND_WORK).map(({ kind, description }) => {
     const noun = BACKGROUND_WORK_NOUNS[kind] ?? "background task";
-    const line = description?.split("\n")[0]?.replaceAll('"', "'").trim() ?? "";
+    const line =
+      description
+        ?.split(/[\n\r\u2028\u2029]/u)[0]
+        ?.replace(/[\u0000-\u001f\u007f]+/gu, " ")
+        .replaceAll('"', "'")
+        .trim() ?? "";
     if (line.length === 0) return `a ${noun}`;
     const name =
       line.length > MAX_BACKGROUND_WORK_NAME_LENGTH

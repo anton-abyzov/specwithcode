@@ -107,6 +107,15 @@ describe("compileClaudeModelSelection", () => {
     ).toBe('Effort xhigh applies when subagent "Review" and a command finish.');
   });
 
+  it("keeps control characters out of a background work name", () => {
+    expect(
+      describeBackgroundWork([{ kind: "command", description: "a\tb\u001b[31mc\rsecond" }]),
+    ).toEqual({ label: 'command "a b [31mc"', count: 1 });
+    expect(
+      describeBackgroundWork([{ kind: "subagent", description: "first\u2028second" }]),
+    ).toEqual({ label: 'subagent "first"', count: 1 });
+  });
+
   it("names background work by kind, first line and count", () => {
     expect(describeBackgroundWork([])).toBeNull();
     expect(describeBackgroundWork([{ kind: "mystery", description: " " }])).toEqual({
