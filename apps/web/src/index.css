@@ -2570,12 +2570,12 @@ video.artifact-viewer-media {
 [data-machine-short] {
   display: none;
 }
-/* Room for the short label: about 0.8em a character (capitals, bold) plus the padding. */
+/* Room for the short label: about 0.95em a character (wide bold capitals) plus the padding. */
 [data-machine-short-chars] {
-  min-width: calc(var(--machine-short-chars) * 0.8em + 1.25rem);
+  min-width: calc(var(--machine-short-chars) * 0.95em + 1.25rem);
 }
 [data-machine-short-chars] [data-machine-name-slot] {
-  min-width: calc(var(--machine-short-chars) * 0.8em - 1.25rem);
+  min-width: calc(var(--machine-short-chars) * 0.95em - 1.25rem);
 }
 [data-machine-compact] {
   position: relative;

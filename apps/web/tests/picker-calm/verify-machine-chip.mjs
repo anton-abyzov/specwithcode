@@ -91,7 +91,8 @@ try {
             nameShown: visible(full) ? full.clientWidth / Math.max(1, full.scrollWidth) : 0,
             nameLength: full.textContent.length,
             short: visible(short) ? short.textContent : null,
-            shortInside: shortBox.right <= chipBox.right + 0.5,
+            // The label clears the chip's border by at least 4px.
+            shortInside: shortBox.left + short.scrollWidth <= chipBox.right - 4,
             name: chip.getAttribute("aria-label") ?? chip.textContent,
             tinted: chip.hasAttribute("data-machine-color"),
           };
