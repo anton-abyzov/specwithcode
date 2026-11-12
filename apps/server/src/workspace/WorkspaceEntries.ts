@@ -73,6 +73,11 @@ export function readDirectoryFailureMessage(folder: string, cause: unknown): str
   }
 }
 
+/** The folder (or a folder above it) does not exist: typed, so clients need not read the message. */
+export function readDirectoryMissing(cause: unknown): boolean {
+  return (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
 export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedError<WorkspaceEntriesReadDirectoryError>()(
   "WorkspaceEntriesReadDirectoryError",
   {
@@ -148,6 +153,19 @@ function markGitFolders(folders: ReadonlyArray<string>, found: Set<string>): Pro
       ),
     ),
   );
+}
+
+/** Which of these links in `parent` lead to a folder. Broken links and links to files drop out. */
+async function linkedFolders(parent: string, names: ReadonlyArray<string>): Promise<string[]> {
+  const found = await Promise.all(
+    names.map((name) =>
+      NodeFSP.stat(`${parent}/${name}`).then(
+        (info) => (info.isDirectory() ? name : null),
+        () => null,
+      ),
+    ),
+  );
+  return found.filter((name): name is string => name !== null);
 }
 
 function createDirectoryFailure(folder: string, cause: unknown): FilesystemCreateDirectoryError {
@@ -309,17 +327,31 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ name: string; fullPath: string; kind?: "folder" | "git" }> = [];
+      const entries: Array<{
+        name: string;
+        fullPath: string;
+        kind?: "folder" | "git";
+        link?: true;
+      }> = [];
+      const links: Array<string> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
+          (dirent.isDirectory() || dirent.isSymbolicLink()) &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
           (showHidden || !dirent.name.startsWith("."))
         ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
+          if (dirent.isSymbolicLink()) links.push(dirent.name);
+          else entries.push({ name: dirent.name, fullPath: path.join(parentPath, dirent.name) });
+        }
+      }
+      // A link is listed when it leads to a folder, marked as a link; a broken
+      // link, or one to a file, is left out.
+      if (links.length > 0) {
+        const linked = yield* Effect.promise(() => linkedFolders(parentPath, links)).pipe(
+          Effect.timeoutOption(GIT_MARK_BUDGET),
+        );
+        for (const name of linked._tag === "Some" ? linked.value : []) {
+          entries.push({ name, fullPath: path.join(parentPath, name), link: true });
         }
       }
 

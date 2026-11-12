@@ -1337,3 +1337,77 @@ it.effect("refuses denied parents with New folder's words, links to them include
     }),
   ),
 );
+
+// The picker's "Creates" or "Uses" comes from the same rules the create runs.
+it.effect("previews what the create does, and the create agrees", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = (name: string) => path.join(baseDir, name);
+        // A worktree or submodule holds a .git file, not a folder.
+        yield* fs.makeDirectory(parent("worktree"));
+        yield* fs.writeFileString(path.join(parent("worktree"), ".git"), "gitdir: /elsewhere\n");
+        // A child named like the project that already uses SpecWeave.
+        yield* fs.makeDirectory(path.join(parent("specweave"), "example", ".specweave"), {
+          recursive: true,
+        });
+        // The child sorts past the first 200 folders a listing marks.
+        yield* fs.makeDirectory(parent("crowded"));
+        for (let index = 0; index < 205; index++) {
+          yield* fs.makeDirectory(
+            path.join(parent("crowded"), `a${String(index).padStart(3, "0")}`),
+          );
+        }
+        yield* fs.makeDirectory(path.join(parent("crowded"), "example", ".git"), {
+          recursive: true,
+        });
+        // A plain folder of the project's name: the new one is numbered.
+        yield* fs.makeDirectory(path.join(parent("taken"), "example"), { recursive: true });
+        yield* fs.makeDirectory(parent("empty"));
+
+        const cases = [
+          ["worktree", { kind: "uses", path: parent("worktree"), because: "repository" }],
+          [
+            "specweave",
+            { kind: "uses", path: path.join(parent("specweave"), "example"), because: "specweave" },
+          ],
+          [
+            "crowded",
+            { kind: "uses", path: path.join(parent("crowded"), "example"), because: "repository" },
+          ],
+          [
+            "taken",
+            {
+              kind: "creates",
+              path: path.join(parent("taken"), "example-2"),
+              because: "name_taken",
+            },
+          ],
+          ["empty", { kind: "creates", path: path.join(parent("empty"), "example") }],
+        ] as const;
+        for (const [folder, expected] of cases) {
+          const preview = yield* folders.previewNamedProject({
+            name: "Example",
+            parentPath: parent(folder),
+          });
+          assert.deepEqual(Option.getOrNull(preview), expected);
+          const created = yield* folders.createNamedProject({
+            name: "Example",
+            parentPath: parent(folder),
+          });
+          assert.equal(created.workspaceRoot, expected.path);
+          assert.equal(created.existing === true, expected.kind === "uses");
+        }
+        assert.isTrue(
+          Option.isNone(
+            yield* folders.previewNamedProject({ name: "Example", parentPath: parent("missing") }),
+          ),
+        );
+      }),
+    ),
+  ),
+);
