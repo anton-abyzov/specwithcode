@@ -4242,4 +4242,5 @@ export const zh: PhraseCatalog = {
   "Account {id}": "账户 {id}",
   "By {id}": "操作者：{id}",
   "Not finished": "未完成",
+  "Setup can be closed once the import finishes.": "导入完成后即可关闭设置。",
 };

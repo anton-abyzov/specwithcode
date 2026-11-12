@@ -65,11 +65,14 @@ function DialogPopup({
   showCloseButton = true,
   bottomStickOnMobile = true,
   variant = "default",
+  viewportClassName,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media";
+  /** For the area the popup is placed in, such as room kept free above it. */
+  viewportClassName?: string | undefined;
 }) {
   return (
     <DialogPortal>
@@ -80,6 +83,7 @@ function DialogPopup({
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
             "z-[60] grid-rows-1 place-items-center px-4 py-6 [-webkit-app-region:no-drag]",
+          viewportClassName,
         )}
       >
         <DialogPrimitive.Popup

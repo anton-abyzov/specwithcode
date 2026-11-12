@@ -30,7 +30,7 @@ const browser = await chromium.launch({
   headless: true,
   executablePath: process.env.STUDIO_CHROME,
 });
-const M4 = "Anton's MacBook M4MAX";
+const M4 = "Sam's MacBook M4";
 const choose = (page) => page.getByRole("radio", { name: new RegExp(M4) }).check();
 /** name, query, and what the owner does before the picture is taken. */
 const cases = [

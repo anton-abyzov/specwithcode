@@ -3,6 +3,7 @@
 //   ?machines=account|mixed|none|offline             which machines there are to list
 //   ?grants=loading                                  who can run work here is still being read
 //   ?view=setup                                      the first step of setup around the card
+//   ?view=frame                                      a long step in the setup frame, for its footer
 //   ?setup=signed-out|linked|failed|off              where that step starts
 //   ?linkMs=600                                      how long linking this machine takes
 import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
@@ -31,11 +32,11 @@ const reported = (os: string, serverVersion: string) => ({
 });
 const here: Saved = {
   environmentId: HERE,
-  label: "Anton's MacBook Pro",
+  label: "Sam's MacBook Pro",
   connection: { phase: "connected" },
 };
 const account = [
-  { environmentId: "m4", label: "Anton's MacBook M4MAX", os: "darwin", availability: "online" },
+  { environmentId: "m4", label: "Sam's MacBook M4", os: "darwin", availability: "online" },
   { environmentId: "m1", label: "Mac mini M1", os: "darwin", availability: "online" },
   {
     environmentId: "ms",
@@ -85,6 +86,9 @@ if (setupView && setup === "off") {
 } else localStorage.removeItem(TURNED_OFF_KEY);
 
 export const isElectron = true;
+// The frame's header: no update is waiting and the star link has its own check.
+export const FirstRunUpdateNotice = () => null;
+export const StarOnGitHubLink = () => null;
 export const hasCloudPublicConfig = () => connect !== "none";
 export const useAuth = () => ({
   isLoaded: connect !== "loading",
@@ -92,7 +96,7 @@ export const useAuth = () => ({
   userId: ACCOUNT,
 });
 export const useUser = () => ({
-  user: { primaryEmailAddress: { emailAddress: "anton@example.com" } },
+  user: { primaryEmailAddress: { emailAddress: "sam@example.com" } },
 });
 export const usePrimaryCloudLinkState = () => ({
   data: useSyncExternalStore(subscribe, () => link).data,

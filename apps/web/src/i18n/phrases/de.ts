@@ -4441,4 +4441,6 @@ export const de: PhraseCatalog = {
   "Account {id}": "Konto {id}",
   "By {id}": "Von {id}",
   "Not finished": "Nicht abgeschlossen",
+  "Setup can be closed once the import finishes.":
+    "Die Einrichtung lässt sich schließen, sobald der Import fertig ist.",
 };

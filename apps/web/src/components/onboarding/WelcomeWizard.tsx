@@ -1,113 +1,30 @@
-import { useAuth } from "@clerk/react";
-import { useAtomValue } from "@effect/atom-react";
 import type {
-  AgentSessionProjectCandidate,
   EnvironmentId,
   OnboardingMachineRole,
-  ProjectId,
-  ProviderInstanceId,
   ScopedProjectRef,
-  ServerConfig,
-  ServerProvider,
 } from "@specweave-studio/contracts";
-import { scopeProjectRef, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@specweave-studio/client-runtime/state/runtime";
-import {
-  AuthAccessWriteScope,
-  AuthTerminalOperateScope,
-  CommandId,
-  defaultInstanceIdForDriver,
-  AuthOrchestrationOperateScope,
-  ProviderDriverKind,
-  ThreadId,
-} from "@specweave-studio/contracts";
-import * as Schema from "effect/Schema";
-import {
-  ArrowRightIcon,
-  CheckIcon,
-  ChevronRightIcon,
-  CloudIcon,
-  LinkIcon,
-  MonitorIcon,
-  TerminalIcon,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { StarOnGitHubLink } from "../github/StarOnGitHub";
-import { useMachineNicknames } from "../../studio/machineNickname";
-import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { AuthAccessWriteScope } from "@specweave-studio/contracts";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
-import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
-import { FirstRunUpdateNotice } from "./FirstRunUpdateNotice";
-import { firstStepControl } from "./wizardFocus";
 import { JoinedMachineStep, JoinMachineStep, MachineRoleStep } from "./JoinMachineSteps";
 import { SignInFirstStep } from "./SignInFirstStep";
-import {
-  groupOnboardingProjects,
-  partitionOnboardingProjects,
-  onboardingProjectKey,
-  resolveOnboardingLandingProject,
-  resolveOnboardingProjectId,
-  type OnboardingProjectGroup,
-} from "../../onboarding/projectImport.logic";
-import {
-  getOnboardingProviderState,
-  resolveOnboardingProviderInstallCommand,
-  resolveOnboardingProviderLoginCommand,
-  selectOnboardingProvidersByDriver,
-} from "../../onboarding/providerReadiness.logic";
-import { newProjectId, randomUUID } from "../../lib/utils";
-import { agentSessionImport } from "../../state/agentSessions";
-import { readProjects, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
-import { isOnboardingRelayEnvironment } from "../../onboarding/targetEnvironment.logic";
-import { useAgentReadiness } from "../../onboarding/useAgentReadiness";
-import { agentReadinessMessage } from "../../onboarding/agentReadiness.logic";
 import { useProjectScans } from "../../onboarding/useProjectScans";
-import { projectEnvironment } from "../../state/projects";
-import { serverEnvironment } from "../../state/server";
-import {
-  readEnvironmentScope,
-  useEnvironmentScope,
-  useEnvironmentsWithScope,
-} from "../../state/session";
-import { terminalEnvironment } from "../../state/terminal";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { connectPairing } from "../../connection/onboarding";
-import { getProviderSummary } from "../settings/providerStatus";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { useEnvironmentScope } from "../../state/session";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
-import { LanguageSelect } from "../settings/LanguageSelect";
-import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
-import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
-import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
-import { TerminalViewport } from "../ThreadTerminalDrawer";
-import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { StudioWordmark } from "../StudioWordmark";
-import { Alert, AlertDescription } from "../ui/alert";
-import { Button } from "../ui/button";
-import { CommandBlock } from "../CommandBlock";
-import { Checkbox } from "../ui/checkbox";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { Input } from "../ui/input";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
-import { ScrollArea } from "../ui/scroll-area";
-import { Spinner } from "../ui/spinner";
-import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
-import { Dialog } from "../ui/dialog";
-import { DialogCloseButton } from "../ui/dialog-close-button";
 import { toastManager } from "../ui/toast";
-import { cn } from "../../lib/utils";
-import { formatRelativeTime } from "../../timestampFormat";
 import { useT, useTx } from "../../i18n";
-import { renderRich } from "../../i18n/rich";
-
+import { AgentsStep } from "./AgentsStep";
+import { ConnectionStep } from "./ConnectionStep";
+import { ImportStep } from "./ProjectsStep";
+import {
+  FirstRunFrame,
+  shownStages,
+  stageAfter,
+  stageBefore,
+  type WizardStage,
+} from "./WizardFrame";
 /**
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
  * fresh install (no completed-onboarding flag, empty workspace). Flow per the
@@ -115,6 +32,10 @@ import { renderRich } from "../../i18n/rich";
  * managed Codex setup or an inline CLI terminal → project import → main screen.
  * Every step past the connection gate is skippable; the whole wizard is
  * re-runnable by clearing the flag.
+ *
+ * The frame is shared (`WizardFrame.tsx`): the stage bar is built from one list
+ * of stages, each step draws the same footer below the scrolling panel, Enter
+ * presses the step's primary, and Escape leaves setup as the close button does.
  *
  * On a first run in the desktop app with SpecWithCode Connect it starts at the
  * sign-in (`SignInFirstStep`): that links this machine, lists the account's
@@ -129,12 +50,17 @@ import { renderRich } from "../../i18n/rich";
  */
 
 type WizardStep = "start" | "role" | "join" | "joined" | "connection" | "agents" | "import";
-const FULL_SETUP_STEPS: ReadonlySet<WizardStep> = new Set([
-  "start",
-  "connection",
-  "agents",
-  "import",
-]);
+/** A stage of the bar. Several steps can belong to one stage. */
+type WizardStageId = "connect" | "agents" | "projects";
+const STAGE_OF_STEP: Record<WizardStep, WizardStageId> = {
+  start: "connect",
+  role: "connect",
+  join: "connect",
+  joined: "connect",
+  connection: "connect",
+  agents: "agents",
+  import: "projects",
+};
 
 export interface WelcomeMachineRole {
   /** Offer the choice: a first run (not finished before) with a server here. */
@@ -143,11 +69,6 @@ export interface WelcomeMachineRole {
   readonly onChange: (role: OnboardingMachineRole) => Promise<void>;
 }
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
-
-const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const CONNECT_SIGN_IN_TIMEOUT_MS = 10_000;
-// Some providers report "not checked yet" for good, so checking cannot last forever.
-const AGENT_CHECK_TIMEOUT_MS = 15_000;
 
 export function WelcomeWizard({
   localAvailable,
@@ -163,6 +84,7 @@ export function WelcomeWizard({
   readonly machineRole?: WelcomeMachineRole | undefined;
 }) {
   const t = useT();
+  const tx = useTx();
   const completeOnboarding = useCompleteOnboarding();
   // Until the person moves, the step follows saved settings, which can
   // finish loading after the first render.
@@ -196,11 +118,29 @@ export function WelcomeWizard({
       ? "wizard.noun.mac"
       : "wizard.noun.machine",
   );
-  const onboardingStages = [
-    t("wizard.stage.connect"),
-    t("wizard.stage.agents"),
-    t("wizard.stage.projects"),
+  // The whole bar, in order. A stage that does not apply sets `when: false` and
+  // drops out of the bar, of Back and of Continue.
+  const stages: readonly WizardStage<WizardStageId>[] = [
+    {
+      id: "connect",
+      label: entryStep === "start" ? tx("Sign in") : t("wizard.stage.connect"),
+    },
+    { id: "agents", label: t("wizard.stage.agents") },
+    { id: "projects", label: t("wizard.stage.projects") },
   ];
+  const barStages = shownStages(stages);
+  // Back and the bar return to the connect step the person went on from, so the
+  // computers picked there are still the ones being set up.
+  const [leftConnectFrom, setLeftConnectFrom] = useState<"start" | "connection" | null>(null);
+  const stepOfStage = (stage: WizardStageId): WizardStep =>
+    stage === "connect"
+      ? (leftConnectFrom ?? (entryStep === "start" ? "start" : "connection"))
+      : stage === "agents"
+        ? "agents"
+        : "import";
+  const goToStage = (stage: WizardStageId | null) => {
+    if (stage !== null) setStep(stepOfStage(stage));
+  };
   const chooseRole = (role: OnboardingMachineRole) => {
     void machineRole?.onChange(role).catch(() =>
       toastManager.add({
@@ -233,12 +173,16 @@ export function WelcomeWizard({
     step === "import" &&
     scans.every((scan) => scan.data === null) &&
     scans.some((scan) => scan.isPending);
-  const startSetup = (ids: readonly EnvironmentId[]) => {
+  const startSetup = (ids: readonly EnvironmentId[], from: "start" | "connection") => {
     if (ids.length === 0) return;
     setSetupIds(ids);
-    setStep("agents");
+    setLeftConnectFrom(from);
+    goToStage(stageAfter(stages, "connect"));
   };
-  const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
+  const stageIndex = Math.max(
+    0,
+    barStages.findIndex((stage) => stage.id === STAGE_OF_STEP[step]),
+  );
   const finish = useCallback(
     (projectRef?: ScopedProjectRef, importWarning?: string, importedThreadCount = 0) => {
       if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
@@ -301,1762 +245,99 @@ export function WelcomeWizard({
   };
 
   return (
-    <Dialog
-      open
-      disablePointerDismissal
-      onOpenChange={(open, event) => {
-        event.cancel();
-        // Only the close button: Escape also reaches the setup terminal.
-        if (!open && canClose && event.reason === "close-press") leaveSetup();
-      }}
+    <FirstRunFrame
+      stages={barStages}
+      currentStage={stageIndex}
+      stagesLocked={isImporting}
+      onStageChange={(stage) => goToStage(stage.id)}
+      canClose={canClose}
+      onLeave={leaveSetup}
+      holdHeight={isLoadingProjects}
+      after={<ChatGptWelcomeCoordinator />}
     >
-      <WizardPopup
-        size="wide"
-        bottomStickOnMobile={false}
-        showCloseButton={false}
-        initialFocus={() =>
-          document.getElementById("onboarding-pairing-url") ?? firstStepControl() ?? true
-        }
-      >
-        <WizardHeader
-          title={t("wizard.title")}
-          identity={
-            <div className="flex flex-wrap items-center justify-between gap-3 pe-10">
-              <div className="flex items-center gap-2" role="img" aria-label="SpecWithCode">
-                <StudioWordmark className="size-6 shrink-0" aria-hidden />
-                <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                  SpecWithCode
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
-                <StarOnGitHubLink />
-                <LanguageSelect showIcon className="w-auto sm:w-auto" />
-              </div>
-            </div>
-          }
-        >
-          {FULL_SETUP_STEPS.has(step) ? (
-            <WizardSteps
-              steps={onboardingStages}
-              currentStep={stageIndex}
-              isStepDisabled={(index) => isImporting || index >= stageIndex}
-              onStepChange={(index) => {
-                if (isImporting || index > stageIndex) return;
-                setStep(index === 0 ? (entryStep === "start" ? "start" : "connection") : "agents");
-              }}
-            />
-          ) : null}
-          <FirstRunUpdateNotice />
-        </WizardHeader>
-
-        <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "start" ? (
-            primaryEnvironmentId ? (
-              <SignInFirstStep
-                environmentId={primaryEnvironmentId}
-                machineNoun={machineNoun}
-                rulesKnown={primaryEnvironment?.serverConfig != null}
-                onContinue={() => startSetup([primaryEnvironmentId])}
-                onOtherComputers={() => setStep("connection")}
-              />
-            ) : null
-          ) : step === "role" ? (
-            <MachineRoleStep
-              machineNoun={machineNoun}
-              onJoin={() => setStep("join")}
-              onMain={() => {
-                chooseRole("main");
-                setStep("connection");
-              }}
-              onLater={leaveSetup}
-            />
-          ) : step === "join" ? (
-            <JoinMachineStep
-              environmentId={primaryEnvironmentId}
-              canManage={canInvite}
-              defaultName={primaryEnvironment?.label ?? null}
-              machineNoun={machineNoun}
-              onBack={() => setStep(machineRole?.role === "joined" ? "joined" : "role")}
-              onJoined={() => chooseRole("joined")}
-              onDone={() => setStep("joined")}
-            />
-          ) : step === "joined" ? (
-            <JoinedMachineStep
-              machineNoun={machineNoun}
-              onNewLine={() => setStep("join")}
-              onFullSetup={() => {
-                chooseRole("main");
-                setStep("connection");
-              }}
-            />
-          ) : step === "connection" ? (
-            <ConnectionStep
-              // Reached from the sign-in step: that step is one press back.
-              onBack={entryStep === "start" ? () => setStep("start") : undefined}
-              expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
-              connectOptional={localAvailable}
-              selectedIds={selectedIds}
-              autoSelectedComputers={autoSelectedComputers.current}
-              onSelectionChange={setSelection}
-              onToggleEnvironment={(environmentId, checked) =>
-                setSelection((current) => {
-                  const next = new Set(current ?? selectedIds);
-                  if (checked) next.add(environmentId);
-                  else next.delete(environmentId);
-                  return next;
-                })
-              }
-              onContinue={() =>
-                startSetup(
-                  environments
-                    .filter((environment) => selectedIds.has(environment.environmentId))
-                    .map((environment) => environment.environmentId),
-                )
-              }
-              onPaired={(environmentId) => {
-                setSelection(new Set([...selectedIds, environmentId]));
-              }}
-            />
-          ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
-          ) : (
-            <ImportStep
-              scans={scans}
-              isImporting={isImporting}
-              setIsImporting={setIsImporting}
-              onDone={finish}
-            />
-          )}
-        </WizardPanel>
-        {/* Last, as in every dialog: setup opens focused on its content. */}
-        {canClose ? (
-          <DialogCloseButton aria-label={t("wizard.close")} title={t("wizard.close")} />
-        ) : null}
-      </WizardPopup>
-      <ChatGptWelcomeCoordinator />
-    </Dialog>
-  );
-}
-
-// ── Step 1: connection choice ────────────────────────────────
-
-function ConnectionStep({
-  autoSelectedComputers,
-  connectOptional,
-  expandPairingInitially,
-  selectedIds,
-  onSelectionChange,
-  onToggleEnvironment,
-  onContinue,
-  onPaired,
-  onBack,
-}: {
-  readonly onBack?: (() => void) | undefined;
-  readonly autoSelectedComputers: Set<EnvironmentId>;
-  /** Off with no server here, where Connect or a pairing link is the way in. */
-  readonly connectOptional: boolean;
-  readonly expandPairingInitially: boolean;
-  readonly selectedIds: ReadonlySet<EnvironmentId>;
-  readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId>) => void;
-  readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
-  readonly onContinue: () => void;
-  readonly onPaired: (environmentId: EnvironmentId) => void;
-}) {
-  const t = useT();
-  const { environments } = useEnvironments();
-  const nickname = useMachineNicknames();
-  const cloudEnabled = hasCloudPublicConfig();
-  const directEnvironments = environments.filter(
-    (environment) => !cloudEnabled || !isOnboardingRelayEnvironment(environment),
-  );
-  const [pairingOpen, setPairingOpen] = useState(expandPairingInitially);
-  const [isPairing, setIsPairing] = useState(false);
-  const ready =
-    selectedIds.size > 0 &&
-    [...selectedIds].every((id) =>
-      environments.some(
-        (environment) =>
-          environment.environmentId === id && environment.connection.phase === "connected",
-      ),
-    );
-  const continueRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (
-      ready &&
-      (document.activeElement === document.body ||
-        document.activeElement?.getAttribute("role") === "dialog")
-    ) {
-      continueRef.current?.focus();
-    }
-  }, [ready]);
-  return (
-    <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        {t("wizard.connection.title")}
-      </h1>
-      <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        {t("wizard.connection.description")}
-      </p>
-      {directEnvironments.length > 0 ? (
-        <fieldset className="mt-5 space-y-2">
-          <legend className="sr-only">{t("wizard.connection.legend")}</legend>
-          {directEnvironments.map((environment) => (
-            <label
-              key={environment.environmentId}
-              className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
-            >
-              <Checkbox
-                checked={selectedIds.has(environment.environmentId)}
-                onCheckedChange={(checked) => {
-                  const next = new Set(selectedIds);
-                  if (checked) next.add(environment.environmentId);
-                  else next.delete(environment.environmentId);
-                  onSelectionChange(next);
-                }}
-              />
-              <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 text-sm font-medium break-words">
-                    {nickname(environment.environmentId, environment.label)}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {environment.connection.phase === "connected"
-                      ? t("wizard.connection.connected")
-                      : t("wizard.connection.connecting")}
-                  </span>
-                </span>
-                {environment.displayUrl ? (
-                  <span className="mt-0.5 block text-xs break-all text-muted-foreground">
-                    {environment.displayUrl}
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          ))}
-        </fieldset>
-      ) : null}
-      <div className="mt-4 space-y-2">
-        {cloudEnabled ? (
-          <ConnectAccountOption
-            autoSelectedComputers={autoSelectedComputers}
-            optional={connectOptional}
-            disabled={isPairing}
-            selectedIds={selectedIds}
-            onToggleEnvironment={onToggleEnvironment}
+      {step === "start" ? (
+        primaryEnvironmentId ? (
+          <SignInFirstStep
+            environmentId={primaryEnvironmentId}
+            machineNoun={machineNoun}
+            rulesKnown={primaryEnvironment?.serverConfig != null}
+            onContinue={() => startSetup([primaryEnvironmentId], "start")}
+            onOtherComputers={() => setStep("connection")}
           />
-        ) : null}
-        <div className="rounded-lg border border-border bg-background">
-          <Collapsible open={pairingOpen} onOpenChange={setPairingOpen}>
-            <CollapsibleTrigger
-              disabled={isPairing}
-              render={
-                <Button
-                  variant="ghost"
-                  size="sm-multiline"
-                  className="min-h-14 w-full justify-start"
-                />
-              }
-            >
-              <LinkIcon className="size-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{t("wizard.connection.addComputer")}</span>
-              <ChevronRightIcon
-                className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
-              />
-            </CollapsibleTrigger>
-            <CollapsiblePanel>
-              <div className="px-3 pb-3">
-                <PairingForm
-                  isPairing={isPairing}
-                  setIsPairing={setIsPairing}
-                  onPaired={(environmentId) => {
-                    setPairingOpen(false);
-                    onPaired(environmentId);
-                    requestAnimationFrame(() => continueRef.current?.focus());
-                  }}
-                />
-              </div>
-            </CollapsiblePanel>
-          </Collapsible>
-        </div>
-      </div>
-      <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          {t("wizard.connection.telemetry")}
-        </p>
-        <div className="flex shrink-0 items-center gap-2 self-end">
-          {onBack ? (
-            <Button variant="ghost" disabled={isPairing} onClick={onBack}>
-              {t("wizard.back")}
-            </Button>
-          ) : null}
-          <Button
-            ref={continueRef}
-            autoFocus={!expandPairingInitially}
-            disabled={!ready || isPairing}
-            onClick={onContinue}
-          >
-            {t("wizard.continue")}
-            <ArrowRightIcon className="size-3.5" />
-          </Button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-/** True once `active` has held for `delayMs`, and false again when it stops. */
-function useHeldFor(active: boolean, delayMs: number) {
-  const [elapsed, setElapsed] = useState(false);
-  useEffect(() => {
-    if (!active) return;
-    const timer = setTimeout(() => setElapsed(true), delayMs);
-    return () => {
-      clearTimeout(timer);
-      setElapsed(false);
-    };
-  }, [active, delayMs]);
-  return active && elapsed;
-}
-
-function ConnectAccountOption({
-  autoSelectedComputers,
-  optional,
-  disabled,
-  selectedIds,
-  onToggleEnvironment,
-}: {
-  readonly autoSelectedComputers: Set<EnvironmentId>;
-  readonly optional: boolean;
-  readonly disabled: boolean;
-  readonly selectedIds: ReadonlySet<EnvironmentId>;
-  readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
-}) {
-  const t = useT();
-  const tx = useTx();
-  const { environments } = useEnvironments();
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const { openAuthPrompt } = useStudioConnectAuthPrompt();
-  const [expanded, setExpanded] = useState(true);
-  const [discoveryReady, setDiscoveryReady] = useState(false);
-  const onDiscoveryReady = useCallback(() => setDiscoveryReady(true), []);
-  const signInStalled = useHeldFor(!isLoaded, CONNECT_SIGN_IN_TIMEOUT_MS);
-
-  return (
-    <div className="rounded-lg border border-border bg-background">
-      <Collapsible open={expanded && !!isSignedIn && discoveryReady} onOpenChange={setExpanded}>
-        <CollapsibleTrigger
-          disabled={disabled || !isLoaded}
-          onClick={(event) => {
-            if (!isSignedIn) {
-              event.preventDefault();
-              setExpanded(true);
-              openAuthPrompt();
-            }
+        ) : null
+      ) : step === "role" ? (
+        <MachineRoleStep
+          machineNoun={machineNoun}
+          onJoin={() => setStep("join")}
+          onMain={() => {
+            chooseRole("main");
+            setStep("connection");
           }}
-          render={
-            <Button variant="ghost" size="sm-multiline" className="min-h-14 w-full justify-start" />
-          }
-        >
-          <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="min-w-0 flex-1 text-left">
-            <span className="block">SpecWithCode Connect</span>
-            {optional ? (
-              <span className="block text-xs font-normal text-muted-foreground">
-                {tx("Optional. Reach this computer from your phone and other machines.")}
-              </span>
-            ) : null}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {!isLoaded
-              ? signInStalled
-                ? tx("Sign-in did not load")
-                : t("wizard.connect.loadingSignIn")
-              : !isSignedIn
-                ? t("wizard.connect.signIn")
-                : !discoveryReady
-                  ? t("wizard.connect.loadingComputers")
-                  : null}
-          </span>
-          <ChevronRightIcon
-            className={cn("size-4 text-muted-foreground", expanded && isSignedIn && "rotate-90")}
-          />
-        </CollapsibleTrigger>
-        <CollapsiblePanel keepMounted>
-          <div className="px-3 pb-3">
-            <div className="mb-3 space-y-1.5">
-              {isSignedIn ? (
-                <CloudEnvironmentConnectRows
-                  primaryEnvironmentId={null}
-                  savedEnvironments={environments}
-                  showSavedEnvironments
-                  onDiscoveryReady={onDiscoveryReady}
-                  selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
-                  refreshWhileEmpty
-                  empty={
-                    <p className="py-3 text-sm text-muted-foreground">
-                      {t("wizard.connect.noComputers")}
-                    </p>
-                  }
-                />
-              ) : null}
-            </div>
-            <p className="text-sm text-muted-foreground">{t("wizard.connect.runThis")}</p>
-            <CommandBlock command="specweave-studio connect" className="mt-3" />
-            <p className="mt-3 text-xs text-muted-foreground">{t("wizard.connect.keepRunning")}</p>
-          </div>
-        </CollapsiblePanel>
-      </Collapsible>
-      {signInStalled ? (
-        <div role="alert" className="flex items-center justify-between gap-3 px-3 pb-3">
-          <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-            {tx("Connect sign-in did not load, so check this computer's network.")}{" "}
-            {optional
-              ? tx("Setup works without Connect, and you can add it later in Settings > Machines.")
-              : tx("You can add a computer with a pairing link instead.")}
-          </p>
-          <Button
-            className="shrink-0"
-            size="xs"
-            variant="outline"
-            onClick={() => window.location.reload()}
-          >
-            {tx("Retry")}
-          </Button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-// ── Step 2′: Direct pairing ──────────────────────────────────
-
-/**
- * Register a computer in this browser using a server-minted pairing link.
- */
-function PairingForm({
-  isPairing,
-  setIsPairing,
-  onPaired,
-}: {
-  readonly isPairing: boolean;
-  readonly setIsPairing: (value: boolean) => void;
-  readonly onPaired: (environmentId: EnvironmentId) => void;
-}) {
-  const t = useT();
-  const connectPairingEnvironment = useAtomCommand(connectPairing, { reportFailure: false });
-  const [pairingUrl, setPairingUrl] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const submit = async () => {
-    if (isPairing || pairingUrl.trim().length === 0) return;
-    setIsPairing(true);
-    setErrorMessage("");
-    const result = await connectPairingEnvironment({ pairingUrl: pairingUrl.trim() });
-    if (!mountedRef.current) return;
-    setIsPairing(false);
-    if (result._tag === "Success") {
-      onPaired(result.value);
-      return;
-    }
-    if (isAtomCommandInterrupted(result)) return;
-    const cause = squashAtomCommandFailure(result);
-    setErrorMessage(cause instanceof Error ? cause.message : t("wizard.pairing.failed"));
-  };
-
-  return (
-    <>
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <div>
-          <label className="block text-sm text-muted-foreground" htmlFor="onboarding-pairing-url">
-            {t("wizard.pairing.label")}
-          </label>
-          <Input
-            id="onboarding-pairing-url"
-            autoFocus
-            aria-invalid={errorMessage.length > 0}
-            aria-describedby={errorMessage ? "onboarding-pairing-error" : undefined}
-            className="mt-2"
-            size="lg"
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-            nativeInput
-            readOnly={isPairing}
-            placeholder="https://your-server:5230/pair#token=…"
-            value={pairingUrl}
-            onChange={(event) => setPairingUrl(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                (event.nativeEvent.isComposing || event.keyCode === 229)
-              ) {
-                event.preventDefault();
-              }
-            }}
-          />
-        </div>
-        {errorMessage ? (
-          <Alert id="onboarding-pairing-error" variant="error">
-            <AlertDescription>{errorMessage}</AlertDescription>
-          </Alert>
-        ) : null}
-        <Collapsible>
-          <div className="flex items-center justify-between gap-3">
-            <CollapsibleTrigger
-              type="button"
-              className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRightIcon className="size-3.5 group-data-panel-open:rotate-90" />
-              {t("wizard.pairing.need")}
-            </CollapsibleTrigger>
-            <Button type="submit" disabled={isPairing || pairingUrl.trim().length === 0}>
-              {isPairing ? t("wizard.pairing.pairing") : t("wizard.pairing.pair")}
-            </Button>
-          </div>
-          <CollapsiblePanel>
-            <p className="pt-3 text-sm text-muted-foreground">{t("wizard.pairing.runThis")}</p>
-            <CommandBlock command="specweave-studio pair" className="mt-2" />
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              {renderRich(t("wizard.pairing.startFirst"), {
-                serve: <code className="font-mono">specweave-studio serve</code>,
-                tailscale: <code className="font-mono">--tailscale</code>,
-              })}
-            </p>
-          </CollapsiblePanel>
-        </Collapsible>
-      </form>
-    </>
-  );
-}
-
-// ── Step 3: agents ───────────────────────────────────────────
-
-const PRIMARY_AGENT_DRIVERS = ["codex", "claudeAgent"] as const;
-type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
-
-/** Setup values stay fixed while provider probes refresh the surrounding cards. */
-interface AgentTerminalSession {
-  readonly environmentId: EnvironmentId;
-  readonly driver: OnboardingAgentDriver;
-  readonly providerInstanceId: ServerProvider["instanceId"];
-  readonly cwd: string;
-  readonly command: string;
-  readonly keybindings: ServerConfig["keybindings"];
-}
-
-/** Codex uses managed setup; existing CLI installs retain the terminal path. */
-function AgentsStep({
-  environmentIds,
-  onContinue,
-}: {
-  readonly environmentIds: readonly EnvironmentId[];
-  readonly onContinue: () => void;
-}) {
-  const t = useT();
-  const tx = useTx();
-  const { environments } = useEnvironments();
-  const nickname = useMachineNicknames();
-  const machines = useMemo(
-    () =>
-      environmentIds.map((environmentId) => ({
-        environmentId,
-        label: nickname(
-          environmentId,
-          environments.find((environment) => environment.environmentId === environmentId)?.label ??
-            t("wizard.computer"),
-        ),
-      })),
-    [environmentIds, environments, nickname, t],
-  );
-  const reported = useAgentReadiness(machines);
-  const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
-  const readiness = checkStalled ? ({ kind: "none" } as const) : reported;
-  return (
-    <StepShell title={t("wizard.agents.title")} description={t("wizard.agents.description")}>
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
-        <div className="space-y-5 pr-3">
-          {machines.map(({ environmentId, label }) => (
-            <ConnectedAgentsStep
-              key={environmentId}
-              environmentId={environmentId}
-              machineLabel={label}
-            />
-          ))}
-        </div>
-      </ScrollArea>
-      <p
-        role="status"
-        className={cn(
-          "mt-4 text-sm leading-relaxed",
-          readiness.kind === "ready"
-            ? "text-success-foreground"
-            : readiness.kind === "checking"
-              ? "text-muted-foreground"
-              : "text-warning-foreground",
-        )}
-      >
-        {agentReadinessMessage(readiness, tx)}
-      </p>
-      <div className="mt-4 flex justify-end">
-        <Button
-          autoFocus
-          variant={readiness.kind === "none" ? "outline" : "default"}
-          onClick={onContinue}
-        >
-          {readiness.kind === "none" ? tx("Continue without an agent") : t("wizard.continue")}
-          <ArrowRightIcon className="size-3.5" />
-        </Button>
-      </div>
-    </StepShell>
-  );
-}
-
-function ConnectedAgentsStep({
-  environmentId,
-  machineLabel,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly machineLabel: string;
-}) {
-  const t = useT();
-  const tx = useTx();
-  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
-  const [addingAccount, setAddingAccount] = useState(false);
-  const [createdAccount, setCreatedAccount] = useState<{
-    instanceId: ProviderInstanceId;
-    displayName: string;
-    autoStart: boolean;
-  } | null>(null);
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const [rechecking, setRechecking] = useState(false);
-
-  // Re-probe on entry so freshly installed CLIs show up without a manual
-  // refresh; harmless when nothing changed (single-flighted per environment).
-  useEffect(() => {
-    void refreshProviders({ environmentId, input: {} });
-  }, [environmentId, refreshProviders]);
-
-  const byDriver = useMemo(() => selectOnboardingProvidersByDriver(providers), [providers]);
-
-  const primaryAgents = PRIMARY_AGENT_DRIVERS.flatMap((driver) => {
-    const instances =
-      driver === "codex" ? providers?.filter((provider) => provider.driver === driver) : undefined;
-    return instances?.length
-      ? instances.map((provider) => ({ driver, provider, instanceId: provider.instanceId }))
-      : [{ driver, provider: byDriver.get(driver), instanceId: byDriver.get(driver)?.instanceId }];
-  });
-  // Keep the newly created row mounted while settings and provider snapshots catch up.
-  if (createdAccount) {
-    const index = primaryAgents.findIndex(
-      (agent) => agent.instanceId === createdAccount.instanceId,
-    );
-    const [existing] = index >= 0 ? primaryAgents.splice(index, 1) : [];
-    primaryAgents.unshift(
-      existing ?? {
-        driver: "codex",
-        provider: undefined,
-        instanceId: createdAccount.instanceId,
-      },
-    );
-  }
-  return (
-    <section>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h2 className="min-w-0 text-sm font-medium break-words">{machineLabel}</h2>
-        <Button
-          className="shrink-0"
-          size="xs"
-          variant="ghost-muted"
-          disabled={rechecking}
-          onClick={() => {
-            setRechecking(true);
-            void Promise.resolve(refreshProviders({ environmentId, input: {} })).finally(() =>
-              setRechecking(false),
-            );
-          }}
-        >
-          {rechecking ? tx("Checking…") : tx("Check again")}
-        </Button>
-      </div>
-      {!canOperateTerminal ? (
-        <p className="mb-2 text-sm text-muted-foreground">{t("wizard.agents.noTerminal")}</p>
-      ) : null}
-      <div className="space-y-1.5">
-        {primaryAgents.map(({ driver, provider, instanceId }) =>
-          driver === "codex" && serverConfig !== null ? (
-            <OnboardingCodexSetup
-              key={instanceId ?? driver}
-              environmentId={environmentId}
-              provider={provider}
-              serverConfig={serverConfig}
-              createdAccount={instanceId === createdAccount?.instanceId ? createdAccount : null}
-              onAutoStartConsumed={() =>
-                setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
-              }
-              terminalOpen={terminalSession?.driver === driver}
-              onOpenTerminal={() => {
-                if (
-                  provider === undefined ||
-                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-                )
-                  return;
-                setTerminalSession({
-                  environmentId,
-                  driver,
-                  providerInstanceId: provider.instanceId,
-                  cwd: serverConfig.cwd,
-                  command: provider.installed
-                    ? resolveOnboardingProviderLoginCommand(
-                        provider,
-                        serverConfig.settings,
-                        serverConfig.environment.platform.os,
-                      )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
-                  keybindings: serverConfig.keybindings,
-                });
-              }}
-            />
-          ) : (
-            <AgentCard
-              key={driver}
-              driver={driver}
-              provider={provider}
-              terminalOpen={terminalSession?.driver === driver}
-              terminalAvailable={serverConfig !== null && canOperateTerminal}
-              onOpenTerminal={() => {
-                if (
-                  provider === undefined ||
-                  serverConfig === null ||
-                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-                )
-                  return;
-                setTerminalSession({
-                  environmentId,
-                  driver,
-                  providerInstanceId: provider.instanceId,
-                  cwd: serverConfig.cwd,
-                  command: provider.installed
-                    ? resolveOnboardingProviderLoginCommand(
-                        provider,
-                        serverConfig.settings,
-                        serverConfig.environment.platform.os,
-                      )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
-                  keybindings: serverConfig.keybindings,
-                });
-              }}
-            />
-          ),
-        )}
-      </div>
-      {providers?.some(
-        (provider) =>
-          provider.driver === "codex" && getOnboardingProviderState(provider) === "ready",
-      ) ? (
-        <div className="mt-3">
-          <Button size="xs" variant="ghost-muted" onClick={() => setAddingAccount(true)}>
-            {t("wizard.agents.anotherChatGpt")}
-          </Button>
-        </div>
-      ) : null}
-      {addingAccount ? (
-        <AddManagedCodexAccountDialog
-          environmentId={environmentId}
-          onClose={() => setAddingAccount(false)}
-          onAccountCreated={(instanceId, displayName) =>
-            setCreatedAccount({ instanceId, displayName, autoStart: true })
-          }
+          onLater={leaveSetup}
         />
-      ) : null}
-      {terminalSession !== null ? (
-        <AgentInstallTerminal
-          key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
-          session={terminalSession}
-          onClose={() => {
-            setTerminalSession(null);
-            void refreshProviders({ environmentId, input: {} });
+      ) : step === "join" ? (
+        <JoinMachineStep
+          environmentId={primaryEnvironmentId}
+          canManage={canInvite}
+          defaultName={primaryEnvironment?.label ?? null}
+          machineNoun={machineNoun}
+          onBack={() => setStep(machineRole?.role === "joined" ? "joined" : "role")}
+          onJoined={() => chooseRole("joined")}
+          onDone={() => setStep("joined")}
+        />
+      ) : step === "joined" ? (
+        <JoinedMachineStep
+          machineNoun={machineNoun}
+          onNewLine={() => setStep("join")}
+          onFullSetup={() => {
+            chooseRole("main");
+            setStep("connection");
           }}
         />
-      ) : null}
-    </section>
-  );
-}
-
-function OnboardingCodexSetup({
-  createdAccount,
-  onAutoStartConsumed,
-  environmentId,
-  provider,
-  serverConfig,
-  terminalOpen,
-  onOpenTerminal,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ServerProvider | undefined;
-  readonly serverConfig: ServerConfig;
-  readonly terminalOpen: boolean;
-  readonly onOpenTerminal: () => void;
-  readonly createdAccount: {
-    instanceId: ProviderInstanceId;
-    displayName: string;
-    autoStart: boolean;
-  } | null;
-  readonly onAutoStartConsumed: () => void;
-}) {
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
-  const instanceId =
-    createdAccount?.instanceId ??
-    provider?.instanceId ??
-    defaultInstanceIdForDriver(ProviderDriverKind.make("codex"));
-  const settings = serverConfig.settings;
-  const instance = settings.providerInstances[instanceId] ?? {
-    driver: ProviderDriverKind.make("codex"),
-    enabled: settings.providers.codex.enabled,
-    config: createdAccount ? { enabled: true, setupMode: "managed" } : settings.providers.codex,
-  };
-  const mode = readCodexSetupMode(instance.config);
-  const existingChosen =
-    mode === "existing" &&
-    instance.config !== null &&
-    typeof instance.config === "object" &&
-    "setupMode" in instance.config &&
-    instance.config.setupMode === "existing";
-  const changeMode = (setupMode: "managed" | "existing") => {
-    void update({
-      environmentId,
-      input: {
-        patch: buildProviderInstanceUpdatePatch({
-          settings,
-          instanceId,
-          driver: ProviderDriverKind.make("codex"),
-          isDefault: instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("codex")),
-          instance: {
-            ...instance,
-            enabled: true,
-            config: {
-              ...(instance.config !== null && typeof instance.config === "object"
-                ? instance.config
-                : {}),
-              enabled: true,
-              setupMode,
-            },
-          },
-        }),
-      },
-    });
-  };
-  return existingChosen ? (
-    <AgentCard
-      driver="codex"
-      provider={provider}
-      terminalOpen={terminalOpen}
-      terminalAvailable={canOperateTerminal}
-      onOpenTerminal={onOpenTerminal}
-    />
-  ) : (
-    <CodexSetupSection
-      presentation="onboarding"
-      autoStart={createdAccount?.autoStart === true}
-      displayName={createdAccount?.displayName}
-      onAutoStartConsumed={onAutoStartConsumed}
-      environmentId={environmentId}
-      instanceId={instanceId}
-      provider={provider}
-      mode={mode}
-      enabled={provider?.enabled ?? true}
-      onModeChange={changeMode}
-    />
-  );
-}
-
-function AgentCard({
-  driver,
-  provider,
-  terminalOpen,
-  terminalAvailable,
-  onOpenTerminal,
-}: {
-  readonly driver: OnboardingAgentDriver;
-  readonly provider: ServerProvider | undefined;
-  readonly terminalOpen: boolean;
-  readonly terminalAvailable: boolean;
-  readonly onOpenTerminal: () => void;
-}) {
-  const t = useT();
-  const tx = useTx();
-  const meta = getDriverOption(ProviderDriverKind.make(driver));
-  const displayName =
-    provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
-  const summary = getProviderSummary(provider, tx);
-  const providerState = getOnboardingProviderState(provider);
-
-  return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
-      <ProviderInstanceIcon
-        driverKind={ProviderDriverKind.make(driver)}
-        displayName={displayName}
-        iconClassName="size-5"
-      />
-      <div className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-foreground">{displayName}</span>
-        <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState === "ready" ? t("wizard.agents.readyToCode") : summary.headline}
-          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
-        </p>
-      </div>
-      <div className="shrink-0">
-        {providerState === "ready" ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
-            <CheckIcon className="size-3.5" />
-            {t("wizard.agents.ready")}
-          </span>
-        ) : providerState === "checking" ? (
-          <span className="text-xs text-muted-foreground">{t("wizard.agents.checking")}</span>
-        ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">{t("wizard.agents.disabled")}</span>
-        ) : providerState === "attention" && provider?.auth.status === "authenticated" ? null : (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={onOpenTerminal}
-            disabled={terminalOpen || !terminalAvailable}
-          >
-            <TerminalIcon className="size-3.5" />
-            {providerState === "signIn"
-              ? t("wizard.agents.signIn")
-              : providerState === "attention"
-                ? tx("Open terminal")
-                : t("wizard.agents.install")}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Inline install terminal. Opens a PTY on the connected environment under a
- * synthetic onboarding thread id (terminals are keyed by free-form thread id;
- * the server validates only the cwd) and pre-types the install or login
- * command without submitting, so the user reviews and presses Enter.
- */
-function AgentInstallTerminal({
-  session,
-  onClose,
-}: {
-  readonly session: AgentTerminalSession;
-  readonly onClose: () => void;
-}) {
-  const t = useT();
-  const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  // Same terminal typography preference the thread drawer honors.
-  const [advancedTypography] = useLocalStorage(
-    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const openTerminal = useAtomCommand(terminalEnvironment.open, { reportFailure: false });
-  const writeTerminal = useAtomCommand(terminalEnvironment.write, { reportFailure: false });
-  const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
-  const setupQueueRef = useRef(Promise.resolve());
-  const setupGenerationRef = useRef(0);
-  const activeSetupGenerationRef = useRef<number | null>(null);
-  const [terminalId] = useState(() => `onboarding-${driver}-${randomUUID()}`);
-  const threadRef = useMemo(
-    () => scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID),
-    [environmentId],
-  );
-  const [setupAttempt, setSetupAttempt] = useState(0);
-  const [setupState, setSetupState] = useState<
-    "preparing" | "ready" | "openFailed" | "writeFailed"
-  >("preparing");
-  const terminalReady = setupState === "ready" || setupState === "writeFailed";
-
-  // Keep each setup generation distinct. In Strict Mode, a canceled open can
-  // finish after the replacement setup starts; it must not close or pre-type
-  // into the replacement session that shares this terminal id.
-  useEffect(() => {
-    const generation = setupGenerationRef.current + 1;
-    setupGenerationRef.current = generation;
-    activeSetupGenerationRef.current = generation;
-    setSetupState("preparing");
-
-    setupQueueRef.current = setupQueueRef.current.then(async () => {
-      if (activeSetupGenerationRef.current !== generation) return;
-      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-        setSetupState("openFailed");
-        return;
-      }
-      const opened = await openTerminal({
-        environmentId,
-        input: {
-          threadId: AGENT_ONBOARDING_THREAD_ID,
-          terminalId,
-          cwd,
-          providerInstanceId,
-        },
-      });
-      if (opened._tag !== "Success") {
-        if (activeSetupGenerationRef.current === generation) setSetupState("openFailed");
-        return;
-      }
-
-      if (activeSetupGenerationRef.current !== generation) return;
-      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-        setSetupState("writeFailed");
-        return;
-      }
-
-      const wrote = await writeTerminal({
-        environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
-      });
-      if (activeSetupGenerationRef.current !== generation) return;
-      setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");
-    });
-
-    // Every exit path unmounts the drawer. Close the PTY only while this
-    // connection still has terminal access; revocation leaves it running.
-    return () => {
-      if (activeSetupGenerationRef.current === generation) {
-        activeSetupGenerationRef.current = null;
-      }
-      setupQueueRef.current = setupQueueRef.current.then(async () => {
-        if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) return;
-        await closeTerminal({
-          environmentId,
-          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, deleteHistory: true },
-        });
-      });
-    };
-  }, [
-    closeTerminal,
-    command,
-    cwd,
-    environmentId,
-    openTerminal,
-    providerInstanceId,
-    setupAttempt,
-    terminalId,
-    writeTerminal,
-  ]);
-
-  return (
-    <div
-      data-thread-terminal-drawer
-      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
-    >
-      <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
-        <span className="text-2xs font-medium text-muted-foreground">
-          {!canOperateTerminal
-            ? t("wizard.agents.noTerminal")
-            : setupState === "writeFailed"
-              ? renderRich(t("wizard.terminal.runCommand"), {
-                  command: <code className="rounded bg-muted px-1 font-mono">{command}</code>,
-                })
-              : setupState === "ready"
-                ? t("wizard.terminal.review")
-                : setupState === "openFailed"
-                  ? t("wizard.terminal.openFailed")
-                  : t("wizard.terminal.preparing")}
-        </span>
-        <div className="flex items-center gap-1">
-          {setupState === "openFailed" ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={!canOperateTerminal}
-              onClick={() => {
-                if (readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-                  setSetupAttempt((value) => value + 1);
-                }
-              }}
-            >
-              {t("wizard.retry")}
-            </Button>
-          ) : null}
-          <Button size="xs" variant="ghost-muted" onClick={onClose}>
-            {t("wizard.closeTerminal")}
-          </Button>
-        </div>
-      </div>
-      <div className="h-64">
-        {terminalReady ? (
-          <TerminalViewport
-            threadRef={threadRef}
-            threadId={AGENT_ONBOARDING_THREAD_ID}
-            terminalId={terminalId}
-            terminalLabel={t("wizard.terminal.label", { driver })}
-            cwd={cwd}
-            providerInstanceId={providerInstanceId}
-            advancedTypography={advancedTypography}
-            onSessionExited={onClose}
-            focusRequestId={1}
-            autoFocus
-            visible
-            resizeEpoch={0}
-            drawerHeight={256}
-            keybindings={keybindings}
-          />
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ── Step 4: import ───────────────────────────────────────────
-
-function ImportStep({
-  scans,
-  isImporting,
-  setIsImporting,
-  onDone,
-}: {
-  readonly scans: ReturnType<typeof useProjectScans>;
-  readonly isImporting: boolean;
-  readonly setIsImporting: (value: boolean) => void;
-  readonly onDone: (
-    projectRef?: ScopedProjectRef,
-    importWarning?: string,
-    importedThreadCount?: number,
-  ) => Promise<boolean>;
-}) {
-  const t = useT();
-  const importPermissionMessage = t("wizard.import.noPermission");
-  const { environments } = useEnvironments();
-  const nickname = useMachineNicknames();
-  const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
-  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
-  const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
-  const projects = useProjects();
-  const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
-  const importWarningRef = useRef("");
-  const importedThreadCountRef = useRef(0);
-  const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
-  // Keep project creation attempts separate from completed history imports so both can retry.
-  const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
-  const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
-  const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
-  const projectAttemptsRef = useRef(
-    new Map<string, { readonly projectId: ProjectId; readonly commandId: CommandId }>(),
-  );
-  const importGenerationRef = useRef(0);
-
-  // Ignore command completions after leaving the import step.
-  useEffect(() => {
-    importGenerationRef.current += 1;
-    return () => {
-      importGenerationRef.current += 1;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (
-      landingProject !== null &&
-      projects.some(
-        (project) =>
-          project.id === landingProject.projectId &&
-          project.environmentId === landingProject.environmentId,
-      )
-    ) {
-      setLandingProject(null);
-      void onDone(landingProject, importWarningRef.current, importedThreadCountRef.current).then(
-        (completed) => {
-          if (!completed) setIsImporting(false);
-        },
-      );
-    }
-  }, [landingProject, onDone, projects, setIsImporting]);
-
-  const { available: candidates, recent } = useMemo(
-    () =>
-      partitionOnboardingProjects(
-        scans.flatMap((scan) =>
-          (scan.data?.candidates ?? []).map((candidate) => ({
-            ...candidate,
-            environmentId: scan.environmentId,
-            key: onboardingProjectKey(scan.environmentId, candidate.path),
-          })),
-        ),
-      ),
-    [scans],
-  );
-  const selectedKeys = useMemo(
-    () => selectedPaths ?? new Set(recent.map((candidate) => candidate.key)),
-    [selectedPaths, recent],
-  );
-  const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
-
-  const canImport = selected.every((candidate) =>
-    writableEnvironments.has(candidate.environmentId),
-  );
-  // Access denied is the only import error; it shows while access is missing,
-  // in whatever language is showing now.
-  const visibleImportError = canImport ? "" : importPermissionMessage;
-
-  const finishAfterImport = () => {
-    const projectRef = resolveOnboardingLandingProject(
-      lastImportSelectionRef.current,
-      projectsWithImportedHistoryRef.current,
-      importedProjectsRef.current,
-    );
-    if (projectRef === undefined) {
-      void onDone(undefined, importWarningRef.current, importedThreadCountRef.current);
-      return;
-    }
-    setIsImporting(true);
-    setLandingProject(projectRef);
-  };
-
-  const runImport = async (selection: typeof candidates) => {
-    if (isImporting) return;
-    const hasAccess = () =>
-      selection.every((candidate) =>
-        readEnvironmentScope(candidate.environmentId, AuthOrchestrationOperateScope),
-      );
-    const stopForDeniedAccess = () => {
-      setIsImporting(false);
-    };
-    if (!hasAccess()) {
-      stopForDeniedAccess();
-      return;
-    }
-    if (selection.length === 0) {
-      void onDone();
-      return;
-    }
-    setIsImporting(true);
-    importWarningRef.current = "";
-    importedThreadCountRef.current = 0;
-    lastImportSelectionRef.current = selection.map((candidate) => candidate.key);
-    const importGeneration = importGenerationRef.current;
-    const importedProjects = importedProjectsRef.current;
-    const projectAttempts = projectAttemptsRef.current;
-    // Interrupted imports are neither failures nor successes — the command was
-    // superseded or the environment dropped — but they still didn't land, so
-    // they must not read as "imported everything". Retries skip paths that
-    // already landed this session (re-creating them would only trip the
-    // duplicate-root invariant and read as a failure).
-    let importedProjectsCount =
-      importedProjects.size > 0
-        ? selection.filter((candidate) => importedProjects.has(candidate.key)).length
-        : 0;
-    let importedThreadCount = 0;
-    let skippedThreadCount = 0;
-    const refreshEnvironments = new Set<EnvironmentId>();
-    for (const candidate of selection) {
-      const { environmentId } = candidate;
-      if (
-        importGeneration !== importGenerationRef.current ||
-        importedProjects !== importedProjectsRef.current
-      ) {
-        return;
-      }
-      if (!hasAccess()) {
-        stopForDeniedAccess();
-        return;
-      }
-      if (importedProjects.has(candidate.key)) continue;
-      let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
-      if (projectId === null) {
-        let attempt = projectAttempts.get(candidate.key);
-        if (attempt === undefined) {
-          const nextProjectId = newProjectId();
-          attempt = {
-            projectId: nextProjectId,
-            commandId: CommandId.make(`onboarding:project:create:${nextProjectId}`),
-          };
-          projectAttempts.set(candidate.key, attempt);
-        }
-        projectId = attempt.projectId;
-        const result = await createProject({
-          environmentId,
-          input: {
-            projectId,
-            commandId: attempt.commandId,
-            title: candidate.title,
-            workspaceRoot: candidate.path,
-            createWorkspaceRootIfMissing: false,
-            defaultModelSelection: null,
-          },
-        });
-        if (
-          importGeneration !== importGenerationRef.current ||
-          importedProjects !== importedProjectsRef.current
-        ) {
-          return;
-        }
-        if (result._tag !== "Success") {
-          if (!isAtomCommandInterrupted(result)) {
-            projectAttempts.delete(candidate.key);
-            refreshEnvironments.add(environmentId);
+      ) : step === "connection" ? (
+        <ConnectionStep
+          // Reached from the sign-in step: that step is one press back.
+          onBack={entryStep === "start" ? () => setStep("start") : undefined}
+          expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
+          connectOptional={localAvailable}
+          selectedIds={selectedIds}
+          autoSelectedComputers={autoSelectedComputers.current}
+          onSelectionChange={setSelection}
+          onToggleEnvironment={(environmentId, checked) =>
+            setSelection((current) => {
+              const next = new Set(current ?? selectedIds);
+              if (checked) next.add(environmentId);
+              else next.delete(environmentId);
+              return next;
+            })
           }
-          continue;
-        }
-      }
-
-      if (!hasAccess()) {
-        stopForDeniedAccess();
-        return;
-      }
-      const threadImportResult = await importThreads({
-        environmentId,
-        input: { projectId, expectedWorkspaceRoot: candidate.path },
-      });
-      if (
-        importGeneration !== importGenerationRef.current ||
-        importedProjects !== importedProjectsRef.current
-      ) {
-        return;
-      }
-      if (threadImportResult._tag === "Success") {
-        importedThreadCount += threadImportResult.value.importedCount;
-        skippedThreadCount += threadImportResult.value.skippedCount;
-        if (threadImportResult.value.importedCount > 0) {
-          projectsWithImportedHistoryRef.current.set(
-            candidate.key,
-            scopeProjectRef(environmentId, projectId),
-          );
-        }
-        if (threadImportResult.value.skippedCount === 0) {
-          importedProjectsCount += 1;
-          importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
-        }
-      } else if (!isAtomCommandInterrupted(threadImportResult)) {
-        projectAttempts.delete(candidate.key);
-        refreshEnvironments.add(environmentId);
-      }
-    }
-    for (const scan of scans) {
-      if (refreshEnvironments.has(scan.environmentId)) scan.refresh();
-    }
-    setIsImporting(false);
-    importedThreadCountRef.current = importedThreadCount;
-    if (importedProjectsCount < selection.length) {
-      const imported = t("wizard.import.importedThreads", { count: importedThreadCount });
-      const skipped = t("wizard.import.skippedThreads", { count: skippedThreadCount });
-      if (importedThreadCount > 0 && skippedThreadCount > 0) {
-        importWarningRef.current = [imported, skipped].join(t("common.sentenceSpace"));
-      } else if (skippedThreadCount > 0) {
-        importWarningRef.current = skipped;
-      } else if (importedThreadCount > 0) {
-        importWarningRef.current = [imported, t("wizard.import.someHistoryFailed")].join(
-          t("common.sentenceSpace"),
-        );
-      } else {
-        importWarningRef.current = t("wizard.import.historyFailed");
-      }
-    }
-    finishAfterImport();
-  };
-
-  if (scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending)) {
-    return (
-      <div className="flex h-full min-h-40 flex-col">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          {t("wizard.import.yourProjects")}
-        </h1>
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
-          <Spinner size="lg" tone="muted" />
-          <p className="text-center text-sm text-muted-foreground">
-            {t("wizard.import.lookingInAgents")}
-          </p>
-        </div>
-        <div className="flex justify-end">
-          <Button variant="ghost-muted" onClick={() => void onDone()}>
-            {t("wizard.import.skip")}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <StepShell title={t("wizard.import.title")} description={t("wizard.import.description")}>
-      {candidates.length > 0 ? (
-        <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span role="status">
-            {t("wizard.import.selectedCount", {
-              selected: selected.length,
-              total: candidates.length,
-            })}
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={isImporting || selected.length === candidates.length}
-              onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
-            >
-              {t("wizard.import.selectAll")}
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={isImporting || selected.length === 0}
-              onClick={() => setSelectedPaths(new Set())}
-            >
-              {t("wizard.import.selectNone")}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-      <ScrollArea scrollFade className="mt-2 h-auto max-h-80">
-        <div className="space-y-5 pr-3">
-          {scans.map((scan) => {
-            const scanCandidates = candidates.filter(
-              (candidate) => candidate.environmentId === scan.environmentId,
-            );
-            const label = nickname(
-              scan.environmentId,
-              environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? t("wizard.computer"),
-            );
-            return (
-              <fieldset
-                key={scan.environmentId}
-                className="min-w-0 space-y-0.5"
-                disabled={isImporting}
-              >
-                {scans.length > 1 ? (
-                  <legend className="mb-2 text-sm font-medium">{label}</legend>
-                ) : null}
-                {scan.isPending && scan.data === null ? (
-                  <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-                    <Spinner size="md" />
-                    {t("wizard.import.looking")}
-                  </div>
-                ) : scan.error !== null ? (
-                  <div
-                    role="alert"
-                    className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
-                  >
-                    <span>{t("wizard.import.checkFailed", { error: scan.error })}</span>
-                    <Button variant="ghost" size="sm" onClick={scan.refresh}>
-                      {t("wizard.retry")}
-                    </Button>
-                  </div>
-                ) : scanCandidates.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">{t("wizard.import.none")}</p>
-                ) : null}
-                {scan.data?.truncated ? (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    {t("wizard.import.scanLimit")}
-                  </p>
-                ) : null}
-                <ImportCandidateList
-                  candidates={scanCandidates}
-                  selectedKeys={selectedKeys}
-                  onSelectionChange={setSelectedPaths}
-                />
-              </fieldset>
-            );
-          })}
-        </div>
-      </ScrollArea>
-      {visibleImportError ? (
-        <p className="mt-3 text-sm text-destructive-foreground">{visibleImportError}</p>
-      ) : null}
-      <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
-          {t("wizard.import.skip")}
-        </Button>
-        <Button
-          autoFocus
-          disabled={!canImport || isImporting || selected.length === 0}
-          onClick={() => void runImport(selected)}
-        >
-          {isImporting
-            ? t("wizard.import.importing")
-            : t("wizard.import.importButton", { count: selected.length })}
-        </Button>
-      </div>
-    </StepShell>
-  );
-}
-
-type ImportCandidate = AgentSessionProjectCandidate & {
-  readonly environmentId: EnvironmentId;
-  readonly key: string;
-};
-
-/**
- * Repositories first, newest activity on top. Clones of one repository share
- * a group with a tri-state checkbox. Folders that are not git repositories
- * sit collapsed at the bottom so they stay reachable without adding noise.
- * Source icons appear only on repository rows so the columns stay still.
- */
-function ImportCandidateList({
-  candidates,
-  selectedKeys,
-  onSelectionChange,
-}: {
-  readonly candidates: ReadonlyArray<ImportCandidate>;
-  readonly selectedKeys: ReadonlySet<string>;
-  readonly onSelectionChange: (next: ReadonlySet<string>) => void;
-}) {
-  const t = useT();
-  const { repositories, other } = useMemo(() => groupOnboardingProjects(candidates), [candidates]);
-  const setKeys = (keys: ReadonlyArray<string>, checked: boolean) => {
-    const next = new Set(selectedKeys);
-    for (const key of keys) {
-      if (checked) next.add(key);
-      else next.delete(key);
-    }
-    onSelectionChange(next);
-  };
-  const otherSelected = other.filter((candidate) => selectedKeys.has(candidate.key)).length;
-
-  return (
-    <>
-      {repositories.map((group) => (
-        <ImportRepositoryGroup
-          key={group.key}
-          group={group}
-          selectedKeys={selectedKeys}
-          onToggle={setKeys}
+          onContinue={() =>
+            startSetup(
+              environments
+                .filter((environment) => selectedIds.has(environment.environmentId))
+                .map((environment) => environment.environmentId),
+              "connection",
+            )
+          }
+          onPaired={(environmentId) => {
+            setSelection(new Set([...selectedIds, environmentId]));
+          }}
         />
-      ))}
-      {other.length > 0 ? (
-        <Collapsible>
-          <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40">
-            <Checkbox
-              checked={otherSelected === other.length}
-              indeterminate={otherSelected > 0 && otherSelected < other.length}
-              onCheckedChange={(checked) =>
-                setKeys(
-                  other.map((candidate) => candidate.key),
-                  checked === true,
-                )
-              }
-            />
-            <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
-              <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-              <span className="truncate text-sm text-muted-foreground">
-                {t("wizard.import.otherFolders")}
-              </span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-                {t("wizard.import.folderCount", { count: other.length })}
-              </span>
-            </CollapsibleTrigger>
-          </div>
-          <CollapsiblePanel>
-            {other.map((candidate) => (
-              <ImportCandidateRow
-                key={candidate.key}
-                candidate={candidate}
-                label={candidate.path}
-                nested
-                checked={selectedKeys.has(candidate.key)}
-                onCheckedChange={(checked) => setKeys([candidate.key], checked)}
-              />
-            ))}
-          </CollapsiblePanel>
-        </Collapsible>
-      ) : null}
-    </>
-  );
-}
-
-function ImportRepositoryGroup({
-  group,
-  selectedKeys,
-  onToggle,
-}: {
-  readonly group: OnboardingProjectGroup<ImportCandidate>;
-  readonly selectedKeys: ReadonlySet<string>;
-  readonly onToggle: (keys: ReadonlyArray<string>, checked: boolean) => void;
-}) {
-  const keys = group.candidates.map((candidate) => candidate.key);
-  const selectedCount = keys.filter((key) => selectedKeys.has(key)).length;
-  const single = group.candidates.length === 1;
-  const only = group.candidates[0];
-  if (single && only !== undefined) {
-    return (
-      <ImportCandidateRow
-        candidate={only}
-        label={group.label}
-        {...(group.repository === null ? {} : { secondary: only.path })}
-        checked={selectedKeys.has(only.key)}
-        onCheckedChange={(checked) => onToggle([only.key], checked)}
-      />
-    );
-  }
-  return (
-    <Collapsible defaultOpen>
-      <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40">
-        <Checkbox
-          checked={selectedCount === keys.length}
-          indeterminate={selectedCount > 0 && selectedCount < keys.length}
-          onCheckedChange={(checked) => onToggle(keys, checked === true)}
+      ) : step === "agents" ? (
+        <AgentsStep
+          environmentIds={setupIds}
+          onBack={() => goToStage(stageBefore(stages, "agents"))}
+          onContinue={() => goToStage(stageAfter(stages, "agents"))}
         />
-        <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-          <span className="truncate text-sm font-medium">{group.label}</span>
-          <ImportRowMeta
-            sources={[...new Set(group.candidates.flatMap((c) => c.sources))]}
-            threadCount={group.threadCount}
-            lastActiveAt={group.lastActiveAt}
-          />
-        </CollapsibleTrigger>
-      </div>
-      <CollapsiblePanel>
-        {group.candidates.map((candidate) => (
-          <ImportCandidateRow
-            key={candidate.key}
-            candidate={candidate}
-            label={candidate.path}
-            nested
-            checked={selectedKeys.has(candidate.key)}
-            onCheckedChange={(checked) => onToggle([candidate.key], checked)}
-          />
-        ))}
-      </CollapsiblePanel>
-    </Collapsible>
-  );
-}
-
-function ImportCandidateRow({
-  candidate,
-  label,
-  secondary,
-  nested = false,
-  checked,
-  onCheckedChange,
-}: {
-  readonly candidate: ImportCandidate;
-  readonly label: string;
-  readonly secondary?: string;
-  readonly nested?: boolean;
-  readonly checked: boolean;
-  readonly onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <label
-      className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40 has-disabled:cursor-default",
-        nested && "pl-8",
+      ) : (
+        <ImportStep
+          scans={scans}
+          isImporting={isImporting}
+          setIsImporting={setIsImporting}
+          onBack={() => goToStage(stageBefore(stages, "projects"))}
+          onDone={finish}
+        />
       )}
-    >
-      <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
-        >
-          <span className={cn("truncate", nested ? "font-mono text-xs" : "text-sm font-medium")}>
-            {label}
-          </span>
-          {secondary !== undefined ? (
-            <span className="truncate font-mono text-2xs text-muted-foreground">{secondary}</span>
-          ) : null}
-        </TooltipTrigger>
-        <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
-      </Tooltip>
-      <ImportRowMeta
-        sources={nested ? null : candidate.sources}
-        threadCount={candidate.threadCount}
-        lastActiveAt={candidate.lastActiveAt}
-      />
-    </label>
-  );
-}
-
-/**
- * Trailing columns shared by every import row: source icons, thread count,
- * last activity. Each column has a fixed width and each icon has its own slot
- * so nothing shifts between rows that differ in sources or digit count.
- */
-function ImportRowMeta({
-  sources,
-  threadCount,
-  lastActiveAt,
-}: {
-  readonly sources: ReadonlyArray<"claudeAgent" | "codex"> | null;
-  readonly threadCount: number;
-  readonly lastActiveAt: string | null;
-}) {
-  const t = useT();
-  const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
-  // "just now" does not fit the fixed column, so collapse it.
-  const age =
-    relative === null ? "" : relative.suffix === null ? t("wizard.import.now") : relative.value;
-  return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
-      <span className="flex size-4 items-center justify-center">
-        {sources?.includes("claudeAgent") ? (
-          <span role="img" aria-label="Claude Code">
-            <ProviderInstanceIcon
-              driverKind={ProviderDriverKind.make("claudeAgent")}
-              displayName="Claude Code"
-              iconClassName="size-3"
-            />
-          </span>
-        ) : null}
-      </span>
-      <span className="flex size-4 items-center justify-center">
-        {sources?.includes("codex") ? (
-          <span role="img" aria-label="Codex">
-            <ProviderInstanceIcon
-              driverKind={ProviderDriverKind.make("codex")}
-              displayName="Codex"
-              iconClassName="size-3"
-            />
-          </span>
-        ) : null}
-      </span>
-      <span className="text-right">{threadCount}</span>
-      <span className="text-right whitespace-nowrap">{age}</span>
-    </span>
-  );
-}
-
-// ── Shared bits ──────────────────────────────────────────────
-
-function StepShell({
-  title,
-  description,
-  children,
-}: {
-  readonly title: string;
-  readonly description?: string;
-  readonly children?: React.ReactNode;
-}) {
-  return (
-    <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-      {description ? (
-        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
-      ) : null}
-      {children}
-    </>
+    </FirstRunFrame>
   );
 }
