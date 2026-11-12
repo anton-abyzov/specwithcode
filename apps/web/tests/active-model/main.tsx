@@ -11,8 +11,9 @@ import { useComposerDraftStore } from "../../src/composerDraftStore";
  * this turn runs on Gemini while the saved preference is Opus;
  * `?case=stale` retains an old explicit draft; manual scenarios preserve the next-send choice.
  * `?case=same` nothing to add. `?theme=dark` the theme.
+ * `window.stopFixtureTurn()` ends the running turn, as Stop does.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -126,7 +127,10 @@ function Harness() {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerRef = useRef<ChatComposerHandle | null>(null);
+  const [stopped, setStopped] = useState(false);
+  const running = stopped ? null : scenario.running;
   useEffect(() => {
+    (window as unknown as { stopFixtureTurn: () => void }).stopFixtureTurn = () => setStopped(true);
     document.body.dataset.fixtureReady = "true";
   }, []);
   return (
@@ -165,7 +169,7 @@ function Harness() {
         isLocalDraftThread={false}
         forceExpandedOnMobile={false}
         projectSelectionRequired={false}
-        phase={scenario.running ? "running" : "ready"}
+        phase={running ? "running" : "ready"}
         canInterrupt={false}
         isConnecting={false}
         isSendBusy={false}
@@ -195,7 +199,7 @@ function Harness() {
         providerCatalogKnown
         activeProjectDefaultModelSelection={opus}
         activeThreadModelSelection={scenario.thread}
-        reportedModelSelection={scenario.running}
+        reportedModelSelection={running}
         limitFallbackFrom={scenario.fallbackFrom}
         activeContextWindow={null}
         compactThreadUnavailable
