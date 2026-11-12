@@ -5,12 +5,18 @@ import { cn } from "~/lib/utils";
 /** One glass backdrop until a top attachment needs the composer to cover its overlap. */
 function Shell({
   contextStrip = false,
+  machineColor,
   className,
   ...props
-}: ComponentProps<"div"> & { contextStrip?: boolean }) {
+}: ComponentProps<"div"> & {
+  contextStrip?: boolean;
+  /** The palette id of the machine a send goes to: the outline and leading edge wear it. */
+  machineColor?: string | undefined;
+}) {
   return (
     <div
       data-slot="composer-shell"
+      {...(machineColor ? { "data-machine-color": machineColor } : {})}
       data-with-context={contextStrip || undefined}
       className={cn(
         "@container/composer-surface group/composer-surface relative isolate mx-auto w-full max-w-(--chat-content-max-width)",

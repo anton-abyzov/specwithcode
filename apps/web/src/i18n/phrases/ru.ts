@@ -3332,7 +3332,6 @@ export const ru: PhraseCatalog = {
   "1 provider": "1 провайдер",
   "Hide older": "Скрыть старые",
   "Connection: {connection}": "Подключение: {connection}",
-  "Account limits:": "Лимиты аккаунта:",
   "Reset, not read since": "Сброшено, не обновлялось с",
   "Shared by every model": "Общий для всех моделей",
   "Limits for one model family": "Лимиты для одного семейства моделей",
@@ -3523,7 +3522,6 @@ export const ru: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     "В тексте промпта есть «ultrathink». Удалите его, чтобы изменить этот параметр.",
   "Not set: follows the Claude workflow mode": "Не задано: следует режиму работы Claude",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Режим Ultrafast включён",
   "Fast mode on": "Быстрый режим включён",
   "Turning into project...": "Превращение в проект...",
@@ -4179,6 +4177,47 @@ export const ru: PhraseCatalog = {
   "Add a project to {name}": "Добавить проект на {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "Дальше на {coordinatorLabel}: эта машина может запускать только проект, копия которого на ней есть. Откройте там «Настройки > Машины» и добавьте проект на эту машину. Затем выберите её в меню «Запустить на» в чате или внесите в список «Machines for workers» в настройках проекта.",
+  "Signed in as {account}": "Вход выполнен: {account}",
+  "Loading sign-in…": "Загрузка входа…",
+  "One account for all your machines and your phone.":
+    "Одна учётная запись для всех ваших компьютеров и телефона.",
+  "Choose your main machine": "Выберите основной компьютер",
+  "Your other machines are listed here once this {machine} is linked.":
+    "Другие ваши компьютеры появятся здесь, когда этот {machine} будет привязан.",
+  "{label} can start work on this {machine}": "Этот {machine} принимает работу от {label}",
+  "{count} of your machines can start work on this {machine}":
+    "Этот {machine} принимает работу от ваших компьютеров: {count}",
+  "Pick it below and press Allow. Nothing to copy or paste.":
+    "Выберите его ниже и нажмите «Разрешить». Ничего копировать и вставлять не нужно.",
+  "If this is your first machine, there is nothing to choose: continue.":
+    "Если это ваш первый компьютер, выбирать нечего: продолжайте.",
+  "Set up this {machine}": "Настроить этот {machine}",
+  "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
+    "Войдите один раз. Этот {machine} сам привяжется к вашей учётной записи и покажет другие ваши компьютеры.",
+  "Turn on SpecWithCode Connect": "Включить SpecWithCode Connect",
+  "Set up other computers too": "Настроить и другие компьютеры",
+  "Continue without an account": "Продолжить без учётной записи",
+  "Link this {machine}": "Привязать этот {machine}",
+  "Happens by itself after you sign in.": "Происходит само после входа.",
+  "Checking this {machine}…": "Проверяем этот {machine}…",
+  "Linking this {machine}…": "Привязываем этот {machine}…",
+  "This {machine} is linked": "Этот {machine} привязан",
+  "Your other machines and your phone can reach it.":
+    "Другие ваши компьютеры и телефон могут к нему подключаться.",
+  "This {machine} could not be linked": "Не удалось привязать этот {machine}",
+  "SpecWithCode Connect could not be read on this {machine}. Check its internet connection.":
+    "Не удалось прочитать SpecWithCode Connect. Проверьте, что этот {machine} подключён к интернету.",
+  "SpecWithCode Connect is off on this {machine}":
+    "Этот {machine} работает без SpecWithCode Connect: он выключен",
+  "Turn it on and your other machines can reach this one.":
+    "Включите его, и другие ваши компьютеры смогут подключаться к этому.",
+  "Team rules keep it off here, so your other machines cannot reach this one.":
+    "Правила команды держат его выключенным здесь, поэтому другие ваши компьютеры не могут подключиться к этому.",
+  "This window is not allowed to turn it on.": "Этому окну не разрешено его включать.",
+  "Done:": "Готово:",
+  "Linking…": "Привязываем…",
+  "Signed in here. This links the machine without leaving this window.":
+    "Вход здесь выполнен. Компьютер будет привязан без выхода из этого окна.",
   "Connect admin": "Администрирование Connect",
   Totals: "Итоги",
   "Tunnel address": "Адрес туннеля",

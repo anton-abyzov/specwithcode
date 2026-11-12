@@ -1,10 +1,16 @@
-import { AuthSettingsWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type MachineColorId,
+} from "@specweave-studio/contracts";
 import { useCallback, useMemo } from "react";
 
 import { useEnvironments } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentsWithScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { machineIdentityPatch } from "./machineIdentity";
 import {
   machineNicknamePatch,
   type RenameMachineLock,
@@ -19,6 +25,15 @@ import {
 export function useRenameMachine(): {
   readonly lock: RenameMachineLock;
   readonly rename: (environmentId: EnvironmentId, name: string) => boolean;
+  /** Saves the name together with the machine's color and icon. */
+  readonly saveIdentity: (
+    environmentId: EnvironmentId,
+    identity: {
+      readonly name: string;
+      readonly color: MachineColorId;
+      readonly icon: EnvironmentMachineKind;
+    },
+  ) => boolean;
 } {
   const { environments } = useEnvironments();
   const persist = useAtomCommand(serverEnvironment.updateSettings, "machine rename");
@@ -46,5 +61,23 @@ export function useRenameMachine(): {
     },
     [nicknames, permitted, persist],
   );
-  return { lock, rename };
+  const saveIdentity = useCallback(
+    (
+      environmentId: EnvironmentId,
+      identity: {
+        readonly name: string;
+        readonly color: MachineColorId;
+        readonly icon: EnvironmentMachineKind;
+      },
+    ) => {
+      if (permitted.size === 0) return false;
+      const patch = machineIdentityPatch(nicknames, environmentId, identity);
+      for (const target of permitted) {
+        void persist({ environmentId: target, input: { patch } });
+      }
+      return true;
+    },
+    [nicknames, permitted, persist],
+  );
+  return { lock, rename, saveIdentity };
 }

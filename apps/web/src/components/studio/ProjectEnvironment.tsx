@@ -1,3 +1,4 @@
+import { Tip } from "./shell/Tip";
 import { ProjectLocation } from "./ProjectLocation";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -347,21 +348,27 @@ export function ProjectEnvironment({
             placeholder="Absolute path on this machine"
           />
         </label>
-        <button
-          className="project-control"
-          disabled={
-            blocked ||
-            !folder.trim() ||
-            value.additionalFolders.length >= 16 ||
-            value.additionalFolders.includes(folder.trim())
-          }
-          onClick={() => {
-            onChange({ ...value, additionalFolders: [...value.additionalFolders, folder.trim()] });
-            setFolder("");
-          }}
-        >
-          Add folder
-        </button>
+        {/* Said here, where folders are added, instead of under every composer. */}
+        <Tip label="Additional folders are available with Codex, Claude and Muse Code. A coordinator on another agent uses its existing full-access permissions.">
+          <button
+            className="project-control"
+            disabled={
+              blocked ||
+              !folder.trim() ||
+              value.additionalFolders.length >= 16 ||
+              value.additionalFolders.includes(folder.trim())
+            }
+            onClick={() => {
+              onChange({
+                ...value,
+                additionalFolders: [...value.additionalFolders, folder.trim()],
+              });
+              setFolder("");
+            }}
+          >
+            Add folder
+          </button>
+        </Tip>
       </section>
       <section className="project-environment-section">
         <h3>Repositories</h3>

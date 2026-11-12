@@ -86,7 +86,9 @@ export function CoordinatorAccessPicker({
     >
       <span className="sws-access-field">
         <AccessIcon className="sws-access-icon" data-access-icon="" />
-        <Tip label="Applies to all chats in this project. Active provider turns finish before restarting. App approvals remain separate.">
+        <Tip
+          label={`Access: ${runtimeModeConfig[value].label}. Applies to all chats in this project. Active provider turns finish before restarting. App approvals remain separate.`}
+        >
           <select
             aria-label="Project permissions"
             className="sws-model-trigger sws-access-trigger max-w-48 bg-transparent"

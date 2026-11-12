@@ -86,6 +86,8 @@ function MetaChip(props: {
   readonly onClick?: (() => void) | undefined;
   readonly href?: string;
   readonly meta: string;
+  /** A machine's palette id: the chip wears its color. */
+  readonly machineColor?: string | undefined;
 }) {
   const Icon = props.icon;
   const content = (
@@ -118,7 +120,12 @@ function MetaChip(props: {
       {content}
     </button>
   ) : (
-    <span role="listitem" data-thread-meta={props.meta} className={CHIP}>
+    <span
+      role="listitem"
+      data-thread-meta={props.meta}
+      {...(props.machineColor ? { "data-machine-color": props.machineColor } : {})}
+      className={cn(CHIP, props.machineColor && "machine-chip")}
+    >
       {content}
     </span>
   );
@@ -271,8 +278,14 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
           icon={environmentMachineIcon(machine.kind)}
           {...(machine.warning ? { iconClassName: "text-warning-foreground" } : {})}
           tip={machine.tip}
+          machineColor={machine.color}
         >
-          <span className="min-w-0 max-w-36 truncate text-foreground/80 sm:max-w-56">
+          <span
+            className={cn(
+              "min-w-0 max-w-36 truncate sm:max-w-56",
+              machine.color ? "font-semibold" : "text-foreground/80",
+            )}
+          >
             {machine.label}
           </span>
           {machine.warning ? (

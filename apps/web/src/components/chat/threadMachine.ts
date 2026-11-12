@@ -3,13 +3,14 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ExecutionEnvironmentPlatformOs,
+  type MachineColorId,
 } from "@specweave-studio/contracts";
 import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
 import { useMemo } from "react";
 
 import { isThisMachineTarget } from "~/connection/desktopLocal";
 import { isThisMachineCatchingUp, machineStatus } from "~/lib/machineStatus";
-import { useMachineNicknames } from "~/studio/machineNickname";
+import { useMachineIdentities } from "~/studio/machineIdentity";
 import { useEnvironment } from "~/state/environments";
 import { useEnvironmentScope } from "~/state/session";
 
@@ -27,6 +28,10 @@ export interface ThreadMachine {
   readonly tip: string;
   /** Short words for a machine the app cannot reach now, shown in the warning tone. */
   readonly warning: string | null;
+  /** The machine's color; absent where the caller has no identity for it. */
+  readonly color?: MachineColorId | undefined;
+  /** False for another machine: a send goes there, and the composer says so. */
+  readonly isThisMachine?: boolean | undefined;
 }
 
 const OS_LABELS: Record<ExecutionEnvironmentPlatformOs, string | null> = {
@@ -62,6 +67,7 @@ export function threadMachinePresentation(input: {
   readonly canOperate: boolean;
   /** How the thread's own menu offers "Move thread…" now; the tip says no more than that. */
   readonly handoff: ThreadMachineHandoff;
+  readonly color?: MachineColorId | undefined;
 }): ThreadMachine {
   const os = input.os ? OS_LABELS[input.os] : null;
   const host = input.hostLabel && input.hostLabel !== input.name ? input.hostLabel : null;
@@ -95,6 +101,8 @@ export function threadMachinePresentation(input: {
       (unreachable ? ` ${status.text}.` : "") +
       HANDOFF_TIPS[handoff],
     warning,
+    ...(input.color ? { color: input.color } : {}),
+    isThisMachine: input.isThisMachine,
   };
 }
 
@@ -103,15 +111,18 @@ export function useThreadMachine(
   handoff: ThreadMachineHandoff,
 ): ThreadMachine | null {
   const environment = useEnvironment(environmentId);
-  const nameOf = useMachineNicknames();
+  const identityOf = useMachineIdentities();
   const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   return useMemo(() => {
     if (environment === null) return null;
     const config = environment.serverConfig ?? null;
+    const identity = identityOf(environment.environmentId, environment.label);
     return threadMachinePresentation({
-      name: nameOf(environment.environmentId, environment.label),
+      name: identity.name,
       hostLabel: environment.label,
-      kind: resolveEnvironmentMachineKind(config),
+      // The icon chosen with the nickname, else the kind of hardware it reports.
+      kind: config ? identity.icon : resolveEnvironmentMachineKind(config),
+      color: identity.color,
       os: config?.environment.platform.os ?? null,
       isThisMachine: isThisMachineTarget(environment.entry),
       phase: environment.connection.phase,
@@ -119,5 +130,5 @@ export function useThreadMachine(
       canOperate,
       handoff,
     });
-  }, [environment, nameOf, canOperate, handoff]);
+  }, [environment, identityOf, canOperate, handoff]);
 }

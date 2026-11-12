@@ -3334,7 +3334,6 @@ export const ja: PhraseCatalog = {
   "1 provider": "1 プロバイダー",
   "Hide older": "古いものを隠す",
   "Connection: {connection}": "接続: {connection}",
-  "Account limits:": "アカウントの制限:",
   "Reset, not read since": "リセット済み、次の時点以降未取得",
   "Shared by every model": "すべてのモデルで共有",
   "Limits for one model family": "1 つのモデルファミリーの制限",
@@ -3524,7 +3523,6 @@ export const ja: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'プロンプトの本文に "ultrathink" が含まれています。この設定を変えるには削除してください。',
   "Not set: follows the Claude workflow mode": "未設定: Claude のワークフローモードに従う",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Ultrafast モードがオン",
   "Fast mode on": "高速モードがオン",
   "Turning into project...": "プロジェクトに変換中...",
@@ -4180,6 +4178,47 @@ export const ja: PhraseCatalog = {
   "Add a project to {name}": "プロジェクトを {name} に追加",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "次は {coordinatorLabel} で: このマシンが実行できるのは、コピーを持っているプロジェクトだけです。そちらで 設定 > マシン を開き、このマシンにプロジェクトを追加してください。その後、チャットの「実行先」でこのマシンを選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
+  "Signed in as {account}": "{account} としてサインイン済み",
+  "Loading sign-in…": "サインインを読み込み中…",
+  "One account for all your machines and your phone.":
+    "すべてのマシンとスマートフォンを 1 つのアカウントで。",
+  "Choose your main machine": "メインマシンを選ぶ",
+  "Your other machines are listed here once this {machine} is linked.":
+    "この{machine}がリンクされると、ほかのマシンがここに表示されます。",
+  "{label} can start work on this {machine}": "{label} はこの{machine}で作業を開始できます",
+  "{count} of your machines can start work on this {machine}":
+    "あなたのマシン {count} 台がこの{machine}で作業を開始できます",
+  "Pick it below and press Allow. Nothing to copy or paste.":
+    "下から選んで「許可」を押してください。コピーも貼り付けも不要です。",
+  "If this is your first machine, there is nothing to choose: continue.":
+    "これが最初のマシンなら、選ぶものはありません。続けてください。",
+  "Set up this {machine}": "この{machine}をセットアップ",
+  "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
+    "一度サインインしてください。この{machine}は自動でアカウントにリンクされ、ほかのマシンが表示されます。",
+  "Turn on SpecWithCode Connect": "SpecWithCode Connect をオンにする",
+  "Set up other computers too": "ほかのコンピューターもセットアップ",
+  "Continue without an account": "アカウントなしで続ける",
+  "Link this {machine}": "この{machine}をリンク",
+  "Happens by itself after you sign in.": "サインイン後に自動で行われます。",
+  "Checking this {machine}…": "この{machine}を確認中…",
+  "Linking this {machine}…": "この{machine}をリンク中…",
+  "This {machine} is linked": "この{machine}はリンク済みです",
+  "Your other machines and your phone can reach it.":
+    "ほかのマシンとスマートフォンから接続できます。",
+  "This {machine} could not be linked": "この{machine}をリンクできませんでした",
+  "SpecWithCode Connect could not be read on this {machine}. Check its internet connection.":
+    "この{machine}の SpecWithCode Connect を読み取れませんでした。インターネット接続を確認してください。",
+  "SpecWithCode Connect is off on this {machine}":
+    "この{machine}では SpecWithCode Connect がオフです",
+  "Turn it on and your other machines can reach this one.":
+    "オンにすると、ほかのマシンからこのマシンに接続できます。",
+  "Team rules keep it off here, so your other machines cannot reach this one.":
+    "チームのルールによりここではオフのため、ほかのマシンからこのマシンに接続できません。",
+  "This window is not allowed to turn it on.": "このウィンドウにはオンにする権限がありません。",
+  "Done:": "完了:",
+  "Linking…": "リンク中…",
+  "Signed in here. This links the machine without leaving this window.":
+    "ここでサインイン済みです。このウィンドウを離れずにマシンをリンクします。",
   "Connect admin": "Connect 管理",
   Totals: "合計",
   "Tunnel address": "トンネルのアドレス",

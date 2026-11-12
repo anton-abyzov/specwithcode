@@ -130,6 +130,7 @@ vi.mock("../ui/wizard", () => ({
 }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/tooltip", () => ({ Tooltip: "div", TooltipTrigger: "span", TooltipPopup: "span" }));
+vi.mock("./SignInFirstStep", () => ({ SignInFirstStep: () => null }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: "connectPairing" }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (

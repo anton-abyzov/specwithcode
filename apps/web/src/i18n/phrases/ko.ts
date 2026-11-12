@@ -3306,7 +3306,6 @@ export const ko: PhraseCatalog = {
   "1 provider": "제공업체 1개",
   "Hide older": "이전 항목 숨기기",
   "Connection: {connection}": "연결: {connection}",
-  "Account limits:": "계정 한도:",
   "Reset, not read since": "재설정됨, 다음 이후로 읽지 않음",
   "Shared by every model": "모든 모델이 공유",
   "Limits for one model family": "한 모델 계열의 한도",
@@ -3497,7 +3496,6 @@ export const ko: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '프롬프트 텍스트에 "ultrathink"가 포함되어 있습니다. 이 옵션을 바꾸려면 제거하세요.',
   "Not set: follows the Claude workflow mode": "설정 안 됨: Claude 워크플로 모드를 따름",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Ultrafast 모드 켜짐",
   "Fast mode on": "빠른 모드 켜짐",
   "Turning into project...": "프로젝트로 전환하는 중...",
@@ -4140,6 +4138,47 @@ export const ko: PhraseCatalog = {
   "Add a project to {name}": "{name}에 프로젝트 추가",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "다음 단계, {coordinatorLabel}에서: 이 컴퓨터는 사본이 있는 프로젝트만 실행할 수 있습니다. 그쪽에서 설정 > 컴퓨터를 열어 이 컴퓨터에 프로젝트를 추가하세요. 그런 다음 채팅의 ‘실행 위치’에서 이 컴퓨터를 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
+  "Signed in as {account}": "{account}(으)로 로그인됨",
+  "Loading sign-in…": "로그인 불러오는 중…",
+  "One account for all your machines and your phone.": "모든 컴퓨터와 휴대폰을 하나의 계정으로.",
+  "Choose your main machine": "메인 컴퓨터 선택",
+  "Your other machines are listed here once this {machine} is linked.":
+    "이 {machine}가 연결되면 다른 컴퓨터가 여기에 표시됩니다.",
+  "{label} can start work on this {machine}":
+    "{label}에서 이 {machine}의 작업을 시작할 수 있습니다",
+  "{count} of your machines can start work on this {machine}":
+    "내 컴퓨터 {count}대가 이 {machine}에서 작업을 시작할 수 있습니다",
+  "Pick it below and press Allow. Nothing to copy or paste.":
+    "아래에서 선택하고 허용을 누르세요. 복사하거나 붙여넣을 것이 없습니다.",
+  "If this is your first machine, there is nothing to choose: continue.":
+    "첫 번째 컴퓨터라면 선택할 것이 없습니다. 계속하세요.",
+  "Set up this {machine}": "이 {machine} 설정",
+  "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
+    "한 번만 로그인하세요. 이 {machine}는 자동으로 계정에 연결되고 다른 컴퓨터를 표시합니다.",
+  "Turn on SpecWithCode Connect": "SpecWithCode Connect 켜기",
+  "Set up other computers too": "다른 컴퓨터도 설정",
+  "Continue without an account": "계정 없이 계속",
+  "Link this {machine}": "이 {machine} 연결",
+  "Happens by itself after you sign in.": "로그인하면 자동으로 진행됩니다.",
+  "Checking this {machine}…": "이 {machine} 확인 중…",
+  "Linking this {machine}…": "이 {machine} 연결 중…",
+  "This {machine} is linked": "이 {machine}가 연결되었습니다",
+  "Your other machines and your phone can reach it.":
+    "다른 컴퓨터와 휴대폰에서 접속할 수 있습니다.",
+  "This {machine} could not be linked": "이 {machine}를 연결하지 못했습니다",
+  "SpecWithCode Connect could not be read on this {machine}. Check its internet connection.":
+    "이 {machine}에서 SpecWithCode Connect를 읽지 못했습니다. 인터넷 연결을 확인하세요.",
+  "SpecWithCode Connect is off on this {machine}":
+    "이 {machine}에서 SpecWithCode Connect가 꺼져 있습니다",
+  "Turn it on and your other machines can reach this one.":
+    "켜면 다른 컴퓨터에서 이 컴퓨터에 접속할 수 있습니다.",
+  "Team rules keep it off here, so your other machines cannot reach this one.":
+    "팀 규칙에 따라 여기서는 꺼져 있어 다른 컴퓨터에서 이 컴퓨터에 접속할 수 없습니다.",
+  "This window is not allowed to turn it on.": "이 창에서는 켤 권한이 없습니다.",
+  "Done:": "완료:",
+  "Linking…": "연결 중…",
+  "Signed in here. This links the machine without leaving this window.":
+    "여기에 로그인되어 있습니다. 이 창을 떠나지 않고 컴퓨터를 연결합니다.",
   "Connect admin": "Connect 관리",
   Totals: "합계",
   "Tunnel address": "터널 주소",

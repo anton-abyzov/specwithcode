@@ -18,6 +18,7 @@ import {
   type OrchestrationV2ThreadOrigin,
 } from "@specweave-studio/contracts";
 import {
+  coordinatorRunSelection,
   coordinatorSelectionProblem,
   coordinatorUnavailableDetail,
   resolveCoordinatorModelSelection,
@@ -241,7 +242,8 @@ const make = Effect.gen(function* () {
             threadId,
             projectId: input.projectId,
             title: `${project.title} coordinator`,
-            modelSelection,
+            // The saved choice is kept as saved; the run itself never goes above High.
+            modelSelection: coordinatorRunSelection(modelSelection, providers),
             runtimeMode: teamRulesClampToCarried(
               teamRulesClampMode(
                 yield* teamRulesForFolder(project.workspaceRoot),
@@ -411,7 +413,16 @@ const make = Effect.gen(function* () {
         !isProjectModelSelectionCompatible({ ...compatibility, selection: effectiveSelection })
       )
         return yield* fail(projectId, "unsupported_provider");
-      return { selection, reason, effective: effectiveSelection ?? null };
+      // A coordinator routes and replies: an effort above High, saved before the cap or
+      // carried by the thread, runs at High. Saved settings are left as they are.
+      const capped = effectiveSelection
+        ? coordinatorRunSelection(effectiveSelection, providers)
+        : undefined;
+      return {
+        selection: capped && capped !== effectiveSelection ? capped : selection,
+        reason,
+        effective: capped ?? null,
+      };
     });
   /**
    * A retry reads the coordinator's providers afresh, past cached probes and

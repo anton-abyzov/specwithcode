@@ -115,6 +115,7 @@ import {
 } from "@specweave-studio/shared/projectNotifications";
 import { chooseCoordinatorView } from "../../../studio/projectCoordinatorMachine";
 import { useMachineNicknames } from "../../../studio/machineNickname";
+import { useMachineIdentities } from "../../../studio/machineIdentity";
 import {
   arrangeProjects,
   moveProject,
@@ -215,6 +216,7 @@ export default function StudioSidebar() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
+  const machineIdentity = useMachineIdentities();
   const machineLabels = useMemo(
     () =>
       new Map(
@@ -1428,7 +1430,13 @@ export default function StudioSidebar() {
                             ) : null}
                             {showMachineColumn ? (
                               // After the dot, so a dot appearing never moves the column.
-                              <span className="sws-row-machine" aria-hidden>
+                              <span
+                                className="sws-row-machine machine-mark"
+                                data-machine-color={
+                                  machineIdentity(location.executionMachineId).color
+                                }
+                                aria-hidden
+                              >
                                 {executionOffline ? (
                                   <WifiOffIcon data-offline="" aria-hidden />
                                 ) : null}

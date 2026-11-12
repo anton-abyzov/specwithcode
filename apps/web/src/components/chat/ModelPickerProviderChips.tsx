@@ -71,8 +71,16 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
   getInstanceUsage?: (
     entry: ProviderInstanceEntry,
   ) => { readonly tone: "warn" | "full"; readonly text: string } | null;
-  /** While searching: matches per view ("all", "favorites", instance id). Empty ones dim. */
+  /**
+   * While searching: matches per view ("all", "favorites", instance id). A provider with
+   * none leaves the rail; All and Favorites dim.
+   */
   counts?: ReadonlyMap<string, number>;
+  /**
+   * Providers that list nothing here but are known to offer what was searched for: they
+   * stay on the rail with a mark and say "sign in to list its models".
+   */
+  signInInstanceIds?: ReadonlySet<ProviderInstanceId>;
 }) {
   const tx = useTx();
   const rowRef = useRef<HTMLDivElement>(null);
@@ -159,6 +167,11 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
         {plainChip("favorites", "Favorites", StarIcon)}
         {column ? <div className="mx-2 my-1 h-px shrink-0 bg-border/60" aria-hidden /> : null}
         {props.instanceEntries.map((entry) => {
+          const offersSignIn = props.signInInstanceIds?.has(entry.instanceId) ?? false;
+          // Searching: only the providers with a match, the chosen one, or a sign-in to offer.
+          if (noMatches(entry.instanceId) && !offersSignIn && props.selected !== entry.instanceId) {
+            return null;
+          }
           const isUnavailable = !isProviderInstancePickerSelectable(entry);
           const isContextDisabled = props.disabledInstanceIds?.has(entry.instanceId) ?? false;
           const reachable = props.selectableUnavailableInstanceIds?.has(entry.instanceId) ?? false;
@@ -166,13 +179,17 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
           const isSelected = props.selected === entry.instanceId;
           const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
           const usageMark = isUnavailable ? null : (props.getInstanceUsage?.(entry) ?? null);
-          const baseTooltip = isUnavailable
-            ? describeUnavailableInstance(entry)
-            : isContextDisabled
-              ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
-              : showNewBadge
-                ? `${entry.displayName} — New`
-                : entry.displayName;
+          const baseTooltip = offersSignIn
+            ? `${entry.displayName}: ${
+                !entry.enabled || entry.status === "disabled" ? "turn it on" : "sign in"
+              } to list its models`
+            : isUnavailable
+              ? describeUnavailableInstance(entry)
+              : isContextDisabled
+                ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
+                : showNewBadge
+                  ? `${entry.displayName} — New`
+                  : entry.displayName;
           const tooltip = usageMark ? `${baseTooltip}: ${usageMark.text}` : baseTooltip;
           const button = (
             <Toolbar.Button
@@ -188,7 +205,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
               aria-pressed={isSelected}
               type="button"
               aria-label={
-                isUnavailable || isContextDisabled || usageMark
+                isUnavailable || isContextDisabled || usageMark || offersSignIn
                   ? tooltip
                   : showNewBadge
                     ? `${entry.displayName}, new`
@@ -211,6 +228,13 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
               </span>
               {showNewBadge ? (
                 <SparklesIcon className="size-3 shrink-0 text-update-foreground" aria-hidden />
+              ) : null}
+              {offersSignIn ? (
+                <span
+                  className="size-1.5 shrink-0 rounded-full bg-warning"
+                  data-model-picker-sign-in-mark=""
+                  aria-hidden
+                />
               ) : null}
               {usageMark ? (
                 <span

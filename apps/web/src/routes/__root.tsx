@@ -83,6 +83,7 @@ import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useAtomValue } from "@effect/atom-react";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { MachineWindowTint } from "../components/MachineWindowTint";
 import {
   primaryServerConfigAtom,
   primaryServerConfigEventAtom,
@@ -244,6 +245,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
+        {primaryEnvironmentAuthenticated ? <MachineWindowTint /> : null}
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
         <GlassAppearanceSync />

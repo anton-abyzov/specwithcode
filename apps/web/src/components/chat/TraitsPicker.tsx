@@ -1,4 +1,5 @@
 import { useTx } from "../../i18n";
+import { Code2Icon } from "lucide-react";
 import { isProviderAllowAllOption } from "@specweave-studio/shared/providerPermissions";
 import {
   type ModelSelection,
@@ -960,7 +961,6 @@ export const TraitsPicker = memo(function TraitsPicker({
     /** Names what the value belongs to where the surroundings do not. */
     triggerAriaLabelPrefix?: string;
   }) {
-  const tx = useTx();
   const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
@@ -1013,12 +1013,21 @@ export const TraitsPicker = memo(function TraitsPicker({
         // Neutral, so it never reads as the amber fallback mark beside it.
         className="text-foreground"
       />
+      {/* The bolt alone when the toolbar is tight; its word joins it when there is room. */}
+      <span data-composer-control-label className="ms-1 font-normal">
+        {triggerSpeedPart.icon === "ultrafast" ? "Ultrafast" : "Fast"}
+      </span>
     </span>
   ) : null;
   const ultracodeMark =
     triggerEffort && triggerUltracode ? (
-      <span data-composer-control-ultracode className="shrink-0 font-normal text-primary">
-        {tx("· Ultracode")}
+      <span
+        data-composer-control-ultracode
+        className="inline-flex shrink-0 items-center gap-1 font-normal"
+      >
+        {/* The mark carries the accent; the word stays in the text color, which keeps contrast. */}
+        <Code2Icon className="size-3.5 text-primary" aria-hidden data-composer-control-icon />
+        <span data-composer-control-label>Ultracode</span>
       </span>
     ) : null;
   const isCodexStyle = provider === "codex";
@@ -1071,7 +1080,11 @@ export const TraitsPicker = memo(function TraitsPicker({
                     className={size === "xs" ? "size-3.5" : "size-4"}
                     data-composer-control-icon
                   />
-                  <span data-composer-control-effort className="shrink-0">
+                  <span
+                    data-composer-control-effort
+                    data-composer-control-label
+                    className="shrink-0"
+                  >
                     {triggerEffort.label}
                   </span>
                   {speedIcon}
@@ -1107,7 +1120,9 @@ export const TraitsPicker = memo(function TraitsPicker({
                 className={size === "xs" ? "size-3.5" : "size-4"}
                 data-composer-control-icon
               />
-              <span data-composer-control-effort>{triggerEffort.label}</span>
+              <span data-composer-control-effort data-composer-control-label>
+                {triggerEffort.label}
+              </span>
               {speedIcon}
               {ultracodeMark}
               {triggerDetails ? (

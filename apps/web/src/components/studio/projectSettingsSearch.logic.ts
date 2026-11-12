@@ -81,10 +81,10 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
   },
   {
     id: "project-coordinator-model",
-    title: "Coordinator model and effort",
+    title: "Coordinator model",
     tab: "general",
-    anchors: ["Coordinator model and effort"],
-    searchTerms: ["provider reasoning thinking"],
+    anchors: ["Coordinator model"],
+    searchTerms: ["provider reasoning thinking effort advanced"],
   },
   {
     id: "project-worker-model",

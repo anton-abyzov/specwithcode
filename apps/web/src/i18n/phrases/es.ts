@@ -3354,7 +3354,6 @@ export const es: PhraseCatalog = {
   "1 provider": "1 proveedor",
   "Hide older": "Ocultar anteriores",
   "Connection: {connection}": "Conexión: {connection}",
-  "Account limits:": "Límites de la cuenta:",
   "Reset, not read since": "Restablecido, sin leer desde",
   "Shared by every model": "Compartido por todos los modelos",
   "Limits for one model family": "Límites para una familia de modelos",
@@ -3545,7 +3544,6 @@ export const es: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'Tu prompt contiene "ultrathink" en el texto. Quítalo para cambiar esta opción.',
   "Not set: follows the Claude workflow mode": "Sin definir: sigue el modo de trabajo de Claude",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Modo Ultrafast activado",
   "Fast mode on": "Modo rápido activado",
   "Turning into project...": "Convirtiendo en proyecto...",
@@ -4206,6 +4204,47 @@ export const es: PhraseCatalog = {
   "Add a project to {name}": "Añadir un proyecto a {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "Siguiente paso, en {coordinatorLabel}: este equipo solo puede ejecutar un proyecto del que tiene una copia. Abre allí Ajustes > Equipos y añade un proyecto a este equipo. Luego elígelo en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
+  "Signed in as {account}": "Sesión iniciada como {account}",
+  "Loading sign-in…": "Cargando el inicio de sesión…",
+  "One account for all your machines and your phone.":
+    "Una cuenta para todos tus equipos y tu teléfono.",
+  "Choose your main machine": "Elige tu equipo principal",
+  "Your other machines are listed here once this {machine} is linked.":
+    "Tus otros equipos aparecen aquí cuando este {machine} esté vinculado.",
+  "{label} can start work on this {machine}": "{label} puede iniciar trabajo en este {machine}",
+  "{count} of your machines can start work on this {machine}":
+    "{count} de tus equipos pueden iniciar trabajo en este {machine}",
+  "Pick it below and press Allow. Nothing to copy or paste.":
+    "Elígelo abajo y pulsa Permitir. Nada que copiar ni pegar.",
+  "If this is your first machine, there is nothing to choose: continue.":
+    "Si este es tu primer equipo, no hay nada que elegir: continúa.",
+  "Set up this {machine}": "Configurar este {machine}",
+  "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
+    "Inicia sesión una vez. Este {machine} se vincula entonces a tu cuenta y muestra tus otros equipos por sí solo.",
+  "Turn on SpecWithCode Connect": "Activar SpecWithCode Connect",
+  "Set up other computers too": "Configurar también otros ordenadores",
+  "Continue without an account": "Continuar sin cuenta",
+  "Link this {machine}": "Vincular este {machine}",
+  "Happens by itself after you sign in.": "Ocurre por sí solo después de iniciar sesión.",
+  "Checking this {machine}…": "Comprobando este {machine}…",
+  "Linking this {machine}…": "Vinculando este {machine}…",
+  "This {machine} is linked": "Este {machine} está vinculado",
+  "Your other machines and your phone can reach it.":
+    "Tus otros equipos y tu teléfono pueden llegar a él.",
+  "This {machine} could not be linked": "No se pudo vincular este {machine}",
+  "SpecWithCode Connect could not be read on this {machine}. Check its internet connection.":
+    "No se pudo leer SpecWithCode Connect en este {machine}. Comprueba su conexión a internet.",
+  "SpecWithCode Connect is off on this {machine}":
+    "SpecWithCode Connect está desactivado en este {machine}",
+  "Turn it on and your other machines can reach this one.":
+    "Actívalo y tus otros equipos podrán llegar a este.",
+  "Team rules keep it off here, so your other machines cannot reach this one.":
+    "Las reglas del equipo lo mantienen desactivado aquí, así que tus otros equipos no pueden llegar a este.",
+  "This window is not allowed to turn it on.": "Esta ventana no tiene permiso para activarlo.",
+  "Done:": "Hecho:",
+  "Linking…": "Vinculando…",
+  "Signed in here. This links the machine without leaving this window.":
+    "Sesión iniciada aquí. Esto vincula el equipo sin salir de esta ventana.",
   "Connect admin": "Administración de Connect",
   Totals: "Totales",
   "Tunnel address": "Dirección del túnel",

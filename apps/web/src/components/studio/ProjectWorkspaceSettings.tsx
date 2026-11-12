@@ -528,7 +528,9 @@ export function ProjectWorkspaceSettings({
                   </label>
                   <ProjectModels
                     environmentId={project.environmentId}
-                    label="Coordinator model and effort"
+                    label="Coordinator model"
+                    title="Coordinator model"
+                    coordinator
                     recommendedTraits={COORDINATOR_RECOMMENDED_TRAITS}
                     value={coordinator ?? inheritedCoordinator}
                     onChange={(v) => change(setCoordinator, v)}
@@ -542,6 +544,7 @@ export function ProjectWorkspaceSettings({
                   <ProjectModels
                     environmentId={project.environmentId}
                     label="Recommended model for threads"
+                    title="Model for new threads"
                     value={worker}
                     onChange={(v) => change(setWorker, v)}
                     disabled={disabled}

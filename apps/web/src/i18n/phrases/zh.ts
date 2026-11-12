@@ -3221,7 +3221,6 @@ export const zh: PhraseCatalog = {
   "1 provider": "1 个提供方",
   "Hide older": "隐藏较早的",
   "Connection: {connection}": "连接：{connection}",
-  "Account limits:": "账户限额：",
   "Reset, not read since": "已重置，自以下时间起未读取",
   "Shared by every model": "所有模型共用",
   "Limits for one model family": "单个模型系列的限额",
@@ -3406,7 +3405,6 @@ export const zh: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     '你的提示词文本中包含 "ultrathink"。移除后才能更改此选项。',
   "Not set: follows the Claude workflow mode": "未设置：跟随 Claude 工作流模式",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Ultrafast 模式已开启",
   "Fast mode on": "快速模式已开启",
   "Turning into project...": "正在转为项目...",
@@ -4028,6 +4026,44 @@ export const zh: PhraseCatalog = {
   "Add a project to {name}": "添加项目到 {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "下一步，在 {coordinatorLabel} 上：这台电脑只能运行它有副本的项目。在那里打开 设置 > 电脑，为这台电脑添加一个项目。然后在聊天的“运行于”中选择它，或在项目设置的“Machines for workers”中列出它。",
+  "Signed in as {account}": "已登录为 {account}",
+  "Loading sign-in…": "正在加载登录…",
+  "One account for all your machines and your phone.": "一个账户，用于你所有的电脑和手机。",
+  "Choose your main machine": "选择你的主电脑",
+  "Your other machines are listed here once this {machine} is linked.":
+    "这台{machine}关联后，你的其他电脑会显示在这里。",
+  "{label} can start work on this {machine}": "{label} 可以在这台{machine}上启动工作",
+  "{count} of your machines can start work on this {machine}":
+    "你有 {count} 台电脑可以在这台{machine}上启动工作",
+  "Pick it below and press Allow. Nothing to copy or paste.":
+    "在下方选择它并按“允许”。无需复制或粘贴。",
+  "If this is your first machine, there is nothing to choose: continue.":
+    "如果这是你的第一台电脑，就没有可选的：请继续。",
+  "Set up this {machine}": "设置这台{machine}",
+  "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
+    "登录一次。这台{machine}随后会自动关联到你的账户，并列出你的其他电脑。",
+  "Turn on SpecWithCode Connect": "开启 SpecWithCode Connect",
+  "Set up other computers too": "也设置其他电脑",
+  "Continue without an account": "不使用账户继续",
+  "Link this {machine}": "关联这台{machine}",
+  "Happens by itself after you sign in.": "登录后会自动完成。",
+  "Checking this {machine}…": "正在检查这台{machine}…",
+  "Linking this {machine}…": "正在关联这台{machine}…",
+  "This {machine} is linked": "这台{machine}已关联",
+  "Your other machines and your phone can reach it.": "你的其他电脑和手机可以连接到它。",
+  "This {machine} could not be linked": "无法关联这台{machine}",
+  "SpecWithCode Connect could not be read on this {machine}. Check its internet connection.":
+    "无法在这台{machine}上读取 SpecWithCode Connect。请检查它的网络连接。",
+  "SpecWithCode Connect is off on this {machine}": "这台{machine}上的 SpecWithCode Connect 已关闭",
+  "Turn it on and your other machines can reach this one.":
+    "开启后，你的其他电脑就能连接到这台电脑。",
+  "Team rules keep it off here, so your other machines cannot reach this one.":
+    "团队规则要求这里保持关闭，因此你的其他电脑无法连接到这台电脑。",
+  "This window is not allowed to turn it on.": "此窗口无权开启它。",
+  "Done:": "已完成：",
+  "Linking…": "正在关联…",
+  "Signed in here. This links the machine without leaving this window.":
+    "已在此登录。无需离开此窗口即可关联这台电脑。",
   "Connect admin": "Connect 管理",
   Totals: "总计",
   "Tunnel address": "隧道地址",

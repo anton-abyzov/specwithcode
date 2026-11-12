@@ -346,6 +346,56 @@ describe("SpecWithCode Connect after sign-in", () => {
     await rerender();
     expect(runtime.reconcile).not.toHaveBeenCalled();
   });
+  /** Session storage that holds the note a sign-in prompt left when it was opened. */
+  const withSignInStarted = (origin: "app" | "setup") => {
+    const removeItem = vi.fn();
+    vi.stubGlobal("window", {
+      desktopBridge: {},
+      sessionStorage: {
+        getItem: (key: string) =>
+          key === "specwithcode.connect.sign-in-started"
+            ? JSON.stringify({ origin, at: Date.now() })
+            : null,
+        removeItem,
+      },
+    });
+    return removeItem;
+  };
+  it("follows up a sign-in that reloaded the window, as one it saw happen", async () => {
+    // Signing in with Google comes back as a load that is already signed in.
+    const removeItem = withSignInStarted("app");
+    runtime.auth = { isLoaded: true, isSignedIn: true, userId: "user_a" };
+    await act(async () => {
+      renderer = create(<ConnectOnboardingDialog />);
+    });
+    await rerender();
+    await rerender();
+    expect(runtime.reconcile).toHaveBeenCalledExactlyOnceWith({
+      managedTunnel: true,
+      publish: true,
+    });
+    expect(texts()).toContain(TURNED_ON);
+    // The note answers one sign-in: the next load is a restored session again.
+    expect(removeItem).toHaveBeenCalledWith("specwithcode.connect.sign-in-started");
+  });
+  it("leaves a sign-in started in setup to setup, seen happen or after a reload", async () => {
+    withSignInStarted("setup");
+    await signIn();
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    expect(runtime.toast).not.toHaveBeenCalled();
+    expect(renderer!.toJSON()).toBeNull();
+    await act(async () => renderer!.unmount());
+    renderer = null;
+
+    withSignInStarted("setup");
+    runtime.auth = { isLoaded: true, isSignedIn: true, userId: "user_a" };
+    await act(async () => {
+      renderer = create(<ConnectOnboardingDialog />);
+    });
+    await rerender();
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    expect(renderer!.toJSON()).toBeNull();
+  });
   it("leaves it to the phone card when that card is about to turn Connect on", async () => {
     const getItem = vi.fn((key: string) =>
       key === "specwithcode.phone-connect.pending" ? "1" : null,

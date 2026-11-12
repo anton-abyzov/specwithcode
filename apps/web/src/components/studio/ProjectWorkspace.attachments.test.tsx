@@ -27,9 +27,7 @@ describe("coordinator image attachments", () => {
     const strip = container.querySelector(".sws-attachments")!;
     expect(strip.querySelectorAll("img")).toHaveLength(1);
     await prompt("What is wrong here?");
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>("[aria-label='Send to coordinator']")!.click(),
-    );
+    await act(async () => container.querySelector<HTMLButtonElement>("button.sws-send")!.click());
     expect(state.send).toHaveBeenCalledTimes(1);
     expect(state.send.mock.calls[0]![0].input).toMatchObject({
       prompt: "What is wrong here?",
@@ -39,8 +37,7 @@ describe("coordinator image attachments", () => {
   });
   it("sends an image on its own, with no words", async () => {
     await render();
-    const send = () =>
-      container.querySelector<HTMLButtonElement>("[aria-label='Send to coordinator']")!;
+    const send = () => container.querySelector<HTMLButtonElement>("button.sws-send")!;
     expect(send().disabled).toBe(true);
     await paste([png()]);
     expect(send().disabled).toBe(false);
@@ -87,9 +84,7 @@ describe("coordinator image attachments", () => {
     await render();
     await paste([png()]);
     await prompt("Look");
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>("[aria-label='Send to coordinator']")!.click(),
-    );
+    await act(async () => container.querySelector<HTMLButtonElement>("button.sws-send")!.click());
     expect(state.send).not.toHaveBeenCalled();
     expect(container.querySelectorAll(".sws-attachment")).toHaveLength(1);
     expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe("Look");

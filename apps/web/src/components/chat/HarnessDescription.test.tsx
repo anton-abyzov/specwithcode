@@ -2,7 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProviderDriverKind } from "@specweave-studio/contracts";
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { describeHarness, describeModelFacts, HarnessDescription } from "./HarnessDescription";
+import {
+  describeHarness,
+  describeModelFacts,
+  describeProviderRow,
+  HarnessDescription,
+  modelBillingNote,
+} from "./HarnessDescription";
 
 function entry(overrides: Partial<ProviderInstanceEntry> = {}): ProviderInstanceEntry {
   return {
@@ -34,9 +40,29 @@ describe("HarnessDescription", () => {
         contextWindow: 128000,
       }),
     ).toBe("Billed per token · Tools · Text only · 128,000 context");
-    expect(
-      describeModelFacts({ slug: "default", name: "Default", isCustom: false, capabilities: null }),
-    ).toBe("Billing unverified");
+    // Unreported billing is not a fact about the model: the row says nothing, the tooltip does.
+    const unreported = { slug: "default", name: "Default", isCustom: false, capabilities: null };
+    expect(describeModelFacts(unreported)).toBe("");
+    expect(modelBillingNote(unreported)).toBe("Billing not reported");
+    expect(modelBillingNote({ ...unreported, billing: "subscription" })).toBeNull();
+  });
+  it("puts the provider's full name, account and harness in the row's tooltip", () => {
+    const text = describeProviderRow(
+      entry({
+        driverKind: ProviderDriverKind.make("acpRegistry"),
+        displayName: "Copilot Enterprise (acme)",
+        snapshot: {
+          auth: { status: "authenticated", label: "Copilot Enterprise", email: "a@example.com" },
+        } as never,
+      }),
+      { slug: "m", name: "M", isCustom: false, capabilities: null },
+    );
+    expect(text.split("\n")).toEqual([
+      "Copilot Enterprise (acme)",
+      "Copilot Enterprise · a@example.com",
+      "Harness: Copilot Enterprise (acme) · ACP",
+      "Billing not reported",
+    ]);
   });
   it("does not turn a disabled snapshot's installed=false into a missing binary claim", () => {
     const text = renderToStaticMarkup(<HarnessDescription entry={entry()} />);

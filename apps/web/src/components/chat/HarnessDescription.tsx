@@ -3,7 +3,10 @@ import { useTx } from "../../i18n";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { ServerProviderModel } from "@specweave-studio/contracts";
 
-/** Only report explicit facts. Missing telemetry is not a negative capability. */
+/**
+ * Only report explicit facts. Missing telemetry is not a negative capability, so
+ * unreported billing says nothing here; `modelBillingNote` says it for a tooltip.
+ */
 export function describeModelFacts(model: ServerProviderModel | undefined): string {
   if (!model) return "";
   const billing =
@@ -13,7 +16,7 @@ export function describeModelFacts(model: ServerProviderModel | undefined): stri
         ? "Local model"
         : model.billing === "subscription"
           ? "Subscription"
-          : "Billing unverified";
+          : undefined;
   return [
     billing,
     model.toolCalls === true ? "Tools" : model.toolCalls === false ? "No tools" : undefined,
@@ -23,6 +26,40 @@ export function describeModelFacts(model: ServerProviderModel | undefined): stri
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** What a tooltip says about billing the provider did not report; null when it did. */
+export function modelBillingNote(model: ServerProviderModel | undefined): string | null {
+  return model && (model.billing === undefined || model.billing === "unknown")
+    ? "Billing not reported"
+    : null;
+}
+
+/**
+ * A provider row's identity in full, for the tooltip on its logo: the provider as
+ * the person named it, the account, the harness, then what the model reports.
+ */
+export function describeProviderRow(
+  entry: ProviderInstanceEntry | undefined,
+  model: ServerProviderModel | undefined,
+  subProvider?: string,
+): string {
+  const lines: string[] = [];
+  if (entry) {
+    lines.push(subProvider ? `${entry.displayName} · ${subProvider}` : entry.displayName);
+    const auth = entry.snapshot.auth;
+    if (auth.status === "authenticated") {
+      const account = [auth.label, auth.email].filter(Boolean).join(" · ");
+      if (account) lines.push(account);
+    }
+    const harness = describeHarness(entry);
+    lines.push(`Harness: ${harness.name} · ${harness.protocol}`);
+  }
+  const facts = describeModelFacts(model);
+  if (facts) lines.push(facts);
+  const billing = modelBillingNote(model);
+  if (billing) lines.push(billing);
+  return lines.join("\n");
 }
 
 const HARNESSES: Record<string, { name: string; protocol: string }> = {

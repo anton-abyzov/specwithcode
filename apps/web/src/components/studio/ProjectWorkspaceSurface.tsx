@@ -185,6 +185,8 @@ import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice } from "./CoordinatorBlockedNotice";
 import { type OrchestratorCopy, workersOnlyProblem } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
+import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
@@ -279,6 +281,7 @@ export function ProjectWorkspaceSurface({
   const projectTitle = logicalProjectTitle(project);
   const environment = useEnvironment(project.environmentId);
   const machineName = useMachineNickname(project.environmentId, environment?.label);
+  const machineIdentity = useMachineIdentity(project.environmentId, environment?.label);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canOperate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
   // "Read-only" only once the host has answered; before that the grant is still loading.
@@ -812,8 +815,52 @@ export function ProjectWorkspaceSurface({
     onSaved: () => setNotice("Coordinator model saved for this project."),
     onSettled: refreshSnapshot,
   });
+  // The model new threads start on, saved on the project like Project settings > General.
+  const [savingThreadModel, setSavingThreadModel] = useState(false);
+  const saveThreadModel = (selection: ModelSelection | null) => {
+    if (savingThreadModel) return;
+    setSavingThreadModel(true);
+    setError(null);
+    void updateProject({
+      environmentId: project.environmentId,
+      input: { projectId: project.id, defaultModelSelection: selection },
+    })
+      .then((result) => {
+        if (result._tag === "Failure") {
+          const failure = squashAtomCommandFailure(result);
+          setError(
+            failure instanceof Error
+              ? failure.message
+              : "The model for new threads was not saved. Try again.",
+          );
+        }
+        if (result._tag !== "Failure") setNotice("Model for new threads saved for this project.");
+      })
+      .finally(() => {
+        setSavingThreadModel(false);
+        refreshSnapshot();
+      });
+  };
+  const projectMachines = [
+    project.environmentId,
+    ...(liveSettings?.workerMachines ?? snapshot?.settings.workerMachines ?? []).map(
+      (machine) => machine.environmentId,
+    ),
+  ]
+    .filter((id, index, all) => all.indexOf(id) === index)
+    .map((environmentId) => ({ environmentId }));
   const { compatibility: modelCompatibility, controls: coordinatorModelControls } =
     useProjectCoordinatorModelControls({
+      threads: {
+        value: project.defaultModelSelection,
+        inherited: hostSettings
+          ? resolveProjectSettings(hostSettings, project.id, project).settings.defaultModelSelection
+          : null,
+        saving: savingThreadModel,
+        onChange: saveThreadModel,
+      },
+      machines: projectMachines,
+      projectTitle,
       project,
       environmentSettings: hostSettings,
       folderSettings: liveSettings?.environment ?? snapshot?.settings.environment,
@@ -1626,8 +1673,16 @@ export function ProjectWorkspaceSurface({
                 {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
                   // Another machine runs this project: its coordinator, workers and sign-ins.
                   <Tip label={`Runs on ${machineName}, not this computer`}>
-                    <span className="sws-tag sws-project-machine" data-project-machine>
-                      <LaptopIcon aria-hidden />
+                    <span
+                      className="sws-tag sws-project-machine machine-chip"
+                      data-project-machine
+                      {...machineColorProps(machineIdentity)}
+                    >
+                      {machineIdentity ? (
+                        <EnvironmentMachineIcon kind={machineIdentity.icon} aria-hidden />
+                      ) : (
+                        <LaptopIcon aria-hidden />
+                      )}
                       <span className="sr-only">Runs on </span>
                       {machineName}
                     </span>

@@ -24,6 +24,9 @@ import {
   useCoordinatorAttachments,
 } from "./shell/CoordinatorAttachments";
 import { Tip } from "./shell/Tip";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
+import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
+import { MachineChip } from "../MachineChip";
 
 type Attached = ReturnType<typeof useCoordinatorAttachments>;
 
@@ -179,6 +182,14 @@ function CoordinatorComposerForm(props: {
     cwd: props.cwd,
   });
   const filePicker = useRef<HTMLInputElement>(null);
+  // The coordinator's machine, by color, icon and name: the box wears it, and a send
+  // to a machine other than the one being looked at says where it goes.
+  const hostEnvironment = useEnvironment(environmentId);
+  const machine = useMachineIdentity(environmentId, hostEnvironment?.label);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const sendsElsewhere =
+    machine !== null && primaryEnvironmentId !== null && environmentId !== primaryEnvironmentId;
+  const sendLabel = composerSendButtonLabel({ isPhoneKeyboard, sendShortcut, prompt });
   // One rule for the Send button and the Enter key.
   const sendDisabled =
     sendBlocked ||
@@ -207,7 +218,8 @@ function CoordinatorComposerForm(props: {
       {props.notices}
       {props.question}
       <div
-        className="sws-composer-card"
+        className={machine ? "sws-composer-card machine-composer" : "sws-composer-card"}
+        {...machineColorProps(machine)}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) e.preventDefault();
         }}
@@ -278,8 +290,20 @@ function CoordinatorComposerForm(props: {
             void submit();
           }}
         />
-        <Tip label={composerSendButtonLabel({ isPhoneKeyboard, sendShortcut, prompt })}>
-          <button className="sws-send" aria-label="Send to coordinator" disabled={sendDisabled}>
+        <Tip
+          label={sendsElsewhere ? sendLabel.replace(/^Send/, `Send to ${machine.name}`) : sendLabel}
+        >
+          <button
+            className={sendsElsewhere ? "sws-send sws-send-target machine-send" : "sws-send"}
+            // The name is drawn from this attribute, so the button's text stays "Send".
+            {...(sendsElsewhere
+              ? { ...machineColorProps(machine), "data-send-label": `Send to ${machine.name}` }
+              : {})}
+            aria-label={
+              sendsElsewhere ? `Send to the coordinator on ${machine.name}` : "Send to coordinator"
+            }
+            disabled={sendDisabled}
+          >
             <ArrowUpIcon aria-hidden />
             <span className="sr-only">{sending || preparing ? "Sending…" : "Send"}</span>
           </button>
@@ -311,6 +335,16 @@ function CoordinatorComposerForm(props: {
               <PlusIcon aria-hidden />
             </button>
           </Tip>
+          {machine ? (
+            <Tip label={`The coordinator runs on ${machine.name}`}>
+              <MachineChip
+                identity={machine}
+                label={`Runs on ${machine.name}`}
+                tabIndex={0}
+                data-coordinator-machine=""
+              />
+            </Tip>
+          ) : null}
           {props.meta}
         </span>
         {props.controls}
