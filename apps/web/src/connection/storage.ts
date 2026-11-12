@@ -26,7 +26,12 @@ import {
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
 } from "@specweave-studio/client-runtime/connection";
-import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ServerConfig,
+  ThreadId,
+  VcsListRefsResult,
+} from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
@@ -464,9 +469,9 @@ function withCrossContextLock<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<
     return Effect.flatten(
       Effect.promise(
         (signal) =>
-          locks.request(CATALOG_LOCK_NAME, { signal }, () => Effect.runPromiseExit(effect)) as Promise<
-            Exit.Exit<A, E>
-          >,
+          locks.request(CATALOG_LOCK_NAME, { signal }, () =>
+            Effect.runPromiseExit(effect),
+          ) as Promise<Exit.Exit<A, E>>,
       ),
     );
   });
