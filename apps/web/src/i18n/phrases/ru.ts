@@ -4364,4 +4364,51 @@ export const ru: PhraseCatalog = {
   "{version}, update to {next} available": "{version}, доступно обновление до {next}",
   "{url}. Turn off and this address stops answering.":
     "{url}. Если выключить, этот адрес перестанет отвечать.",
+  "Unlink {machine}": "Отвязать {machine}",
+  "Remove {phone}": "Удалить {phone}",
+  "Change the machine limit for {account}": "Изменить лимит машин для {account}",
+  "Change limit": "Изменить лимит",
+  "Machine limit": "Лимит машин",
+  "Machine limit for {account}": "Лимит машин для {account}",
+  "It applies to the account's next link. Machines already linked stay linked.":
+    "Действует со следующей привязки аккаунта. Уже привязанные машины остаются привязанными.",
+  "Now: {limit}": "Сейчас: {limit}",
+  "Plan default": "По тарифу",
+  "This many machines": "Столько машин",
+  "Number of machines": "Число машин",
+  "Enter a whole number from 0 to {max}.": "Введите целое число от 0 до {max}.",
+  "Account id: {id}": "ID аккаунта: {id}",
+  "The change is recorded with your account id.": "Изменение записывается с ID вашего аккаунта.",
+  "Unlink “{machine}” from {account}?": "Отвязать «{machine}» от {account}?",
+  "The machine loses its Connect link, its credentials and its tunnel. The account can link it again from that machine.":
+    "Машина теряет привязку к Connect, учётные данные и туннель. Аккаунт может привязать её снова с этой машины.",
+  "Unlink machine": "Отвязать машину",
+  "Unlinking…": "Отвязывается…",
+  "Remove “{phone}” from {account}?": "Удалить «{phone}» из {account}?",
+  "The phone is signed out of SpecWithCode Connect, and the account's machines stop accepting its keys.":
+    "Телефон выходит из SpecWithCode Connect, и машины аккаунта перестают принимать его ключи.",
+  "That machine or phone is no longer on this account":
+    "Этой машины или телефона больше нет в этом аккаунте",
+  "Refresh to see the account as it is now.":
+    "Обновите, чтобы увидеть аккаунт в текущем состоянии.",
+  "SpecWithCode Connect could not record the change":
+    "SpecWithCode Connect не смог записать изменение",
+  "The change stopped part way": "Изменение остановилось на полпути",
+  "It is recorded as failed. Check the account, then send it again if needed.":
+    "Оно записано как неудачное. Проверьте аккаунт и при необходимости отправьте снова.",
+  "No clear answer from SpecWithCode Connect": "Нет ясного ответа от SpecWithCode Connect",
+  "The change may or may not have been made. Close this and check the account.":
+    "Изменение могло быть внесено, а могло и нет. Закройте это окно и проверьте аккаунт.",
+  "Recent changes": "Недавние изменения",
+  "Loading recent changes…": "Загрузка недавних изменений…",
+  "No owner has changed anything yet.": "Ни один владелец пока ничего не менял.",
+  "Unlinked machine {name}": "Отвязана машина {name}",
+  "Removed phone {name}": "Удалён телефон {name}",
+  "Changed the machine limit": "Изменён лимит машин",
+  "Set the machine limit to {count}": "Лимит машин установлен: {count}",
+  "Removed the machine limit": "Лимит машин снят",
+  "Reset the machine limit to the plan default": "Лимит машин возвращён к тарифному",
+  "Account {id}": "Аккаунт {id}",
+  "By {id}": "Кем: {id}",
+  "Not finished": "Не завершено",
 };

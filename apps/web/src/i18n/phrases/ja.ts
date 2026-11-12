@@ -4368,4 +4368,51 @@ export const ja: PhraseCatalog = {
   "{version}, update to {next} available": "{version}、{next} へのアップデートがあります",
   "{url}. Turn off and this address stops answering.":
     "{url}。オフにすると、このアドレスは応答しなくなります。",
+  "Unlink {machine}": "{machine} のリンクを解除",
+  "Remove {phone}": "{phone} を削除",
+  "Change the machine limit for {account}": "{account} のマシン数の上限を変更",
+  "Change limit": "上限を変更",
+  "Machine limit": "マシン数の上限",
+  "Machine limit for {account}": "{account} のマシン数の上限",
+  "It applies to the account's next link. Machines already linked stay linked.":
+    "このアカウントの次回のリンクから適用されます。リンク済みのマシンはそのままです。",
+  "Now: {limit}": "現在: {limit}",
+  "Plan default": "プランの既定値",
+  "This many machines": "この台数まで",
+  "Number of machines": "マシンの台数",
+  "Enter a whole number from 0 to {max}.": "0 から {max} までの整数を入力してください。",
+  "Account id: {id}": "アカウント ID: {id}",
+  "The change is recorded with your account id.":
+    "この変更はあなたのアカウント ID とともに記録されます。",
+  "Unlink “{machine}” from {account}?": "「{machine}」と {account} のリンクを解除しますか？",
+  "The machine loses its Connect link, its credentials and its tunnel. The account can link it again from that machine.":
+    "このマシンは Connect のリンク、認証情報、トンネルを失います。アカウントはそのマシンから再びリンクできます。",
+  "Unlink machine": "マシンのリンクを解除",
+  "Unlinking…": "リンクを解除中…",
+  "Remove “{phone}” from {account}?": "「{phone}」を {account} から削除しますか？",
+  "The phone is signed out of SpecWithCode Connect, and the account's machines stop accepting its keys.":
+    "この電話は SpecWithCode Connect からサインアウトされ、アカウントのマシンはそのキーを受け付けなくなります。",
+  "That machine or phone is no longer on this account":
+    "そのマシンまたは電話は、もうこのアカウントにありません",
+  "Refresh to see the account as it is now.": "更新すると、現在のアカウントの状態が表示されます。",
+  "SpecWithCode Connect could not record the change":
+    "SpecWithCode Connect は変更を記録できませんでした",
+  "The change stopped part way": "変更は途中で止まりました",
+  "It is recorded as failed. Check the account, then send it again if needed.":
+    "失敗として記録されています。アカウントを確認し、必要ならもう一度送信してください。",
+  "No clear answer from SpecWithCode Connect": "SpecWithCode Connect から明確な応答がありません",
+  "The change may or may not have been made. Close this and check the account.":
+    "変更は行われた可能性も、行われていない可能性もあります。これを閉じてアカウントを確認してください。",
+  "Recent changes": "最近の変更",
+  "Loading recent changes…": "最近の変更を読み込み中…",
+  "No owner has changed anything yet.": "オーナーによる変更はまだありません。",
+  "Unlinked machine {name}": "マシン {name} のリンクを解除",
+  "Removed phone {name}": "電話 {name} を削除",
+  "Changed the machine limit": "マシン数の上限を変更",
+  "Set the machine limit to {count}": "マシン数の上限を {count} に設定",
+  "Removed the machine limit": "マシン数の上限を解除",
+  "Reset the machine limit to the plan default": "マシン数の上限をプランの既定値に戻しました",
+  "Account {id}": "アカウント {id}",
+  "By {id}": "実行者: {id}",
+  "Not finished": "未完了",
 };

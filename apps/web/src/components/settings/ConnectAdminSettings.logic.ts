@@ -1,8 +1,10 @@
 import type {
   RelayAdminAccount,
   RelayAdminAccountsResponse,
+  RelayAdminAction,
   RelayAdminMachine,
   RelayAdminMachineLimit,
+  RelayAdminMachineLimitSetting,
   RelayAdminOverviewResponse,
 } from "@specweave-studio/contracts/relayAdmin";
 
@@ -49,6 +51,17 @@ export function appendAccountPage(
     nextCursor: page.nextCursor,
     identitiesRead: list.identitiesRead && page.identities === "read",
     searchTruncated: false,
+  };
+}
+
+/** The list with one account's row replaced by a newer reading of it. */
+export function withAccount(
+  list: ConnectAdminAccountList,
+  account: RelayAdminAccount,
+): ConnectAdminAccountList {
+  return {
+    ...list,
+    accounts: list.accounts.map((shown) => (shown.userId === account.userId ? account : shown)),
   };
 }
 
@@ -136,10 +149,25 @@ export function failureCopy(failure: ConnectAdminFailure): {
         title: "No Connect account has that id",
         description: "It may have been deleted since the list was read.",
       };
+    case "target_not_found":
+      return {
+        title: "That machine or phone is no longer on this account",
+        description: "Refresh to see the account as it is now.",
+      };
     case "unavailable":
       return {
         title: "SpecWithCode Connect could not read its data",
         description: "Nothing was changed. Try again in a moment.",
+      };
+    case "not_recorded":
+      return {
+        title: "SpecWithCode Connect could not record the change",
+        description: "Nothing was changed. Try again in a moment.",
+      };
+    case "action_failed":
+      return {
+        title: "The change stopped part way",
+        description: "It is recorded as failed. Check the account, then send it again if needed.",
       };
     case "timeout":
       return {
@@ -156,6 +184,91 @@ export function failureCopy(failure: ConnectAdminFailure): {
         title: "SpecWithCode Connect sent an answer this page could not read",
         description: "Nothing was changed. Try again in a moment.",
       };
+  }
+}
+
+/**
+ * Title and next step for a failed change. A read that got no answer changed
+ * nothing; a change that got no answer may have been made, and says so. The
+ * relay's "could not read its data" counts as no answer: it can come from the
+ * read after the change was written.
+ */
+export function changeFailureCopy(failure: ConnectAdminFailure): {
+  readonly title: string;
+  readonly description: string;
+} {
+  if (
+    failure.kind === "timeout" ||
+    failure.kind === "network" ||
+    failure.kind === "failed" ||
+    failure.kind === "unavailable"
+  ) {
+    return {
+      title: "No clear answer from SpecWithCode Connect",
+      description: "The change may or may not have been made. Close this and check the account.",
+    };
+  }
+  return failureCopy(failure);
+}
+
+/** What the limit dialog holds while an owner edits it. */
+export interface MachineLimitDraft {
+  readonly choice: RelayAdminMachineLimitSetting["kind"];
+  /** The number as typed. */
+  readonly count: string;
+}
+
+export function machineLimitDraftOf(limit: RelayAdminMachineLimit): MachineLimitDraft {
+  const count = limit.maxMachines === null ? "" : String(limit.maxMachines);
+  if (limit.source !== "override") return { choice: "default", count };
+  return { choice: limit.maxMachines === null ? "unlimited" : "limited", count };
+}
+
+export const MACHINE_LIMIT_MAX = 1000;
+
+/** What to send for the draft, or null while the number is not a whole number from 0 to 1000. */
+export function machineLimitSettingOf(
+  draft: MachineLimitDraft,
+): RelayAdminMachineLimitSetting | null {
+  if (draft.choice !== "limited") return { kind: draft.choice };
+  const typed = draft.count.trim();
+  if (!/^\d{1,4}$/u.test(typed)) return null;
+  const maxMachines = Number(typed);
+  return maxMachines <= MACHINE_LIMIT_MAX ? { kind: "limited", maxMachines } : null;
+}
+
+/** One recorded owner action in plain words. */
+export function actionText(tx: TranslatePhrase, action: RelayAdminAction): string {
+  const name = action.targetLabel ?? action.targetId ?? "";
+  switch (action.action) {
+    case "unlink_machine":
+      return tx("Unlinked machine {name}", { name });
+    case "remove_phone":
+      return tx("Removed phone {name}", { name });
+    case "set_machine_limit": {
+      const set = action.limitSet;
+      if (set === null) return tx("Changed the machine limit");
+      if (set.kind === "limited") {
+        return tx("Set the machine limit to {count}", { count: set.maxMachines });
+      }
+      return set.kind === "unlimited"
+        ? tx("Removed the machine limit")
+        : tx("Reset the machine limit to the plan default");
+    }
+  }
+}
+
+export function actionOutcome(action: RelayAdminAction): {
+  readonly phrase: string;
+  readonly tone: MachineStateTone;
+} {
+  switch (action.outcome) {
+    case "done":
+      return { phrase: "Done", tone: "success" };
+    case "failed":
+      return { phrase: "Failed", tone: "error" };
+    case "started":
+      return { phrase: "Not finished", tone: "warning" };
   }
 }
 

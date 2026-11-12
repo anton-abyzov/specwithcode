@@ -68,7 +68,10 @@ const unlinkOf = (userId: string, environmentId: string) =>
 const removeOf = (userId: string, deviceId: string) =>
   `/v1/admin/accounts/${userId}/phones/${deviceId}/remove`;
 
-/** Read when a request runs, so a test can change it between two requests. */
+/**
+ * The tunnel fields are read when a request runs, so a test can change them
+ * between two requests. `owners` is read once, when the relay is built.
+ */
 interface World {
   owners?: ReadonlyArray<string>;
   /** Cloudflare refuses to take the tunnel down. */
