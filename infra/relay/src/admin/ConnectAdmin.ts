@@ -23,7 +23,11 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as PhoneRemovals from "../agentActivity/PhoneRemovals.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
-import { verifyRelayClientBearerToken } from "../http/ClerkBearer.ts";
+import {
+  clerkSessionIdClaim,
+  hasExpectedClerkAudience,
+  verifyClerkBearerToken,
+} from "../http/ClerkBearer.ts";
 import { currentTraceId } from "../http/mapErrorTags.ts";
 import * as PhoneRemovalApi from "../http/PhoneRemovalApi.ts";
 import { readHttpAuthorizationCredential } from "../http/requestCredentials.ts";
@@ -35,6 +39,15 @@ export const CONNECT_ADMIN_LOG_MESSAGE = "connect_admin_request";
 
 /** Cloudflare's live tunnel readings for one account must fit in this. */
 export const ADMIN_TUNNEL_STATUS_TIMEOUT = Duration.seconds(3);
+
+/**
+ * Tunnels one account request asks Cloudflare about. A Worker has a fixed
+ * number of outgoing requests; machines past this read as "unknown".
+ */
+export const ADMIN_TUNNEL_STATUS_MAX = 25;
+
+/** What a Clerk user id looks like; a search for anything else goes to Clerk. */
+const CLERK_USER_ID = /^user_[A-Za-z0-9]+$/u;
 
 /** What a path the relay does not have answers: nothing tells a caller the routes exist. */
 const notFound = () => HttpServerResponse.empty({ status: 404 });
@@ -54,15 +67,27 @@ export const layerAdminAuth = Layer.effect(
     /** The owner a token belongs to, or null. Any doubt or failure is "not an owner". */
     const ownerOf = Effect.fnUntraced(
       function* (token: string) {
-        const verified = yield* verifyRelayClientBearerToken(config, token);
-        // Only an interactive Clerk session of an owner. The headless CLI's
-        // OAuth token is refused even for an owner's account.
-        if (verified.mode !== "clerk_session_bearer" || !owners.has(verified.sub)) return null;
-        if (verified.sid) {
-          // A removed phone's session is refused; so is one the relay cannot check.
+        // Only an interactive Clerk session of an owner: a session JWT for the
+        // relay's audience. The headless CLI's OAuth token is never sent to
+        // Clerk from here, so a guess costs no Clerk call and takes no longer
+        // than a path the relay does not have.
+        if (token === "") return null;
+        const verified = yield* verifyClerkBearerToken(config, token);
+        if (
+          !verified.sub ||
+          !owners.has(verified.sub) ||
+          !hasExpectedClerkAudience(verified.aud, config.clerkJwtAudience)
+        ) {
+          return null;
+        }
+        const { sid } = clerkSessionIdClaim(verified);
+        if (sid) {
+          // The token names its Clerk session: one removed with a phone is
+          // refused, and so is one the relay cannot check. A token without a
+          // session id (the relay's own JWT template) lives a minute at most.
           const session = yield* PhoneRemovalApi.clerkSessionStatus({
             userId: verified.sub,
-            clerkSessionId: verified.sid,
+            clerkSessionId: sid,
           }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
           if (session !== "allowed") return null;
         }
@@ -180,11 +205,11 @@ export const layerApi = HttpApiBuilder.group(
         Effect.fn("relay.api.admin.listAccounts")(function* ({ query }) {
           const search = query.query?.trim() ?? "";
           // An id is matched as it is; anything else is an email or name Clerk looks up.
-          const userIds =
+          const found =
             search === ""
               ? undefined
-              : search.startsWith("user_")
-                ? [search]
+              : CLERK_USER_ID.test(search)
+                ? { userIds: [search], truncated: false }
                 : yield* identities
                     .search(search)
                     .pipe(Effect.catch(() => unavailable("identity_lookup_failed")));
@@ -192,10 +217,14 @@ export const layerApi = HttpApiBuilder.group(
             .listAccounts({
               limit: RELAY_ADMIN_ACCOUNTS_PAGE_SIZE,
               cursor: query.cursor,
-              userIds,
+              userIds: found?.userIds,
             })
             .pipe(Effect.catch(() => unavailable("persistence_failed")));
-          return { ...(yield* identify(listed.accounts)), nextCursor: listed.nextCursor };
+          return {
+            ...(yield* identify(listed.accounts)),
+            nextCursor: listed.nextCursor,
+            searchTruncated: found?.truncated ?? false,
+          };
         }),
       )
       .handle(
@@ -210,7 +239,11 @@ export const layerApi = HttpApiBuilder.group(
           const [identified, live] = yield* Effect.all(
             [
               identify([found.account]),
-              readLive(found.machines.flatMap((machine) => machine.tunnelId ?? [])),
+              readLive(
+                found.machines
+                  .flatMap((machine) => machine.tunnelId ?? [])
+                  .slice(0, ADMIN_TUNNEL_STATUS_MAX),
+              ),
             ],
             { concurrency: 2 },
           );

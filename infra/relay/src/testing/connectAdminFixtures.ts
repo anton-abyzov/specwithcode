@@ -84,6 +84,8 @@ const allocation = (
   ...extra,
 });
 
+export { allocation as adminAllocation, link as adminLink };
+
 /**
  * Five accounts, oldest to newest:
  * - user_owner: unlimited override, founder 1, two linked machines (one tunnel

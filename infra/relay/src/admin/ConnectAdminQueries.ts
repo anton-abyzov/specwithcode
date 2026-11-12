@@ -108,15 +108,23 @@ const count = (value: unknown): number => {
 };
 const flag = (value: unknown): boolean => value === true || Number(value) === 1;
 
-/** Every user id the relay holds anything for, with when it was first and last seen. */
-const SEEN_USERS = sql`
-  SELECT user_id, created_at AS first_seen, updated_at AS last_seen FROM relay_connect_accounts
+/**
+ * Every user id the relay holds anything for, with when it was first and last
+ * seen. `where` narrows each table before the rows are put together.
+ */
+const seenUsers = (where: SQL = sql``) => sql`
+  SELECT user_id, created_at AS first_seen, updated_at AS last_seen
+    FROM relay_connect_accounts ${where}
   UNION ALL
-  SELECT user_id, created_at, updated_at FROM relay_environment_links
+  SELECT user_id, created_at, updated_at FROM relay_environment_links ${where}
   UNION ALL
-  SELECT user_id, created_at, COALESCE(last_seen_at, updated_at) FROM relay_mobile_devices
+  SELECT user_id, created_at, COALESCE(last_seen_at, updated_at)
+    FROM relay_mobile_devices ${where}
   UNION ALL
-  SELECT user_id, last_seen_at, last_seen_at FROM relay_client_keys`;
+  SELECT user_id, last_seen_at, last_seen_at FROM relay_client_keys ${where}`;
+
+/** Only the accounts named in the `wanted` list the statement starts with. */
+const ONLY_WANTED = sql`WHERE user_id IN (SELECT user_id FROM wanted)`;
 
 const inList = (values: ReadonlyArray<string>): SQL =>
   sql.join(
@@ -132,7 +140,7 @@ export function encodeAccountsCursor(firstSeenAt: string, userId: string): strin
     .replaceAll("=", "");
 }
 
-/** Null for anything that is not a cursor this relay made; the list then starts over. */
+/** Null for anything that is not a cursor this relay made; the list then ends. */
 export function decodeAccountsCursor(
   cursor: string | undefined,
 ): readonly [firstSeenAt: string, userId: string] | null {
@@ -265,19 +273,26 @@ export const make = Effect.gen(function* () {
       return { accounts: [], nextCursor: null };
     }
     const cursor = decodeAccountsCursor(input.cursor);
-    const conditions: Array<SQL> = [];
-    if (input.userIds !== undefined) conditions.push(sql`user_id IN (${inList(input.userIds)})`);
-    if (cursor !== null) {
-      conditions.push(
-        sql`(MIN(first_seen) < ${cursor[0]} OR (MIN(first_seen) = ${cursor[0]} AND user_id < ${cursor[1]}))`,
-      );
-    }
+    // A cursor this relay did not make ends the list; it never restarts it.
+    if (input.cursor && cursor === null) return { accounts: [], nextCursor: null };
+    // The ids are bound once, and each table is then read by user id.
+    const wanted =
+      input.userIds === undefined
+        ? sql``
+        : sql`WITH wanted(user_id) AS (VALUES ${sql.join(
+            input.userIds.map((userId) => sql`(${userId})`),
+            sql`, `,
+          )})`;
     const having =
-      conditions.length === 0 ? sql`` : sql`HAVING ${sql.join(conditions, sql` AND `)}`;
+      cursor === null
+        ? sql``
+        : sql`HAVING (MIN(first_seen) < ${cursor[0]} OR (MIN(first_seen) = ${cursor[0]} AND user_id < ${cursor[1]}))`;
     // One row more than the page tells whether another page follows.
     const [seen = []] = yield* run("list-accounts", [
-      sql`SELECT user_id, MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen
-          FROM (${SEEN_USERS}) GROUP BY user_id ${having}
+      sql`${wanted}
+          SELECT user_id, MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen
+          FROM (${seenUsers(input.userIds === undefined ? undefined : ONLY_WANTED)})
+          GROUP BY user_id ${having}
           ORDER BY first_seen DESC, user_id DESC LIMIT ${input.limit + 1}`,
     ]);
     const page = seen.slice(0, input.limit);
@@ -294,7 +309,7 @@ export const make = Effect.gen(function* () {
   return ConnectAdminQueries.of({
     overview: Effect.fn("relay.admin.queries.overview")(function* () {
       const [accounts, machines, tunnels, phones, promos] = yield* run("overview", [
-        sql`SELECT COUNT(DISTINCT user_id) AS n FROM (${SEEN_USERS})`,
+        sql`SELECT COUNT(DISTINCT user_id) AS n FROM (${seenUsers()})`,
         sql`SELECT COUNT(*) AS n FROM relay_environment_links WHERE revoked_at IS NULL`,
         sql`SELECT COUNT(*) AS allocated,
                    COALESCE(SUM(CASE WHEN ready_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS ready

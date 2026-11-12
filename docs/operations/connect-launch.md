@@ -140,7 +140,10 @@ manual override; leave it unset for 3.
 every account's machines, phones and machine limit), as Clerk user ids (`user_...`), comma
 separated. Unset, the routes answer 404 for everyone. An owner must be signed in to Connect in the
 app; the headless CLI's token is refused. Every admin request is logged as `connect_admin_request`
-with the owner's id.
+with the owner's id. The routes are left out of `/openapi.json` and `/docs`, and a search's email or
+name is kept out of traces and logs. A malformed value (anything that is not a `user_...` id) fails
+the relay deploy on purpose, so fix the variable before the next push to `main`. Changing the list
+takes a relay deploy.
 
 Leave `RELAY_DOMAIN` unset: the `prod` stage derives `relay.spec-weave.com` from the zone. Leave
 `RELAY_TUNNEL_BASE_DOMAIN` unset so tunnels sit directly under `spec-weave.com`. Leave

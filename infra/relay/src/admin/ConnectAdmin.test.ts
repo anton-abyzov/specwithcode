@@ -3,18 +3,27 @@ import { describe, expect, it } from "@effect/vitest";
 import { RelayApi } from "@specweave-studio/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Tracer from "effect/Tracer";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as OpenApi from "effect/http-api/OpenApi";
 import { beforeEach, vi } from "vite-plus/test";
 
 import * as PhoneRemovals from "../agentActivity/PhoneRemovals.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as RelayDb from "../db.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import { traceRelayHttpRequestWith } from "../http/Api.ts";
 import { clearClerkOAuthVerificationCache } from "../http/ClerkBearer.ts";
+import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
 import {
   ADMIN_SECRETS,
+  adminAllocation,
+  adminLink,
   adminTestConfig,
   seedConnectAdmin,
 } from "../testing/connectAdminFixtures.ts";
@@ -70,6 +79,8 @@ interface World {
   readonly removedSessions?: ReadonlyArray<string>;
   /** The removal check itself fails, or throws something nobody expected. */
   readonly removalCheck?: "fails" | "crashes";
+  /** More rows on top of the five seeded accounts. */
+  readonly seed?: Effect.Effect<void, never, RelayDb.RelayDb>;
 }
 
 const KNOWN: ReadonlyMap<string, AdminIdentities.AdminIdentity> = new Map([
@@ -81,12 +92,13 @@ const KNOWN: ReadonlyMap<string, AdminIdentities.AdminIdentity> = new Map([
 const withAdmin = <A, E>(
   world: World,
   use: (
-    call: (path: string, token?: string) => Effect.Effect<Response>,
+    call: (path: string, token?: string, scheme?: string) => Effect.Effect<Response>,
   ) => Effect.Effect<A, E, never>,
 ) =>
   Effect.gen(function* () {
     const layerDb = layerSqliteRelayDb(makeSqliteD1().d1);
     yield* seedConnectAdmin.pipe(Effect.provide(layerDb));
+    if (world.seed) yield* world.seed.pipe(Effect.provide(layerDb));
     const layerBase = Layer.mergeAll(
       layerDb,
       RelayConfiguration.layer(
@@ -98,7 +110,7 @@ const withAdmin = <A, E>(
       Layer.mock(AdminIdentities.AdminIdentities, {
         lookup: (userIds) =>
           Effect.succeed(new Map([...KNOWN].filter(([userId]) => userIds.includes(userId)))),
-        search: () => Effect.succeed([]),
+        search: () => Effect.succeed({ userIds: [], truncated: false }),
         ...world.identities,
       }),
       Layer.mock(ManagedEndpointProvider.ManagedEndpointTunnelClient, {
@@ -138,11 +150,11 @@ const withAdmin = <A, E>(
       ),
       (handler) => Effect.promise(() => handler.dispose()),
     );
-    return yield* use((path, token) =>
+    return yield* use((path, token, scheme = "Bearer") =>
       Effect.promise(() =>
         app.handler(
           new Request(`https://relay.example.test${path}`, {
-            headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+            headers: token === undefined ? {} : { authorization: `${scheme} ${token}`.trim() },
           }),
         ),
       ),
@@ -206,7 +218,13 @@ describe("who may use the Connect admin routes", () => {
           yield* expectHidden(yield* call(route));
           yield* expectHidden(yield* call(route, "made-up-token"));
           yield* expectHidden(yield* call(route, "wrong-audience"));
+          // An empty bearer, and the owner's token under a scheme the routes do not take.
+          yield* expectHidden(yield* call(route, ""));
+          yield* expectHidden(yield* call(route, "owner-session", "DPoP"));
+          yield* expectHidden(yield* call(route, "owner-session", "Basic"));
         }
+        // None of these guesses reached Clerk's API.
+        expect(createClerkClient).not.toHaveBeenCalled();
       }),
     ),
   );
@@ -215,8 +233,9 @@ describe("who may use the Connect admin routes", () => {
     withAdmin({ owners: ["user_owner"] }, (call) =>
       Effect.gen(function* () {
         for (const route of ROUTES) yield* expectHidden(yield* call(route, "oat_owner_cli"));
-        // Clerk did accept that token as the owner: the refusal is the relay's.
-        expect(createClerkClient).toHaveBeenCalled();
+        // Clerk would accept that token as the owner. The relay never asks: a
+        // guess costs no Clerk call and takes no longer than an unknown path.
+        expect(createClerkClient).not.toHaveBeenCalled();
       }),
     ),
   );
@@ -359,7 +378,10 @@ describe("what a Connect owner reads", () => {
         identities: {
           search: (query) => {
             searched.push(query);
-            return Effect.succeed(query === "free@example.test" ? ["user_free"] : []);
+            return Effect.succeed({
+              userIds: query === "free@example.test" ? ["user_free"] : [],
+              truncated: false,
+            });
           },
         },
       },
@@ -383,9 +405,37 @@ describe("what a Connect owner reads", () => {
           expect(searched).toEqual(["free@example.test"]);
           expect(yield* found("/v1/admin/accounts?query=nobody%40example.test")).toEqual([]);
           expect(yield* found("/v1/admin/accounts?query=user_nobody")).toEqual([]);
+          // An email that only starts like an id is still an email.
+          searched.length = 0;
+          yield* found("/v1/admin/accounts?query=user_free%40example.test");
+          expect(searched).toEqual(["user_free@example.test"]);
         }),
     );
   });
+
+  it.effect("that a search matched more people than it read", () =>
+    Effect.gen(function* () {
+      const truncated = (path: string, clerkHasMore: boolean) =>
+        withAdmin(
+          {
+            owners: ["user_owner"],
+            identities: {
+              search: () => Effect.succeed({ userIds: ["user_free"], truncated: clerkHasMore }),
+            },
+          },
+          (call) =>
+            call(path, "owner-session").pipe(
+              Effect.flatMap(json),
+              Effect.map((body) => (body as { searchTruncated: boolean }).searchTruncated),
+            ),
+        );
+      expect(yield* truncated("/v1/admin/accounts?query=example.test", true)).toBe(true);
+      expect(yield* truncated("/v1/admin/accounts?query=example.test", false)).toBe(false);
+      // A plain list and a search by id never read Clerk's search.
+      expect(yield* truncated("/v1/admin/accounts", true)).toBe(false);
+      expect(yield* truncated("/v1/admin/accounts?query=user_free", true)).toBe(false);
+    }),
+  );
 
   it.effect("a clear failure, not an empty list, when a search cannot reach Clerk", () =>
     withAdmin(
@@ -491,6 +541,50 @@ describe("what a Connect owner reads", () => {
     );
   });
 
+  it.effect("live readings for a bounded number of machines, the rest unknown", () => {
+    const asked: Array<string> = [];
+    const machines = Array.from({ length: ConnectAdmin.ADMIN_TUNNEL_STATUS_MAX + 5 }, (_, n) => ({
+      id: `fleet-${String(n).padStart(2, "0")}`,
+      at: `2026-11-01T00:${String(n).padStart(2, "0")}:00.000Z`,
+    }));
+    return withAdmin(
+      {
+        owners: ["user_owner"],
+        tunnels: {
+          get: (tunnelId) => {
+            asked.push(tunnelId);
+            return Effect.succeed({ id: tunnelId, status: "healthy" });
+          },
+        },
+        seed: Effect.gen(function* () {
+          const db = yield* RelayDb.RelayDb;
+          yield* db
+            .insert(relayEnvironmentLinks)
+            .values(machines.map(({ id, at }) => adminLink("user_fleet", id, id, at)));
+          yield* db
+            .insert(relayManagedEndpointAllocations)
+            .values(
+              machines.map(({ id, at }) => adminAllocation("user_fleet", id, at, { readyAt: at })),
+            );
+        }).pipe(Effect.orDie),
+      },
+      (call) =>
+        Effect.gen(function* () {
+          const response = yield* call("/v1/admin/accounts/user_fleet", "owner-session");
+          expect(response.status).toBe(200);
+          const body = (yield* json(response)) as {
+            machines: ReadonlyArray<{ live: string }>;
+          };
+          expect(body.machines).toHaveLength(machines.length);
+          expect(asked).toHaveLength(ConnectAdmin.ADMIN_TUNNEL_STATUS_MAX);
+          expect(body.machines.filter((machine) => machine.live === "healthy")).toHaveLength(
+            ConnectAdmin.ADMIN_TUNNEL_STATUS_MAX,
+          );
+          expect(body.machines.filter((machine) => machine.live === "unknown")).toHaveLength(5);
+        }),
+    );
+  });
+
   it.effect("machines as unknown when Cloudflare fails or reports a state it does not name", () =>
     Effect.gen(function* () {
       const live = (tunnels: NonNullable<World["tunnels"]>) =>
@@ -536,6 +630,46 @@ describe("what a Connect owner reads", () => {
         });
       }),
     ),
+  );
+});
+
+describe("what nobody else learns about the Connect admin routes", () => {
+  it("the public API description does not list them", () => {
+    const described = JSON.stringify(OpenApi.fromApi(RelayApi));
+    expect(described).toContain("/v1/client/environment-links");
+    expect(described).not.toContain("/v1/admin");
+    expect(described).not.toContain("Owner-only");
+  });
+
+  it.effect("a search's email or name stays out of the request trace", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      let handled = "";
+      const handler = Effect.gen(function* () {
+        handled = (yield* HttpServerRequest.HttpServerRequest).url;
+        return HttpServerResponse.empty({ status: 204 });
+      });
+      yield* traceRelayHttpRequestWith(handler, Layer.succeed(Tracer.Tracer, tracer)).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(
+            new Request("https://relay.test/v1/admin/accounts?query=alice%40example.test"),
+          ),
+        ),
+      );
+      // The route still gets the search it was sent.
+      expect(handled).toContain("alice%40example.test");
+      expect(spans[0]?.attributes.get("url.path")).toBe("/v1/admin/accounts");
+      const recorded = JSON.stringify(spans.map((span) => [...span.attributes.entries()]));
+      expect(recorded).not.toContain("alice");
+    }),
   );
 });
 

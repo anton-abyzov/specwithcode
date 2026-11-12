@@ -38,10 +38,16 @@ export class AdminIdentities extends Context.Service<
     readonly lookup: (
       userIds: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyMap<string, AdminIdentity>, AdminIdentityLookupFailed>;
-    /** Clerk user ids matching an email or name, at most ADMIN_IDENTITY_SEARCH_LIMIT. */
+    /**
+     * Clerk user ids matching an email or name, at most ADMIN_IDENTITY_SEARCH_LIMIT.
+     * `truncated` says Clerk knows more matches than it returned.
+     */
     readonly search: (
       query: string,
-    ) => Effect.Effect<ReadonlyArray<string>, AdminIdentityLookupFailed>;
+    ) => Effect.Effect<
+      { readonly userIds: ReadonlyArray<string>; readonly truncated: boolean },
+      AdminIdentityLookupFailed
+    >;
   }
 >()("studio-relay/admin/AdminIdentities") {}
 
@@ -104,7 +110,10 @@ export const layer = Layer.effect(
         const page = yield* bounded("search")(() =>
           users().getUserList({ query, limit: ADMIN_IDENTITY_SEARCH_LIMIT }),
         );
-        return page.data.map((user) => user.id);
+        return {
+          userIds: page.data.map((user) => user.id),
+          truncated: page.totalCount > page.data.length,
+        };
       }),
     });
   }),

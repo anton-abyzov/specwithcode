@@ -119,6 +119,8 @@ export const RelayAdminAccountsResponse = Schema.Struct({
   nextCursor: Schema.NullOr(Schema.String),
   /** "unavailable": Clerk did not answer, so this page has ids only. */
   identities: Schema.Literals(["read", "unavailable"]),
+  /** True when more people matched `query` than one search reads: narrow it. */
+  searchTruncated: Schema.Boolean,
 });
 export type RelayAdminAccountsResponse = typeof RelayAdminAccountsResponse.Type;
 
@@ -196,4 +198,6 @@ export const RelayAdminGroup = HttpApiGroup.make("admin")
     }).annotate(OpenApi.Summary, "One account's machines and phones"),
   )
   .annotate(OpenApi.Description, "Owner-only view of Connect accounts. Read-only.")
+  // Not in the public /openapi.json or /docs: nothing there tells a visitor the routes exist.
+  .annotate(OpenApi.Exclude, true)
   .middleware(RelayAdminAuth);

@@ -7,8 +7,12 @@ import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
 import * as ConnectAccounts from "../environments/ConnectAccounts.ts";
 import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
-import { relayConnectPromos, relayManagedTunnelLimits } from "../persistence/schema.ts";
-import { adminTestConfig, seedConnectAdmin } from "../testing/connectAdminFixtures.ts";
+import {
+  relayConnectPromos,
+  relayEnvironmentLinks,
+  relayManagedTunnelLimits,
+} from "../persistence/schema.ts";
+import { adminLink, adminTestConfig, seedConnectAdmin } from "../testing/connectAdminFixtures.ts";
 import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
 import * as ConnectAdminQueries from "./ConnectAdminQueries.ts";
 
@@ -108,16 +112,46 @@ describe("the Connect admin's read of the relay database", () => {
     }).pipe(Effect.provide(layer())),
   );
 
-  it.effect("starts over on a cursor it did not make", () =>
+  it.effect("ends the list on a cursor it did not make, so a caller's loop ends too", () =>
     Effect.gen(function* () {
       yield* seedConnectAdmin;
       const queries = yield* ConnectAdminQueries.ConnectAdminQueries;
-      for (const cursor of ["not-a-cursor", "e30", ""]) {
-        expect(ids((yield* queries.listAccounts({ limit: 2, cursor })).accounts)).toEqual([
-          "user_key",
-          "user_phone",
-        ]);
+      for (const cursor of ["not-a-cursor", "e30"]) {
+        expect(yield* queries.listAccounts({ limit: 2, cursor })).toEqual({
+          accounts: [],
+          nextCursor: null,
+        });
       }
+      // No cursor at all is the first page.
+      expect(ids((yield* queries.listAccounts({ limit: 2, cursor: "" })).accounts)).toEqual([
+        "user_key",
+        "user_phone",
+      ]);
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("pages through accounts first seen at the same moment", () =>
+    Effect.gen(function* () {
+      const db = yield* RelayDb.RelayDb;
+      const at = "2026-11-05T00:00:00.000Z";
+      yield* db
+        .insert(relayEnvironmentLinks)
+        .values(
+          ["user_c", "user_a", "user_d", "user_b"].map((userId) =>
+            adminLink(userId, `m-${userId}`, userId, at),
+          ),
+        );
+      const queries = yield* ConnectAdminQueries.ConnectAdminQueries;
+      const seen: Array<string> = [];
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const page = yield* queries.listAccounts({ limit: 1, cursor });
+        seen.push(...ids(page.accounts));
+        cursor = page.nextCursor ?? undefined;
+        pages += 1;
+      } while (cursor !== undefined && pages < 10);
+      expect(seen).toEqual(["user_d", "user_c", "user_b", "user_a"]);
     }).pipe(Effect.provide(layer())),
   );
 
