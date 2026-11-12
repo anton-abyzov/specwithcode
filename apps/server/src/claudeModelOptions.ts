@@ -24,6 +24,41 @@ export interface CompiledClaudeModelSelection {
   readonly queryIdentity: string;
 }
 
+const DEFERRED_SETTING_LABELS: Readonly<Record<string, string>> = {
+  alwaysThinkingEnabled: "thinking",
+  fastMode: "fast mode",
+};
+
+/**
+ * The quiet note shown when a process that still runs background work keeps
+ * its selection: what was chosen, and that it waits. Both arguments are
+ * `queryIdentity` values.
+ */
+export function describeDeferredClaudeSelection(
+  openIdentity: string,
+  nextIdentity: string,
+): string {
+  type Identity = {
+    readonly apiModelId: string;
+    readonly effort: string | null;
+    readonly settings: Readonly<Record<string, boolean | undefined>>;
+  };
+  const open = JSON.parse(openIdentity) as Identity;
+  const next = JSON.parse(nextIdentity) as Identity;
+  const parts: Array<string> = [];
+  if (open.apiModelId !== next.apiModelId) parts.push(`model ${next.apiModelId}`);
+  if (open.effort !== next.effort) parts.push(`effort ${next.effort ?? "default"}`);
+  for (const [key, label] of Object.entries(DEFERRED_SETTING_LABELS)) {
+    if (open.settings[key] !== next.settings[key]) {
+      parts.push(`${label} ${next.settings[key] === true ? "on" : "off"}`);
+    }
+  }
+  if (parts.length === 0) return "The new model options apply when background work finishes.";
+  const list =
+    parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} ${parts.length === 1 ? "applies" : "apply"} when background work finishes.`;
+}
+
 /** Compile every Claude model option at the provider boundary. */
 export function compileClaudeModelSelection(
   selection: ModelSelection,
