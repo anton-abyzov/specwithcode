@@ -43,11 +43,6 @@ vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
   machineNickname: (id: string, label?: string | null) => label ?? id,
 }));
-vi.mock("./JoinMachineSteps", () => ({
-  MachineRoleStep: () => null,
-  JoinMachineStep: () => null,
-  JoinedMachineStep: () => null,
-}));
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
 vi.mock("@specweave-studio/client-runtime/state/session", () => ({
   createEnvironmentSessionAtoms: () => ({

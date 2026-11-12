@@ -483,12 +483,12 @@ const main = async () => {
 
   const nav = page.getByRole("navigation", { name: "Projects and chats" });
   const wizardSteps = [];
-  // First-run wizard, as in installed-e2e.mjs: choose this machine as the main
-  // one, then skip the agent and project-import steps.
+  // First-run wizard, as in installed-e2e.mjs: go on without an account,
+  // then skip the agent and project-import steps.
   const finishWizard = async () => {
     const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
     const wizardButtons = [
-      /^Start as a main machine|up as my main machine/u,
+      /^Use without an account$/u,
       /^Do not import projects$/u,
       /^Skip/u,
       /^Continue( without an agent)?$/u,

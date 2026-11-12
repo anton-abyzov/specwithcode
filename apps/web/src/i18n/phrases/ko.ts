@@ -4072,12 +4072,13 @@ export const ko: PhraseCatalog = {
     "아래에서 선택하고 허용을 누르세요. 복사하거나 붙여넣을 것이 없습니다.",
   "If this is your first machine, there is nothing to choose: continue.":
     "첫 번째 컴퓨터라면 선택할 것이 없습니다. 계속하세요.",
-  "Set up this {machine}": "이 {machine} 설정",
+  "Your phone: get SpecWithCode at specwithcode.com/get and sign in as {account}. This {machine} shows up there by itself.":
+    "휴대폰: specwithcode.com/get에서 SpecWithCode를 받고 {account} 계정으로 로그인하세요. 이 {machine}가 자동으로 표시됩니다.",
   "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
     "한 번만 로그인하세요. 이 {machine}는 자동으로 계정에 연결되고 다른 컴퓨터를 표시합니다.",
   "Turn on SpecWithCode Connect": "SpecWithCode Connect 켜기",
   "Set up other computers too": "다른 컴퓨터도 설정",
-  "Continue without an account": "계정 없이 계속",
+  "Use without an account": "계정 없이 사용",
   "Link this {machine}": "이 {machine} 연결",
   "Happens by itself after you sign in.": "로그인하면 자동으로 진행됩니다.",
   "Checking this {machine}…": "이 {machine} 확인 중…",

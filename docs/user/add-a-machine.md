@@ -138,10 +138,10 @@ or a shared document.
 
 ### In the app (1.0.44 and later)
 
-**On a new install**, the first screen asks **How will you use this Mac?**
-(**this machine** on Linux). Choose **Connect to an existing one**. This skips
-setting up agents and projects on the worker. **Start as a main machine** sets
-up agents and projects here instead.
+**On a new install**, setup asks no question about what the machine is for.
+With the same SpecWithCode Connect account on both machines no line is needed:
+sign in on the first screen and choose the main machine there. For a line,
+close setup first, then follow the next step.
 
 **On a Mac that is already set up**, open **Settings → Machines**. Next to **Add this machine to another one**, choose **Invite
 this machine**.

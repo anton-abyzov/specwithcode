@@ -4110,12 +4110,13 @@ export const ru: PhraseCatalog = {
     "Выберите его ниже и нажмите «Разрешить». Ничего копировать и вставлять не нужно.",
   "If this is your first machine, there is nothing to choose: continue.":
     "Если это ваш первый компьютер, выбирать нечего: продолжайте.",
-  "Set up this {machine}": "Настроить этот {machine}",
+  "Your phone: get SpecWithCode at specwithcode.com/get and sign in as {account}. This {machine} shows up there by itself.":
+    "Телефон: установите SpecWithCode с specwithcode.com/get и войдите как {account}. Этот {machine} появится там сам.",
   "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
     "Войдите один раз. Этот {machine} сам привяжется к вашей учётной записи и покажет другие ваши компьютеры.",
   "Turn on SpecWithCode Connect": "Включить SpecWithCode Connect",
   "Set up other computers too": "Настроить и другие компьютеры",
-  "Continue without an account": "Продолжить без учётной записи",
+  "Use without an account": "Использовать без учётной записи",
   "Link this {machine}": "Привязать этот {machine}",
   "Happens by itself after you sign in.": "Происходит само после входа.",
   "Checking this {machine}…": "Проверяем этот {machine}…",

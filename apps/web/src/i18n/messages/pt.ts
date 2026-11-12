@@ -23,7 +23,6 @@ export const pt: Messages = {
   "wizard.back": "Voltar",
   "wizard.retry": "Tentar de novo",
   "wizard.closeTerminal": "Fechar",
-  "wizard.toast.choiceNotSaved": "Não foi possível salvar sua escolha",
   "wizard.toast.settingsNotSaved": "Não foi possível salvar suas configurações. Tente de novo.",
   "wizard.toast.historyNotImported": "Parte do histórico não foi importada",
   "wizard.toast.imported": {
@@ -108,31 +107,6 @@ export const pt: Messages = {
   "wizard.import.otherFolders": "Outras pastas",
   "wizard.import.folderCount": { one: "{count} pasta", other: "{count} pastas" },
   "wizard.import.now": "agora",
-
-  "wizard.role.title": "Como você vai usar este {machine}?",
-  "wizard.role.changeLater": "Você pode mudar isso depois.",
-  "wizard.role.main.title": "Começar como máquina principal",
-  "wizard.role.main.description":
-    "Configure agentes e projetos neste {machine}. Você pode adicionar outras máquinas a ele depois.",
-  "wizard.role.join.title": "Conectar a uma existente",
-  "wizard.role.join.description":
-    "Este {machine} trabalha para sua máquina principal em outro lugar. Você vincula o SpecWithCode Connect aqui e depois cola uma linha na máquina principal.",
-  "wizard.role.later": "Decidir depois",
-  "wizard.role.laterHint":
-    "Explore ou atualize primeiro. Para entrar depois, escolha Entrar em uma máquina principal em Configurações > Conexões.",
-  "wizard.join.title": "Conectar este {machine} à sua máquina principal",
-  "wizard.join.step1": "Entre no SpecWithCode Connect e vincule este {machine}.",
-  "wizard.join.step2":
-    "Cole o ID de ambiente da sua máquina principal (em Configurações > Conexões nela) e gere a linha.",
-  "wizard.join.step3":
-    "Cole a linha na máquina principal em Configurações > Conexões > Adicionar máquina em até uma hora.",
-  "wizard.join.makeLine": "Gerar a linha",
-  "wizard.join.pasted": "Já colei",
-  "wizard.joined.title": "Este {machine} está pronto para sua máquina principal",
-  "wizard.joined.description":
-    "Ele fica pronto assim que você colar a linha na máquina principal em Configurações > Conexões > Adicionar máquina. Escolha Permitir workers no cartão dele lá para que coordenadores possam iniciar trabalho aqui, e mantenha o app aberto neste {machine}.",
-  "wizard.joined.newLine": "Gerar uma nova linha",
-  "wizard.joined.fullSetup": "Configurar este {machine} como máquina principal",
 
   "update.downloadFailed": "Não foi possível baixar a atualização",
   "update.startFailed": "Não foi possível iniciar o download da atualização",

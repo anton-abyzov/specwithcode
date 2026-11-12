@@ -31,7 +31,6 @@ export const en = {
   "wizard.back": "Back",
   "wizard.retry": "Retry",
   "wizard.closeTerminal": "Close",
-  "wizard.toast.choiceNotSaved": "Could not save your choice",
   "wizard.toast.settingsNotSaved": "Your settings could not be saved. Try again.",
   "wizard.toast.historyNotImported": "Some history was not imported",
   "wizard.toast.imported": { one: "Imported {count} thread", other: "Imported {count} threads" },
@@ -109,31 +108,6 @@ export const en = {
   "wizard.import.otherFolders": "Other folders",
   "wizard.import.folderCount": { one: "{count} folder", other: "{count} folders" },
   "wizard.import.now": "now",
-
-  "wizard.role.title": "How will you use this {machine}?",
-  "wizard.role.changeLater": "You can change this later.",
-  "wizard.role.main.title": "Start as a main machine",
-  "wizard.role.main.description":
-    "Set up agents and projects on this {machine}. You can add other machines to it later.",
-  "wizard.role.join.title": "Connect to an existing one",
-  "wizard.role.join.description":
-    "This {machine} does work for your main machine elsewhere. You link SpecWithCode Connect here, then paste one line on the main machine.",
-  "wizard.role.later": "Decide later",
-  "wizard.role.laterHint":
-    "Look around or update first. To join later, choose Join a main machine under Settings > Machines.",
-  "wizard.join.title": "Connect this {machine} to your main machine",
-  "wizard.join.step1": "Sign in to SpecWithCode Connect and link this {machine}.",
-  "wizard.join.step2":
-    "Paste your main machine's environment ID (Settings > Machines there) and make the line.",
-  "wizard.join.step3":
-    "Paste the line on the main machine under Settings > Machines > Add a machine within an hour.",
-  "wizard.join.makeLine": "Make the line",
-  "wizard.join.pasted": "I pasted it",
-  "wizard.joined.title": "This {machine} is ready for your main machine",
-  "wizard.joined.description":
-    "It is ready once you paste the line on your main machine under Settings > Machines > Add a machine. Then choose Allow on its card there, on the line “Agents on … can start work on” this machine, and keep the app running on this {machine}.",
-  "wizard.joined.newLine": "Make a new line",
-  "wizard.joined.fullSetup": "Set this {machine} up as a main machine instead",
 
   // ── App update during setup ───────────────────────────────
   "update.downloadFailed": "Could not download update",

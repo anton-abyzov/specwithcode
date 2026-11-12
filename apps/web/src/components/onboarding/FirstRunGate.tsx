@@ -37,10 +37,8 @@ import { Button } from "../ui/button";
  * Nothing renders while pending — no shell, no EventRouter (whose welcome
  * payload would otherwise navigate into a thread), no dialogs.
  *
- * Decision order: a machine whose first-run choice was "joined" (it only
- * serves a main machine elsewhere) goes to the welcome flow, which shows that
- * status, until the person closes setup. Closing, or choosing to decide later,
- * sets `onboardingCompletedAt`, which resolves to the app as soon
+ * Decision order: closing setup sets `onboardingCompletedAt`, which resolves
+ * to the app as soon
  * as settings hydrate (the common case, no server round-trip). A `null` flag also
  * covers installs that predate the field, so it alone is not enough — the gate
  * waits for environment shells to bootstrap and inspects the workspace.
@@ -88,7 +86,6 @@ export function FirstRunGate({
   const hydrated = hydrationStatus === "ready";
   const completeOnboarding = useCompleteOnboarding();
   const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
-  const joined = useClientSettings((settings) => settings.onboardingMachineRole === "joined");
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady: environmentCatalogReady } = useEnvironments();
   const projects = useProjects();
@@ -141,7 +138,6 @@ export function FirstRunGate({
         enabled,
         hydrated,
         completed: onboardingCompletedAt !== null,
-        joined,
         bootstrapped,
         authoritative: primaryShellLive,
         workspaceAuthoritative: workspaceEvidenceLive,

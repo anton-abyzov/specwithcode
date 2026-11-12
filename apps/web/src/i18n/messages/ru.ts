@@ -20,7 +20,6 @@ export const ru: Messages = {
   "wizard.back": "Назад",
   "wizard.retry": "Повторить",
   "wizard.closeTerminal": "Закрыть",
-  "wizard.toast.choiceNotSaved": "Не удалось сохранить выбор",
   "wizard.toast.settingsNotSaved": "Не удалось сохранить настройки. Попробуйте ещё раз.",
   "wizard.toast.historyNotImported": "Часть истории не импортирована",
   "wizard.toast.imported": {
@@ -118,31 +117,6 @@ export const ru: Messages = {
     other: "{count} папки",
   },
   "wizard.import.now": "сейчас",
-
-  "wizard.role.title": "Как вы будете использовать этот {machine}?",
-  "wizard.role.changeLater": "Это можно изменить позже.",
-  "wizard.role.main.title": "Сделать основным компьютером",
-  "wizard.role.main.description":
-    "Настройте здесь агентов и проекты. Другие компьютеры можно подключить к нему позже.",
-  "wizard.role.join.title": "Подключиться к существующему",
-  "wizard.role.join.description":
-    "Этот {machine} выполняет работу для вашего основного компьютера. Здесь вы подключаете SpecWithCode Connect, а затем вставляете одну строку на основном компьютере.",
-  "wizard.role.later": "Решить позже",
-  "wizard.role.laterHint":
-    "Сначала осмотритесь или обновитесь. Чтобы подключиться позже, выберите «Подключиться к основному компьютеру» в разделе Настройки > Подключения.",
-  "wizard.join.title": "Подключите этот {machine} к основному компьютеру",
-  "wizard.join.step1": "Войдите в SpecWithCode Connect и привяжите этот {machine}.",
-  "wizard.join.step2":
-    "Вставьте ID окружения основного компьютера (там: Настройки > Подключения) и создайте строку.",
-  "wizard.join.step3":
-    "В течение часа вставьте строку на основном компьютере в разделе Настройки > Подключения > Добавить компьютер.",
-  "wizard.join.makeLine": "Создать строку",
-  "wizard.join.pasted": "Строка вставлена",
-  "wizard.joined.title": "Этот {machine} готов к работе с основным компьютером",
-  "wizard.joined.description":
-    "Всё заработает, когда вы вставите строку на основном компьютере в разделе Настройки > Подключения > Добавить компьютер. Выберите там «Разрешить исполнителей» на его карточке, чтобы координаторы могли запускать здесь работу, и не закрывайте приложение на этом устройстве.",
-  "wizard.joined.newLine": "Создать новую строку",
-  "wizard.joined.fullSetup": "Настроить этот {machine} как основной компьютер",
 
   "update.downloadFailed": "Не удалось скачать обновление",
   "update.startFailed": "Не удалось начать загрузку обновления",

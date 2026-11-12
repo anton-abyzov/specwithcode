@@ -24,35 +24,8 @@ const freshWorkspace = {
 } as const;
 
 describe("resolveFirstRunDecision", () => {
-  it("opens a machine that joined a main machine elsewhere to its status, even with workers' threads", () => {
-    expect(
-      resolveFirstRunDecision({
-        ...freshWorkspace,
-        joined: true,
-        projectCount: 3,
-        threadCount: 5,
-        workspaceFresh: false,
-      }),
-    ).toEqual({ decision: "wizard", persistCompletion: false });
-    expect(resolveFirstRunDecision({ ...freshWorkspace, joined: true, hydrated: false })).toEqual({
-      decision: "pending",
-      persistCompletion: false,
-    });
-  });
-
-  it("opens the app for a joined machine once the person closed setup", () => {
-    expect(resolveFirstRunDecision({ ...freshWorkspace, joined: true, completed: true })).toEqual({
-      decision: "app",
-      persistCompletion: false,
-    });
-  });
-
-  it("never sends someone who already finished first run back to the choice", () => {
+  it("never sends someone who already finished first run back to setup", () => {
     expect(resolveFirstRunDecision({ ...freshWorkspace, completed: true })).toEqual({
-      decision: "app",
-      persistCompletion: false,
-    });
-    expect(resolveFirstRunDecision({ ...freshWorkspace, completed: true, joined: false })).toEqual({
       decision: "app",
       persistCompletion: false,
     });

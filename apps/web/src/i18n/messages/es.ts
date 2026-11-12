@@ -20,7 +20,6 @@ export const es: Messages = {
   "wizard.back": "Atrás",
   "wizard.retry": "Reintentar",
   "wizard.closeTerminal": "Cerrar",
-  "wizard.toast.choiceNotSaved": "No se pudo guardar tu elección",
   "wizard.toast.settingsNotSaved": "No se pudo guardar la configuración. Inténtalo de nuevo.",
   "wizard.toast.historyNotImported": "Parte del historial no se importó",
   "wizard.toast.imported": { one: "Se importó {count} hilo", other: "Se importaron {count} hilos" },
@@ -103,31 +102,6 @@ export const es: Messages = {
   "wizard.import.otherFolders": "Otras carpetas",
   "wizard.import.folderCount": { one: "{count} carpeta", other: "{count} carpetas" },
   "wizard.import.now": "ahora",
-
-  "wizard.role.title": "¿Cómo usarás este {machine}?",
-  "wizard.role.changeLater": "Puedes cambiarlo después.",
-  "wizard.role.main.title": "Usarlo como equipo principal",
-  "wizard.role.main.description":
-    "Configura agentes y proyectos en este {machine}. Puedes añadirle otros equipos después.",
-  "wizard.role.join.title": "Conectarlo a uno existente",
-  "wizard.role.join.description":
-    "Este {machine} trabaja para tu equipo principal, que está en otro lugar. Vinculas SpecWithCode Connect aquí y luego pegas una línea en el equipo principal.",
-  "wizard.role.later": "Decidir después",
-  "wizard.role.laterHint":
-    "Explora o actualiza primero. Para unirte después, elige Unirse a un equipo principal en Configuración > Conexiones.",
-  "wizard.join.title": "Conecta este {machine} a tu equipo principal",
-  "wizard.join.step1": "Inicia sesión en SpecWithCode Connect y vincula este {machine}.",
-  "wizard.join.step2":
-    "Pega el ID de entorno de tu equipo principal (allí, en Configuración > Conexiones) y crea la línea.",
-  "wizard.join.step3":
-    "Pega la línea en el equipo principal, en Configuración > Conexiones > Añadir un equipo, en menos de una hora.",
-  "wizard.join.makeLine": "Crear la línea",
-  "wizard.join.pasted": "Ya la pegué",
-  "wizard.joined.title": "Este {machine} está listo para tu equipo principal",
-  "wizard.joined.description":
-    "Quedará listo cuando pegues la línea en tu equipo principal, en Configuración > Conexiones > Añadir un equipo. Elige Permitir trabajadores en su tarjeta para que los coordinadores puedan iniciar trabajo aquí, y mantén la app abierta en este {machine}.",
-  "wizard.joined.newLine": "Crear una línea nueva",
-  "wizard.joined.fullSetup": "Configurar este {machine} como equipo principal",
 
   "update.downloadFailed": "No se pudo descargar la actualización",
   "update.startFailed": "No se pudo iniciar la descarga de la actualización",

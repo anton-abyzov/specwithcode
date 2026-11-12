@@ -152,7 +152,7 @@ const mainButtons = () =>
 
 it("starts with one thing to do: sign in", async () => {
   await render();
-  expect(container.querySelector("h1")?.textContent).toBe("Set up this Mac");
+  expect(container.querySelector("h1")?.textContent).toBe("Sign in to SpecWithCode Connect");
   expect(row("sign-in").dataset.state).toBe("next");
   expect(row("link").textContent).toContain("Happens by itself after you sign in.");
   expect(row("machines").dataset.state).toBe("later");
@@ -167,7 +167,10 @@ it("starts with one thing to do: sign in", async () => {
 
 it("works without an account", async () => {
   await render();
-  await act(async () => button("Continue without an account")!.click());
+  const link = button("Use without an account")!;
+  // A small link under the rows, not a footer button.
+  expect(link.closest('[data-slot="wizard-step-footer"]')).toBeNull();
+  await act(async () => link.click());
   expect(onContinue).toHaveBeenCalledOnce();
   expect(world.reconcile).not.toHaveBeenCalled();
 });
@@ -352,7 +355,7 @@ it("opens on the way on, not on the side path, for the keyboard", async () => {
 
 it("keeps Enter off going on while signing in is still the main action", async () => {
   await render();
-  expect(button("Continue without an account")!.hasAttribute("data-wizard-primary")).toBe(false);
+  expect(button("Use without an account")!.hasAttribute("data-wizard-primary")).toBe(false);
   expect(container.querySelector("[data-wizard-primary]")).toBeNull();
 });
 
@@ -376,4 +379,18 @@ it("forgets a sign-in it opened when setup closes", async () => {
   await act(async () => root.unmount());
   expect(readConnectSignInStarted()).toBeNull();
   root = createRoot(container);
+});
+
+it("says in one line how the phone joins, with the account named, once linked", async () => {
+  await render();
+  expect(container.querySelector('[data-testid="sign-in-first-phone"]')).toBeNull();
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  signIn();
+  world.link.data = { linked: true };
+  await render();
+  expect(container.querySelector('[data-testid="sign-in-first-phone"]')?.textContent).toBe(
+    "Your phone: get SpecWithCode at specwithcode.com/get and sign in as ada@example.com. This Mac shows up there by itself.",
+  );
+  expect(button("Use without an account")).toBeUndefined();
 });

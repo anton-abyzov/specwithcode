@@ -1,17 +1,10 @@
-import type {
-  EnvironmentId,
-  OnboardingMachineRole,
-  ScopedProjectRef,
-} from "@specweave-studio/contracts";
-import { AuthAccessWriteScope } from "@specweave-studio/contracts";
+import type { EnvironmentId, ScopedProjectRef } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
-import { JoinedMachineStep, JoinMachineStep, MachineRoleStep } from "./JoinMachineSteps";
 import { SignInFirstStep } from "./SignInFirstStep";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
-import { useEnvironmentScope } from "../../state/session";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { toastManager } from "../ui/toast";
 import { useT, useTx } from "../../i18n";
@@ -37,51 +30,40 @@ import {
  * of stages, each step draws the same footer below the scrolling panel, Enter
  * presses the step's primary, and Escape leaves setup as the close button does.
  *
- * On a first run in the desktop app with SpecWithCode Connect it starts at the
- * sign-in (`SignInFirstStep`): that links this machine, lists the account's
- * other machines and lets one start work here, with no role question.
- * Elsewhere, on a first run with a server here it first asks what this machine is for.
- * "Connect to an existing one" makes the invitation line for a main machine
- * elsewhere and then opens to that status, skipping agents and projects; the
- * main-machine choice continues with the steps above, unchanged. "Decide later"
- * and the close button, on any step, leave setup for the app with nothing
- * chosen: there the sidebar can update an old install first. Closing
- * completes onboarding, so it does not come back on the next launch.
+ * Setup asks no question about what this machine is for. On a first run in
+ * the desktop app with SpecWithCode Connect it starts at the sign-in
+ * (`SignInFirstStep`): that links this machine, lists the account's other
+ * machines and lets one start work here. In a browser, or in a build without
+ * Connect, it starts at the connection step. The close button, on any step,
+ * leaves setup for the app with nothing chosen: there the sidebar can update
+ * an old install first. Closing completes onboarding, so it does not come
+ * back on the next launch.
  */
 
-type WizardStep = "start" | "role" | "join" | "joined" | "connection" | "agents" | "import";
+type WizardStep = "start" | "connection" | "agents" | "import";
 /** A stage of the bar. Several steps can belong to one stage. */
 type WizardStageId = "connect" | "agents" | "projects";
 const STAGE_OF_STEP: Record<WizardStep, WizardStageId> = {
   start: "connect",
-  role: "connect",
-  join: "connect",
-  joined: "connect",
   connection: "connect",
   agents: "agents",
   import: "projects",
 };
 
-export interface WelcomeMachineRole {
-  /** Offer the choice: a first run (not finished before) with a server here. */
-  readonly offer: boolean;
-  readonly role: OnboardingMachineRole | null;
-  readonly onChange: (role: OnboardingMachineRole) => Promise<void>;
-}
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 export function WelcomeWizard({
   localAvailable,
   onDone,
   resumeEnvironmentId,
-  machineRole,
+  firstRun = false,
 }: {
   /** Whether this client is authenticated to the server serving the app. */
   readonly localAvailable: boolean;
   readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
-  /** Absent: no machine choice, the setup starts at Connect. */
-  readonly machineRole?: WelcomeMachineRole | undefined;
+  /** A first run (setup not finished before) with a server on this machine. */
+  readonly firstRun?: boolean | undefined;
 }) {
   const t = useT();
   const tx = useTx();
@@ -89,17 +71,10 @@ export function WelcomeWizard({
   // Until the person moves, the step follows saved settings, which can
   // finish loading after the first render.
   const [chosenStep, setStep] = useState<WizardStep | null>(resumeEnvironmentId ? "agents" : null);
-  // The desktop app with SpecWithCode Connect asks no role question: it starts
-  // at the sign-in, which links this machine and lists the account's others.
+  // A first run in the desktop app with SpecWithCode Connect starts at the
+  // sign-in, which links this machine and lists the account's others.
   const signInFirst = hasCloudPublicConfig() && window.desktopBridge !== undefined;
-  const entryStep: WizardStep =
-    machineRole?.role === "joined"
-      ? "joined"
-      : machineRole?.offer && machineRole.role === null
-        ? signInFirst
-          ? "start"
-          : "role"
-        : "connection";
+  const entryStep: WizardStep = firstRun && signInFirst ? "start" : "connection";
   const step: WizardStep = chosenStep ?? entryStep;
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
@@ -112,7 +87,6 @@ export function WelcomeWizard({
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const primaryEnvironment = usePrimaryEnvironment();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
-  const canInvite = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
   const machineNoun = t(
     primaryEnvironment?.serverConfig?.environment.platform.os === "darwin"
       ? "wizard.noun.mac"
@@ -140,15 +114,6 @@ export function WelcomeWizard({
         : "import";
   const goToStage = (stage: WizardStageId | null) => {
     if (stage !== null) setStep(stepOfStage(stage));
-  };
-  const chooseRole = (role: OnboardingMachineRole) => {
-    void machineRole?.onChange(role).catch(() =>
-      toastManager.add({
-        type: "error",
-        title: t("wizard.toast.choiceNotSaved"),
-        description: t("wizard.toast.settingsNotSaved"),
-      }),
-    );
   };
   useEffect(() => {
     const newComputers = environments.filter(
@@ -265,35 +230,6 @@ export function WelcomeWizard({
             onOtherComputers={() => setStep("connection")}
           />
         ) : null
-      ) : step === "role" ? (
-        <MachineRoleStep
-          machineNoun={machineNoun}
-          onJoin={() => setStep("join")}
-          onMain={() => {
-            chooseRole("main");
-            setStep("connection");
-          }}
-          onLater={leaveSetup}
-        />
-      ) : step === "join" ? (
-        <JoinMachineStep
-          environmentId={primaryEnvironmentId}
-          canManage={canInvite}
-          defaultName={primaryEnvironment?.label ?? null}
-          machineNoun={machineNoun}
-          onBack={() => setStep(machineRole?.role === "joined" ? "joined" : "role")}
-          onJoined={() => chooseRole("joined")}
-          onDone={() => setStep("joined")}
-        />
-      ) : step === "joined" ? (
-        <JoinedMachineStep
-          machineNoun={machineNoun}
-          onNewLine={() => setStep("join")}
-          onFullSetup={() => {
-            chooseRole("main");
-            setStep("connection");
-          }}
-        />
       ) : step === "connection" ? (
         <ConnectionStep
           // Reached from the sign-in step: that step is one press back.

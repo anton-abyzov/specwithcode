@@ -37,12 +37,6 @@ interface FirstRunDecisionInput {
   readonly enabled: boolean;
   readonly hydrated: boolean;
   readonly completed: boolean;
-  /**
-   * The person chose on first run that this machine only serves a main
-   * machine elsewhere: it opens to that status, in the welcome flow, until
-   * the person closes setup (which completes it).
-   */
-  readonly joined?: boolean;
   readonly bootstrapped: boolean;
   readonly authoritative: boolean;
   readonly workspaceAuthoritative: boolean;
@@ -135,10 +129,6 @@ export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
 } {
   if (!input.enabled) {
     return { decision: "app", persistCompletion: false };
-  }
-
-  if (input.hydrated && input.joined === true && !input.completed) {
-    return { decision: "wizard", persistCompletion: false };
   }
 
   if (input.hydrated && input.completed) {

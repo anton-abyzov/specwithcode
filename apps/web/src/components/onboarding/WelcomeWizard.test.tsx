@@ -13,11 +13,6 @@ const mocks = vi.hoisted(() => ({
   projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
 }));
 // The machine choice and its invitation have their own tests.
-vi.mock("./JoinMachineSteps", () => ({
-  MachineRoleStep: () => null,
-  JoinMachineStep: () => null,
-  JoinedMachineStep: () => null,
-}));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => true,
   useEnvironmentsWithScope: (environments: Array<{ environmentId: string }>) =>

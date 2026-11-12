@@ -23,7 +23,6 @@ export const fr: Messages = {
   "wizard.back": "Retour",
   "wizard.retry": "Réessayer",
   "wizard.closeTerminal": "Fermer",
-  "wizard.toast.choiceNotSaved": "Impossible d’enregistrer votre choix",
   "wizard.toast.settingsNotSaved": "Impossible d’enregistrer vos réglages. Réessayez.",
   "wizard.toast.historyNotImported": "Une partie de l’historique n’a pas été importée",
   "wizard.toast.imported": { one: "{count} fil importé", other: "{count} fils importés" },
@@ -108,31 +107,6 @@ export const fr: Messages = {
   "wizard.import.otherFolders": "Autres dossiers",
   "wizard.import.folderCount": { one: "{count} dossier", other: "{count} dossiers" },
   "wizard.import.now": "maintenant",
-
-  "wizard.role.title": "Comment allez-vous utiliser ce {machine} ?",
-  "wizard.role.changeLater": "Vous pourrez changer cela plus tard.",
-  "wizard.role.main.title": "Commencer comme machine principale",
-  "wizard.role.main.description":
-    "Configurez des agents et des projets sur ce {machine}. Vous pourrez y ajouter d’autres machines plus tard.",
-  "wizard.role.join.title": "Se connecter à une machine existante",
-  "wizard.role.join.description":
-    "Ce {machine} travaille pour votre machine principale située ailleurs. Vous associez SpecWithCode Connect ici, puis vous collez une ligne sur la machine principale.",
-  "wizard.role.later": "Décider plus tard",
-  "wizard.role.laterHint":
-    "Explorez ou mettez à jour d’abord. Pour rejoindre plus tard, choisissez « Rejoindre une machine principale » dans Réglages > Connexions.",
-  "wizard.join.title": "Connecter ce {machine} à votre machine principale",
-  "wizard.join.step1": "Connectez-vous à SpecWithCode Connect et associez ce {machine}.",
-  "wizard.join.step2":
-    "Collez l’ID d’environnement de votre machine principale (Réglages > Connexions sur celle-ci) et générez la ligne.",
-  "wizard.join.step3":
-    "Collez la ligne sur la machine principale dans Réglages > Connexions > Ajouter une machine dans l’heure.",
-  "wizard.join.makeLine": "Générer la ligne",
-  "wizard.join.pasted": "Je l’ai collée",
-  "wizard.joined.title": "Ce {machine} est prêt pour votre machine principale",
-  "wizard.joined.description":
-    "Il sera prêt dès que vous aurez collé la ligne sur votre machine principale dans Réglages > Connexions > Ajouter une machine. Choisissez « Autoriser les workers » sur sa carte pour que les coordinateurs puissent démarrer du travail ici, et laissez l’app ouverte sur ce {machine}.",
-  "wizard.joined.newLine": "Générer une nouvelle ligne",
-  "wizard.joined.fullSetup": "Configurer plutôt ce {machine} comme machine principale",
 
   "update.downloadFailed": "Impossible de télécharger la mise à jour",
   "update.startFailed": "Impossible de lancer le téléchargement de la mise à jour",

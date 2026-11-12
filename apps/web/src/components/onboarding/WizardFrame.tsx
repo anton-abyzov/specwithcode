@@ -251,9 +251,9 @@ export function escapeLeavesSetup(target: EventTarget | null): boolean {
   // With nothing focused the key is setup's, unless another dialog is open over it.
   return (
     target === document.body &&
-    [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].every(
-      (dialog) => dialog.closest(popup) !== null,
-    )
+    [
+      ...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"]'),
+    ].every((dialog) => dialog.closest(popup) !== null)
   );
 }
 
