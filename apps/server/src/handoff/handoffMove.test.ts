@@ -104,6 +104,8 @@ const scenario = (
   options: {
     readonly linked?: boolean;
     readonly destinationSettings?: Partial<ServerSettingsValue>;
+    /** The destination project's Use worktrees switch; on unless a case turns it off. */
+    readonly destinationUsesWorktrees?: boolean;
     readonly destinationRepositoryName?: string;
     readonly signedIn?: boolean;
     readonly sourceMembers?: boolean;
@@ -245,6 +247,15 @@ const scenario = (
           getSettings: Effect.succeed({
             ...DEFAULT_SERVER_SETTINGS,
             ...options.destinationSettings,
+            projectSettingsOverrides: {
+              ...options.destinationSettings?.projectSettingsOverrides,
+              [destinationProject]: {
+                ...options.destinationSettings?.projectSettingsOverrides?.[destinationProject],
+                ...(options.destinationUsesWorktrees === false
+                  ? {}
+                  : { defaultThreadEnvMode: "worktree" as const }),
+              },
+            },
           }),
         } as never),
         Layer.succeed(ServerConfig.ServerConfig, { worktreesDir } as never),
@@ -609,6 +620,28 @@ describe("handoff between two machines", () => {
       );
     }),
   );
+  it.effect("lands in the destination's project folder when its Use worktrees switch is off", () =>
+    Effect.gen(function* () {
+      const { destination, moves, destinationRoot } = yield* scenario({
+        destinationUsesWorktrees: false,
+      });
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      const base = git(destinationRoot, "rev-parse", "HEAD");
+      yield* handOff(moves);
+      expect(destination.launches[0]!.workspaceStrategy).toEqual({ type: "root" });
+      const read = (file: string) =>
+        NodeFS.readFileSync(NodePath.join(destinationRoot, file), "utf8");
+      expect(read("app.ts")).toBe("export const a = 2;\n");
+      expect(read("notes.md")).toBe("half done\n");
+      // The destination's own secret file stays as it was.
+      expect(read(".env.local")).toBe("TOKEN=minis\n");
+      expect(git(destinationRoot, "rev-parse", "HEAD")).toBe(base);
+      expect(
+        git(destinationRoot, "worktree", "list", "--porcelain").match(/^worktree /gm),
+      ).toHaveLength(1);
+    }),
+  );
+
   it.effect("moves a thread stopped by its usage limit and resumes it on the destination", () =>
     Effect.gen(function* () {
       const { source, destination, moves, destinationRoot } = yield* scenario();
