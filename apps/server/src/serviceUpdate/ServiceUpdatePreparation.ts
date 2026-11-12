@@ -88,6 +88,7 @@ import {
   type ServiceUpdateBlockerKind,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { updatesMayPauseWork } from "@specweave-studio/shared/updatePause";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -945,6 +946,7 @@ export const makePartsWithTimings = (
           blockers,
           folderCopies: copiesNow,
           ...(processes > 0 ? { leftoverProcesses: processes } : {}),
+          ...(current === null ? {} : { pauseWorkForUpdates: updatesMayPauseWork(current) }),
         };
       });
 

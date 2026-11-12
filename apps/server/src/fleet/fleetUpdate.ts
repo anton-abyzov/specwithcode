@@ -17,6 +17,11 @@
  *   once but switches over only once nothing runs here (`awaitQuiet`): no turn,
  *   terminal or folder copy, as `update --if-idle` decides it.
  *
+ * The machine's own "Pause running work for updates" decides what may stop
+ * work here (fleetUpdatePause): off, a forced request is refused and a busy
+ * boot service is left on its version; on, a boot service stops its work after
+ * the quiet wait, as Update now does.
+ *
  * The request path is narrow on purpose: install a newer published version,
  * cancel a request this path wrote (never one Update now or anything else on
  * the machine wrote), look for a release, read status. Nothing in
@@ -87,6 +92,7 @@ import * as Socket from "effect/socket/Socket";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSelfUpdate from "../cloud/selfUpdate.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { folderCopiesText } from "./folderTransfer/folderWork.ts";
 import { installedManagedUpdateHelper } from "../managedUpdates/ManagedUpdatesService.ts";
@@ -99,6 +105,16 @@ import {
   fleetRequest,
   reachFleetMachine,
 } from "./fleetTransport.ts";
+import {
+  forceRefusedMessage,
+  type HeldForInstall,
+  leftForLaterMessage,
+  nothingToPauseMessage,
+  pauseWorkForInstall,
+  pausesWorkFrom,
+  type QuietGiveUp,
+  releaseHeld,
+} from "./fleetUpdatePause.ts";
 
 // ---------------------------------------------------------------------------
 // Shared rules
@@ -256,6 +272,12 @@ export interface FleetUpdateWorkerDeps {
       stage: ServerSelfUpdateProgressStage,
     ) => Effect.Effect<void, { readonly reason: string }>,
   ) => Effect.Effect<unknown, { readonly reason: string }>;
+  /**
+   * Whether an update may pause running work here (`pauseWorkForUpdates`, while
+   * threads continue after a restart), read on each call. Off: a forced request
+   * is refused and a busy boot service is left on its version.
+   */
+  readonly pausesWork: Effect.Effect<boolean>;
   /** How often and how long a normal boot-service install waits for quiet; tests shorten both. */
   readonly quietWait?: { readonly pollMs: number; readonly maxMs: number };
 }
@@ -431,8 +453,8 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
      * Takes the if-idle hold `update --if-idle` takes, looking again every
      * `pollMs` while anything runs, and hands its token to `held` in the same
      * uninterruptible step, so an interrupt never leaves a hold nobody knows of;
-     * fails as `busy` after `maxMs`. Meanwhile the phase is `requested` and
-     * `lastError` says what it waits for.
+     * gives up after `maxMs` with what kept it busy. Meanwhile the phase is
+     * `requested` and `lastError` says what it waits for.
      */
     const awaitQuiet = (version: string, held: (token: string) => Effect.Effect<void>) =>
       Effect.gen(function* () {
@@ -451,14 +473,21 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
             ),
           );
           if (Option.isSome(look) && look.value.held === true && look.value.holdToken !== undefined)
-            return;
+            return Option.none();
           const waiting = Option.isSome(look)
             ? quietWaitReasons(look.value)
             : "a check of what runs here, which failed";
           const minutes = Math.round(quietWait.maxMs / 60_000);
           if ((yield* Clock.currentTimeMillis) - began + quietWait.pollMs > quietWait.maxMs)
-            return yield* Effect.fail({
-              reason: `${version} was not installed: this machine stayed busy for ${minutes} minutes (${waiting}). Ask again once it is quiet, or force the update.`,
+            return Option.some<QuietGiveUp>({
+              minutes,
+              waiting,
+              copies: Option.isSome(look) ? (look.value.folderCopies ?? 0) : 0,
+              work:
+                Option.isSome(look) &&
+                (look.value.blockers.length > 0 ||
+                  (look.value.openTerminals ?? 0) > 0 ||
+                  (look.value.folderCopies ?? 0) > 0),
             });
           yield* set({
             phase: "requested",
@@ -469,32 +498,61 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
         }
       });
 
-    /** The boot service's self-update; a normal one switches over only once nothing runs. */
+    /**
+     * The boot service's self-update. A normal one switches over only once
+     * nothing runs; when it stays busy it stops the work first if this
+     * machine's setting allows it, and is left for later otherwise. A forced one,
+     * taken only with the setting on, stops the work first.
+     */
     const bootInstall = (version: string, normal: boolean) =>
       Effect.gen(function* () {
-        let holdToken: string | undefined;
-        let busy = false;
-        const keep = (token: string) =>
+        let held: HeldForInstall | undefined;
+        let refusal: StudioFleetUpdateRefusal = "failed";
+        const keep = (next: HeldForInstall) =>
           Effect.sync(() => {
-            holdToken = token;
+            held = next;
           });
+        const pause = (copiesBefore: number) =>
+          set({ phase: "draining", targetVersion: version }).pipe(
+            Effect.andThen(
+              pauseWorkForInstall({
+                prepare: deps.prepare,
+                spareCopies: normal,
+                copiesBefore,
+                keep,
+              }),
+            ),
+            Effect.andThen(set({ phase: "installing", targetVersion: version })),
+            Effect.mapError((failure) => {
+              refusal = failure.refusal;
+              return { reason: failure.reason };
+            }),
+          );
+        const beforeSwitch = Effect.gen(function* () {
+          if (!normal) return yield* pause(0);
+          const gaveUp = yield* awaitQuiet(version, (token) =>
+            keep({ kind: "lease", token }).pipe(
+              Effect.andThen(set({ phase: "installing", targetVersion: version })),
+            ),
+          );
+          if (Option.isNone(gaveUp)) return;
+          const { minutes, waiting, copies, work } = gaveUp.value;
+          const allowed = yield* deps.pausesWork;
+          // Another update's hold, or a look that failed, is nothing a pause would end.
+          if (allowed && work) return yield* pause(copies);
+          refusal = "busy";
+          return yield* Effect.fail({
+            reason: (allowed ? nothingToPauseMessage : leftForLaterMessage)(
+              version,
+              minutes,
+              waiting,
+            ),
+          });
+        });
         const report = (stage: ServerSelfUpdateProgressStage) =>
-          normal && stage === "installing"
-            ? awaitQuiet(version, (token) =>
-                keep(token).pipe(Effect.andThen(set({ phase: stage, targetVersion: version }))),
-              ).pipe(
-                Effect.mapError((error) => {
-                  busy = true;
-                  return error;
-                }),
-              )
-            : set({ phase: stage, targetVersion: version });
-        // Nobody would release an if-idle hold no switch-over follows.
-        const release = Effect.suspend(() =>
-          holdToken === undefined
-            ? Effect.void
-            : deps.prepare({ stopWork: false, releaseHold: true, holdToken }).pipe(Effect.ignore),
-        );
+          stage === "installing" ? beforeSwitch : set({ phase: stage, targetVersion: version });
+        // Nobody would release a hold no switch-over follows.
+        const release = Effect.suspend(() => releaseHeld(deps.prepare, held));
         yield* deps.selfUpdate(version, report).pipe(
           // A forced request, or another release, replaced it after it took the hold.
           Effect.onInterrupt(() => release),
@@ -503,11 +561,7 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
               Effect.gen(function* () {
                 yield* release;
                 yield* set(
-                  fail(
-                    { phase: "downloading", targetVersion: version },
-                    busy ? "busy" : "failed",
-                    error.reason,
-                  ),
+                  fail({ phase: "downloading", targetVersion: version }, refusal, error.reason),
                 );
               }),
             onSuccess: () => set({ phase: "handed-off", targetVersion: version }),
@@ -644,6 +698,9 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
             "downgrade",
             `This machine runs ${deps.serverVersion}, newer than ${version}; a fleet update never installs an older release.`,
           );
+        // Checked before anything is stopped, held, replaced or written.
+        if (ask.mode === "force" && !(yield* deps.pausesWork))
+          return yield* refuse("busy", forceRefusedMessage(deps.serverVersion, version));
         return yield* exclusive(started(method, ask));
       });
 
@@ -738,6 +795,7 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
         ...(current.lastErrorReason === undefined
           ? {}
           : { lastErrorReason: current.lastErrorReason }),
+        pauseWorkForUpdates: yield* deps.pausesWork,
       };
       if (method !== "service-agent") return base;
       return { ...base, agent: yield* agent(["status"]) };
@@ -769,6 +827,7 @@ export const layer = Layer.effect(
     const platform = yield* HostProcessPlatform;
     const arch = yield* HostProcessArchitecture;
     const helperContext = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+    const settings = yield* ServerSettings.ServerSettingsService;
     const releaseBaseUrl = Option.getOrUndefined(
       yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
     );
@@ -847,6 +906,7 @@ export const layer = Layer.effect(
       method,
       agent,
       prepare: preparation.prepare,
+      pausesWork: pausesWorkFrom(settings),
       releasePublished,
       selfUpdate: (version, report) =>
         selfUpdate.update({ targetVersion: version }, (stage) =>
@@ -994,6 +1054,9 @@ export function flattenFleetUpdateStatus(
     serverVersion: status.serverVersion,
     ...(status.lastError === undefined ? {} : { lastError: status.lastError }),
     ...(status.lastErrorReason === undefined ? {} : { lastErrorReason: status.lastErrorReason }),
+    ...(status.pauseWorkForUpdates === undefined
+      ? {}
+      : { pauseWorkForUpdates: status.pauseWorkForUpdates }),
   };
 }
 
