@@ -116,7 +116,7 @@ describe("recognition hints", () => {
 
 describe("product vocabulary", () => {
   const imported = parseVocabulary(
-    "stdio\nEasyChamp\nclaude\ncodex\nspecwithcode\nspecweave\nmcp\nminisforum",
+    "stdio\nNorthwind\nclaude\ncodex\nspecwithcode\nspecweave\nmcp\nminisforum",
   ).terms;
 
   it("puts the product's words ahead of an imported list in the hint", () => {
@@ -124,7 +124,7 @@ describe("product vocabulary", () => {
     expect(prompt.startsWith("SpecWithCode, SpecWeave, worktree, worktrees, increment,")).toBe(
       true,
     );
-    expect(prompt.endsWith("stdio, EasyChamp, minisforum.")).toBe(true);
+    expect(prompt.endsWith("stdio, Northwind, minisforum.")).toBe(true);
     expect(prompt).not.toMatch(/specwithcode|specweave|claude,|codex|mcp/);
   });
 

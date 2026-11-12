@@ -10,7 +10,7 @@ import "./fixture.css";
 
 /** What the desktop app answers: the person's own list, and the product's words beside it. */
 const vocabulary = {
-  text: "EasyChamp\nminus forum => Minisforum\nDevon => Devin",
+  text: "Northwind\nminus forum => Minisforum\nDevon => Devin",
   count: 3,
   refused: 0,
   builtIn: [

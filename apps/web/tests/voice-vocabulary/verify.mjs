@@ -44,7 +44,7 @@ try {
       const editor = page.getByRole("textbox", { name: "Your vocabulary" });
       await editor.waitFor();
       await page.waitForFunction(() =>
-        document.querySelector('[aria-label="Your vocabulary"]')?.value.includes("EasyChamp"),
+        document.querySelector('[aria-label="Your vocabulary"]')?.value.includes("Northwind"),
       );
       const builtIn = page.locator("[data-voice-built-in-words]");
       await builtIn.scrollIntoViewIfNeeded();
