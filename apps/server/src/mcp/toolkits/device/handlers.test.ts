@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { agentDeviceQuickStart, agentDeviceTargetArgs, pngDimensions } from "./handlers.ts";
+import {
+  agentDeviceQuickStart,
+  agentDeviceTargetArgs,
+  iosOnlyElsewhere,
+  pngDimensions,
+} from "./handlers.ts";
 
 const device = {
   hostId: "local",
@@ -52,5 +57,29 @@ describe("device tool helpers", () => {
     new DataView(png.buffer).setUint32(20, 2556);
     expect(pngDimensions(png)).toEqual({ width: 1179, height: 2556 });
     expect(pngDimensions(new Uint8Array([1, 2, 3]))).toEqual({ width: 0, height: 0 });
+  });
+});
+
+describe("iosOnlyElsewhere", () => {
+  const host = (kind: "local" | "ssh", ios: boolean) => ({
+    id: kind === "local" ? "local" : "lab",
+    kind,
+    label: kind,
+    platforms: [
+      { platform: "ios" as const, available: ios },
+      { platform: "android" as const, available: true },
+    ],
+    hubInstalled: true,
+    agentDeviceInstalled: true,
+  });
+
+  it("points to a Mac only when this machine cannot run iOS and no device host is set up", () => {
+    expect(iosOnlyElsewhere([host("local", false)] as never, {})).toBe(true);
+    expect(iosOnlyElsewhere([host("local", false)] as never, { platform: "ios" })).toBe(true);
+    expect(iosOnlyElsewhere([host("local", false)] as never, { platform: "android" })).toBe(false);
+    expect(iosOnlyElsewhere([host("local", true)] as never, {})).toBe(false);
+    expect(
+      iosOnlyElsewhere([host("local", false), host("ssh", true)] as never, { platform: "ios" }),
+    ).toBe(false);
   });
 });

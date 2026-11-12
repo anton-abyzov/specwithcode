@@ -1,4 +1,5 @@
 import { TeamRulesCarried } from "./teamRules.ts";
+import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from "./environment.ts";
 import { LifecycleGoal } from "./threadLifecycleEvidence.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -89,6 +90,26 @@ export const OrchestratorMcpMachineRef = Schema.Struct({
   environmentId: EnvironmentId,
 });
 export type OrchestratorMcpMachineRef = typeof OrchestratorMcpMachineRef.Type;
+
+/**
+ * What a machine says about itself for placing work on it. Absent from older
+ * machines, and `iosSimulators` is absent while it is not known yet: both read
+ * as unknown, never as "cannot".
+ */
+export const OrchestratorMcpMachinePlatform = Schema.Struct({
+  os: ExecutionEnvironmentPlatformOs,
+  arch: ExecutionEnvironmentPlatformArch,
+  /** macOS whose selected Xcode has a working `simctl`, so iOS Simulators can run there. */
+  iosSimulators: Schema.optional(Schema.Boolean),
+});
+export type OrchestratorMcpMachinePlatform = typeof OrchestratorMcpMachinePlatform.Type;
+
+/**
+ * What a thread's work needs from the machine it runs on: "ios_simulator" is
+ * macOS that can run iOS Simulators, "macos" is any Mac (an Xcode build).
+ */
+export const OrchestratorMcpLaunchNeed = Schema.Literals(["ios_simulator", "macos"]);
+export type OrchestratorMcpLaunchNeed = typeof OrchestratorMcpLaunchNeed.Type;
 
 /** The most machines one chain of remote launches may name. */
 export const ORCHESTRATOR_MCP_DELEGATION_MAX_PATH = 16;
@@ -965,6 +986,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  /** This machine's operating system and whether it can run iOS Simulators. Older machines omit it. */
+  platform: Schema.optional(OrchestratorMcpMachinePlatform),
   /** For another machine's work: which of this machine's projects its grant here covers. */
   grantProjects: Schema.optional(Schema.Literals(["all", "linked", "listed"])),
   features: Schema.Struct({
@@ -1040,6 +1063,8 @@ export const OrchestratorMcpMachine = Schema.Struct({
   reachable: Schema.optional(Schema.Boolean),
   /** Why this machine's Team rules refuse working with that one. */
   teamRulesRefused: Schema.optional(Schema.String),
+  /** Its operating system and iOS Simulator support, when it answered and reported them. */
+  platform: Schema.optional(OrchestratorMcpMachinePlatform),
 });
 export type OrchestratorMcpMachine = typeof OrchestratorMcpMachine.Type;
 
@@ -1067,6 +1092,7 @@ export const OrchestratorMcpMachineListResult = Schema.Struct({
     id: Schema.Literal("local"),
     label: Schema.String,
     environmentId: EnvironmentId,
+    platform: Schema.optional(OrchestratorMcpMachinePlatform),
   }),
   machines: Schema.Array(OrchestratorMcpMachine),
   /** The first other machine this project's coordinator starts workers on, or null for this one. */

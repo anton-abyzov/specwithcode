@@ -1,6 +1,7 @@
 import {
   type DeviceError,
   type DeviceHostId,
+  type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
   type DeviceSummary,
@@ -8,6 +9,7 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as ServerConfig from "../../../config.ts";
@@ -17,6 +19,8 @@ import { nodeRuntimeUnavailableMessage } from "@specweave-studio/shared/nodeRunt
 import * as AccessGate from "../../../access/accessGate.ts";
 import * as AccessRequests from "../../../access/AccessRequests.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
+import { iosSimulatorElsewhereHint, needsFit } from "../../../fleet/launchNeeds.ts";
+import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
@@ -183,6 +187,53 @@ const pickDevice = (
 
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 
+/**
+ * Whether a device tool found no iOS Simulator because this machine cannot
+ * run one and no device host is set up: false when iOS was not asked for or
+ * a host could serve it.
+ */
+export function iosOnlyElsewhere(
+  hosts: ReadonlyArray<DeviceHostSummary>,
+  input: {
+    readonly platform?: DevicePlatform | undefined;
+    readonly hostId?: DeviceHostId | undefined;
+  },
+): boolean {
+  if (input.platform === "android") return false;
+  if (input.hostId !== undefined && input.hostId !== LOCAL_DEVICE_HOST_ID) return false;
+  if (hosts.some((host) => host.kind !== "local")) return false;
+  const ios = hosts
+    .find((host) => host.kind === "local")
+    ?.platforms.find((platform) => platform.platform === "ios");
+  return ios !== undefined && !ios.available;
+}
+
+/** The hint for that case, naming the connected Macs that can. */
+const iosElsewhere = (
+  state: { readonly hosts: ReadonlyArray<DeviceHostSummary> },
+  input: {
+    readonly platform?: DevicePlatform | undefined;
+    readonly hostId?: DeviceHostId | undefined;
+  },
+) =>
+  Effect.gen(function* () {
+    if (!iosOnlyElsewhere(state.hosts, input)) return undefined;
+    const remote = yield* Effect.serviceOption(RemoteWorkers.RemoteWorkers);
+    if (Option.isNone(remote) || !remote.value.enabled) return iosSimulatorElsewhereHint([]);
+    const listed = yield* remote.value
+      .listMachines({ projectId: undefined, probe: true })
+      .pipe(Effect.orElseSucceed(() => ({ machines: [] })));
+    return iosSimulatorElsewhereHint(
+      listed.machines
+        .filter(
+          (machine) =>
+            (machine.status === "ready" || machine.status === "grant_expiring") &&
+            needsFit(["ios_simulator"], machine.platform) === "yes",
+        )
+        .map((machine) => machine.label),
+    );
+  });
+
 const handlers = {
   device_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
@@ -221,7 +272,19 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const target = yield* pickDevice(state.devices, input);
+      const target = yield* pickDevice(state.devices, input).pipe(
+        Effect.catch((error) =>
+          iosElsewhere(state, input).pipe(
+            Effect.flatMap((hint) =>
+              Effect.fail(
+                hint === undefined
+                  ? error
+                  : new DeviceToolUnavailableError({ reason: `${error.reason} ${hint}` }),
+              ),
+            ),
+          ),
+        ),
+      );
       const { scope, consented } = yield* requireDeviceConsent(target);
       // Resolve consent and agent connectivity before booting or registering a session.
       const agentArgs = yield* devices.agentTarget({

@@ -22,6 +22,7 @@ import {
   OrchestratorMcpMachineRef,
   OrchestratorMcpDelegation,
   OrchestratorMcpOriginHint,
+  OrchestratorMcpLaunchNeed,
   OrchestratorMcpMachineTarget,
   OrchestratorMcpTaskClassHint,
   OrchestratorMcpTaskLaneHint,
@@ -260,6 +261,14 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
           "The project on that machine, when studio_machine_list reports no single match. Its id there, not here.",
       }),
     ),
+    needs: Schema.optional(
+      Schema.Array(OrchestratorMcpLaunchNeed)
+        .check(Schema.isMinLength(1), Schema.isMaxLength(2))
+        .annotate({
+          description:
+            'What the work needs from its machine: "ios_simulator" for running or testing an app in an iOS Simulator, "macos" for an Xcode build or other Mac-only work. Without machine, the thread goes to a connected machine that has it, in the usual order, and placement.note says which and why; a named machine known not to have it is refused. When no connected machine has it the launch is refused and says what is missing. Omit for work any machine can do.',
+        }),
+    ),
     reportBack: Schema.optional(
       Schema.Boolean.annotate({
         description:
@@ -384,11 +393,13 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     placement: Schema.optional(
       Schema.Struct({
         machine: Schema.String,
-        reason: Schema.Literals(["explicit", "project_worker_machine", "this_machine"]),
+        reason: Schema.Literals(["explicit", "project_worker_machine", "this_machine", "needs"]),
+        /** Set when the launch stated needs: why this machine. */
+        note: Schema.optional(Schema.String),
         skipped: Schema.Array(Schema.Struct({ machine: Schema.String, reason: Schema.String })),
       }).annotate({
         description:
-          "Where the thread runs and why: the machine you named (explicit), the project's worker machine, or this machine. skipped lists machines that could not take it and why; tell the user when it is not empty.",
+          "Where the thread runs and why: the machine you named (explicit), the project's worker machine, this machine, or a machine chosen for the work's needs (note says why). skipped lists machines that could not take it and why; tell the user when it is not empty.",
       }),
     ),
   }),

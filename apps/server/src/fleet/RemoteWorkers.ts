@@ -12,6 +12,7 @@ import {
   type OrchestratorMcpOriginHint,
   type OrchestratorMcpMachine,
   type OrchestratorMcpMachineListResult,
+  type OrchestratorMcpMachinePlatform,
   type OrchestratorMcpMachineProvider,
   type OrchestratorMcpMachineRef,
   Project,
@@ -66,6 +67,8 @@ import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts"
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import * as WorkerEpochStore from "./WorkerEpochStore.ts";
+import { readMachinePlatform } from "./launchNeeds.ts";
+import { thisMachinePlatform } from "./thisMachinePlatform.ts";
 
 const PROBE_TTL = Duration.seconds(60);
 /**
@@ -452,6 +455,8 @@ interface Probe {
   readonly projects: ReadonlyArray<Project>;
   /** Which projects the grant there covers; absent from machines older than this field. */
   readonly projectScope?: GrantProjectScope | undefined;
+  /** Its operating system and iOS Simulator support; absent from machines older than this field. */
+  readonly platform?: OrchestratorMcpMachinePlatform | undefined;
 }
 
 type GrantProjectScope = "all" | "linked" | "listed";
@@ -717,6 +722,7 @@ const make = Effect.gen(function* () {
         providers: readProviders(capabilities),
         projects: listed,
         projectScope: readProjectScope(capabilities),
+        platform: readMachinePlatform(capabilities),
       };
       yield* Ref.update(probes, (current) => new Map(current).set(machine.id, next));
       return next;
@@ -795,6 +801,7 @@ const make = Effect.gen(function* () {
             }
             row.reachable = true;
             row.providers = probed.success.providers;
+            if (probed.success.platform !== undefined) row.platform = probed.success.platform;
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;
             if (project !== undefined) {
@@ -814,11 +821,13 @@ const make = Effect.gen(function* () {
           }),
         { concurrency: 4 },
       );
+      const platform = yield* thisMachinePlatform;
       return {
         local: {
           id: "local" as const,
           label: (yield* nicknames).get(descriptor.environmentId) ?? descriptor.label,
           environmentId: descriptor.environmentId,
+          ...(platform === undefined ? {} : { platform }),
         },
         machines: rows,
         ...workerMachineSummary(project, descriptor.environmentId),

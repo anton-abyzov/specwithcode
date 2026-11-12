@@ -54,7 +54,13 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // The Chrome line (about 35 tokens) outranks a skill that names another browser.
     // The model line (about 30 tokens) stops agents delegating to change model.
     // The access sentence (about 40 tokens) asks before driving apps or devices.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_750);
+    // The needs sentence (about 35 tokens) sends simulator and Xcode work to a Mac.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_900);
+  });
+
+  it("tells coordinators to state that simulator and Xcode work needs a Mac", () => {
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "For iOS Simulator, Xcode build");
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, '`["ios_simulator"]`');
   });
 
   it("asks for app and device access before computer or device use", () => {

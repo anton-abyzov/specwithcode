@@ -28,6 +28,7 @@ import {
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { accountInGrant } from "../../../fleet/workGrantPolicy.ts";
+import { thisMachinePlatform } from "../../../fleet/thisMachinePlatform.ts";
 import { loadCaller, unavailable } from "../../threadAccess.ts";
 import {
   assertAccountInGrant,
@@ -110,7 +111,12 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      const capabilities = yield* service.capabilities(scope);
+      const platform = yield* thisMachinePlatform;
+      // Another machine places simulator and Xcode work by what this one reports here.
+      const capabilities = {
+        ...(yield* service.capabilities(scope)),
+        ...(platform === undefined ? {} : { platform }),
+      };
       // Another machine judging this one as a limit handoff target needs to know which sign-ins its grant allows.
       const work = yield* workGrantOf(yield* loadCaller());
       if (work === undefined) return capabilities;

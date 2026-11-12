@@ -407,6 +407,27 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("lists the operating system and simulator support each machine reports", () => {
+    const list = Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      return (yield* workers.listMachines({ projectId: undefined, probe: true })).machines[0];
+    });
+    const reporting = setup({
+      orchestrator_capabilities: () => ({
+        result: { ...capabilities, platform: { os: "darwin", arch: "arm64", iosSimulators: true } },
+      }),
+    });
+    const older = setup();
+    return Effect.gen(function* () {
+      expect(yield* list.pipe(Effect.provide(reporting.layer))).toMatchObject({
+        platform: { os: "darwin", arch: "arm64", iosSimulators: true },
+      });
+      // A machine from before the report says nothing, so it reads as unknown.
+      expect(yield* list.pipe(Effect.provide(older.layer))).not.toHaveProperty("platform");
+    });
+  });
+
   it.live("says when that machine's grant covers only some projects, and not this one", () => {
     const scoped = (grantProjects: string, projects: ReadonlyArray<unknown>) =>
       setup({
