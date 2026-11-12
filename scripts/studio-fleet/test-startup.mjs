@@ -107,8 +107,9 @@ try {
         // imports deliberately; never seed settings or disable the product gate.
         await page.waitForURL(url => url.pathname === '/welcome', { timeout: 15000 });
         proof.initialPairedPath = new URL(page.url()).pathname; save('first-run-onboarding');
-        // Continue past the computers and agents steps, then no project import.
-        const wizardSteps = [/^Continue( without an agent)?$/, /^Do not import projects$/];
+        // Continue past the computers and agents steps, keep the access new chats start
+        // with, then no project import.
+        const wizardSteps = [/^Continue( without an agent)?$/, /^Keep (Supervised|current access)$/, /^Do not import projects$/];
         for (const deadline = Date.now() + 30000; new URL(page.url()).pathname === '/welcome' && Date.now() < deadline;) {
           let clicked = false;
           for (const name of wizardSteps) {
@@ -131,6 +132,8 @@ try {
     } catch (error) {
       proof.failedStage = proof.phase;
       proof.failedPath = page ? new URL(page.url()).pathname : null;
+      // The buttons on screen name the step a wizard stopped at.
+      proof.failedButtons = page ? await page.getByRole('button').allInnerTexts().then(names => names.map(name => name.trim().split('\n')[0].slice(0, 60)).filter(Boolean).slice(0, 20)).catch(() => []) : [];
       throw error;
     } finally {
       save('owned-cleanup');
