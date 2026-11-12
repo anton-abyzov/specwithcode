@@ -301,7 +301,7 @@ function AddToMachineBody({
     : !checksSupported
       ? `${destName} needs a newer SpecWithCode to add projects. Update SpecWithCode on ${destName}, then try again.`
       : !urls
-        ? `This project has no Git remote, so ${destName} has nothing to clone from. Push it to GitHub or another host first.`
+        ? `This project has no Git remote, so ${destName} has nothing to clone from. Copy its folder there instead: the project's menu > Add to another machine… > Review files to transfer.`
         : null;
 
   const run = async (work: (signal: AbortSignal | undefined) => Promise<void>) => {

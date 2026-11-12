@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
+  type FolderCopyOffer,
   type LogicalProjectMember,
   ProjectLinkError,
   type OrchestrationV2ThreadShell,
@@ -19,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../../config.ts";
+import * as MachineHandoff from "../../../fleet/MachineHandoff.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { unscopedGrant, type WorkOrigin } from "../../../fleet/workGrantPolicy.ts";
@@ -29,6 +31,7 @@ import * as ProjectLink from "../../../project/ProjectLink.ts";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import { TeamRules, teamRulesOf } from "../../../teamRules/TeamRules.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -89,6 +92,10 @@ const setup = (
     readonly olderM1?: boolean;
     /** The shared project here already lists a member on M1. */
     readonly m1MemberHere?: boolean;
+    /** The project here has no Git remote (or no Git at all). */
+    readonly noRemote?: boolean;
+    /** M1 runs a version without studio_folder_copy_receive. */
+    readonly noFolderCopy?: boolean;
   } = {},
 ) => {
   const caller = {
@@ -103,11 +110,13 @@ const setup = (
     deletedAt: null,
   } as OrchestrationV2ThreadShell;
   const calls: RemoteCall[] = [];
+  const handoffCalls: string[] = [];
   const project = projectFixture(projectId, {
     title: "Widgets",
     workspaceRoot: "/Users/example/Projects/widgets",
-    repositoryIdentity:
-      options.m1Projects === undefined
+    repositoryIdentity: options.noRemote
+      ? null
+      : options.m1Projects === undefined
         ? forkIdentity
         : ({ ...forkIdentity, rootPath: "/Users/example/Projects/widgets" } as RepositoryIdentity),
     workspaceSettings: {
@@ -234,6 +243,45 @@ const setup = (
             replayed: false,
           });
         }
+        if (input.tool === "studio_folder_copy_receive") {
+          if (options.noFolderCopy)
+            return Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "machine_unsupported",
+                message: "M1 needs a newer SpecWithCode for this.",
+              }),
+            );
+          const step = input.arguments as {
+            action: string;
+            targetFolder?: string;
+            link?: { operationId: string; logicalProject: unknown };
+          };
+          if (step.action === "check")
+            return Effect.succeed({
+              targetFolder: String(step.targetFolder).replace("~", "/home/example"),
+            });
+          if (step.action === "link")
+            return Effect.succeed({
+              state: "applied",
+              link: {
+                operationId: step.link?.operationId,
+                member: joined,
+                logicalProject: { ...logicalProject, members: [kept, joined] },
+                coordinatorBinding: {
+                  epoch: 0,
+                  state: "transferred",
+                  operationId: step.link?.operationId,
+                  successor: kept,
+                },
+                replayed: false,
+              },
+            });
+          return Effect.succeed({
+            state: "applied",
+            projectId: "remote-widgets",
+            projectFolder: "/home/example/Projects/widgets",
+          });
+        }
         return Effect.die(`unexpected tool ${input.tool}`);
       }),
   };
@@ -299,6 +347,48 @@ const setup = (
       },
     }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+    Layer.succeed(TeamRules, teamRulesOf({ status: "none" })),
+    Layer.mock(MachineHandoff.MachineHandoff)({
+      copyOffer: (input) => {
+        handoffCalls.push(`offer:${input.mode}:${input.destinationEnvironmentId}`);
+        return Effect.succeed({
+          operationId: input.operationId,
+          sourceEnvironmentId: EnvironmentId.make("env-m4"),
+          sourceProjectId: projectId,
+          sourceUrl: "https://m4.example.test",
+          sourceMachine: "M4",
+          token: "token",
+          title: "Widgets",
+          mode: "copy-only",
+          status: {
+            operationId: input.operationId,
+            projectId,
+            mode: "copy-only",
+            state: "scanned",
+            summary: {
+              totals: {
+                repository: { files: 0, bytes: 0 },
+                tracked: { files: 0, bytes: 0 },
+                untracked: { files: 4, bytes: 400 },
+                ignoredData: { files: 0, bytes: 0 },
+                rebuildable: { files: 0, bytes: 0 },
+                secret: { files: 1, bytes: 10 },
+              },
+              repositories: [],
+              secretFiles: [{ path: ".env", size: 10 }],
+              linksOutside: 0,
+              warnings: [],
+            },
+            error: null,
+            releaseReason: null,
+          },
+        } as FolderCopyOffer);
+      },
+      copySourceCancel: (input) => {
+        handoffCalls.push(`cancel:${input.operationId}`);
+        return Effect.die("not cancelled in these tests");
+      },
+    }),
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
     NodeServices.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "studio-add-to-machine-" }).pipe(
@@ -320,7 +410,7 @@ const setup = (
       Effect.map((results) => results.at(-1)?.result as unknown as Record<string, unknown>),
     );
   const add = (params: Record<string, unknown>) => call("studio_project_add_to_machine", params);
-  return { add, call, calls, linkCalls, joined };
+  return { add, call, calls, handoffCalls, linkCalls, joined };
 };
 
 describe("studio_project_add_to_machine", () => {
@@ -539,6 +629,53 @@ describe("studio_project_add_to_machine", () => {
         code: "capability_denied",
       });
       expect([...readOnly.calls, ...relayed.calls]).toEqual([]);
+    });
+  });
+});
+
+describe("studio_project_add_to_machine without a Git remote", () => {
+  it.effect("copies the folder there, links it and lists the secrets left here", () => {
+    const { add, calls, handoffCalls, linkCalls } = setup({ noRemote: true });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(calls.map((entry) => `${entry.tool}:${String(entry.arguments.action)}`)).toEqual([
+        "studio_folder_copy_receive:check",
+        "studio_folder_copy_receive:start",
+        "studio_folder_copy_receive:link",
+      ]);
+      expect(calls[0]?.arguments).toEqual({ action: "check", targetFolder: "~/Projects/widgets" });
+      expect(calls[1]?.arguments).toMatchObject({
+        start: {
+          targetFolder: "/home/example/Projects/widgets",
+          mode: "copy-only",
+          selection: ["repository", "tracked", "untracked", "ignoredData"],
+        },
+      });
+      expect(handoffCalls).toEqual(["offer:copy-only:env-m1"]);
+      expect(linkCalls.map((entry) => entry.step)).toEqual(["prepare", "commit"]);
+      expect(result).toMatchObject({
+        machine: M1,
+        projectId: "remote-widgets",
+        workspaceRoot: "/home/example/Projects/widgets",
+        copied: true,
+        linked: true,
+        leftOut: { files: 1, secretFiles: [".env"], rebuildableFolders: 0 },
+      });
+      expect(result.remoteUrl).toBeUndefined();
+      expect(String(result.next)).toContain('machineProjectId:"remote-widgets"');
+      expect(String(result.next)).toContain("studio_file_transfer");
+      expect(String(result.next)).toContain(".env");
+    });
+  });
+
+  it.effect("tells the agent to update SpecWithCode there when M1 cannot receive a copy", () => {
+    const { add, handoffCalls } = setup({ noRemote: true, noFolderCopy: true });
+    return Effect.gen(function* () {
+      const refused = yield* add({ machine: "M1", projectId });
+      expect(refused).toMatchObject({ code: "machine_unsupported" });
+      expect(String(refused.message)).toContain("Update SpecWithCode on M1");
+      expect(String(refused.message)).not.toContain("cloneUrl");
+      expect(handoffCalls).toEqual([]);
     });
   });
 });

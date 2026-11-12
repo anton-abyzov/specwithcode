@@ -48,6 +48,8 @@ export const REMOTE_TOOL_ALLOWLIST = [
   "studio_project_clone",
   "studio_project_create",
   "studio_project_link_accept",
+  // A project with no Git remote: its folder is copied there, step by step.
+  "studio_folder_copy_receive",
   "studio_thread_launch",
   "studio_thread_list",
   "studio_thread_read",
@@ -74,6 +76,7 @@ const REMOTE_WORK_TOOLS: ReadonlySet<string> = new Set<RemoteTool>([
   "studio_project_clone",
   "studio_project_create",
   "studio_project_link_accept",
+  "studio_folder_copy_receive",
   "studio_thread_launch",
   "studio_thread_send",
   "studio_file_offer",

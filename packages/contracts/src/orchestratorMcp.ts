@@ -1030,6 +1030,8 @@ export const OrchestratorMcpMachineProject = Schema.Struct({
   candidates: Schema.optional(
     Schema.Array(Schema.Struct({ projectId: ProjectId, title: Schema.String })),
   ),
+  /** Why the project does not match there (none, ambiguous). Older machines omit it. */
+  reason: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpMachineProject = typeof OrchestratorMcpMachineProject.Type;
 

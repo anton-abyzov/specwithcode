@@ -582,6 +582,11 @@ it.effect("tells the agent to add a missing project to the machine, then launch 
       `studio_project_add_to_machine {machine:"M1", projectId:"${projectId}"}`,
     );
     expect(String(refused.message)).toContain("machineProjectId");
+    // That one call also works for a project with no Git remote.
+    expect(String(refused.message)).toContain(
+      "copies the project folder when it has no Git remote",
+    );
+    expect(String(refused.message)).not.toContain("cloneUrl");
     // A scratch launch has no project to add.
     const bare = yield* scratch.launch({
       title: "Check disk",

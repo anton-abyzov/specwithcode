@@ -52,7 +52,9 @@ describe("preflightFailures", () => {
   });
 
   it("names the machine and the exact missing piece", () => {
-    expect(messages({ missingFiles: [".env.local"] })).toEqual(["Minis: no .env.local"]);
+    expect(messages({ missingFiles: [".env.local"] })).toEqual([
+      "Minis: no .env.local. Send it with studio_file_transfer, or with Handoff > Copy local files",
+    ]);
     expect(messages({ provider: { ...ready.provider!, authStatus: "unauthenticated" } })).toEqual([
       "Minis: Claude not signed in",
     ]);
@@ -66,7 +68,11 @@ describe("preflightFailures", () => {
   });
 
   it("refuses a project that is only named the same", () => {
-    expect(messages({ project: null })).toEqual(["Minis: this project is not linked here"]);
+    const [notLinked] = messages({ project: null });
+    expect(notLinked).toMatch(/^Minis: this project is not linked here\. /u);
+    // It names both remedies: Link… and adding the project to that machine.
+    expect(notLinked).toContain("Link…");
+    expect(notLinked).toContain("studio_project_add_to_machine");
     expect(messages({ project: { title: "SpecWeave", inGrant: false } })).toEqual([
       "Minis: no work grant for SpecWeave",
     ]);
@@ -88,7 +94,11 @@ describe("preflightFailures", () => {
         missingFiles: [".env.local", ".env"],
         provider: { ...ready.provider!, authStatus: "unauthenticated" },
       }),
-    ).toEqual(["Minis: no .env.local", "Minis: no .env", "Minis: Claude not signed in"]);
+    ).toEqual([
+      "Minis: no .env.local. Send it with studio_file_transfer, or with Handoff > Copy local files",
+      "Minis: no .env. Send it with studio_file_transfer, or with Handoff > Copy local files",
+      "Minis: Claude not signed in",
+    ]);
   });
 });
 

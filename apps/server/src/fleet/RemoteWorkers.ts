@@ -57,6 +57,7 @@ import {
   matchRemoteProject,
   isLogicalProjectBinding,
   logicalProjectBindingMatch,
+  machineRowProjectMatch,
   matchLogicalRemoteProject,
   type RemoteProjectMatch,
   translateModel,
@@ -795,11 +796,8 @@ const make = Effect.gen(function* () {
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;
             if (project !== undefined) {
-              const { reason: _reason, ...match } = matchFor(
-                machine,
-                project,
-                probed.success.projects,
-                undefined,
+              const match = machineRowProjectMatch(
+                matchFor(machine, project, probed.success.projects, undefined),
               );
               row.project = match;
               // That machine lists only projects its grant covers, so no match there means
