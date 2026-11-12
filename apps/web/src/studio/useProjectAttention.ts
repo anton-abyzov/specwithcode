@@ -39,12 +39,49 @@ export function memberFreshness(
   return shell.status === "live" ? "live" : "empty";
 }
 
+type RemoteWorkers = NonNullable<AttentionMember["remoteWorkers"]>;
+const sameRemoteWorkers = (left: RemoteWorkers | undefined, right: RemoteWorkers | undefined) =>
+  left === right ||
+  (left !== undefined &&
+    right !== undefined &&
+    left.length === right.length &&
+    left.every((worker, index) => {
+      const other = right[index]!;
+      return (
+        worker.environmentId === other.environmentId &&
+        worker.remoteThreadId === other.remoteThreadId &&
+        worker.state === other.state
+      );
+    }));
+
+/** Whether two readings say the same about every member, so the earlier one can stand. */
+export function sameAttentionMembers(
+  left: readonly AttentionMember[],
+  right: readonly AttentionMember[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((member, index) => {
+      const other = right[index]!;
+      return (
+        member.environmentId === other.environmentId &&
+        member.projectId === other.projectId &&
+        member.coordinatorThreadId === other.coordinatorThreadId &&
+        member.freshness === other.freshness &&
+        member.includeUserRoots === other.includeUserRoots &&
+        member.remoteWorkersComplete === other.remoteWorkersComplete &&
+        sameRemoteWorkers(member.remoteWorkers, other.remoteWorkers)
+      );
+    })
+  );
+}
+
 export function useAttentionMembers(projects: readonly AttentionProjectMember[]) {
   const unreachable = useUnreachableHosts();
   const observations = useMemo(
     () =>
-      Atom.make((get): AttentionMember[] =>
-        expandAttentionProjects(projects).map((project) => {
+      Atom.make((get): AttentionMember[] => {
+        const next = expandAttentionProjects(projects).map((project): AttentionMember => {
           const shell = get(
             environmentShell.stateValueAtom(EnvironmentId.make(project.environmentId)),
           );
@@ -63,8 +100,13 @@ export function useAttentionMembers(projects: readonly AttentionProjectMember[])
               project.workspaceSettings?.coordinatorThreadId ?? `project-coordinator:${project.id}`,
             freshness: memberFreshness(shell, project.id, unreachable.has(project.environmentId)),
           };
-        }),
-      ),
+        });
+        // Each shell update and each remote worker poll reads the members again. Most
+        // say what the last one said; the same array then stands, so the project
+        // counts built from it are not built again.
+        const previous = Option.getOrNull(get.self<AttentionMember[]>());
+        return previous !== null && sameAttentionMembers(previous, next) ? previous : next;
+      }),
     [projects, unreachable],
   );
   return useAtomValue(observations);

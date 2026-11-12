@@ -223,23 +223,71 @@ export interface ProjectAttention {
   readonly staleCount: number;
   readonly label: string;
 }
+/** The strings one thread is looked up by. A shell object never changes, so they are made once. */
+interface AttentionThreadKeys {
+  readonly identity: string;
+  readonly member: string;
+  readonly environmentThread: string;
+  readonly parent: string | null;
+}
+const memberKey = (environmentId: string, projectId: string) =>
+  JSON.stringify([environmentId, projectId]);
+const threadKeys = new WeakMap<EnvironmentThreadShell, AttentionThreadKeys>();
+function keysOf(thread: EnvironmentThreadShell): AttentionThreadKeys {
+  let keys = threadKeys.get(thread);
+  if (keys === undefined) {
+    const parentId =
+      thread.lineage?.parentThreadId ??
+      (thread.forkedFrom?.type === "run" ? thread.forkedFrom.threadId : null);
+    keys = {
+      identity: attentionIdentity({
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+        threadId: thread.id,
+      }),
+      member: memberKey(thread.environmentId, thread.projectId),
+      environmentThread: JSON.stringify([thread.environmentId, thread.id]),
+      parent: parentId ? JSON.stringify([thread.environmentId, parentId]) : null,
+    };
+    threadKeys.set(thread, keys);
+  }
+  return keys;
+}
+/**
+ * A thread list by identity and by machine. Every project on screen aggregates
+ * the same list, and an update replaces the list instead of changing it, so
+ * the index is built once per list, not once per project.
+ */
+interface AttentionThreadIndex {
+  readonly byKey: ReadonlyMap<string, EnvironmentThreadShell>;
+  readonly byEnvironmentThread: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
+}
+const threadIndexes = new WeakMap<readonly EnvironmentThreadShell[], AttentionThreadIndex>();
+function indexThreads(threads: readonly EnvironmentThreadShell[]): AttentionThreadIndex {
+  let index = threadIndexes.get(threads);
+  if (index === undefined) {
+    const byKey = new Map(threads.map((t) => [keysOf(t).identity, t]));
+    const byEnvironmentThread = new Map<string, EnvironmentThreadShell[]>();
+    for (const thread of byKey.values()) {
+      const key = keysOf(thread).environmentThread;
+      const sameThread = byEnvironmentThread.get(key);
+      if (sameThread) sameThread.push(thread);
+      else byEnvironmentThread.set(key, [thread]);
+    }
+    index = { byKey, byEnvironmentThread };
+    threadIndexes.set(threads, index);
+  }
+  return index;
+}
 /** Roots are the explicit visible conversations, never inferred from a title or Git remote. */
 export function aggregateProjectAttention(input: {
   readonly members: readonly AttentionMember[];
   readonly roots: readonly EnvironmentThreadShell[];
   readonly threads: readonly EnvironmentThreadShell[];
 }): ProjectAttention {
-  const memberKey = (environmentId: string, projectId: string) =>
-    JSON.stringify([environmentId, projectId]);
   const members = new Map(input.members.map((m) => [memberKey(m.environmentId, m.projectId), m]));
-  const keyOf = (t: EnvironmentThreadShell) =>
-    attentionIdentity({ environmentId: t.environmentId, projectId: t.projectId, threadId: t.id });
-  const byKey = new Map(input.threads.map((t) => [keyOf(t), t]));
-  const byEnvironmentThread = new Map<string, EnvironmentThreadShell[]>();
-  for (const thread of byKey.values()) {
-    const key = JSON.stringify([thread.environmentId, thread.id]);
-    byEnvironmentThread.set(key, [...(byEnvironmentThread.get(key) ?? []), thread]);
-  }
+  const keyOf = (t: EnvironmentThreadShell) => keysOf(t).identity;
+  const { byKey, byEnvironmentThread } = indexThreads(input.threads);
   const roots = new Map<
     string,
     {
@@ -253,7 +301,7 @@ export function aggregateProjectAttention(input: {
     }
   >();
   for (const thread of input.roots) {
-    const member = members.get(memberKey(thread.environmentId, thread.projectId));
+    const member = members.get(keysOf(thread).member);
     if (!member || thread.archivedAt != null || thread.deletedAt != null) continue;
     const key = keyOf(thread);
     roots.set(key, {
@@ -270,7 +318,7 @@ export function aggregateProjectAttention(input: {
   const staleRoots = new Set<string>();
   const representedThreads = new Set<string>();
   for (const thread of byKey.values()) {
-    const initialMember = members.get(memberKey(thread.environmentId, thread.projectId));
+    const initialMember = members.get(keysOf(thread).member);
     if (thread.archivedAt != null || thread.deletedAt != null) continue;
     let current = thread;
     const visited = new Set<string>();
@@ -287,12 +335,8 @@ export function aggregateProjectAttention(input: {
         break;
       }
       visited.add(key);
-      const parentId =
-        current.lineage?.parentThreadId ??
-        (current.forkedFrom?.type === "run" ? current.forkedFrom.threadId : null);
-      const candidates = parentId
-        ? (byEnvironmentThread.get(JSON.stringify([current.environmentId, parentId])) ?? [])
-        : [];
+      const parentKey = keysOf(current).parent;
+      const candidates = parentKey ? (byEnvironmentThread.get(parentKey) ?? []) : [];
       const parent = candidates.length === 1 ? candidates[0] : undefined;
       if (!parent) {
         if (initialMember) complete = false;
@@ -304,8 +348,8 @@ export function aggregateProjectAttention(input: {
     }
     if (!root || (!roots.has(keyOf(thread)) && thread.lineage?.relationshipToParent !== "subagent"))
       continue;
-    representedThreads.add(JSON.stringify([thread.environmentId, thread.id]));
-    const member = members.get(memberKey(root.thread.environmentId, root.thread.projectId))!;
+    representedThreads.add(keysOf(thread).environmentThread);
+    const member = members.get(keysOf(root.thread).member)!;
     const observation = inheritRootSettlement(
       observeProjectThread(thread, member.freshness),
       root.thread,
