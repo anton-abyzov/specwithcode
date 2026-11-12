@@ -1739,10 +1739,6 @@ export const pt: PhraseCatalog = {
   Never: "Nunca",
   "{input} days": "{input} dias",
   "Archive after days": "Arquivar depois de (dias)",
-  "Allow another machine to run work here": "Permitir que outra máquina execute trabalho aqui",
-  "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.":
-    "Escolha a máquina que vai enviar trabalho para esta. Isso não concede acesso automático a segredos; cada transferência de segredo ainda precisa da sua aprovação.",
-  "Machine sending work{select}": "Máquina que envia trabalho{select}",
   "Machine sending work": "Máquina que envia trabalho",
   "Choose a machine": "Escolha uma máquina",
   "Most access for this work{select}": "Acesso máximo para este trabalho{select}",

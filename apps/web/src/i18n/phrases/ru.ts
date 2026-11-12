@@ -1733,10 +1733,6 @@ export const ru: PhraseCatalog = {
   Never: "Никогда",
   "{input} days": "{input} дн.",
   "Archive after days": "Архивировать через, дней",
-  "Allow another machine to run work here": "Разрешить другой машине запускать работу здесь",
-  "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.":
-    "Выберите машину, которая будет отправлять работу на эту. Это не даёт автоматического доступа к секретам; каждая передача секрета по-прежнему требует вашего одобрения.",
-  "Machine sending work{select}": "Машина, отправляющая работу{select}",
   "Machine sending work": "Машина, отправляющая работу",
   "Choose a machine": "Выберите машину",
   "Most access for this work{select}": "Максимальный доступ для этой работы{select}",

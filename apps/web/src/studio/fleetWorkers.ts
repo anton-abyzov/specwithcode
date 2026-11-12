@@ -58,9 +58,9 @@ const PROBLEMS: Record<NonNullable<StudioFleetWorkers["problem"]>, string> = {
   unsupported: "That machine's SpecWithCode is too old to run workers for another machine.",
   route_mismatch: "That machine answers on a different address than configured here.",
   pairing_unavailable:
-    "This machine's key there cannot make a code. On that machine, open Settings > Machines > Allow another machine to run work here and choose this machine.",
+    "This machine's key there cannot make a code. On that machine, open Settings > Machines > Let another of your machines run work here and choose this machine.",
   pairing_code_rejected:
-    "That machine did not accept the code. A code from Create link does not work here. On that machine, open Settings > Machines > Allow another machine to run work here and choose this machine.",
+    "That machine did not accept the code. A code from Create link does not work here. On that machine, open Settings > Machines > Let another of your machines run work here and choose this machine.",
   unreachable: "That machine could not be reached.",
   identity_mismatch: "A different SpecWithCode answers at that machine's address.",
 };

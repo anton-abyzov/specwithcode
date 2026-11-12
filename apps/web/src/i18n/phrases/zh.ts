@@ -1676,10 +1676,6 @@ export const zh: PhraseCatalog = {
   Never: "从不",
   "{input} days": "{input} 天",
   "Archive after days": "多少天后归档",
-  "Allow another machine to run work here": "允许另一台电脑在这里运行工作",
-  "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.":
-    "选择将把工作发送到这台电脑的电脑。这不会自动授予密钥访问权限；每次传输密钥仍需你的批准。",
-  "Machine sending work{select}": "发送工作的电脑{select}",
   "Machine sending work": "发送工作的电脑",
   "Choose a machine": "选择一台电脑",
   "Most access for this work{select}": "此工作的最高访问权限{select}",
