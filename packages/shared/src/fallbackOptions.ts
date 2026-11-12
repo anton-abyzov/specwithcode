@@ -226,8 +226,8 @@ function optionStatus(input: {
   if (isPaidModelOn(provider, model)) return "per-token";
   if (isUnknownBillingAgent(provider, model)) return "named-only";
   if (input.limited) return "limited";
-  if (usageDeniesTurn(provider)) return "full";
-  if (!canTakeTurn(provider)) return "not-ready";
+  if (usageDeniesTurn(provider, model)) return "full";
+  if (!canTakeTurn(provider, model)) return "not-ready";
   if (reportsNoUsage(provider)) return "ready";
   if (input.usedPercent !== null && input.usedPercent >= input.threshold) return "full";
   if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return "unverified";

@@ -1611,7 +1611,7 @@ export const makeSweep = Effect.gen(function* () {
     // not keep spending after the rule is turned off. Nor does the retry of a
     // provider that could not open, which needs some provider ready.
     const retryOnly = !anyLimitRule(preferences) && !providers.some(isClaudeApiKeyProvider);
-    if (retryOnly && !providers.some(canTakeTurn)) return;
+    if (retryOnly && !providers.some((provider) => canTakeTurn(provider))) return;
     // Simulated limits test the banner and the switch; they never redeem or spend.
     const simulated = simulatedUsageLimitInstances(env).length > 0;
     // Only active threads are swept (`snapshot.threads`), so this shares the
