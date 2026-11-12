@@ -34,7 +34,9 @@ live database (its WAL index header pinned before and after the snapshot opened)
    -wal pages whose latest frame differs from the clone, and the gap pages.
 2. Owners. Every b-tree of sqlite_master is walked in both versions from its root, reading interior
    pages only (all leaves sit at one depth), plus the free lists and the overflow chains of every
-   changed b-tree page's cells. Any change to a table writes a page it owns afterwards: a table
+   changed b-tree page's cells. In an auto-vacuum database the changed pages at pointer-map
+   positions are claimed first, and each of their changed entries must describe the live file
+   (check_pointer_maps). Any change to a table writes a page it owns afterwards: a table
    whose tree has no changed page reads as in the reference. A changed page that nothing owns (it
    could be an overflow page of an unchanged row), page 1 beyond its header counters, the schema,
    or a changed index of an otherwise untouched table refuses; a page one table freed and another
@@ -90,7 +92,10 @@ WAL_HEADER_BYTES, FRAME_HEADER_BYTES = read_delta.WAL_HEADER_BYTES, read_delta.F
 INDEX_HEADER_BYTES = 136  # Two 48-byte copies of the WAL index header, then the checkpoint info.
 INDEX_VERSION = 3007000
 CHUNK_BYTES = 64 << 20
-FREE, SCHEMA = '(free)', '(schema)'
+FREE, SCHEMA, POINTER_MAP = '(free)', '(schema)', '(pointer map)'
+PENDING_BYTE = 1 << 30  # SQLite's lock byte: the page holding it is never used.
+# Changed pointer-map entries check_pointer_maps() verifies, one page read each, before it refuses.
+MAX_POINTER_MAP_ENTRIES = 1 << 16
 TABLE_PAGES, INDEX_PAGES = (5, 13), (2, 10)
 READER_START_SECONDS, READER_STOP_SECONDS = 30, 10
 # Leaf and overflow pages adopt() may read to find the unchanged leaf that links to a changed overflow
@@ -727,6 +732,7 @@ class _Proof:
         self.cache, self.owners, self.overflow = {}, {'clone': {}, 'live': {}}, {'clone': set(), 'live': set()}
         self.leaves, self.ranges, self.kinds = {}, {}, {}
         self.explained = self.leaves_verified = self.adopted = 0
+        self.auto_vacuum, self.pointer_entries, self.pointer_kinds = False, 0, set()
 
     def close(self):
         for connection in (self.db, self.clone_db):
@@ -758,6 +764,8 @@ class _Proof:
                   'gapPages': len(self.gap), 'referenceImage': bool(self.reference)}
         if self.adopted:
             record['overflowAdopted'] = self.adopted
+        if self.auto_vacuum:
+            record['pointerMapEntries'], record['pointerMapKinds'] = self.pointer_entries, sorted(self.pointer_kinds)
         return reads, record
 
     # Pages of the two versions.
@@ -930,8 +938,9 @@ class _Proof:
         live, clone = (self.page(version, 1) for version in ('live', 'clone'))
         if live[:24] != clone[:24] or live[40:92] != clone[40:92] or live[100:] != clone[100:]:
             raise Refused('schema')
-        if struct.unpack_from('>I', clone, 52)[0]:
-            raise Refused('auto-vacuum')  # Pointer-map pages belong to no tree.
+        # Bytes 52 (largest root page, non-zero in an auto-vacuum database) and 64 (incremental) are
+        # among those compared above, so the mode is the clone's.
+        self.auto_vacuum = bool(struct.unpack_from('>I', clone, 52)[0])
 
     def node(self, version, number):
         """(kind, children or None) of a b-tree page; one read for both versions when unchanged."""
@@ -994,6 +1003,7 @@ class _Proof:
         self.tree_table = {name: table if kind == 'index' else name for name, _, kind, table in self.trees}
         self.tree_kind = {name: kind for name, _, kind, _ in self.trees}
         for version in ('clone', 'live'):
+            self.pointer_maps(version)
             for name, root, _, _ in self.trees:
                 interior, leaves, family = self.tree(version, root)
                 for number in self.paged.intersection(interior):
@@ -1005,8 +1015,107 @@ class _Proof:
         for version, pages in (('clone', sorted(self.paged)), ('live', sorted(self.changed))):
             for number in pages:
                 owner = self.owners[version].get(number)
-                if owner is not None and owner != FREE and number not in self.overflow[version]:
+                if owner not in (None, FREE, POINTER_MAP) and number not in self.overflow[version]:
                     self.cells(version, number, owner)
+        self.check_pointer_maps()
+
+    # An auto-vacuum database's pointer-map pages.
+
+    def is_pointer_map(self, number):
+        """SQLite's PTRMAP_ISPAGE: page 2 and every (usable / 5 + 1)th page after it, moved one on
+        where it would be the lock-byte page."""
+        every = self.usable // 5 + 1
+        first = (number - 2) // every * every + 2
+        if first == PENDING_BYTE // self.page_size + 1:
+            first += 1
+        return number >= 2 and first == number
+
+    def pointer_maps(self, version):
+        """Claims the changed and gap pages at pointer-map positions before any tree or free list
+        is walked, so a b-tree, overflow or free page at one refuses ('page-owned-twice')."""
+        if self.auto_vacuum:
+            for number in self.paged:
+                if self.is_pointer_map(number):
+                    self.claim(version, number, POINTER_MAP)
+
+    def free_pages(self, version):
+        """Every page on `version`'s freelist (freelist() already checked its shape)."""
+        trunk, total = struct.unpack_from('>II', self.page(version, 1), 32)
+        pages = set()
+        while trunk:
+            if trunk in pages:
+                raise Refused('freelist')
+            pages.add(trunk)
+            page = self.page(version, trunk)
+            trunk, count = struct.unpack_from('>II', page, 0)
+            if count > self.usable // 4 - 2:
+                raise Refused('freelist')
+            pages.update(struct.unpack_from('>%dI' % count, page, 8))
+            if len(pages) > total:
+                raise Refused('freelist')
+        if len(pages) != total:
+            raise Refused('freelist')
+        return pages
+
+    def check_pointer_maps(self):
+        """A pointer-map page holds no row, but a read can follow one: skipping to an offset in an
+        overflow chain, SQLite takes the page after an overflow page as the next of the chain when
+        that page's entry names it (getOverflowPage). So every entry of a changed pointer-map page
+        that differs from the old version must describe the live file: a root of the schema, a page
+        of the live free list, a child of the b-tree page it names, the first overflow page of a
+        cell on the page it names, or the page an overflow page links to; so must every entry of such
+        a page for a page the file grew by, and every entry of a gap page whose old version is
+        unknown (no reference image). Any other unchanged entry is the old version's, as an
+        unchanged page is. Entries past the end of the database, and the slots of the lock-byte
+        page and of a pointer-map page, are never read (getOverflowPage steps over those pages)."""
+        if not self.auto_vacuum:
+            return
+        roots, free, blank = {root for _, root, _, _ in self.trees}, None, bytes(self.page_size)
+        for number in sorted(self.paged):
+            if number > self.pages or not self.is_pointer_map(number):
+                continue
+            live = self.page('live', number)  # A gap page the live log does not hold reads as the stop left it.
+            known = number in self.changed and number <= self.clone_pages
+            old = self.page('clone', number) if known else blank
+            for slot in range(self.usable // 5):
+                entry = live[slot * 5:slot * 5 + 5]
+                page = number + 1 + slot
+                if page > self.pages:
+                    break
+                if self.is_pointer_map(page) or page == PENDING_BYTE // self.page_size + 1:
+                    continue
+                if known and entry == old[slot * 5:slot * 5 + 5] and page <= self.clone_pages:
+                    continue  # A page the file grew by had no entry: its bytes there described nothing.
+                self.pointer_entries += 1
+                if self.pointer_entries > MAX_POINTER_MAP_ENTRIES:
+                    raise Refused('pointer-map-budget')
+                kind, parent = entry[0], int.from_bytes(entry[1:], 'big')
+                self.pointer_kinds.add(kind)
+                if kind == 2 and free is None:
+                    free = self.free_pages('live')
+                try:
+                    if not self.pointer_holds(kind, parent, page, roots, free):
+                        raise Refused('pointer-map')
+                except (IndexError, struct.error):
+                    raise Refused('pointer-map') from None
+
+    def pointer_holds(self, kind, parent, page, roots, free):
+        if kind in (1, 2):
+            return parent == 0 and page in (roots if kind == 1 else free)
+        if not 1 <= parent <= self.pages or self.is_pointer_map(parent):
+            return False
+        if kind == 4:
+            return struct.unpack_from('>I', self.page('live', parent), 0)[0] == page
+        if kind not in (3, 5):
+            return False
+        data, offset = self.page('live', parent), 100 if parent == 1 else 0
+        if kind == 5:
+            if data[offset] not in (2, 5):
+                return False
+            return page in self.node('live', parent)[1]
+        if data[offset] not in (2, 10, 13):
+            return False
+        return any(count and link == page for _, count, link in self.cell_links(data, offset, data[offset]))
 
     def freelist(self, version):
         trunk, total = struct.unpack_from('>II', self.page(version, 1), 32)
@@ -1159,7 +1268,7 @@ class _Proof:
         for version, pages in (('clone', self.paged), ('live', self.changed)):
             for number in pages:
                 owner = self.owners[version].get(number)
-                if owner in (None, FREE):
+                if owner in (None, FREE, POINTER_MAP):
                     continue
                 if owner == SCHEMA and number != 1:
                     raise Refused('schema')

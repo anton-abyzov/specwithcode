@@ -148,7 +148,7 @@ const reclaimCommand = Command.make("reclaim", {
   ),
   incremental: Flag.Boolean("incremental").pipe(
     Flag.withDescription(
-      "Also turn on auto_vacuum=INCREMENTAL so later compaction returns space by itself. Updates then always read the database in full a second time: the update helper's page proof refuses auto-vacuum databases.",
+      "Also turn on auto_vacuum=INCREMENTAL so later compaction returns space by itself. Updates keep their fast check: the update helper's page proof checks the pointer-map pages of an auto-vacuum database.",
     ),
     Flag.withDefault(false),
   ),

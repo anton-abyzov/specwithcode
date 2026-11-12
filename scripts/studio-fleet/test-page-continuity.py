@@ -679,4 +679,63 @@ class DeclaredRebuilds(unittest.TestCase):
                 self.assertEqual([list(row) for row in db.execute('PRAGMA table_xinfo(%s)' % table)], declared['columns'])
 
 
+class AutoVacuum:
+    """The same cases on an auto_vacuum=INCREMENTAL database (the fixture's AutoVacuum)."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch.dict(fixture.build.__globals__, {'AUTO_VACUUM': 2})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class PreservationAutoVacuum(AutoVacuum, Preservation):
+    def test_pointer_map_entries_are_checked(self):
+        result = self.prove(self.flow(writes=True))
+        self.assertTrue(result['preserved'])
+        self.assertGreater(result['pages']['pointerMapEntries'], 0)
+
+
+class AdditiveMigrationsAutoVacuum(AutoVacuum, AdditiveMigrations):
+    def test_declared_migration_without_other_writes(self):
+        """A new root takes the page after the last root, and the page that was there moves to the
+        end of the file: its table is compared by rows as any touched table is."""
+        result = self.prove(self.flow(*migration(70), *migration(71), writes=False))
+        self.assertTrue(result['preserved'])
+        self.assertEqual(result['schemaDelta']['migrations'], [70, 71])
+        self.assertIn('effect_sql_migrations', result['pages']['touchedTables'])
+        self.assertGreater(result['pages']['pointerMapEntries'], 0)
+
+
+    def test_a_largest_root_page_that_is_not_the_schemas_refuses(self):
+        flow = self.flow(*migration(70), *migration(71))
+        page = proof.PageProof.page
+
+        def read(instance, version, number):
+            data = page(instance, version, number)
+            if version == 'live' and number == 1:
+                data = data[:52] + struct.pack('>I', struct.unpack_from('>I', data, 52)[0] - 1) + data[56:]
+            return data
+        with patch.object(proof.PageProof, 'page', read):
+            with self.assertRaisesRegex(proof.Refused, '^schema:largest-root$'):
+                self.prove(flow)
+
+
+class RebuiltMigrationsAutoVacuum(AutoVacuum, unittest.TestCase):
+    """DROP TABLE in an auto-vacuum database moves the last root into the freed root's place, so a
+    rebuilt table ends on its old root page: the proof refuses and the full read decides."""
+
+    setUp_memory, flow, prove, full_read = RebuiltMigrations.setUp, RebuiltMigrations.flow, RebuiltMigrations.prove, RebuiltMigrations.full_read
+
+    def setUp(self):
+        super().setUp()
+        self.setUp_memory()
+
+    def test_a_declared_rebuild_is_left_to_the_full_read(self):
+        flow = self.flow(*migration(72), writes=False)
+        with self.assertRaisesRegex(proof.Refused, '^schema:rebuild-root:' + COMPACTIONS + '$'):
+            self.prove(flow)
+        self.full_read(flow)
+
+
 if __name__ == '__main__': unittest.main()

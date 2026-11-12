@@ -124,12 +124,16 @@ class PageProof(after_proof._Proof):
         # Header bytes 24-40 (change counter, size, freelist) differ after any write, as without a
         # delta; the schema cookie (40) must have moved forward, every other field stays. Page 1's
         # cells are sqlite_schema's root, whose rows delta() compared above.
-        if live_page[:24] != clone_page[:24] or live_page[44:92] != clone_page[44:92]:
+        # Bytes 52-56 are the largest root page of an auto-vacuum database (else zero), which an
+        # added table or index raises: it must be the live schema's largest root, in the same mode.
+        if live_page[:24] != clone_page[:24] or live_page[44:52] != clone_page[44:52] or live_page[56:92] != clone_page[56:92]:
             raise Refused('schema')
         if struct.unpack_from('>I', live_page, 40)[0] <= struct.unpack_from('>I', clone_page, 40)[0]:
             raise Refused('schema:cookie')
-        if struct.unpack_from('>I', clone_page, 52)[0]:
-            raise Refused('auto-vacuum')
+        largest, old_largest = (struct.unpack_from('>I', page, 52)[0] for page in (live_page, clone_page))
+        self.auto_vacuum = bool(old_largest)
+        if largest != (max([1] + [row[3] for row in live]) if self.auto_vacuum else 0):
+            raise Refused('schema:largest-root')
 
     def walk(self):
         """after_proof's walk, where an added b-tree exists only in the live version and a rebuilt one
@@ -141,6 +145,7 @@ class PageProof(after_proof._Proof):
         self.tree_table = {name: table if kind == 'index' else name for name, _, kind, table in self.trees}
         self.tree_kind = {name: kind for name, _, kind, _ in self.trees}
         for version in ('clone', 'live'):
+            self.pointer_maps(version)
             for name, root, _, _ in self.trees:
                 if version == 'clone' and name in self.added:
                     self.leaves[version, name] = []
@@ -157,8 +162,9 @@ class PageProof(after_proof._Proof):
         for version, pages in (('clone', sorted(self.paged)), ('live', sorted(self.changed))):
             for number in pages:
                 owner = self.owners[version].get(number)
-                if owner is not None and owner != after_proof.FREE and number not in self.overflow[version]:
+                if owner not in (None, after_proof.FREE, after_proof.POINTER_MAP) and number not in self.overflow[version]:
                     self.cells(version, number, owner)
+        self.check_pointer_maps()
         self.check_added()
         self.check_rebuilt()
 
@@ -198,25 +204,6 @@ class PageProof(after_proof._Proof):
                 overflow.update(self.chain(version, count, link))
         return set(interior) | set(leaves), overflow
 
-    def free_pages(self, version):
-        """Every page on `version`'s freelist (freelist() already checked its shape)."""
-        trunk, total = struct.unpack_from('>II', self.page(version, 1), 32)
-        pages = set()
-        while trunk:
-            if trunk in pages:
-                raise Refused('freelist')
-            pages.add(trunk)
-            page = self.page(version, trunk)
-            trunk, count = struct.unpack_from('>II', page, 0)
-            if count > self.usable // 4 - 2:
-                raise Refused('freelist')
-            pages.update(struct.unpack_from('>%dI' % count, page, 8))
-            if len(pages) > total:
-                raise Refused('freelist')
-        if len(pages) != total:
-            raise Refused('freelist')
-        return pages
-
     def check_rebuilt(self):
         """A declared rebuild's trees: every page of each new tree (interior, leaf, overflow) was
         written after the stop, and every page of each old tree is on the live freelist, in a new
@@ -242,7 +229,7 @@ class PageProof(after_proof._Proof):
         free = self.free_pages('live')
         for number in sorted(old_pages - new_pages - free):
             owner = self.owners['live'].get(number) if number in self.changed else None
-            if owner in (None, after_proof.FREE) or owner in self.rebuilt:
+            if owner in (None, after_proof.FREE, after_proof.POINTER_MAP) or owner in self.rebuilt:
                 raise Refused('rebuild-old-page-kept')
 
     def rebuilt_lines(self, db, query):
@@ -301,7 +288,7 @@ class PageProof(after_proof._Proof):
         for version, pages in (('clone', self.paged), ('live', self.changed)):
             for number in pages:
                 owner = self.owners[version].get(number)
-                if owner in (None, after_proof.FREE, after_proof.SCHEMA) or owner in self.added or owner in self.rebuilt:
+                if owner in (None, after_proof.FREE, after_proof.POINTER_MAP, after_proof.SCHEMA) or owner in self.added or owner in self.rebuilt:
                     continue
                 (indexed if self.tree_kind[owner] == 'index' else tables).add(self.tree_table[owner])
                 if version == 'clone' and number in self.gap and not self.reference:
