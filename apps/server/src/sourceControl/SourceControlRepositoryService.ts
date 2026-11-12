@@ -36,6 +36,7 @@ import { originUrlFromConfig } from "../project/projectFingerprint.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { classifyCreateRepositoryFailure } from "./publishFailure.ts";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@specweave-studio/shared/cloneUrl";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
@@ -688,11 +689,30 @@ export const make = Effect.gen(function* () {
         provider: input.provider,
       });
       const provider = yield* providers.get(providerKind);
-      const urls = yield* provider.createRepository({
-        cwd: input.cwd,
-        repository: input.repository.trim(),
-        visibility: input.visibility,
-      });
+      const urls = yield* provider
+        .createRepository({
+          cwd: input.cwd,
+          repository: input.repository.trim(),
+          visibility: input.visibility,
+        })
+        .pipe(
+          // Say why in fixed words; the provider's own text is never passed on.
+          Effect.mapError((cause) => {
+            const known = classifyCreateRepositoryFailure({
+              providerCause: cause.cause,
+              repository: input.repository.trim(),
+            });
+            return known === null
+              ? cause
+              : new SourceControlRepositoryError({
+                  operation: "publishRepository",
+                  provider: providerKind,
+                  detail: known.detail,
+                  publishFailure: known.reason,
+                  cause,
+                });
+          }),
+        );
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
@@ -725,7 +745,18 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName });
+      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlRepositoryError({
+              operation: "publishRepository",
+              provider: providerKind,
+              detail: `The repository was created, but pushing to it failed: ${redactUrlCredentials(cause.detail)}`,
+              publishFailure: "push_failed",
+              cause,
+            }),
+        ),
+      );
 
       return {
         repository: toRepositoryInfo(providerKind, urls),

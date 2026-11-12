@@ -19,6 +19,16 @@ import {
   personalAssistantDisabledMessage,
 } from "../studio/personalAssistant";
 
+import {
+  createFailureDescription,
+  nothingPushedDescription,
+  notOpenedDescription,
+  projectWhere,
+  publishFailureDescription,
+  type ProjectMachineName,
+} from "../studio/newProjectMessages";
+import { isThisMachineTarget } from "../connection/desktopLocal";
+
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useNamedEnvironments } from "~/components/settings/useNamedEnvironments";
 import { useProjects, waitForProject } from "~/state/entities";
@@ -57,13 +67,16 @@ export function useNewProject() {
       readonly environmentId: EnvironmentId;
       readonly workspaceRoot: string;
       readonly account: string | null;
+      readonly machine: ProjectMachineName;
+      readonly commitError?: string | undefined;
     }) => {
+      const repositoryName = getNewProjectGitHubRepository(input, input.workspaceRoot);
       const result = await publishRepository({
         environmentId: input.environmentId,
         input: {
           cwd: input.workspaceRoot,
           provider: "github",
-          repository: getNewProjectGitHubRepository(input, input.workspaceRoot),
+          repository: repositoryName,
           visibility: "private",
         },
       });
@@ -73,7 +86,7 @@ export function useNewProject() {
             stackedThreadToast({
               type: "error",
               title: "Could not create the GitHub repository",
-              description: `${errorMessage(squashAtomCommandFailure(result))} Use Publish Repository in the Git menu to try again.`,
+              description: `${publishFailureDescription(squashAtomCommandFailure(result), input.machine, repositoryName)} Use Publish Repository in the Git menu to try again.`,
             }),
           );
         }
@@ -87,7 +100,10 @@ export function useNewProject() {
             ? {
                 type: "warning",
                 title: "GitHub repository created, nothing pushed yet",
-                description: `${repository.nameWithOwner} is empty until the project has a first commit. Commit, then push from the Git menu.`,
+                description: nothingPushedDescription({
+                  repository: repository.nameWithOwner,
+                  commitError: input.commitError,
+                }),
               }
             : {
                 type: "success",
@@ -119,6 +135,14 @@ export function useNewProject() {
           ...(input.specweave === true ? { specweave: true } : {}),
         },
       });
+      const environment = environments.find(
+        (candidate) => candidate.environmentId === input.environmentId,
+      );
+      // The machine is named whenever the project is not on this device.
+      const machine: ProjectMachineName =
+        environment === undefined || isThisMachineTarget(environment.entry)
+          ? null
+          : environment.label;
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const failure = squashAtomCommandFailure(result);
@@ -133,7 +157,7 @@ export function useNewProject() {
                       (environment) => environment.environmentId === input.environmentId,
                     )?.label,
                   )
-                : errorMessage(failure),
+                : createFailureDescription(failure, machine),
             }),
           );
         }
@@ -141,31 +165,27 @@ export function useNewProject() {
       }
 
       const { projectId, workspaceRoot, commitError, existing, specweaveError } = result.value;
-      // Confirm the actual folder, including any collision suffix.
-      toastManager.add(
-        stackedThreadToast(
-          existing === true
-            ? {
-                type: "success",
-                title: `Opened ${input.name} in its existing folder`,
-                description: workspaceRoot,
-              }
-            : commitError === undefined
+      // Confirm the actual folder, including any collision suffix. An existing
+      // project is confirmed once it is read, under its own title.
+      if (existing !== true)
+        toastManager.add(
+          stackedThreadToast(
+            commitError === undefined
               ? {
                   type: "success",
                   title:
                     input.kind === "personal"
                       ? "Personal assistant ready"
                       : `Created ${input.name}`,
-                  description: workspaceRoot,
+                  description: projectWhere(workspaceRoot, machine),
                 }
               : {
                   type: "warning",
                   title: `Created ${input.name} without a first commit`,
-                  description: `${commitError} The project is in ${workspaceRoot}.`,
+                  description: `${commitError} The project is in ${projectWhere(workspaceRoot, machine)}.`,
                 },
-        ),
-      );
+          ),
+        );
       if (input.specweave === true && input.kind !== "personal") {
         const { specweaveAdded } = result.value;
         if (specweaveError !== undefined) {
@@ -192,6 +212,8 @@ export function useNewProject() {
           environmentId: input.environmentId,
           workspaceRoot,
           account: input.github.account,
+          machine,
+          commitError,
         });
       }
 
@@ -208,6 +230,17 @@ export function useNewProject() {
         );
         return null;
       });
+      // An existing project keeps its own title, which may differ from the name typed.
+      const title = existing === true ? (project?.title ?? input.name) : input.name;
+      if (existing === true) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: `Opened ${title} in its existing folder`,
+            description: projectWhere(workspaceRoot, machine),
+          }),
+        );
+      }
       if (project === null) return true;
       if (input.kind === "personal") {
         await navigate({
@@ -221,15 +254,26 @@ export function useNewProject() {
         });
         return true;
       }
-      await handleNewThread(projectRef).catch((error: unknown) => {
+      // The dialog closes either way, so a project that is not opened is said, never silent.
+      const reportNotOpened = () =>
         toastManager.add(
           stackedThreadToast({
-            type: "error",
-            title: "Failed to open project",
-            description: errorMessage(error),
+            type: "info",
+            title: `${title} is ready`,
+            description: notOpenedDescription({ title, workspaceRoot, machine }),
           }),
         );
-      });
+      await handleNewThread(projectRef, { onNotOpened: reportNotOpened }).catch(
+        (error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to open project",
+              description: errorMessage(error),
+            }),
+          );
+        },
+      );
       return true;
     },
     [createNew, environments, handleNewThread, publishToGitHub, navigate, clientSettings],

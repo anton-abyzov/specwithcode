@@ -1003,6 +1003,46 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 
+  describe("browse of linked folders", () => {
+    it.effect(
+      "lists links to folders as folders, marked as links, and leaves broken ones out",
+      () =>
+        Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir({ prefix: "studio-workspace-browse-links-" });
+          yield* writeTextFile(cwd, "target/notes.txt", "x");
+          yield* writeTextFile(cwd, "repo/.git/HEAD", "ref: refs/heads/main\n");
+          yield* writeTextFile(cwd, "file.txt", "x");
+          const linked = yield* Effect.promise(() =>
+            Promise.all([
+              NodeFSP.symlink(path.join(cwd, "target"), path.join(cwd, "shared"), "junction"),
+              NodeFSP.symlink(path.join(cwd, "repo"), path.join(cwd, "linked-repo"), "junction"),
+              NodeFSP.symlink(path.join(cwd, "gone"), path.join(cwd, "broken"), "junction"),
+              NodeFSP.symlink(path.join(cwd, "file.txt"), path.join(cwd, "to-file")),
+            ]).then(
+              () => true,
+              () => false,
+            ),
+          );
+          // Some Windows accounts may not make links.
+          if (!linked) return;
+
+          const result = yield* workspaceEntries.browse({
+            partialPath: yield* appendSeparator(cwd),
+          });
+          expect(
+            result.entries.map((entry) => [entry.name, entry.kind, entry.link === true]),
+          ).toEqual([
+            ["linked-repo", "git", true],
+            ["repo", "git", false],
+            ["shared", "folder", true],
+            ["target", "folder", false],
+          ]);
+        }),
+    );
+  });
+
   describe("browse of a folder the account may not list", () => {
     it.effect("reports it as unreadable instead of empty", () =>
       Effect.gen(function* () {
@@ -1023,6 +1063,15 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(readable.unreadable).toBeUndefined();
       }),
     );
+  });
+});
+
+describe("readDirectoryMissing", () => {
+  it("types a missing folder so clients need not read the message", () => {
+    const error = (code: string) => Object.assign(new Error(code), { code });
+    expect(WorkspaceEntries.readDirectoryMissing(error("ENOENT"))).toBe(true);
+    expect(WorkspaceEntries.readDirectoryMissing(error("EACCES"))).toBe(false);
+    expect(WorkspaceEntries.readDirectoryMissing(new Error("x"))).toBe(false);
   });
 });
 

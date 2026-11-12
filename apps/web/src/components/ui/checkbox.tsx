@@ -21,7 +21,7 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
           <span {...props}>
             {state.indeterminate ? (
               <svg
-                className="size-3.5 sm:size-3"
+                className="size-3.5 text-current sm:size-3"
                 fill="none"
                 height="24"
                 stroke="currentColor"
@@ -36,7 +36,7 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
               </svg>
             ) : (
               <svg
-                className="size-3.5 sm:size-3"
+                className="size-3.5 text-current sm:size-3"
                 fill="none"
                 height="24"
                 stroke="currentColor"

@@ -3,6 +3,7 @@ import {
   collapseCrumbs,
   displayPath,
   folderOutcome,
+  outcomeFromServer,
   pathCrumbs,
   projectPlaces,
   recentParents,
@@ -106,5 +107,21 @@ describe("places", () => {
       { kind: "home", label: "Home", path: "~/" },
       { kind: "recent", label: "client", path: "/work/client" },
     ]);
+  });
+});
+
+describe("outcomeFromServer", () => {
+  it("turns the server's decision into the footer's words", () => {
+    expect(
+      outcomeFromServer({ kind: "uses", path: "/p/app", because: "specweave" }, "app"),
+    ).toEqual({ kind: "use", path: "/p/app", note: "It already uses SpecWeave." });
+    expect(
+      outcomeFromServer({ kind: "creates", path: "/p/app-2", because: "name_taken" }, "app"),
+    ).toEqual({ kind: "create", path: "/p/app-2", note: "A folder named app is already here." });
+    expect(outcomeFromServer({ kind: "creates", path: "/p/app" }, "app")).toEqual({
+      kind: "create",
+      path: "/p/app",
+      note: null,
+    });
   });
 });
