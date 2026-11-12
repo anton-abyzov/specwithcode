@@ -171,6 +171,15 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map([["host-worker", { providers: state.providers }]]),
   useAllEnvironmentShellsBootstrapped: () => true,
 }));
+const NO_UNREACHABLE_ENVIRONMENTS: ReadonlySet<string> = new Set();
+let environmentIdsCache: { readonly key: string; readonly ids: ReadonlyArray<string> } | null = null;
+// One array per set of ids, as the real atom gives, so effects keyed on it do not re-run.
+function mockedEnvironmentIds(): ReadonlyArray<string> {
+  const ids = state.environments.map((environment) => environment.environmentId);
+  const key = ids.join("\n");
+  if (environmentIdsCache?.key !== key) environmentIdsCache = { key, ids };
+  return environmentIdsCache.ids;
+}
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     environments: state.environments,
@@ -178,6 +187,8 @@ vi.mock("../../state/environments", () => ({
     networkStatus: "online",
   }),
   usePrimaryEnvironmentId: () => "host-local",
+  useEnvironmentIds: () => mockedEnvironmentIds(),
+  useUnreachableEnvironmentIds: () => NO_UNREACHABLE_ENVIRONMENTS,
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: () => new Set(["host-local", "host-worker"]),
