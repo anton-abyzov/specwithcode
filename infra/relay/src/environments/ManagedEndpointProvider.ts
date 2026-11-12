@@ -444,7 +444,8 @@ function failureChain(cause: unknown, depth = 0): string {
   if (typeof cause !== "object" || cause === null || depth > 5) return typeof cause;
   const tag = "_tag" in cause && typeof cause._tag === "string" ? cause._tag : "Error";
   const message = "message" in cause && typeof cause.message === "string" ? cause.message : "";
-  const inner = "cause" in cause && cause.cause ? ` <- ${failureChain(cause.cause, depth + 1)}` : "";
+  const inner =
+    "cause" in cause && cause.cause ? ` <- ${failureChain(cause.cause, depth + 1)}` : "";
   return `${tag}: ${message}${inner}`.slice(0, 1_000);
 }
 
@@ -750,7 +751,15 @@ export const make = Effect.gen(function* () {
           );
         }
         if (tunnelId !== null) {
-          yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
+          // The machine being removed is often still online, and Cloudflare
+          // refuses to delete a tunnel while its connector is attached. That
+          // is not a failed removal: the link is revoked and the DNS record is
+          // gone, so the address is dead. Keep the allocation, which still
+          // names the tunnel, so a later teardown (another unlink, or the
+          // sweep once the connector drops) can finish.
+          const tunnelDeleted = yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
+            Effect.as(true),
+            Effect.catchIf(isManagedEndpointTunnelInUse, () => Effect.succeed(false)),
             Effect.mapError(
               (cause) =>
                 new ManagedEndpointDeprovisioningFailed({
@@ -761,6 +770,13 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
+          if (!tunnelDeleted) {
+            yield* Effect.logWarning("Managed tunnel still has a connector; left for later", {
+              environmentId: input.environmentId,
+              tunnelId,
+            });
+            return false;
+          }
         }
         return yield* allocations
           .removeClaimed({

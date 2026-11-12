@@ -3,16 +3,19 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import { AuthRelayWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/relay";
 import { ServerIcon } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 
+import { unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentCommand } from "../../cloud/linkEnvironmentAtoms";
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
 } from "../../cloud/managedRelayState";
+import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -74,10 +77,12 @@ export function StudioConnectEnvironmentRow(props: {
   readonly current?: boolean;
   readonly confirmationOpen: boolean;
   readonly mutationPending: boolean;
+  /** Why the last try to deregister this machine failed; null when it has not. */
+  readonly failure?: string | null;
   readonly onConfirmationChange: (open: boolean) => void;
   readonly onDeregister: (environment: RelayClientEnvironmentRecord) => void;
 }) {
-  const { environment, current = false } = props;
+  const { environment, current = false, failure = null } = props;
   return (
     <ClerkUserProfileRow icon={<ServerIcon className="size-4" />}>
       <Collapsible open={props.confirmationOpen} onOpenChange={props.onConfirmationChange}>
@@ -130,7 +135,17 @@ export function StudioConnectEnvironmentRow(props: {
               </p>
               {current ? (
                 <p className="mt-2 text-xs leading-4.5 font-medium text-warning-foreground">
-                  This is the machine you are using now.
+                  This is the machine you are using now. SpecWithCode Connect is turned off on it
+                  too.
+                </p>
+              ) : null}
+              {/* In the row, not only a toast: the account window can cover toasts. */}
+              {failure !== null ? (
+                <p
+                  role="alert"
+                  className="mt-2 text-xs leading-4.5 font-medium wrap-anywhere text-destructive"
+                >
+                  It was not deregistered: {failure}
                 </p>
               ) : null}
               <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -149,7 +164,11 @@ export function StudioConnectEnvironmentRow(props: {
                   disabled={props.mutationPending}
                   onClick={() => props.onDeregister(environment)}
                 >
-                  {props.mutationPending ? "Deregistering…" : "Deregister machine"}
+                  {props.mutationPending
+                    ? "Deregistering…"
+                    : failure !== null
+                      ? "Try again"
+                      : "Deregister machine"}
                 </Button>
               </div>
             </div>
@@ -172,6 +191,11 @@ export function StudioConnectMachinesView(props: {
   readonly error: string | null;
   readonly confirmingEnvironmentId: EnvironmentId | null;
   readonly deregisteringEnvironmentId: EnvironmentId | null;
+  /** The machine whose last deregistration failed, and why. */
+  readonly deregisterFailure?: {
+    readonly environmentId: EnvironmentId;
+    readonly message: string;
+  } | null;
   readonly onRefresh: () => void;
   readonly onConfirmationChange: (environmentId: EnvironmentId | null) => void;
   readonly onDeregister: (environment: RelayClientEnvironmentRecord) => void;
@@ -195,6 +219,11 @@ export function StudioConnectMachinesView(props: {
               current={environment.environmentId === props.currentEnvironmentId}
               confirmationOpen={props.confirmingEnvironmentId === environment.environmentId}
               mutationPending={mutationPending}
+              failure={
+                props.deregisterFailure?.environmentId === environment.environmentId
+                  ? props.deregisterFailure.message
+                  : null
+              }
               onConfirmationChange={(open) =>
                 props.onConfirmationChange(open ? environment.environmentId : null)
               }
@@ -253,6 +282,14 @@ export function StudioConnectUserProfilePage() {
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
     reportFailure: false,
   });
+  const primaryCloudLinkState = usePrimaryCloudLinkState();
+  const unlinkPrimaryEnvironment = useAtomCommand(unlinkPrimaryEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const [deregisterFailure, setDeregisterFailure] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly message: string;
+  } | null>(null);
   const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [confirmingEnvironmentId, setConfirmingEnvironmentId] = useState<EnvironmentId | null>(
@@ -270,12 +307,36 @@ export function StudioConnectUserProfilePage() {
 
     mutationPendingRef.current = true;
     setDeregisteringEnvironmentId(environment.environmentId);
+    setDeregisterFailure(null);
+
+    // This machine: turn Connect off here first. Its relay client then lets go
+    // of the tunnel the account is about to delete, and its own settings stop
+    // saying it is linked. The account's answer below is the result either way.
+    const localTarget = primaryCloudLinkState.target;
+    if (
+      localTarget !== null &&
+      localTarget.environmentId === environment.environmentId &&
+      readEnvironmentScope(environment.environmentId, AuthRelayWriteScope)
+    ) {
+      const localResult = await unlinkPrimaryEnvironment({ target: localTarget, clerkToken: null });
+      if (localResult._tag === "Failure" && !isAtomCommandInterrupted(localResult)) {
+        console.warn("[studio-connect] Could not turn Connect off on this machine", {
+          environmentId: environment.environmentId,
+          cause: squashAtomCommandFailure(localResult),
+        });
+      }
+      primaryCloudLinkState.refresh();
+    }
+
     const result = await deregisterEnvironment({
       accountId,
       environmentId: environment.environmentId,
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
+    // Whatever the answer: the account may have removed the machine before a
+    // later step failed, so the list is read again on every exit.
+    environmentsState.refresh();
 
     if (result._tag === "Success") {
       setConfirmingEnvironmentId(null);
@@ -284,7 +345,6 @@ export function StudioConnectUserProfilePage() {
         linkedAtById.set(environment.environmentId, environment.linkedAt);
         return { accountId, linkedAtById };
       });
-      environmentsState.refresh();
       toastManager.add({
         type: "success",
         title: "Machine deregistered",
@@ -297,6 +357,7 @@ export function StudioConnectUserProfilePage() {
     const cause = squashAtomCommandFailure(result);
     const message = cause instanceof Error ? cause.message : "Could not deregister the machine.";
     const traceId = findErrorTraceId(cause);
+    setDeregisterFailure({ environmentId: environment.environmentId, message });
     console.error("[studio-connect] Could not deregister environment", {
       environmentId: environment.environmentId,
       message,
@@ -338,8 +399,12 @@ export function StudioConnectUserProfilePage() {
       error={environmentsState.error}
       confirmingEnvironmentId={confirmingEnvironmentId}
       deregisteringEnvironmentId={deregisteringEnvironmentId}
+      deregisterFailure={deregisterFailure}
       onRefresh={environmentsState.refresh}
-      onConfirmationChange={setConfirmingEnvironmentId}
+      onConfirmationChange={(environmentId) => {
+        setDeregisterFailure(null);
+        setConfirmingEnvironmentId(environmentId);
+      }}
       onDeregister={(environment) => void handleDeregister(environment)}
     />
   );
