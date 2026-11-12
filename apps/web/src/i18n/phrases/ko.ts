@@ -4368,4 +4368,14 @@ export const ko: PhraseCatalog = {
   "By {id}": "실행: {id}",
   "Not finished": "완료되지 않음",
   "Setup can be closed once the import finishes.": "가져오기가 끝나면 설정을 닫을 수 있습니다.",
+  "Add a folder on this machine": "이 컴퓨터의 폴더 추가",
+  "Type a path, browse or drop a folder": "경로를 입력하거나 찾아보거나 폴더를 끌어다 놓기",
+  "Starting from nothing?": "처음부터 시작하시나요?",
+  "New empty project or clone a repository": "새 빈 프로젝트 또는 저장소 복제",
+  "Add {folder}": "{folder} 추가",
+  "That drop held no folder. Type or paste the path instead.":
+    "놓은 항목에 폴더가 없습니다. 경로를 입력하거나 붙여넣으세요.",
+  "Used the folder that holds the dropped file.": "놓은 파일이 들어 있는 폴더를 사용했습니다.",
+  "This machine keeps its folders inside WSL. Type or paste the path instead.":
+    "이 컴퓨터의 폴더는 WSL 안에 있습니다. 경로를 입력하거나 붙여넣으세요.",
 };
