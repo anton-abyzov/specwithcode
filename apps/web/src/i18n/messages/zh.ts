@@ -25,7 +25,8 @@ export const zh: Messages = {
   "wizard.toast.finishFailed": "无法完成设置",
 
   "wizard.connection.title": "连接你的电脑",
-  "wizard.connection.description": "选择一台或多台电脑。我们会在每台电脑上设置智能体和项目。",
+  "wizard.connection.description":
+    "智能体在这里选择的电脑上运行，所以请选中每一台要用来工作的电脑。",
   "wizard.connection.legend": "要设置的电脑",
   "wizard.connection.connected": "已连接",
   "wizard.connection.connecting": "正在连接…",
@@ -51,7 +52,7 @@ export const zh: Messages = {
 
   "wizard.agents.title": "连接你的智能体",
   "wizard.agents.description":
-    "选择一个智能体开始编程。Cursor、OpenCode、Grok 等可以在设置完成后于 设置 > 提供商 中添加。",
+    "代码由智能体编写，所以在第一次对话前至少要登录一个。Cursor、OpenCode、Grok 等可以在设置完成后于 设置 > 提供商 中添加。",
   "wizard.agents.noTerminal": "此连接无法控制终端。",
   "wizard.agents.anotherChatGpt": "连接另一个 ChatGPT 账号",
   "wizard.agents.readyToCode": "可以开始编程。",
@@ -76,7 +77,7 @@ export const zh: Messages = {
   "wizard.import.lookingInAgents": "正在查找 Claude Code 和 Codex 的项目…",
   "wizard.import.skip": "不导入项目",
   "wizard.import.title": "选择你的项目",
-  "wizard.import.description": "从所选电脑导入项目和对话。",
+  "wizard.import.description": "项目是智能体工作的文件夹，所以请选择要连同对话一起导入的项目。",
   "wizard.import.selectedCount": "已选择 {selected} / {total}",
   "wizard.import.selectAll": "全选",
   "wizard.import.selectNone": "全不选",

@@ -27,7 +27,7 @@ export const ko: Messages = {
 
   "wizard.connection.title": "컴퓨터 연결",
   "wizard.connection.description":
-    "컴퓨터를 하나 이상 선택하세요. 각 컴퓨터에 에이전트와 프로젝트를 설정합니다.",
+    "에이전트는 여기서 선택한 컴퓨터에서 실행되므로, 작업할 컴퓨터를 모두 선택하세요.",
   "wizard.connection.legend": "설정할 컴퓨터",
   "wizard.connection.connected": "연결됨",
   "wizard.connection.connecting": "연결 중…",
@@ -54,7 +54,7 @@ export const ko: Messages = {
 
   "wizard.agents.title": "에이전트 연결",
   "wizard.agents.description":
-    "코딩을 시작할 에이전트를 선택하세요. Cursor, OpenCode, Grok 등은 설정 후 설정 > 공급자에서 추가할 수 있습니다.",
+    "코드는 에이전트가 작성하므로, 첫 채팅 전에 하나 이상 로그인되어 있어야 합니다. Cursor, OpenCode, Grok 등은 설정 후 설정 > 공급자에서 추가할 수 있습니다.",
   "wizard.agents.noTerminal": "이 연결로는 터미널을 제어할 수 없습니다.",
   "wizard.agents.anotherChatGpt": "다른 ChatGPT 계정 연결",
   "wizard.agents.readyToCode": "코딩할 준비가 되었습니다.",
@@ -79,7 +79,8 @@ export const ko: Messages = {
   "wizard.import.lookingInAgents": "Claude Code와 Codex에서 프로젝트를 찾는 중…",
   "wizard.import.skip": "프로젝트 가져오지 않기",
   "wizard.import.title": "프로젝트 선택",
-  "wizard.import.description": "선택한 컴퓨터에서 프로젝트와 대화를 가져옵니다.",
+  "wizard.import.description":
+    "프로젝트는 에이전트가 작업하는 폴더이므로, 대화와 함께 가져올 프로젝트를 선택하세요.",
   "wizard.import.selectedCount": "{total}개 중 {selected}개 선택됨",
   "wizard.import.selectAll": "모두 선택",
   "wizard.import.selectNone": "선택 해제",
