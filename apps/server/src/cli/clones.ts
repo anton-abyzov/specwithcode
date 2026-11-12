@@ -295,6 +295,8 @@ const sweepCommand = Command.make("sweep", {
               kept,
               dependenciesPrunable: dependencies.prunable,
               dependenciesPruned: dependencies.pruned,
+              dependenciesSkipped: dependencies.skipped,
+              dependenciesFailed: dependencies.failed,
             }),
           );
         else
@@ -307,7 +309,7 @@ const sweepCommand = Command.make("sweep", {
                 ? []
                 : [
                     flags.apply
-                      ? `Dependency installs removed from ${dependencies.pruned} kept ${dependencies.pruned === 1 ? "copy" : "copies"}.`
+                      ? `Dependency installs removed from ${dependencies.pruned} of ${dependencies.prunable} kept ${dependencies.prunable === 1 ? "copy" : "copies"} that had idle ones.`
                       : `Dependency installs would be removed from ${dependencies.prunable} kept ${dependencies.prunable === 1 ? "copy" : "copies"}.`,
                   ]),
               ...Object.entries(kept)

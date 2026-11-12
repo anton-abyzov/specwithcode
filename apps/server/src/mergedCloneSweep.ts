@@ -322,7 +322,8 @@ export interface CloneSweepContext {
   /**
    * `package.json` names of registered repositories. A clone with no origin, or
    * with another one (a fork, a renamed repository), is still a copy of a
-   * registered repository for its dependency installs when its name is one of these.
+   * registered repository for its dependency installs when its name is one of
+   * these. Only installs a package manager can write again go either way.
    */
   readonly sourceTreeNames?: ReadonlyArray<string>;
   /** How long a kept copy must be unchanged before its dependency installs go. */
@@ -534,7 +535,9 @@ export interface DependencyPruneDecision extends CloneCandidate {
 
 /**
  * `node_modules` folders beside a `package.json`, at most a few folders below
- * `tree`. Hidden folders and the installs themselves are not entered, a
+ * `tree`, that a package manager wrote: the copy has a lockfile and the folder
+ * has the manager's state file, or holds only links into a root install that
+ * has one. Hidden folders and the installs themselves are not entered, a
  * symlinked `node_modules` is not an install of this copy, and in a clone a
  * `node_modules` with a tracked file in it is source, not an install.
  */
@@ -565,13 +568,64 @@ async function findDependencyInstalls(
       }
     }
   }
-  if (kind !== "clone") return installs;
-  const untracked: Array<string> = [];
+  // Only what a package manager wrote and can write again: the copy has a
+  // lockfile, and each folder carries the manager's state file or, in a
+  // workspace, nothing but links into the root install.
+  if (!LOCKFILES.some((name) => NodeFS.existsSync(NodePath.join(tree, name)))) return [];
+  const rootInstalled = hasInstallState(NodePath.join(tree, "node_modules"));
+  const written: Array<string> = [];
   for (const install of installs) {
-    const tracked = await git(tree, "ls-files", "-z", "--", NodePath.relative(tree, install));
-    if (tracked.code === 0 && tracked.stdout.length === 0) untracked.push(install);
+    if (!hasInstallState(install) && !(rootInstalled && (await onlyLinks(install)))) continue;
+    if (kind === "clone") {
+      const tracked = await git(tree, "ls-files", "-z", "--", NodePath.relative(tree, install));
+      if (tracked.code !== 0 || tracked.stdout.length > 0) continue;
+    }
+    written.push(install);
   }
-  return untracked;
+  return written;
+}
+
+/** Written by pnpm, npm and yarn at the end of every install. */
+const INSTALL_STATE_FILES = [".modules.yaml", ".package-lock.json", ".yarn-integrity"];
+/** With one of these in the copy, the same install can be made again. */
+const LOCKFILES = [
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+];
+
+function hasInstallState(install: string): boolean {
+  return INSTALL_STATE_FILES.some((name) => {
+    try {
+      return NodeFS.lstatSync(NodePath.join(install, name)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * A workspace package's `node_modules` as pnpm leaves it: links to packages,
+ * scope folders of links, and hidden entries (`.bin`, tool caches). A real
+ * package folder or file in it was put there by hand and keeps it.
+ */
+async function onlyLinks(install: string): Promise<boolean> {
+  try {
+    for (const entry of await NodeFS.promises.readdir(install, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+      if (!entry.isDirectory() || !entry.name.startsWith("@")) return false;
+      const scoped = await NodeFS.promises.readdir(NodePath.join(install, entry.name), {
+        withFileTypes: true,
+      });
+      if (!scoped.every((link) => link.isSymbolicLink())) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -618,9 +672,6 @@ async function changedAfter(
   return { state: "idle", newestMs: newest };
 }
 
-/** Written by pnpm, npm and yarn at the end of every install. */
-const INSTALL_STATE_FILES = [".modules.yaml", ".package-lock.json", ".yarn-integrity"];
-
 const hours = (ms: number) => `${Math.max(0, Math.round(ms / 3_600_000))} h`;
 
 /**
@@ -649,6 +700,8 @@ export async function decideDependencyPrune(
     )
   ) {
     try {
+      // A linked worktree or submodule belongs to another repository's folder.
+      if (!NodeFS.lstatSync(NodePath.join(tree, ".git")).isDirectory()) return null;
       const manifest = JSON.parse(
         await NodeFS.promises.readFile(NodePath.join(tree, "package.json"), "utf8"),
       ) as { name?: unknown };

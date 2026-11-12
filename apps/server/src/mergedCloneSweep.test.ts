@@ -483,8 +483,16 @@ describe("merged clone sweep", () => {
       NodeFS.writeFileSync(NodePath.join(path, "apps", "web", "package.json"), "{}");
       NodeFS.writeFileSync(NodePath.join(path, "apps", "web", "src", "main.ts"), "export {}\n");
       NodeFS.writeFileSync(NodePath.join(path, "notes.md"), "what the build found\n");
+      NodeFS.writeFileSync(NodePath.join(path, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
       install(path);
-      install(NodePath.join(path, "apps", "web"));
+      // A workspace package's install: only links into the root one.
+      const workspace = NodePath.join(path, "apps", "web", "node_modules");
+      NodeFS.mkdirSync(NodePath.join(workspace, "@scope"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(workspace, ".bin"));
+      NodeFS.writeFileSync(NodePath.join(workspace, ".bin", "vite"), "#!/bin/sh\n");
+      const target = NodePath.join(path, "node_modules", "left-pad");
+      NodeFS.symlinkSync(target, NodePath.join(workspace, "left-pad"));
+      NodeFS.symlinkSync(target, NodePath.join(workspace, "@scope", "pad"));
       prepare(path);
       ageTree(NodePath.dirname(path));
       return {
@@ -632,8 +640,10 @@ describe("merged clone sweep", () => {
 
     it("prunes a kept clone of a registered repository, never tracked files or other repositories", async () => {
       // Untracked notes keep the clone itself; its install can still go.
+      const lock = (repo: string) => NodeFS.writeFileSync(NodePath.join(repo, "yarn.lock"), "");
       const path = clone((repo) => {
         NodeFS.writeFileSync(NodePath.join(repo, "findings.md"), "notes\n");
+        lock(repo);
         install(repo);
       });
       ageTree(NodePath.dirname(path));
@@ -643,10 +653,11 @@ describe("merged clone sweep", () => {
       assert.strictEqual(result.result, "pruned");
       assert.isFalse(NodeFS.existsSync(NodePath.join(path, "node_modules")));
       assert.isTrue(NodeFS.existsSync(NodePath.join(path, "findings.md")));
-      assert.strictEqual(git(path, "status", "--porcelain"), "?? findings.md");
+      assert.strictEqual(git(path, "status", "--porcelain"), "?? findings.md\n?? yarn.lock");
 
       // A node_modules folder with a tracked file in it is source, not an install.
       const vendored = clone((repo) => {
+        lock(repo);
         install(repo);
         git(repo, "add", "-f", "node_modules/left-pad/index.js");
         git(repo, "commit", "--quiet", "-m", "vendored");
@@ -655,7 +666,10 @@ describe("merged clone sweep", () => {
       assert.isNull(await decideDependencyPrune(await decide(vendored, byMtime), context(byMtime)));
 
       // A clone of a repository no project registered is not looked at.
-      const foreign = clone((repo) => install(repo));
+      const foreign = clone((repo) => {
+        lock(repo);
+        install(repo);
+      });
       ageTree(NodePath.dirname(foreign));
       const unregistered = { ...byMtime, registeredRemotes: new Set<string>() };
       assert.isNull(
@@ -671,6 +685,44 @@ describe("merged clone sweep", () => {
       const merged = clone();
       assert.isNull(await decideDependencyPrune(await decide(merged), context(byMtime)));
       assert.isTrue(NodeFS.existsSync(NodePath.join(foreign, "node_modules", "left-pad")));
+    });
+
+    it("leaves a linked worktree, and anything a package manager could not write again", async () => {
+      // A linked worktree with a registered name and no readable origin.
+      const main = clone();
+      const linked = NodePath.join(NodePath.dirname(main), "linked");
+      git(main, "worktree", "add", "--quiet", "--detach", linked, "HEAD");
+      NodeFS.writeFileSync(NodePath.join(linked, "yarn.lock"), "");
+      install(linked);
+      ageTree(NodePath.dirname(main));
+      const named = { ...byMtime, sourceTreeNames: ["widgets"] };
+      const worktree = await decideClone(
+        { path: linked, root: scratch, kind: "clone" },
+        context(named),
+      );
+      assert.include(worktree.reason, "linked worktree");
+      assert.isNull(await decideDependencyPrune(worktree, context(named)));
+
+      // No lockfile: the same install could not be made again.
+      const unlocked = sourceTree((path) => NodeFS.rmSync(NodePath.join(path, "pnpm-lock.yaml")));
+      assert.isNull(await decideDependencyPrune(unlocked, context(byMtime)));
+      // A node_modules folder made by hand: no state file, real files in it.
+      const handmade = sourceTree((path) => {
+        NodeFS.rmSync(NodePath.join(path, "node_modules", ".modules.yaml"));
+        const local = NodePath.join(path, "apps", "web", "node_modules", "local-lib");
+        NodeFS.mkdirSync(local);
+        NodeFS.writeFileSync(NodePath.join(local, "index.js"), "module.exports = 2\n");
+      });
+      assert.isNull(await decideDependencyPrune(handmade, context(byMtime)));
+      // With a root install, a workspace folder holding a real package still stays.
+      const mixed = sourceTree((path) => {
+        const local = NodePath.join(path, "apps", "web", "node_modules", "local-lib");
+        NodeFS.mkdirSync(local);
+        NodeFS.writeFileSync(NodePath.join(local, "index.js"), "module.exports = 2\n");
+      });
+      assert.deepStrictEqual((await decideDependencyPrune(mixed, context(byMtime)))!.installs, [
+        NodePath.join(mixed.path, "node_modules"),
+      ]);
     });
 
     it("leaves a symlinked node_modules and one without a package.json beside it", async () => {

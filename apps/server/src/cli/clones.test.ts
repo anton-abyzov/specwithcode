@@ -205,6 +205,8 @@ describe("specweave-studio clones sweep", () => {
           },
           dependenciesPrunable: 0,
           dependenciesPruned: 0,
+          dependenciesSkipped: 0,
+          dependenciesFailed: 0,
         });
         assert.isFalse(NodeFS.existsSync(NodePath.dirname(fixture.merged)));
         assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.dirty, "notes.md")));
@@ -225,7 +227,9 @@ describe("specweave-studio clones sweep", () => {
         Effect.gen(function* () {
           const install = NodePath.join(fixture.dirty, "node_modules");
           NodeFS.mkdirSync(NodePath.join(install, "left-pad"), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(install, ".modules.yaml"), "layoutVersion: 5\n");
           NodeFS.writeFileSync(NodePath.join(fixture.dirty, "package.json"), "{}");
+          NodeFS.writeFileSync(NodePath.join(fixture.dirty, "pnpm-lock.yaml"), "");
           assert.strictEqual(yield* sweep(fixture, "--apply"), 0);
           const lines = (yield* TestConsole.logLines).map(String);
           const at = lines.findIndex((line) => line.includes(`${fixture.dirty}  `));
