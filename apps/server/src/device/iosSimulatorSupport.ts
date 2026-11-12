@@ -12,6 +12,8 @@ import * as Context from "effect/Context";
 const CHECK_TIMEOUT_MS = 5_000;
 /** A "no" is checked again after this long, so installing Xcode is noticed without a restart. */
 export const IOS_SIMULATOR_RECHECK_MS = 10 * 60_000;
+/** A check that could not tell (it timed out) runs again after this long. */
+export const UNKNOWN_RECHECK_MS = 60_000;
 
 export interface IosSimulatorProbe {
   /**
@@ -22,12 +24,13 @@ export interface IosSimulatorProbe {
   readonly current: () => boolean | undefined;
 }
 
+/** A check answers yes, no, or undefined when it could not tell; undefined stays unknown. */
 export const makeIosSimulatorProbe = (input: {
-  readonly check: () => Promise<boolean>;
+  readonly check: () => Promise<boolean | undefined>;
   readonly now?: () => number;
 }): IosSimulatorProbe => {
   const now = input.now ?? Date.now;
-  let answer: { readonly value: boolean; readonly at: number } | undefined;
+  let answer: { readonly value: boolean | undefined; readonly at: number } | undefined;
   let running = false;
   const start = () => {
     if (running) return;
@@ -40,23 +43,41 @@ export const makeIosSimulatorProbe = (input: {
         running = false;
       });
   };
+  const stale = (kept: { readonly value: boolean | undefined; readonly at: number }) =>
+    kept.value === undefined
+      ? now() - kept.at >= UNKNOWN_RECHECK_MS
+      : !kept.value && now() - kept.at >= IOS_SIMULATOR_RECHECK_MS;
   return {
     current: () => {
-      if (answer === undefined || (!answer.value && now() - answer.at >= IOS_SIMULATOR_RECHECK_MS))
-        start();
+      if (answer === undefined || stale(answer)) start();
       return answer?.value;
     },
   };
 };
 
-const run = (command: string, args: ReadonlyArray<string>) =>
-  new Promise<{ readonly ok: boolean; readonly stdout: string }>((resolve) => {
+/**
+ * Runs one developer tool; ok is a zero exit within the time limit, and
+ * timedOut is set when the time limit stopped it. Never throws.
+ */
+export type DeveloperToolRunner = (
+  command: string,
+  args: ReadonlyArray<string>,
+  timeoutMs?: number,
+) => Promise<{ readonly ok: boolean; readonly stdout: string; readonly timedOut?: boolean }>;
+
+export const runDeveloperTool: DeveloperToolRunner = (command, args, timeoutMs) =>
+  new Promise((resolve) => {
     try {
       NodeChildProcess.execFile(
         command,
         [...args],
-        { timeout: CHECK_TIMEOUT_MS, windowsHide: true, encoding: "utf8" },
-        (error, stdout) => resolve({ ok: error === null, stdout: String(stdout ?? "") }),
+        { timeout: timeoutMs ?? CHECK_TIMEOUT_MS, windowsHide: true, encoding: "utf8" },
+        (error, stdout) =>
+          resolve({
+            ok: error === null,
+            stdout: String(stdout ?? ""),
+            ...(error?.killed === true ? { timedOut: true } : {}),
+          }),
       );
     } catch {
       resolve({ ok: false, stdout: "" });
@@ -69,10 +90,10 @@ const run = (command: string, args: ReadonlyArray<string>) =>
  * (which honors DEVELOPER_DIR) does not.
  */
 const simctlAnswers = async (): Promise<boolean> => {
-  const selected = await run("xcode-select", ["-p"]);
+  const selected = await runDeveloperTool("xcode-select", ["-p"]);
   const developerDir = selected.stdout.trim();
   if (!selected.ok || developerDir === "") return false;
-  return (await run(NodePath.join(developerDir, "usr", "bin", "simctl"), ["help"])).ok;
+  return (await runDeveloperTool(NodePath.join(developerDir, "usr", "bin", "simctl"), ["help"])).ok;
 };
 
 /** This server's answer, shared by everything that reports it. */

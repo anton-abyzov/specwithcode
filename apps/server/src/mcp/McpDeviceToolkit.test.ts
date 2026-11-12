@@ -15,6 +15,7 @@ import * as AccessRequests from "../access/AccessRequests.ts";
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import { IosSimulatorSupport } from "../device/iosSimulatorSupport.ts";
+import { XcodeBuildSupport } from "../device/xcodeBuildSupport.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -475,6 +476,7 @@ const simulatorHintCall = (machine: {
     Layer.provideMerge(
       Layer.succeed(IosSimulatorSupport, { current: () => machine.iosSimulators }),
     ),
+    Layer.provideMerge(Layer.succeed(XcodeBuildSupport, { current: () => undefined })),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-device-hint-" })),
     Layer.provide(NodeServices.layer),
   );

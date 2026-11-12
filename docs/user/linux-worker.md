@@ -231,6 +231,19 @@ Install the project's toolchain on the
 worker as you would on any machine. Nothing is synchronized between machines:
 not files, not provider sign-ins, not browser logins.
 
+## Mac builds from a Linux machine
+
+A coordinator or agent on Linux cannot run Xcode, so it starts the build as a
+thread on one of your Macs. Each Mac reports whether a full Xcode is selected
+there. A Mac with full Xcode is used first. A Mac that has only the Command Line
+Tools is used last, and the launch note says an Xcode build will fail there.
+
+The agent pushes its branch first, so the Mac builds the same source. When the
+Mac does not have the project yet, the agent adds it there. Files that are not
+in Git, such as a `.env` file or signing secrets, go through the file transfer
+tool, which asks you first. The build thread reports back with the result and
+where the built app or log is.
+
 ## Costs
 
 A worker idles at well under one CPU and a few hundred MB of memory; the

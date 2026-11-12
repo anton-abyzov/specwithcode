@@ -95,7 +95,7 @@ import * as ComputerUseBroker from "./computerUse/ComputerUseBroker.ts";
 import * as BrowserExtension from "./browserExtension/BrowserExtension.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
-import { iosSimulatorProbe } from "./device/iosSimulatorSupport.ts";
+import { startDeveloperToolChecks } from "./device/xcodeBuildSupport.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as StudioMods from "./mods/StudioMods.ts";
@@ -745,10 +745,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
   // Wakes the thread that launched a worker on this machine when the worker's run ends.
   Layer.effectDiscard(LaunchedWorkerWake.start),
-  // Starts the background check of whether iOS Simulators run here, which machines report to each other.
+  // Starts the background checks of whether iOS Simulators and Xcode builds run here, which machines report to each other.
   Layer.effectDiscard(
     Effect.map(HostProcessPlatform, (platform) => {
-      if (platform === "darwin") iosSimulatorProbe.current();
+      if (platform === "darwin") startDeveloperToolChecks();
     }),
   ),
   // Handoff moves between machines; the receiver also serves the peer route.

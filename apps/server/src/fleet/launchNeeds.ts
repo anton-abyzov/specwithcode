@@ -22,16 +22,18 @@ const NEED_TEXT: Record<OrchestratorMcpLaunchNeed, string> = {
   macos: "macOS (a Mac, for Xcode)",
 };
 
-/** This machine's own report, from its descriptor and the simulator check. */
+/** This machine's own report, from its descriptor and the simulator and Xcode checks. */
 export const localMachinePlatform = (
   platform: Pick<ExecutionEnvironmentPlatform, "os" | "arch">,
   iosSimulators: boolean | undefined,
+  xcodeBuild?: boolean | undefined,
 ): OrchestratorMcpMachinePlatform => ({
   os: platform.os,
   arch: platform.arch,
   ...(iosSimulators === undefined
     ? {}
     : { iosSimulators: platform.os === "darwin" && iosSimulators }),
+  ...(xcodeBuild === undefined ? {} : { xcodeBuild: platform.os === "darwin" && xcodeBuild }),
 });
 
 /**
@@ -45,7 +47,7 @@ export const readMachinePlatform = (
   if (typeof capabilities !== "object" || capabilities === null) return undefined;
   const platform = (capabilities as { readonly platform?: unknown }).platform;
   if (typeof platform !== "object" || platform === null) return undefined;
-  const { os, arch, iosSimulators } = platform as Record<string, unknown>;
+  const { os, arch, iosSimulators, xcodeBuild } = platform as Record<string, unknown>;
   if (typeof os !== "string") return undefined;
   return {
     os: OS_VALUES.has(os) ? (os as OrchestratorMcpMachinePlatform["os"]) : "unknown",
@@ -54,6 +56,7 @@ export const readMachinePlatform = (
         ? (arch as OrchestratorMcpMachinePlatform["arch"])
         : "other",
     ...(typeof iosSimulators === "boolean" ? { iosSimulators } : {}),
+    ...(typeof xcodeBuild === "boolean" ? { xcodeBuild } : {}),
   };
 };
 
@@ -66,6 +69,31 @@ const fitOne = (
   if (need === "macos") return "yes";
   return platform.iosSimulators === undefined ? "unknown" : platform.iosSimulators ? "yes" : "no";
 };
+
+/**
+ * How well a Mac that meets the needs suits Mac work: 0 with full Xcode, 1
+ * when it has not said (an older version), 2 without it. A Mac without Xcode
+ * still runs Mac-only work that is not an Xcode build, so it is used last, not
+ * refused. Other needs do not care, so their machines are all 0.
+ */
+const xcodeRank = (
+  needs: ReadonlyArray<OrchestratorMcpLaunchNeed>,
+  platform: OrchestratorMcpMachinePlatform | undefined,
+): number => {
+  if (!needs.includes("macos") || platform?.os !== "darwin") return 0;
+  return platform.xcodeBuild === undefined ? 1 : platform.xcodeBuild ? 0 : 2;
+};
+
+/** Added to the note of a chosen Mac that reported it has no full Xcode. */
+export const NO_XCODE_NOTE = "This Mac has no full Xcode; an Xcode build will fail there.";
+
+const withXcodeNote = <T>(
+  needs: ReadonlyArray<OrchestratorMcpLaunchNeed>,
+  choice: NeedsChoice<T>,
+): NeedsChoice<T> =>
+  xcodeRank(needs, choice.candidate.platform) === 2
+    ? { ...choice, note: `${choice.note} ${NO_XCODE_NOTE}` }
+    : choice;
 
 export const needsFit = (
   needs: ReadonlyArray<OrchestratorMcpLaunchNeed>,
@@ -163,23 +191,28 @@ export const chooseForNeeds = <T>(input: {
     return {
       ok: true,
       chosen: [
-        {
+        withXcodeNote(needs, {
           candidate: explicit,
           fit,
           note:
             fit === "yes"
               ? `${sentence(explicit.label)} was named and has ${wanted}.`
               : `${sentence(explicit.label)} was named; it has not said whether it has ${wanted} (an older version), so it was used as asked.`,
-        },
+        }),
       ],
       skipped: [],
     };
   }
-  // The usual machines keep the work whenever one of them reports the need.
-  const outside = primary.some((candidate) => fits(candidate, "yes")) ? [] : extra;
+  // The usual machines keep the work whenever one of them reports the need,
+  // unless every Mac among them reports it has no full Xcode.
+  const usualQualifies = primary.filter((candidate) => fits(candidate, "yes"));
+  const outside = usualQualifies.some((candidate) => xcodeRank(needs, candidate.platform) < 2)
+    ? []
+    : extra;
   const usual = listing(primary.map((candidate) => candidate.label));
+  const missing = usualQualifies.length > 0 ? "full Xcode" : wanted;
   const outsideNote = (candidate: NeedsCandidate<T>, has: string) =>
-    `Chosen outside the usual machines (${usual || "none"}) because none of them reports ${wanted}; ${candidate.label} ${has}.`;
+    `Chosen outside the usual machines (${usual || "none"}) because none of them reports ${missing}; ${candidate.label} ${has}.`;
   const skipped = [...primary, ...outside]
     .filter((candidate) => fits(candidate, "no"))
     .map((candidate) => ({
@@ -188,14 +221,14 @@ export const chooseForNeeds = <T>(input: {
     }));
   const unknownNote = (candidate: NeedsCandidate<T>) =>
     `Tried because no machine that reports ${wanted} could take it, and ${candidate.label} has not said whether it has it (an older version).`;
-  const chosen: Array<NeedsChoice<T>> = [
-    ...primary
-      .filter((candidate) => fits(candidate, "yes"))
-      .map((candidate) => ({
-        candidate,
-        fit: "yes" as const,
-        note: `Chosen because this work needs ${wanted} and ${candidate.label} has it.`,
-      })),
+  // Among machines that qualify, a Mac with full Xcode comes first and one
+  // without it last; the sort is stable, so the usual order holds otherwise.
+  const qualified: Array<NeedsChoice<T>> = [
+    ...usualQualifies.map((candidate) => ({
+      candidate,
+      fit: "yes" as const,
+      note: `Chosen because this work needs ${wanted} and ${candidate.label} has it.`,
+    })),
     ...outside
       .filter((candidate) => fits(candidate, "yes"))
       .map((candidate) => ({
@@ -203,6 +236,12 @@ export const chooseForNeeds = <T>(input: {
         fit: "yes" as const,
         note: outsideNote(candidate, "has it"),
       })),
+  ].toSorted(
+    (left, right) =>
+      xcodeRank(needs, left.candidate.platform) - xcodeRank(needs, right.candidate.platform),
+  );
+  const chosen: Array<NeedsChoice<T>> = [
+    ...qualified.map((choice) => withXcodeNote(needs, choice)),
     ...primary
       .filter((candidate) => fits(candidate, "unknown"))
       .map((candidate) => ({ candidate, fit: "unknown" as const, note: unknownNote(candidate) })),

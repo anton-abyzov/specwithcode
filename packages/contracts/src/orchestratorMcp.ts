@@ -110,12 +110,14 @@ export const OrchestratorMcpMachinePlatform = Schema.Struct({
   arch: ExecutionEnvironmentPlatformArch,
   /** macOS whose selected Xcode has a working `simctl`, so iOS Simulators can run there. */
   iosSimulators: Schema.optional(Schema.Boolean),
+  /** macOS with a full Xcode selected, so `xcodebuild` runs; Command Line Tools alone is false. */
+  xcodeBuild: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpMachinePlatform = typeof OrchestratorMcpMachinePlatform.Type;
 
 /**
  * What a thread's work needs from the machine it runs on: "ios_simulator" is
- * macOS that can run iOS Simulators, "macos" is any Mac (an Xcode build).
+ * macOS that can run iOS Simulators, "macos" is any Mac, best one with full Xcode.
  */
 export const OrchestratorMcpLaunchNeed = Schema.Literals(["ios_simulator", "macos"]);
 export type OrchestratorMcpLaunchNeed = typeof OrchestratorMcpLaunchNeed.Type;

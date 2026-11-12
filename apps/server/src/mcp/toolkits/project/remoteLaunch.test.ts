@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import { IosSimulatorSupport } from "../../../device/iosSimulatorSupport.ts";
+import { XcodeBuildSupport } from "../../../device/xcodeBuildSupport.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { unscopedGrant, type WorkOrigin } from "../../../fleet/workGrantPolicy.ts";
@@ -403,6 +404,7 @@ const setup = (
           Layer.succeed(IosSimulatorSupport, {
             current: () => options.platforms?.local?.iosSimulators,
           }),
+          Layer.succeed(XcodeBuildSupport, { current: () => options.platforms?.local?.xcodeBuild }),
         ),
     NodeServices.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "studio-remote-launch-" }).pipe(
@@ -1220,5 +1222,31 @@ it.effect("goes outside the project's worker machines only when none can, and sa
     });
     expect(outside.remoteLaunches.map((launch) => launch.machine.id)).toEqual(["m3"]);
     expect(outside.localLaunches).toEqual([]);
+  });
+});
+
+it.effect("sends a Mac build from Linux to the Mac with full Xcode, else warns", () => {
+  const withXcode = { os: "darwin", arch: "arm64", xcodeBuild: true } as const;
+  const toolsOnly = { os: "darwin", arch: "arm64", xcodeBuild: false } as const;
+  const both = setup({ platforms: { local: linux, m1: toolsOnly, m3: withXcode } });
+  const onlyToolsMac = setup({ platforms: { local: linux, m1: toolsOnly, m3: linux } });
+  return Effect.gen(function* () {
+    expect(
+      yield* both.launch({ title: "Build", message: "Build the app", needs: ["macos"] }),
+    ).toMatchObject({ machine: M3, placement: { machine: "M3", reason: "needs" } });
+    expect(both.remoteLaunches.map((launch) => launch.machine.id)).toEqual(["m3"]);
+
+    expect(
+      yield* onlyToolsMac.launch({ title: "Build", message: "Build the app", needs: ["macos"] }),
+    ).toMatchObject({
+      machine: M1,
+      placement: {
+        machine: "M1",
+        note: expect.stringContaining(
+          "This Mac has no full Xcode; an Xcode build will fail there.",
+        ),
+      },
+    });
+    expect(onlyToolsMac.localLaunches).toEqual([]);
   });
 });
