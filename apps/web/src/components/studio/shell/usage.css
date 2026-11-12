@@ -10,6 +10,11 @@
   max-height: min(27rem, 70dvh);
   overflow-y: auto;
 }
+/* Holds its screen-reader-only text: absolute children of a non-positioned scroller
+   overflow the popover itself and leave empty space below the last account. */
+.sws-machine-limits {
+  position: relative;
+}
 .sws-machine-limits .sws-machine-limits-back {
   align-self: flex-start;
   margin-bottom: 4px;
