@@ -74,7 +74,7 @@ export const resolveFile = async (asked: string) => {
   const stat = await NodeFSP.stat(real);
   if (!stat.isFile())
     throw new FileTransferRefusal(
-      `${asked} is not a regular file. Move folders with Handoff > Copy files, or archive the folder first.`,
+      `${asked} is not a regular file. To put a whole project folder on that machine, call studio_project_add_to_machine with its projectId; for any other folder, archive it first and send the archive.`,
     );
   if (stat.size > MAX_FILE_BYTES)
     throw new FileTransferRefusal(`${asked} is ${formatBytes(stat.size)}; the limit is 4 GB.`);

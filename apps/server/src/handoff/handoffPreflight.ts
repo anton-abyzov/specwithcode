@@ -55,12 +55,20 @@ export function providerName(provider: {
   );
 }
 
+/** The receiver has no copy of the project, with the two ways to give it one. */
+export const NOT_LINKED_HERE =
+  "this project is not linked here. Link its copy here (the project's sidebar menu > Link…), or put it here with Add to another machine (agents: studio_project_add_to_machine)";
+
+/** A file the work needs that ignored-file rules kept on the source, and how to send it. */
+export const missingFileMessage = (path: string) =>
+  `no ${path}. Send it with studio_file_transfer, or with Handoff > Copy local files`;
+
 /** Every check that fails, worded for the user and prefixed with the machine. */
 export function preflightFailures(facts: PreflightFacts): Array<HandoffPreflightFailure> {
   const at = (message: string) => `${facts.machineLabel}: ${message}`;
   const failures: Array<HandoffPreflightFailure> = [];
   if (facts.project === null) {
-    failures.push({ check: "project-link", message: at("this project is not linked here") });
+    failures.push({ check: "project-link", message: at(NOT_LINKED_HERE) });
   } else if (!facts.project.inGrant) {
     failures.push({ check: "grant", message: at(`no work grant for ${facts.project.title}`) });
   }
@@ -68,7 +76,7 @@ export function preflightFailures(facts: PreflightFacts): Array<HandoffPreflight
     failures.push({ check: "checkpoint", message: at("no checkpoint for this thread") });
   }
   for (const path of facts.missingFiles) {
-    failures.push({ check: "ignored-files", message: at(`no ${path}`) });
+    failures.push({ check: "ignored-files", message: at(missingFileMessage(path)) });
   }
   const provider = facts.provider;
   if (provider === null) {

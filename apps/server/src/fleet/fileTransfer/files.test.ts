@@ -69,6 +69,8 @@ describe("what counts as a secret", () => {
 describe("resolving and landing", () => {
   it("refuses folders, missing files and relative paths", async () => {
     await expect(resolveFile(project)).rejects.toThrow("not a regular file");
+    // It names the call that moves a project folder, not a flow an agent cannot start.
+    await expect(resolveFile(project)).rejects.toThrow("studio_project_add_to_machine");
     await expect(resolveFile(NodePath.join(project, "no"))).rejects.toThrow("does not exist");
     await expect(resolveFile("relative.txt")).rejects.toThrow("absolute path");
   });

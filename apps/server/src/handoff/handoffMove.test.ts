@@ -798,7 +798,7 @@ describe("handoff between two machines", () => {
     Effect.gen(function* () {
       const { moves, destination } = yield* scenario({ linked: false });
       const failure = yield* handOff(moves).pipe(Effect.flip);
-      expect(failure.message).toBe("Minis: this project is not linked here");
+      expect(failure.message).toMatch(/^Minis: this project is not linked here\. .*Link…/u);
       expect(destination.document.incoming).toHaveLength(0);
     }),
   );

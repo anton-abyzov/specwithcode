@@ -452,6 +452,9 @@ describe("RemoteWorkers", () => {
         projectScope: "linked",
         project: { match: "none" },
       });
+      // The reason it does not match travels with the match, for the agent to act on.
+      expect(refused?.project?.reason).toEqual(expect.any(String));
+      expect(refused?.project?.reason?.length).toBeGreaterThan(0);
       // Every project: ready, and the scope says so.
       const everything = scoped("all", []);
       const open = yield* Effect.gen(function* () {

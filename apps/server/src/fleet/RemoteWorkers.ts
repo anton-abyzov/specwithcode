@@ -795,13 +795,17 @@ const make = Effect.gen(function* () {
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;
             if (project !== undefined) {
-              const { reason: _reason, ...match } = matchFor(
+              const { reason, ...match } = matchFor(
                 machine,
                 project,
                 probed.success.projects,
                 undefined,
               );
-              row.project = match;
+              // Why it does not match, so an agent can act on it (link, add, choose).
+              row.project =
+                reason === undefined || match.match === "configured" || match.match === "identity"
+                  ? match
+                  : { ...match, reason };
               // That machine lists only projects its grant covers, so no match there means
               // the grant leaves this one out: work for it cannot start there yet.
               if (scope !== undefined && scope !== "all" && match.match === "none")

@@ -81,6 +81,7 @@ import {
   handoffSeed,
   HANDOFF_SEED_MAX_CHARS,
   type PreflightProvider,
+  NOT_LINKED_HERE,
   preflightFailures,
   shouldResume,
 } from "./handoffPreflight.ts";
@@ -295,7 +296,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const project = yield* localProject(caller.sourceEnvironmentId, sourceProjectId);
       if (project === null) {
-        return yield* refuse(409, "invalid", at("this project is not linked here"), "project-link");
+        return yield* refuse(409, "invalid", at(NOT_LINKED_HERE), "project-link");
       }
       if (!inGrant(caller, project)) {
         return yield* refuse(403, "needs_grant", at(`no work grant for ${project.title}`), "grant");
