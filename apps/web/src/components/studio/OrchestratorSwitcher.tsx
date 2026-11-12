@@ -1,3 +1,8 @@
+import {
+  machineColorProps,
+  useMachineIdentity,
+  type MachineIdentity,
+} from "../../studio/machineIdentity";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { useNavigate } from "@tanstack/react-router";
@@ -83,7 +88,9 @@ export function OrchestratorSwitcher({
   onAdd = null,
   onMoveElsewhere = null,
   onLeave = null,
+  identity = null,
 }: {
+  identity?: MachineIdentity | null;
   /** The viewed machine's name: its nickname, else its short host label. */
   label: string;
   /** Its full host label for the tooltip; defaults to `label`. */
@@ -118,7 +125,7 @@ export function OrchestratorSwitcher({
   const status = (
     <>
       <span className="sws-dot" data-tone={connected ? "resolved" : "failed"} aria-hidden />
-      <span className="sws-host-name">{label}</span>
+      <span className="sws-host-name">Runs on {label}</span>
       <span className="sr-only">{connected ? ", connected" : `, ${statusDetail}`}</span>
       {connected ? null : (
         <span aria-hidden data-orchestrator-status="">
@@ -135,7 +142,14 @@ export function OrchestratorSwitcher({
   if (!viewable && !machineActions)
     return (
       <Tooltip>
-        <TooltipTrigger render={<span className="project-muted sws-host" />}>
+        <TooltipTrigger
+          render={
+            <span
+              className="project-muted sws-host sws-execution-control machine-chip"
+              {...machineColorProps(identity)}
+            />
+          }
+        >
           {status}
         </TooltipTrigger>
         <TooltipPopup side="top">{hostLabel ?? label}</TooltipPopup>
@@ -152,7 +166,7 @@ export function OrchestratorSwitcher({
   const movable = onMove ? others.filter((copy) => copy.role !== "pending") : [];
   return (
     <Menu>
-      <span className="project-muted sws-host">
+      <span className="project-muted sws-host sws-execution-control">
         <Tooltip>
           <TooltipTrigger
             render={
@@ -161,7 +175,9 @@ export function OrchestratorSwitcher({
                   <Button
                     variant="ghost-muted"
                     size="xs"
-                    className="min-w-0 max-w-full"
+                    className="min-w-0 max-w-full machine-chip"
+                    {...machineColorProps(identity)}
+                    data-coordinator-machine=""
                     aria-label={
                       viewable
                         ? `Viewing ${label}'s orchestrator. Choose a machine to view`
@@ -352,6 +368,7 @@ export function ProjectOrchestratorSwitcher({
   const navigate = useNavigate();
   // A nickname shows as typed; only a host label drops its owner.
   const name = useMachineNickname(project.environmentId, label);
+  const identity = useMachineIdentity(project.environmentId, label);
   const start = useStartCoordinator(members, copies);
   useMachineLastSeenVersion();
   const now = nowFromMinute(useNowMinute());
@@ -360,6 +377,7 @@ export function ProjectOrchestratorSwitcher({
     : remoteOrchestratorOfflineLabel(name, machineLastSeenAt(project.environmentId), now);
   return (
     <OrchestratorSwitcher
+      identity={identity}
       label={name}
       hostLabel={label}
       connected={connected}

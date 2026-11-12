@@ -60,7 +60,15 @@ const fieldClass = "w-full rounded-md border border-border bg-background px-3 py
  * settings, with the ElevenLabs key in that server's secret store. The key is
  * write-only here; the server only reports whether one is saved.
  */
-export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
+export function VoiceSettings({
+  disabled = false,
+  controlledOpen,
+  onControlledOpenChange,
+}: {
+  disabled?: boolean;
+  controlledOpen?: boolean;
+  onControlledOpenChange?: (open: boolean) => void;
+}) {
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
   const environmentId = usePrimaryEnvironmentId();
   const saved = usePrimarySettings((settings) => settings.voice);
@@ -68,7 +76,9 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
     label: "save voice settings",
     reportFailure: false,
   });
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onControlledOpenChange ?? setLocalOpen;
   const [value, setValue] = useState<VoiceSettingsValue>(saved);
   const [voices, setVoices] = useState<readonly DesktopLocalVoice[]>([]);
   const [apiKey, setApiKey] = useState("");
@@ -99,6 +109,13 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
     setClearKey(false);
     setOpen(true);
   };
+  useEffect(() => {
+    if (!open) return;
+    setValue(saved);
+    setError(null);
+    setApiKey("");
+    setClearKey(false);
+  }, [open, saved]);
   useEffect(() => {
     if (!open || !bridge) return;
     let alive = true;
@@ -229,17 +246,19 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
   };
   return (
     <>
-      <Tip label={disabled ? "End the call to change voice settings" : "Voice settings"}>
-        <button
-          type="button"
-          className="sws-icon-button"
-          aria-label="Voice settings"
-          disabled={disabled}
-          onClick={openDialog}
-        >
-          <AudioLinesIcon aria-hidden />
-        </button>
-      </Tip>
+      {controlledOpen === undefined ? (
+        <Tip label={disabled ? "End the call to change voice settings" : "Voice settings"}>
+          <button
+            type="button"
+            className="sws-icon-button"
+            aria-label="Voice settings"
+            disabled={disabled}
+            onClick={openDialog}
+          >
+            <AudioLinesIcon aria-hidden />
+          </button>
+        </Tip>
+      ) : null}
       <Dialog
         open={open}
         onOpenChange={(next) => {
