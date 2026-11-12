@@ -1,4 +1,6 @@
-import { WorkspaceModeControl } from "./chat/WorkspaceModeControl";
+import { useComposerRepositoryPick, WorkspaceModeControl } from "./chat/WorkspaceModeControl";
+import { projectWorkspace } from "../studio/projectWorkspace";
+import { useEnvironmentQuery } from "../state/query";
 import { ThreadRepositoriesChip } from "./chat/ThreadRepositories";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
@@ -35,6 +37,7 @@ import {
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   shouldShowEnvironmentIndicator,
+  composerRepositoryPicks,
 } from "./BranchToolbar.logic";
 import {
   BranchToolbarBranchSelector,
@@ -630,6 +633,32 @@ export const BranchToolbar = memo(function BranchToolbar({
       activeEnvironment: activeEnvironmentOption,
       canPickEnvironment: showEnvironmentPicker,
     });
+  // The folder's repositories, for a draft that will get a worktree. An older
+  // server sends none, which hides the control.
+  const pickingRepositories =
+    showGitControls &&
+    layout === "composer" &&
+    serverThread === null &&
+    draftThread !== null &&
+    activeWorktreePath === null &&
+    effectiveEnvMode === "worktree" &&
+    activeProject !== null;
+  const repositoriesRead = useEnvironmentQuery(
+    pickingRepositories
+      ? projectWorkspace.environmentRead({
+          environmentId: activeProject.environmentId,
+          input: { projectId: activeProject.id, discover: true },
+        })
+      : null,
+  );
+  const composerRepositories = useMemo(
+    () =>
+      pickingRepositories
+        ? (repositoriesRead.data?.found ?? []).filter((row) => row.state === "available")
+        : [],
+    [pickingRepositories, repositoriesRead.data],
+  );
+  const composerPick = useComposerRepositoryPick(threadId);
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
 
@@ -683,7 +712,20 @@ export const BranchToolbar = memo(function BranchToolbar({
       )}
     >
       {showGitControls && !envModeLocked && !forceNewWorktree && !activeWorktreePath ? (
-        <WorkspaceModeControl mode={effectiveEnvMode} onChange={onEnvModeChange} />
+        <WorkspaceModeControl
+          mode={effectiveEnvMode}
+          onChange={onEnvModeChange}
+          repositories={
+            composerRepositories.length > 0
+              ? {
+                  environmentId,
+                  found: composerRepositories,
+                  pick: composerPick,
+                  onChange: (pick) => composerRepositoryPicks.set(threadId, pick),
+                }
+              : undefined
+          }
+        />
       ) : null}
       {serverThread?.worktreePath ? <ThreadRepositoriesChip shell={serverThread} /> : null}
       {showGitControls ? (

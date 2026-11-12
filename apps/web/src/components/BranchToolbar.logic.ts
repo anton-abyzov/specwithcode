@@ -442,3 +442,71 @@ export function threadRepositoryEventText(event: ThreadRepositoryEvent): {
     detail: `${on}${event.baseRef === null ? "" : ` from ${event.baseRef}`}. Dependencies ${event.dependencies === "installed" ? "installed" : "not installed"}.`,
   };
 }
+
+/** The composer's repository pick for one draft: none picked means the agent decides. */
+export interface ComposerRepositoryPick {
+  /** Paths relative to the project folder. */
+  readonly repositories: ReadonlyArray<string>;
+  /** With exactly one repository: the branch of it to start from. */
+  readonly baseBranch: string | null;
+}
+
+export const AGENT_DECIDES: ComposerRepositoryPick = { repositories: [], baseBranch: null };
+
+/** Check or uncheck one repository. The base branch resets to the single pick's current branch. */
+export function toggleComposerRepository(
+  pick: ComposerRepositoryPick,
+  relativePath: string,
+  found: ReadonlyArray<ProjectFoundRepository>,
+): ComposerRepositoryPick {
+  const order = found.map((row) => row.relativePath);
+  const repositories = (
+    pick.repositories.includes(relativePath)
+      ? pick.repositories.filter((path) => path !== relativePath)
+      : [...pick.repositories, relativePath]
+  ).toSorted((left, right) => order.indexOf(left) - order.indexOf(right));
+  const only =
+    repositories.length === 1 ? found.find((row) => row.relativePath === repositories[0]) : null;
+  return { repositories, baseBranch: only?.branch ?? only?.defaultBranch ?? null };
+}
+
+/** `Repositories: Agent decides`, `Repositories: api`, `Repositories: 3 picked`. */
+export function composerRepositoriesLabel(
+  pick: ComposerRepositoryPick,
+  found: ReadonlyArray<ProjectFoundRepository>,
+): string {
+  if (pick.repositories.length === 0) return "Repositories: Agent decides";
+  if (pick.repositories.length === 1)
+    return `Repositories: ${found.find((row) => row.relativePath === pick.repositories[0])?.name ?? pick.repositories[0]}`;
+  return `Repositories: ${pick.repositories.length} picked`;
+}
+
+/** What the launch sends for a pick: nothing when the agent decides. */
+export function composerRepositoryLaunch(pick: ComposerRepositoryPick | null): {
+  readonly repositories?: ReadonlyArray<string>;
+  readonly repositoryBaseBranch?: string;
+} {
+  if (pick === null || pick.repositories.length === 0) return {};
+  return {
+    repositories: pick.repositories,
+    ...(pick.repositories.length === 1 && pick.baseBranch !== null
+      ? { repositoryBaseBranch: pick.baseBranch }
+      : {}),
+  };
+}
+
+// Picks live for the page's lifetime, keyed by the draft's thread: never saved, never remembered.
+const composerPicks = new Map<string, ComposerRepositoryPick>();
+const composerPickListeners = new Set<() => void>();
+export const composerRepositoryPicks = {
+  get: (threadId: string): ComposerRepositoryPick => composerPicks.get(threadId) ?? AGENT_DECIDES,
+  set(threadId: string, pick: ComposerRepositoryPick) {
+    if (pick.repositories.length === 0) composerPicks.delete(threadId);
+    else composerPicks.set(threadId, pick);
+    for (const listener of composerPickListeners) listener();
+  },
+  subscribe(listener: () => void) {
+    composerPickListeners.add(listener);
+    return () => void composerPickListeners.delete(listener);
+  },
+};

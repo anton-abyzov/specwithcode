@@ -90,6 +90,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly repository?: string | undefined;
       /** A worktree set (worktreeSet.ts): environment repository ids or paths relative to the root. */
       readonly repositories?: ReadonlyArray<string> | undefined;
+      readonly repositoryBaseRef?: string | undefined;
     };
 
 /** A nested repository checkout a launch runs git in instead of the project root. */
@@ -342,7 +343,6 @@ const make = Effect.gen(function* () {
     if (requested === undefined) return { cwd: project.workspaceRoot, repository: null };
     const resolved = resolveLaunchRepository(project, requested);
     if (!resolved.ok) {
-      // A clone in the project folder is named by its path there, with nothing to register.
       const inFolder = yield* Effect.promise(() =>
         resolveFolderRepository(project.workspaceRoot, requested),
       );
@@ -497,8 +497,7 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
-      // `launch` leaves an empty list only for a folder of separate clones: the
-      // thread then starts in its own folder with no worktree yet.
+      // An empty list (see `launch`): the thread starts in its own folder, no worktree yet.
       const setRepositories =
         input.workspaceStrategy.type === "worktree" &&
         input.workspaceStrategy.repository === undefined
@@ -575,6 +574,7 @@ const make = Effect.gen(function* () {
             branch: branch!,
             projectRoot: project.workspaceRoot,
             baseRef: strategy.baseRef,
+            memberBaseRef: members.length === 1 ? strategy.repositoryBaseRef : undefined,
             startFromOrigin: strategy.startFromOrigin === true,
             submodules: placementSettings.worktreeSubmodules,
           }),
@@ -871,7 +871,6 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
-      // A folder with no repository has nothing to set up; adding one installs nothing either.
       const setup = yield* (
         createdSet?.members.length === 0
           ? Effect.succeed({ status: "no-script" as const })

@@ -215,6 +215,8 @@ export const createWorktreeSet = Effect.fn("worktreeSet.create")(function* (inpu
   readonly branch: string;
   readonly projectRoot: string;
   readonly baseRef: string;
+  /** The branch a single picked repository starts from, when the launch named one. */
+  readonly memberBaseRef?: string | undefined;
   readonly startFromOrigin: boolean;
   readonly submodules: WorktreeSubmodules | null;
 }) {
@@ -241,7 +243,14 @@ export const createWorktreeSet = Effect.fn("worktreeSet.create")(function* (inpu
         .makeDirectory(input.folder, { recursive: true })
         .pipe(Effect.mapError((cause) => `Could not create ${input.folder}: ${String(cause)}`));
     for (const member of input.members) {
-      const base = yield* memberBase(member, input.projectRoot, input.baseRef);
+      const picked =
+        input.memberBaseRef !== undefined &&
+        (yield* git
+          .hasCommit({ cwd: member.repository, refName: input.memberBaseRef })
+          .pipe(Effect.orElseSucceed(() => false)));
+      const base = picked
+        ? input.memberBaseRef!
+        : yield* memberBase(member, input.projectRoot, input.baseRef);
       const start = yield* memberStart(member.repository, base, input.startFromOrigin);
       const exists = yield* git
         .hasCommit({ cwd: member.repository, refName: start })

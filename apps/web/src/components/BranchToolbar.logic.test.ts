@@ -22,6 +22,11 @@ import {
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
   addableThreadRepositories,
+  AGENT_DECIDES,
+  composerRepositoriesLabel,
+  composerRepositoryLaunch,
+  composerRepositoryPicks,
+  toggleComposerRepository,
   threadRepositoriesLabel,
   threadRepositoryEvents,
   threadRepositoryEventText,
@@ -1020,5 +1025,54 @@ describe("thread repositories", () => {
     ]);
     // Repositories that came with the launch are not "added".
     expect(threadRepositoryEvents(thread([held({ addedBy: null, addedAt: null })]))).toEqual([]);
+  });
+});
+
+describe("composer repositories", () => {
+  const found = [
+    { relativePath: "repositories/a/api", name: "api", branch: "main", defaultBranch: "main" },
+    { relativePath: "repositories/a/web", name: "web", branch: null, defaultBranch: "trunk" },
+  ] as never[];
+
+  it("lets the agent decide until a repository is checked", () => {
+    expect(composerRepositoriesLabel(AGENT_DECIDES, found)).toBe("Repositories: Agent decides");
+    expect(composerRepositoryLaunch(AGENT_DECIDES)).toEqual({});
+    expect(composerRepositoryLaunch(null)).toEqual({});
+  });
+
+  it("sends the picked repositories, and a base branch only for exactly one", () => {
+    const web = toggleComposerRepository(AGENT_DECIDES, "repositories/a/web", found);
+    // No branch checked out: the base is its default branch.
+    expect(web).toEqual({ repositories: ["repositories/a/web"], baseBranch: "trunk" });
+    expect(composerRepositoriesLabel(web, found)).toBe("Repositories: web");
+    expect(composerRepositoryLaunch({ ...web, baseBranch: "release" })).toEqual({
+      repositories: ["repositories/a/web"],
+      repositoryBaseBranch: "release",
+    });
+    const both = toggleComposerRepository(
+      { ...web, baseBranch: "release" },
+      "repositories/a/api",
+      found,
+    );
+    expect(both).toEqual({
+      repositories: ["repositories/a/api", "repositories/a/web"],
+      baseBranch: null,
+    });
+    expect(composerRepositoriesLabel(both, found)).toBe("Repositories: 2 picked");
+    expect(composerRepositoryLaunch(both)).toEqual({ repositories: both.repositories });
+    // Back to one: the base resets to that repository's current branch.
+    expect(toggleComposerRepository(both, "repositories/a/web", found)).toEqual({
+      repositories: ["repositories/a/api"],
+      baseBranch: "main",
+    });
+  });
+
+  it("holds a pick per draft and forgets it when cleared", () => {
+    const pick = { repositories: ["repositories/a/api"], baseBranch: "main" };
+    composerRepositoryPicks.set("draft-1", pick);
+    expect(composerRepositoryPicks.get("draft-1")).toBe(pick);
+    expect(composerRepositoryPicks.get("draft-2")).toBe(AGENT_DECIDES);
+    composerRepositoryPicks.set("draft-1", AGENT_DECIDES);
+    expect(composerRepositoryPicks.get("draft-1")).toBe(AGENT_DECIDES);
   });
 });
