@@ -20,10 +20,14 @@ name: Desktop Windows and Linux
 # only the server, the web client and the resource monitor it needs, never the
 # desktop app, whose AppImage and .deb come from the release.
 #
-# A pull request runs it only when it changes the desktop app or the packaging
-# and end-to-end scripts. Server, web and shared package changes are covered by
-# the daily run on main, so a regression they cause surfaces within a day
-# without holding a Windows and a Linux runner for every PR.
+# A pull request runs it only when it changes the desktop app, the packaging
+# and end-to-end scripts, or the first-run setup the end-to-end test clicks
+# through (the onboarding components and the English labels it matches). A new
+# first-run step that the test cannot pass otherwise surfaces only at release
+# time, about 24 minutes into the macOS run. Other server, web and shared
+# package changes are covered by the daily run on main, so a regression they
+# cause surfaces within a day without holding a Windows and a Linux runner for
+# every PR.
 #
 # The macOS job (Apple silicon) builds the unsigned zip, unpacks it as the
 # updater does, launches it offscreen and runs the release's verify stage in
@@ -40,6 +44,8 @@ on:
       - "scripts/smoke-cli-archive.ts"
       - "scripts/desktop-e2e/**"
       - "scripts/release/verify-built-app.mjs"
+      - "apps/web/src/components/onboarding/**"
+      - "apps/web/src/i18n/messages/en.ts"
   schedule:
     # 06:53 UTC daily on main, beside the daily platform tests.
     - cron: "53 6 * * *"

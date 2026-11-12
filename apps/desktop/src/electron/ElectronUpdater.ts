@@ -16,6 +16,7 @@ import {
 import {
   type DebUpdaterInstall,
   isDebInstall,
+  unattendedDebInstallReadiness,
   useSignedDebInstall,
 } from "../updates/signedDebInstall.ts";
 
@@ -89,6 +90,13 @@ export class ElectronUpdater extends Context.Service<
      * a later staging finishes, or only waits when the flag is set.
      */
     readonly installReady: Effect.Effect<boolean>;
+    /**
+     * True only on a .deb install whose downloaded update can go in through the
+     * signed pkexec helper with nobody there to authenticate: the helper is
+     * installed, the download has its signature and polkit allows this process
+     * the action. Anything else may open a password dialog.
+     */
+    readonly silentInstallReady: Effect.Effect<boolean>;
     readonly quitAndInstall: (options: {
       readonly isSilent: boolean;
       readonly isForceRunAfter: boolean;
@@ -125,9 +133,8 @@ export function forgetDownloadRecord(updater: unknown): void {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
-  if (platform === "linux" && isDebInstall(process.resourcesPath)) {
-    useSignedDebInstall(autoUpdater as unknown as DebUpdaterInstall);
-  }
+  const debInstall = platform === "linux" && isDebInstall(process.resourcesPath);
+  if (debInstall) useSignedDebInstall(autoUpdater as unknown as DebUpdaterInstall);
   // Squirrel.Mac's staging, from public events instead of MacUpdater's
   // private squirrelDownloadedUpdate (set once, never reset, so it stays true
   // for an older bundle): electron-updater's update-downloaded names the
@@ -150,10 +157,24 @@ export const make = Effect.gen(function* () {
     trackStaging,
     () =>
       platform !== "darwin" || (downloadedVersion !== null && stagedVersion === downloadedVersion),
+    () => debInstall && silentDebInstallReady(autoUpdater),
   );
 });
 
-const makeService = (trackStaging: () => void, installReady: () => boolean) =>
+/** Whether the .deb electron-updater downloaded installs through the helper without a prompt. */
+export function silentDebInstallReady(
+  updater: unknown,
+  readiness: typeof unattendedDebInstallReadiness = unattendedDebInstallReadiness,
+): boolean {
+  const file = (updater as Partial<DebUpdaterInstall>).downloadedUpdateHelper?.file;
+  return typeof file === "string" && readiness(file) === "ready";
+}
+
+const makeService = (
+  trackStaging: () => void,
+  installReady: () => boolean,
+  silentInstallReady: () => boolean,
+) =>
   ElectronUpdater.of({
     setFeedURL: (options) =>
       Effect.suspend(() => {
@@ -214,6 +235,7 @@ const makeService = (trackStaging: () => void, installReady: () => boolean) =>
       }).pipe(Effect.asVoid);
     }),
     installReady: Effect.sync(installReady),
+    silentInstallReady: Effect.sync(silentInstallReady),
     quitAndInstall: ({ isSilent, isForceRunAfter }) =>
       Effect.suspend(() => {
         const channel = autoUpdater.channel;

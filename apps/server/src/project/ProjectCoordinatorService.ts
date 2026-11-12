@@ -289,7 +289,15 @@ const make = Effect.gen(function* () {
       const recovered = (instanceId: string) => {
         if (!rechecked.has(instanceId)) return false;
         const fresh = providers.find((provider) => provider.instanceId === instanceId);
-        return fresh !== undefined && canTakeTurn(fresh) && !usageDeniesTurn(fresh);
+        // Room is read for the model that would run there: a denial scoped to
+        // another model of the same account does not hold this one back.
+        const model =
+          saved?.instanceId === instanceId
+            ? saved.model
+            : shell?.modelSelection.instanceId === instanceId
+              ? shell.modelSelection.model
+              : undefined;
+        return fresh !== undefined && canTakeTurn(fresh, model) && !usageDeniesTurn(fresh, model);
       };
       const compatibility = {
         project,
@@ -388,6 +396,10 @@ const make = Effect.gen(function* () {
             threadId,
             reason: decision.reason,
             saved: saved.instanceId,
+            savedModel: saved.model,
+            thread: shell?.providerInstanceId ?? null,
+            threadModel: shell?.modelSelection.model ?? null,
+            limited: [...limited],
             selected: decision.selection.instanceId,
             model: decision.selection.model,
           });

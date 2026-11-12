@@ -593,6 +593,18 @@ describe("CloudManagedEndpointRuntime", () => {
         "token-1",
         "token-2",
       ]);
+      // A stop must not wait out cloudflared's 30 second default for open requests.
+      expect(spawned.map((command) => command.options.env?.TUNNEL_GRACE_PERIOD)).toEqual([
+        "1s",
+        "1s",
+      ]);
+      expect(
+        spawned.map((command) =>
+          command.options.forceKillAfter === undefined
+            ? undefined
+            : Duration.toMillis(Duration.fromInputUnsafe(command.options.forceKillAfter)),
+        ),
+      ).toEqual([5_000, 5_000]);
       expect(spawned.map((command) => command.options.stdout)).toEqual(["pipe", "pipe"]);
       expect(spawned.map((command) => command.options.stderr)).toEqual(["pipe", "pipe"]);
       expect(spawned.map((command) => command.options.detached)).toEqual([false, false]);

@@ -38,6 +38,12 @@ CLI's own `update` write (docs/user/linux-worker.md). For each worker, over SSH:
    itself (1.0.105 and earlier), it keeps running and the worker is skipped. Such a worker is
    updated by hand once (docs/user/linux-worker.md).
 6. Read the state again until the server runs the version, healthy (up to VERIFY_SECONDS).
+7. Once the service runs the version (or a newer one), its desktop app follows unless
+   --no-desktop-apps: desktop_app_rollout.LinuxDesktopApp streams desktop_app_update_linux.sh,
+   which installs the release's .deb through the signed update helper the .deb ships
+   (/usr/lib/specwithcode/update-helper and its polkit action), quitting and reopening the app only
+   if it runs, and reads the installed version back from dpkg. A worker without the helper, or
+   where polkit wants a password, is reported with that reason; a worker without the app is fine.
 
 Exit 0 when every worker chosen runs the version (or a newer one), or there is none; 1 when one
 was skipped or failed; 2 for bad arguments. The last line of output is a JSON summary.
@@ -52,6 +58,7 @@ import subprocess
 import sys
 import time
 
+import desktop_app_rollout
 import fleet_hosts
 import fleet_rollout
 
@@ -64,6 +71,8 @@ VERSION = fleet_rollout.VERSION
 OK_RESULTS = ('installed', 'already-installed', 'newer')
 # Only these mean nothing runs in the service; anything else is not known to be stopped.
 STOPPED = ('inactive', 'failed')
+# Desktop app results that leave nothing to do on that worker.
+APP_OK_RESULTS = ('no-desktop-app', 'already-current', 'updater-on-quit', 'helper', 'dry-run')
 # What a CLI older than `update --if-idle` prints for the flag.
 CLI_PARSE_ERRORS = ('Unrecognized flag', 'Unknown flag', 'Invalid flag')
 
@@ -302,18 +311,46 @@ def roll_worker(worker, version, say, sleep=time.sleep, clock=time.monotonic, lo
         return dict(outcome, result='failed', reason=str(error))
 
 
-def rollout(version, workers, say, sleep=time.sleep, clock=time.monotonic, local_copies=None):
-    """One worker after another (a Linux worker is cheap to update; the order is the inventory's)."""
-    return [roll_worker(worker, version, say, sleep, clock, local_copies) for worker in workers]
+def roll_app(worker, desktop, say):
+    """The worker's .deb desktop app, once its service runs the version; never raises."""
+    try:
+        return desktop(worker.identity, worker.ssh, say)
+    except desktop_app_rollout.DesktopAppError as error:
+        reason = str(error)
+    except Exception as error:  # noqa: BLE001 - an app step never drops out of the results unreported.
+        reason = 'stopped on an unexpected %s: %s' % (type(error).__name__, error)
+    say('%s: WARNING: desktop app not updated to %s: %s' % (worker.identity, desktop.version, reason))
+    return {'result': 'failed', 'reason': reason}
 
 
-def main(argv=None, home=None, run=subprocess.run, sleep=time.sleep, stdout=None):
+def rollout(version, workers, say, sleep=time.sleep, clock=time.monotonic, local_copies=None, desktop=None):
+    """One worker after another (a Linux worker is cheap to update; the order is the inventory's).
+    With `desktop` (desktop_app_rollout.LinuxDesktopApp), each worker whose service ends on the version
+    or a newer one updates its desktop app too."""
+    results = []
+    for worker in workers:
+        outcome = roll_worker(worker, version, say, sleep, clock, local_copies)
+        if desktop is not None and outcome['result'] in OK_RESULTS:
+            outcome['desktopApp'] = roll_app(worker, desktop, say)
+        results.append(outcome)
+    return results
+
+
+def finished(result):
+    app = result.get('desktopApp')
+    return result['result'] in OK_RESULTS and (app is None or app.get('result') in APP_OK_RESULTS)
+
+
+def main(argv=None, home=None, run=subprocess.run, sleep=time.sleep, stdout=None,
+         desktop_app=desktop_app_rollout.LinuxDesktopApp):
     os.umask(0o077)
     out = stdout or sys.stdout
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--version', required=True)
     parser.add_argument('--host', action='append', default=[], help='only this Linux worker (repeatable)')
     parser.add_argument('--dry-run', action='store_true', help='print the workers and commands; contact none')
+    parser.add_argument('--no-desktop-apps', action='store_true',
+                        help='leave the workers\' .deb desktop apps as they are (by default each follows its service)')
     args = parser.parse_args(argv)
     if _tuple(args.version) is None:
         parser.error('--version must be X.Y.Z')
@@ -339,11 +376,18 @@ def main(argv=None, home=None, run=subprocess.run, sleep=time.sleep, stdout=None
         say('no Linux workers in the fleet inventory; nothing to update')
         print(json.dumps({'version': args.version, 'result': 'installed', 'hosts': []}), file=out)
         return 0
-    results = rollout(args.version, workers, say, sleep, local_copies=lambda: fleet_rollout.local_folder_copies(home))
-    ok = all(result['result'] in OK_RESULTS for result in results)
+    desktop = None
+    if not args.no_desktop_apps:
+        try:
+            desktop = desktop_app(args.version)
+        except desktop_app_rollout.DesktopAppError as error:  # RELEASE_PUBLIC_REPO is not owner/name.
+            parser.error(str(error))
+    results = rollout(args.version, workers, say, sleep, local_copies=lambda: fleet_rollout.local_folder_copies(home),
+                      desktop=desktop)
+    ok = all(finished(result) for result in results)
     if not ok:
         say('retry once the worker is idle: python3 -B scripts/studio-fleet/linux_rollout.py --version %s%s' % (
-            args.version, ''.join(' --host ' + r['identity'] for r in results if r['result'] not in OK_RESULTS)))
+            args.version, ''.join(' --host ' + r['identity'] for r in results if not finished(r))))
     print(json.dumps({'version': args.version, 'result': 'installed' if ok else 'incomplete', 'hosts': results}),
           file=out)
     return 0 if ok else 1
