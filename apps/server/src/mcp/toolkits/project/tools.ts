@@ -276,7 +276,14 @@ const FolderCopyReceiveTool = Tool.make("studio_folder_copy_receive", {
     "Internal, between SpecWithCode machines. When studio_project_add_to_machine copies a project folder here, the machine it comes from runs this machine's side of the copy, one step per call, and links the copy to its project. Agents never call this.",
   parameters: AgentCopyReceiveInput,
   success: AgentCopyReceiveResult,
-  dependencies: [...shared.dependencies, ProjectLink.ProjectLink, FileSystem.FileSystem, Path.Path],
+  dependencies: [
+    ...shared.dependencies,
+    ProjectLink.ProjectLink,
+    FileSystem.FileSystem,
+    Path.Path,
+    // The folders it never copies into (app state, ~/.ssh and the like) follow this config.
+    ServerConfig.ServerConfig,
+  ],
 }).annotate(Tool.Destructive, true);
 const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,

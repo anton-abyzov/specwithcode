@@ -284,6 +284,14 @@ it("opens the full review to pick secrets when Include secrets is ticked", async
   expect(state.job).not.toHaveBeenCalled();
 });
 
+it("keeps Copy ignored files a live tick while Include secrets is ticked", async () => {
+  await show();
+  await act(async () => tick("Include secrets")!.click());
+  expect(tick("Copy ignored files")?.hasAttribute("data-disabled")).toBe(false);
+  await act(async () => tick("Copy ignored files")!.click());
+  expect(tick("Copy ignored files")?.getAttribute("aria-checked")).toBe("true");
+});
+
 it("shows no extras ticks once the machine has the project", async () => {
   await show({ linked: true });
   expect(tick("Copy ignored files")).toBeUndefined();

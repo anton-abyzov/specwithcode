@@ -19,7 +19,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as ServerConfig from "../../config.ts";
 import * as ProjectLink from "../../project/ProjectLink.ts";
+import * as WorkspaceSensitivePaths from "../../workspace/WorkspaceSensitivePaths.ts";
 import { TeamRules, teamRulesOf } from "../../teamRules/TeamRules.ts";
 import * as MachineHandoff from "../MachineHandoff.ts";
 import {
@@ -66,6 +68,12 @@ interface World {
   started?: { readonly targetFolder: string; readonly selection: ReadonlyArray<string> };
 }
 
+/** The destination's own config, for the folders it never copies into. */
+const config = ServerConfig.layerTest(process.cwd(), { prefix: "agent-copy-config-" }).pipe(
+  Layer.provide(NodeServices.layer),
+  Layer.orDie,
+);
+
 const setup = (options: {
   readonly workspaceRoot: string;
   /** Something appeared in the destination folder after the check. */
@@ -74,6 +82,10 @@ const setup = (options: {
   readonly teamRulesHold?: "source" | "destination";
   /** That machine runs a version without the receiving tool. */
   readonly olderDestination?: boolean;
+  /** The copy applies there but registers no project. */
+  readonly unregistered?: boolean;
+  /** The destination's home, for its protected folders. */
+  readonly homeDir?: string;
 }) => {
   const world: World = { source: [], destination: [], link: [] };
   let state: FolderCopyStatus["state"] = "planned";
@@ -155,7 +167,7 @@ const setup = (options: {
     warnings: [],
     unstable: [],
     committed: state === "applied",
-    projectId: state === "applied" ? copyId : null,
+    projectId: state === "applied" && !options.unregistered ? copyId : null,
     createdAt: "2026-11-12T00:00:00.000Z",
     updatedAt: "2026-11-12T00:00:00.000Z",
   });
@@ -258,8 +270,12 @@ const setup = (options: {
           }),
         )
       : receiveAgentCopy(args, { environmentId: SOURCE }).pipe(
-          Effect.provide(Layer.mergeAll(destination, link, NodeServices.layer)),
+          Effect.provide(Layer.mergeAll(destination, link, NodeServices.layer, config)),
           Effect.provideService(TeamRules, rules("destination")),
+          Effect.provideService(
+            WorkspaceSensitivePaths.SensitivePathsHomeDirectory,
+            options.homeDir ?? NodeOS.homedir(),
+          ),
         );
   const run = (targetFolder: string) =>
     runAgentCopy({
@@ -349,6 +365,56 @@ describe("agent folder copy", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("refuses a relative folder or one with .. in it, and writes nothing", () =>
+    Effect.gen(function* () {
+      const root = yield* tempFolder;
+      for (const there of [
+        "widgets",
+        "../widgets",
+        `${root}${NodePath.sep}a${NodePath.sep}..${NodePath.sep}widgets`,
+      ]) {
+        const { world, run } = setup({ workspaceRoot: yield* plainFolder });
+        const error = yield* Effect.flip(run(there));
+        expect(error).toMatchObject({ code: "invalid_request" });
+        expect(world.source).toEqual([]);
+        expect(world.destination).toEqual([]);
+      }
+      expect(yield* Effect.promise(() => NodeFSP.readdir(root))).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("refuses a protected folder such as ~/.ssh there, even through a link", () =>
+    Effect.gen(function* () {
+      const home = yield* tempFolder;
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".ssh")));
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(NodePath.join(home, ".ssh"), NodePath.join(home, "keys")),
+      );
+      for (const there of [
+        NodePath.join(home, ".ssh", "widgets"),
+        NodePath.join(home, "keys", "w"),
+      ]) {
+        const { world, run } = setup({ workspaceRoot: yield* plainFolder, homeDir: home });
+        const error = yield* Effect.flip(run(there));
+        expect(error).toMatchObject({ code: "invalid_request" });
+        expect(error.message).toContain("does not copy folders into");
+        expect(world.source).toEqual([]);
+        expect(world.destination).toEqual([]);
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("says a copy that applied without registering a project finished unregistered", () =>
+    Effect.gen(function* () {
+      const there = NodePath.join(yield* tempFolder, "widgets");
+      const { world, run } = setup({ workspaceRoot: yield* plainFolder, unregistered: true });
+      const error = yield* Effect.flip(run(there));
+      expect(error.message).toContain("finished but was not registered");
+      expect(error.message).toContain(there);
+      expect(world.link).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("refuses when the folder there changed before Apply, and withdraws the offer", () =>
     Effect.gen(function* () {
       const there = NodePath.join(yield* tempFolder, "widgets");
@@ -403,6 +469,7 @@ describe("agent folder copy", () => {
         Layer.mock(MachineHandoff.MachineHandoff)({}),
         Layer.mock(ProjectLink.ProjectLink)({}),
         NodeServices.layer,
+        config,
       );
       const refused = yield* Effect.flip(
         receiveAgentCopy(

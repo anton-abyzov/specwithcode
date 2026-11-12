@@ -275,7 +275,7 @@ export function HandoffShare({
           </p>
           <ShareTick
             checked={copyIgnored}
-            disabled={busy || includeSecrets}
+            disabled={busy}
             onChange={setCopyIgnored}
             label="Copy ignored files"
             note={IGNORED_FILES_NOTE}

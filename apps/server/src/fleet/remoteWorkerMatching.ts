@@ -61,6 +61,15 @@ export type RemoteProjectMatch = OrchestratorMcpMachineProject & {
   readonly reason?: string;
 };
 
+/** A machine row's match, keeping the reason only where nothing matched, so an agent can act on it. */
+export const machineRowProjectMatch = ({
+  reason,
+  ...match
+}: RemoteProjectMatch): RemoteProjectMatch =>
+  reason === undefined || match.match === "configured" || match.match === "identity"
+    ? match
+    : { ...match, reason };
+
 /** Select a declared binding before consulting remote state; availability never elects an owner. */
 export function logicalProjectBindingMatch(input: {
   readonly logical: LogicalProject;

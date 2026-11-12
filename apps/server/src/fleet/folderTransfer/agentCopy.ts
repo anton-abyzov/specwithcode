@@ -26,6 +26,7 @@ import * as Schema from "effect/Schema";
 import { randomUuidV4 } from "../../orchestration-v2/RandomUuid.ts";
 import { expandHomePathWith } from "../../pathExpansion.ts";
 import * as ProjectLink from "../../project/ProjectLink.ts";
+import * as WorkspaceSensitivePaths from "../../workspace/WorkspaceSensitivePaths.ts";
 import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as MachineHandoff from "../MachineHandoff.ts";
 import { DEFAULT_SELECTION, isRebuildableDirectoryName } from "./classify.ts";
@@ -98,12 +99,43 @@ const handoffService = Effect.serviceOption(MachineHandoff.MachineHandoff).pipe(
   ),
 );
 
+/** `target` with symlinks resolved in its longest existing prefix; null when none resolves. */
+const realOfNearestExisting = async (
+  target: string,
+  realpath: (candidate: string) => Promise<string>,
+): Promise<string | null> => {
+  const missing: Array<string> = [];
+  let current = target;
+  for (;;) {
+    const resolved = await realpath(current).catch(() => null);
+    if (resolved !== null) return NodePath.join(resolved, ...missing.toReversed());
+    const parent = NodePath.dirname(current);
+    if (parent === current) return null;
+    missing.push(NodePath.basename(current));
+    current = parent;
+  }
+};
+
 /** The absolute folder `requested` names here, refused unless it is missing or empty. */
 const emptyTarget = Effect.fn("fleet.agentCopy.emptyTarget")(function* (requested: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const target = path.resolve(expandHomePathWith(requested.trim(), path));
-  if (!path.isAbsolute(target)) return yield* invalid("Pass an absolute folder or one under ~.");
+  const expanded = expandHomePathWith(requested.trim(), path);
+  if (!path.isAbsolute(expanded)) return yield* invalid("Pass an absolute folder or one under ~.");
+  if (expanded.split(/[\\/]+/).includes(".."))
+    return yield* invalid("Pass a folder path without .. in it.");
+  const target = path.resolve(expanded);
+  // The same refusals as making a folder there: never into ~/.ssh, app state and the like,
+  // checked on the spelling given and on the real path of its nearest existing parent.
+  const guard = yield* WorkspaceSensitivePaths.sensitivePathGuardSnapshot;
+  const realpath = yield* WorkspaceSensitivePaths.SensitivePathsRealpath;
+  const real = yield* Effect.promise(() => realOfNearestExisting(target, realpath));
+  const refused = (candidate: string) =>
+    guard.isInsideDeniedFolder(candidate) || guard.isDenied(candidate, "write");
+  if (real === null || refused(target) || refused(real))
+    return yield* invalid(
+      `SpecWithCode does not copy folders into ${target}. Pass another folder.`,
+    );
   const info = yield* fs.stat(target).pipe(Effect.option);
   if (info._tag === "None") return target;
   if (info.value.type !== "Directory")
@@ -359,10 +391,14 @@ export const runAgentCopy = Effect.fn("fleet.agentCopy.run")(function* (input: {
       },
       60_000,
     );
-    while (!(status.state === "applied" && status.projectId != null)) {
+    while (status.state !== "applied") {
       yield* Effect.sleep(POLL);
       status = yield* ask({ action: "status", operationId }, 60_000);
     }
+    if (status.projectId == null)
+      return yield* failed(
+        `The copy to ${status.projectFolder ?? targetFolder} on ${machine.label} finished but was not registered as a project there. Ask the user to add that folder there (Add project) and link it (its sidebar menu > Link…).`,
+      );
     const paths =
       summary.repositories.length === 0 && (summary.skipped?.rebuildableFolders ?? 0) > 0
         ? yield* Effect.promise(() => listRebuildableFolders(input.workspaceRoot))
