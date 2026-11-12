@@ -2650,26 +2650,24 @@ video.artifact-viewer-media {
     content: none;
   }
 }
-/* The window's own machine, always on: a 3px bar along the top edge and a hairline
-   frame, both semi-transparent so they tint the chrome without competing with
-   content. Stronger in dark, where a faint hue disappears. */
+/* The machine doing the work in the view on screen (windowMachine.ts), always on:
+   one 3px bar along the top edge, semi-transparent so it tints the chrome without
+   competing with content. No frame around the window: pane separators stay neutral.
+   Stronger in dark, where a faint hue disappears. */
 .machine-window-tint[data-machine-color] {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto;
+  height: 3px;
   z-index: 2147483000;
   pointer-events: none;
-  box-shadow:
-    inset 0 3px 0 color-mix(in srgb, var(--machine) 62%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--machine) 30%, transparent);
+  background: color-mix(in srgb, var(--machine) 62%, transparent);
   @variant dark {
-    box-shadow:
-      inset 0 3px 0 color-mix(in srgb, var(--machine) 78%, transparent),
-      inset 0 0 0 1px color-mix(in srgb, var(--machine) 42%, transparent);
+    background: color-mix(in srgb, var(--machine) 78%, transparent);
   }
 }
 @media (prefers-contrast: more) {
   .machine-window-tint[data-machine-color] {
-    box-shadow: inset 0 3px 0 var(--machine);
+    background: var(--machine);
   }
 }
 @media print {
