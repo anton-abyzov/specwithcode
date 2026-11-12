@@ -26,6 +26,11 @@ import {
   auditPreservedFixtures,
   isProtectedPath,
 } from "./studio-toolchain/fixture-preservation-audit.mjs";
+import {
+  assertInheritedNoticeRetained,
+  assertProjectLicense,
+  publishableKeyFinding,
+} from "./studio-toolchain/source-terms-rules.mjs";
 
 const assert = NodeAssert;
 const { execFileSync } = NodeChildProcess;
@@ -110,19 +115,55 @@ check("CLI package and alpha version", () => {
   assert.match(read("apps/server/src/config.ts"), /DEFAULT_PORT = STUDIO_DEFAULT_PORT/);
   assert.match(read("apps/server/src/os-jank.ts"), /studioDefaultHome\(NodeOS.homedir\(\)\)/);
 });
+const upstreamLicense = () =>
+  execFileSync("git", ["show", upstream + ":LICENSE"], { cwd: root, encoding: "utf8" });
+// Workspace packages that are not under the project's MIT terms, each with the
+// licence its own LICENSE and NOTICE files state.
+const SEPARATELY_LICENSED_PACKAGES = new Map([
+  ["apps/chrome-extension/package.json", "Apache-2.0"],
+]);
 check("upstream MIT provenance retained exactly", () => {
-  assert.equal(
-    read("THIRD_PARTY_NOTICES.md").slice(read("THIRD_PARTY_NOTICES.md").indexOf("MIT License\n")),
-    execFileSync("git", ["show", upstream + ":LICENSE"], { cwd: root, encoding: "utf8" }),
-  );
+  // Exactly once and byte for byte; later notices follow under their own headings.
+  assertInheritedNoticeRetained(read("THIRD_PARTY_NOTICES.md"), upstreamLicense());
   assert.match(read("UPSTREAM.md"), /T3 Tools Inc/);
   assert.match(read("UPSTREAM.md"), new RegExp(upstream));
   assert.match(read("scripts/lib/third-party-licenses.ts"), /\["@specweave-studio\/"\]/);
 });
 check("project terms remain separate from inherited notices", () => {
-  assert.equal(existsSync(join(root, "LICENSE")), false);
-  assert.equal(JSON.parse(read("apps/server/package.json")).license, "UNLICENSED");
-  assert.doesNotMatch(read("README.md"), /MIT licensed|independent MIT fork/);
+  // The project is released under the MIT License (LICENSE). Its copyright
+  // line is the owner's alone; the inherited one stays in the notices.
+  assertProjectLicense(
+    existsSync(join(root, "LICENSE")) ? read("LICENSE") : undefined,
+    upstreamLicense(),
+    "Anton Abyzov",
+  );
+  assert.doesNotMatch(
+    read("THIRD_PARTY_NOTICES.md"),
+    /Copyright \(c\) \d{4}(?:-\d{4})? Anton Abyzov/,
+  );
+  assert.match(
+    read("THIRD_PARTY_NOTICES.md"),
+    /released under the MIT License in \[LICENSE\]\(LICENSE\)/,
+  );
+  // Every workspace package states the project's licence, or the one its own
+  // LICENSE file carries.
+  const manifests = ["package.json"];
+  for (const directory of ["apps", "packages", "apps/mobile/modules"]) {
+    for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
+      const manifest = `${directory}/${entry.name}/package.json`;
+      if (entry.isDirectory() && existsSync(join(root, manifest))) manifests.push(manifest);
+    }
+  }
+  assert.ok(manifests.includes("apps/server/package.json"));
+  for (const manifest of manifests) {
+    const expected = SEPARATELY_LICENSED_PACKAGES.get(manifest) ?? "MIT";
+    assert.equal(JSON.parse(read(manifest)).license, expected, manifest);
+    if (expected !== "MIT") {
+      assert.ok(existsSync(join(root, dirname(manifest), "LICENSE")), `${manifest}: own LICENSE`);
+    }
+  }
+  // The product is presented on its own terms, not as a fork of upstream.
+  assert.doesNotMatch(read("README.md"), /independent MIT fork|\bfork of\b/i);
   const notices = JSON.parse(read("third-party-licenses.config.json")).customNotices;
   const inherited = notices.find((notice) => notice.noticeFile === "THIRD_PARTY_NOTICES.md");
   assert.ok(inherited, "inherited notice must reach generated runtime notices");
@@ -130,18 +171,6 @@ check("project terms remain separate from inherited notices", () => {
   assert.match(read("scripts/studio-fleet/bundle.mjs"), /THIRD_PARTY_NOTICES\.md/);
   assert.match(read("scripts/build-desktop-artifact.ts"), /THIRD_PARTY_NOTICES\.md/);
   assert.match(read("scripts/studio-fleet/make_helpers.py"), /THIRD_PARTY_NOTICES\.md/);
-  for (const file of [
-    "scripts/studio-fleet/npm-package.mjs",
-    "scripts/studio-fleet/runtime-package.mjs",
-    "scripts/build-desktop-artifact.ts",
-  ]) {
-    assert.doesNotMatch(read(file), /license: "MIT"|MIT licensed/);
-    assert.match(read(file), /license: "UNLICENSED"/);
-  }
-  assert.match(
-    read("apps/desktop/resources/linux/com.specweave.studio.metainfo.xml"),
-    /<project_license>LicenseRef-proprietary<\/project_license>/,
-  );
 });
 if (process.argv.includes("--source-terms-only")) {
   console.log(JSON.stringify({ checksPassed: checks.length, failures }, null, 2));
@@ -205,14 +234,22 @@ check("security policy reaches a real inbox", () => {
   assert.match(policy, /mailto:[^\s)]+@[^\s)]+/, ".github/SECURITY.md names a contact address");
 });
 check("self update only from an owned feed and original update endpoints absent", () => {
-  const updates = read("apps/desktop/src/updates/DesktopUpdates.ts");
+  // The gate holds the refused feeds and the refusal; the updater has to ask it.
+  const gate = read("apps/desktop/src/updates/updateFeedGate.ts");
   for (const name of ["pingdotgg", "t3tools", "t3code", "t3.codes"]) {
     assert.ok(
-      updates.includes(createHash("sha256").update(name).digest("hex")),
+      gate.includes(createHash("sha256").update(name).digest("hex")),
       `the update guard refuses ${name}`,
     );
   }
-  assert.match(read("apps/desktop/src/updates/DesktopUpdates.ts"), /if \(args.feedIsUpstream\)/);
+  assert.match(gate, /if \(args.feedIsUpstream\) \{\s*return "/);
+  const updates = read("apps/desktop/src/updates/DesktopUpdates.ts");
+  assert.match(updates, /getAutoUpdateDisabledReason\(\{/);
+  assert.match(updates, /feedIsUpstream: isUpstreamUpdateFeed\(/);
+  assert.match(
+    updates,
+    /import \{[^}]*\bgetAutoUpdateDisabledReason\b[^}]*\bisUpstreamUpdateFeed\b[^}]*\} from "\.\/updateFeedGate\.ts"/,
+  );
   assert.match(read("apps/server/src/cli/update.ts"), /STUDIO_ENABLE_SELF_UPDATE !== "true"/);
   assert.doesNotMatch(read("packages/shared/src/cliRelease.ts"), /pingdotgg|t3code|t3.codes/);
 });
@@ -285,6 +322,7 @@ const ACCOUNT_CANDIDATES = [
   /(?<![A-Za-z0-9])([A-Z0-9]{10})(?![A-Za-z0-9])/g,
 ];
 // A Clerk publishable key is "pk_<env>_" followed by its base64 frontend host.
+// Which keys may sit where is decided by publishableKeyFinding.
 const PUBLISHABLE_KEY = /pk_(?:live|test)_([A-Za-z0-9+/_-]+)/g;
 
 // The preservation audit files that name upstream, each with the reason it has
@@ -316,10 +354,11 @@ function isUpstreamReferenceFile(p, inUpstreamTree) {
     UPSTREAM_NAMING_TOOLCHAIN_FILES.has(p) ||
     // Research notes on upstream's shipped app. The public snapshot excludes them.
     PRIVATE_UPSTREAM_RESEARCH_NOTES.has(p) ||
-    // Recorded fixtures and replays, which hold every *.ndjson recording. Their
-    // bytes are pinned to upstream, or to a hash-reviewed migration, by the
-    // fixture preservation check above, so they cannot gain a new reference.
-    isProtectedPath(p) ||
+    // Inherited fixtures and replays. Their bytes are pinned to upstream, or to
+    // a hash-reviewed migration, by the fixture preservation check above, so
+    // they cannot gain a new reference. A fixture that upstream does not have
+    // is Studio's own and is read like any other file.
+    (isProtectedPath(p) && inUpstreamTree(p)) ||
     // Inherited dependency patches, compared byte for byte with upstream by the
     // payload preservation check below. A patch that upstream does not have is
     // Studio's own and is read like any other file.
@@ -327,18 +366,12 @@ function isUpstreamReferenceFile(p, inUpstreamTree) {
   );
 }
 
-// A third party's Ghostty branch is named after upstream, and the licence
-// notice has to cite the source the vendored framework was built from.
-const GHOSTTY_SOURCE_BRANCH =
-  /github\.com\/Yash-Singh1\/ghostty\/tree\/t3code\/custom-io-ordered-feed/g;
 // The one upstream package name that a retained evidence log quotes verbatim.
 const QUOTED_CONTRACTS_IMPORT = /@t3tools\/contracts/g;
 
 // Single deliberate references inside files Studio otherwise owns. Only the
 // quoted fragment is tolerated, so a second reference in the same file fails.
 const UPSTREAM_REFERENCE_FRAGMENTS = [
-  ["third-party-licenses.config.json", GHOSTTY_SOURCE_BRANCH],
-  ["scripts/lib/third-party-licenses.test.ts", GHOSTTY_SOURCE_BRANCH],
   // Retained verification evidence: a past module-resolution error, verbatim.
   ["reports/t26-resolution-lifecycle/README.md", QUOTED_CONTRACTS_IMPORT],
   ["reports/t26-resolution-lifecycle/guards-replay.txt", QUOTED_CONTRACTS_IMPORT],
@@ -355,19 +388,6 @@ const PRIVATE_ONLY_REFERENCE_FILES = new Set([
   "reports/t26-resolution-lifecycle/README.md",
   "reports/t26-resolution-lifecycle/guards-replay.txt",
 ]);
-
-const TEST_DIRECTORIES = new Set([
-  "test",
-  "tests",
-  "__tests__",
-  "integration",
-  "testkit",
-  "testUtils",
-]);
-const isTestFile = (p) =>
-  isProtectedPath(p) ||
-  /\.(?:test|spec)\.(?:[cm]?[jt]sx?|py)$/.test(p) ||
-  p.split("/").some((part) => TEST_DIRECTORIES.has(part));
 
 const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|avif|ico|icns|svg|bmp|tiff?|heic)$/i;
 const ANDROID_DRAWABLE = /\/res\/(?:drawable|mipmap)[^/]*\/[^/]+\.xml$/;
@@ -584,12 +604,8 @@ function findUpstreamLeftovers() {
 
     // Keys are checked in every file: no allowance can excuse an upstream host.
     for (const match of text.matchAll(PUBLISHABLE_KEY)) {
-      const host = Buffer.from(match[1], "base64").toString("latin1");
-      if (/^[\x20-\x7e]+$/.test(host) && /t3/i.test(host)) {
-        found.keys.push(`${p}:${lineOf(text, match.index)}: key issued for an upstream host`);
-      } else if (!isTestFile(p)) {
-        found.keys.push(`${p}:${lineOf(text, match.index)}: publishable key outside a test`);
-      }
+      const finding = publishableKeyFinding(p, match[1], isProtectedPath);
+      if (finding) found.keys.push(`${p}:${lineOf(text, match.index)}: ${finding}`);
     }
     if (UPSTREAM_NAMING_TOOLCHAIN_FILES.has(p) && UPSTREAM_NAME.test(text)) {
       toolchainFilesNamingUpstream.add(p);
@@ -655,9 +671,12 @@ check("no upstream product, vendor or domain name outside the documented referen
 check("no upstream store, invite or signing identifier", () => {
   expectNoLeftovers("accounts", "upstream account identifier(s) left in the tree:");
 });
-check("no publishable key outside tests and none issued for an upstream host", () => {
-  expectNoLeftovers("keys", "publishable key(s) to remove:");
-});
+check(
+  "no publishable key outside tests except for an owned host, none for an upstream host",
+  () => {
+    expectNoLeftovers("keys", "publishable key(s) to remove:");
+  },
+);
 check("upstream wordmark outline absent from every text file", () => {
   expectNoLeftovers("wordmark", "file(s) still draw the upstream wordmark:");
 });

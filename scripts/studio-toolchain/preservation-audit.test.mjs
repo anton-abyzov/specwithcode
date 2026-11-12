@@ -9,9 +9,11 @@ import nodeTest from "node:test";
 import {
   LOCK_REVIEW_SHA256,
   LOCK_UPSTREAM,
+  PORTED_INHERITED_PATCHES,
   canonicalLockSections,
   loadReviewedLockChanges,
   validateReviewedLockChanges,
+  verifyInheritedPatches,
   verifyPreservedLock,
   verifyReviewedPatches,
 } from "./preservation-audit.mjs";
@@ -117,10 +119,7 @@ test("ignores registry deprecation notes, which pnpm adds and drops on a refresh
   assert.notEqual(noted, current);
   verify(noted);
   verify(noted.replace(note, "    deprecated: Single-line note\n"));
-  assert.equal(
-    canonicalLockSections(noted, registry),
-    canonicalLockSections(current, registry),
-  );
+  assert.equal(canonicalLockSections(noted, registry), canonicalLockSections(current, registry));
   // The resolution of the entry that carries the note is still compared.
   const resolution = current.slice(at, lineEnd);
   refused(noted.replace(resolution, resolution.replace("sha512-", "sha512-A")));
@@ -136,7 +135,8 @@ test("compares a dependency, snapshot edge or override named deprecated", () => 
     ),
   );
   const snapshots = current.indexOf("\nsnapshots:\n");
-  const edges = current.indexOf("\n    dependencies:\n", snapshots) + "\n    dependencies:\n".length;
+  const edges =
+    current.indexOf("\n    dependencies:\n", snapshots) + "\n    dependencies:\n".length;
   refused(current.slice(0, edges) + "      deprecated: 1.0.0\n" + current.slice(edges));
   refused(change(current, "\noverrides:\n", "\noverrides:\n  deprecated: 9.9.9\n"));
   // Nor is a line that only starts with the word.
@@ -550,5 +550,98 @@ test("existing patch replacements retain their package key and exact pinned payl
     assert.throws(() => verifyReviewedPatches(temp, [patch]), /Reviewed patch payload changed/);
   } finally {
     rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+// Inherited patches: upstream's bytes, a reviewed replacement, or a port to a reviewed successor.
+function patchTree(t, files) {
+  const temp = mkdtempSync(join(tmpdir(), "inherited-patches-"));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  mkdirSync(join(temp, "patches"));
+  for (const [path, text] of Object.entries(files)) writeFileSync(join(temp, path), text);
+  return temp;
+}
+const inherited = new Map([
+  ["patches/kept@1.0.0.patch", "kept\n"],
+  ["patches/replaced@1.0.0.patch", "upstream\n"],
+  ["patches/old@1.0.0.patch", "old\n"],
+]);
+const patchChanges = [
+  { op: "replace", patchFile: "patches/replaced@1.0.0.patch" },
+  { op: "add", patchFile: "patches/old@2.0.0.patch" },
+];
+const portedPatches = new Map([["patches/old@1.0.0.patch", "patches/old@2.0.0.patch"]]);
+const patchFiles = {
+  "patches/kept@1.0.0.patch": "kept\n",
+  "patches/replaced@1.0.0.patch": "reviewed replacement\n",
+  "patches/old@2.0.0.patch": "ported\n",
+};
+
+nodeTest("inherited patches pass unchanged, replaced under review or ported", (t) => {
+  const temp = patchTree(t, patchFiles);
+  assert.deepEqual(verifyInheritedPatches(temp, inherited, patchChanges, portedPatches), {
+    unchanged: 1,
+    replaced: 1,
+    ported: 1,
+  });
+});
+
+nodeTest("an inherited patch cannot change or disappear without a reviewed lock change", (t) => {
+  const run = (files, changes = patchChanges, ported = portedPatches) =>
+    verifyInheritedPatches(patchTree(t, files), inherited, changes, ported);
+  assert.throws(
+    () => run({ ...patchFiles, "patches/kept@1.0.0.patch": "edited\n" }),
+    /Inherited patch payload changed: patches\/kept/,
+  );
+  const { "patches/kept@1.0.0.patch": _kept, ...withoutKept } = patchFiles;
+  assert.throws(() => run(withoutKept), /Inherited patch removed: patches\/kept/);
+  // A replacement that is not reviewed, or reviewed only as an addition, is a change.
+  assert.throws(() => run(patchFiles, [patchChanges[1]]), /payload changed: patches\/replaced/);
+  assert.throws(
+    () => run(patchFiles, [{ ...patchChanges[0], op: "add" }, patchChanges[1]]),
+    /payload changed: patches\/replaced/,
+  );
+  const { "patches/replaced@1.0.0.patch": _replaced, ...withoutReplaced } = patchFiles;
+  assert.throws(() => run(withoutReplaced), /Inherited patch removed: patches\/replaced/);
+});
+
+nodeTest("a ported patch must be gone and succeeded by a reviewed patch", (t) => {
+  const run = (files, changes = patchChanges, ported = portedPatches) =>
+    verifyInheritedPatches(patchTree(t, files), inherited, changes, ported);
+  assert.throws(
+    () => run({ ...patchFiles, "patches/old@1.0.0.patch": "old\n" }),
+    /Ported inherited patch is still present/,
+  );
+  assert.throws(() => run(patchFiles, [patchChanges[0]]), /no reviewed successor/);
+  assert.throws(
+    () =>
+      run(
+        patchFiles,
+        patchChanges,
+        new Map([["patches/old@1.0.0.patch", "patches/kept@1.0.0.patch"]]),
+      ),
+    /successor is inherited/,
+  );
+  // Without the port entry the missing file is a removal.
+  assert.throws(
+    () => run(patchFiles, patchChanges, new Map()),
+    /Inherited patch removed: patches\/old/,
+  );
+});
+
+test("the committed ports name reviewed successors that this checkout carries", () => {
+  const reviewedAdds = new Set(
+    reviewed.filter((c) => c.op === "add" && c.patchFile).map((c) => c.patchFile),
+  );
+  const upstreamPatches = git(["ls-tree", "-r", "--name-only", upstream, "--", "patches/"])
+    .trim()
+    .split("\n");
+  for (const [before, after] of PORTED_INHERITED_PATCHES) {
+    assert.ok(upstreamPatches.includes(before), `Not an inherited patch: ${before}`);
+    assert.ok(reviewedAdds.has(after), `Successor is not a reviewed patch: ${after}`);
+    assert.equal(before.replace(/@[^@]+$/, ""), after.replace(/@[^@]+$/, ""), "Same package");
+    // Upstream's own lock did not apply the patch it still carried.
+    const name = before.slice("patches/".length).replace(/\.patch$/, "");
+    assert.ok(!git(["show", `${upstream}:pnpm-lock.yaml`]).includes(`\n  ${name}: `), name);
   }
 });

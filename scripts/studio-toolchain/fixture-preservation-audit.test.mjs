@@ -18,13 +18,10 @@ import test from "node:test";
 import {
   FIXTURE_MANIFEST_SHA256,
   FIXTURE_REVIEW_COMMITS,
-  FIXTURE_UPSTREAM,
-  OWNED_FIXTURE_MANIFEST_SHA256,
-  loadOwnedFixtureManifest,
+  STUDIO_ASSERTION_HELPERS,
   loadReviewedFixtureManifest,
   readProtectedBaseline,
   validateFixtureManifest,
-  validateOwnedFixtureManifest,
   verifyFixtureTree,
 } from "./fixture-preservation-audit.mjs";
 
@@ -103,9 +100,9 @@ test("approved bytes/modes pass while references and every unlisted fixture rema
     referenceGitlinksPreserved: 0,
     unlistedFixtureFilesPreserved: 2,
     reviewedFixtureMigrationsVerified: 1,
-    ownedFixtureFilesVerified: 0,
+    studioFixtureFilesRead: 0,
     reviewedFixtureBytesAndModesVerified: true,
-    unlistedProtectedChangesRejected: true,
+    unlistedReferenceChangesRejected: true,
   });
 });
 test("altered user prose is rejected even inside an approved recording", (t) => {
@@ -128,24 +125,37 @@ test("reference content is rejected", (t) => {
   f.put(".repos/reference.txt", "edited\n");
   assert.throws(f.run, /Unreviewed protected bytes changed/);
 });
-for (const kind of ["tracked", "untracked", "ignored"])
-  test(`${kind} new protected files are rejected`, (t) => {
+// A fixture upstream does not have is Studio's own: counted here, and read for
+// upstream names by the brand audit. It cannot stand in for an inherited file.
+for (const kind of ["tracked", "untracked"])
+  test(`a ${kind} fixture that upstream does not have is Studio's own`, (t) => {
     const f = fixture(t);
-    const path = `app/fixtures/${kind === "ignored" ? "ignored.ndjson" : "new.ndjson"}`;
-    f.put(path, "not reviewed\n");
-    if (kind === "tracked") f.git(["add", path]);
-    assert.throws(f.run, /Unlisted protected file/);
+    f.put("app/fixtures/new.ndjson", "studio recording\n");
+    f.put("new-app/replays/new.ndjson", "studio recording\n");
+    if (kind === "tracked") f.git(["add", "app/fixtures/new.ndjson", "new-app/replays/new.ndjson"]);
+    assert.equal(f.run().studioFixtureFilesRead, 2);
+    assert.equal(f.run().unlistedFixtureFilesPreserved, 2);
   });
-test("a new fixture tree outside existing protected roots is rejected", (t) => {
+test("a Studio fixture cannot be a symlink", (t) => {
   const f = fixture(t);
-  f.put("new-app/replays/new.ndjson", "not reviewed\n");
-  assert.throws(f.run, /Unlisted protected file/);
+  f.put("elsewhere.ndjson", "studio recording\n");
+  symlinkSync("../../elsewhere.ndjson", join(f.root, "app/fixtures/new.ndjson"));
+  assert.throws(f.run, /Studio fixture is not a regular file/);
 });
-test("an ignored new reference file is rejected", (t) => {
+test("a Studio fixture beside an inherited one does not excuse a change to it", (t) => {
   const f = fixture(t);
-  f.put(".repos/ignored.txt", "not reviewed\n");
-  assert.throws(f.run, /Unlisted protected file/);
+  f.put("app/fixtures/new.ndjson", "studio recording\n");
+  f.put("app/fixtures/unchanged.ndjson", '{"request":"edited"}\n');
+  assert.throws(f.run, /Unreviewed protected bytes changed/);
 });
+for (const kind of ["tracked", "untracked", "ignored"])
+  test(`${kind === "ignored" ? "an" : "a"} ${kind} new reference file is rejected`, (t) => {
+    const f = fixture(t);
+    const path = `.repos/${kind === "ignored" ? "ignored.txt" : "new.txt"}`;
+    f.put(path, "not upstream\n");
+    if (kind === "tracked") f.git(["add", path]);
+    assert.throws(f.run, /Unlisted reference file/);
+  });
 test("assume-unchanged cannot hide edited fixture bytes", (t) => {
   const f = fixture(t);
   f.git(["update-index", "--assume-unchanged", "app/fixtures/unchanged.ndjson"]);
@@ -230,84 +240,118 @@ test("the committed 197-file manifest matches its independent digest", () => {
   assert.equal(sha(pinnedBytes), FIXTURE_MANIFEST_SHA256);
   assert.equal(loadReviewedFixtureManifest(sourceRoot).entries.length, 197);
 });
+// The review recorded here re-pinned thirteen entries to the bytes this
+// repository's own history carries. Everything it changed is derived below from
+// the manifest before it, so the review cannot have touched anything else.
+const previousManifestCommit = "072265ee0093a9744d4cbcbf774ceb14b46b22d9";
+const publicReviewCommits = FIXTURE_REVIEW_COMMITS.slice(5);
+const replayNames = [
+  "provider_thread_resume",
+  "thread_fork_native_continue",
+  "thread_fork_native_prior_turn",
+  "thread_fork_native_siblings",
+  "thread_merge_back_continue",
+  "thread_merge_back_siblings",
+  "thread_rollback",
+  "thread_rollback_after_restart",
+];
+const replayPaths = replayNames.map(
+  (name) => `apps/server/src/orchestration-v2/testkit/fixtures/${name}/codex_transcript.ndjson`,
+);
+const gitIn = (args) => execFileSync("git", args, { cwd: sourceRoot, maxBuffer: 64 * 1024 * 1024 });
+const show = (rev, path) => gitIn(["show", `${rev}:${path}`]);
 test(
-  "the repository rename approvals cover only the Codex replay origin URLs",
-  needs("f08e451aa562c04b5ef8a36074c7682155d3f67c"),
+  "the public history review re-pins only eight origin URLs and five assertion helpers",
+  needs(previousManifestCommit, ...publicReviewCommits),
   () => {
-    const rename = "f08e451aa562c04b5ef8a36074c7682155d3f67c";
-    const paths = [
-      "provider_thread_resume",
-      "thread_fork_native_continue",
-      "thread_fork_native_siblings",
-      "thread_merge_back_continue",
-      "thread_merge_back_siblings",
-      "thread_rollback",
-      "thread_rollback_after_restart",
-    ].map(
-      (name) => `apps/server/src/orchestration-v2/testkit/fixtures/${name}/codex_transcript.ndjson`,
-    );
-    const entries = pinnedManifest.entries.filter((entry) => entry.reviewCommit === rename);
-    assert.deepEqual(entries.map((entry) => entry.path).sort(), [...paths].sort());
-    const gitIn = (args) =>
-      execFileSync("git", args, { cwd: sourceRoot, maxBuffer: 64 * 1024 * 1024 });
-    const show = (rev, path) => gitIn(["show", `${rev}:${path}`]);
-    // The manifest the rename commit itself shipped, pinned by the audit at that commit.
-    const previousBytes = show(rename, manifestPath);
+    assert.equal(publicReviewCommits.length, 5);
+    const previousBytes = show(previousManifestCommit, manifestPath);
     assert.equal(
       sha(previousBytes),
-      "3a983321e10e5ab354c94e4b1f8268d2f28e3900652a54c72e6de615fbe10bcb",
+      "f1d2deb1203a7af2c7c88f212c4f0da51a5113cb77bbe76f35663652e5eac904",
     );
-    const previous = JSON.parse(previousBytes);
-    const expected = structuredClone(previous);
-    expected.reviewCommits.push(rename);
-    expected.reasons["product-identity-metadata"] = previous.reasons[
-      "product-identity-metadata"
-    ].replace("metadata, instruction", "metadata, repository origin URLs, instruction");
-    const previousByPath = new Map(previous.entries.map((entry) => [entry.path, entry]));
-    for (const entry of entries)
-      Object.assign(
-        expected.entries.find((old) => old.path === entry.path),
-        { reviewedSha256: entry.reviewedSha256, reviewCommit: rename },
-      );
+    const expected = JSON.parse(previousBytes);
+    expected.reviewCommits.push(...publicReviewCommits);
+    expected.reasons["studio-test-assertion"] = pinnedManifest.reasons["studio-test-assertion"];
+    assert.match(
+      expected.reasons["studio-test-assertion"],
+      /recorded provider bytes are untouched/,
+    );
+    const entries = pinnedManifest.entries.filter((entry) =>
+      publicReviewCommits.includes(entry.reviewCommit),
+    );
     assert.deepEqual(
-      pinnedManifest,
-      expected,
-      "The rename review changed more than its seven entries",
+      entries.map((entry) => entry.path).sort(),
+      [...replayPaths, ...STUDIO_ASSERTION_HELPERS].sort(),
     );
-    const oldUrl = '"originUrl":"https://github.com/anton-abyzov/specweave-studio.git"';
-    const newUrl = '"originUrl":"https://github.com/anton-abyzov/specwithcode-dev.git"';
     for (const entry of entries) {
-      const old = previousByPath.get(entry.path);
-      assert.ok(
-        old.reviewCommit !== rename && FIXTURE_REVIEW_COMMITS.includes(old.reviewCommit),
-        `No earlier review: ${entry.path}`,
-      );
-      const beforeBytes = show(`${rename}^`, entry.path);
+      const old = expected.entries.find((candidate) => candidate.path === entry.path);
+      assert.notEqual(old.reviewedSha256, entry.reviewedSha256, `Nothing re-pinned: ${entry.path}`);
+      Object.assign(old, {
+        reviewedSha256: entry.reviewedSha256,
+        reviewCommit: entry.reviewCommit,
+        reason: STUDIO_ASSERTION_HELPERS.includes(entry.path)
+          ? "studio-test-assertion"
+          : "product-identity-metadata",
+      });
       assert.equal(
-        sha(beforeBytes),
-        old.reviewedSha256,
-        `Rename parent is not the earlier reviewed bytes: ${entry.path}`,
-      );
-      const before = beforeBytes.toString("utf8");
-      assert.ok(before.split(oldUrl).length - 1 >= 1, `No origin URL to replace: ${entry.path}`);
-      const after = show(rename, entry.path);
-      assert.ok(
-        after.equals(Buffer.from(before.split(oldUrl).join(newUrl), "utf8")),
-        `Rename changed more than the origin URL: ${entry.path}`,
-      );
-      assert.equal(
-        sha(after),
+        sha(show(entry.reviewCommit, entry.path)),
         entry.reviewedSha256,
-        `Reviewed hash is not the rename bytes: ${entry.path}`,
+        `Reviewed hash is not the bytes of its commit: ${entry.path}`,
       );
       assert.equal(
-        gitIn(["ls-tree", rename, "--", entry.path]).toString("utf8").split(" ")[0],
+        gitIn(["ls-tree", entry.reviewCommit, "--", entry.path]).toString("utf8").split(" ")[0],
         entry.reviewedMode,
-        `Rename changed the mode: ${entry.path}`,
+        `Reviewed mode is not the mode of its commit: ${entry.path}`,
+      );
+    }
+    assert.deepEqual(pinnedManifest, expected, "The review changed more than its thirteen entries");
+  },
+);
+// Needs the archived development repository: the bytes reviewed before this
+// repository existed are only there.
+const renameCommit = "f08e451aa562c04b5ef8a36074c7682155d3f67c";
+test(
+  "the eight replay fixtures differ from their earlier reviewed bytes only in the origin URL",
+  needs(previousManifestCommit, renameCommit),
+  () => {
+    const previous = JSON.parse(show(previousManifestCommit, manifestPath));
+    const originUrl = /"originUrl":"[^"]*"/g;
+    const publicUrls = [
+      '"originUrl":"https://github.com/anton-abyzov/specwithcode.git"',
+      '"originUrl":"git@github.com:anton-abyzov/specwithcode.git"',
+    ];
+    for (const path of replayPaths) {
+      const before = show(renameCommit, path);
+      assert.equal(
+        sha(before),
+        previous.entries.find((entry) => entry.path === path).reviewedSha256,
+        `Not the earlier reviewed bytes: ${path}`,
+      );
+      const after = readFileSync(join(sourceRoot, path), "utf8");
+      const urls = after.match(originUrl) ?? [];
+      assert.ok(urls.length > 0, `No origin URL: ${path}`);
+      for (const url of urls) assert.ok(publicUrls.includes(url), `${path}: ${url}`);
+      assert.equal(
+        after.replace(originUrl, '"originUrl":""'),
+        before.toString("utf8").replace(originUrl, '"originUrl":""'),
+        `More than the origin URL changed: ${path}`,
       );
     }
   },
 );
+test("only the closed list of helpers may carry the assertion reason", () => {
+  const m = structuredClone(pinnedManifest);
+  const other = m.entries.find(
+    (entry) => entry.path.endsWith(".ts") && !STUDIO_ASSERTION_HELPERS.includes(entry.path),
+  );
+  other.reason = "studio-test-assertion";
+  assert.throws(() => validateFixtureManifest(m), /Wrong migration reason/);
+  const n = structuredClone(pinnedManifest);
+  n.entries.find((entry) => entry.path === STUDIO_ASSERTION_HELPERS[0]).reason =
+    "product-name-prose";
+  assert.throws(() => validateFixtureManifest(n), /Wrong migration reason/);
+});
 for (const mutation of ["missing", "extra", "hash", "baseline", "review", "reason"])
   test(`the production loader rejects a ${mutation} manifest edit`, (t) => {
     const root = mkdtempSync(join(tmpdir(), "studio-manifest-audit-"));
@@ -331,192 +375,4 @@ test("manifest schema independently rejects missing entries and the wrong baseli
   const wrong = structuredClone(pinnedManifest);
   wrong.upstreamCommit = "0".repeat(40);
   assert.throws(() => validateFixtureManifest(wrong), /Wrong fixture baseline/);
-});
-
-// Studio-owned files in protected trees: only the pinned list, byte- and mode-exact.
-const ownedPath = "owned-app/fixtures/serve.cjs";
-const ownedBytes = "// owned deterministic test server\n";
-function withOwned(t) {
-  const f = fixture(t);
-  f.put(ownedPath, ownedBytes);
-  f.owned = [{ path: ownedPath, sha256: sha(ownedBytes), mode: "100644" }];
-  f.run = () => verifyFixtureTree(f.root, f.baseline, f.approvals, f.owned);
-  return f;
-}
-test("a listed owned fixture passes byte- and mode-exact", (t) => {
-  assert.equal(withOwned(t).run().ownedFixtureFilesVerified, 1);
-});
-test("an owned fixture is rejected without its listing", (t) => {
-  const f = withOwned(t);
-  f.owned.length = 0;
-  assert.throws(f.run, /Unlisted protected file: owned-app/);
-});
-for (const kind of ["tracked", "untracked", "ignored"])
-  test(`${kind === "ignored" ? "an" : "a"} ${kind} unlisted file beside an owned fixture is rejected`, (t) => {
-    const f = withOwned(t);
-    const path = `owned-app/fixtures/${kind === "ignored" ? "ignored.cjs" : "other.cjs"}`;
-    f.put(path, "not reviewed\n");
-    if (kind === "tracked") f.git(["add", path]);
-    assert.throws(f.run, /Unlisted protected file/);
-  });
-test("a listed owned fixture whose bytes change is rejected", (t) => {
-  const f = withOwned(t);
-  f.put(ownedPath, ownedBytes + "process.exit(0);\n");
-  assert.throws(f.run, /Owned fixture bytes changed/);
-});
-test("a listed owned fixture cannot change mode or become a symlink", (t) => {
-  const f = withOwned(t);
-  chmodSync(join(f.root, ownedPath), 0o755);
-  assert.throws(f.run, /Owned fixture mode\/type changed/);
-  const g = withOwned(t);
-  g.put("same-owned.cjs", ownedBytes);
-  rmSync(join(g.root, ownedPath));
-  symlinkSync("../../same-owned.cjs", join(g.root, ownedPath));
-  assert.throws(g.run, /Owned fixture mode\/type changed/);
-});
-test("a deleted owned fixture is rejected", (t) => {
-  const f = withOwned(t);
-  rmSync(join(f.root, ownedPath));
-  assert.throws(f.run, /ENOENT/);
-});
-test("an owned listing cannot cover a file that exists upstream", (t) => {
-  const f = withOwned(t);
-  f.owned.push({
-    path: "app/fixtures/unchanged.ndjson",
-    sha256: sha('{"request":"edited"}\n'),
-    mode: "100644",
-  });
-  f.put("app/fixtures/unchanged.ndjson", '{"request":"edited"}\n');
-  assert.throws(f.run, /shadows an upstream file/);
-});
-test("an owned listing cannot cover references, unprotected paths or duplicates", (t) => {
-  for (const path of [".repos/owned.txt", "owned-app/src/serve.cjs"]) {
-    const f = withOwned(t);
-    f.owned[0].path = path;
-    assert.throws(f.run, /Ineligible owned fixture path/);
-  }
-  const f = withOwned(t);
-  f.owned.push({ ...f.owned[0] });
-  assert.throws(f.run, /Duplicate owned fixture/);
-  const g = withOwned(t);
-  g.owned.push({ ...g.owned[0], path: reviewedPath });
-  assert.throws(g.run, /Duplicate owned fixture/);
-  const h = withOwned(t);
-  h.owned[0].path = "owned-app/fixtures/../serve.cjs";
-  assert.throws(h.run, /Noncanonical protected path/);
-});
-
-const ownedManifestPath = "scripts/studio-toolchain/owned-fixture-files.json";
-const ownedPinnedBytes = readFileSync(join(sourceRoot, ownedManifestPath));
-const ownedPinned = JSON.parse(ownedPinnedBytes);
-test(
-  "the committed owned fixture list matches its digest and its adding commits",
-  needs(
-    FIXTURE_UPSTREAM,
-    ...loadOwnedFixtureManifest(sourceRoot).entries.map((entry) => entry.addedCommit),
-  ),
-  () => {
-    assert.equal(sha(ownedPinnedBytes), OWNED_FIXTURE_MANIFEST_SHA256);
-    const { entries } = loadOwnedFixtureManifest(sourceRoot);
-    assert.deepEqual(
-      entries.map((entry) => entry.path),
-      ["apps/server/src/provider/muse/fixtures/serve.cjs"],
-    );
-    const upstream = readProtectedBaseline(sourceRoot, FIXTURE_UPSTREAM);
-    const gitIn = (args) =>
-      execFileSync("git", args, {
-        cwd: sourceRoot,
-        maxBuffer: 64 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-    for (const entry of entries) {
-      assert.ok(!upstream.has(entry.path), `Owned fixture exists upstream: ${entry.path}`);
-      assert.equal(
-        sha(gitIn(["show", `${entry.addedCommit}:${entry.path}`])),
-        entry.sha256,
-        `Not the added bytes: ${entry.path}`,
-      );
-      assert.equal(
-        gitIn(["ls-tree", entry.addedCommit, "--", entry.path]).toString("utf8").split(" ")[0],
-        entry.mode,
-        `Not the added mode: ${entry.path}`,
-      );
-      assert.throws(
-        () => gitIn(["cat-file", "-e", `${entry.addedCommit}^:${entry.path}`]),
-        `Not added by its commit: ${entry.path}`,
-      );
-    }
-  },
-);
-for (const mutation of ["extra", "hash", "mode", "commit", "reason", "field"])
-  test(`the owned list loader rejects a ${mutation} edit`, (t) => {
-    const root = mkdtempSync(join(tmpdir(), "studio-owned-audit-"));
-    t.after(() => rmSync(root, { recursive: true, force: true }));
-    const m = structuredClone(ownedPinned);
-    if (mutation === "extra")
-      m.entries.push({ ...m.entries[0], path: "apps/server/src/provider/muse/fixtures/extra.cjs" });
-    if (mutation === "hash") m.entries[0].sha256 = sha("arbitrary replacement bytes");
-    if (mutation === "mode") m.entries[0].mode = "100755";
-    if (mutation === "commit") m.entries[0].addedCommit = "0".repeat(40);
-    if (mutation === "reason") m.entries[0].reason = "allow arbitrary files";
-    if (mutation === "field") m.entries[0].allowAnyBytes = true;
-    mkdirSync(dirname(join(root, ownedManifestPath)), { recursive: true });
-    writeFileSync(join(root, ownedManifestPath), JSON.stringify(m, null, 2) + "\n");
-    assert.throws(() => loadOwnedFixtureManifest(root), /pinned digest/);
-  });
-test("owned list schema is closed independently of its digest", () => {
-  const edit = (change) => {
-    const m = structuredClone(ownedPinned);
-    change(m);
-    return () => validateOwnedFixtureManifest(m);
-  };
-  assert.doesNotThrow(edit(() => {}));
-  assert.throws(
-    edit((m) => {
-      m.allowUnlisted = true;
-    }),
-    /unknown fields/,
-  );
-  assert.throws(
-    edit((m) => {
-      m.entries[0].allowAnyBytes = true;
-    }),
-    /unknown fields/,
-  );
-  assert.throws(
-    edit((m) => {
-      m.entries[0].addedCommit = "0".repeat(40);
-    }),
-    /Unknown owned fixture commit/,
-  );
-  assert.throws(
-    edit((m) => {
-      m.entries[0].reason = "anything";
-    }),
-    /Unknown owned fixture reason/,
-  );
-  assert.throws(
-    edit((m) => {
-      m.reasons.anything = "x";
-    }),
-    /Wrong owned fixture reasons/,
-  );
-  assert.throws(
-    edit((m) => {
-      m.entries[0].mode = "120000";
-    }),
-    /Invalid owned mode/,
-  );
-  assert.throws(
-    edit((m) => {
-      m.entries[0].path = "../serve.cjs";
-    }),
-    /Noncanonical protected path/,
-  );
-  assert.throws(
-    edit((m) => {
-      m.upstreamCommit = "0".repeat(40);
-    }),
-    /Wrong owned fixture baseline/,
-  );
 });

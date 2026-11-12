@@ -272,6 +272,57 @@ export function verifyReviewedPatches(root, changes) {
   return verified;
 }
 
+// Inherited patches whose package upstream's lock no longer patched and whose
+// fix Studio ported to the installed version. Each names its successor, which
+// must be a reviewed patch, so the inherited file may be gone but never changed.
+export const PORTED_INHERITED_PATCHES = new Map([
+  ["patches/expo-modules-core@57.0.14.patch", "patches/expo-modules-core@58.0.11.patch"],
+  ["patches/expo-notifications@57.0.15.patch", "patches/expo-notifications@58.0.11.patch"],
+]);
+
+// An inherited patch keeps upstream's bytes. The exceptions are closed: a
+// reviewed lock change that replaces the patch's hash, whose new bytes
+// verifyReviewedPatches has already checked against that hash, and a ported
+// patch, which must be absent and succeeded by a reviewed patch.
+// `upstreamPatches` maps each inherited patch path to upstream's text.
+export function verifyInheritedPatches(
+  root,
+  upstreamPatches,
+  changes,
+  ported = PORTED_INHERITED_PATCHES,
+) {
+  const reviewed = new Map(
+    changes.filter((change) => change.patchFile !== undefined).map((c) => [c.patchFile, c.op]),
+  );
+  const counts = { unchanged: 0, replaced: 0, ported: 0 };
+  for (const [path, upstreamText] of upstreamPatches) {
+    const successor = ported.get(path);
+    if (successor !== undefined) {
+      assert.ok(!existsSync(join(root, path)), `Ported inherited patch is still present: ${path}`);
+      assert.ok(!upstreamPatches.has(successor), `Ported patch successor is inherited: ${path}`);
+      assert.equal(
+        reviewed.get(successor),
+        "add",
+        `Ported patch has no reviewed successor: ${path}`,
+      );
+      counts.ported += 1;
+      continue;
+    }
+    assert.ok(existsSync(join(root, path)), `Inherited patch removed: ${path}`);
+    if (reviewed.get(path) === "replace") {
+      counts.replaced += 1;
+      continue;
+    }
+    assert.equal(
+      readFileSync(join(root, path), "utf8"),
+      upstreamText,
+      `Inherited patch payload changed: ${path}`,
+    );
+    counts.unchanged += 1;
+  }
+  return counts;
+}
+
 // Identity replacements must never alter registry hashes, encoded bytes or
 // public keys. Lock changes beyond them are the closed, digest-pinned set in
 // reviewed-lock-changes.json. The separate fixture-preservation audit permits
@@ -362,13 +413,11 @@ export function auditPreservedPayloads(root, upstream) {
 
   const paths = git(["ls-tree", "-r", "--name-only", upstream]).trim().split("\n");
   const patchPaths = paths.filter((p) => p.startsWith("patches/"));
-  for (const p of patchPaths) {
-    assert.equal(
-      readFileSync(join(root, p), "utf8"),
-      git(["show", `${upstream}:${p}`]),
-      `Inherited patch payload changed: ${p}`,
-    );
-  }
+  const inheritedPatches = verifyInheritedPatches(
+    root,
+    new Map(patchPaths.map((p) => [p, git(["show", `${upstream}:${p}`])])),
+    review.changes,
+  );
 
   const renames = new Map();
   for (const line of git(["diff", "--name-status", "-M20%", upstream, "--"]).trim().split("\n")) {
@@ -400,6 +449,19 @@ export function auditPreservedPayloads(root, upstream) {
     [
       "apps/marketing/src/pages/index.astro",
       ["R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"],
+    ],
+  ]);
+  // A provider's mark that upstream embedded as a PNG and Studio replaced with
+  // that vendor's official vector (docs/studio/provider-logos.md). Named by
+  // file and the SHA-256 of the exact payload; the file must still export the
+  // mark and may hold no encoded image at all.
+  const replacedProviderMarks = new Map([
+    [
+      "apps/web/src/components/Icons.tsx",
+      {
+        payloads: ["07537e571ee6fc0aa6277573edb7bbe7c32a4c59bab0677fea1ab7baf69b3719"],
+        exportedAs: /\bAntigravityLogo as AntigravityIcon\b/,
+      },
     ],
   ]);
   const patterns = [
@@ -436,9 +498,15 @@ export function auditPreservedPayloads(root, upstream) {
       continue;
     }
     const removed = removedWithUpstreamArtwork.get(currentPath) ?? [];
+    const replaced = replacedProviderMarks.get(currentPath);
+    if (replaced) {
+      assert.doesNotMatch(current, /base64,/, `Replaced provider mark is encoded: ${currentPath}`);
+      assert.match(current, replaced.exportedAs, `Replaced provider mark is gone: ${currentPath}`);
+    }
     let preserved = 0;
     for (const payload of payloadSet) {
       if (!current.includes(payload) && removed.includes(payload)) continue;
+      if (!current.includes(payload) && replaced?.payloads.includes(sha256(payload))) continue;
       assert.ok(current.includes(payload), `Pinned encoded payload changed: ${currentPath}`);
       preserved += 1;
     }
@@ -453,6 +521,9 @@ export function auditPreservedPayloads(root, upstream) {
     reviewedPatches,
     reviewedLockSha256: LOCK_REVIEW_SHA256,
     inheritedPatches: patchPaths.length,
+    inheritedPatchesUnchanged: inheritedPatches.unchanged,
+    inheritedPatchesReplacedByReview: inheritedPatches.replaced,
+    inheritedPatchesPorted: inheritedPatches.ported,
     encodedPayloads: payloads,
     encodedPayloadFiles: files,
   };
