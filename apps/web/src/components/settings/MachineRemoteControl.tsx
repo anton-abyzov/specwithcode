@@ -232,7 +232,7 @@ function MachineRemoteSheet({
       (archived: boolean) =>
       (entry: Checkout): RemoteSheetCheckout<Checkout["project"], Checkout["search"]> => {
         // The whole sheet is one machine, so rows drop the " · <machine>" suffix.
-        const suffix = ` · ${entry.project.environmentLabel ?? "Environment"}`;
+        const suffix = ` · ${entry.project.environmentLabel ?? "Machine"}`;
         return {
           key: entry.key,
           name: entry.label.endsWith(suffix) ? entry.label.slice(0, -suffix.length) : entry.label,

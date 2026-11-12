@@ -168,7 +168,7 @@ export function CloudEnvironmentConnectRows({
         type: "success",
         title: savedWithoutRelay.has(environment.environmentId)
           ? "SpecWithCode Connect route added"
-          : "Environment added",
+          : "Machine added",
         description: savedWithoutRelay.has(environment.environmentId)
           ? `${environment.label} falls back to SpecWithCode Connect when its other routes are unreachable.`
           : `Connecting to ${environment.label} through SpecWithCode Connect.`,
@@ -182,12 +182,12 @@ export function CloudEnvironmentConnectRows({
     const message =
       cause instanceof Error
         ? cause.message
-        : "Could not connect the SpecWithCode Connect environment.";
+        : "Could not connect this machine through SpecWithCode Connect.";
     const traceId = findErrorTraceId(cause);
     console.error("[studio-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
       type: "error",
-      title: "Could not connect environment",
+      title: "Could not connect the machine",
       description: message,
       data: traceId
         ? {
@@ -378,13 +378,13 @@ export function CloudEnvironmentConnectRows({
           : savedConnection
             ? savedConnection.statusText
             : availability === "online"
-              ? `SpecWithCode Connect · ${notAdded} · Relay online`
+              ? `SpecWithCode Connect · ${notAdded} · Online`
               : availability === "offline"
-                ? `SpecWithCode Connect · ${notAdded} · Relay offline`
+                ? `SpecWithCode Connect · ${notAdded} · Offline`
                 : availability === "checking"
-                  ? `SpecWithCode Connect · ${notAdded} · Checking relay status…`
+                  ? `SpecWithCode Connect · ${notAdded} · Checking…`
                   : (Option.getOrNull(error)?.message ??
-                    `SpecWithCode Connect · ${notAdded} · Relay status unavailable`);
+                    `SpecWithCode Connect · ${notAdded} · Status unavailable`);
     if (selection) {
       return (
         <label
@@ -456,12 +456,12 @@ export function CloudEnvironmentConnectRows({
                       : savedConnection
                         ? savedConnection.statusText
                         : availability === "online"
-                          ? "Relay online"
+                          ? "Connect online"
                           : availability === "offline"
-                            ? "Relay offline"
+                            ? "Connect offline"
                             : availability === "checking"
-                              ? "Checking relay status"
-                              : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                              ? "Checking Connect"
+                              : (Option.getOrNull(error)?.message ?? "Connect status unavailable")
                 }
               />
               <EnvironmentMachineIcon

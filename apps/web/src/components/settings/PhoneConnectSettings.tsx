@@ -1,210 +1,184 @@
-import { useTx } from "../../i18n";
-import { useAuth } from "@clerk/react";
-import { AuthRelayWriteScope } from "@specweave-studio/contracts";
-import { SmartphoneIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import type { EnvironmentId } from "@specweave-studio/contracts";
+import { CheckIcon, SmartphoneIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
-import { useCloudLinkController } from "~/cloud/useCloudLinkController";
-import { useRememberConnectChoice } from "~/cloud/useRememberConnectChoice";
-import { usePrimaryEnvironmentId } from "~/state/environments";
-import { useEnvironmentScope } from "~/state/session";
-import { isMacPlatform } from "~/lib/utils";
-import { teamRulesReachLock } from "~/teamRules/teamRulesView";
-import { useTeamRules } from "~/teamRules/useTeamRules";
-import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
+import { useTx } from "~/i18n";
+import { cn } from "~/lib/utils";
+import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
+import { useMachineNickname } from "~/studio/machineNickname";
 import { Button } from "../ui/button";
+import { QRCodeSvg } from "../ui/qr-code";
 import {
-  PHONE_CONNECT_PENDING_KEY,
-  resolvePhoneConnectStep,
-  shouldAutoTurnOn,
-  shouldClearPending,
-} from "./PhoneConnect.logic";
+  isPendingMachineStep,
+  MachineNextStepHead,
+  MachineSetupState,
+  NEXT_STEP_FRAME_CLASS,
+  type MachineSetup,
+} from "./MachineSummary";
+import { PHONE_APP_URL, phoneCardSteps, type PhoneCardStep } from "./PhoneConnect.logic";
 import { PhoneDevicesSettings } from "./PhoneDevicesSettings";
-import { SettingsRow, SettingsSection, TeamRulesLabel } from "./settingsLayout";
-import { TeamRulesInert } from "./TeamRulesLock";
+import { SettingsSection, TeamRulesLabel } from "./settingsLayout";
 
-function readPending(): boolean {
-  try {
-    return window.sessionStorage.getItem(PHONE_CONNECT_PENDING_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writePending(pending: boolean): void {
-  try {
-    if (pending) window.sessionStorage.setItem(PHONE_CONNECT_PENDING_KEY, "1");
-    else window.sessionStorage.removeItem(PHONE_CONNECT_PENDING_KEY);
-  } catch {
-    // Storage can be unavailable; the person then clicks the second button.
-  }
-}
-
-/** Whether this window shows the Connect card (a build with Connect, in the desktop app). */
+/** Whether this window shows the Connect phone card: any window of a build with Connect. */
 export function isPhoneConnectShown(): boolean {
-  return hasCloudPublicConfig() && window.desktopBridge !== undefined;
+  return hasCloudPublicConfig();
 }
 
 /**
- * The one-click way to reach this computer from the iPhone: sign in, and it
- * links itself to SpecWithCode Connect with its own tunnel. Direct pairing
- * (Tailscale or the same network) stays below as a folded advanced option.
+ * "Your phone": three steps to reach this machine from an iPhone or an Android
+ * phone through SpecWithCode Connect, worded from the live state. A browser
+ * shows it too, with the state read from the machine. The page hands in the
+ * setup it already read; alone, the card reads its own.
  */
-export function PhoneConnectSettings() {
-  if (!isPhoneConnectShown()) return null;
-  return <ConfiguredPhoneConnectSettings />;
+export function PhoneConnectSettings({
+  setup,
+  pairRow,
+}: {
+  readonly setup?: MachineSetup | undefined;
+  /** The quiet row for pairing over the person's own network, drawn last in the card. */
+  readonly pairRow?: ReactNode;
+}) {
+  const environmentId = usePrimaryEnvironmentId();
+  if (!isPhoneConnectShown() || environmentId === null) return null;
+  if (setup) return <YourPhoneCard environmentId={environmentId} setup={setup} pairRow={pairRow} />;
+  return (
+    <MachineSetupState environmentId={environmentId}>
+      {(own) => <YourPhoneCard environmentId={environmentId} setup={own} pairRow={pairRow} />}
+    </MachineSetupState>
+  );
 }
 
-function ConfiguredPhoneConnectSettings() {
+function YourPhoneCard({
+  environmentId,
+  setup,
+  pairRow,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly setup: MachineSetup;
+  readonly pairRow?: ReactNode;
+}) {
   const tx = useTx();
-  const { isLoaded } = useAuth();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
-  const { summary: teamRules } = useTeamRules(primaryEnvironmentId);
-  // This card is a phone reaching the machine over Connect, so either rule stops it.
-  const teamRulesLock =
-    teamRulesReachLock(teamRules, "phones") ?? teamRulesReachLock(teamRules, "connect");
-  const {
-    isSignedIn,
-    linkState,
-    managedTunnelActive,
-    publishAgentActivity,
-    operationError,
-    reconcileCloudState,
-  } = useCloudLinkController();
-  const { authPrompt, openAuthPrompt } = useStudioConnectAuthPrompt();
-  const rememberConnectChoice = useRememberConnectChoice();
-  const [busy, setBusy] = useState(false);
-
-  const step = resolvePhoneConnectStep({
-    configured: true,
-    isDesktop: true,
-    authLoaded: isLoaded,
-    signedIn: isSignedIn === true,
-    canManageRelay,
-    linkStateKnown: linkState.data !== null && !linkState.isPending,
-    managedTunnelActive,
-  });
-
-  const turnOn = async () => {
-    setBusy(true);
-    writePending(false);
-    // Keep an existing agent-activity choice; a first link publishes so the phone gets alerts.
-    const ok = await reconcileCloudState({
-      managedTunnel: true,
-      publish: publishAgentActivity || !managedTunnelActive,
-    });
-    // Turned on from here: an earlier off no longer holds a sign-in back.
-    if (ok) rememberConnectChoice(true);
-    setBusy(false);
-  };
-
-  useEffect(() => {
-    if (busy || teamRulesLock !== null) return;
-    if (shouldAutoTurnOn(step, readPending())) {
-      void turnOn();
-    } else if (shouldClearPending(step)) {
-      writePending(false);
-    }
-    // turnOn is recreated each render; the step change is the trigger.
-  }, [step, busy, teamRulesLock]);
-
-  if (step === "hidden") return null;
-
-  // Linux and Windows desktops run this card too: name the machine they are on.
-  const computer = isMacPlatform(navigator.platform) ? "Mac" : "computer";
-  const row = (() => {
-    if (teamRulesLock !== null) {
-      return (
-        <SettingsRow
-          title={`Make this ${computer} reachable from your iPhone`}
-          description={teamRulesLock.message}
-          status={<TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel>}
-          control={
-            <TeamRulesInert lock={teamRulesLock}>
-              <Button size="sm">{tx("Turn on")}</Button>
-            </TeamRulesInert>
-          }
-        />
-      );
-    }
-    switch (step) {
-      case "loading":
-        // A failed read leaves the link state unknown; show why instead of waiting forever.
-        if (linkState.error && !linkState.isPending) {
-          return (
-            <SettingsRow
-              title="Could not check SpecWithCode Connect"
-              description="Try again in a moment."
-              status={linkState.error}
-              control={
-                <Button size="sm" variant="outline" onClick={() => linkState.refresh()}>
-                  {tx("Try again")}
-                </Button>
-              }
-            />
-          );
-        }
-        return <SettingsRow title="Checking SpecWithCode Connect" description="One moment." />;
-      case "sign-in":
-        return (
-          <SettingsRow
-            title={`Sign in to reach this ${computer} from your iPhone`}
-            description="Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports."
-            control={
-              <Button
-                size="sm"
-                onClick={() => {
-                  writePending(true);
-                  openAuthPrompt();
-                }}
-              >
-                {tx("Sign in")}
-              </Button>
-            }
-          />
-        );
-      case "no-permission":
-        return (
-          <SettingsRow
-            title="This window cannot turn on SpecWithCode Connect"
-            description={`Open SpecWithCode on this ${computer} itself, or pair this connection with Manage relay permission.`}
-          />
-        );
-      case "turn-on":
-        return (
-          <SettingsRow
-            title={`Make this ${computer} reachable from your iPhone`}
-            description={`This ${computer} gets a private address through SpecWithCode Connect that only your account can use.`}
-            status={operationError ?? linkState.error}
-            control={
-              <Button size="sm" disabled={busy} onClick={() => void turnOn()}>
-                {busy ? tx("Turning on…") : tx("Turn on")}
-              </Button>
-            }
-          />
-        );
-      case "ready":
-        return (
-          <SettingsRow
-            title={`This ${computer} is ready for your iPhone`}
-            description={`Open SpecWithCode on the iPhone and sign in with the same account. This ${computer} appears in its list. Add another iPhone the same way.`}
-            status={operationError ?? linkState.error}
-          />
-        );
-    }
-  })();
+  const environment = useEnvironment(environmentId);
+  const machine = useMachineNickname(environmentId, environment?.label) || tx("This machine");
+  const { connect, lock } = setup;
+  const steps = phoneCardSteps({ connect, phones: setup.phones, machine });
+  // Signing in and turning Connect on stay the person's to do when a rule only keeps phones off.
+  const connectStep =
+    (setup.step.kind === "sign-in" || setup.step.kind === "turn-on") && !setup.connectLocked;
+  const pending = isPendingMachineStep(setup.step) && (lock === null || connectStep);
+  // A failed read is the one state where the card's own button is the way on.
+  const failed = lock === null && connect.kind === "unknown";
 
   return (
     <SettingsSection
       id="phone-connect"
-      title="Your phones"
-      icon={<SmartphoneIcon className="size-4" />}
+      title="Your phone"
+      variant="plain"
+      icon={<SmartphoneIcon aria-hidden className="size-4" />}
     >
-      {row}
-      {authPrompt}
-      {isSignedIn === true ? <PhoneDevicesSettings /> : null}
+      <div
+        data-phone-card={pending ? setup.step.kind : failed ? "failed" : lock ? "locked" : "plain"}
+        className={cn(
+          pending
+            ? NEXT_STEP_FRAME_CLASS
+            : "overflow-hidden rounded-xl border border-border/60 bg-card/60",
+        )}
+      >
+        {pending ? <MachineNextStepHead setup={setup} machineName={machine} /> : null}
+        {lock ? (
+          <div
+            className={cn(
+              "flex flex-wrap items-center gap-2 px-3 py-3 text-sm sm:px-4",
+              pending && "border-t border-border/60",
+            )}
+          >
+            <p className="min-w-0 flex-1 text-muted-foreground">{lock.message}</p>
+            <TeamRulesLabel>{lock.setBy}</TeamRulesLabel>
+          </div>
+        ) : (
+          <ol className={cn("divide-y divide-border/60", pending && "border-t border-border/60")}>
+            {steps.map((step, index) => (
+              <PhoneStep key={step.title.text} index={index + 1} step={step}>
+                {index === 0 && failed ? (
+                  <Button type="button" size="sm" onClick={setup.retry}>
+                    {tx("Try again")}
+                  </Button>
+                ) : null}
+              </PhoneStep>
+            ))}
+          </ol>
+        )}
+        {(lock === null || pending) && setup.error ? (
+          <p
+            role="alert"
+            className="border-t border-border/60 px-3 py-2 text-xs text-destructive-foreground sm:px-4"
+          >
+            {setup.error}
+          </p>
+        ) : null}
+        {/* Removing a phone only takes access away, so the list stays under a lock too. */}
+        <PhoneDevicesSettings />
+        {pairRow ? <div className="border-t border-border/60 bg-muted/40">{pairRow}</div> : null}
+      </div>
     </SettingsSection>
+  );
+}
+
+function PhoneStep({
+  index,
+  step,
+  children,
+}: {
+  readonly index: number;
+  readonly step: PhoneCardStep;
+  readonly children?: ReactNode;
+}) {
+  const tx = useTx();
+  return (
+    <li
+      data-phone-step={index}
+      data-state={step.state}
+      aria-current={step.state === "current" ? "step" : undefined}
+      className="flex items-start gap-3 px-3 py-3 sm:px-4"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "mt-0.5 grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
+          step.state === "done"
+            ? "bg-success/15 text-success-foreground"
+            : step.state === "current"
+              ? "bg-primary text-primary-foreground"
+              : "border border-border text-muted-foreground",
+        )}
+      >
+        {step.state === "done" ? <CheckIcon className="size-3" /> : index}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">
+          {step.state === "done" ? <span className="sr-only">{tx("Done:")} </span> : null}
+          {tx(step.title.text, step.title.values)}
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {tx(step.body.text, step.body.values)}
+        </p>
+      </div>
+      {step.storeCode ? (
+        <div className="flex shrink-0 flex-col items-center gap-1">
+          <div className="rounded-lg bg-white p-1.5">
+            <QRCodeSvg
+              value={PHONE_APP_URL}
+              size={step.state === "done" ? 72 : 104}
+              level="M"
+              marginSize={1}
+              title={tx("Code that opens the App Store or Google Play")}
+            />
+          </div>
+          <span className="text-[11px] text-muted-foreground">{tx("App Store · Google Play")}</span>
+        </div>
+      ) : null}
+      {children}
+    </li>
   );
 }

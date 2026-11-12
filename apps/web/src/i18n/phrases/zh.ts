@@ -16,7 +16,6 @@ export const zh: PhraseCatalog = {
   "Add project starts in": "添加项目的起始文件夹",
   Advanced: "高级",
   "Advanced connections": "高级连接",
-  "Advanced routes and saved connections": "高级路由和已保存的连接",
   "Adversarial review": "对抗式审查",
   "Agent browser access": "智能体浏览器访问",
   "Agent computer access": "智能体电脑访问",
@@ -65,7 +64,6 @@ export const zh: PhraseCatalog = {
   "Chat width": "聊天宽度",
   "ChatGPT account": "ChatGPT 账户",
   "Check for updates automatically": "自动检查更新",
-  "Checking SpecWithCode Connect": "正在检查 SpecWithCode Connect",
   Checkouts: "检出",
   Chrome: "Chrome",
   "Chrome for agents": "智能体使用的 Chrome",
@@ -122,7 +120,6 @@ export const zh: PhraseCatalog = {
   "Display name": "显示名称",
   "Download in the background": "在后台下载",
   Driver: "驱动",
-  "Environment icon": "环境图标",
   "Environment identification": "环境标识",
   "Environment-wide setting. Select an environment to change it.":
     "整个环境的设置。选择一个环境后即可更改。",
@@ -165,8 +162,6 @@ export const zh: PhraseCatalog = {
   "Live Processes": "运行中的进程",
   "Live process tree": "运行中的进程树",
   "Load balancing": "负载均衡",
-  "Loading your phones": "正在加载你的手机",
-  "Local environment": "本地环境",
   "MCP connections": "MCP 连接",
   Machines: "电脑",
   Messaging: "消息",
@@ -185,10 +180,8 @@ export const zh: PhraseCatalog = {
   "Network access": "网络访问",
   "New keybinding": "新快捷键",
   "New threads": "新会话",
-  "No environment selected": "未选择环境",
   "No hubs configured.": "未配置任何中心。",
   "No matching routines": "没有匹配的例行任务",
-  "No phones yet": "还没有手机",
   "No routines": "没有例行任务",
   "No routines for active projects": "活跃项目没有例行任务",
   "No routines match these filters": "没有符合这些筛选条件的例行任务",
@@ -292,7 +285,6 @@ export const zh: PhraseCatalog = {
   "This connection does not have permission to change environment settings.":
     "此连接无权更改环境设置。",
   "This machine": "这台电脑",
-  "This window cannot turn on SpecWithCode Connect": "此窗口无法开启 SpecWithCode Connect",
   "Thread notifications": "会话通知",
   "Time format": "时间格式",
   "Timeline detail": "时间线详细程度",
@@ -328,7 +320,6 @@ export const zh: PhraseCatalog = {
   "Worktree storage": "工作树存储",
   Worktrees: "工作树",
   "Your data": "你的数据",
-  "Your phones": "你的手机",
   "specweave-studio.json is invalid": "specweave-studio.json 无效",
   "Clear settings search": "清除设置搜索",
   "No settings found": "未找到设置",
@@ -387,7 +378,6 @@ export const zh: PhraseCatalog = {
     "在此项目的检出或其工作树中运行的命令，可设置快捷键。",
   "Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way.":
     "简洁的智能体会用几句平实的话先给出结果，并向协调者发送结果以及能证明它的路径或链接，而不是复述步骤。详细的智能体会解释它们的步骤。无论哪种方式，错误、失败的测试和安全警告都会完整保留。",
-  "Connect an environment to view its settings and access.": "连接一个环境以查看其设置和访问权限。",
   "Couldn't load the WSL backend state.": "无法加载 WSL 后端状态。",
   "Creates the worktree from the latest matching branch on origin instead of your local branch.":
     "从 origin 上最新的匹配分支创建工作树，而不是从你的本地分支创建。",
@@ -469,7 +459,6 @@ export const zh: PhraseCatalog = {
   "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.":
     "优先打开关联的拉取请求。否则在至少编辑 3 个文件或 50 行时打开“更改”。",
   "Optional marker shown in the picker.": "在选择器中显示的可选标记。",
-  "Or pair with a private QR code": "或用私有二维码配对",
   "Order of projects in the sidebar project picker and command palette.":
     "项目在侧边栏项目选择器和命令面板中的顺序。",
   "Page zoom applied to new browser tabs.": "新浏览器标签页使用的页面缩放。",
@@ -518,8 +507,6 @@ export const zh: PhraseCatalog = {
     "将智能体拥有的对话作为 SpecWithCode 会话继续。",
   "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
     "在报告的重置时间恢复因用量上限停止的会话。每个会话都可以取消其计划的继续。",
-  "Run only the WSL backend. SpecWithCode restarts when this changes.":
-    "仅运行 WSL 后端。更改后 SpecWithCode 会重启。",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "与 Windows 一起运行所选的 WSL 发行版。项目保留在当前的文件系统中。",
   "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
@@ -573,8 +560,6 @@ export const zh: PhraseCatalog = {
     "常规模型负责日常工作；需要最强模型时（例如前沿深度的审查）使用前沿模型。",
   "Then running work is stopped for the update, the app restarts, and running and queued threads continue after it.":
     "之后，运行中的工作会为更新而停止，应用重启，运行中和排队的会话会在更新后继续。",
-  "Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports.":
-    "然后在你使用的每台 iPhone 上，用同一账户登录 iPhone 应用。无需 Tailscale、VPN 或开放端口。",
   "This routine no longer exists or is outside the selected project scope.":
     "此例行任务已不存在，或不在所选项目范围内。",
   "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
@@ -1312,10 +1297,6 @@ export const zh: PhraseCatalog = {
   "Copy trace ID": "复制追踪 ID",
   "Remove from this device…": "从此设备移除…",
   "Sign in": "登录",
-  "No saved remote environments": "没有已保存的远程环境",
-  "Click “Add environment” to pair another environment, or connect one from SpecWithCode Connect.":
-    "点击“添加环境”以配对另一个环境，或从 SpecWithCode Connect 连接一个。",
-  "Click “Add environment” to pair another environment.": "点击“添加环境”以配对另一个环境。",
   Host: "主机",
   "Paste a full pairing URL here to fill both fields automatically.":
     "在此粘贴完整的配对 URL，即可自动填写两个字段。",
@@ -1323,7 +1304,6 @@ export const zh: PhraseCatalog = {
     "这台电脑在你的 SpecWithCode Connect 账户中。可将其用作备用路由。",
   "Add SpecWithCode Connect": "添加 SpecWithCode Connect",
   "Add route": "添加路由",
-  "Add environment": "添加环境",
   "SSH host or alias": "SSH 主机或别名",
   "Search hosts or type devbox": "搜索主机或输入 devbox",
   "Loading hosts…": "正在加载主机…",
@@ -1338,8 +1318,6 @@ export const zh: PhraseCatalog = {
   "Default distro": "默认发行版",
   "Run WSL only": "仅运行 WSL",
   "Enable Tailscale HTTPS": "启用 Tailscale HTTPS",
-  "Not encrypted: anyone on the same network can capture the sign-in. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
-    "未加密：同一网络中的任何人都能截获登录信息。远程访问请使用 SpecWithCode Connect 或 Tailscale HTTPS。",
   "More actions for this machine": "此电脑的更多操作",
   "Up to date": "已是最新",
   "This connection can create access links but cannot view authorized clients.":
@@ -1391,10 +1369,8 @@ export const zh: PhraseCatalog = {
   "HTTPS endpoint": "HTTPS 地址",
   "Pending MagicDNS endpoint": "等待中的 MagicDNS 地址",
   Enable: "启用",
-  "Add Environment": "添加环境",
   "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine.":
     "通过另一个地址（例如其 Tailscale 名称）重新配对这台电脑。它会加入现有路由，而不是添加第二台电脑。",
-  "Pair another environment to this client.": "将另一个环境与此客户端配对。",
   value: "值",
   "Choice value": "选项值",
   "Choice label": "选项标签",
@@ -1535,10 +1511,8 @@ export const zh: PhraseCatalog = {
   Manage: "管理",
   "Add an agent, complete its sign-in, then choose its models in chat. Registry agents work in the project folder; projects with additional approved folders currently require Codex, Claude or Muse Code.":
     "添加一个智能体，完成登录，然后在对话中选择它的模型。注册表智能体在项目文件夹中工作；带有其他已批准文件夹的项目目前需要 Codex、Claude 或 Muse Code。",
-  "Main machine environment ID": "主电脑的环境 ID",
   "Main machine": "主电脑",
   "Another machine": "另一台电脑",
-  "This machine’s environment ID: {code}": "这台电脑的环境 ID：{code}",
   "Invitation line for the main machine": "给主电脑的邀请码",
   " Use it within an hour; it works once.": " 请在一小时内使用；仅可使用一次。",
   "Revoke this line": "撤销此邀请码",
@@ -1768,10 +1742,6 @@ export const zh: PhraseCatalog = {
   "Automatically balance load": "自动均衡负载",
   "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.":
     "共享项目中的新会话会在空闲 CPU 和内存最多的电脑上启动，并按每台电脑的偏好加权。",
-  "Turn off local environment?": "关闭本地环境？",
-  "Turn on local environment?": "开启本地环境？",
-  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.":
-    "SpecWithCode 将重启，不在这台电脑上运行服务器。这里运行的所有智能体和终端都会停止，其他设备将无法再连接到这台电脑。你的项目、历史和远程环境不受影响。",
   "SpecWithCode will restart and start running a server on this computer again.":
     "SpecWithCode 将重启，并再次在这台电脑上运行服务器。",
   "Restart and turn off": "重启并关闭",
@@ -1834,8 +1804,6 @@ export const zh: PhraseCatalog = {
     "撤销会立即拒绝新工作。它在这里启动的会话会继续运行 2 分钟然后停止；它们的工作树和更改会保留。{value}",
   "Checking your machines…": "正在检查你的电脑…",
   "No machines yet.": "还没有电脑。",
-  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
-    "在{link}中添加电脑、管理其路由，以及允许或停止工作者。可以在这里运行工作的电脑位于“谁可以在这里运行工作”下。要断开某台电脑，请使用那里的卡片：“移除电脑”会让这里的智能体停止使用它，“环境”下的“移除”会让此应用不再看到它。",
   "Advanced connection settings": "高级连接设置",
   "also on {value}": "也在 {value} 上",
   "also on": "也在",
@@ -1947,49 +1915,20 @@ export const zh: PhraseCatalog = {
   "Turning on…": "正在开启…",
   "This phone": "这部手机",
   "Remove phone": "移除手机",
-  "The simplest way to reach this computer from your iPhone is to sign in to SpecWithCode Connect in the desktop app. No Tailscale is needed. To pair with a private QR code instead, this computer needs a private HTTPS address: set up Tailscale on this computer and your iPhone, sign in to the same tailnet, then enable Tailscale HTTPS in Connections.":
-    "从 iPhone 访问这台电脑最简单的方法是在桌面应用中登录 SpecWithCode Connect，不需要 Tailscale。若要改用私有二维码配对，这台电脑需要一个私有 HTTPS 地址：在这台电脑和 iPhone 上设置 Tailscale，登录同一个 tailnet，然后在“连接”中启用 Tailscale HTTPS。",
-  "Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn the VPN on.":
-    "在 iPhone 上安装 Tailscale。登录与这台电脑相同的 tailnet 并开启 VPN。",
-  "Copy the computer address below and open it in Safari on your iPhone. If it cannot load, check Tailscale on both devices before making a code.":
-    "复制下方的电脑地址，并在 iPhone 的 Safari 中打开。如果无法加载，请在生成代码之前检查两台设备上的 Tailscale。",
-  "Open SpecWithCode on your iPhone, tap Pair a machine, then Scan QR code.":
-    "在 iPhone 上打开 SpecWithCode，点击“配对电脑”，然后点击“扫描二维码”。",
-  "Open the computer address in Safari on your iPhone. Once it loads, open SpecWithCode and tap Pair a machine, then Scan QR code.":
-    "在 iPhone 的 Safari 中打开电脑地址。加载完成后，打开 SpecWithCode，点击“配对电脑”，然后点击“扫描二维码”。",
-  "Scan with your iPhone": "用 iPhone 扫描",
   "Pair with a private QR code": "使用私有二维码配对",
-  "A fallback for when you can't use SpecWithCode Connect. Your iPhone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
-    "在无法使用 SpecWithCode Connect 时的备用方式。你的 iPhone 必须能直接访问这台电脑，在同一网络中或通过 Tailscale。请先准备好连接，然后生成一次性代码。",
   "Computer address · no pairing code": "电脑地址 · 无配对码",
   "Copy computer address": "复制电脑地址",
   "This window cannot create pairing codes. Reopen SpecWithCode with access to this computer.":
     "此窗口无法创建配对码。请以可访问这台电脑的方式重新打开 SpecWithCode。",
-  "Pairing code for the SpecWithCode iPhone app": "SpecWithCode iPhone 应用的配对码",
   "Ready to scan. The phone has not confirmed a connection yet.": "可以扫描了。手机尚未确认连接。",
   "This code expired. Generate a new code when your phone is ready.":
     "此代码已过期。手机准备好后请生成新代码。",
   "The computer address changed. Generate a new code for this address.":
     "电脑地址已改变。请为此地址生成新代码。",
-  "If scanning fails, check the address in Safari, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
-    "如果扫描失败，请检查 Safari 中的地址、VPN 连接和代码是否过期。地址在这台电脑上可用，并不代表你的手机能访问它。",
   "Set up Tailscale HTTPS": "设置 Tailscale HTTPS",
   "Copy pairing link": "复制配对链接",
   "Generate pairing code": "生成配对码",
   "Generate new code": "生成新代码",
-  "Add your iPhone with SpecWithCode Connect": "使用 SpecWithCode Connect 添加 iPhone",
-  "Sign in with the same account on this computer and on the iPhone. It works from anywhere, with no Tailscale, VPN or QR code.":
-    "在这台电脑和 iPhone 上登录同一个账户。可以从任何地方使用，无需 Tailscale、VPN 或二维码。",
-  "On this computer, check Your phones. If it does not say this computer is ready for your iPhone yet, sign in there and turn it on.":
-    "在这台电脑上查看“你的手机”。如果还没有显示这台电脑已为你的 iPhone 准备就绪，请在那里登录并开启。",
-  "On the iPhone, open SpecWithCode and sign in with the same account.":
-    "在 iPhone 上打开 SpecWithCode 并登录同一个账户。",
-  "This computer appears in the iPhone's list. Tap it to start.":
-    "这台电脑会出现在 iPhone 的列表中。点击它即可开始。",
-  "For a second iPhone, repeat the last two steps on it. Each iPhone signs in on its own; phones do not count toward your Connect machines.":
-    "如需第二部 iPhone，请在它上面重复最后两步。每部 iPhone 各自登录；手机不计入你的 Connect 电脑数量。",
-  "Use a private QR code instead": "改用私有二维码",
-  "Go to SpecWithCode Connect": "前往 SpecWithCode Connect",
   "This is the entire report. It contains versions, diagnostic counts, and failure categories. Conversation content, raw logs, files, credentials, paths, and identifiers are excluded.":
     "这就是完整报告。其中包含版本、诊断计数和失败类别。不包括对话内容、原始日志、文件、凭据、路径和标识符。",
   "Diagnostics report preview": "诊断报告预览",
@@ -2665,7 +2604,6 @@ export const zh: PhraseCatalog = {
     "在 {label} 上启动的 worker 最多能做的事，即使其协调者权限更高。",
   "Change access": "更改权限",
   "Private machines could not be checked. Refresh to retry.": "无法检查私有电脑。刷新以重试。",
-  "Current environment": "当前环境",
   "Saved for the machine picker": "已保存到电脑选择器",
   "Approve again": "再次批准",
   "Connect machine": "连接电脑",
@@ -2694,8 +2632,6 @@ export const zh: PhraseCatalog = {
   "Link SpecWithCode Connect here first, then make a line to paste on your main machine.":
     "先在这里关联 SpecWithCode Connect，然后生成一行命令粘贴到你的主电脑上。",
   "Make a join line": "生成加入命令",
-  "To connect one, open a pairing link from this server’s owner with {value}, or use Add environment with that machine’s own link.":
-    "要连接一台，请用 {value} 打开此服务器所有者提供的配对链接，或用那台电脑自己的链接执行“添加环境”。",
   "Turn Auto off": "关闭 Auto",
   "Long audio is transcribed first (speech to text), the transcript is split into chunks that fit the model's context, and the cheaper model works through the chunks. Auto never sends audio to a model that cannot hear it.":
     "长音频会先转写（语音转文字），转写内容被拆分为适合模型上下文的片段，再由更便宜的模型逐段处理。Auto 绝不会把音频发给无法听取音频的模型。",
@@ -3534,9 +3470,6 @@ export const zh: PhraseCatalog = {
   "Paste the pairing code.": "粘贴配对码。",
   "Name the profile, for example Work or Marketing.": "为配置文件命名，例如“工作”或“营销”。",
   "Click Pair.": "点击“配对”。",
-  "Send activity to mobile notifications and Live Activities without SpecWithCode Connect.":
-    "无需 SpecWithCode Connect，即可将活动发送到移动通知和实时活动。",
-  "Publish agent activity to mobile clients": "将代理活动发布到移动客户端",
   "Ask Google for {service}": "向 Google 请求：{service}",
   "Edit shortcut for {command}: {shortcut}": "编辑 {command} 的快捷键：{shortcut}",
   "Edit when clause for {command}": "编辑 {command} 的条件",
@@ -3572,14 +3505,6 @@ export const zh: PhraseCatalog = {
     "当此浏览器页面打开时，在此设备上接收来自已连接机器的提醒。关闭页面会停止推送。",
   "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer.":
     "此窗口无法创建配对码。请退出并重新打开 SpecWithCode，让它以对这台电脑的完全访问权限登录。",
-  "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
-    "要用私密二维码配对，你的手机需要这台电脑的地址。请先开启网络访问或 Tailscale HTTPS。要从任何地方访问，请改为登录 SpecWithCode Connect。",
-  "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`.":
-    "要从手机访问这台电脑，请在 SpecWithCode 桌面应用中打开这些设置并登录 SpecWithCode Connect。要改用私密二维码配对，请用 `specweave-studio pair --tailscale` 设置 Tailscale Serve。",
-  "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code.":
-    "仅在无法使用 SpecWithCode Connect 时：你的 iPhone 在同一网络或通过 Tailscale 直接访问这台电脑，并扫描一次性码。",
-  "Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to {url}.":
-    "用 iPhone 上的 SpecWithCode 应用扫描私密配对码。它会连接到 {url}。",
   "Selected environment: local tracing on; external diagnostic export configured.":
     "所选环境：本地追踪开启；外部诊断导出已配置。",
   "Selected environment: local tracing on; external diagnostic export off.":
@@ -4130,4 +4055,149 @@ export const zh: PhraseCatalog = {
   "Check this computer's connection, then try again.": "请检查这台电脑的网络连接，然后重试。",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect 返回了此页面无法读取的响应",
+  "Get SpecWithCode on your phone": "在手机上获取 SpecWithCode",
+  "It gets a private address that only your account can use.":
+    "它会获得一个只有你的账户才能使用的私有地址。",
+  "It links {machine} to your account in the same click. No VPN, open ports or terminal.":
+    "一键将 {machine} 关联到你的账户。无需 VPN、开放端口或终端。",
+  "Linked as {account}. Reachable from anywhere, by your account only.":
+    "已关联为 {account}。可从任何地方访问，但仅限你的账户。",
+  "Pair over your own network instead.": "改为通过你自己的网络配对。",
+  "Reachable from anywhere, by its account only.": "可从任何地方访问，仅限其所属账户。",
+  "Scan this with the phone's camera. It opens the App Store on an iPhone and Google Play on Android. Or search the store for “SpecWithCode”.":
+    "用手机相机扫描此码。iPhone 上会打开 App Store，Android 上会打开 Google Play。也可以在应用商店中搜索“SpecWithCode”。",
+  "Sign in on the phone as {account}": "在手机上以 {account} 登录",
+  "Sign in on the phone with the same account": "在手机上登录同一个账户",
+  "Signed in as {account}. It gets a private address that only your account can use.":
+    "已登录为 {account}。它会获得一个只有你的账户才能使用的私有地址。",
+  "SpecWithCode Connect is not in this build": "此版本不包含 SpecWithCode Connect",
+  "To add another phone, scan this with its camera. It opens the App Store on an iPhone and Google Play on Android.":
+    "要添加另一部手机，请用它的相机扫描此码。iPhone 上会打开 App Store，Android 上会打开 Google Play。",
+  "Turn on SpecWithCode Connect for {machine}": "为 {machine} 开启 SpecWithCode Connect",
+  "Your phone": "你的手机",
+  "iPhone or Android. The store code shows here once this machine is on SpecWithCode Connect.":
+    "iPhone 或 Android。这台电脑接入 SpecWithCode Connect 后，应用商店二维码会显示在这里。",
+  "{machine} is on SpecWithCode Connect": "{machine} 已接入 SpecWithCode Connect",
+  "{machine} shows up on the phone by itself, and the phone shows up here. Nothing to scan or type.":
+    "{machine} 会自动出现在手机上，手机也会自动出现在这里。无需扫描或输入。",
+  "{machine} shows up there by itself.": "{machine} 会自动出现在那里。",
+  "Next step": "下一步",
+  "Open SpecWithCode on {machine} to do this.": "请在 {machine} 上打开 SpecWithCode 来完成此操作。",
+  "Waiting for your phone…": "正在等待你的手机…",
+  "You are set": "一切就绪",
+  "Agents run on this machine. Turn off and they run only on your other machines.":
+    "智能体在这台电脑上运行。关闭后，它们只在你的其他电脑上运行。",
+  "Run agents on this machine": "在这台电脑上运行智能体",
+  "Run agents on this machine again?": "重新在这台电脑上运行智能体？",
+  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history and other machines are unaffected.":
+    "SpecWithCode 将重启，且不再在这台电脑上运行服务器。在此运行的所有智能体和终端都会停止，其他设备也将无法再连接到这台电脑。你的项目、历史记录和其他电脑不受影响。",
+  "Stop running agents on this machine?": "停止在这台电脑上运行智能体？",
+  "Turned off. Agents run only on your other machines.": "已关闭。智能体只在你的其他电脑上运行。",
+  "App Store · Google Play": "App Store · Google Play",
+  "Code that opens the App Store or Google Play": "打开 App Store 或 Google Play 的二维码",
+  "Main machine ID": "主电脑 ID",
+  "This machine’s ID: {code}": "这台电脑的 ID：{code}",
+  "Copy the computer address below and open it in the phone's browser. If it does not load, check Tailscale on both devices before making a code.":
+    "复制下方的电脑地址，并在手机浏览器中打开。如果无法加载，请在生成代码之前检查两台设备上的 Tailscale。",
+  "For when you cannot use SpecWithCode Connect. Your phone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
+    "无法使用 SpecWithCode Connect 时的备用方式。你的手机必须能直接访问这台电脑，在同一网络中或通过 Tailscale。请先准备好连接，然后生成一次性代码。",
+  "If scanning fails, check the address in the phone's browser, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
+    "如果扫描失败，请检查手机浏览器中的地址、VPN 连接和代码是否过期。地址在这台电脑上可用，并不代表你的手机能访问它。",
+  "Install Tailscale on your phone. Sign in to the same Tailscale network as this computer and turn the VPN on.":
+    "在手机上安装 Tailscale。登录与这台电脑相同的 Tailscale 网络并开启 VPN。",
+  "Network access, for a phone on the same Wi-Fi or network.":
+    "网络访问，适用于处于同一 Wi-Fi 或网络的手机。",
+  "Open SpecWithCode on your phone, choose Pair a machine, then Scan QR code.":
+    "在手机上打开 SpecWithCode，选择“配对电脑”，然后选择“扫描二维码”。",
+  "Open the computer address in the phone's browser. Once it loads, open SpecWithCode and choose Pair a machine, then Scan QR code.":
+    "在手机浏览器中打开电脑地址。加载完成后，打开 SpecWithCode，选择“配对电脑”，然后选择“扫描二维码”。",
+  "Pair over your own network": "通过你自己的网络配对",
+  "Pairing code for the SpecWithCode phone app": "SpecWithCode 手机应用的配对码",
+  "Scan with your phone": "用手机扫描",
+  "Show Network access and Tailscale HTTPS": "显示“网络访问”和 Tailscale HTTPS",
+  "Tailscale HTTPS, for a phone on your Tailscale network, anywhere.":
+    "Tailscale HTTPS，适用于在你的 Tailscale 网络中的手机，随处可用。",
+  "This window cannot change how this computer is reached. Open SpecWithCode on this computer and turn on Network access or Tailscale HTTPS there, or sign in to SpecWithCode Connect, which needs neither.":
+    "此窗口无法更改这台电脑的访问方式。请在这台电脑上打开 SpecWithCode，在那里开启“网络访问”或 Tailscale HTTPS，或者登录 SpecWithCode Connect，两者都不需要。",
+  "Turn on Network access": "开启“网络访问”",
+  "Your phone needs an address for this computer. Turn on one of these first:":
+    "你的手机需要这台电脑的地址。请先开启以下其中一项：",
+  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Saved connections stops this app seeing it.":
+    "在{link}中添加电脑、管理其路由，以及允许或停止工作者。可以在这里运行工作的电脑位于“谁可以在这里运行工作”下。要断开某台电脑，请使用那里的卡片：“移除电脑”会让这里的智能体停止使用它，“已保存的连接”下的“移除”会让此应用不再看到它。",
+  "Projects and accounts on this machine": "这台电脑上的项目和账户",
+  "Activity for phone notifications": "手机通知的活动",
+  "Machine icon": "电脑图标",
+  "Saved connections": "已保存的连接",
+  "Advanced: run agents on this machine, network access, Tailscale, signed-in browsers and apps, saved connections":
+    "高级：在这台电脑上运行智能体、网络访问、Tailscale、已登录的浏览器和应用、已保存的连接",
+  "Keep webhook requests for up to 24 hours while this machine is offline, then deliver them. Turn off and SpecWithCode Connect only forwards requests and stores nothing.":
+    "这台电脑离线时，将 Webhook 请求保留最多 24 小时，之后再送达。关闭后，SpecWithCode Connect 只转发请求，不存储任何内容。",
+  "Optional. Sign in to reach your machines from anywhere and to change the settings below.":
+    "可选。登录后可从任何地方访问你的电脑，并更改下方的设置。",
+  "Send activity for phone notifications": "发送手机通知活动",
+  "Send agent activity to your phone's notifications and Live Activities, even while SpecWithCode Connect is off for this machine. Turn off and your phone shows no activity from this machine.":
+    "将智能体活动发送到手机的通知和 Live Activities，即使这台电脑的 SpecWithCode Connect 已关闭。关闭后，你的手机不会显示这台电脑的任何活动。",
+  "Sign in to SpecWithCode Connect to change this. Notifications go to the phones signed in to your account.":
+    "登录 SpecWithCode Connect 以更改此项。通知会发送到登录了你账户的手机。",
+  "Turn on to reach this machine from your phone and your other machines, from anywhere.":
+    "开启后，可从手机和你的其他电脑随处访问这台电脑。",
+  "Your phone and your other machines reach this machine from anywhere. Turn off and they can no longer reach it this way.":
+    "你的手机和其他电脑可从任何地方访问这台电脑。关闭后，它们将无法再以这种方式访问。",
+  "Current machine": "当前电脑",
+  "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
+    "要连接一台电脑，请打开此服务器所有者提供的、带有 {value} 的配对链接，或通过“添加连接”使用那台电脑自己的链接。",
+  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
+    "打开此应用时，自动连接到有响应的电脑，让它们的项目显示在这里。关闭后，需要你自己用“连接电脑”逐台连接。不会更改任何智能体权限。保存在此设备上。",
+  "Cannot use Connect? Pair over your own network": "无法使用 Connect？通过你自己的网络配对",
+  "Cannot use Connect? Pair over your own network.": "无法使用 Connect？通过你自己的网络配对。",
+  "Scan a one-time code with the SpecWithCode app on your phone. It connects to {url}.":
+    "用手机上的 SpecWithCode 应用扫描一次性代码。它会连接到 {url}。",
+  "To pair over your own network, open these settings in the SpecWithCode desktop app on this computer and turn on Network access or Tailscale HTTPS.":
+    "要通过你自己的网络配对，请在这台电脑上的 SpecWithCode 桌面应用中打开这些设置，并开启“网络访问”或 Tailscale HTTPS。",
+  "To pair over your own network, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first.":
+    "要通过你自己的网络配对，你的手机需要这台电脑的地址。请先开启“网络访问”或 Tailscale HTTPS。",
+  "Your phone must be able to open this address. Keep this computer awake and online.":
+    "你的手机必须能打开此地址。请保持这台电脑唤醒并联网。",
+  "Your phone needs the Tailscale app, signed in to the same Tailscale network as this computer.":
+    "你的手机需要 Tailscale 应用，并登录与这台电脑相同的 Tailscale 网络。",
+  "Your phone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
+    "你的手机需要与这台电脑处于同一 Wi-Fi。要从任何地方访问，请改为登录 SpecWithCode Connect。",
+  "Add a connection": "添加连接",
+  "Add connection": "添加连接",
+  "Click “Add connection” to pair another machine, or connect one from SpecWithCode Connect.":
+    "点击“添加连接”配对另一台电脑，或通过 SpecWithCode Connect 连接。",
+  "Click “Add connection” to pair another machine.": "点击“添加连接”配对另一台电脑。",
+  "Connect a machine to see its settings and access.": "连接一台电脑以查看其设置和访问权限。",
+  "No machine connected": "没有已连接的电脑",
+  "No saved connections": "没有已保存的连接",
+  "Not encrypted: anyone on the same network can capture the sign-in. Turn off and only this machine can open the app. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
+    "未加密：同一网络中的任何人都可能截获登录信息。关闭后，只有这台电脑能打开应用。如需远程访问，请使用 SpecWithCode Connect 或 Tailscale HTTPS。",
+  "Pair another machine with this app.": "用此应用配对另一台电脑。",
+  "Run only the WSL backend. Turn off and the Windows backend runs beside it again. SpecWithCode restarts when this changes.":
+    "仅运行 WSL 后端。关闭后，Windows 后端会再次与它并行运行。更改后 SpecWithCode 会重启。",
+  "Turn on to reach this machine at an HTTPS address on your tailnet, through Tailscale Serve.":
+    "开启后，可通过 Tailscale Serve 在你的 tailnet 上以 HTTPS 地址访问这台电脑。",
+  "Add your phone": "添加你的手机",
+  "Connect: checking…": "Connect：正在检查…",
+  "Connect: could not check": "Connect：无法检查",
+  "Connect: linked as {account}": "Connect：已关联为 {account}",
+  "Connect: not in this build": "Connect：此版本不包含",
+  "Connect: not signed in": "Connect：未登录",
+  "Connect: off by your team's rules": "Connect：已被团队规则关闭",
+  "Connect: off for this machine": "Connect：已对这台电脑关闭",
+  "Connect: on": "Connect：已开启",
+  "Helper for {machine}": "{machine} 的辅助机器",
+  "Helper for {machine} and {count} more": "{machine} 及另外 {count} 台机器的辅助机器",
+  "Not set up": "未设置",
+  "Other machines: none": "其他电脑：无",
+  "Other machines: {count}": "其他电脑：{count}",
+  "Phone: 1 linked": "手机：已关联 1 部",
+  "Phone: checking…": "手机：正在检查…",
+  "Phone: none yet": "手机：暂无",
+  "Phone: sign in to see": "手机：登录后查看",
+  "Phones: {count} linked": "已关联手机：{count}",
+  "Turn on SpecWithCode Connect for this machine": "为这台电脑开启 SpecWithCode Connect",
+  "{version}, up to date": "{version}，已是最新",
+  "{version}, update to {next} available": "{version}，可更新到 {next}",
+  "{url}. Turn off and this address stops answering.": "{url}。关闭后，此地址将不再响应。",
 };

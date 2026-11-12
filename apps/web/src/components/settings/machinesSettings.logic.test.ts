@@ -347,7 +347,7 @@ describe("connect both ways", () => {
 
   it("names the exact place to paste the link", () => {
     expect(connectBothWaysInstruction("MacBook Pro")).toBe(
-      "On MacBook Pro, open Settings > Machines > Advanced routes and saved connections > Add environment > Remote link and paste this link.",
+      "On MacBook Pro, open Settings > Machines > Advanced > Saved connections > Add connection > Remote link and paste this link.",
     );
   });
 
