@@ -12,6 +12,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -346,6 +347,8 @@ class Attempt(unittest.TestCase):
         """A stand-in server suite in a process group of its own. ready: a file the stand-in
         writes once it is set up, waited for so no signal reaches it half started."""
         proc = subprocess.Popen(command, start_new_session=True)
+        # Reaped as it exits, as launchd reaps the real suite: its group is then gone for good.
+        threading.Thread(target=proc.wait, daemon=True).start()
         self.addCleanup(proc.wait)
         self.addCleanup(lambda: proc.poll() is None and os.killpg(proc.pid, 9))
         (self.stage / 'server.pid').write_text(f'{proc.pid}\n')
@@ -376,6 +379,14 @@ class Attempt(unittest.TestCase):
         self.assertEqual(self.attempt()[0], 'fresh')
         self.assertTrue(closed.exists(), 'the staging folder was retired while the runner still ran')
         self.assertIsNotNone(proc.wait(timeout=5))
+
+    def test_a_group_that_outlives_the_wait_keeps_the_attempt(self):
+        marks = pathlib.Path(self.tmp.name)
+        ready = marks / 'runner-ready'
+        self.server('bash', '-c', (
+            f"(trap '' TERM; : > '{ready}'; sleep 30) & "
+            f"exec -a 'release.sh --internal-server {VERSION}' sleep 60"), ready=ready)
+        self.assertFalse(release_plan.stop_server(self.stage, VERSION, wait=1))
 
     def test_a_pid_that_is_not_this_versions_server_suite_is_left_alone(self):
         proc = self.server('sleep', '60')

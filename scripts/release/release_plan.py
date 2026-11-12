@@ -273,11 +273,15 @@ def stop_server(stage, version, wait=30):
         return True
 
     def group_alive():
-        # Not kill(-pid, 0): that also answers for a group of nothing but unreaped processes.
-        rows = subprocess.run(['ps', '-axo', 'pgid=,stat='], capture_output=True, text=True,
-                              check=False).stdout.splitlines()
-        return any(row.split()[0] == str(pid) and not row.split()[1].startswith('Z')
-                   for row in rows if len(row.split()) == 2)
+        # release.sh's `kill -0 -- -pid`. Nothing here reads a process list: one that comes
+        # back empty or in another layout would say the group is gone while it still runs.
+        try:
+            os.killpg(pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
 
     try:
         os.killpg(pid, signal.SIGTERM)
