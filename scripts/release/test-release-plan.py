@@ -342,31 +342,39 @@ class Attempt(unittest.TestCase):
         self.assertEqual(self.attempt()[0], 'resume')
         self.assertTrue(self.stage.is_dir())
 
-    def server(self, *command):
+    def server(self, *command, ready=None):
+        """A stand-in server suite in a process group of its own. ready: a file the stand-in
+        writes once it is set up, waited for so no signal reaches it half started."""
         proc = subprocess.Popen(command, start_new_session=True)
         self.addCleanup(proc.wait)
         self.addCleanup(lambda: proc.poll() is None and os.killpg(proc.pid, 9))
         (self.stage / 'server.pid').write_text(f'{proc.pid}\n')
-        for _ in range(50):
-            if 'sleep' in subprocess.run(['ps', '-o', 'command=', '-p', str(proc.pid)],
-                                         capture_output=True, text=True).stdout:
+        for _ in range(300):
+            if ready is None or ready.exists():
                 break
             time.sleep(0.1)
+        else:
+            self.fail(f'the stand-in server suite never wrote {ready}')
         return proc
 
     def test_starting_over_stops_the_earlier_attempts_server_suite(self):
-        proc = self.server('sh', '-c', f'exec -a "release.sh --internal-server {VERSION}" sleep 60')
+        proc = self.server('bash', '-c', f'exec -a "release.sh --internal-server {VERSION}" sleep 60')
         self.commit(self.origin, 'main moved')
         self.assertEqual(self.attempt()[0], 'fresh')
         self.assertIsNotNone(proc.wait(timeout=5))
 
     def test_starting_over_waits_for_the_whole_group_not_only_its_leader(self):
-        # The leader goes at once on TERM; a runner in its group closes later.
-        proc = self.server('sh', '-c', f"(trap '' TERM; sleep 2) & exec -a 'release.sh --internal-server {VERSION}' sleep 60")
+        # The leader goes at once on TERM; a runner in its group ignores it and closes 2s later,
+        # leaving a file as it goes. No clock is read: the file is there only if the wait was
+        # for the runner too, and the runner is signalled only once it says it ignores TERM.
+        marks = pathlib.Path(self.tmp.name)
+        ready, closed = marks / 'runner-ready', marks / 'runner-closed'
+        proc = self.server('bash', '-c', (
+            f"(trap '' TERM; : > '{ready}'; sleep 2; : > '{closed}') & "
+            f"exec -a 'release.sh --internal-server {VERSION}' sleep 60"), ready=ready)
         self.commit(self.origin, 'main moved')
-        began = time.monotonic()
         self.assertEqual(self.attempt()[0], 'fresh')
-        self.assertGreater(time.monotonic() - began, 1.0)
+        self.assertTrue(closed.exists(), 'the staging folder was retired while the runner still ran')
         self.assertIsNotNone(proc.wait(timeout=5))
 
     def test_a_pid_that_is_not_this_versions_server_suite_is_left_alone(self):
