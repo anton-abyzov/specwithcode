@@ -64,7 +64,6 @@ const state = vi.hoisted(() => ({
   ownerMachineId: undefined as string | undefined,
   // The machines that serve thread-1; null serves it from every machine.
   threadEnvironments: null as string[] | null,
-  launchers: new Map<string, string>(),
 }));
 
 const SHELL_NOW = DateTime.makeUnsafe("2026-09-13T09:00:00.000Z");
@@ -156,9 +155,6 @@ vi.mock("@effect/atom-react", () => ({
     }),
   }),
 }));
-vi.mock("../studio/useRemoteWorkerLaunchers", () => ({
-  useRemoteWorkerLaunchers: () => state.launchers,
-}));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
   useParams: () => state.active,
@@ -232,6 +228,11 @@ vi.mock("./ui/toast", () => ({
 import { __resetNotificationOwnerForTests, setNotificationBadge } from "../threadNotifications";
 import { setNotificationsConnected } from "../notificationConnection";
 import { __resetNotificationHistoryForTests } from "../notificationHistory";
+import {
+  __resetRemoteWorkerLaunchersForTests,
+  publishRemoteWorkerLaunchers,
+  withdrawRemoteWorkerLaunchers,
+} from "../studio/remoteWorkerLaunchers";
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
 
 let renderer: ReactTestRenderer | undefined;
@@ -298,8 +299,9 @@ beforeEach(() => {
     executionMachineId: undefined,
     ownerMachineId: undefined,
     threadEnvironments: null,
-    launchers: new Map(),
   });
+  // As once the sidebar has its remote worker readings: none launched anything.
+  publishRemoteWorkerLaunchers("views", new Map(), true);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
   setNotificationsConnected(true);
@@ -318,6 +320,7 @@ afterEach(async () => {
   await act(() => renderer?.unmount());
   renderer = undefined;
   vi.unstubAllGlobals();
+  __resetRemoteWorkerLaunchersForTests();
 });
 
 describe("thread notifications", () => {
@@ -718,7 +721,7 @@ describe("only the device in use pops up", () => {
 
     it("badges on the launching coordinator's app when another app is elected", async () => {
       state.threadEnvironments = ["env-2"];
-      state.launchers = launchedBy("env-1");
+      publishRemoteWorkerLaunchers("views", launchedBy("env-1"), true);
       state.primary = "env-1";
       await askInBackground();
       expect(state.targetReads).toEqual(["env-2"]);
@@ -729,7 +732,7 @@ describe("only the device in use pops up", () => {
 
     it("stays quiet on the worker machine's app, neither owner nor elected", async () => {
       state.threadEnvironments = ["env-2"];
-      state.launchers = launchedBy("env-1");
+      publishRemoteWorkerLaunchers("views", launchedBy("env-1"), true);
       state.primary = "env-2";
       await askInBackground();
       expect(state.targetReads).toEqual(["env-2"]);
@@ -740,7 +743,7 @@ describe("only the device in use pops up", () => {
 
     it("leaves a thread on its own machine owned by that machine", async () => {
       state.threadEnvironments = ["env-1"];
-      state.launchers = launchedBy("env-2");
+      publishRemoteWorkerLaunchers("views", launchedBy("env-2"), true);
       state.primary = "env-1";
       await askInBackground();
       expect(state.targetReads).toEqual(["env-1"]);
@@ -757,6 +760,66 @@ describe("only the device in use pops up", () => {
       expect(state.notification).not.toHaveBeenCalled();
       expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
     });
+
+    describe("at app start, before the first remote worker reading", () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        state.threadEnvironments = ["env-2"];
+        // Nothing has its readings yet.
+        withdrawRemoteWorkerLaunchers("views");
+        publishRemoteWorkerLaunchers("sidebar", new Map(), false);
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it.each([
+        ["badges on the coordinator machine's app", "env-1", true],
+        ["stays quiet on the worker machine's app", "env-2", false],
+      ])("%s once the readings arrive", async (_name, primary, badged) => {
+        state.primary = primary;
+        await askInBackground();
+        expect(state.targetReads).toEqual(["env-2"]);
+        expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000);
+          publishRemoteWorkerLaunchers("sidebar", launchedBy("env-1"), true);
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(state.notification).not.toHaveBeenCalled();
+        expect(state.sound).not.toHaveBeenCalled();
+        if (badged) expect(vi.mocked(setNotificationBadge)).toHaveBeenLastCalledWith(1);
+        else expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
+      });
+
+      it("badges nothing for a question answered while it waits", async () => {
+        state.primary = "env-1";
+        await askInBackground();
+        state.input = false;
+        await render();
+        await act(async () => {
+          publishRemoteWorkerLaunchers("sidebar", launchedBy("env-1"), true);
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
+      });
+    });
+  });
+
+  it("pops up on the elected app at once, with no remote worker readings yet", async () => {
+    __resetRemoteWorkerLaunchersForTests();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      state.targetRead = target("client-self");
+      await askInBackground();
+      expect(state.notification).toHaveBeenCalledTimes(1);
+      expect(state.sound).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("on an older server or a timeout, pops up only on the thread's own machine", async () => {

@@ -55,13 +55,20 @@ import { notificationsConnected, useNotificationsConnected } from "../notificati
 import { deliverNotificationOnce } from "../notificationHistory";
 import {
   decideNotificationDelivery,
+  isNotificationTarget,
   ownerMachineReachable,
   readNotificationTarget,
 } from "../notificationTarget";
 import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
-import { useRemoteWorkerLaunchers } from "../studio/useRemoteWorkerLaunchers";
+import {
+  currentRemoteWorkerLaunchers,
+  remoteWorkerLaunchersSettled,
+} from "../studio/remoteWorkerLaunchers";
+
+/** How long an app that is not elected waits for the remote worker readings at start. */
+const LAUNCHERS_SETTLE_MS = 3_000;
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -102,9 +109,6 @@ export function ThreadNotificationCoordinator() {
   );
   // A project workspace's thread opens in that project's right panel.
   const openChat = useOpenChat();
-  // Read once for every machine: a remote worker's alert belongs to the
-  // coordinator machine that launched it, as in the sidebar and Overview.
-  const launchers = useRemoteWorkerLaunchers();
   const pending = useRef(new Map<string, ShownNotification>());
   const onNotification = useCallback<OnNotification>((tag, shown, posted = true) => {
     const previous = pending.current.get(tag);
@@ -191,7 +195,6 @@ export function ThreadNotificationCoordinator() {
       environmentId={environmentId}
       onNotification={onNotification}
       onWithdraw={onWithdraw}
-      launchers={launchers}
     />
   ));
 }
@@ -209,12 +212,10 @@ function EnvironmentNotifications({
   environmentId,
   onNotification,
   onWithdraw,
-  launchers,
 }: {
   environmentId: EnvironmentId;
   onNotification: OnNotification;
   onWithdraw: (tag: string, actionKey?: string | null) => void;
-  launchers: ReadonlyMap<string, string>;
 }) {
   const connected = useNotificationsConnected();
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
@@ -222,22 +223,10 @@ function EnvironmentNotifications({
   const ownEnvironmentId = usePrimaryEnvironmentId();
   const knownEnvironmentIds = useEnvironmentIds();
   const unreachableEnvironmentIds = useUnreachableEnvironmentIds();
-  // Read at delivery time, so a new remote worker reading never re-runs the
-  // per-thread scan below.
-  const presence = useRef({
-    ownEnvironmentId,
-    knownEnvironmentIds,
-    unreachableEnvironmentIds,
-    launchers,
-  });
+  const presence = useRef({ ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds });
   useLayoutEffect(() => {
-    presence.current = {
-      ownEnvironmentId,
-      knownEnvironmentIds,
-      unreachableEnvironmentIds,
-      launchers,
-    };
-  }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds, launchers]);
+    presence.current = { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds };
+  }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds]);
   // The shell reducer keeps the thread list and unchanged thread objects
   // stable, so this only rescans when a thread actually changed.
   const threads =
@@ -505,7 +494,7 @@ function EnvironmentNotifications({
             };
             const checked = stillCurrent();
             if (checked === null) return false;
-            const { currentRaw, currentThread } = checked;
+            const { currentThread } = checked;
             const title =
               kind === "stalled"
                 ? "No activity in thread"
@@ -533,19 +522,31 @@ function EnvironmentNotifications({
             // focus, the serving machine says which one app pops up and plays the
             // sound; the owner machine's app badges, the rest stay quiet.
             if (!inApp) {
-              const {
-                ownEnvironmentId,
-                knownEnvironmentIds,
-                unreachableEnvironmentIds,
-                launchers,
-              } = presence.current;
+              const read = await readNotificationTarget(environmentId);
+              const ownClientId = backgroundActivityClientId();
+              // Only the badge-or-quiet choice of an app that is not elected
+              // depends on the owner machine. A remote worker's owner is the
+              // coordinator machine that launched it, known once the sidebar or
+              // Overview has its remote worker readings; at app start wait
+              // briefly for them. The elected app's popup never waits.
+              if (isNotificationTarget(read, ownClientId) === false)
+                await remoteWorkerLaunchersSettled(LAUNCHERS_SETTLE_MS);
+              if (!mounted.current || !isNotificationOwner()) return false;
+              const fresh = stillCurrent();
+              if (fresh === null) return false;
+              const { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds } =
+                presence.current;
               const ownerMachineId = attentionOwnerMachine(
-                { environmentId, id: currentRaw.id, ownerMachineId: currentRaw.ownerMachineId },
-                launchers,
+                {
+                  environmentId,
+                  id: fresh.currentRaw.id,
+                  ownerMachineId: fresh.currentRaw.ownerMachineId,
+                },
+                currentRemoteWorkerLaunchers(),
               );
               const delivery = decideNotificationDelivery({
-                read: await readNotificationTarget(environmentId),
-                ownClientId: backgroundActivityClientId(),
+                read,
+                ownClientId,
                 ownEnvironmentId,
                 servingEnvironmentId: environmentId,
                 ownerMachineId,
@@ -555,8 +556,6 @@ function EnvironmentNotifications({
                   unreachableEnvironmentIds,
                 ),
               });
-              if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
-                return false;
               if (delivery !== "post") {
                 if (
                   delivery === "badge" &&

@@ -6,6 +6,7 @@ import {
   remoteWorkerLaunchers,
 } from "@specweave-studio/client-runtime/state/projectAttention";
 import { projectAttentionRoots, useAttentionMembers } from "../../studio/useProjectAttention";
+import { usePublishRemoteWorkerLaunchers } from "../../studio/remoteWorkerLaunchers";
 import { useAttentionRaise } from "../../studio/attentionRaise";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
@@ -132,6 +133,8 @@ export function StudioOverview() {
     [catalogProjects, aideEnabled],
   );
   const attentionMembers = useAttentionMembers(projects);
+  // Alerts read the remote worker launchers from here instead of polling their own.
+  usePublishRemoteWorkerLaunchers("overview", attentionMembers);
   const currentIds = useMemo(
     () =>
       new Set(
