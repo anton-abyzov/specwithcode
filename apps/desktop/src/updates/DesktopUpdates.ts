@@ -961,9 +961,15 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
-        // The legacy Debian installer opens a password dialog. Idle installation
-        // must wait for a silent-capable installer (or an already replaced binary).
-        if (beforeQuit !== undefined && isDebPackage && !runningInstallReplaced()) {
+        // Without the signed pkexec helper and its polkit action, a .deb install
+        // opens a password dialog, so an idle install waits for one that cannot
+        // (the helper ready for this download, or a binary already replaced).
+        if (
+          beforeQuit !== undefined &&
+          isDebPackage &&
+          !runningInstallReplaced() &&
+          !(yield* electronUpdater.silentInstallReady)
+        ) {
           return { accepted: false, completed: false, failed: false, reason: "disabled" as const };
         }
         if (yield* activation.refusesInstall(expectedVersion, serviceLacksRelease)) {
