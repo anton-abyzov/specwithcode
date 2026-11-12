@@ -47,9 +47,10 @@
  * AUTOINCREMENT, and `sqlite_sequence` is copied as a table. Step 6 checks the
  * same for every table it hashes.
  *
- * INCREMENTAL is opt-in: the update helper's page proof refuses any
- * auto-vacuum database (`scripts/studio-fleet/after_proof.py`, refusal
- * `auto-vacuum`), so each update would read the database in full once more.
+ * INCREMENTAL is opt-in. The update helper's page proof accepts an
+ * auto-vacuum database (`scripts/studio-fleet/after_proof.py`,
+ * `check_pointer_maps`); until it did, each update of one read the database in
+ * full once more (3 to 6 minutes on M4's 10 GB).
  *
  * `dryRun` changes nothing and works while the service runs: it opens the
  * database read-only with the flags that cannot disturb a live service

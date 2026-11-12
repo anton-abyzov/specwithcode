@@ -22,11 +22,12 @@ export const PAGE_CACHE_KIB = 64 * 1024;
 /**
  * Whether a database created from nothing starts with `auto_vacuum =
  * INCREMENTAL`, so StorageMaintenance can return freed pages to the file
- * system. Off: the update helper's page proof refuses any auto-vacuum database
- * (`scripts/studio-fleet/after_proof.py`, `auto-vacuum`: pointer-map pages
- * belong to no tree) and every update would then read the database in full a
- * second time. Freed pages still go to the free list and new writes reuse
- * them. `specweave-studio db reclaim --incremental` turns it on for one database.
+ * system. Off for now: machines still on a release whose update helper refuses
+ * an auto-vacuum database (before `check_pointer_maps` in
+ * `scripts/studio-fleet/after_proof.py`) would read such a database in full a
+ * second time on every update. Freed pages still go to the free list and new
+ * writes reuse them. `specweave-studio db reclaim --incremental` turns it on
+ * for one database.
  */
 export const INCREMENTAL_AUTO_VACUUM_FOR_NEW_DATABASES = false;
 

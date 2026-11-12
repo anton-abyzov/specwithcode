@@ -205,11 +205,15 @@ def turn_item(rng, label, thread, ordinal, low=300, high=9000):
             ['item-' + label, thread, 'run-' + thread, ordinal, 'agent_message', 'completed', NOW, text(rng, low, high)])
 
 
+AUTO_VACUUM = 0  # 2 in the AutoVacuum classes: the database `db reclaim --incremental` leaves.
+
+
 def build(state, events=160, items=220, sessions=3):
     """The database before the update, in WAL mode."""
     state.mkdir(parents=True, exist_ok=True)
     rng = random.Random(993)
     db = sqlite3.connect(str(state / 'statev2.sqlite'))
+    db.execute('PRAGMA auto_vacuum=%d' % AUTO_VACUUM)  # Before the first table, or it does not apply.
     db.execute('PRAGMA journal_mode=WAL')
     db.executescript(SCHEMA)
     for project in ('p1', 'p2'):
@@ -951,6 +955,80 @@ class Refuses(unittest.TestCase):
         reads, record, _ = flow.decide()
         self.assertEqual(record['mode'], 'pages', record)
         self.assertEqual(encoded(reads[0]), encoded(flow.full()[0]))
+
+
+class AutoVacuum:
+    """The same cases on a database with auto_vacuum=INCREMENTAL, whose pointer-map pages the
+    proof claims and checks instead of refusing 'auto-vacuum'."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch.dict(build.__globals__, {'AUTO_VACUUM': 2})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class EqualAutoVacuum(AutoVacuum, Equal):
+    def test_the_fixture_is_an_auto_vacuum_database_and_its_entries_are_checked(self):
+        flow = Update(self)
+        flow.around_restart()
+        db = sqlite3.connect('file:%s?mode=ro' % flow.database, uri=True)
+        self.addCleanup(db.close)
+        self.assertEqual(db.execute('PRAGMA auto_vacuum').fetchone()[0], 2)
+        record = self.assert_same(flow)
+        self.assertGreater(record['pointerMapEntries'], 0)  # The appended rows took new pages:
+        # leaves (5), the first overflow page of a long payload (3) and the rest of its chain (4).
+        self.assertEqual(record['pointerMapKinds'], [3, 4, 5])
+
+    def test_an_incremental_vacuum_after_the_restart_equals_the_full_read_or_refuses(self):
+        flow = Update(self, written=[('DELETE FROM checkpoint_diff_blobs', [])])
+        new = flow.around_restart()
+        new.commit(('PRAGMA incremental_vacuum(64)', []))
+        reads, record, _ = flow.decide()
+        if reads is None:
+            self.assertEqual(record['mode'], 'full')
+            self.assertEqual(record['reason'], 'database-shrank', record)
+        else:
+            full = flow.full()
+            for index in (0, 2, 3):
+                self.assertEqual(encoded(reads[index]), encoded(full[index]))
+            flow.kept.clear()
+
+
+class RefusesAutoVacuum(AutoVacuum, Refuses):
+    def wrong_entry(self, entry):
+        """The proof with the last entry in use of every pointer-map page read as `entry`; it reads
+        the changed ones."""
+        flow, _ = self.after_restart()
+        db = sqlite3.connect('file:%s?mode=ro' % flow.database, uri=True)
+        self.addCleanup(db.close)
+        pages = db.execute('PRAGMA page_count').fetchone()[0]
+        self.assertEqual(db.execute('PRAGMA freelist_count').fetchone()[0], 0)
+        roots = [row[0] for row in db.execute('SELECT rootpage FROM sqlite_master')]
+        page, tampered = after_proof._Proof.page, []
+
+        def read(proof, version, wanted):
+            data = page(proof, version, wanted)
+            if version == 'live' and proof.auto_vacuum and proof.is_pointer_map(wanted) and wanted < pages:
+                slot = min(proof.usable // 5 - 1, pages - wanted - 1)
+                self.assertNotIn(wanted + 1 + slot, roots)  # An auto-vacuum database keeps its roots first.
+                self.assertNotEqual(data[slot * 5:slot * 5 + 5], entry)
+                data = data[:slot * 5] + entry + data[slot * 5 + 5:]
+                tampered.append(wanted)
+            return data
+        with patch.object(after_proof._Proof, 'page', read):
+            self.refused(flow, 'pointer-map')
+        self.assertTrue(tampered)
+
+    def test_a_pointer_map_entry_that_does_not_describe_the_live_file(self):
+        for kind, parent in ((1, 0), (2, 0), (3, 1), (4, 1), (5, 1), (4, 3), (5, 3), (3, 3), (0, 0), (9, 9), (4, 1 << 31)):
+            with self.subTest(kind=kind, parent=parent):
+                self.wrong_entry(bytes([kind]) + parent.to_bytes(4, 'big'))
+
+    def test_a_tree_page_at_a_pointer_map_position(self):
+        flow, _ = self.after_restart()
+        with patch.object(after_proof._Proof, 'is_pointer_map', lambda proof, number: number != 1):
+            self.refused(flow, 'page-owned-twice')
 
 
 class KeptLines(unittest.TestCase):
