@@ -34,6 +34,8 @@ export const DesktopVoiceVocabularySchema = Schema.Struct({
   text: Schema.String,
   count: Schema.Number,
   refused: Schema.Number,
+  /** The product's own words, always recognized; shown beside the editor, not editable. */
+  builtIn: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type DesktopVoiceVocabulary = typeof DesktopVoiceVocabularySchema.Type;
 export const DesktopVoiceVocabularySaveInputSchema = Schema.Struct({
@@ -43,7 +45,10 @@ export const DesktopVoiceVocabularySaveInputSchema = Schema.Struct({
 export const DesktopVoiceTranscribeInputSchema = Schema.Struct({
   audio: Schema.Uint8Array,
   locale: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(35))),
-  /** The person chose this language in Settings; engines that auto-detect must use it. */
+  /**
+   * The person chose `locale` in Settings. `und` there asks the engine to detect the
+   * language from the speech, where it can; without this the computer's language is used.
+   */
   pinLanguage: Schema.optionalKey(Schema.Boolean),
 });
 

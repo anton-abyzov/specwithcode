@@ -214,6 +214,9 @@ export function useVoiceCall(
   const voice = usePrimarySettings((settings) => settings.voice);
   const settingsLoaded = useAtomValue(primaryServerConfigAtom) !== null;
   // Read at speaking time, so a call picks up the voice saved just before it.
+  // A call listens in the language dictation does: the one chosen in Settings, else the computer's.
+  const language = useClientSettings((settings) => settings.dictationLanguage);
+  const languageRef = useRef(language);
   const voiceRef = useRef({ environmentId, voice });
   const updateSettings = useUpdateClientSettings();
   const [state, setState] = useState<VoiceCallState>(IDLE);
@@ -260,6 +263,7 @@ export function useVoiceCall(
   useLayoutEffect(() => {
     askRef.current = ask;
     voiceRef.current = { environmentId, voice };
+    languageRef.current = language;
   });
   const setLevelTarget = useCallback((element: HTMLElement | null) => {
     levelTarget.current = element;
@@ -320,7 +324,16 @@ export function useVoiceCall(
     const locale = bridge.getSystemLocale?.() ?? undefined;
     const call: VoiceCallController = new VoiceCallController({
       openMicrophone: openCallMicrophone,
-      transcribe: (audio) => bridge.transcribeVoice(locale ? { audio, locale } : { audio }),
+      transcribe: (audio) => {
+        const chosen = languageRef.current;
+        return bridge.transcribeVoice(
+          chosen
+            ? { audio, locale: chosen, pinLanguage: true }
+            : locale
+              ? { audio, locale }
+              : { audio },
+        );
+      },
       ask: (text, signal) => askRef.current(text, signal),
       synthesize: (text) =>
         speakReply(bridge, voiceRef.current.environmentId, voiceRef.current.voice, text),

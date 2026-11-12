@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { PRODUCT_VOCABULARY } from "./productVocabulary.ts";
 import {
   acceptTranscript,
   contextualStrings,
@@ -7,10 +8,14 @@ import {
   decodeStoredVocabulary,
   encodeStoredVocabulary,
   formatVocabulary,
+  judgeTranscript,
   looksSecret,
   parseVocabulary,
+  productWords,
   wavPeak,
+  wavSeconds,
   whisperPrompt,
+  withProductVocabulary,
 } from "./vocabulary.ts";
 
 describe("vocabulary parsing", () => {
@@ -109,6 +114,60 @@ describe("recognition hints", () => {
   });
 });
 
+describe("product vocabulary", () => {
+  const imported = parseVocabulary(
+    "stdio\nEasyChamp\nclaude\ncodex\nspecwithcode\nspecweave\nmcp\nminisforum",
+  ).terms;
+
+  it("puts the product's words ahead of an imported list in the hint", () => {
+    const prompt = whisperPrompt(withProductVocabulary(imported));
+    expect(prompt.startsWith("SpecWithCode, SpecWeave, worktree, worktrees, increment,")).toBe(true);
+    expect(prompt.endsWith("stdio, EasyChamp, minisforum.")).toBe(true);
+    expect(prompt).not.toMatch(/specwithcode|specweave|claude,|codex|mcp/);
+  });
+
+  it("fits every product word in the hint with a full imported list behind it", () => {
+    const many = Array.from({ length: 352 }, (_, index) => ({ phrase: `Imported${index}` }));
+    const prompt = whisperPrompt(withProductVocabulary(many));
+    for (const word of productWords()) expect(prompt).toContain(word);
+    expect(prompt).toContain("Imported0");
+    expect(prompt.length).toBeLessThanOrEqual(501);
+  });
+
+  it("writes product names the way the product does, whatever was heard", () => {
+    const terms = withProductVocabulary(imported);
+    expect(
+      correctTranscript("Open the spec with code coordinator and start a thread in a work tree.", terms),
+    ).toBe("Open the SpecWithCode coordinator and start a thread in a worktree.");
+    expect(correctTranscript("ask claude to run spec weave verify in cloud code", terms)).toBe(
+      "ask Claude to run SpecWeave verify in Claude Code",
+    );
+    expect(correctTranscript("install the v skill over mcp on git hub", terms)).toBe(
+      "install the vskill over MCP on GitHub",
+    );
+  });
+
+  it("only hints words that are also ordinary ones", () => {
+    const terms = withProductVocabulary([]);
+    const phrase = "move the cursor, tell a fable and increment the opus counter";
+    expect(correctTranscript(phrase, terms)).toBe(phrase);
+  });
+
+  it("lets a line of the person's own win when it says something", () => {
+    const respelled = withProductVocabulary(parseVocabulary("Specweave\ncloud code => Cloud Code").terms);
+    expect(correctTranscript("spec weave in cloud code", respelled)).toBe("Specweave in Cloud Code");
+    expect(whisperPrompt(respelled).startsWith("SpecWithCode, Specweave,")).toBe(true);
+    expect(respelled).toHaveLength(PRODUCT_VOCABULARY.length);
+  });
+
+  it("lists each built-in word once for the editor", () => {
+    const words = productWords();
+    expect(words).toContain("SpecWithCode");
+    expect(words).toContain("worktree");
+    expect(new Set(words.map((word) => word.toLowerCase())).size).toBe(words.length);
+  });
+});
+
 describe("transcript correction", () => {
   const terms = [
     { phrase: "SpecWeave" },
@@ -134,6 +193,17 @@ describe("transcript correction", () => {
   it("matches whole words only and leaves short case-only terms alone", () => {
     expect(correctTranscript("postizing and aid", terms)).toBe("postizing and aid");
     expect(correctTranscript("ai is here", terms)).toBe("ai is here");
+  });
+
+  it("keeps the sentence's capital for a lowercase term and still fixes other casing", () => {
+    const lowercase = parseVocabulary("kubernetes\nnpm\nwork tree => worktree\nbtw => by the way").terms;
+    expect(correctTranscript("Kubernetes runs NPM and Npm", lowercase)).toBe(
+      "Kubernetes runs npm and Npm",
+    );
+    expect(correctTranscript("Work tree is ready. Work tree two, then a Work Tree.", lowercase)).toBe(
+      "Worktree is ready. Worktree two, then a worktree.",
+    );
+    expect(correctTranscript("Btw it works, BTW", lowercase)).toBe("By the way it works, by the way");
   });
 
   it("stays quick on a phrase with the largest vocabulary", () => {
@@ -182,6 +252,65 @@ describe("silence", () => {
       expect(acceptTranscript(text, "", 0.001)).toBe("");
     },
   );
+
+  it("reads the recording's length from its header", () => {
+    const bytes = new Uint8Array(44 + 32_000);
+    new DataView(bytes.buffer).setUint32(28, 32_000, true);
+    expect(wavSeconds(bytes)).toBe(1);
+    expect(wavSeconds(new Uint8Array(44))).toBe(0);
+  });
+
+  it("drops anything a recording with no speech level produced", () => {
+    expect(judgeTranscript("I'm going to show you how to do it.", { prompt: "", peak: 0.01 })).toEqual({
+      text: "",
+      dropped: "quiet",
+    });
+  });
+
+  it.each([
+    "you",
+    "You.",
+    ".",
+    "[BLANK_AUDIO]",
+    "*music*",
+    "Thanks for watching!",
+    "We'll see you in the next video.",
+    "Subtitles by the Amara.org community",
+    "Please subscribe to my channel.",
+    "Продолжение следует...",
+  ])("drops %s at any level", (text) => {
+    expect(judgeTranscript(text, { prompt: "", peak: 0.5 })).toEqual({
+      text: "",
+      dropped: "invented",
+    });
+  });
+
+  it.each(["Subscribe to the event bus.", "See you at the review.", "You can merge it."])(
+    "keeps a real phrase: %s",
+    (text) => {
+      expect(judgeTranscript(text, { prompt: "", peak: 0.5 }).text).toBe(text);
+    },
+  );
+
+  it("drops another alphabet when a language was chosen, and allows Latin everywhere", () => {
+    const georgian = "\u10da".repeat(8);
+    expect(judgeTranscript(georgian, { prompt: "", peak: 0.5, language: "en" }).dropped).toBe(
+      "script",
+    );
+    expect(judgeTranscript(georgian, { prompt: "", peak: 0.5, language: "ru" }).dropped).toBe(
+      "script",
+    );
+    expect(judgeTranscript(georgian, { prompt: "", peak: 0.5 }).text).toBe(georgian);
+    expect(judgeTranscript("merge в main", { prompt: "", peak: 0.5, language: "ru-RU" }).text).toBe(
+      "merge в main",
+    );
+    expect(judgeTranscript("SpecWeave verify", { prompt: "", peak: 0.5, language: "ru" }).text).toBe(
+      "SpecWeave verify",
+    );
+    expect(judgeTranscript("こんにちは", { prompt: "", peak: 0.5, language: "ja" }).text).toBe(
+      "こんにちは",
+    );
+  });
 
   it("keeps the same words when they were really spoken", () => {
     expect(acceptTranscript("Thank you.", "", 0.4)).toBe("Thank you.");

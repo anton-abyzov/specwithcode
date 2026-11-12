@@ -78,6 +78,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [vocabulary, setVocabulary] = useState("");
   const savedVocabulary = useRef("");
+  const [builtInWords, setBuiltInWords] = useState<readonly string[]>([]);
   const preview = useRef<AbortController | null>(null);
   // Waits for the server's real settings, so defaults are never mistaken for "untouched".
   const settingsLoaded = useAtomValue(primaryServerConfigAtom) !== null;
@@ -107,6 +108,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
         if (!alive) return;
         savedVocabulary.current = stored.text;
         setVocabulary(stored.text);
+        setBuiltInWords(stored.builtIn ?? []);
       })
       .catch(() => undefined);
     void bridge
@@ -380,6 +382,12 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
                 Names and terms to recognize, one per line, or heard =&gt; written. Earlier lines
                 count most. Kept only on {host}. Lines that look like passwords or keys are refused.
               </span>
+              {builtInWords.length > 0 ? (
+                <span className="block text-xs text-muted-foreground" data-voice-built-in-words>
+                  Always recognized: {builtInWords.join(", ")}. A line of your own for the same word
+                  wins.
+                </span>
+              ) : null}
             </label>
           ) : null}
           <div className="rounded-lg border border-border p-3 text-sm">
