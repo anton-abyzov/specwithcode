@@ -539,6 +539,59 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer.pipe(Layer.provide(named))));
   });
 
+  it.live("refuses a name two machines answer to, and keeps ids exact", () => {
+    const nicknamed = (names: Record<string, string>) =>
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getSettings: Effect.succeed({
+          machineNicknames: Object.fromEntries(
+            Object.entries(names).map(([environmentId, name]) => [
+              environmentId,
+              { name, updatedAt: "2026-11-11T00:00:00.000Z" },
+            ]),
+          ),
+        } as never),
+      });
+    const second = { ...target, id: "m4-2", label: "m4", environmentId: "env-m5" as never };
+    const m5 = { id: "m4-2", environmentId: "env-m5" };
+    // The second machine still carries the host name this machine goes by.
+    const sharedWithHere = setup({}, {}, { extraTargets: [second] }).layer.pipe(
+      Layer.provide(nicknamed({ "env-m4": "m4" })),
+    );
+    // Two other machines were given one name.
+    const sharedByTwo = setup({}, {}, { extraTargets: [second] }).layer.pipe(
+      Layer.provide(nicknamed({ "env-m1": "studio", "env-m5": "studio" })),
+    );
+    // A machine was named after another machine's id.
+    const namedAfterAnId = setup({}, {}, { extraTargets: [second] }).layer.pipe(
+      Layer.provide(nicknamed({ "env-m5": "m1" })),
+    );
+    return Effect.gen(function* () {
+      const here = yield* Effect.gen(function* () {
+        const workers = yield* RemoteWorkers.RemoteWorkers;
+        const refused = yield* workers.resolveMachine("m4").pipe(Effect.flip);
+        expect(refused.code).toBe("unknown_machine");
+        expect(refused.message).toContain('this machine (machine "local")');
+        expect(refused.message).toContain('id "m4-2"');
+        return yield* workers.resolveMachine("m4-2");
+      }).pipe(Effect.provide(sharedWithHere));
+      expect(here).toMatchObject({ kind: "remote", machine: m5 });
+
+      yield* Effect.gen(function* () {
+        const workers = yield* RemoteWorkers.RemoteWorkers;
+        const refused = yield* workers.resolveMachine("studio").pipe(Effect.flip);
+        expect(refused.code).toBe("unknown_machine");
+        expect(refused.message).toContain('id "m1"');
+        expect(refused.message).toContain('id "m4-2"');
+      }).pipe(Effect.provide(sharedByTwo));
+
+      const byId = yield* Effect.gen(function* () {
+        const workers = yield* RemoteWorkers.RemoteWorkers;
+        return yield* workers.resolveMachine("m1");
+      }).pipe(Effect.provide(namedAfterAnId));
+      expect(byId).toEqual({ kind: "remote", machine: M1 });
+    });
+  });
+
   it.live("resolves machines by id, label, environment and thread link", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

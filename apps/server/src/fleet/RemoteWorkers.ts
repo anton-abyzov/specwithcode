@@ -42,10 +42,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type { FleetTarget } from "../studioFleet.ts";
+import { ownerMachineNames } from "./machineNames.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import { incomingMachines, matchIncoming, reverseGrantMessage } from "./incomingMachines.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import * as PhoneLinks from "./phoneLinks.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
@@ -546,19 +546,7 @@ const make = Effect.gen(function* () {
 
   // A row naming this machine itself (a line added while the server was down, or a copied
   // file) is never a remote machine: it would list as needing a grant and resolve to itself.
-  /** The names the owner gave machines in Settings, by environment id. */
-  const nicknames = Effect.gen(function* () {
-    const names = new Map<string, string>();
-    if (Option.isNone(settings)) return names;
-    const read = yield* settings.value.getSettings.pipe(Effect.option);
-    for (const [environmentId, entry] of Object.entries(
-      (Option.isSome(read) ? read.value.machineNicknames : undefined) ?? {},
-    )) {
-      const name = normalizeMachineNickname(entry.name);
-      if (name !== "") names.set(environmentId, name);
-    }
-    return names;
-  });
+  const nicknames = ownerMachineNames(settings);
   // Rows carry the owner's name for a machine, so agents see and resolve the name the app
   // shows. The name saved when a machine joined is its host name, which can equal this one's.
   const everyRow = Effect.all([
@@ -646,9 +634,24 @@ const make = Effect.gen(function* () {
       if (byId) return { kind: "remote", machine: refOf(byId) } as const;
       const byEnvironment = configured.find((machine) => machine.environmentId === wanted);
       if (byEnvironment) return { kind: "remote", machine: refOf(byEnvironment) } as const;
+      // An id is the exact handle saved launches use, so it always wins. A name must point at
+      // one machine: two machines answering to it, or this machine and another, is refused
+      // instead of guessed, because the wrong guess runs work on the wrong machine.
       const byLabel = configured.filter((machine) => machine.label.toLowerCase() === lower);
-      if (byLabel.length === 1) return { kind: "remote", machine: refOf(byLabel[0]!) } as const;
-      if (yield* namesThisMachine(lower)) return { kind: "local" } as const;
+      const here = yield* namesThisMachine(lower);
+      if (byLabel.length === 1 && !here)
+        return { kind: "remote", machine: refOf(byLabel[0]!) } as const;
+      if (byLabel.length === 0 && here) return { kind: "local" } as const;
+      if (byLabel.length > 0)
+        return yield* failure(
+          "unknown_machine",
+          `More than one machine is called "${wanted}": ${[
+            ...(here ? ['this machine (machine "local")'] : []),
+            ...byLabel.map((machine) => `the one with id "${machine.id}"`),
+          ].join(
+            ", ",
+          )}. Pass the id from studio_machine_list, and tell the user to give one of them another name in Settings > Machines.`,
+        );
       return yield* notConfigured(wanted, configured);
     });
 
