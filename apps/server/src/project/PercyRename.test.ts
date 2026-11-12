@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
-import PercyRenamePending from "../persistence/Migrations/074_PercyRenamePending.ts";
+import PercyRenamePending from "../persistence/Migrations/075_PercyRenamePending.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as PercyRename from "./PercyRename.ts";
