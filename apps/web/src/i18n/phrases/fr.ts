@@ -4625,6 +4625,8 @@ export const fr: PhraseCatalog = {
   "Install Git": "Installer Git",
   "Install and sign in": "Installer et se connecter",
   "Install {agent} and sign in": "Installer {agent} et se connecter",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "Une installation est en cours. Attendez qu'elle se termine ou fermez son journal pour l'arrêter.",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "Installation de {agent}. Voici son journal. La connexion s'ouvre une fois l'installation terminée.",
   "Installing. Its log is below, and its sign-in opens when the install is done.":

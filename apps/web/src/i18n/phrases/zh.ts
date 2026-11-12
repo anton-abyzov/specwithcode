@@ -4405,6 +4405,8 @@ export const zh: PhraseCatalog = {
   "Install Git": "安装 Git",
   "Install and sign in": "安装并登录",
   "Install {agent} and sign in": "安装 {agent} 并登录",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "正在安装。请等待安装结束，或关闭其日志以停止安装。",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "正在安装 {agent}。以下是日志。安装完成后会打开登录。",
   "Installing. Its log is below, and its sign-in opens when the install is done.":

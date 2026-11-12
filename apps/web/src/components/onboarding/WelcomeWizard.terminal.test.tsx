@@ -577,12 +577,27 @@ describe("the agents step: install panel", () => {
     expect(state.claude.at(-1)).toMatchObject({ autoStart: true });
   });
 
-  it("closes the session when setup is left while an install runs", async () => {
+  it("gives the row its button back, and starts no sign-in, once a failed install's log is closed", async () => {
     await enterRemoteAgents();
     await click(INSTALL);
-    await click("Back");
-    expect(state.close).toHaveBeenCalledOnce();
-    expect(text(renderer!.root)).toContain("Connect your computers");
+    await act(async () => state.viewport!.onSessionExited(7));
+    await click("Close");
+    expect(hasViewport()).toBe(false);
+    expect(button(INSTALL).props.disabled).toBeFalsy();
+    await setProviders(remoteId, [
+      { ...missingClaude, installed: true, auth: { status: "unauthenticated" } },
+    ]);
+    expect(state.claude.at(-1)).not.toMatchObject({ autoStart: true });
+  });
+
+  it("keeps Back and Continue off while an install runs, and gives them back when it ends", async () => {
+    await enterRemoteAgents();
+    await click(INSTALL);
+    expect(text(renderer!.root)).toContain("An install is running.");
+    expect(button("Continue without an agent").props.disabled).toBe(true);
+    await act(async () => state.viewport!.onSessionExited(7));
+    expect(text(renderer!.root)).not.toContain("An install is running.");
+    expect(button("Continue without an agent").props.disabled).toBeFalsy();
   });
 });
 

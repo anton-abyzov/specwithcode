@@ -4533,6 +4533,8 @@ export const ko: PhraseCatalog = {
   "Install Git": "Git 설치",
   "Install and sign in": "설치하고 로그인",
   "Install {agent} and sign in": "{agent} 설치하고 로그인",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "설치가 진행 중입니다. 끝날 때까지 기다리거나 로그를 닫아 중지하세요.",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "{agent}을(를) 설치하는 중입니다. 아래는 그 로그입니다. 설치가 끝나면 로그인이 열립니다.",
   "Installing. Its log is below, and its sign-in opens when the install is done.":

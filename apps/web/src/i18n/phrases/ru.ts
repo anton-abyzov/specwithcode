@@ -4582,6 +4582,8 @@ export const ru: PhraseCatalog = {
   "Install Git": "Установить Git",
   "Install and sign in": "Установить и войти",
   "Install {agent} and sign in": "Установить {agent} и войти",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "Идёт установка. Дождитесь её окончания или закройте журнал, чтобы остановить её.",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "Устанавливается {agent}. Это лог установки. Вход откроется, когда установка завершится.",
   "Installing. Its log is below, and its sign-in opens when the install is done.":

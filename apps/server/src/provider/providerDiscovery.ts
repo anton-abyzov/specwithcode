@@ -266,7 +266,19 @@ export const probeGit = (environment: NodeJS.ProcessEnv, platform: NodeJS.Platfo
     if (platform === "darwin") {
       const tools = yield* makeRun("xcode-select", environment)(["-p"], VERSION_TIMEOUT_MS);
       if (tools === "missing" || Option.isNone(tools)) return undefined;
-      if (tools.value.code === 0) return "present" as const;
+      if (tools.value.code === 0) {
+        // The answer can outlive the tools: a macOS upgrade removes them and keeps the path.
+        const folder = tools.value.stdout.trim();
+        const git = folder
+          ? yield* makeRun("/bin/test", environment)(
+              ["-x", `${folder}/usr/bin/git`],
+              VERSION_TIMEOUT_MS,
+            )
+          : ("missing" as const);
+        if (git !== "missing" && Option.isSome(git) && git.value.code === 0) {
+          return "present" as const;
+        }
+      }
       // A Git from Homebrew or Nix works without the developer tools.
       const withoutShim = {
         ...environment,

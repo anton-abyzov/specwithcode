@@ -151,6 +151,19 @@ export function AgentsStep({
     [environmentIds, environments, nickname, t],
   );
   const reported = useAgentReadiness(machines);
+  const [installing, setInstalling] = useState<readonly EnvironmentId[]>([]);
+  const onInstalling = useCallback(
+    (environmentId: EnvironmentId, running: boolean) =>
+      setInstalling((current) =>
+        running === current.includes(environmentId)
+          ? current
+          : running
+            ? [...current, environmentId]
+            : current.filter((id) => id !== environmentId),
+      ),
+    [],
+  );
+  const busy = installing.length > 0;
   const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
   const readiness = checkStalled ? ({ kind: "none" } as const) : reported;
   return (
@@ -162,6 +175,7 @@ export function AgentsStep({
               key={environmentId}
               environmentId={environmentId}
               machineLabel={label}
+              onInstalling={onInstalling}
             />
           ))}
         </div>
@@ -180,8 +194,14 @@ export function AgentsStep({
         {agentReadinessMessage(readiness, tx)}
       </p>
       <WizardStepFooter
-        back={onBack ? { onClick: onBack } : undefined}
+        back={onBack ? { onClick: onBack, disabled: busy } : undefined}
+        note={
+          busy
+            ? tx("An install is running. Wait for it to end, or close its log to stop it.")
+            : null
+        }
         primary={{
+          disabled: busy,
           label: readiness.kind === "none" ? tx("Continue without an agent") : t("wizard.continue"),
           onClick: onContinue,
           variant: readiness.kind === "none" ? "outline" : "default",
@@ -194,9 +214,11 @@ export function AgentsStep({
 function ConnectedAgentsStep({
   environmentId,
   machineLabel,
+  onInstalling,
 }: {
   readonly environmentId: EnvironmentId;
   readonly machineLabel: string;
+  readonly onInstalling: (environmentId: EnvironmentId, running: boolean) => void;
 }) {
   const t = useT();
   const tx = useTx();
@@ -346,10 +368,16 @@ function ConnectedAgentsStep({
     });
   };
 
-  const closePanel = () => {
+  const closePanel = (installed = false) => {
     const closed = terminalSession;
     setTerminalSession(null);
     if (closed === null) return;
+    if (closed.purpose === "install") {
+      // The row gets its button back, and a sign-in nobody is waiting for never starts.
+      setInstallFailed(null);
+      if (!installed)
+        setSignInAfterTurnOn((current) => (current === closed.agent ? null : current));
+    }
     if (closed.purpose !== "signIn") {
       void refreshProviders({ environmentId, input: {} });
       find();
@@ -413,8 +441,11 @@ function ConnectedAgentsStep({
     if (ended === null) return;
     if (ended.purpose === "install") setInstallFailed(succeeded ? null : ended.agent);
     if (succeeded) {
-      closePanel();
+      closePanel(true);
       return;
+    }
+    if (ended.purpose === "install") {
+      setSignInAfterTurnOn((current) => (current === ended.agent ? null : current));
     }
     void refreshProviders({ environmentId, input: {} });
     find();
@@ -436,6 +467,13 @@ function ConnectedAgentsStep({
       purpose: "install",
     });
   };
+
+  // Leaving the step closes the panel's terminal, which would stop an install midway.
+  const installRunning = terminalSession?.purpose === "install" && installFailed === null;
+  useEffect(() => {
+    onInstalling(environmentId, installRunning);
+    return () => onInstalling(environmentId, false);
+  }, [environmentId, installRunning, onInstalling]);
 
   const panelBlocked = terminalSession !== null || serverConfig === null || !canOperateTerminal;
   const codexMenu = (
@@ -646,9 +684,12 @@ function ConnectedAgentsStep({
         <AgentSetupPanel
           key={`${terminalSession.environmentId}:${terminalSession.agent}:${terminalSession.purpose}`}
           session={terminalSession}
-          onClose={closePanel}
+          onClose={() => closePanel()}
           onEnded={installEnded}
-          onRetry={() => setInstallFailed(null)}
+          onRetry={() => {
+            setInstallFailed(null);
+            if (terminalSession.purpose === "install") setSignInAfterTurnOn(terminalSession.agent);
+          }}
         />
       ) : null}
     </section>

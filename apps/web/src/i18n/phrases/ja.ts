@@ -4586,6 +4586,8 @@ export const ja: PhraseCatalog = {
   "Install Git": "Git をインストール",
   "Install and sign in": "インストールしてサインイン",
   "Install {agent} and sign in": "{agent} をインストールしてサインイン",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "インストールを実行中です。終わるまで待つか、ログを閉じて停止してください。",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "{agent} をインストールしています。これがそのログです。インストールが終わるとサインインが開きます。",
   "Installing. Its log is below, and its sign-in opens when the install is done.":

@@ -600,8 +600,20 @@ describe("finding every agent", () => {
       if (HostProcessPlatform.defaultValue() === "win32") return;
       const tool = (directory: string, name: string, exit: number) =>
         writeFakeCli({ directory, name, source: `process.exit(${exit});` });
+      const developer = fakeCliDirectory();
+      NodeFS.mkdirSync(NodePath.join(developer, "usr/bin"), { recursive: true });
+      tool(NodePath.join(developer, "usr/bin"), "git", 0);
+      const says = (directory: string, folder: string) =>
+        writeFakeCli({
+          directory,
+          name: "xcode-select",
+          source: `console.log(${JSON.stringify(folder)}); process.exit(0);`,
+        });
       const withTools = fakeCliDirectory();
-      tool(withTools, "xcode-select", 0);
+      says(withTools, developer);
+      // A macOS upgrade can remove the tools and leave their path behind.
+      const stale = fakeCliDirectory();
+      says(stale, NodePath.join(developer, "gone"));
       const withoutTools = fakeCliDirectory();
       tool(withoutTools, "xcode-select", 2);
       const brewGit = fakeCliDirectory();
@@ -610,6 +622,7 @@ describe("finding every agent", () => {
       const path = (directory: string) => [directory, withoutSystemTools()].join(":");
       assert.equal(yield* probeGit({ PATH: path(withTools) }, "darwin"), "present");
       assert.equal(yield* probeGit({ PATH: path(withoutTools) }, "darwin"), "missing");
+      assert.equal(yield* probeGit({ PATH: path(stale) }, "darwin"), "missing");
       // A Git that does not come from the developer tools counts.
       assert.equal(yield* probeGit({ PATH: path(brewGit) }, "darwin"), "present");
       // The shim's folder is never searched: running it opens macOS's install prompt.
