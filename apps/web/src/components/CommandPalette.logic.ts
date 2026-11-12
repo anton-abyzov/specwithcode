@@ -9,12 +9,13 @@ import type { SidebarThreadSortOrder } from "@specweave-studio/contracts/setting
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
-import { getThreadSortTimestamp, sortThreads } from "../lib/threadSort";
+import { getThreadSortTimestamp, sortThreads, type ThreadSortInput } from "../lib/threadSort";
 import { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
 export const RECENT_THREAD_LIMIT = 12;
+export const RECENT_PROJECT_LIMIT = 8;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
@@ -471,7 +472,10 @@ export function filterCommandPaletteGroups(input: {
   if (isActionsFilter) {
     baseGroups = baseGroups.filter((group) => group.value === "actions");
   } else if (!input.isInSubmenu) {
-    baseGroups = baseGroups.filter((group) => group.value !== "recent-threads");
+    // Typed queries list projects once, in the "projects-search" group below.
+    baseGroups = baseGroups.filter(
+      (group) => group.value !== "recent-threads" && group.value !== "projects",
+    );
   }
 
   const searchableGroups = [...baseGroups];
@@ -539,11 +543,108 @@ export function getCommandPaletteMode(input: {
   return input.isBrowsing ? "root-browse" : "root";
 }
 
+/**
+ * Root Projects order: the current project, then projects by their latest thread
+ * activity (newest first), then the rest in their incoming (sidebar) order.
+ */
+export function orderProjectsForPalette<T>(input: {
+  items: ReadonlyArray<T>;
+  keyOf: (item: T) => string;
+  contextualKey: string | null;
+  latestActivityByKey: ReadonlyMap<string, number>;
+}): T[] {
+  const activityOf = (item: T): number | null => {
+    const timestamp = input.latestActivityByKey.get(input.keyOf(item));
+    return timestamp !== undefined && Number.isFinite(timestamp) ? timestamp : null;
+  };
+  return input.items
+    .map((item, index) => ({
+      item,
+      index,
+      isContextual: input.contextualKey !== null && input.keyOf(item) === input.contextualKey,
+      activity: activityOf(item),
+    }))
+    .toSorted(
+      (left, right) =>
+        Number(right.isContextual) - Number(left.isContextual) ||
+        Number(right.activity !== null) - Number(left.activity !== null) ||
+        (right.activity ?? 0) - (left.activity ?? 0) ||
+        left.index - right.index,
+    )
+    .map((entry) => entry.item);
+}
+
+/** Latest thread activity per `${environmentId}:${projectId}`, ignoring archived threads. */
+export function latestThreadActivityByProjectKey(
+  threads: ReadonlyArray<
+    ThreadSortInput & Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "projectId">
+  >,
+): Map<string, number> {
+  const latest = new Map<string, number>();
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) continue;
+    const timestamp = getThreadSortTimestamp(thread, "updated_at");
+    if (!Number.isFinite(timestamp)) continue;
+    const key = `${thread.environmentId}:${thread.projectId}`;
+    latest.set(key, Math.max(latest.get(key) ?? Number.NEGATIVE_INFINITY, timestamp));
+  }
+  return latest;
+}
+
+type CommandPaletteProjectRef = Pick<Project, "environmentId" | "id">;
+const projectKeyOf = (project: CommandPaletteProjectRef) =>
+  `${project.environmentId}:${project.id}`;
+
+/**
+ * Orders the project search items (one per entry of `projects`, same order) for the
+ * root Projects group. A grouped project counts the threads of every member project.
+ */
+export function buildRootProjectItems(input: {
+  projects: ReadonlyArray<CommandPaletteProjectRef>;
+  items: ReadonlyArray<CommandPaletteActionItem>;
+  groupByKey: ReadonlyMap<
+    string,
+    { readonly memberProjects: ReadonlyArray<CommandPaletteProjectRef> }
+  >;
+  contextualProject: CommandPaletteProjectRef | null;
+  threads: Parameters<typeof latestThreadActivityByProjectKey>[0];
+}): CommandPaletteActionItem[] {
+  const activityByProjectKey = latestThreadActivityByProjectKey(input.threads);
+  const latestActivityByKey = new Map<string, number>();
+  for (const project of input.projects) {
+    const key = projectKeyOf(project);
+    const members = input.groupByKey.get(key)?.memberProjects ?? [project];
+    const timestamps = members.flatMap((member) => {
+      const timestamp = activityByProjectKey.get(projectKeyOf(member));
+      return timestamp === undefined ? [] : [timestamp];
+    });
+    if (timestamps.length > 0) latestActivityByKey.set(key, Math.max(...timestamps));
+  }
+  const entries = input.projects.flatMap((project, index) => {
+    const item = input.items[index];
+    return item ? [{ key: projectKeyOf(project), item }] : [];
+  });
+  return orderProjectsForPalette({
+    items: entries,
+    keyOf: (entry) => entry.key,
+    contextualKey: input.contextualProject ? projectKeyOf(input.contextualProject) : null,
+    latestActivityByKey,
+  }).map((entry) => entry.item);
+}
+
 export function buildRootGroups(input: {
+  projectItems: ReadonlyArray<CommandPaletteActionItem>;
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
+  if (input.projectItems.length > 0) {
+    groups.push({
+      value: "projects",
+      label: "Projects",
+      items: input.projectItems.slice(0, RECENT_PROJECT_LIMIT),
+    });
+  }
   if (input.actionItems.length > 0) {
     groups.push({ value: "actions", label: "Actions", items: input.actionItems });
   }

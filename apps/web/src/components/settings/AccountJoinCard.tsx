@@ -390,6 +390,8 @@ export function AccountJoinCardBody({
           access={access}
           onAccessChange={setAccess}
           onPendingChange={setAllowing}
+          // First-run setup: the card states what Allow gives, so it asks once.
+          confirm={!firstRun}
           leaveLabel={firstRun ? tx("Skip") : tx("Not now")}
           onLeave={leave}
           onGranted={(grant) => {
@@ -678,6 +680,13 @@ function JoinCardAction({
         </dd>
         <dt className="text-muted-foreground">{tx("Lasts")}</dt>
         <dd>{lasts}</dd>
+        {/* What the confirmation used to be the only place to say. */}
+        <dt className="text-muted-foreground">{tx("Management key")}</dt>
+        <dd>
+          {tx(
+            "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.",
+          )}
+        </dd>
         <dt className="text-muted-foreground">{tx("Secrets")}</dt>
         <dd>{tx("Not included. Each secret transfer still asks you.")}</dd>
       </dl>
