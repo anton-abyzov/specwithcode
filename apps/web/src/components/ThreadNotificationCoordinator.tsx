@@ -55,20 +55,13 @@ import { notificationsConnected, useNotificationsConnected } from "../notificati
 import { deliverNotificationOnce } from "../notificationHistory";
 import {
   decideNotificationDelivery,
-  isNotificationTarget,
   ownerMachineReachable,
   readNotificationTarget,
 } from "../notificationTarget";
 import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
-import {
-  currentRemoteWorkerLaunchers,
-  remoteWorkerLaunchersSettled,
-} from "../studio/remoteWorkerLaunchers";
-
-/** How long an app that is not elected waits for the remote worker readings at start. */
-const LAUNCHERS_SETTLE_MS = 3_000;
+import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -494,7 +487,7 @@ function EnvironmentNotifications({
             };
             const checked = stillCurrent();
             if (checked === null) return false;
-            const { currentThread } = checked;
+            const { currentRaw, currentThread } = checked;
             const title =
               kind === "stalled"
                 ? "No activity in thread"
@@ -522,31 +515,23 @@ function EnvironmentNotifications({
             // focus, the serving machine says which one app pops up and plays the
             // sound; the owner machine's app badges, the rest stay quiet.
             if (!inApp) {
-              const read = await readNotificationTarget(environmentId);
-              const ownClientId = backgroundActivityClientId();
-              // Only the badge-or-quiet choice of an app that is not elected
-              // depends on the owner machine. A remote worker's owner is the
-              // coordinator machine that launched it, known once the sidebar or
-              // Overview has its remote worker readings; at app start wait
-              // briefly for them. The elected app's popup never waits.
-              if (isNotificationTarget(read, ownClientId) === false)
-                await remoteWorkerLaunchersSettled(LAUNCHERS_SETTLE_MS);
-              if (!mounted.current || !isNotificationOwner()) return false;
-              const fresh = stillCurrent();
-              if (fresh === null) return false;
               const { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds } =
                 presence.current;
+              // A remote worker's owner is the coordinator machine that launched
+              // it, as the sidebar and Overview last published it. Before their
+              // first reading, or when no such view is mounted, the map is empty
+              // and the owner is the thread's own machine, as before.
               const ownerMachineId = attentionOwnerMachine(
                 {
                   environmentId,
-                  id: fresh.currentRaw.id,
-                  ownerMachineId: fresh.currentRaw.ownerMachineId,
+                  id: currentRaw.id,
+                  ownerMachineId: currentRaw.ownerMachineId,
                 },
                 currentRemoteWorkerLaunchers(),
               );
               const delivery = decideNotificationDelivery({
-                read,
-                ownClientId,
+                read: await readNotificationTarget(environmentId),
+                ownClientId: backgroundActivityClientId(),
                 ownEnvironmentId,
                 servingEnvironmentId: environmentId,
                 ownerMachineId,
@@ -556,6 +541,8 @@ function EnvironmentNotifications({
                   unreachableEnvironmentIds,
                 ),
               });
+              if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
+                return false;
               if (delivery !== "post") {
                 if (
                   delivery === "badge" &&
