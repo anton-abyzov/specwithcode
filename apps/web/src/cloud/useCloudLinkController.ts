@@ -41,7 +41,7 @@ export interface CloudLinkDesiredState {
  * changes, so flipping publish alone is cheap.
  */
 export function useCloudLinkController() {
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isSignedIn, userId } = useAuth();
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
@@ -200,6 +200,8 @@ export function useCloudLinkController() {
 
   return {
     isSignedIn,
+    /** The signed-in SpecWithCode Connect account, for choices saved per account. */
+    userId: userId ?? null,
     linkState: primaryCloudLinkState,
     linked,
     managedTunnelActive,

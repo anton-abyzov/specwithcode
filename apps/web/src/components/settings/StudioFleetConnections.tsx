@@ -58,6 +58,7 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { unreachableMachines } from "../../cloud/connectRoutePlan";
 import { useMachineNicknames } from "../../studio/machineNickname";
+import { ConnectDeregisterHint, fleetRemoveConnectNote } from "./ConnectDeregisterHint";
 import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
@@ -295,8 +296,17 @@ export interface FleetInventoryComposition {
     environmentId: EnvironmentId,
     controls: ReactNode,
     workers: ReactNode,
+    card?: FleetMachineCardExtras,
   ) => ReactNode;
   additionalMachines?: ReactNode;
+}
+
+/** What a composed machine card shows itself, so it is not left under Connection details. */
+export interface FleetMachineCardExtras {
+  /** Stop workers and Remove machine, for the card's header. */
+  readonly actions: ReactNode;
+  /** Says the machine no longer answers and offers Remove; null while it answers. */
+  readonly gone: ReactNode;
 }
 
 interface Props extends FleetInventoryComposition {
@@ -336,6 +346,8 @@ export function StudioFleetConnections({
   const removeSupported = useFleetRemoveSupported(environmentId);
   const [notice, setNotice] = useState<string | null>(null);
   const [added, setAdded] = useState<string | null>(null);
+  // The machine just removed here: it may still be registered on the Connect account.
+  const [removedLabel, setRemovedLabel] = useState<string | null>(null);
   const [workerDrafts, setWorkerDrafts] = useState<Readonly<Record<string, WorkerDraft>>>({});
   const [invitation, setInvitation] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -390,6 +402,7 @@ export function StudioFleetConnections({
     setError(null);
     setNotice(null);
     setAdded(null);
+    setRemovedLabel(null);
     try {
       const result = await addStudioFleetMachine(environmentId, invitation.trim());
       const addedName = nickname(result.environmentId, result.label);
@@ -414,6 +427,7 @@ export function StudioFleetConnections({
     setPending(`workers:${machine.id}`);
     setError(null);
     setNotice(null);
+    setRemovedLabel(null);
     try {
       if (action === "stop") {
         const stopped = await stopStudioFleetWorkers(environmentId, machine.id);
@@ -451,7 +465,7 @@ export function StudioFleetConnections({
     );
     // Fail closed: no mounted confirm host means no removal.
     const confirmed = await requestConfirmDialog(
-      `Remove ${machine.label} from this machine's list?\nThis machine gives up its worker access and management token on ${machine.label}. Threads already running there keep running.${secretsWarning ? `\n${secretsWarning}` : ""}`,
+      `Remove ${machine.label} from this machine's list?\nThis machine gives up its worker access and management token on ${machine.label}. Threads already running there keep running.\n${fleetRemoveConnectNote(machine.label)}${secretsWarning ? `\n${secretsWarning}` : ""}`,
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
@@ -459,8 +473,10 @@ export function StudioFleetConnections({
     setError(null);
     setNotice(null);
     setAdded(null);
+    setRemovedLabel(null);
     try {
       const removed = await removeStudioFleetMachine(environmentId, machine.id);
+      setRemovedLabel(machine.label);
       if (secretsWarning) setNotice(`${fleetRemoveNotice(removed)} ${secretsWarning}`);
       else if (removed.workerAccess === "kept" || removed.managementToken === "kept")
         setNotice(fleetRemoveNotice(removed));
@@ -539,6 +555,7 @@ export function StudioFleetConnections({
       defaultWorkerDraft={DEFAULT_WORKER_DRAFT}
       notice={notice}
       added={added}
+      removedLabel={removedLabel}
       onWorkerDraftChange={(id, draft) =>
         setWorkerDrafts((current) => ({ ...current, [id]: draft }))
       }
@@ -727,6 +744,7 @@ export function StudioFleetRoster({
   defaultWorkerDraft = DEFAULT_WORKER_DRAFT,
   notice = null,
   added = null,
+  removedLabel = null,
   onWorkerDraftChange,
   onWorkers,
   onRemove,
@@ -767,6 +785,8 @@ export function StudioFleetRoster({
   notice?: string | null;
   /** What adding a machine just did. */
   added?: string | null;
+  /** The machine just removed, which may still be registered on the Connect account. */
+  removedLabel?: string | null;
   onWorkerDraftChange?: (id: string, draft: WorkerDraft) => void;
   onWorkers?: (machine: StudioFleetMachine, action: "allow" | "stop") => void;
   /** Removes a machine and gives up what this server holds on it. */
@@ -887,6 +907,87 @@ export function StudioFleetRoster({
                   />
                 </TeamRulesInert>
               ) : null;
+            // Stop workers and Remove machine. A composed card puts them in its own header.
+            const actions =
+              pending === `remove:${machine.id}` || canStop || canRemove ? (
+                <>
+                  {pending === `remove:${machine.id}` ? (
+                    <span className="text-xs text-muted-foreground" role="status">
+                      {tx("Removing…")}
+                    </span>
+                  ) : null}
+                  {canStop || canRemove ? (
+                    <Menu>
+                      <MenuTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost-muted"
+                            size="icon-xs"
+                            aria-label={`More actions for ${machine.label}`}
+                          />
+                        }
+                      >
+                        <EllipsisIcon className="size-3.5" />
+                      </MenuTrigger>
+                      <MenuPopup align="end">
+                        {canStop ? (
+                          <MenuItem
+                            disabled={busy || !canManageWorkers}
+                            onClick={() => onWorkers?.(machine, "stop")}
+                          >
+                            {tx("Stop workers")}
+                          </MenuItem>
+                        ) : null}
+                        {canStop ? (
+                          <p className="max-w-64 px-2 pb-2 text-xs text-muted-foreground">
+                            {renderRich(
+                              tx(
+                                "Coordinators on this machine can no longer start threads on {label}. Workers already running there keep running.",
+                              ),
+                              { label: machine.label },
+                            )}
+                          </p>
+                        ) : null}
+                        {canStop && canRemove ? <MenuSeparator /> : null}
+                        {canRemove ? (
+                          <MenuItem
+                            variant="destructive"
+                            disabled={busy}
+                            onClick={() => onRemove?.(machine)}
+                          >
+                            {pending === `remove:${machine.id}`
+                              ? tx("Removing…")
+                              : tx("Remove machine")}
+                          </MenuItem>
+                        ) : null}
+                      </MenuPopup>
+                    </Menu>
+                  ) : null}
+                </>
+              ) : null;
+            // A machine that stopped answering was often wiped or reinstalled.
+            const gone =
+              canRemove && machine.status === "unreachable" ? (
+                <p
+                  role="status"
+                  className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                >
+                  <span>
+                    {tx(
+                      "No longer answers. If it was wiped or reinstalled, remove it here; a fresh install joins as a new machine.",
+                    )}
+                  </span>
+                  <Button
+                    size="xs"
+                    variant="destructive-outline"
+                    disabled={busy}
+                    onClick={() => onRemove?.(machine)}
+                  >
+                    {pending === `remove:${machine.id}` ? tx("Removing…") : tx("Remove")}
+                  </Button>
+                </p>
+              ) : null;
             const controls = (
               <li
                 key={machine.id}
@@ -955,61 +1056,10 @@ export function StudioFleetRoster({
                             : tx("Connect machine")}
                       </Button>
                     )}
-                    {pending === `remove:${machine.id}` ? (
-                      <span className="text-xs text-muted-foreground" role="status">
-                        {tx("Removing…")}
-                      </span>
-                    ) : null}
-                    {canStop || canRemove ? (
-                      <Menu>
-                        <MenuTrigger
-                          render={
-                            <Button
-                              type="button"
-                              variant="ghost-muted"
-                              size="icon-xs"
-                              aria-label={`More actions for ${machine.label}`}
-                            />
-                          }
-                        >
-                          <EllipsisIcon className="size-3.5" />
-                        </MenuTrigger>
-                        <MenuPopup align="end">
-                          {canStop ? (
-                            <MenuItem
-                              disabled={busy || !canManageWorkers}
-                              onClick={() => onWorkers?.(machine, "stop")}
-                            >
-                              {tx("Stop workers")}
-                            </MenuItem>
-                          ) : null}
-                          {canStop ? (
-                            <p className="max-w-64 px-2 pb-2 text-xs text-muted-foreground">
-                              {renderRich(
-                                tx(
-                                  "Coordinators on this machine can no longer start threads on {label}. Workers already running there keep running.",
-                                ),
-                                { label: machine.label },
-                              )}
-                            </p>
-                          ) : null}
-                          {canStop && canRemove ? <MenuSeparator /> : null}
-                          {canRemove ? (
-                            <MenuItem
-                              variant="destructive"
-                              disabled={busy}
-                              onClick={() => onRemove?.(machine)}
-                            >
-                              {pending === `remove:${machine.id}`
-                                ? tx("Removing…")
-                                : tx("Remove machine")}
-                            </MenuItem>
-                          ) : null}
-                        </MenuPopup>
-                      </Menu>
-                    ) : null}
+                    {renderMachine ? null : actions}
                   </div>
                 </div>
+                {gone && !renderMachine ? <div className="pl-7">{gone}</div> : null}
                 {workersRow && !renderMachine ? <div className="pl-7">{workersRow}</div> : null}
                 {connected ? (
                   <div className="flex flex-wrap items-center gap-1.5 pl-7 empty:hidden">
@@ -1065,7 +1115,7 @@ export function StudioFleetRoster({
               </li>
             );
             return renderMachine
-              ? renderMachine(machine.environmentId, controls, workersRow)
+              ? renderMachine(machine.environmentId, controls, workersRow, { actions, gone })
               : controls;
           })}
         </ul>
@@ -1282,7 +1332,7 @@ export function StudioFleetRoster({
           {removeUnavailable}
         </p>
       ) : null}
-      {added || notice || error ? (
+      {added || notice || error || removedLabel ? (
         <div className="space-y-1 border-t border-border/60 px-3 py-2 text-xs sm:px-4">
           {added ? (
             <p role="status" className="text-muted-foreground">
@@ -1294,6 +1344,7 @@ export function StudioFleetRoster({
               {notice}
             </p>
           ) : null}
+          {removedLabel ? <ConnectDeregisterHint label={removedLabel} /> : null}
           {error ? (
             <p role="alert" className="text-destructive-foreground">
               {error}

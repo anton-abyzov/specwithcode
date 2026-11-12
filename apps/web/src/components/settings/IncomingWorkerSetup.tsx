@@ -299,6 +299,19 @@ export function IncomingWorkerSetup({
   );
 }
 
+/** The join line could not be made because this machine is not linked to SpecWithCode Connect. */
+function isConnectOffHere(failure: unknown): boolean {
+  return (
+    typeof failure === "object" &&
+    failure !== null &&
+    (failure as { readonly reason?: unknown }).reason === "connect_not_linked"
+  );
+}
+
+function connectOffHereMessage(hereLabel: string, coordinatorLabel: string): string {
+  return `SpecWithCode Connect is off on ${hereLabel}, so ${coordinatorLabel} has no address to reach it. On ${hereLabel}, turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow again.`;
+}
+
 export function IncomingWorkerSaved({
   coordinatorLabel,
   access,
@@ -423,6 +436,11 @@ export function IncomingWorkerAction({
       coordinator,
       coordinatorLabel,
       access,
+    }).catch((failure: unknown) => {
+      // This machine has no Connect address to hand over: name the switch that gives it one.
+      if (isConnectOffHere(failure))
+        throw new Error(connectOffHereMessage(hereLabel, coordinatorLabel), { cause: failure });
+      throw failure;
     });
     if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
       throw new Error(

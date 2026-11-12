@@ -391,6 +391,37 @@ describe("incoming worker setup view", () => {
     );
     await act(async () => renderer!.unmount());
   });
+  it("names the SpecWithCode Connect switch when this machine has no Connect address to hand over", async () => {
+    vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
+    vi.mocked(requestConfirmDialog).mockResolvedValue(true);
+    // What the join line's maker reports when this machine is not linked to Connect.
+    vi.mocked(joinAccountMachineForWorkers).mockRejectedValue(
+      Object.assign(new Error("This machine is not linked to SpecWithCode Connect."), {
+        reason: "connect_not_linked",
+      }),
+    );
+    const onGranted = vi.fn();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerAction
+          here={here}
+          coordinator={coordinator}
+          hereLabel="m4"
+          coordinatorLabel="m1"
+          connected
+          accountJoin
+          onGranted={onGranted}
+        />,
+      );
+    });
+    await act(async () => renderer!.root.findByType("button").props.onClick());
+    expect(onGranted).not.toHaveBeenCalled();
+    expect(renderer!.root.findByProps({ role: "alert" }).props.children).toBe(
+      "SpecWithCode Connect is off on m4, so m1 has no address to reach it. On m4, turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow again.",
+    );
+    await act(async () => renderer!.unmount());
+  });
   it("says the one manual path when m1 is neither managed here nor in this machine's list", () => {
     vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
     const html = action();
