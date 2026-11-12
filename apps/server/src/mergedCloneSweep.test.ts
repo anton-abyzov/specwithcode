@@ -14,10 +14,12 @@ import {
   cloneSweepLivePaths,
   cloneSweepRoots,
   decideClone,
+  decideDependencyPrune,
   findClones,
   MERGED_CLONE_GRACE_MS,
   normalizeRemoteUrl,
   planCloneSweep,
+  pruneDependencies,
   registeredRepositories,
   removeClone,
 } from "./mergedCloneSweep.ts";
@@ -445,6 +447,244 @@ describe("merged clone sweep", () => {
     assert.include(roots, NodePath.join("/home/app", "scratch"));
     assert.include(roots, NodePath.join("/work/project", "scratch"));
     assert.include(roots, NodePath.join("/work/project", ".artifacts"));
+  });
+  describe("dependency installs of copies that stay", () => {
+    const DAY = 24 * 60 * 60_000;
+    /** Tests can set mtimes but not ctimes. */
+    const byMtime = { changedAt: (stat: NodeFS.Stats) => stat.mtimeMs };
+
+    /** Dates every entry under `path`, the folder itself too. */
+    function ageTree(path: string, ms = 2 * DAY) {
+      const at = (Date.now() - ms) / 1000;
+      const stat = NodeFS.lstatSync(path);
+      if (stat.isDirectory())
+        for (const name of NodeFS.readdirSync(path)) ageTree(NodePath.join(path, name), ms);
+      NodeFS.lutimesSync(path, at, at);
+    }
+
+    /** An install as pnpm leaves it: packages, a state file and a link out of the copy. */
+    function install(folder: string) {
+      const modules = NodePath.join(folder, "node_modules");
+      NodeFS.mkdirSync(NodePath.join(modules, "left-pad"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(modules, "left-pad", "index.js"), "module.exports = 1\n");
+      NodeFS.writeFileSync(NodePath.join(modules, ".modules.yaml"), "layoutVersion: 5\n");
+      return modules;
+    }
+
+    /** A source tree without `.git`, as a build outside the checkout leaves it. */
+    function sourceTree(prepare: (path: string) => void = () => {}): CloneDecision {
+      counter += 1;
+      const path = NodePath.join(scratch, `2026-11-1${counter % 10}-build-${counter}`, "app");
+      NodeFS.mkdirSync(NodePath.join(path, "apps", "web", "src"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(path, "package.json"),
+        JSON.stringify({ name: "widgets" }),
+      );
+      NodeFS.writeFileSync(NodePath.join(path, "apps", "web", "package.json"), "{}");
+      NodeFS.writeFileSync(NodePath.join(path, "apps", "web", "src", "main.ts"), "export {}\n");
+      NodeFS.writeFileSync(NodePath.join(path, "notes.md"), "what the build found\n");
+      install(path);
+      install(NodePath.join(path, "apps", "web"));
+      prepare(path);
+      ageTree(NodePath.dirname(path));
+      return {
+        path,
+        root: scratch,
+        kind: "source-tree",
+        action: "report",
+        reason: "source tree without .git: reported only, never removed",
+        origin: null,
+        head: null,
+        branch: null,
+      };
+    }
+
+    it("removes only the installs of an idle source tree and leaves every other file", async () => {
+      const outside = NodePath.join(root, "outside-store");
+      NodeFS.mkdirSync(outside, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(outside, "kept.txt"), "not in the copy\n");
+      const tree = sourceTree((path) =>
+        NodeFS.symlinkSync(outside, NodePath.join(path, "node_modules", "linked-store")),
+      );
+      const prune = (await decideDependencyPrune(tree, context(byMtime)))!;
+      assert.strictEqual(prune.action, "prune");
+      assert.deepStrictEqual(
+        [...prune.installs].toSorted(),
+        [
+          NodePath.join(tree.path, "apps", "web", "node_modules"),
+          NodePath.join(tree.path, "node_modules"),
+        ].toSorted(),
+      );
+      // Deciding changes nothing.
+      assert.isTrue(NodeFS.existsSync(NodePath.join(tree.path, "node_modules", "left-pad")));
+
+      const result = await pruneDependencies(tree, context(byMtime));
+      assert.strictEqual(result.result, "pruned");
+      assert.strictEqual(result.removed.length, 2);
+      assert.isFalse(NodeFS.existsSync(NodePath.join(tree.path, "node_modules")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(tree.path, "apps", "web", "node_modules")));
+      for (const kept of [
+        "package.json",
+        "notes.md",
+        "apps/web/package.json",
+        "apps/web/src/main.ts",
+      ])
+        assert.isTrue(NodeFS.existsSync(NodePath.join(tree.path, kept)), kept);
+      // The link inside the install was unlinked, not followed.
+      assert.isTrue(NodeFS.existsSync(NodePath.join(outside, "kept.txt")));
+      // Nothing is left to prune, so the next sweep says nothing about it.
+      assert.isNull(await decideDependencyPrune(tree, context(byMtime)));
+    });
+
+    it("keeps the installs of a copy that changed within a day", async () => {
+      const edited = sourceTree();
+      NodeFS.writeFileSync(NodePath.join(edited.path, "apps", "web", "src", "main.ts"), "// wip\n");
+      const prune = (await decideDependencyPrune(edited, context(byMtime)))!;
+      assert.strictEqual(prune.action, "keep");
+      assert.include(prune.reason, "inside the 24 h idle period");
+      assert.strictEqual((await pruneDependencies(edited, context(byMtime))).result, "skipped");
+      assert.isTrue(NodeFS.existsSync(NodePath.join(edited.path, "node_modules", "left-pad")));
+
+      // An install that only rewrote its state file counts as a change too.
+      const reinstalled = sourceTree();
+      const state = NodePath.join(reinstalled.path, "node_modules", ".modules.yaml");
+      NodeFS.utimesSync(state, new Date(), new Date());
+      assert.strictEqual(
+        (await decideDependencyPrune(reinstalled, context(byMtime)))!.action,
+        "keep",
+      );
+      // Idle for less than the period given.
+      const recent = sourceTree();
+      assert.strictEqual(
+        (await decideDependencyPrune(recent, context({ ...byMtime, dependencyIdleMs: 3 * DAY })))!
+          .action,
+        "keep",
+      );
+    });
+
+    it("keeps the installs of a copy that a thread, a process or an open file uses", async () => {
+      const tree = sourceTree();
+      const bound = (path: string) =>
+        cloneSweepLivePaths({ projects: [], threads: [bindingOf(path)], sessions: [] }, []);
+      const inside = await decideDependencyPrune(
+        tree,
+        context({ ...byMtime, livePaths: bound(NodePath.join(tree.path, "apps", "web")) }),
+      );
+      assert.strictEqual(inside!.reason, "in use by thread thread-2 (open)");
+      // A thread working in the dated folder around the copy uses it too.
+      const around = await decideDependencyPrune(
+        tree,
+        context({ ...byMtime, livePaths: bound(NodePath.dirname(tree.path)) }),
+      );
+      assert.strictEqual(around!.reason, "in use by thread thread-2 (open)");
+      // The scan root itself, or a folder around it, binds nothing in it.
+      for (const path of [scratch, root])
+        assert.strictEqual(
+          (await decideDependencyPrune(tree, context({ ...byMtime, livePaths: bound(path) })))!
+            .action,
+          "prune",
+        );
+      // An archived thread no longer keeps them.
+      const archived = cloneSweepLivePaths(
+        { projects: [], threads: [{ ...bindingOf(tree.path), archived: true }], sessions: [] },
+        [],
+      );
+      assert.strictEqual(
+        (await decideDependencyPrune(tree, context({ ...byMtime, livePaths: archived })))!.action,
+        "prune",
+      );
+
+      const working = await decideDependencyPrune(
+        tree,
+        context({ ...byMtime, processCwds: [NodePath.join(tree.path, "apps", "web")] }),
+      );
+      assert.include(working!.reason, "a process is working in");
+      const unlisted = await decideDependencyPrune(
+        tree,
+        context({ ...byMtime, processCwds: null }),
+      );
+      assert.strictEqual(unlisted!.reason, "cannot list running processes");
+      for (const [open, reason] of [
+        [true, "a process has a file open in it"],
+        [null, "cannot check for open files"],
+      ] as const)
+        assert.strictEqual(
+          (await decideDependencyPrune(
+            tree,
+            context({ ...byMtime, openFilesIn: () => Promise.resolve(open) }),
+          ))!.reason,
+          reason,
+        );
+      assert.isTrue(NodeFS.existsSync(NodePath.join(tree.path, "node_modules", "left-pad")));
+    });
+
+    it("decides again right before pruning and leaves a copy that came into use", async () => {
+      const tree = sourceTree();
+      assert.strictEqual((await decideDependencyPrune(tree, context(byMtime)))!.action, "prune");
+      const result = await pruneDependencies(
+        tree,
+        context({ ...byMtime, processCwds: [tree.path] }),
+      );
+      assert.strictEqual(result.result, "skipped");
+      assert.include(result.detail ?? "", "a process is working in");
+      assert.isTrue(NodeFS.existsSync(NodePath.join(tree.path, "node_modules", "left-pad")));
+    });
+
+    it("prunes a kept clone of a registered repository, never tracked files or other repositories", async () => {
+      // Untracked notes keep the clone itself; its install can still go.
+      const path = clone((repo) => {
+        NodeFS.writeFileSync(NodePath.join(repo, "findings.md"), "notes\n");
+        install(repo);
+      });
+      ageTree(NodePath.dirname(path));
+      const kept = await decide(path, byMtime);
+      assert.strictEqual(kept.action, "keep");
+      const result = await pruneDependencies(kept, context(byMtime));
+      assert.strictEqual(result.result, "pruned");
+      assert.isFalse(NodeFS.existsSync(NodePath.join(path, "node_modules")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(path, "findings.md")));
+      assert.strictEqual(git(path, "status", "--porcelain"), "?? findings.md");
+
+      // A node_modules folder with a tracked file in it is source, not an install.
+      const vendored = clone((repo) => {
+        install(repo);
+        git(repo, "add", "-f", "node_modules/left-pad/index.js");
+        git(repo, "commit", "--quiet", "-m", "vendored");
+      });
+      ageTree(NodePath.dirname(vendored));
+      assert.isNull(await decideDependencyPrune(await decide(vendored, byMtime), context(byMtime)));
+
+      // A clone of a repository no project registered is not looked at.
+      const foreign = clone((repo) => install(repo));
+      ageTree(NodePath.dirname(foreign));
+      const unregistered = { ...byMtime, registeredRemotes: new Set<string>() };
+      assert.isNull(
+        await decideDependencyPrune(await decide(foreign, unregistered), context(unregistered)),
+      );
+      // Unless its package.json carries a registered repository's name: a fork, or no origin at all.
+      const named = { ...unregistered, sourceTreeNames: ["widgets"] };
+      assert.strictEqual(
+        (await decideDependencyPrune(await decide(foreign, named), context(named)))!.action,
+        "prune",
+      );
+      // A clone about to be removed whole is left to that.
+      const merged = clone();
+      assert.isNull(await decideDependencyPrune(await decide(merged), context(byMtime)));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(foreign, "node_modules", "left-pad")));
+    });
+
+    it("leaves a symlinked node_modules and one without a package.json beside it", async () => {
+      const elsewhere = NodePath.join(root, "shared-install");
+      NodeFS.mkdirSync(NodePath.join(elsewhere, "left-pad"), { recursive: true });
+      const tree = sourceTree((path) => {
+        NodeFS.rmSync(NodePath.join(path, "node_modules"), { recursive: true });
+        NodeFS.symlinkSync(elsewhere, NodePath.join(path, "node_modules"));
+        NodeFS.rmSync(NodePath.join(path, "apps", "web", "package.json"));
+      });
+      assert.isNull(await decideDependencyPrune(tree, context(byMtime)));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(elsewhere, "left-pad")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(tree.path, "apps", "web", "node_modules")));
+    });
   });
 });
 

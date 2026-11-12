@@ -2,7 +2,8 @@
 /**
  * `specweave-studio clones sweep`: list, and with `--apply` remove, review
  * and scratch clones of registered projects' repositories whose work is
- * merged. The rules are in mergedCloneSweep.ts; the running service applies
+ * merged. A copy that stays loses its dependency installs once it sat unused
+ * for a day. The rules are in mergedCloneSweep.ts; the running service applies
  * the same sweep hourly (Settings: `storageCleanup.removeMergedClones`).
  *
  * It reads the live database read-only, as `scratch prune` and `worktree
@@ -37,9 +38,13 @@ import {
   type CloneSweepContext,
   cloneSweepLivePaths,
   cloneSweepRoots,
+  decideDependencyPrune,
+  type DependencyPruneDecision,
+  type DependencyPruneResult,
   ghMergedPullRequest,
   MERGED_CLONE_GRACE_MS,
   planCloneSweep,
+  pruneDependencies,
   registeredRepositories,
   removeClone,
 } from "../mergedCloneSweep.ts";
@@ -124,6 +129,37 @@ function line(
   return `${label.padEnd(9)} ${decision.path}  ${decision.reason}${detail}`;
 }
 
+/** The line for a kept copy whose dependency installs would go, went or stay for a stated reason. */
+function dependencyLine(
+  prune: DependencyPruneDecision,
+  result: DependencyPruneResult | null,
+  apply: boolean,
+  json: boolean,
+): string {
+  const installs = result?.result === "pruned" ? result.removed : prune.installs;
+  if (json)
+    return JSON.stringify({
+      kind: "dependencies",
+      path: prune.path,
+      action: prune.action,
+      reason: prune.reason,
+      installs,
+      ...(result === null ? {} : { result: result.result }),
+      ...(result?.detail === undefined ? {} : { detail: result.detail }),
+    });
+  const label =
+    result !== null
+      ? result.result
+      : prune.action === "prune"
+        ? apply
+          ? "prune"
+          : "would go"
+        : "keep";
+  const detail = result?.detail === undefined ? "" : ` -> ${result.detail}`;
+  const count = `${installs.length} dependency install${installs.length === 1 ? "" : "s"}`;
+  return `${label.padEnd(9)}   ${count} in it: ${prune.reason}${detail}`;
+}
+
 /** Reasons without their per-clone details, for the summary. */
 const reasonKind = (reason: string) =>
   reason
@@ -190,6 +226,7 @@ const sweepCommand = Command.make("sweep", {
           const bindings = yield* decodeWorktreeBindings(yield* readStore(paths.dbPath));
           return {
             registeredRemotes: registered.remotes,
+            sourceTreeNames: registered.sourceTreeNames,
             livePaths: cloneSweepLivePaths(bindings, registered.checkouts),
             processCwds: yield* listProcessCwds(platform),
             now: yield* Clock.currentTimeMillis,
@@ -210,6 +247,7 @@ const sweepCommand = Command.make("sweep", {
           ),
         );
         const run = { decisions, removed: 0, skipped: 0, failed: 0 };
+        const dependencies = { prunable: 0, pruned: 0, skipped: 0, failed: 0 };
         for (const decision of decisions) {
           let removal: CloneRemoval | null = null;
           if (flags.apply && decision.action === "remove") {
@@ -221,6 +259,20 @@ const sweepCommand = Command.make("sweep", {
             if (removal.result === "removed") progress.removed += 1;
           }
           yield* Console.log(line(decision, removal, flags.apply, flags.json));
+          // A copy that stays may still lose its dependency installs.
+          const prune = yield* Effect.promise(() => decideDependencyPrune(decision, context));
+          if (prune === null) continue;
+          let pruned: DependencyPruneResult | null = null;
+          if (prune.action === "prune") {
+            dependencies.prunable += 1;
+            if (flags.apply) {
+              const fresh = yield* readContext;
+              pruned = yield* Effect.promise(() => pruneDependencies(decision, fresh));
+              dependencies[pruned.result] += 1;
+              if (pruned.result === "failed") run.failed += 1;
+            }
+          }
+          yield* Console.log(dependencyLine(prune, pruned, flags.apply, flags.json));
         }
 
         const removable = run.decisions.filter((decision) => decision.action === "remove").length;
@@ -241,6 +293,8 @@ const sweepCommand = Command.make("sweep", {
               skipped: run.skipped,
               failed: run.failed,
               kept,
+              dependenciesPrunable: dependencies.prunable,
+              dependenciesPruned: dependencies.pruned,
             }),
           );
         else
@@ -249,6 +303,13 @@ const sweepCommand = Command.make("sweep", {
               flags.apply
                 ? `${run.removed} removed, ${run.skipped} skipped, ${run.failed} failed; ${run.decisions.length - removable} kept.`
                 : `Dry run: ${removable} of ${run.decisions.length} would be removed. Pass --apply to remove them.`,
+              ...(dependencies.prunable === 0
+                ? []
+                : [
+                    flags.apply
+                      ? `Dependency installs removed from ${dependencies.pruned} kept ${dependencies.pruned === 1 ? "copy" : "copies"}.`
+                      : `Dependency installs would be removed from ${dependencies.prunable} kept ${dependencies.prunable === 1 ? "copy" : "copies"}.`,
+                  ]),
               ...Object.entries(kept)
                 .toSorted(([, left], [, right]) => right - left)
                 .map(([reason, count]) => `  kept ${count}: ${reason}`),
