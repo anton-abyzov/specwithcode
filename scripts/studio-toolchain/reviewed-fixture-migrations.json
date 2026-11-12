@@ -6,13 +6,19 @@
     "e400f67aed5d5e34a9010298983e32a0ae2cb157",
     "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
     "9d03b0c63a2611aaff707d7b55a344de27437387",
-    "f08e451aa562c04b5ef8a36074c7682155d3f67c"
+    "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+    "b71edc50541865b427c7a05c80fa8e4ddb81d5e7",
+    "839602c74dbd58626c0fc8081379ae584aafabc5",
+    "1c75728fbbe49bd38d250e306633c238a4e673ed",
+    "a4631cf4ac2b7a1dc72575346fe1bd87828496d3",
+    "722be77e8547f912b1e4de1e9016821603258136"
   ],
   "reasons": {
     "product-identity-metadata": "Exact reviewed product identity replacements in provider initialization metadata, repository origin URLs, instruction keys/wrappers and deterministic message IDs; protocol frames, ID suffixes/references and user prose preserved.",
     "type-import": "Exact @t3tools/contracts to @specweave-studio/contracts type/module import rename; test fixture behavior unchanged.",
     "strict-regex-product-identity": "Exact /^msg_t3_turn_/ to /^msg_studio_turn_/ expected prefix rename, retaining equally strict protocol assertion.",
-    "product-name-prose": "Original product name replaced by SpecWithCode in comments, assertion messages and the contracts import of fixture helpers; replay behavior unchanged."
+    "product-name-prose": "Original product name replaced by SpecWithCode in comments, assertion messages and the contracts import of fixture helpers; replay behavior unchanged.",
+    "studio-test-assertion": "Reviewed product-name rename followed by a reviewed Studio change to the assertions this replay helper makes about Studio's own orchestration; recorded provider bytes are untouched."
   },
   "entries": [
     {
@@ -396,20 +402,20 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/cursor_output.ts",
       "upstreamSha256": "dd2a5399db050ee3faf8da66482751f056e87ef5be83786af0d4c5e9e6242c66",
-      "reviewedSha256": "d2c44850ac04f67f3958e709d1d2fa3fec5042167001f1f5a1f5a54162fa0b50",
+      "reviewedSha256": "3ffb390d1d817f0df7dce4a6c5f7318751bf9dd621a24cdaa3a62c252054a50e",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
-      "reason": "product-name-prose"
+      "reviewCommit": "1c75728fbbe49bd38d250e306633c238a4e673ed",
+      "reason": "studio-test-assertion"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/grok_output.ts",
       "upstreamSha256": "3028b04507071454e5c99e62f383d8a53cfe0783718e529d731d7ae0e887bab7",
-      "reviewedSha256": "18a72728d1f8433435d363a9acf84e69e3ccf1edcd1722603d838a129b3c0da5",
+      "reviewedSha256": "8ac0c58be4666280f0da3887c4e66741703d3c1533f1a2134a4a6cdc9bd2cb3a",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
-      "reason": "product-name-prose"
+      "reviewCommit": "1c75728fbbe49bd38d250e306633c238a4e673ed",
+      "reason": "studio-test-assertion"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/grok_transcript.ndjson",
@@ -945,10 +951,10 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson",
       "upstreamSha256": "e4df2b5068fcbf9c48d8ee034fbaf663cc5e9548eafa1aa6e68e4433581dfeda",
-      "reviewedSha256": "f17ad4eb3b3446a5e026abbec95298c24674c8f287b3fc8239e4084b7d7c64a8",
+      "reviewedSha256": "67843185ec0c9c570bca977275f821511d94cde680f8c94c288a023450a8058f",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reviewCommit": "b71edc50541865b427c7a05c80fa8e4ddb81d5e7",
       "reason": "product-identity-metadata"
     },
     {
@@ -1017,11 +1023,11 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/shared.ts",
       "upstreamSha256": "e32bdcc5823d9c8cbc65570f8ad1ab00b67cc3cdd9b2401b25e38bcf59882cc4",
-      "reviewedSha256": "0fe9e524bb621ecf77e330c6c1c9ddb5645663d0e150fad8cbef16fb180c78ac",
+      "reviewedSha256": "75de0d8e56b4e7cdda0a3250cdbcd2a27d2bc8bbe3085d33e78cdb0fdcd2abbb",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "9d03b0c63a2611aaff707d7b55a344de27437387",
-      "reason": "type-import"
+      "reviewCommit": "1c75728fbbe49bd38d250e306633c238a4e673ed",
+      "reason": "studio-test-assertion"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/claude_output.ts",
@@ -1125,11 +1131,11 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent/claude_output.ts",
       "upstreamSha256": "963076679744a6656a2dc3417721f1febb520fad8803dcdd7de0254973cc831f",
-      "reviewedSha256": "949f2f01a81d752f44b79cba05ebd59805b9c3bfb8e5286399e6480c2f1f9cd5",
+      "reviewedSha256": "e44c0b57801a286f5fa1c7040cb8beb07e919f6f0dbe7273e3ae61cf08ee9e51",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
-      "reason": "product-name-prose"
+      "reviewCommit": "a4631cf4ac2b7a1dc72575346fe1bd87828496d3",
+      "reason": "studio-test-assertion"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent/claude_transcript.ndjson",
@@ -1269,10 +1275,10 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson",
       "upstreamSha256": "87b81d487981683e150639925ca47b9304cdaac9b90b52d8b7a358fa72bbe8b4",
-      "reviewedSha256": "083c5e841de52d5b3fdaa7d6c7b5327d054a486c58e0096da019b9f6a31191de",
+      "reviewedSha256": "7080ccb2f2fdf92cfa61e4151dea9e2e1f28e20e5e522bacd4441f736d73c167",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reviewCommit": "839602c74dbd58626c0fc8081379ae584aafabc5",
       "reason": "product-identity-metadata"
     },
     {
@@ -1287,37 +1293,37 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson",
       "upstreamSha256": "0fe5a607a1e06531770fac7a30d5a559253ee1756bd5dc390187e8e6e1543d8d",
-      "reviewedSha256": "5ef5c41cc4705fe22c69d6947bc8bb9c03101a1bfee5d94b94058f6133dcc975",
+      "reviewedSha256": "dbce29682f3bdd360cf7af6bc264949d5ce9af6c14af746cc3dde2b39876b766",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "9d03b0c63a2611aaff707d7b55a344de27437387",
+      "reviewCommit": "839602c74dbd58626c0fc8081379ae584aafabc5",
       "reason": "product-identity-metadata"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson",
       "upstreamSha256": "264e7198f46687963e17b80c4a394fbe10d0c6cb75764737646e05a91bdad0ff",
-      "reviewedSha256": "5c004f25f49e49631eec4a6a459e745816a749924ec4f12f0351c1035b566f93",
+      "reviewedSha256": "3eb5fe22f895682cbf4100dda4e6b09a9c0025884f77b8fb49b92f5facb6e4f2",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reviewCommit": "839602c74dbd58626c0fc8081379ae584aafabc5",
       "reason": "product-identity-metadata"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson",
       "upstreamSha256": "1cb19a54430041ef540f536f76658bfb6873c55fe0907af1a5e17a07c2f35b5b",
-      "reviewedSha256": "e3cde66b6ede7b7ec53f645e1d93000453ec585bd925f00aaba79539e71b1b34",
+      "reviewedSha256": "11fce2c6aa5541b6b03b076d65d02b56024b9689f48d3b6e9e02aad255fd3481",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reviewCommit": "b71edc50541865b427c7a05c80fa8e4ddb81d5e7",
       "reason": "product-identity-metadata"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson",
       "upstreamSha256": "f34475131ede5fc0223200b9e608d4d93b82755dc2ed69d6678f47d394cf6d4d",
-      "reviewedSha256": "0536cded4024c81192fc946ce3b0024d398650aa644c0c274a9ff6592bd39494",
+      "reviewedSha256": "e202ccb737931f7037c7174606bbf3cb4ae3d7822e3cdfdf41eee2e82701d5c8",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reviewCommit": "b71edc50541865b427c7a05c80fa8e4ddb81d5e7",
       "reason": "product-identity-metadata"
     },
     {
@@ -1341,10 +1347,10 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson",
       "upstreamSha256": "ac4b7bfced54918110cc456c00555a03fa38d71b30efb1dc012945325866a161",
-      "reviewedSha256": "93c68d7d7c22a001972b1553a787c16bb519c215b48cd517b36911856c370110",
+      "reviewedSha256": "103b838bf8df82ee062dd6a4036a07cf6163d0ec286e3de6d4a658aae052a4f6",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reviewCommit": "b71edc50541865b427c7a05c80fa8e4ddb81d5e7",
       "reason": "product-identity-metadata"
     },
     {
@@ -1377,10 +1383,10 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback_after_restart/codex_transcript.ndjson",
       "upstreamSha256": "f3738400345bce331f6c1d48f5bfd62035eed4fc73498da732cf21fae01526c1",
-      "reviewedSha256": "66399c2be1a1402e252c9410352c4685ab1d63a53e421011536e3c5260147bab",
+      "reviewedSha256": "846dd76d0bd4a8f1082d29f61cc6e4b902247b3cbe2bde60b98bfaf4f7c54624",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reviewCommit": "b71edc50541865b427c7a05c80fa8e4ddb81d5e7",
       "reason": "product-identity-metadata"
     },
     {
@@ -1548,11 +1554,11 @@
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/output.ts",
       "upstreamSha256": "2d2a68b6d090a6ec7a0869ec05c6dbbd4c104d7246d68d526b9d9c8b15df49b5",
-      "reviewedSha256": "563c7c309b8849ed805b70fdf58d4064c857bcd5d196fea2eff6d0f825b2074e",
+      "reviewedSha256": "9e78c8aa0c0f76c63db5036dbe28e416ca9e9fe3776f24af5ad097ae3f542160",
       "upstreamMode": "100644",
       "reviewedMode": "100644",
-      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
-      "reason": "product-name-prose"
+      "reviewCommit": "722be77e8547f912b1e4de1e9016821603258136",
+      "reason": "studio-test-assertion"
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/registry_transcript.ndjson",
