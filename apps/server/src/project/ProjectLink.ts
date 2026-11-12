@@ -125,8 +125,14 @@ export class ProjectLink extends Context.Service<
     readonly prepare: (
       input: ProjectLinkPrepareInput,
     ) => Effect.Effect<ProjectLinkPrepareResult, ProjectLinkError>;
+    /**
+     * `copiedFromKept`: this machine verified the copy is a folder copy of the kept
+     * project it just applied, so the fingerprint comparison (which a plain folder
+     * with no repository never passes) is not needed.
+     */
     readonly accept: (
       input: ProjectLinkAcceptInput,
+      options?: { readonly copiedFromKept?: boolean },
     ) => Effect.Effect<ProjectLinkAcceptResult, ProjectLinkError>;
     readonly commit: (
       input: ProjectLinkCommitInput,
@@ -571,7 +577,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const accept: ProjectLink["Service"]["accept"] = (input) =>
+  const accept: ProjectLink["Service"]["accept"] = (input, options) =>
     admission.withLock(
       input.projectId,
       Effect.gen(function* () {
@@ -604,9 +610,11 @@ const make = Effect.gen(function* () {
         const shell = yield* coordinatorShell(self);
         const refusal = linkRefusals(project, shell?.activeRunId != null).join;
         if (refusal) return yield* fail(refusal);
-        const own = yield* fingerprintOf(project.workspaceRoot);
-        if (!compareFingerprints(own, input.keptFingerprint).rootMatches)
-          return yield* fail("repository_mismatch", rootSummary(own, input.keptFingerprint));
+        if (options?.copiedFromKept !== true) {
+          const own = yield* fingerprintOf(project.workspaceRoot);
+          if (!compareFingerprints(own, input.keptFingerprint).rootMatches)
+            return yield* fail("repository_mismatch", rootSummary(own, input.keptFingerprint));
+        }
         const logicalProject: LogicalProject = {
           ...input.logicalProject,
           members: mergeMembers(input.logicalProject.members, [self]),
