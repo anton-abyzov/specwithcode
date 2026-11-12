@@ -225,22 +225,27 @@ export const layerApi = HttpApiBuilder.group(
 
     /**
      * Records the action, runs it, and records how it ended. Without the first
-     * record nothing runs. A failure part way is recorded and answered 503;
-     * the action is safe to send again.
+     * record nothing runs. A failure part way is recorded and answered 503.
      */
     const recorded = Effect.fnUntraced(function* <A, E, R>(
       record: Parameters<ConnectAdminActionLog["Service"]["begin"]>[0],
       run: Effect.Effect<A, E, R>,
     ) {
       const id = yield* log.begin(record).pipe(Effect.catch(() => unavailable("record_failed")));
-      const ran = yield* Effect.exit(run);
-      yield* log.finish(id, Exit.isSuccess(ran) ? "done" : "failed").pipe(
-        Effect.catch(() =>
-          Effect.logWarning("Connect admin could not record how an action ended", {
-            action: record.action,
-            recordId: id,
-          }),
+      const ran = yield* run.pipe(
+        // As a finalizer, so a request cut off part way (a deadline, a closed
+        // connection) is recorded as failed and not left at "started".
+        Effect.onExit((exit) =>
+          log.finish(id, Exit.isSuccess(exit) ? "done" : "failed").pipe(
+            Effect.catch(() =>
+              Effect.logWarning("Connect admin could not record how an action ended", {
+                action: record.action,
+                recordId: id,
+              }),
+            ),
+          ),
         ),
+        Effect.exit,
       );
       if (Exit.isFailure(ran)) {
         yield* Effect.logWarning("Connect admin action failed", {
@@ -284,9 +289,14 @@ export const layerApi = HttpApiBuilder.group(
         Effect.fn("relay.api.admin.unlinkMachine")(function* ({ params }) {
           const { userId: ownerUserId } = yield* RelayAdminPrincipal;
           const found = yield* accountOf(params.userId);
+          // Linked, or unlinked with its tunnel still allocated: an unlink whose
+          // tunnel teardown failed is finished by sending it again.
           const machine = found.machines.find(
             (candidate) =>
-              candidate.environmentId === params.environmentId && candidate.unlinkedAt === null,
+              candidate.environmentId === params.environmentId &&
+              (candidate.unlinkedAt === null ||
+                candidate.tunnel === "ready" ||
+                candidate.tunnel === "provisioning"),
           );
           if (machine === undefined) {
             return yield* new RelayAdminTargetNotFoundError({

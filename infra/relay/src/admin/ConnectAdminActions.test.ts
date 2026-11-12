@@ -68,10 +68,15 @@ const unlinkOf = (userId: string, environmentId: string) =>
 const removeOf = (userId: string, deviceId: string) =>
   `/v1/admin/accounts/${userId}/phones/${deviceId}/remove`;
 
+/** Read when a request runs, so a test can change it between two requests. */
 interface World {
-  readonly owners?: ReadonlyArray<string>;
+  owners?: ReadonlyArray<string>;
   /** Cloudflare refuses to take the tunnel down. */
-  readonly deprovisionFails?: boolean;
+  deprovisionFails?: boolean;
+  /** Cloudflare never answers. */
+  deprovisionHangs?: boolean;
+  /** Runs while the tunnel teardown is under way. */
+  onDeprovision?: Effect.Effect<void>;
 }
 
 interface Outside {
@@ -83,7 +88,12 @@ interface Outside {
   readonly notified: Array<string>;
 }
 
-type Call = (path: string, token?: string, body?: unknown) => Effect.Effect<Response>;
+type Call = (
+  path: string,
+  token?: string,
+  body?: unknown,
+  signal?: AbortSignal,
+) => Effect.Effect<Response>;
 
 /** Both admin groups over a seeded relay database; Clerk and Cloudflare stood in. */
 const withActions = <A, E>(
@@ -118,18 +128,19 @@ const withActions = <A, E>(
       Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {
         prepareDeprovision: () => Effect.succeed(null),
         deprovision: (input) =>
-          world.deprovisionFails
-            ? Effect.fail(
-                new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
-                  userId: input.userId,
-                  environmentId: input.environmentId,
-                  cause: "cloudflare down",
-                } as never),
-              )
-            : Effect.sync(() => {
-                outside.deprovisioned.push(`${input.userId}/${input.environmentId}`);
-                return true;
-              }),
+          Effect.gen(function* () {
+            if (world.onDeprovision) yield* world.onDeprovision;
+            if (world.deprovisionHangs) return yield* Effect.never;
+            if (world.deprovisionFails) {
+              return yield* new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+                userId: input.userId,
+                environmentId: input.environmentId,
+                cause: "cloudflare down",
+              } as never);
+            }
+            outside.deprovisioned.push(`${input.userId}/${input.environmentId}`);
+            return true;
+          }),
       }),
       Layer.mock(HookInbox.HookInbox, { clear: () => Effect.void }),
       Layer.mock(ClerkSessions.ClerkSessions, {
@@ -160,13 +171,14 @@ const withActions = <A, E>(
       ),
       (handler) => Effect.promise(() => handler.dispose()),
     );
-    const call: Call = (path, token, body) =>
+    const call: Call = (path, token, body, signal) =>
       Effect.promise(() =>
         app.handler(
           new Request(`https://relay.example.test${path}`, {
             method:
               path === ACTIONS || !path.match(/(machine-limit|unlink|remove)$/u) ? "GET" : "POST",
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            ...(signal === undefined ? {} : { signal }),
             headers: {
               ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
               ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -393,6 +405,40 @@ describe("changing one account's machine limit", () => {
       }),
     ),
   );
+
+  it.effect("writes neither the record nor the limit when the limit cannot be written", () =>
+    withActions({}, (call, _outside, database) =>
+      Effect.gen(function* () {
+        // The record is the first statement of the batch and succeeds; the limit then fails.
+        yield* database(
+          Effect.gen(function* () {
+            const db = yield* RelayDb.RelayDb;
+            yield* db
+              .run(
+                sql`CREATE TRIGGER refuse_limits BEFORE INSERT ON relay_managed_tunnel_limits BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+              )
+              .pipe(Effect.orDie);
+          }),
+        );
+        const response = yield* call(limitOf("user_free"), "owner-session", {
+          limit: { kind: "limited", maxMachines: 50 },
+        });
+        expect(response.status).toBe(503);
+        expect(yield* actionsOf(call)).toEqual([]);
+        expect((yield* accountOf(call, "user_free")).account.limit).toEqual(SEEDED_DEFAULT);
+      }),
+    ),
+  );
+
+  it.effect("hides the route from a non-owner whatever the body says", () =>
+    withActions({}, (call) =>
+      Effect.gen(function* () {
+        const response = yield* call(limitOf("user_free"), "other-session", { limit: "junk" });
+        expect(response.status).toBe(404);
+        expect(yield* text(response)).toBe("");
+      }),
+    ),
+  );
 });
 
 describe("unlinking one machine of one account", () => {
@@ -496,6 +542,67 @@ describe("unlinking one machine of one account", () => {
       }),
     ),
   );
+
+  it.effect("finishes an unlink whose tunnel teardown failed when it is sent again", () => {
+    const world: World = { deprovisionFails: true };
+    return withActions(world, (call, outside) =>
+      Effect.gen(function* () {
+        expect((yield* call(unlinkOf("user_owner", "m4"), "owner-session")).status).toBe(503);
+        const afterFailure = yield* accountOf(call, "user_owner");
+        expect(
+          afterFailure.machines.find((machine) => machine.environmentId === "m4")?.unlinkedAt,
+        ).not.toBeNull();
+        expect(outside.deprovisioned).toEqual([]);
+
+        world.deprovisionFails = false;
+        const again = yield* call(unlinkOf("user_owner", "m4"), "owner-session");
+        expect(again.status).toBe(200);
+        // The link was already revoked; this time the tunnel came down.
+        expect(yield* json(again)).toEqual({ unlinked: false });
+        expect(outside.deprovisioned).toContain("user_owner/m4");
+        expect((yield* actionsOf(call)).map((action) => action.outcome)).toEqual([
+          "done",
+          "failed",
+        ]);
+      }),
+    );
+  });
+
+  it.effect("has the record in place, as started, before the machine is touched", () => {
+    const world: World = {};
+    const seen: Array<ReadonlyArray<string>> = [];
+    return withActions(world, (call, _outside, database) =>
+      Effect.gen(function* () {
+        world.onDeprovision = database(
+          Effect.gen(function* () {
+            const db = yield* RelayDb.RelayDb;
+            const rows = yield* db
+              .select({ outcome: relayAdminActions.outcome })
+              .from(relayAdminActions)
+              .pipe(Effect.orDie);
+            seen.push(rows.map((row) => row.outcome));
+          }),
+        );
+        expect((yield* call(unlinkOf("user_owner", "m4"), "owner-session")).status).toBe(200);
+        expect(seen[0]).toEqual(["started"]);
+        expect((yield* actionsOf(call)).map((action) => action.outcome)).toEqual(["done"]);
+      }),
+    );
+  });
+
+  it.effect("records an unlink that was cut off part way as failed, not left as started", () => {
+    const cutOff = new AbortController();
+    const world: World = {
+      deprovisionHangs: true,
+      onDeprovision: Effect.sync(() => cutOff.abort()),
+    };
+    return withActions(world, (call) =>
+      Effect.gen(function* () {
+        yield* call(unlinkOf("user_owner", "m4"), "owner-session", undefined, cutOff.signal);
+        expect((yield* actionsOf(call)).map((action) => action.outcome)).toEqual(["failed"]);
+      }),
+    );
+  });
 });
 
 describe("removing one phone of one account", () => {

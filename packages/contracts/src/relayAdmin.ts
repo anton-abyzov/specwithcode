@@ -32,8 +32,8 @@ export class RelayAdminUnavailableError extends Schema.TaggedError<RelayAdminUna
     code: Schema.Literal("admin_unavailable"),
     /**
      * - "record_failed": the action's record could not be written, so the action did not run.
-     * - "action_failed": the record was written and the action then failed part way; it is
-     *   safe to run again.
+     * - "action_failed": the record was written and the action then failed part way. An
+     *   unlink can be sent again to finish; a phone removal has already removed the phone.
      */
     reason: Schema.Literals([
       "persistence_failed",
@@ -332,8 +332,8 @@ export const RelayAdminActionsResponse = Schema.Struct({
 export type RelayAdminActionsResponse = typeof RelayAdminActionsResponse.Type;
 
 /**
- * What an owner can change. Every route here is a POST so the relay's CORS
- * rules need no new method, and each writes its record before it acts.
+ * What an owner can change. Every change is a POST so the relay's CORS rules
+ * need no new method, and each writes its record before it acts.
  */
 export const RelayAdminActionsGroup = HttpApiGroup.make("adminActions")
   .add(

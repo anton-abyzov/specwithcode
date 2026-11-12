@@ -23,6 +23,7 @@ import {
   relayEnvironmentLinks,
   relayLiveActivities,
   relayManagedEndpointAllocations,
+  relayAdminActions,
   relayManagedTunnelLimits,
   relayClientKeys,
   relayMobileDeviceRemovals,
@@ -166,6 +167,11 @@ export const layerAccountRecords = Layer.effect(
           db
             .delete(relayManagedTunnelLimits)
             .where(and(eq(relayManagedTunnelLimits.userId, userId), noAllocation)),
+          // What an owner did to this account names its machines and phones, so
+          // it goes with the account. What this person did as an owner stays.
+          db
+            .delete(relayAdminActions)
+            .where(and(eq(relayAdminActions.targetUserId, userId), noAllocation)),
           // The promo's seats_granted is left alone, so the seat is not resold.
           db
             .delete(relayConnectAccounts)

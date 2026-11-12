@@ -11,6 +11,7 @@ import * as RelayDb from "../db.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import {
+  relayAdminActions,
   relayDpopProofs,
   relayEnvironmentCredentials,
   relayClientKeys,
@@ -243,6 +244,24 @@ describe("relay persistence on SQLite (D1)", () => {
           lastSeenAt: now,
         });
       }
+      for (const [id, ownerUserId, targetUserId] of [
+        ["owner-acted-on-user-1", "user-2", "user-1"],
+        ["user-1-acted-as-owner", "user-1", "user-2"],
+      ] as const) {
+        yield* db.insert(relayAdminActions).values({
+          id,
+          ownerUserId,
+          action: "unlink_machine",
+          targetUserId,
+          targetId: "env-1",
+          targetLabel: "Someone's Mac",
+          beforeJson: null,
+          afterJson: null,
+          outcome: "done",
+          createdAt: now,
+        });
+      }
+      const actionIds = db.select({ id: relayAdminActions.id }).from(relayAdminActions);
       const linkUsers = db
         .select({ userId: relayEnvironmentLinks.userId })
         .from(relayEnvironmentLinks);
@@ -258,6 +277,7 @@ describe("relay persistence on SQLite (D1)", () => {
       expect(yield* linkUsers).toEqual([{ userId: "user-1" }, { userId: "user-2" }]);
       expect(yield* removalUsers).toEqual([{ userId: "user-1" }, { userId: "user-2" }]);
       expect(yield* keyUsers).toEqual([{ userId: "user-1" }, { userId: "user-2" }]);
+      expect(yield* actionIds).toHaveLength(2);
       expect(yield* allocations.get({ userId: "user-1", environmentId: "env-1" })).not.toBeNull();
 
       yield* allocations.remove({ userId: "user-1", environmentId: "env-1" });
@@ -265,6 +285,8 @@ describe("relay persistence on SQLite (D1)", () => {
       expect(yield* linkUsers).toEqual([{ userId: "user-2" }]);
       expect(yield* removalUsers).toEqual([{ userId: "user-2" }]);
       expect(yield* keyUsers).toEqual([{ userId: "user-2" }]);
+      // The record of what an owner did to the deleted account goes with it.
+      expect(yield* actionIds).toEqual([{ id: "user-1-acted-as-owner" }]);
     }).pipe(Effect.provide(layer())),
   );
 
