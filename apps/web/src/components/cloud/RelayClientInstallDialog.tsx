@@ -1,5 +1,5 @@
 import { DownloadIcon } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { RelayClientInstallProgressStage } from "@specweave-studio/contracts";
 
 import {
@@ -37,6 +37,15 @@ export function RelayClientInstallDialog() {
     readRelayClientInstallDialogState,
     readRelayClientInstallDialogState,
   );
+  // The store leaves "closing" only when a mounted dialog reports that its close
+  // finished. This dialog is mounted in two places (setup and the app), so one can
+  // unmount mid-close and the next mounts already shut, with no close to report.
+  // Without this the store would stay "closing" and refuse every later link.
+  useEffect(() => {
+    if (readRelayClientInstallDialogState().status === "closing") {
+      completeRelayClientInstallDialogClose();
+    }
+  }, []);
   const view = state.status === "closing" ? state.view : state;
   const isConfirming = view.status === "confirming";
   const isInstalling = view.status === "installing";
