@@ -2,7 +2,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
-import { InfoIcon, ShieldIcon, Undo2Icon } from "lucide-react";
+import { ChevronRightIcon, InfoIcon, ShieldIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@specweave-studio/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -152,6 +152,52 @@ export function SettingsSearchTarget({
 
 /** Layout for the composer model/traits pickers in a settings row: drop the composer's max-width. */
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-none shrink-0";
+
+/**
+ * A page that sets this shows a long description behind an info button beside
+ * the title instead of printing it under every row. Short ones still print.
+ */
+const SettingsCompactDescriptionsContext = createContext(false);
+
+export function SettingsCompactDescriptions({ children }: { readonly children: ReactNode }) {
+  return (
+    <SettingsCompactDescriptionsContext value={true}>{children}</SettingsCompactDescriptionsContext>
+  );
+}
+
+/** Descriptions longer than this move behind the info button on a compact page. */
+export const COMPACT_DESCRIPTION_MAX_LENGTH = 90;
+
+export function descriptionGoesBehindInfo(description: unknown, compact: boolean): boolean {
+  return (
+    compact &&
+    typeof description === "string" &&
+    description.length > COMPACT_DESCRIPTION_MAX_LENGTH
+  );
+}
+
+function DescriptionTooltip({ label, children }: { readonly label: string; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        delay={150}
+        render={
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={label}
+            data-slot="settings-row-info"
+          >
+            <InfoIcon className="size-3.5" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-xs">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
@@ -316,6 +362,79 @@ export function SettingsSection({
   );
 }
 
+const SECTION_OPEN_STORAGE_PREFIX = "specwithcode:settings-section-open:";
+
+function readSectionOpen(id: string, fallback: boolean): boolean {
+  try {
+    const stored = window.localStorage.getItem(SECTION_OPEN_STORAGE_PREFIX + id);
+    return stored === null ? fallback : stored === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * A section that rests closed behind its heading. Its rows stay mounted so
+ * settings search can still reveal and focus one; whether it is open is
+ * remembered on this device.
+ */
+export function SettingsCollapsibleSection({
+  id,
+  title,
+  count,
+  defaultOpen = false,
+  children,
+  className,
+}: {
+  readonly id: string;
+  readonly title: string;
+  /** How many settings sit inside, shown beside the closed heading. */
+  readonly count?: number | undefined;
+  readonly defaultOpen?: boolean | undefined;
+  readonly children: ReactNode;
+  readonly className?: string | undefined;
+}) {
+  const targetRef = useSettingsSearchTarget<HTMLDetailsElement>(id);
+  const tx = useTx();
+  const [open, setOpen] = useState(() => readSectionOpen(id, defaultOpen));
+  return (
+    <details
+      id={id}
+      ref={targetRef}
+      tabIndex={-1}
+      open={open}
+      data-slot="settings-collapsible-section"
+      className={cn("group/section space-y-2.5", className)}
+      onToggle={(event) => {
+        const next = event.currentTarget.open;
+        setOpen(next);
+        try {
+          window.localStorage.setItem(SECTION_OPEN_STORAGE_PREFIX + id, next ? "1" : "0");
+        } catch {
+          // Private windows refuse storage; the section still opens and closes.
+        }
+      }}
+    >
+      <summary
+        data-settings-scroll-target
+        className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-foreground focus-visible:outline-2 focus-visible:outline-ring sm:px-4 [&::-webkit-details-marker]:hidden"
+      >
+        <ChevronRightIcon
+          aria-hidden
+          className="size-3.5 shrink-0 text-icon-muted transition-transform group-open/section:rotate-90"
+        />
+        <h2 className="text-sm font-semibold">{tx(title)}</h2>
+        {count !== undefined ? (
+          <span className="text-xs font-normal text-muted-foreground tabular-nums group-open/section:hidden">
+            {count}
+          </span>
+        ) : null}
+      </summary>
+      <SettingsGroup>{children}</SettingsGroup>
+    </details>
+  );
+}
+
 export function SettingsUnavailableGroup({
   children,
   message,
@@ -387,6 +506,10 @@ export function SettingsRow({
   const tx = useTx();
   const shownTitle = typeof title === "string" && !literal ? tx(title) : title;
   const shownDescription = typeof description === "string" ? tx(description) : description;
+  const descriptionBehindInfo = descriptionGoesBehindInfo(
+    shownDescription,
+    useContext(SettingsCompactDescriptionsContext),
+  );
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const navigate = useNavigate();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
@@ -582,6 +705,17 @@ export function SettingsRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <h3 className="min-w-0 text-sm font-medium text-foreground">{shownTitle}</h3>
+            {descriptionBehindInfo ? (
+              <DescriptionTooltip
+                label={
+                  typeof shownTitle === "string"
+                    ? tx("About {setting}", { setting: shownTitle })
+                    : tx("About this setting")
+                }
+              >
+                {shownDescription}
+              </DescriptionTooltip>
+            ) : null}
             {renderedInheritance ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {renderedInheritance}
@@ -594,7 +728,7 @@ export function SettingsRow({
               </span>
             ) : null}
           </div>
-          {description ? (
+          {description && !descriptionBehindInfo ? (
             <div className="max-w-xl text-xs leading-normal text-muted-foreground">
               {shownDescription}
             </div>

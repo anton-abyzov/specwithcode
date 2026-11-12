@@ -172,6 +172,8 @@ import {
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
+  SettingsCollapsibleSection,
+  SettingsCompactDescriptions,
   SettingsSection,
   useSettingsSearchTarget,
   useSettingsSearchTargetId,
@@ -2383,161 +2385,367 @@ export function GeneralSettingsPanel() {
   );
 
   return (
-    <SettingsPageContainer>
-      <TeamRulesSection environmentId={environmentId} />
-      <ProjectDefaultsSettings category="general" />
-      <SettingsSection id="organization" title="Organization">
-        <SettingsRow
-          {...searchableSetting("project-grouping")}
-          description="Combine matching repositories across environments."
-          resetAction={
-            settings.sidebarProjectGroupingMode !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode ? (
-              <SettingResetButton
-                label={tx("project grouping")}
-                onClick={() =>
+    <SettingsCompactDescriptions>
+      <SettingsPageContainer>
+        <TeamRulesSection environmentId={environmentId} />
+        <ProjectDefaultsSettings category="general" />
+        <SettingsSection id="organization" title="Organization">
+          <SettingsRow
+            {...searchableSetting("project-grouping")}
+            description="Combine matching repositories across environments."
+            resetAction={
+              settings.sidebarProjectGroupingMode !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode ? (
+                <SettingResetButton
+                  label={tx("project grouping")}
+                  onClick={() =>
+                    updateSettings({
+                      sidebarProjectGroupingMode:
+                        DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={isProjectGroupingEnabled(settings.sidebarProjectGroupingMode)}
+                onCheckedChange={(checked) => {
+                  if (!checked && settings.sidebarProjectGroupingMode !== "separate") {
+                    lastEnabledProjectGroupingMode.current = settings.sidebarProjectGroupingMode;
+                    rememberEnabledProjectGroupingMode(settings.sidebarProjectGroupingMode);
+                  }
                   updateSettings({
-                    sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
-                  })
+                    sidebarProjectGroupingMode: projectGroupingModeFromToggle(
+                      checked,
+                      lastEnabledProjectGroupingMode.current,
+                    ),
+                  });
+                }}
+                aria-label={tx("Project grouping")}
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("project-order")}
+            description="Order of projects in the sidebar project picker and command palette."
+            resetAction={
+              settings.sidebarProjectSortOrder !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
+                <SettingResetButton
+                  label={tx("project order")}
+                  onClick={() =>
+                    updateSettings({
+                      sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.sidebarProjectSortOrder}
+                onValueChange={(value) => {
+                  if (isSidebarProjectSortOrder(value)) {
+                    updateSettings({ sidebarProjectSortOrder: value });
+                  }
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-44"
+                  aria-label={tx("Project order")}
+                >
+                  <SelectValue>
+                    {SIDEBAR_PROJECT_SORT_ORDER_LABELS[settings.sidebarProjectSortOrder]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SidebarProjectSortOrder.literals.map((sortOrder) => (
+                    <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
+                      {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("working-shelf")}
+            description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+            resetAction={
+              settings.sidebarWorkingShelfEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
+                <SettingResetButton
+                  label={tx("working section")}
+                  onClick={() =>
+                    updateSettings({
+                      sidebarWorkingShelfEnabled:
+                        DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.sidebarWorkingShelfEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
+                }
+                aria-label={tx("Working section (beta)")}
+              />
+            }
+          />
+
+          {supportsAutoSettlement ? (
+            <>
+              <SettingsRow
+                serverScoped
+                settingKeys={["sidebarAutoSettleOnMerge"]}
+                {...searchableSetting("auto-settle-merged-threads")}
+                description="Resolve only when every relevant pull request is merged and the latest turn has recorded delivery evidence: push, merge, deployment and verification. A merge alone or unknown evidence keeps the thread active."
+                resetAction={
+                  settings.sidebarAutoSettleOnMerge !==
+                  DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
+                    <SettingResetButton
+                      label={tx("auto-resolve on verified merge")}
+                      onClick={() =>
+                        updateSettings({
+                          sidebarAutoSettleOnMerge:
+                            DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <ScopedSwitch
+                    settingKeys={["sidebarAutoSettleOnMerge"]}
+                    checked={settings.sidebarAutoSettleOnMerge}
+                    onCheckedChange={(checked) =>
+                      updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
+                    }
+                    aria-label={THREAD_LIFECYCLE_LABELS.autoResolveMerged}
+                  />
                 }
               />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={isProjectGroupingEnabled(settings.sidebarProjectGroupingMode)}
-              onCheckedChange={(checked) => {
-                if (!checked && settings.sidebarProjectGroupingMode !== "separate") {
-                  lastEnabledProjectGroupingMode.current = settings.sidebarProjectGroupingMode;
-                  rememberEnabledProjectGroupingMode(settings.sidebarProjectGroupingMode);
+
+              <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
+                {tx(
+                  "Inactivity never resolves work. Snooze hides a thread temporarily while work remains active; completion, errors and approval requests can wake it early.",
+                )}
+              </p>
+            </>
+          ) : null}
+        </SettingsSection>
+
+        <SettingsSection id="behavior" title="Behavior">
+          <NotificationSettings />
+          <SettingsRow
+            {...searchableSetting("input-needed-alerts")}
+            description="Notify when a thread needs your answer or approval. Connect notifications above first. Disconnect overrides this switch on this device."
+            control={
+              <Switch
+                checked={settings.inputNeededAlertsEnabled}
+                onCheckedChange={(checked) => updateSettings({ inputNeededAlertsEnabled: checked })}
+                aria-label={tx("Alert when a thread needs you")}
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("in-app-notifications")}
+            description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."
+            control={
+              <Switch
+                checked={settings.inAppNotificationsEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ inAppNotificationsEnabled: checked })
                 }
-                updateSettings({
-                  sidebarProjectGroupingMode: projectGroupingModeFromToggle(
-                    checked,
-                    lastEnabledProjectGroupingMode.current,
-                  ),
-                });
-              }}
-              aria-label={tx("Project grouping")}
+                aria-label={tx("In-app notifications")}
+              />
+            }
+          />
+          {isElectron ? (
+            <SettingsRow
+              {...searchableSetting("keep-awake")}
+              description="Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps."
+              control={
+                <Switch
+                  checked={settings.keepAwakeWhileWorking}
+                  onCheckedChange={(checked) => updateSettings({ keepAwakeWhileWorking: checked })}
+                  aria-label={tx("Keep awake while sessions work")}
+                />
+              }
             />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("project-order")}
-          description="Order of projects in the sidebar project picker and command palette."
-          resetAction={
-            settings.sidebarProjectSortOrder !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
-              <SettingResetButton
-                label={tx("project order")}
-                onClick={() =>
-                  updateSettings({
-                    sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.sidebarProjectSortOrder}
-              onValueChange={(value) => {
-                if (isSidebarProjectSortOrder(value)) {
-                  updateSettings({ sidebarProjectSortOrder: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label={tx("Project order")}>
-                <SelectValue>
-                  {SIDEBAR_PROJECT_SORT_ORDER_LABELS[settings.sidebarProjectSortOrder]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {SidebarProjectSortOrder.literals.map((sortOrder) => (
-                  <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
-                    {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
+          ) : null}
+          <SettingsRow
+            {...searchableSetting("time-format")}
+            description="System default follows your browser or OS clock preference."
+            resetAction={
+              settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
+                <SettingResetButton
+                  label={tx("time format")}
+                  onClick={() =>
+                    updateSettings({
+                      timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.timestampFormat}
+                onValueChange={(value) => {
+                  if (value === "locale" || value === "12-hour" || value === "24-hour") {
+                    updateSettings({ timestampFormat: value });
+                  }
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-40"
+                  aria-label={tx("Timestamp format")}
+                >
+                  <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="locale">
+                    {TIMESTAMP_FORMAT_LABELS.locale}
                   </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+                  <SelectItem hideIndicator value="12-hour">
+                    {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="24-hour">
+                    {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("send-shortcut")}
+            description="Choose when Enter sends a prompt or inserts a new line"
+            resetAction={
+              settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? (
+                <SettingResetButton
+                  label={tx("send shortcut")}
+                  onClick={() =>
+                    updateSettings({ sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.sendShortcut}
+                onValueChange={(value) => {
+                  const option = sendShortcutOptions.find((option) => option.value === value);
+                  if (option) updateSettings({ sendShortcut: option.value });
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto min-w-0 max-w-full"
+                  aria-label={tx("Send shortcut")}
+                >
+                  <SelectValue>
+                    {
+                      sendShortcutOptions.find((option) => option.value === settings.sendShortcut)
+                        ?.label
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {sendShortcutOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      <span className="flex items-center justify-between gap-4">
+                        {option.label}
+                        {settings.sendShortcut === option.value && <CheckIcon aria-hidden="true" />}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
 
-        <SettingsRow
-          serverScoped
-          {...searchableSetting("auto-resume-limited-threads")}
-          description="Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation."
-          settingKeys={["autoResumeLimitedThreads"]}
-          control={
-            <ScopedSwitch
-              settingKeys={["autoResumeLimitedThreads"]}
-              checked={settings.autoResumeLimitedThreads}
-              onCheckedChange={(checked) =>
-                updateSettings({ autoResumeLimitedThreads: Boolean(checked) })
-              }
-              aria-label={tx("Auto-resume limited threads")}
-            />
-          }
-        />
-        <SettingsRow
-          serverScoped
-          {...searchableSetting("snooze-limited-threads")}
-          description="Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake."
-          settingKeys={["snoozeLimitedThreads"]}
-          control={
-            <ScopedSwitch
-              settingKeys={["snoozeLimitedThreads"]}
-              checked={settings.snoozeLimitedThreads}
-              onCheckedChange={(checked) =>
-                updateSettings({ snoozeLimitedThreads: Boolean(checked) })
-              }
-              aria-label={tx("Snooze limited threads")}
-            />
-          }
-        />
+          <SettingsRow
+            {...searchableSetting("follow-up-behavior")}
+            description={
+              settings.sendShortcut === "mod-enter-multiline"
+                ? tx(
+                    "Queue follow-ups while the agent runs or steer the current run. Press {modifier} + Enter for single-line prompts or {modifier} + Shift + Enter for multiline prompts to do the opposite for one message.",
+                    { modifier: modifierLabel },
+                  )
+                : tx(
+                    "Queue follow-ups while the agent runs or steer the current run. Press {shortcut} + Enter to do the opposite for one message.",
+                    {
+                      shortcut:
+                        settings.sendShortcut === "mod-enter"
+                          ? `${modifierLabel} + Shift`
+                          : modifierLabel,
+                    },
+                  )
+            }
+            resetAction={
+              settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
+                <SettingResetButton
+                  label={tx("follow-up behavior")}
+                  onClick={() =>
+                    updateSettings({
+                      followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.followUpBehavior}
+                onValueChange={(value) => {
+                  if (value === "queue" || value === "steer") {
+                    updateSettings({ followUpBehavior: value });
+                  }
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto min-w-0"
+                  aria-label={tx("Follow-up behavior")}
+                >
+                  <SelectValue>
+                    {settings.followUpBehavior === "queue" ? tx("Queue") : tx("Steer")}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="queue">{tx("Queue")}</SelectItem>
+                  <SelectItem value="steer">{tx("Steer")}</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </SettingsSection>
 
-        <SettingsRow
-          {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
-          resetAction={
-            settings.sidebarWorkingShelfEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
-              <SettingResetButton
-                label={tx("working section")}
-                onClick={() =>
-                  updateSettings({
-                    sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarWorkingShelfEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
-              }
-              aria-label={tx("Working section (beta)")}
-            />
-          }
-        />
-
-        {supportsAutoSettlement ? (
-          <>
+        <SettingsSection id="projects-and-threads" title="Projects & threads">
+          {/* A picked project sets this with its other new-thread settings on the Project page. */}
+          {isProjectScope ? null : (
             <SettingsRow
               serverScoped
-              settingKeys={["sidebarAutoSettleOnMerge"]}
-              {...searchableSetting("auto-settle-merged-threads")}
-              description="Resolve only when every relevant pull request is merged and the latest turn has recorded delivery evidence: push, merge, deployment and verification. A merge alone or unknown evidence keeps the thread active."
+              settingKeys={["newWorktreesStartFromOrigin"]}
+              {...searchableSetting("start-from-origin")}
+              description="Creates the worktree from the latest matching branch on origin instead of your local branch."
               resetAction={
-                settings.sidebarAutoSettleOnMerge !==
-                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
+                settings.newWorktreesStartFromOrigin !==
+                DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
                   <SettingResetButton
-                    label={tx("auto-resolve on verified merge")}
+                    label={tx("new worktrees start from origin")}
                     onClick={() =>
                       updateSettings({
-                        sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+                        newWorktreesStartFromOrigin:
+                          DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
                       })
                     }
                   />
@@ -2545,754 +2753,701 @@ export function GeneralSettingsPanel() {
               }
               control={
                 <ScopedSwitch
-                  settingKeys={["sidebarAutoSettleOnMerge"]}
-                  checked={settings.sidebarAutoSettleOnMerge}
+                  settingKeys={["newWorktreesStartFromOrigin"]}
+                  checked={settings.newWorktreesStartFromOrigin}
                   onCheckedChange={(checked) =>
-                    updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
+                    updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
                   }
-                  aria-label={THREAD_LIFECYCLE_LABELS.autoResolveMerged}
+                  aria-label={tx("Start new worktrees from origin by default")}
                 />
               }
             />
-
-            <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">
-              {tx(
-                "Inactivity never resolves work. Snooze hides a thread temporarily while work remains active; completion, errors and approval requests can wake it early.",
-              )}
-            </p>
-          </>
-        ) : null}
-      </SettingsSection>
-
-      <SettingsSection id="behavior" title="Behavior">
-        <NotificationSettings />
-        <SettingsRow
-          {...searchableSetting("input-needed-alerts")}
-          description="Notify when a thread needs your answer or approval. Connect notifications above first. Disconnect overrides this switch on this device."
-          control={
-            <Switch
-              checked={settings.inputNeededAlertsEnabled}
-              onCheckedChange={(checked) => updateSettings({ inputNeededAlertsEnabled: checked })}
-              aria-label={tx("Alert when a thread needs you")}
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("in-app-notifications")}
-          description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."
-          control={
-            <Switch
-              checked={settings.inAppNotificationsEnabled}
-              onCheckedChange={(checked) => updateSettings({ inAppNotificationsEnabled: checked })}
-              aria-label={tx("In-app notifications")}
-            />
-          }
-        />
-        {isElectron ? (
+          )}
           <SettingsRow
-            {...searchableSetting("keep-awake")}
-            description="Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps."
+            serverScoped
+            settingKeys={["addProjectBaseDirectory"]}
+            {...searchableSetting("add-project-starts-in")}
+            description={tx('Leave empty to use "~/" when the Add Project browser opens.')}
+            resetAction={
+              settings.addProjectBaseDirectory !==
+              DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
+                <SettingResetButton
+                  label={tx("add project base directory")}
+                  onClick={() =>
+                    updateSettings({
+                      addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+                    })
+                  }
+                />
+              ) : null
+            }
             control={
-              <Switch
-                checked={settings.keepAwakeWhileWorking}
-                onCheckedChange={(checked) => updateSettings({ keepAwakeWhileWorking: checked })}
-                aria-label={tx("Keep awake while sessions work")}
+              <DraftInput
+                size="sm"
+                className="w-full sm:w-72"
+                value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
+                onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
+                placeholder={mixedAddProjectBaseDirectory ? tx("Mixed") : "~/"}
+                spellCheck={false}
+                aria-label={tx("Add project base directory")}
               />
             }
           />
-        ) : null}
-        {canHostVoiceCall() ? (
+        </SettingsSection>
+
+        <SettingsCollapsibleSection id="composer-and-diffs" title="Composer & diffs" count={10}>
           <SettingsRow
-            {...searchableSetting("voice-calls")}
-            description={`Call a project's coordinator and talk, or dictate into its message box. The microphone is on only during a call or dictation, and speech is turned into text on ${voiceHostName()}.`}
-            control={
-              <Switch
-                checked={settings.voiceCallsAllowed}
-                onCheckedChange={(checked) => updateSettings({ voiceCallsAllowed: checked })}
-                aria-label={tx("Voice calls with the coordinator")}
-              />
+            serverScoped
+            settingKeys={["responseStreamingMode"]}
+            {...searchableSetting("response-streaming")}
+            description={
+              mixedResponseStreamingMode
+                ? "The selected targets use different streaming modes."
+                : RESPONSE_STREAMING_MODE_DESCRIPTIONS[settings.responseStreamingMode]
             }
-          />
-        ) : null}
-        {canHostVoiceCall() ? <DictationSettings /> : null}
-        <SettingsRow
-          {...searchableSetting("what-you-can-do")}
-          description="A short checklist on Overview, ticked from what you have set up. It goes away once everything is done."
-          control={
-            <Switch
-              checked={!settings.whatYouCanDoDismissed}
-              onCheckedChange={(checked) => updateSettings({ whatYouCanDoDismissed: !checked })}
-              aria-label={tx("Show What you can do")}
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("time-format")}
-          description="System default follows your browser or OS clock preference."
-          resetAction={
-            settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
-              <SettingResetButton
-                label={tx("time format")}
-                onClick={() =>
-                  updateSettings({
-                    timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.timestampFormat}
-              onValueChange={(value) => {
-                if (value === "locale" || value === "12-hour" || value === "24-hour") {
-                  updateSettings({ timestampFormat: value });
-                }
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-40"
-                aria-label={tx("Timestamp format")}
-              >
-                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="locale">
-                  {TIMESTAMP_FORMAT_LABELS.locale}
-                </SelectItem>
-                <SelectItem hideIndicator value="12-hour">
-                  {TIMESTAMP_FORMAT_LABELS["12-hour"]}
-                </SelectItem>
-                <SelectItem hideIndicator value="24-hour">
-                  {TIMESTAMP_FORMAT_LABELS["24-hour"]}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          serverScoped
-          settingKeys={["responseStreamingMode"]}
-          {...searchableSetting("response-streaming")}
-          description={
-            mixedResponseStreamingMode
-              ? "The selected targets use different streaming modes."
-              : RESPONSE_STREAMING_MODE_DESCRIPTIONS[settings.responseStreamingMode]
-          }
-          resetAction={
-            settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode ? (
-              <SettingResetButton
-                label={tx("response streaming")}
-                onClick={() =>
-                  updateSettings({
-                    responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={mixedResponseStreamingMode ? null : settings.responseStreamingMode}
-              onValueChange={(value) => {
-                if (value === "turn" || value === "paragraph") {
-                  updateSettings({ responseStreamingMode: value });
-                }
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-56"
-                aria-label={tx("Response streaming")}
-              >
-                <SelectValue>
-                  {(value: ResponseStreamingMode | null) =>
-                    value === null ? "Mixed" : RESPONSE_STREAMING_MODE_LABELS[value]
+            resetAction={
+              settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode ? (
+                <SettingResetButton
+                  label={tx("response streaming")}
+                  onClick={() =>
+                    updateSettings({
+                      responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
+                    })
                   }
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="turn">
-                  {RESPONSE_STREAMING_MODE_LABELS.turn}
-                </SelectItem>
-                <SelectItem hideIndicator value="paragraph">
-                  {RESPONSE_STREAMING_MODE_LABELS.paragraph}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("hide-whitespace-changes")}
-          description="Set whether the diff panel ignores whitespace-only edits by default."
-          resetAction={
-            settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
-              <SettingResetButton
-                label={tx("diff whitespace changes")}
-                onClick={() =>
-                  updateSettings({
-                    diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.diffIgnoreWhitespace}
-              onCheckedChange={(checked) =>
-                updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
-              }
-              aria-label={tx("Hide whitespace changes by default")}
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("default-diff-file-state")}
-          description="Start with files expanded or collapsed when opening diffs or a pull request's Code tab."
-          resetAction={
-            settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
-              <SettingResetButton
-                label={tx("default diff file state")}
-                onClick={() =>
-                  updateSettings({
-                    diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.diffFilesCollapsed ? "collapsed" : "expanded"}
-              onValueChange={(value) => {
-                if (value === "expanded" || value === "collapsed") {
-                  updateSettings({ diffFilesCollapsed: value === "collapsed" });
-                }
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-40"
-                aria-label={tx("Default diff file state")}
-              >
-                <SelectValue>
-                  {settings.diffFilesCollapsed ? tx("Collapsed") : tx("Expanded")}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="expanded">
-                  {tx("Expanded")}
-                </SelectItem>
-                <SelectItem hideIndicator value="collapsed">
-                  {tx("Collapsed")}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("diff-layout")}
-          description="Show diffs stacked or side by side. The toggle in the diff toolbar changes this too."
-          resetAction={
-            settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? (
-              <SettingResetButton
-                label={tx("diff layout")}
-                onClick={() => updateSettings({ diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout })}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.diffLayout}
-              onValueChange={(value) => {
-                if (value === "stacked" || value === "split") {
-                  updateSettings({ diffLayout: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={tx("Diff layout")}>
-                <SelectValue>{DIFF_LAYOUT_LABELS[settings.diffLayout]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="stacked">
-                  {DIFF_LAYOUT_LABELS.stacked}
-                </SelectItem>
-                <SelectItem hideIndicator value="split">
-                  {DIFF_LAYOUT_LABELS.split}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("proactive-panels")}
-          description="Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines."
-          resetAction={
-            settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
-              <SettingResetButton
-                label={tx("proactive panels")}
-                onClick={() =>
-                  updateSettings({
-                    proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.proactivePanelsEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ proactivePanelsEnabled: Boolean(checked) })
-              }
-              aria-label={tx("Proactive panels")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("skills-in-slash-menu")}
-          description="Also include skills in the / command menu. Skills always appear when you type $."
-          resetAction={
-            settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
-              <SettingResetButton
-                label={tx("skills in slash menu")}
-                onClick={() =>
-                  updateSettings({
-                    showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.showSkillsInSlashMenu}
-              onCheckedChange={(checked) =>
-                updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
-              }
-              aria-label={tx("Show skills in slash menu")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("composer-rich-text")}
-          description="Show formatted Markdown as you type."
-          resetAction={
-            settings.composerRichTextEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled ? (
-              <SettingResetButton
-                label={tx("rich text composer")}
-                onClick={() =>
-                  updateSettings({
-                    composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.composerRichTextEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ composerRichTextEnabled: Boolean(checked) })
-              }
-              aria-label={tx("Rich text composer")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("composer-collapse")}
-          description="Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again."
-          resetAction={
-            settings.composerCollapseOnScroll !==
-            DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll ? (
-              <SettingResetButton
-                label={tx("collapse composer on scroll")}
-                onClick={() =>
-                  updateSettings({
-                    composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.composerCollapseOnScroll}
-              onCheckedChange={(checked) =>
-                updateSettings({ composerCollapseOnScroll: Boolean(checked) })
-              }
-              aria-label={tx("Collapse composer on scroll")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("context-window-indicator")}
-          description="Shows context window usage as a circular indicator in the composer, with where the conversation compacts."
-          resetAction={
-            settings.contextWindowMeterEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled ? (
-              <SettingResetButton
-                label={tx("context window indicator")}
-                onClick={() =>
-                  updateSettings({
-                    contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.contextWindowMeterEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ contextWindowMeterEnabled: Boolean(checked) })
-              }
-              aria-label={tx("Context window indicator")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("send-shortcut")}
-          description="Choose when Enter sends a prompt or inserts a new line"
-          resetAction={
-            settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? (
-              <SettingResetButton
-                label={tx("send shortcut")}
-                onClick={() =>
-                  updateSettings({ sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.sendShortcut}
-              onValueChange={(value) => {
-                const option = sendShortcutOptions.find((option) => option.value === value);
-                if (option) updateSettings({ sendShortcut: option.value });
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-auto min-w-0 max-w-full"
-                aria-label={tx("Send shortcut")}
-              >
-                <SelectValue>
-                  {
-                    sendShortcutOptions.find((option) => option.value === settings.sendShortcut)
-                      ?.label
-                  }
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {sendShortcutOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    <span className="flex items-center justify-between gap-4">
-                      {option.label}
-                      {settings.sendShortcut === option.value && <CheckIcon aria-hidden="true" />}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("follow-up-behavior")}
-          description={
-            settings.sendShortcut === "mod-enter-multiline"
-              ? tx(
-                  "Queue follow-ups while the agent runs or steer the current run. Press {modifier} + Enter for single-line prompts or {modifier} + Shift + Enter for multiline prompts to do the opposite for one message.",
-                  { modifier: modifierLabel },
-                )
-              : tx(
-                  "Queue follow-ups while the agent runs or steer the current run. Press {shortcut} + Enter to do the opposite for one message.",
-                  {
-                    shortcut:
-                      settings.sendShortcut === "mod-enter"
-                        ? `${modifierLabel} + Shift`
-                        : modifierLabel,
-                  },
-                )
-          }
-          resetAction={
-            settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
-              <SettingResetButton
-                label={tx("follow-up behavior")}
-                onClick={() =>
-                  updateSettings({
-                    followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.followUpBehavior}
-              onValueChange={(value) => {
-                if (value === "queue" || value === "steer") {
-                  updateSettings({ followUpBehavior: value });
-                }
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-auto min-w-0"
-                aria-label={tx("Follow-up behavior")}
-              >
-                <SelectValue>
-                  {settings.followUpBehavior === "queue" ? tx("Queue") : tx("Steer")}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="queue">{tx("Queue")}</SelectItem>
-                <SelectItem value="steer">{tx("Steer")}</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          serverScoped
-          settingKeys={["promptSuggestions"]}
-          {...searchableSetting("prompt-suggestions")}
-          description={
-            mixedPromptSuggestions
-              ? "The selected targets suggest prompts differently."
-              : PROMPT_SUGGESTIONS_MODE_DESCRIPTIONS[settings.promptSuggestions]
-          }
-          resetAction={
-            settings.promptSuggestions !== DEFAULT_UNIFIED_SETTINGS.promptSuggestions ? (
-              <SettingResetButton
-                label={tx("suggested prompts")}
-                onClick={() =>
-                  updateSettings({ promptSuggestions: DEFAULT_UNIFIED_SETTINGS.promptSuggestions })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={mixedPromptSuggestions ? null : settings.promptSuggestions}
-              onValueChange={(value) => {
-                if (Schema.is(PromptSuggestionsMode)(value)) {
-                  updateSettings({ promptSuggestions: value });
-                }
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-44"
-                aria-label={tx("Suggested prompts")}
-              >
-                <SelectValue>
-                  {(value: PromptSuggestionsMode | null) =>
-                    value === null ? "Mixed" : PROMPT_SUGGESTIONS_MODE_LABELS[value]
-                  }
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {PromptSuggestionsMode.literals.map((mode) => (
-                  <SelectItem hideIndicator key={mode} value={mode}>
-                    {PROMPT_SUGGESTIONS_MODE_LABELS[mode]}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          serverScoped
-          settingKeys={["enableProviderUpdateChecks"]}
-          {...searchableSetting("provider-update-checks")}
-          description="Check installed provider CLIs for newer available versions."
-          resetAction={
-            settings.enableProviderUpdateChecks !==
-            DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
-              <SettingResetButton
-                label={tx("provider update checks")}
-                onClick={() =>
-                  updateSettings({
-                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["enableProviderUpdateChecks"]}
-              checked={settings.enableProviderUpdateChecks}
-              onCheckedChange={(checked) =>
-                updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
-              }
-              aria-label={tx("Check provider versions")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("continue-threads-after-server-update")}
-          serverScoped
-          settingKeys={["continueThreadsAfterServerUpdate"]}
-          description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments."
-          status={
-            !supportsRestartContinuation
-              ? "All selected connected environments must support restart continuation."
-              : undefined
-          }
-          resetAction={
-            supportsRestartContinuation &&
-            settings.continueThreadsAfterServerUpdate !==
-              DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
-              <SettingResetButton
-                label={tx("continue threads after restarts")}
-                onClick={() =>
-                  updateSettings({
-                    continueThreadsAfterServerUpdate:
-                      DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["continueThreadsAfterServerUpdate"]}
-              checked={settings.continueThreadsAfterServerUpdate}
-              disabled={!supportsRestartContinuation}
-              onCheckedChange={(checked) =>
-                updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
-              }
-              aria-label={tx("Continue threads after restarts")}
-            />
-          }
-        />
-
-        <SettingsRow
-          serverScoped
-          settingKeys={["backgroundActivity"]}
-          id={searchableSetting("background-activity").id}
-          title={
-            <span className="inline-flex items-center gap-1.5">
-              {searchableSetting("background-activity").title}
-              <PolicyTooltip>
-                {tx(
-                  "This shared policy gates background work such as Git refreshes and provider health probes after their individual intervals elapse.",
-                )}
-              </PolicyTooltip>
-            </span>
-          }
-          description={backgroundActivityDescription}
-          resetAction={
-            canResetBackgroundActivity ? (
-              <SettingResetButton
-                label={tx("background activity")}
-                onClick={() => updateSettings(resetBackgroundActivitySettings())}
-              />
-            ) : null
-          }
-          control={
-            <>
+                />
+              ) : null
+            }
+            control={
               <Select
-                value={mixedBackgroundActivity ? null : backgroundActivityProfileOption}
+                value={mixedResponseStreamingMode ? null : settings.responseStreamingMode}
                 onValueChange={(value) => {
-                  if (value === "advanced") {
-                    if (isEnvironmentScope) setBackgroundActivityDialogOpen(true);
-                    return;
+                  if (value === "turn" || value === "paragraph") {
+                    updateSettings({ responseStreamingMode: value });
                   }
-                  if (
-                    value === "balanced" ||
-                    value === "performance" ||
-                    value === "battery-saver"
-                  ) {
-                    updateSettings(backgroundActivityProfileSettings(value));
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-56"
+                  aria-label={tx("Response streaming")}
+                >
+                  <SelectValue>
+                    {(value: ResponseStreamingMode | null) =>
+                      value === null ? "Mixed" : RESPONSE_STREAMING_MODE_LABELS[value]
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="turn">
+                    {RESPONSE_STREAMING_MODE_LABELS.turn}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="paragraph">
+                    {RESPONSE_STREAMING_MODE_LABELS.paragraph}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("hide-whitespace-changes")}
+            description="Set whether the diff panel ignores whitespace-only edits by default."
+            resetAction={
+              settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
+                <SettingResetButton
+                  label={tx("diff whitespace changes")}
+                  onClick={() =>
+                    updateSettings({
+                      diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.diffIgnoreWhitespace}
+                onCheckedChange={(checked) =>
+                  updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
+                }
+                aria-label={tx("Hide whitespace changes by default")}
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("default-diff-file-state")}
+            description="Start with files expanded or collapsed when opening diffs or a pull request's Code tab."
+            resetAction={
+              settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
+                <SettingResetButton
+                  label={tx("default diff file state")}
+                  onClick={() =>
+                    updateSettings({
+                      diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.diffFilesCollapsed ? "collapsed" : "expanded"}
+                onValueChange={(value) => {
+                  if (value === "expanded" || value === "collapsed") {
+                    updateSettings({ diffFilesCollapsed: value === "collapsed" });
                   }
                 }}
               >
                 <SelectTrigger
                   size="sm"
                   className="w-full sm:w-40"
-                  aria-label={tx("Background activity profile")}
+                  aria-label={tx("Default diff file state")}
                 >
                   <SelectValue>
-                    {(value: BackgroundActivityProfileOption | null) =>
-                      value === null ? "Mixed" : BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[value]
+                    {settings.diffFilesCollapsed ? tx("Collapsed") : tx("Expanded")}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="expanded">
+                    {tx("Expanded")}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="collapsed">
+                    {tx("Collapsed")}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("diff-layout")}
+            description="Show diffs stacked or side by side. The toggle in the diff toolbar changes this too."
+            resetAction={
+              settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? (
+                <SettingResetButton
+                  label={tx("diff layout")}
+                  onClick={() =>
+                    updateSettings({ diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.diffLayout}
+                onValueChange={(value) => {
+                  if (value === "stacked" || value === "split") {
+                    updateSettings({ diffLayout: value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={tx("Diff layout")}>
+                  <SelectValue>{DIFF_LAYOUT_LABELS[settings.diffLayout]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="stacked">
+                    {DIFF_LAYOUT_LABELS.stacked}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="split">
+                    {DIFF_LAYOUT_LABELS.split}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("proactive-panels")}
+            description="Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines."
+            resetAction={
+              settings.proactivePanelsEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
+                <SettingResetButton
+                  label={tx("proactive panels")}
+                  onClick={() =>
+                    updateSettings({
+                      proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.proactivePanelsEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ proactivePanelsEnabled: Boolean(checked) })
+                }
+                aria-label={tx("Proactive panels")}
+              />
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("skills-in-slash-menu")}
+            description="Also include skills in the / command menu. Skills always appear when you type $."
+            resetAction={
+              settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
+                <SettingResetButton
+                  label={tx("skills in slash menu")}
+                  onClick={() =>
+                    updateSettings({
+                      showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.showSkillsInSlashMenu}
+                onCheckedChange={(checked) =>
+                  updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
+                }
+                aria-label={tx("Show skills in slash menu")}
+              />
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("composer-rich-text")}
+            description="Show formatted Markdown as you type."
+            resetAction={
+              settings.composerRichTextEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled ? (
+                <SettingResetButton
+                  label={tx("rich text composer")}
+                  onClick={() =>
+                    updateSettings({
+                      composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.composerRichTextEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ composerRichTextEnabled: Boolean(checked) })
+                }
+                aria-label={tx("Rich text composer")}
+              />
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("composer-collapse")}
+            description="Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again."
+            resetAction={
+              settings.composerCollapseOnScroll !==
+              DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll ? (
+                <SettingResetButton
+                  label={tx("collapse composer on scroll")}
+                  onClick={() =>
+                    updateSettings({
+                      composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.composerCollapseOnScroll}
+                onCheckedChange={(checked) =>
+                  updateSettings({ composerCollapseOnScroll: Boolean(checked) })
+                }
+                aria-label={tx("Collapse composer on scroll")}
+              />
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("context-window-indicator")}
+            description="Shows context window usage as a circular indicator in the composer, with where the conversation compacts."
+            resetAction={
+              settings.contextWindowMeterEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled ? (
+                <SettingResetButton
+                  label={tx("context window indicator")}
+                  onClick={() =>
+                    updateSettings({
+                      contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.contextWindowMeterEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ contextWindowMeterEnabled: Boolean(checked) })
+                }
+                aria-label={tx("Context window indicator")}
+              />
+            }
+          />
+
+          <SettingsRow
+            serverScoped
+            settingKeys={["promptSuggestions"]}
+            {...searchableSetting("prompt-suggestions")}
+            description={
+              mixedPromptSuggestions
+                ? "The selected targets suggest prompts differently."
+                : PROMPT_SUGGESTIONS_MODE_DESCRIPTIONS[settings.promptSuggestions]
+            }
+            resetAction={
+              settings.promptSuggestions !== DEFAULT_UNIFIED_SETTINGS.promptSuggestions ? (
+                <SettingResetButton
+                  label={tx("suggested prompts")}
+                  onClick={() =>
+                    updateSettings({
+                      promptSuggestions: DEFAULT_UNIFIED_SETTINGS.promptSuggestions,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={mixedPromptSuggestions ? null : settings.promptSuggestions}
+                onValueChange={(value) => {
+                  if (Schema.is(PromptSuggestionsMode)(value)) {
+                    updateSettings({ promptSuggestions: value });
+                  }
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-44"
+                  aria-label={tx("Suggested prompts")}
+                >
+                  <SelectValue>
+                    {(value: PromptSuggestionsMode | null) =>
+                      value === null ? "Mixed" : PROMPT_SUGGESTIONS_MODE_LABELS[value]
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="balanced">
-                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="performance">
-                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="battery-saver">
-                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="advanced" disabled={!isEnvironmentScope}>
-                    {isEnvironmentScope
-                      ? BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced
-                      : `${BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced} (one environment)`}
-                  </SelectItem>
+                  {PromptSuggestionsMode.literals.map((mode) => (
+                    <SelectItem hideIndicator key={mode} value={mode}>
+                      {PROMPT_SUGGESTIONS_MODE_LABELS[mode]}
+                    </SelectItem>
+                  ))}
                 </SelectPopup>
               </Select>
-              {backgroundActivityProfileOption === "advanced" && isEnvironmentScope ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="outline"
-                        aria-label={tx("Configure advanced background activity")}
-                        onClick={() => setBackgroundActivityDialogOpen(true)}
-                      >
-                        <SettingsIcon className="size-4" />
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup side="top">{tx("Configure background activity")}</TooltipPopup>
-                </Tooltip>
-              ) : null}
-              <BackgroundActivityAdvancedDialog
-                open={backgroundActivityDialogOpen && isEnvironmentScope}
-                onOpenChange={setBackgroundActivityDialogOpen}
-              />
-            </>
-          }
-        />
-      </SettingsSection>
+            }
+          />
+        </SettingsCollapsibleSection>
 
-      <SettingsSection id="projects-and-threads" title="Projects & threads">
-        {/* A picked project sets this with its other new-thread settings on the Project page. */}
-        {isProjectScope ? null : (
+        <SettingsCollapsibleSection id="confirmations" title="Confirmations" count={4}>
           <SettingsRow
-            serverScoped
-            settingKeys={["newWorktreesStartFromOrigin"]}
-            {...searchableSetting("start-from-origin")}
-            description="Creates the worktree from the latest matching branch on origin instead of your local branch."
+            {...searchableSetting("unpin-confirmation")}
+            description="Ask before unpinning a thread from the pinned section."
             resetAction={
-              settings.newWorktreesStartFromOrigin !==
-              DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
+              settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin ? (
                 <SettingResetButton
-                  label={tx("new worktrees start from origin")}
+                  label={tx("unpin confirmation")}
                   onClick={() =>
                     updateSettings({
-                      newWorktreesStartFromOrigin:
-                        DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+                      confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.confirmThreadUnpin}
+                onCheckedChange={(checked) =>
+                  updateSettings({ confirmThreadUnpin: Boolean(checked) })
+                }
+                aria-label={tx("Confirm thread unpinning")}
+              />
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("archive-confirmation")}
+            description="Require a second click on the inline archive action before a thread is archived."
+            resetAction={
+              settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
+                <SettingResetButton
+                  label={tx("archive confirmation")}
+                  onClick={() =>
+                    updateSettings({
+                      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.confirmThreadArchive}
+                onCheckedChange={(checked) =>
+                  updateSettings({ confirmThreadArchive: Boolean(checked) })
+                }
+                aria-label={tx("Confirm thread archiving")}
+              />
+            }
+          />
+
+          <SettingsRow
+            {...searchableSetting("delete-confirmation")}
+            description="Ask before deleting a thread and its chat history."
+            resetAction={
+              settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
+                <SettingResetButton
+                  label={tx("delete confirmation")}
+                  onClick={() =>
+                    updateSettings({
+                      confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.confirmThreadDelete}
+                onCheckedChange={(checked) =>
+                  updateSettings({ confirmThreadDelete: Boolean(checked) })
+                }
+                aria-label={tx("Confirm thread deletion")}
+              />
+            }
+          />
+
+          {isElectron ? (
+            <SettingsRow
+              {...searchableSetting("quit-confirmation")}
+              description="Hold mode also quits on two quick presses."
+              resetAction={
+                settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
+                  <SettingResetButton
+                    label={tx("quit shortcut behavior")}
+                    onClick={() =>
+                      updateSettings({ confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={settings.confirmQuit}
+                  onValueChange={(value) => {
+                    if (value === "direct" || value === "hold" || value === "double-click") {
+                      updateSettings({ confirmQuit: value });
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-40"
+                    aria-label={tx("Quit shortcut behavior")}
+                  >
+                    <SelectValue>{QUIT_CONFIRMATION_MODE_LABELS[settings.confirmQuit]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
+                      <SelectItem hideIndicator key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ) : null}
+        </SettingsCollapsibleSection>
+
+        <SettingsCollapsibleSection id="text-generation" title="Text generation" count={1}>
+          <SettingsRow
+            serverScoped
+            settingKeys={["textGenerationModelSelection"]}
+            {...searchableSetting("text-generation-model")}
+            description="Used for thread titles and other generated text on connected devices with this provider. Source control can override it."
+            resetAction={
+              hasServerTargets && isTextGenerationModelDirty ? (
+                <SettingResetButton
+                  label={tx("text generation model")}
+                  onClick={() =>
+                    updateSettings({
+                      textGenerationModelSelection:
+                        DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              !hasServerTargets ? (
+                <span className="text-sm text-muted-foreground">
+                  {tx("Connect an environment to choose its text generation model.")}
+                </span>
+              ) : !hasTextGenerationProvider ? (
+                <span className="text-sm text-muted-foreground">
+                  {tx("No text generation providers available.")}
+                </span>
+              ) : (
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <ProviderModelPicker
+                    activeInstanceId={textGenInstanceId}
+                    model={textGenModel}
+                    lockedProvider={null}
+                    instanceEntries={textGenerationModelInstanceEntries}
+                    modelOptionsByInstance={textGenerationModelOptionsByInstance}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
+                    getModelDisabledReason={textGenerationModelDisabledReason}
+                    {...(environmentId
+                      ? {
+                          onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                            void navigate({
+                              to: "/settings/providers",
+                              search: { environmentId, instanceId },
+                            });
+                          },
+                        }
+                      : {})}
+                    onInstanceModelChange={(instanceId, model) => {
+                      const reason = textGenerationModelDisabledReason(instanceId, model);
+                      if (reason) {
+                        toastManager.add({
+                          type: "error",
+                          title: "Text generation model not saved",
+                          description: reason,
+                        });
+                        return;
+                      }
+                      updateSettings({
+                        textGenerationModelSelection: resolveAppModelSelectionState(
+                          {
+                            ...settings,
+                            textGenerationModelSelection: createModelSelection(instanceId, model),
+                          },
+                          textGenerationProviders,
+                        ),
+                      });
+                    }}
+                  />
+                  {textGenInstanceEntry ? (
+                    <TraitsPicker
+                      provider={textGenProvider}
+                      models={
+                        // Use the exact instance's models (rather than the
+                        // first-kind-match) so a custom text-gen instance like
+                        // `codex_personal` gets its own model list, not the
+                        // default Codex one.
+                        textGenInstanceEntry?.models ?? []
+                      }
+                      model={textGenModel}
+                      prompt=""
+                      onPromptChange={() => {}}
+                      modelOptions={textGenModelOptions}
+                      allowPromptInjectedEffort={false}
+                      planModeEnabled={
+                        settings.planModeEnabled || selectsPlanAgent(textGenModelOptions)
+                      }
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      onModelOptionsChange={(nextOptions) => {
+                        updateSettings({
+                          textGenerationModelSelection: resolveAppModelSelectionState(
+                            {
+                              ...settings,
+                              textGenerationModelSelection: createModelSelection(
+                                textGenInstanceId,
+                                textGenModel,
+                                nextOptions,
+                              ),
+                            },
+                            textGenerationProviders,
+                          ),
+                        });
+                      }}
+                    />
+                  ) : null}
+                </div>
+              )
+            }
+          />
+        </SettingsCollapsibleSection>
+
+        <SettingsCollapsibleSection id="general-advanced" title="Advanced" count={8}>
+          <SettingsRow
+            serverScoped
+            {...searchableSetting("auto-resume-limited-threads")}
+            description="Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation."
+            settingKeys={["autoResumeLimitedThreads"]}
+            control={
+              <ScopedSwitch
+                settingKeys={["autoResumeLimitedThreads"]}
+                checked={settings.autoResumeLimitedThreads}
+                onCheckedChange={(checked) =>
+                  updateSettings({ autoResumeLimitedThreads: Boolean(checked) })
+                }
+                aria-label={tx("Auto-resume limited threads")}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            {...searchableSetting("snooze-limited-threads")}
+            description="Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake."
+            settingKeys={["snoozeLimitedThreads"]}
+            control={
+              <ScopedSwitch
+                settingKeys={["snoozeLimitedThreads"]}
+                checked={settings.snoozeLimitedThreads}
+                onCheckedChange={(checked) =>
+                  updateSettings({ snoozeLimitedThreads: Boolean(checked) })
+                }
+                aria-label={tx("Snooze limited threads")}
+              />
+            }
+          />
+
+          {canHostVoiceCall() ? (
+            <SettingsRow
+              {...searchableSetting("voice-calls")}
+              description={`Call a project's coordinator and talk, or dictate into its message box. The microphone is on only during a call or dictation, and speech is turned into text on ${voiceHostName()}.`}
+              control={
+                <Switch
+                  checked={settings.voiceCallsAllowed}
+                  onCheckedChange={(checked) => updateSettings({ voiceCallsAllowed: checked })}
+                  aria-label={tx("Voice calls with the coordinator")}
+                />
+              }
+            />
+          ) : null}
+          {canHostVoiceCall() ? <DictationSettings /> : null}
+          <SettingsRow
+            {...searchableSetting("what-you-can-do")}
+            description="A short checklist on Overview, ticked from what you have set up. It goes away once everything is done."
+            control={
+              <Switch
+                checked={!settings.whatYouCanDoDismissed}
+                onCheckedChange={(checked) => updateSettings({ whatYouCanDoDismissed: !checked })}
+                aria-label={tx("Show What you can do")}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["enableProviderUpdateChecks"]}
+            {...searchableSetting("provider-update-checks")}
+            description="Check installed provider CLIs for newer available versions."
+            resetAction={
+              settings.enableProviderUpdateChecks !==
+              DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
+                <SettingResetButton
+                  label={tx("provider update checks")}
+                  onClick={() =>
+                    updateSettings({
+                      enableProviderUpdateChecks:
+                        DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
                     })
                   }
                 />
@@ -3300,351 +3455,222 @@ export function GeneralSettingsPanel() {
             }
             control={
               <ScopedSwitch
-                settingKeys={["newWorktreesStartFromOrigin"]}
-                checked={settings.newWorktreesStartFromOrigin}
+                settingKeys={["enableProviderUpdateChecks"]}
+                checked={settings.enableProviderUpdateChecks}
                 onCheckedChange={(checked) =>
-                  updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
+                  updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
                 }
-                aria-label={tx("Start new worktrees from origin by default")}
+                aria-label={tx("Check provider versions")}
               />
             }
           />
-        )}
-        <SettingsRow
-          serverScoped
-          settingKeys={["addProjectBaseDirectory"]}
-          {...searchableSetting("add-project-starts-in")}
-          description={tx('Leave empty to use "~/" when the Add Project browser opens.')}
-          resetAction={
-            settings.addProjectBaseDirectory !==
-            DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
-              <SettingResetButton
-                label={tx("add project base directory")}
-                onClick={() =>
-                  updateSettings({
-                    addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <DraftInput
-              size="sm"
-              className="w-full sm:w-72"
-              value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
-              onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
-              placeholder={mixedAddProjectBaseDirectory ? tx("Mixed") : "~/"}
-              spellCheck={false}
-              aria-label={tx("Add project base directory")}
-            />
-          }
-        />
-      </SettingsSection>
 
-      <SettingsSection id="confirmations" title="Confirmations">
-        <SettingsRow
-          {...searchableSetting("unpin-confirmation")}
-          description="Ask before unpinning a thread from the pinned section."
-          resetAction={
-            settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin ? (
-              <SettingResetButton
-                label={tx("unpin confirmation")}
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadUnpin}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadUnpin: Boolean(checked) })
-              }
-              aria-label={tx("Confirm thread unpinning")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("archive-confirmation")}
-          description="Require a second click on the inline archive action before a thread is archived."
-          resetAction={
-            settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
-              <SettingResetButton
-                label={tx("archive confirmation")}
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadArchive}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadArchive: Boolean(checked) })
-              }
-              aria-label={tx("Confirm thread archiving")}
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("delete-confirmation")}
-          description="Ask before deleting a thread and its chat history."
-          resetAction={
-            settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
-              <SettingResetButton
-                label={tx("delete confirmation")}
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadDelete}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadDelete: Boolean(checked) })
-              }
-              aria-label={tx("Confirm thread deletion")}
-            />
-          }
-        />
-
-        {isElectron ? (
           <SettingsRow
-            {...searchableSetting("quit-confirmation")}
-            description="Hold mode also quits on two quick presses."
+            {...searchableSetting("continue-threads-after-server-update")}
+            serverScoped
+            settingKeys={["continueThreadsAfterServerUpdate"]}
+            description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments."
+            status={
+              !supportsRestartContinuation
+                ? "All selected connected environments must support restart continuation."
+                : undefined
+            }
             resetAction={
-              settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
+              supportsRestartContinuation &&
+              settings.continueThreadsAfterServerUpdate !==
+                DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
                 <SettingResetButton
-                  label={tx("quit shortcut behavior")}
+                  label={tx("continue threads after restarts")}
                   onClick={() =>
-                    updateSettings({ confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit })
+                    updateSettings({
+                      continueThreadsAfterServerUpdate:
+                        DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+                    })
                   }
                 />
               ) : null
             }
             control={
-              <Select
-                value={settings.confirmQuit}
-                onValueChange={(value) => {
-                  if (value === "direct" || value === "hold" || value === "double-click") {
-                    updateSettings({ confirmQuit: value });
-                  }
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full sm:w-40"
-                  aria-label={tx("Quit shortcut behavior")}
-                >
-                  <SelectValue>{QUIT_CONFIRMATION_MODE_LABELS[settings.confirmQuit]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+              <ScopedSwitch
+                settingKeys={["continueThreadsAfterServerUpdate"]}
+                checked={settings.continueThreadsAfterServerUpdate}
+                disabled={!supportsRestartContinuation}
+                onCheckedChange={(checked) =>
+                  updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
+                }
+                aria-label={tx("Continue threads after restarts")}
+              />
             }
           />
-        ) : null}
-      </SettingsSection>
 
-      <SettingsSection id="text-generation" title="Text generation">
-        <SettingsRow
-          serverScoped
-          settingKeys={["textGenerationModelSelection"]}
-          {...searchableSetting("text-generation-model")}
-          description="Used for thread titles and other generated text on connected devices with this provider. Source control can override it."
-          resetAction={
-            hasServerTargets && isTextGenerationModelDirty ? (
-              <SettingResetButton
-                label={tx("text generation model")}
-                onClick={() =>
-                  updateSettings({
-                    textGenerationModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            !hasServerTargets ? (
-              <span className="text-sm text-muted-foreground">
-                {tx("Connect an environment to choose its text generation model.")}
+          <SettingsRow
+            serverScoped
+            settingKeys={["backgroundActivity"]}
+            id={searchableSetting("background-activity").id}
+            title={
+              <span className="inline-flex items-center gap-1.5">
+                {searchableSetting("background-activity").title}
+                <PolicyTooltip>
+                  {tx(
+                    "This shared policy gates background work such as Git refreshes and provider health probes after their individual intervals elapse.",
+                  )}
+                </PolicyTooltip>
               </span>
-            ) : !hasTextGenerationProvider ? (
-              <span className="text-sm text-muted-foreground">
-                {tx("No text generation providers available.")}
-              </span>
-            ) : (
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                <ProviderModelPicker
-                  activeInstanceId={textGenInstanceId}
-                  model={textGenModel}
-                  lockedProvider={null}
-                  instanceEntries={textGenerationModelInstanceEntries}
-                  modelOptionsByInstance={textGenerationModelOptionsByInstance}
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
-                  getModelDisabledReason={textGenerationModelDisabledReason}
-                  {...(environmentId
-                    ? {
-                        onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
-                          void navigate({
-                            to: "/settings/providers",
-                            search: { environmentId, instanceId },
-                          });
-                        },
-                      }
-                    : {})}
-                  onInstanceModelChange={(instanceId, model) => {
-                    const reason = textGenerationModelDisabledReason(instanceId, model);
-                    if (reason) {
-                      toastManager.add({
-                        type: "error",
-                        title: "Text generation model not saved",
-                        description: reason,
-                      });
+            }
+            description={backgroundActivityDescription}
+            resetAction={
+              canResetBackgroundActivity ? (
+                <SettingResetButton
+                  label={tx("background activity")}
+                  onClick={() => updateSettings(resetBackgroundActivitySettings())}
+                />
+              ) : null
+            }
+            control={
+              <>
+                <Select
+                  value={mixedBackgroundActivity ? null : backgroundActivityProfileOption}
+                  onValueChange={(value) => {
+                    if (value === "advanced") {
+                      if (isEnvironmentScope) setBackgroundActivityDialogOpen(true);
                       return;
                     }
-                    updateSettings({
-                      textGenerationModelSelection: resolveAppModelSelectionState(
-                        {
-                          ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
-                        },
-                        textGenerationProviders,
-                      ),
-                    });
+                    if (
+                      value === "balanced" ||
+                      value === "performance" ||
+                      value === "battery-saver"
+                    ) {
+                      updateSettings(backgroundActivityProfileSettings(value));
+                    }
                   }}
-                />
-                {textGenInstanceEntry ? (
-                  <TraitsPicker
-                    provider={textGenProvider}
-                    models={
-                      // Use the exact instance's models (rather than the
-                      // first-kind-match) so a custom text-gen instance like
-                      // `codex_personal` gets its own model list, not the
-                      // default Codex one.
-                      textGenInstanceEntry?.models ?? []
-                    }
-                    model={textGenModel}
-                    prompt=""
-                    onPromptChange={() => {}}
-                    modelOptions={textGenModelOptions}
-                    allowPromptInjectedEffort={false}
-                    planModeEnabled={
-                      settings.planModeEnabled || selectsPlanAgent(textGenModelOptions)
-                    }
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onModelOptionsChange={(nextOptions) => {
-                      updateSettings({
-                        textGenerationModelSelection: resolveAppModelSelectionState(
-                          {
-                            ...settings,
-                            textGenerationModelSelection: createModelSelection(
-                              textGenInstanceId,
-                              textGenModel,
-                              nextOptions,
-                            ),
-                          },
-                          textGenerationProviders,
-                        ),
-                      });
-                    }}
-                  />
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-40"
+                    aria-label={tx("Background activity profile")}
+                  >
+                    <SelectValue>
+                      {(value: BackgroundActivityProfileOption | null) =>
+                        value === null ? "Mixed" : BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[value]
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value="balanced">
+                      {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
+                    </SelectItem>
+                    <SelectItem hideIndicator value="performance">
+                      {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
+                    </SelectItem>
+                    <SelectItem hideIndicator value="battery-saver">
+                      {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
+                    </SelectItem>
+                    <SelectItem hideIndicator value="advanced" disabled={!isEnvironmentScope}>
+                      {isEnvironmentScope
+                        ? BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced
+                        : `${BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced} (one environment)`}
+                    </SelectItem>
+                  </SelectPopup>
+                </Select>
+                {backgroundActivityProfileOption === "advanced" && isEnvironmentScope ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="icon-sm"
+                          variant="outline"
+                          aria-label={tx("Configure advanced background activity")}
+                          onClick={() => setBackgroundActivityDialogOpen(true)}
+                        >
+                          <SettingsIcon className="size-4" />
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup side="top">{tx("Configure background activity")}</TooltipPopup>
+                  </Tooltip>
                 ) : null}
-              </div>
-            )
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection id="about" title="About">
-        {isElectron || HOSTED_APP_CHANNEL ? (
-          <>
-            <AboutVersionSection />
-            {isElectron ? <UpdatePreferencesSection /> : null}
-          </>
-        ) : (
-          <SettingsRow
-            id={searchableSetting("about-version").id}
-            title={<AboutVersionTitle />}
-            description="Current version of the application."
+                <BackgroundActivityAdvancedDialog
+                  open={backgroundActivityDialogOpen && isEnvironmentScope}
+                  onOpenChange={setBackgroundActivityDialogOpen}
+                />
+              </>
+            }
           />
-        )}
-        <SettingsRow
-          {...searchableSetting("star-on-github")}
-          description="SpecWithCode is open source under the MIT License. A star helps other developers find it."
-          control={<StarOnGitHubButton />}
-        />
-        <SettingsRow
-          {...searchableSetting("send-feedback")}
-          description="Report a bug, suggest an idea or ask a question. Opens a GitHub issue form with the app version, OS and machine count filled in; nothing else is sent."
-          control={<SendFeedbackButton />}
-        />
-        <SettingsRow
-          {...searchableSetting("usage-data")}
-          description="Off by default. The server sends product usage events only when STUDIO_TELEMETRY_ENABLED is set to true in its environment."
-        />
-      </SettingsSection>
-      <SettingsSection title="Diagnostics">
-        <SettingsRow
-          {...searchableSetting("diagnostics")}
-          description={
-            isEnvironmentScope
-              ? tx("Inspect processes, resource use, and logs on this environment.")
-              : tx("Inspect processes, resource use, and logs on one environment at a time.")
-          }
-          control={
-            <Button
-              render={
-                <Link to="/settings/diagnostics" search={{ machine: environmentId ?? undefined }} />
-              }
-              size="sm"
-              variant="outline"
-            >
-              {tx("View diagnostics")}
-            </Button>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by SpecWithCode."
-          control={
-            <Button
-              render={<Link to="/settings/open-source-licenses" />}
-              size="sm"
-              variant="outline"
-            >
-              {tx("View licenses")}
-            </Button>
-          }
-        />
-      </SettingsSection>
+        </SettingsCollapsibleSection>
 
-      <SettingsSection id="personal-assistant" title="Assistant">
-        <AideSetting />
-      </SettingsSection>
+        <SettingsSection id="about" title="About">
+          {isElectron || HOSTED_APP_CHANNEL ? (
+            <>
+              <AboutVersionSection />
+              {isElectron ? <UpdatePreferencesSection /> : null}
+            </>
+          ) : (
+            <SettingsRow
+              id={searchableSetting("about-version").id}
+              title={<AboutVersionTitle />}
+              description="Current version of the application."
+            />
+          )}
+          <SettingsRow
+            {...searchableSetting("star-on-github")}
+            description="SpecWithCode is open source under the MIT License. A star helps other developers find it."
+            control={<StarOnGitHubButton />}
+          />
+          <SettingsRow
+            {...searchableSetting("send-feedback")}
+            description="Report a bug, suggest an idea or ask a question. Opens a GitHub issue form with the app version, OS and machine count filled in; nothing else is sent."
+            control={<SendFeedbackButton />}
+          />
+          <SettingsRow
+            {...searchableSetting("usage-data")}
+            description="Off by default. The server sends product usage events only when STUDIO_TELEMETRY_ENABLED is set to true in its environment."
+          />
+        </SettingsSection>
+        <SettingsCollapsibleSection id="diagnostics-section" title="Diagnostics" count={2}>
+          <SettingsRow
+            {...searchableSetting("diagnostics")}
+            description={
+              isEnvironmentScope
+                ? tx("Inspect processes, resource use, and logs on this environment.")
+                : tx("Inspect processes, resource use, and logs on one environment at a time.")
+            }
+            control={
+              <Button
+                render={
+                  <Link
+                    to="/settings/diagnostics"
+                    search={{ machine: environmentId ?? undefined }}
+                  />
+                }
+                size="sm"
+                variant="outline"
+              >
+                {tx("View diagnostics")}
+              </Button>
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("open-source-licenses")}
+            description="Notices for dependencies, assets, and optional tools used by SpecWithCode."
+            control={
+              <Button
+                render={<Link to="/settings/open-source-licenses" />}
+                size="sm"
+                variant="outline"
+              >
+                {tx("View licenses")}
+              </Button>
+            }
+          />
+        </SettingsCollapsibleSection>
 
-      <LegacyFeaturesSection />
-    </SettingsPageContainer>
+        <SettingsSection id="personal-assistant" title="Assistant">
+          <AideSetting />
+        </SettingsSection>
+
+        <LegacyFeaturesSection />
+      </SettingsPageContainer>
+    </SettingsCompactDescriptions>
   );
 }
 
