@@ -765,13 +765,6 @@ export const layer = HttpApiBuilder.group(
               machine: added.id,
               change: added.change,
             });
-            // For the notice this machine's app shows. Only a notice: failing
-            // to write it leaves the join as it is.
-            yield* Effect.promise(() =>
-              recordAccountJoin(config.baseDir, { id: added.id, label: added.label }).catch(
-                () => undefined,
-              ),
-            );
             return { id: added.id, workers };
           }),
         )
@@ -814,13 +807,15 @@ export const layer = HttpApiBuilder.group(
               environmentId: added.environmentId,
               change: added.change,
             });
-            // For the notice this machine's app shows. Only a notice: failing
-            // to write it leaves the join as it is.
-            yield* Effect.promise(() =>
-              recordAccountJoin(config.baseDir, { id: added.id, label: added.label }).catch(
-                () => undefined,
-              ),
-            );
+            // For the notice this machine's app shows, and only for a machine
+            // that was not listed before. Only a notice: failing to write it
+            // leaves the join as it is.
+            if (added.change === "added")
+              yield* Effect.promise(() =>
+                recordAccountJoin(config.baseDir, { id: added.id, label: added.label }).catch(
+                  () => undefined,
+                ),
+              );
             return { id: added.id, workers };
           }),
         )

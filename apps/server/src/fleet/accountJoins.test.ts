@@ -48,7 +48,8 @@ describe("account joins", () => {
       ["m5", "MacBook Pro (2)"],
     ]);
     const stat = await NodeFSP.stat(join(dir, FLEET_ACCOUNT_JOINS_FILE));
-    expect(stat.mode & 0o777).toBe(0o600);
+    // Windows reports no owner-only mode.
+    if (process.platform !== "win32") expect(stat.mode & 0o777).toBe(0o600);
     expect((await NodeFSP.readdir(dir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
