@@ -262,19 +262,16 @@ def stop_server(stage, version, wait=30):
 
     server.pid names the leader of the suite's process group. The leader goes at once on TERM,
     while the test runner keeps the group until its shards have closed (15s at most), so the
-    wait is for the whole group."""
+    wait is for the whole group. A leader that is already gone can leave its runner behind, so
+    the group is looked at as well. A pid that something else took since is left alone."""
     try:
         pid = int((stage / 'server.pid').read_text().split()[0])
     except (OSError, ValueError, IndexError):
         return True
-    command = subprocess.run(['ps', '-o', 'command=', '-p', str(pid)], capture_output=True,
-                             text=True, check=False).stdout
-    if f'--internal-server {version}' not in command:
-        return True
 
     def group_alive():
-        # release.sh's `kill -0 -- -pid`. Nothing here reads a process list: one that comes
-        # back empty or in another layout would say the group is gone while it still runs.
+        # release.sh's `kill -0 -- -pid`: asked of the kernel, so no process list that came
+        # back empty or in another layout can say the group is gone while it still runs.
         try:
             os.killpg(pid, 0)
         except ProcessLookupError:
@@ -283,6 +280,17 @@ def stop_server(stage, version, wait=30):
             return True
         return True
 
+    def ps(*args):
+        return subprocess.run(['ps', *args], capture_output=True, text=True, check=False).stdout
+
+    suite = re.compile(r'--internal-server ' + re.escape(version) + r'(\s|$)')
+    ours = bool(suite.search(ps('-o', 'command=', '-p', str(pid))))
+    if not ours and group_alive():
+        members = (row.split(None, 1) for row in ps('-axo', 'pgid=', '-o', 'command=').splitlines())
+        ours = any(len(row) == 2 and row[0] == str(pid)
+                   and (suite.search(row[1]) or 'test-sharded.mjs' in row[1]) for row in members)
+    if not ours:
+        return True
     try:
         os.killpg(pid, signal.SIGTERM)
     except OSError:

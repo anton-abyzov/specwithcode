@@ -350,7 +350,13 @@ class Attempt(unittest.TestCase):
         # Reaped as it exits, as launchd reaps the real suite: its group is then gone for good.
         threading.Thread(target=proc.wait, daemon=True).start()
         self.addCleanup(proc.wait)
-        self.addCleanup(lambda: proc.poll() is None and os.killpg(proc.pid, 9))
+
+        def kill_group():
+            # Whatever the leader did: a runner of its group may have outlived it.
+            with contextlib.suppress(OSError):
+                os.killpg(proc.pid, 9)
+
+        self.addCleanup(kill_group)
         (self.stage / 'server.pid').write_text(f'{proc.pid}\n')
         for _ in range(300):
             if ready is None or ready.exists():
@@ -388,8 +394,31 @@ class Attempt(unittest.TestCase):
             f"exec -a 'release.sh --internal-server {VERSION}' sleep 60"), ready=ready)
         self.assertFalse(release_plan.stop_server(self.stage, VERSION, wait=1))
 
+    def runner_without_leader(self, trap):
+        """The suite's runner alone in the group: its leader died before the attempt is looked at."""
+        ready = pathlib.Path(self.tmp.name) / 'runner-ready'
+        proc = self.server('bash', '-c', (
+            f"({trap} : > '{ready}'; exec -a 'node scripts/release/test-sharded.mjs --shards 8' sleep 30) & "
+            f"exec -a 'release.sh --internal-server {VERSION}' sleep 60"), ready=ready)
+        os.kill(proc.pid, 9)
+        proc.wait(timeout=5)
+
+    def test_a_runner_left_by_a_dead_leader_is_stopped_too(self):
+        self.runner_without_leader('')
+        self.assertTrue(release_plan.stop_server(self.stage, VERSION, wait=5))
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(int((self.stage / 'server.pid').read_text()), 0)
+
+    def test_a_runner_left_by_a_dead_leader_that_will_not_stop_keeps_the_attempt(self):
+        self.runner_without_leader("trap '' TERM;")
+        self.assertFalse(release_plan.stop_server(self.stage, VERSION, wait=1))
+
     def test_a_pid_that_is_not_this_versions_server_suite_is_left_alone(self):
-        proc = self.server('sleep', '60')
+        for command in (('sleep', '60'),
+                        ('bash', '-c', f'exec -a "release.sh --internal-server {VERSION}0" sleep 60')):
+            proc = self.server(*command)
+            self.assertTrue(release_plan.stop_server(self.stage, VERSION, wait=1))
+            self.assertIsNone(proc.poll())
         self.commit(self.origin, 'main moved')
         self.assertEqual(self.attempt()[0], 'fresh')
         self.assertIsNone(proc.poll())
