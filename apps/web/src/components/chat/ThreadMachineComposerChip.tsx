@@ -5,6 +5,7 @@ import { useHandoffDestinations } from "../handoff/useHandoffDestinations";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { machineShortCharsProps, useMachineNameFit } from "../machineNameFit";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ComposerControl,
@@ -18,10 +19,30 @@ import type { ThreadMachine } from "./threadMachine";
  * a draft's "Run on" picker sits there before the first message. It only
  * names the machine; moving a sent chat uses Move thread in its thread menu.
  * It wears the machine's color. Its name is the first thing in the toolbar to
- * give way: it shortens to an ellipsis and then to the icon alone before any
- * other control folds into the overflow menu, and the color, the icon and the
- * tooltip go on naming the machine.
+ * give way: it shortens to an ellipsis, and once too little of the machine's
+ * name shows, the icon and words give way to its short label ("M4", "LM") in
+ * the same tint, before any other control folds into the overflow menu. It
+ * never shrinks to the icon alone; the tooltip and accessible name stay full.
  */
+const RUNS_ON = "Runs on ";
+
+/** Fits "Runs on <name>" to the room it has, counting only the machine's name. */
+function useThreadMachineFit(machine: ThreadMachine) {
+  const fit = useMachineNameFit<HTMLSpanElement>(`${RUNS_ON}${machine.label}`, RUNS_ON.length);
+  const short = machine.short ?? machine.label;
+  return {
+    ref: fit.ref,
+    rootProps: {
+      ...(fit.compact ? { "data-machine-compact": "" } : {}),
+      ...machineShortCharsProps(short),
+    },
+    shortLabel: (
+      <span aria-hidden data-machine-short="" data-thread-machine-short="">
+        {short}
+      </span>
+    ),
+  };
+}
 export function ThreadMachineComposerChip({
   machine,
   size,
@@ -33,6 +54,17 @@ export function ThreadMachineComposerChip({
 }) {
   if (threadRef && machine.canMove)
     return <ThreadMachineMenu machine={machine} size={size} threadRef={threadRef} />;
+  return <ThreadMachineLabel machine={machine} size={size} />;
+}
+
+function ThreadMachineLabel({
+  machine,
+  size,
+}: {
+  machine: ThreadMachine;
+  size: ComposerControlSize;
+}) {
+  const fit = useThreadMachineFit(machine);
   return (
     <>
       <Tooltip>
@@ -40,12 +72,14 @@ export function ThreadMachineComposerChip({
           render={
             <ComposerControl
               size={size}
-              render={<span tabIndex={0} />}
+              // A role that can carry the label: with no room the name is hidden and the label says it.
+              render={<span tabIndex={0} role="group" />}
               aria-label={`${machine.tip}${machine.warning ? ` ${machine.warning}.` : ""}`}
               data-thread-machine-chip=""
               {...(machine.color ? { "data-machine-color": machine.color } : {})}
+              {...fit.rootProps}
               className={cn(
-                "max-w-48 min-w-7 shrink cursor-default overflow-hidden",
+                "max-w-48 shrink cursor-default overflow-hidden",
                 machine.color ? "machine-chip font-semibold" : "hover:bg-transparent",
                 !machine.warning && "@max-[520px]/composer-surface:max-w-26",
               )}
@@ -54,15 +88,24 @@ export function ThreadMachineComposerChip({
         >
           <EnvironmentMachineIcon
             aria-hidden
+            data-machine-full=""
             kind={machine.kind}
             className={cn(
               size === "xs" ? "size-3.5" : "size-4",
               machine.warning ? "text-warning-foreground" : machine.color && "text-current",
             )}
           />
-          <span className="min-w-0 truncate" data-thread-machine-name="">
-            Runs on {machine.label}
+          <span
+            ref={fit.ref}
+            className="min-w-0 truncate"
+            data-thread-machine-name=""
+            data-machine-full=""
+            data-machine-name-slot=""
+          >
+            {RUNS_ON}
+            {machine.label}
           </span>
+          {fit.shortLabel}
           {machine.warning ? (
             <span className="shrink-0 text-xs text-warning-foreground">{machine.warning}</span>
           ) : null}
@@ -86,6 +129,7 @@ function ThreadMachineMenu({
   threadRef: ScopedThreadRef;
 }) {
   const destinations = useHandoffDestinations(threadRef.environmentId, false);
+  const fit = useThreadMachineFit(machine);
   return (
     <>
       <Menu>
@@ -93,13 +137,27 @@ function ThreadMachineMenu({
           render={<ComposerControl size={size} />}
           data-thread-machine-chip=""
           data-machine-color={machine.color}
-          className="machine-chip min-w-0 max-w-48"
+          {...fit.rootProps}
+          className="machine-chip max-w-48 overflow-hidden"
           aria-label={`Runs on ${machine.label}. Choose a machine`}
         >
-          <EnvironmentMachineIcon aria-hidden kind={machine.kind} className="size-4 shrink-0" />
-          <span className="min-w-0 truncate" data-thread-machine-name="">
-            Runs on {machine.label}
+          <EnvironmentMachineIcon
+            aria-hidden
+            data-machine-full=""
+            kind={machine.kind}
+            className="size-4 shrink-0"
+          />
+          <span
+            ref={fit.ref}
+            className="min-w-0 truncate"
+            data-thread-machine-name=""
+            data-machine-full=""
+            data-machine-name-slot=""
+          >
+            {RUNS_ON}
+            {machine.label}
           </span>
+          {fit.shortLabel}
           {machine.warning ? (
             <span className="text-xs text-warning-foreground">{machine.warning}</span>
           ) : null}

@@ -373,7 +373,19 @@ const codex = { instanceId: "codex", model: "gpt-5.5" } as unknown as ModelSelec
  * Minis receiving one thread from M4 over a real Git repository, with M4's
  * work grant kept in memory: what it records, revokes and launches.
  */
-const receiving = (options: { readonly runtimeMode?: RuntimeMode } = {}) =>
+const receiving = (
+  options: {
+    readonly runtimeMode?: RuntimeMode;
+    /** The project's Use worktrees switch; on unless a case turns it off. */
+    readonly usesWorktrees?: boolean;
+    /** More of the source's uncommitted work, made before the checkpoint is written. */
+    readonly beforeCheckpoint?: (root: string) => void;
+    /** Changes the project folder after the checkpoint is written. */
+    readonly afterCheckpoint?: (root: string) => void;
+    /** The project folder is the parent of the repository, as in a folder of several clones. */
+    readonly repositoryBelowProject?: boolean;
+  } = {},
+) =>
   Effect.gen(function* () {
     const base = NodeFS.realpathSync(
       NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-handoff-incoming-")),
@@ -386,9 +398,11 @@ const receiving = (options: { readonly runtimeMode?: RuntimeMode } = {}) =>
     git(root, "add", "-A");
     git(root, "commit", "-q", "-m", "base");
     NodeFS.writeFileSync(NodePath.join(root, "app.ts"), "export const a = 2;\n");
+    options.beforeCheckpoint?.(root);
     const written = yield* Effect.promise(() =>
       writeCheckpoint({ cwd: root, threadId: sourceThread }),
     );
+    options.afterCheckpoint?.(root);
     let document: Document = EMPTY_HANDOFF_DOCUMENT;
     const launches: Array<ThreadLaunchService.ThreadLaunchInput> = [];
     const origins = new Map<string, WorkOrigin>();
@@ -397,7 +411,7 @@ const receiving = (options: { readonly runtimeMode?: RuntimeMode } = {}) =>
     const project = {
       id: localProject,
       title: "App",
-      workspaceRoot: root,
+      workspaceRoot: options.repositoryBelowProject === true ? base : root,
       deletedAt: null,
       workspaceSettings: {
         logicalProject: { members: [{ environmentId: m4, projectId: sourceProject }] },
@@ -425,7 +439,16 @@ const receiving = (options: { readonly runtimeMode?: RuntimeMode } = {}) =>
           }),
       } as unknown as HandoffMode["Service"]),
       Layer.succeed(ServerSettings.ServerSettingsService, {
-        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        getSettings: Effect.succeed(
+          options.usesWorktrees === false
+            ? DEFAULT_SERVER_SETTINGS
+            : {
+                ...DEFAULT_SERVER_SETTINGS,
+                projectSettingsOverrides: {
+                  [localProject]: { defaultThreadEnvMode: "worktree" as const },
+                },
+              },
+        ),
       } as never),
       Layer.succeed(ServerConfig.ServerConfig, {
         worktreesDir: NodePath.join(base, "worktrees"),
@@ -473,6 +496,7 @@ const receiving = (options: { readonly runtimeMode?: RuntimeMode } = {}) =>
         caller,
         {
           ...meta(1),
+          repositoryPath: options.repositoryBelowProject === true ? "repo" : "",
           modelSelection,
           runtimeMode: options.runtimeMode ?? "full-access",
           checkpoint: {
@@ -511,6 +535,8 @@ const receiving = (options: { readonly runtimeMode?: RuntimeMode } = {}) =>
       origins,
       grantState,
       launchState,
+      root,
+      baseCommit: written.baseCommit,
       worktreesDir: NodePath.join(base, "worktrees"),
       document: () => document,
     };
@@ -667,6 +693,236 @@ describe("takeover under the source's work grant", () => {
       expect(launches).toHaveLength(0);
       expect(origins.size).toBe(0);
       expect(Object.keys(document().threads)).toEqual([]);
+    }),
+  );
+});
+
+/** The folder as the destination has it: the base commit, nothing uncommitted. */
+const discard = (root: string) => {
+  git(root, "checkout", "-q", "--", ".");
+  git(root, "clean", "-fdq");
+};
+const read = (root: string, file: string) => NodeFS.readFileSync(NodePath.join(root, file), "utf8");
+
+describe("takeover and the project's Use worktrees switch", () => {
+  it.effect("off: the work lands in a clean project folder, on the branch checked out there", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root, baseCommit, worktreesDir } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: discard,
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy).toEqual({ type: "root" });
+      expect(NodeFS.existsSync(worktreesDir)).toBe(false);
+      expect(read(root, "app.ts")).toBe("export const a = 2;\n");
+      expect(git(root, "rev-parse", "HEAD")).toBe(baseCommit);
+      expect(git(root, "status", "--porcelain")).toBe("M app.ts");
+      expect(git(root, "worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(1);
+      expect(response.notice).toBe(
+        "Use worktrees is off for this project, so the work is in the project folder as uncommitted changes.",
+      );
+    }),
+  );
+
+  it.effect("off: a folder that already holds the work is used as it is", () =>
+    Effect.gen(function* () {
+      // The source worked in this folder: a move between sign-ins on one machine.
+      const { replicate, takeOver, launches, root, worktreesDir } = yield* receiving({
+        usesWorktrees: false,
+        beforeCheckpoint: (folder) =>
+          NodeFS.writeFileSync(NodePath.join(folder, "notes.txt"), "half done\n"),
+      });
+      yield* replicate(self, claude);
+      const response = yield* takeOver(self);
+      expect(launches[0]?.workspaceStrategy).toEqual({ type: "root" });
+      expect(NodeFS.existsSync(worktreesDir)).toBe(false);
+      expect(read(root, "app.ts")).toBe("export const a = 2;\n");
+      expect(read(root, "notes.txt")).toBe("half done\n");
+      expect(git(root, "status", "--porcelain")).toBe("M app.ts\n?? notes.txt");
+      expect(response.notice).toBe(
+        "Use worktrees is off for this project, so the work is in the project folder as uncommitted changes.",
+      );
+    }),
+  );
+
+  it.effect("off: names the branch when the folder is on another one", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: (folder) => {
+          discard(folder);
+          git(folder, "checkout", "-q", "-b", "main");
+        },
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy).toEqual({ type: "root" });
+      expect(git(root, "symbolic-ref", "--short", "HEAD")).toBe("main");
+      expect(response.notice).toBe(
+        "Use worktrees is off for this project, so the work is in the project folder as uncommitted changes, on main (it was on feat/x).",
+      );
+    }),
+  );
+
+  it.effect("off: a folder with uncommitted changes keeps them, and the work gets a worktree", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root, worktreesDir } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: (folder) => {
+          discard(folder);
+          NodeFS.writeFileSync(NodePath.join(folder, "app.ts"), "export const mine = true;\n");
+        },
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      const strategy = launches[0]?.workspaceStrategy;
+      expect(strategy?.type).toBe("existing_worktree");
+      const worktreePath = strategy?.type === "existing_worktree" ? strategy.worktreePath : "";
+      expect(worktreePath.startsWith(worktreesDir)).toBe(true);
+      expect(read(worktreePath, "app.ts")).toBe("export const a = 2;\n");
+      expect(read(root, "app.ts")).toBe("export const mine = true;\n");
+      expect(response.notice).toBe(
+        `Use worktrees is off for this project, but the project folder has uncommitted changes, so the work is in its own worktree at ${worktreePath}.`,
+      );
+    }),
+  );
+
+  it.effect("off: a folder at another commit is left alone", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: (folder) => {
+          discard(folder);
+          NodeFS.writeFileSync(NodePath.join(folder, "later.ts"), "export const later = 1;\n");
+          git(folder, "add", "-A");
+          git(folder, "commit", "-q", "-m", "later");
+        },
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy.type).toBe("existing_worktree");
+      expect(read(root, "app.ts")).toBe("export const a = 1;\n");
+      expect(git(root, "status", "--porcelain")).toBe("");
+      expect(response.notice).toContain(
+        "the project folder is at a different commit than the work started from",
+      );
+    }),
+  );
+
+  it.effect("off: an ignored file in the way is never overwritten", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        usesWorktrees: false,
+        beforeCheckpoint: (folder) =>
+          NodeFS.writeFileSync(NodePath.join(folder, "notes.txt"), "from the source\n"),
+        afterCheckpoint: (folder) => {
+          discard(folder);
+          // A local-only file where the work adds one: Git reports the folder clean.
+          NodeFS.appendFileSync(NodePath.join(folder, ".git", "info", "exclude"), "notes.txt\n");
+          NodeFS.writeFileSync(NodePath.join(folder, "notes.txt"), "mine\n");
+        },
+      });
+      yield* replicate(peer(), claude);
+      expect(git(root, "status", "--porcelain")).toBe("");
+      const response = yield* takeOver(peer());
+      const strategy = launches[0]?.workspaceStrategy;
+      expect(strategy?.type).toBe("existing_worktree");
+      const worktreePath = strategy?.type === "existing_worktree" ? strategy.worktreePath : "";
+      expect(read(worktreePath, "notes.txt")).toBe("from the source\n");
+      expect(read(root, "notes.txt")).toBe("mine\n");
+      expect(read(root, "app.ts")).toBe("export const a = 1;\n");
+      expect(response.notice).toContain("the project folder has files in the way");
+    }),
+  );
+
+  it.effect("off: a folder in the middle of a merge is left alone", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: (folder) => {
+          discard(folder);
+          NodeFS.writeFileSync(
+            NodePath.join(folder, ".git", "MERGE_HEAD"),
+            `${git(folder, "rev-parse", "HEAD")}\n`,
+          );
+        },
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy.type).toBe("existing_worktree");
+      expect(read(root, "app.ts")).toBe("export const a = 1;\n");
+      expect(response.notice).toContain("the project folder is in the middle of a merge or rebase");
+    }),
+  );
+
+  it.effect("off: work for a repository below the project folder keeps its worktree", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        usesWorktrees: false,
+        repositoryBelowProject: true,
+        afterCheckpoint: discard,
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      // A thread in the project folder would not run git in that repository.
+      expect(launches[0]?.workspaceStrategy.type).toBe("existing_worktree");
+      expect(read(root, "app.ts")).toBe("export const a = 1;\n");
+      expect(git(root, "status", "--porcelain")).toBe("");
+      expect(response.notice).toContain(
+        "the project folder is not the repository this work belongs to",
+      );
+    }),
+  );
+
+  it.effect("off: a retry after the work was thrown away puts it back, not a false success", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, launchState, root } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: discard,
+      });
+      yield* replicate(peer(), claude);
+      launchState.fail = true;
+      yield* takeOver(peer()).pipe(Effect.flip);
+      discard(root);
+      launchState.fail = false;
+      yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy).toEqual({ type: "root" });
+      expect(read(root, "app.ts")).toBe("export const a = 2;\n");
+    }),
+  );
+
+  it.effect("off: a retry after a failed start finds the work already in the folder", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, launchState, root, worktreesDir } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: discard,
+      });
+      yield* replicate(peer(), claude);
+      launchState.fail = true;
+      const refused = yield* takeOver(peer()).pipe(Effect.flip);
+      expect(refused).toMatchObject({ status: 500, code: "failed" });
+      expect(git(root, "status", "--porcelain")).toBe("M app.ts");
+      launchState.fail = false;
+      const response = yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy).toEqual({ type: "root" });
+      expect(NodeFS.existsSync(worktreesDir)).toBe(false);
+      expect(read(root, "app.ts")).toBe("export const a = 2;\n");
+      expect(response.notice).toContain("so the work is in the project folder");
+    }),
+  );
+
+  it.effect("on: a clean project folder is not touched", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        afterCheckpoint: discard,
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy.type).toBe("existing_worktree");
+      expect(read(root, "app.ts")).toBe("export const a = 1;\n");
+      expect(git(root, "status", "--porcelain")).toBe("");
+      expect(response.notice).toBeNull();
     }),
   );
 });

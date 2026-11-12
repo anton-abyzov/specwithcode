@@ -188,6 +188,10 @@
       "types": "./src/machineNicknames.ts",
       "import": "./src/machineNicknames.ts"
     },
+    "./machineShortLabel": {
+      "types": "./src/machineShortLabel.ts",
+      "import": "./src/machineShortLabel.ts"
+    },
     "./backgroundActivitySettings": {
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"

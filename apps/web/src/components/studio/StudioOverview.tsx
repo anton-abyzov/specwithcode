@@ -1,7 +1,13 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
-import { aggregateProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
+import {
+  aggregateProjectAttention,
+  attentionOwnerMachine,
+  remoteWorkerLaunchers,
+} from "@specweave-studio/client-runtime/state/projectAttention";
 import { projectAttentionRoots, useAttentionMembers } from "../../studio/useProjectAttention";
+import { usePublishRemoteWorkerLaunchers } from "../../studio/remoteWorkerLaunchers";
+import { useAttentionRaise } from "../../studio/attentionRaise";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { useAideEnabled } from "../../hooks/useSettings";
@@ -54,6 +60,7 @@ import {
   groupAttention,
   resolveNativeModel,
   type DayGroup,
+  splitRaisedAttention,
   type SessionView,
 } from "../../studio/overviewModel";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -126,6 +133,8 @@ export function StudioOverview() {
     [catalogProjects, aideEnabled],
   );
   const attentionMembers = useAttentionMembers(projects);
+  // Alerts read the remote worker launchers from here instead of polling their own.
+  usePublishRemoteWorkerLaunchers("overview", attentionMembers);
   const currentIds = useMemo(
     () =>
       new Set(
@@ -209,7 +218,13 @@ export function StudioOverview() {
     () => deriveSessions(shells, projects, currentIds, Date.parse(`${nowMinute}:00Z`)),
     [shells, projects, currentIds, nowMinute],
   );
-  const attention = sessions.filter((s) => s.attention !== null);
+  // Counted here only when this app raises them: its own machine owns them, or
+  // it is the device the serving machine elected. The rest stay one quiet line.
+  const raisesAttention = useAttentionRaise();
+  const launchers = useMemo(() => remoteWorkerLaunchers(attentionMembers), [attentionMembers]);
+  const raisedHere = (s: SessionView) =>
+    raisesAttention(s.thread, attentionOwnerMachine(s.thread, launchers));
+  const attention = splitRaisedAttention(sessions, raisedHere, null).here;
   // Counted as the Working list shows them: a running chat that needs you is listed there.
   const working = sessions.filter((s) => s.working && s.attention === null).length;
   const connected = connectedIds.size;
@@ -325,7 +340,11 @@ export function StudioOverview() {
     (projectScope === null ||
       groupByMemberKey.get(`${s.thread.environmentId}:${s.thread.projectId}`) === projectScope);
   const scoped = sessions.filter(inScope);
-  const scopedAttention = scoped.filter((s) => s.attention !== null);
+  const { here: scopedAttention, elsewhere: attentionElsewhere } = splitRaisedAttention(
+    scoped,
+    raisedHere,
+    machineScope,
+  );
   const attentionGroups = groupAttention(scopedAttention);
   const workingSessions = scoped.filter((s) => s.working && s.attention === null);
   const query = chatQuery.trim().toLowerCase();
@@ -703,6 +722,20 @@ export function StudioOverview() {
                     ) : undefined
                   }
                 />
+                {bootstrapped &&
+                  attentionElsewhere.map(({ environmentId, count }) => (
+                    <button
+                      key={environmentId}
+                      type="button"
+                      className="studio-more"
+                      onClick={() => setMachineScope(environmentId)}
+                    >
+                      {tx("{count} more on {machine}, in use there", {
+                        count,
+                        machine: hostNames.get(environmentId as never) ?? tx("this machine"),
+                      })}
+                    </button>
+                  ))}
                 {!bootstrapped ? (
                   <EmptyState
                     title={tx("Reading your chats…")}

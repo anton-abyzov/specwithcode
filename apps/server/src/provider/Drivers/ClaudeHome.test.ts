@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
 import {
+  claudeNotSignedInMessage,
   claudeSignedOutMessage,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
@@ -74,6 +75,24 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       expect(message).toContain(`CLAUDE_CONFIG_DIR set to "${configDir}"`);
       expect(message).not.toContain("CLAUDE_CONFIG_DIR=");
       expect(message).toContain("then start a new thread");
+    });
+
+    it("says which other sign-ins do not count, wherever Claude is signed out", () => {
+      const read = (platform: NodeJS.Platform) =>
+        claudeNotSignedInMessage({
+          executablePath: "/synthetic/claude",
+          configDir: "/synthetic/.claude",
+          customConfigDir: false,
+          platform,
+        });
+      for (const platform of ["darwin", "linux", "win32"] as const) {
+        expect(read(platform)).toContain(
+          "The Claude desktop app has its own sign-in, and it does not count here.",
+        );
+      }
+      expect(read("win32")).toContain("inside WSL");
+      expect(read("darwin")).not.toContain("WSL");
+      expect(read("linux")).toMatch(/refresh provider status\. The Claude desktop app/);
     });
 
     it.effect("separates capability probes by cwd", () =>

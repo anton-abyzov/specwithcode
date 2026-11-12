@@ -529,8 +529,6 @@ export const es: PhraseCatalog = {
     "Reanudar las paradas por límite de uso a la hora de reinicio indicada. Cada hilo puede cancelar su continuación programada.",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "Ejecutar la distribución de WSL seleccionada junto a Windows. Los proyectos siguen en su sistema de archivos actual.",
-  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
-    "Ejecuta esto una vez en Terminal en ese equipo. Abre claude.ai en el navegador: inicia sesión allí con la otra cuenta.",
   "Selected by SpecWithCode.": "Elegido por SpecWithCode.",
   "Set how fast panels open and close.":
     "Define la velocidad con que se abren y cierran los paneles.",
@@ -4467,6 +4465,9 @@ export const es: PhraseCatalog = {
     "Se usó la carpeta que contiene el archivo soltado.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "Este equipo guarda sus carpetas dentro de WSL. Escribe o pega la ruta.",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "Se muestra en el dispositivo que estás usando. Tus otros ordenadores muestran una insignia.",
+  "{count} more on {machine}, in use there": "{count} más en {machine}, en uso allí",
   "Agents found on {machine}": "Agentes encontrados en {machine}",
   "Looking for {agents}…": "Buscando {agents}…",
   "{found} of {count} agents found on {machine}.":
@@ -4485,4 +4486,36 @@ export const es: PhraseCatalog = {
   "{names} and {count} more": "{names} y {count} más",
   "Turn on {agent}": "Activar {agent}",
   "Add {agent}": "Añadir {agent}",
+  "Sign-in failed. Try again.": "No se pudo iniciar sesión. Inténtalo de nuevo.",
+  "That is not the whole code. Copy it from the page again: it has two parts joined by #.":
+    "Ese no es el código completo. Cópialo otra vez de la página: tiene dos partes unidas por #.",
+  "Could not copy. Select the text and copy it.":
+    "No se pudo copiar. Selecciona el texto y cópialo.",
+  "Signed in as {account}.": "Sesión iniciada como {account}.",
+  "Signed in.": "Sesión iniciada.",
+  "Plan: {plan}.": "Plan: {plan}.",
+  "Its limits now show under Usage > Limits.": "Sus límites ya aparecen en Uso > Límites.",
+  "Run the command below once in a terminal on {machine}. It opens Claude's page in the browser.":
+    "Ejecuta una vez el comando de abajo en una terminal de {machine}. Abre la página de Claude en el navegador.",
+  "A sign-in for this account is in progress in another window.":
+    "Hay un inicio de sesión de esta cuenta en curso en otra ventana.",
+  "Starting Claude Code's sign-in…": "Iniciando el inicio de sesión de Claude Code…",
+  "Sign in on the page that opened. If it shows a code, paste it here.":
+    "Inicia sesión en la página que se abrió. Si muestra un código, pégalo aquí.",
+  "Claude's sign-in page opens in your browser. No terminal needed.":
+    "La página de inicio de sesión de Claude se abre en tu navegador. No hace falta terminal.",
+  "Finish in your browser": "Termina en tu navegador",
+  "Could not open the page. Copy the link.": "No se pudo abrir la página. Copia el enlace.",
+  "Open the page again": "Abrir la página otra vez",
+  "Link copied": "Enlace copiado",
+  "Copy the link": "Copiar el enlace",
+  "Sign in with Claude": "Iniciar sesión con Claude",
+  "Code from the page": "Código de la página",
+  "The Claude desktop app has its own sign-in, and it does not count here.":
+    "La app de escritorio de Claude tiene su propio inicio de sesión, y aquí no cuenta.",
+  "A sign-in inside WSL or under another Windows user does not count either.":
+    "Un inicio de sesión dentro de WSL o con otro usuario de Windows tampoco cuenta.",
+  "Show command": "Mostrar comando",
+  "After a sign-in in a terminal, the app checks again when you come back to this window.":
+    "Tras iniciar sesión en una terminal, la app vuelve a comprobar cuando regresas a esta ventana.",
 };

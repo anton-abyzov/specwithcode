@@ -25,6 +25,8 @@ export interface ThreadMachine {
   readonly kind: EnvironmentMachineKind;
   /** The machine's name as the person knows it: their nickname, else its host label. */
   readonly label: string;
+  /** Two or three characters the chip keeps when it runs out of room ("M4", "LM"). */
+  readonly short?: string | undefined;
   /** Says where the chat runs and why that matters, with the host name when it differs. */
   readonly tip: string;
   /** Short words for a machine the app cannot reach now, shown in the warning tone. */
@@ -59,6 +61,8 @@ const HANDOFF_TIPS: Record<ThreadMachineHandoff, string> = {
 
 export function threadMachinePresentation(input: {
   readonly name: string;
+  /** The machine's short label; its name stands in where none is known. */
+  readonly short?: string | undefined;
   readonly hostLabel: string;
   readonly kind: EnvironmentMachineKind;
   readonly os: ExecutionEnvironmentPlatformOs | null;
@@ -96,6 +100,7 @@ export function threadMachinePresentation(input: {
     canMove: handoff === "available",
     kind: input.kind,
     label: input.name,
+    short: input.short ?? input.name,
     tip:
       `Runs on ${where}${facts ? ` (${facts})` : ""}.` +
       // Where the move is offered, the tip says how to move it instead of what lives there.
@@ -121,6 +126,7 @@ export function useThreadMachine(
     const identity = identityOf(environment.environmentId, environment.label);
     return threadMachinePresentation({
       name: identity.name,
+      short: identity.short,
       hostLabel: environment.label,
       // The icon chosen with the nickname, else the kind of hardware it reports.
       kind: config ? identity.icon : resolveEnvironmentMachineKind(config),

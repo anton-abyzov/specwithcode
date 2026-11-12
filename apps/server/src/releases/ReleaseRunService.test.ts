@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { ReleaseRun } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
 
 import * as ReleaseRuns from "./ReleaseRunService.ts";
@@ -78,7 +80,7 @@ const record = (version: string, runId: string, startedAt: string, overrides = {
 
 const withRuns = <A, E>(
   files: Record<string, string>,
-  use: (directory: string) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  use: (directory: string) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -237,7 +239,7 @@ const withReceipts = <A, E>(
   receipts: Record<string, string>,
   use: (
     files: ReleaseRuns.InstallTimingFiles & { readonly runs: string },
-  ) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  ) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -317,6 +319,8 @@ describe("install timings", () => {
             "1.0.202",
             "1.0.201",
           ]);
+          yield* service.awaitBackgroundScan;
+          yield* restarted.awaitBackgroundScan;
           const kept = yield* fs.readFileString(files.historyFile);
           expect(kept).toContain('"schemaVersion":1');
           expect(kept).not.toContain("owned-updates");
@@ -331,6 +335,7 @@ describe("install timings", () => {
         const fs = yield* FileSystem.FileSystem;
         const service = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
         assert.deepStrictEqual((yield* service.list()).installs, []);
+        yield* service.awaitBackgroundScan;
         assert.isFalse(yield* fs.exists(files.historyFile));
         const many = Array.from({ length: ReleaseRuns.INSTALL_HISTORY_LIMIT + 5 }, (_, index) => ({
           version: `1.0.${index}`,
@@ -388,6 +393,48 @@ describe("install timings", () => {
           assert.isFalse(yield* fs.exists(`${files.historyFile}.tmp`));
         }),
     ),
+  );
+
+  it.live("stops every receipt read when the service's scope closes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      for (let round = 0; round < 6; round++) {
+        const base = yield* fs.makeTempDirectory({ prefix: "installs-close-" });
+        const updates = path.join(base, "updates");
+        const files = {
+          runs: path.join(updates, "runs"),
+          receiptsDirectory: path.join(updates, "receipts"),
+          historyFile: path.join(updates, ReleaseRuns.INSTALL_HISTORY_FILE),
+        };
+        yield* fs.makeDirectory(files.receiptsDirectory, { recursive: true });
+        yield* Effect.forEach(
+          Array.from({ length: 200 }, (_, index) => index),
+          (index) =>
+            fs.writeFileString(
+              path.join(
+                files.receiptsDirectory,
+                `update-1.0.${index}-202611${String((index % 28) + 1).padStart(2, "0")}T${String(index).padStart(6, "0")}Z.json`,
+              ),
+              receipt("verified", { total: 1000 + index }),
+            ),
+          { concurrency: 16, discard: true },
+        );
+        const scope = yield* Scope.make();
+        const service = yield* ReleaseRuns.makeWithDirectory(files.runs, files).pipe(
+          Scope.provide(scope),
+        );
+        assert.deepStrictEqual((yield* service.list()).installs, []);
+        yield* Scope.close(scope, Exit.void);
+        // Closing the scope already waited for the read: nothing is left running, so the
+        // wait ends at once instead of on a read still going through the receipts.
+        const settled = yield* service.awaitBackgroundScan.pipe(Effect.timeoutOption("0 millis"));
+        assert.isTrue(Option.isSome(settled));
+        assert.isFalse(yield* fs.exists(`${files.historyFile}.tmp`));
+        yield* fs.remove(base, { recursive: true });
+        assert.isFalse(yield* fs.exists(base));
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("orders receipts by their time, not by the version in the name", () => {

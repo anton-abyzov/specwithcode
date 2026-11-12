@@ -572,6 +572,64 @@ function ComposerScene() {
   );
 }
 
+/**
+ * Machine chips squeezed narrower step by step: the name shortens, then the icon
+ * and name give way to the short label ("LM", "M1"), never the icon alone.
+ */
+const NARROW_WIDTHS = [360, 240, 190, 160, 130, 110];
+function MachinesScene() {
+  const identityOf = useMachineIdentities();
+  const machines = [identityOf("env-lm", "linux-mini"), identityOf("env-m1"), identityOf("env-ww")];
+  return (
+    <main className="flex min-h-screen flex-col gap-3 p-4">
+      <h1 className="text-sm text-muted-foreground">Machine chips at narrow widths.</h1>
+      {machines.flatMap((machine) =>
+        NARROW_WIDTHS.map((width) => (
+          <div
+            key={`${machine.environmentId}-${width}`}
+            className="flex min-w-0 items-center gap-1 rounded-xl border bg-card p-1.5"
+            style={{ width }}
+            data-narrow-row={width}
+          >
+            <ThreadMachineComposerChip
+              size="sm"
+              machine={{
+                kind: machine.icon,
+                label: machine.name,
+                short: machine.short,
+                tip: `Runs on ${machine.name}.`,
+                warning: null,
+                color: machine.color,
+                isThisMachine: false,
+              }}
+            />
+            <span className="shrink-0 text-sm font-medium">Opus 5.5</span>
+            <span className="shrink-0 text-sm text-muted-foreground">Full access</span>
+          </div>
+        )),
+      )}
+      <div className="flex w-24 items-center gap-1" data-narrow-row="chip">
+        <MachineChip identity={machines[0]!} label="Runs on linux-mini" className="shrink" />
+      </div>
+      <div className="flex items-center gap-2" data-send-row="">
+        {machines.map((machine) => (
+          <button
+            key={machine.environmentId}
+            type="button"
+            className="sws-send sws-send-target machine-send"
+            {...machineColorProps(machine)}
+            data-send-label={`Send to ${machine.name}`}
+            data-send-short={machine.short}
+            aria-label={`Send to the coordinator on ${machine.name}`}
+          >
+            ↑
+          </button>
+        ))}
+      </div>
+    </main>
+  );
+}
+
 /** The thread's effort, Fast and Ultracode: icon and word with room, icons alone when tight. */
 const ORDER: ModelSelection[] = [
   { instanceId: id("claudeAgent"), model: "claude-fable-5-2" },
@@ -670,6 +728,8 @@ createRoot(document.getElementById("root")!).render(
       <SettingsScene />
     ) : scene === "composer" ? (
       <ComposerScene />
+    ) : scene === "machines" ? (
+      <MachinesScene />
     ) : (
       <PickerScene />
     )}

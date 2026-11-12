@@ -534,12 +534,12 @@ const main = async () => {
     const nav = page.getByRole("navigation", { name: "Projects and chats" });
     const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
     // First-run wizard: go on without an account, then skip the
-    // agent and project-import steps. With no agent installed the agents step
-    // offers "Continue without an agent".
+    // agent, access and project-import steps. With no agent installed the
+    // agents step offers "Continue without an agent".
     const wizardButtons = [
       /^Use without an account$/u,
       /^Do not import projects$/u,
-      // The access step: keep what the machine has, so the checks after setup run as before.
+      // The access step: new chats keep the access they start with.
       /^Keep (Supervised|current access)$/u,
       /^Skip/u,
       /^Continue( without an agent)?$/u,

@@ -5,6 +5,8 @@ import {
   projectAttentionRoots,
   expandAttentionProjects,
 } from "../../../studio/useProjectAttention";
+import { usePublishRemoteWorkerLaunchers } from "../../../studio/remoteWorkerLaunchers";
+import { useAttentionRaise } from "../../../studio/attentionRaise";
 /**
  * The default sidebar: the personal assistant under Overview, then projects, then a
  * separate Chats section. A project
@@ -390,6 +392,9 @@ export default function StudioSidebar() {
   );
   const attentionProjects = useMemo(() => [...attentionScopes.values()].flat(), [attentionScopes]);
   const attentionMembers = useAttentionMembers(attentionProjects);
+  // Alerts read the remote worker launchers from here instead of polling their own.
+  usePublishRemoteWorkerLaunchers("sidebar", attentionMembers);
+  const raisesAttention = useAttentionRaise();
   const attentionByProject = useMemo(
     () =>
       new Map(
@@ -405,11 +410,12 @@ export default function StudioSidebar() {
               members,
               roots: projectAttentionRoots(threads, members),
               threads,
+              raises: raisesAttention,
             }),
           ];
         }),
       ),
-    [projectGroups, attentionScopes, attentionMembers, threads],
+    [projectGroups, attentionScopes, attentionMembers, threads, raisesAttention],
   );
   const waitingByProject = useMemo(
     () => new Map([...attentionByProject].map(([key, attention]) => [key, attention.count])),

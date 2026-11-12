@@ -25,13 +25,14 @@ import {
 export function useRenameMachine(): {
   readonly lock: RenameMachineLock;
   readonly rename: (environmentId: EnvironmentId, name: string) => boolean;
-  /** Saves the name together with the machine's color and icon. */
+  /** Saves the name together with the machine's color, icon and short label. */
   readonly saveIdentity: (
     environmentId: EnvironmentId,
     identity: {
       readonly name: string;
       readonly color: MachineColorId;
       readonly icon: EnvironmentMachineKind;
+      readonly short?: string;
     },
   ) => boolean;
 } {
@@ -68,6 +69,7 @@ export function useRenameMachine(): {
         readonly name: string;
         readonly color: MachineColorId;
         readonly icon: EnvironmentMachineKind;
+        readonly short?: string;
       },
     ) => {
       if (permitted.size === 0) return false;

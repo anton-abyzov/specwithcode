@@ -6,11 +6,10 @@ import {
   ProviderInstanceId,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
-import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -20,11 +19,12 @@ import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { claudeAccountPlan, claudeLoginCommand } from "./addClaudeAccount.logic";
+import { ClaudeSignIn } from "./ClaudeSignIn";
 import { SettingsRow } from "./settingsLayout";
 
 /**
  * A second Claude subscription on one machine: its own Claude instance with
- * its own CLAUDE_CONFIG_DIR, signed in once from that machine's terminal.
+ * its own CLAUDE_CONFIG_DIR, signed in from here with "Sign in with Claude".
  * The existing ~/.claude sign-in is left alone, so both accounts report limits.
  */
 export function AddClaudeAccountDialog({
@@ -44,10 +44,7 @@ export function AddClaudeAccountDialog({
     serverEnvironment.mutateProviderInstance,
     "Add Claude account",
   );
-  const refresh = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-    reportDefect: false,
-  });
+  const os = useEnvironment(environmentId)?.serverConfig?.environment.platform.os;
   const [name, setName] = useState("Work");
   const [created, setCreated] = useState<{
     readonly instanceId: ProviderInstanceId;
@@ -55,29 +52,10 @@ export function AddClaudeAccountDialog({
     readonly homePath: string;
   } | null>(null);
   const [pending, setPending] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [copied, setCopied] = useState(false);
   const provider = created
     ? providers?.find((candidate) => candidate.instanceId === created.instanceId)
     : undefined;
   const signedIn = provider?.auth.status === "authenticated";
-
-  const check = async () => {
-    if (!created || checking) return;
-    setChecking(true);
-    await refresh({ environmentId, input: { instanceId: created.instanceId } });
-    setChecking(false);
-  };
-
-  // Coming back from the terminal or the browser is the moment to look again.
-  useEffect(() => {
-    if (!created || signedIn) return;
-    const onFocus = () => {
-      void refresh({ environmentId, input: { instanceId: created.instanceId } });
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [created, signedIn, environmentId, refresh]);
 
   const createAccount = async () => {
     if (pending || !name.trim() || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
@@ -109,8 +87,6 @@ export function AddClaudeAccountDialog({
     setPending(false);
   };
 
-  const command = created ? claudeLoginCommand(created.homePath) : "";
-
   return (
     <Dialog
       open
@@ -125,47 +101,15 @@ export function AddClaudeAccountDialog({
         />
         <WizardPanel>
           {created ? (
-            <div className="flex flex-col gap-4" data-add-claude-account="sign-in">
-              <SettingsRow
-                title={`Sign in on ${environmentLabel}`}
-                description="Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there."
-              />
-              <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
-                <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap">
-                  {command}
-                </code>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={copied ? tx("Copied") : tx("Copy command")}
-                  onClick={() =>
-                    void writeTextToClipboard(command).then(() => {
-                      setCopied(true);
-                    })
-                  }
-                >
-                  {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-                </Button>
-              </div>
-              <SettingsRow
-                title="Account"
-                description={
-                  signedIn
-                    ? `Signed in${provider?.auth.email ? ` as ${provider.auth.email}` : ""}. Its limits now show under Usage > Limits.`
-                    : "Waiting for the sign-in. The app checks again when you come back to this window."
-                }
-                control={
-                  signedIn ? null : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={checking}
-                      onClick={() => void check()}
-                    >
-                      {checking ? tx("Checking…") : tx("Check sign-in")}
-                    </Button>
-                  )
-                }
+            <div data-add-claude-account="sign-in">
+              <ClaudeSignIn
+                environmentId={environmentId}
+                environmentLabel={environmentLabel}
+                instanceId={created.instanceId}
+                provider={provider}
+                os={os}
+                command={claudeLoginCommand(created.homePath, os)}
+                readOnly={!canManageProviders}
               />
             </div>
           ) : (

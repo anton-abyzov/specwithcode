@@ -604,6 +604,12 @@ export async function runBackgroundControls(reportDir) {
         await delay(300);
       }
     }
+    // The access step: keep what the machine has, so the checks after setup run as before.
+    const keepAccess = page.getByRole("button", { name: /^Keep (Supervised|current access)$/ });
+    if (await keepAccess.count()) {
+      await keepAccess.click();
+      await delay(300);
+    }
     const skip = page.getByRole("button", { name: "Do not import projects", exact: true });
     if (await skip.count()) await skip.click();
     await page.locator(".studio-desk").waitFor();

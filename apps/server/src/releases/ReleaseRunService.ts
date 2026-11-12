@@ -30,6 +30,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -184,8 +185,13 @@ export interface InstallTimingFiles {
   readonly historyFile: string;
 }
 
+/**
+ * Builds the service in the caller's scope: every background receipt read is forked into
+ * that scope, so closing it interrupts a running read and waits for it to stop.
+ */
 export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallTimingFiles) =>
   Effect.gen(function* () {
+    const scope = yield* Effect.scope;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const installLock = yield* Semaphore.make(1);
@@ -198,6 +204,8 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
     /** False once the file on disk is a newer service's history: it is read, never replaced. */
     let historyWritable = true;
     let scanning = false;
+    /** The receipt read `list` started last, so a caller can wait for it to finish. */
+    let scanFiber: Fiber.Fiber<void> | undefined;
 
     const readReceipt = (directory: string, name: string) =>
       Effect.gen(function* () {
@@ -243,14 +251,16 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
 
     /**
      * A new file beside it, renamed over it: a reader sees the old history or the new one.
-     * Writes run one at a time (installLock), so the one temporary name is enough.
+     * Writes run one at a time (installLock), so the one temporary name is enough. The write
+     * and the rename cannot be interrupted, so a closing scope waits for this small write
+     * instead of leaving a half-written temporary file behind.
      */
     const writeHistory = (file: string, value: InstallHistory) =>
       Effect.gen(function* () {
         const temporary = `${file}.tmp`;
         yield* fileSystem.writeFileString(temporary, `${encodeHistory(value)}\n`, { mode: 0o600 });
         yield* fileSystem.rename(temporary, file);
-      }).pipe(Effect.ignore);
+      }).pipe(Effect.ignore, Effect.uninterruptible);
 
     /** Reads the receipts the history does not hold yet and keeps their installs. */
     const scanInstalls = (files: InstallTimingFiles) =>
@@ -294,8 +304,12 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
             ) ||
             receipts.length !== known.size;
           const next: InstallHistory = { schemaVersion: 1, installs: merged, receipts };
-          history = next;
-          if (changed && historyWritable) yield* writeHistory(files.historyFile, next);
+          // Memory and the file change together: a closing scope cannot stop the
+          // read between the two.
+          yield* Effect.suspend(() => {
+            history = next;
+            return changed && historyWritable ? writeHistory(files.historyFile, next) : Effect.void;
+          }).pipe(Effect.uninterruptible);
           return merged;
         }),
       );
@@ -309,15 +323,12 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
         const current = history ?? (yield* loadHistory(files.historyFile));
         if (!scanning) {
           scanning = true;
-          yield* scanInstalls(files).pipe(
-            Effect.ignore,
-            Effect.ensuring(
-              Effect.sync(() => {
-                scanning = false;
-              }),
-            ),
-            Effect.forkDetach,
-          );
+          const fiber = yield* scanInstalls(files).pipe(Effect.ignore, Effect.forkIn(scope));
+          scanFiber = fiber;
+          // Cleared when the read ends in any way, also when it was interrupted before it ran.
+          fiber.addObserver(() => {
+            scanning = false;
+          });
         }
         return current.installs;
       });
@@ -359,6 +370,17 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
       refreshInstalls: installFiles
         ? scanInstalls(installFiles)
         : Effect.succeed<ReadonlyArray<ReleaseInstallTiming>>([]),
+      /**
+       * Waits until no receipt read started by `list` is running or about to run, so the
+       * history file can be read at a settled moment.
+       */
+      awaitBackgroundScan: Effect.gen(function* () {
+        while (scanning) {
+          if (scanFiber) yield* Fiber.await(scanFiber);
+          // A read just being started may not have its fiber stored yet: let it run.
+          yield* Effect.yieldNow;
+        }
+      }),
     };
   });
 
@@ -372,8 +394,9 @@ export const layer = Layer.effect(
       receiptsDirectory: path.join(updates, "receipts"),
       historyFile: path.join(updates, INSTALL_HISTORY_FILE),
     });
-    // Startup never waits on it: the first Releases view usually finds it done.
-    yield* service.refreshInstalls.pipe(Effect.ignore, Effect.forkDetach);
+    // Startup never waits on it: the first Releases view usually finds it done. It runs in
+    // the layer's scope, so shutdown interrupts it and waits for it to stop.
+    yield* service.refreshInstalls.pipe(Effect.ignore, Effect.forkScoped);
     return ReleaseRunService.of({ list: service.list });
   }),
 );

@@ -523,8 +523,6 @@ export const ko: PhraseCatalog = {
     "사용량 한도로 멈춘 스레드를 보고된 초기화 시간에 재개합니다. 각 스레드에서 예약된 계속을 취소할 수 있습니다.",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "선택한 WSL 배포판을 Windows와 함께 실행합니다. 프로젝트는 현재 파일 시스템에 그대로 남습니다.",
-  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
-    "그 컴퓨터의 터미널에서 이 명령을 한 번 실행하세요. 브라우저에서 claude.ai가 열리면 그곳에서 다른 계정으로 로그인하세요.",
   "Selected by SpecWithCode.": "SpecWithCode가 선택합니다.",
   "Set how fast panels open and close.": "패널이 열리고 닫히는 속도를 설정합니다.",
   "Set how wide messages and the composer can grow on large screens.":
@@ -4394,6 +4392,9 @@ export const ko: PhraseCatalog = {
   "Used the folder that holds the dropped file.": "놓은 파일이 들어 있는 폴더를 사용했습니다.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "이 컴퓨터의 폴더는 WSL 안에 있습니다. 경로를 입력하거나 붙여넣으세요.",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "사용 중인 기기에 표시됩니다. 다른 컴퓨터에는 배지가 표시됩니다.",
+  "{count} more on {machine}, in use there": "{machine}에 {count}개 더 있음, 그곳에서 사용 중",
   "Agents found on {machine}": "{machine}에서 찾은 에이전트",
   "Looking for {agents}…": "{agents} 찾는 중…",
   "{found} of {count} agents found on {machine}.":
@@ -4412,4 +4413,36 @@ export const ko: PhraseCatalog = {
   "{names} and {count} more": "{names} 외 {count}개",
   "Turn on {agent}": "{agent} 켜기",
   "Add {agent}": "{agent} 추가",
+  "Sign-in failed. Try again.": "로그인하지 못했습니다. 다시 시도하세요.",
+  "That is not the whole code. Copy it from the page again: it has two parts joined by #.":
+    "코드가 전부가 아닙니다. 페이지에서 다시 복사하세요. #으로 이어진 두 부분입니다.",
+  "Could not copy. Select the text and copy it.":
+    "복사하지 못했습니다. 텍스트를 선택해 복사하세요.",
+  "Signed in as {account}.": "{account}(으)로 로그인했습니다.",
+  "Signed in.": "로그인했습니다.",
+  "Plan: {plan}.": "요금제: {plan}.",
+  "Its limits now show under Usage > Limits.": "이 계정의 한도가 이제 사용량 > 한도에 표시됩니다.",
+  "Run the command below once in a terminal on {machine}. It opens Claude's page in the browser.":
+    "{machine}의 터미널에서 아래 명령을 한 번 실행하세요. 브라우저에서 Claude 페이지가 열립니다.",
+  "A sign-in for this account is in progress in another window.":
+    "이 계정의 로그인이 다른 창에서 진행 중입니다.",
+  "Starting Claude Code's sign-in…": "Claude Code 로그인을 시작하는 중…",
+  "Sign in on the page that opened. If it shows a code, paste it here.":
+    "열린 페이지에서 로그인하세요. 코드가 보이면 여기에 붙여넣으세요.",
+  "Claude's sign-in page opens in your browser. No terminal needed.":
+    "Claude 로그인 페이지가 브라우저에서 열립니다. 터미널이 필요 없습니다.",
+  "Finish in your browser": "브라우저에서 마치세요",
+  "Could not open the page. Copy the link.": "페이지를 열지 못했습니다. 링크를 복사하세요.",
+  "Open the page again": "페이지 다시 열기",
+  "Link copied": "링크를 복사했습니다",
+  "Copy the link": "링크 복사",
+  "Sign in with Claude": "Claude로 로그인",
+  "Code from the page": "페이지의 코드",
+  "The Claude desktop app has its own sign-in, and it does not count here.":
+    "Claude 데스크톱 앱의 로그인은 별개이며 여기서는 인정되지 않습니다.",
+  "A sign-in inside WSL or under another Windows user does not count either.":
+    "WSL 안이나 다른 Windows 사용자로 한 로그인도 인정되지 않습니다.",
+  "Show command": "명령 보기",
+  "After a sign-in in a terminal, the app checks again when you come back to this window.":
+    "터미널에서 로그인한 뒤 이 창으로 돌아오면 앱이 다시 확인합니다.",
 };

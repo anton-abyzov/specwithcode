@@ -34,6 +34,10 @@ When the thread finishes and the project opens pull requests, each repository wi
 
 Use the current checkout for one writer working sequentially. Use separate worktrees for simultaneous code-writing threads on different branches. Two local threads see the same files, index and checked-out branch; selecting Local does not isolate their edits. Reusing an existing worktree avoids another checkout but also shares its files with any thread still using it.
 
+## Where handed-off work lands
+
+Work that arrives from another machine, or moves to another sign-in on the same machine, follows the same switch. With **Use worktrees** on, it gets its own worktree at the commit it started from, with the unfinished changes applied. With it off, the changes go into the project folder as uncommitted changes, on whatever branch is checked out there. The folder takes them only when that is safe: it is at the commit the work started from, and it is clean or already holds the same changes. A file Git ignores is never overwritten. When the folder cannot take the work (it has other uncommitted changes, it is at a different commit, it is in the middle of a merge or rebase, a file is in the way, or the work belongs to a repository inside the project folder rather than the folder itself), the work still gets its own worktree and the handoff says why.
+
 ## What consumes space
 
 A linked Git worktree shares the repository's Git object database. It is not another full clone of Git history. Each worktree still has its own checked-out files, dependencies, build output and caches. Dependencies can be much larger than the source tree. Git branches themselves are small references; deleting a branch usually saves little disk space.

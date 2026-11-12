@@ -42,6 +42,7 @@ import { parseStudioProjectFile } from "@specweave-studio/shared/studioProjectFi
 import { resolveProjectFileBackedSetting } from "@specweave-studio/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { isRegisteredWorktree, isSameOrInside } from "./worktreeRegistration.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -4351,6 +4352,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       args.push("--force");
     }
     args.push(input.path);
+    const platform = yield* HostProcessPlatform;
+    const registered = Effect.gen(function* () {
+      const listed = yield* executeGit(
+        "GitVcsDriver.removeWorktree.list",
+        input.cwd,
+        ["worktree", "list", "--porcelain", "-z"],
+        { allowNonZeroExit: true, timeoutMs: 15_000 },
+      );
+      if (listed.exitCode !== 0) return "unknown" as const;
+      const real = yield* fileSystem
+        .realPath(input.path)
+        .pipe(Effect.orElseSucceed(() => input.path));
+      return isRegisteredWorktree(listed.stdout, [input.path, real], platform)
+        ? ("yes" as const)
+        : ("no" as const);
+      // A list that fails or times out says nothing: only a list that ran and
+      // does not name the path counts as unregistered.
+    }).pipe(Effect.orElseSucceed(() => "unknown" as const));
+    const wasRegistered = (yield* registered) === "yes";
     const result = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.removeWorktree",
       input.cwd,
@@ -4376,6 +4396,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (alreadyGone) {
       yield* pruneWorktrees({ cwd: input.cwd });
       return;
+    }
+    // Git drops the registration even when it could not delete every file (one
+    // was still being written), which leaves a folder nothing points to and no
+    // later removal can reach. The removal was asked for, so finish it.
+    if (
+      wasRegistered &&
+      !isSameOrInside(input.cwd, input.path, platform) &&
+      (yield* registered) === "no" &&
+      (yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)))
+    ) {
+      const finished = yield* fileSystem.remove(input.path, { recursive: true, force: true }).pipe(
+        Effect.retry({ times: 2 }),
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (finished) {
+        yield* Effect.logInfo(
+          `GitVcsDriver.removeWorktree: finished removing ${input.path} after git left files behind.`,
+        );
+        yield* pruneWorktrees({ cwd: input.cwd });
+        return;
+      }
     }
     // Raw stderr stays out of both the wire error and the log (it can carry
     // secrets); log bounded diagnostics so a genuine failure is visible

@@ -484,13 +484,13 @@ const main = async () => {
   const nav = page.getByRole("navigation", { name: "Projects and chats" });
   const wizardSteps = [];
   // First-run wizard, as in installed-e2e.mjs: go on without an account,
-  // then skip the agent and project-import steps.
+  // then skip the agent, access and project-import steps.
   const finishWizard = async () => {
     const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
     const wizardButtons = [
       /^Use without an account$/u,
       /^Do not import projects$/u,
-      // The access step: keep what the machine has, so the checks after setup run as before.
+      // The access step: new chats keep the access they start with.
       /^Keep (Supervised|current access)$/u,
       /^Skip/u,
       /^Continue( without an agent)?$/u,

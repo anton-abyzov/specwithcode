@@ -1,10 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - bundles and worktrees are plain Git and file copies.
 /**
  * Git transport for handoff checkpoints: an incremental bundle of the hidden
- * ref travels to the destination, lands on a per-source incoming ref, and a
- * new worktree is materialized at the base commit with the checkpoint tree
- * applied as uncommitted changes. Secret files are copied from the
- * destination's own project root, never sent.
+ * ref travels to the destination, lands on a per-source incoming ref, and
+ * the checkpoint tree is applied as uncommitted changes on the base commit:
+ * in a new worktree, or in the project folder when its Use worktrees switch is
+ * off. Secret files are copied from the destination's own project root, never
+ * sent.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -260,6 +261,143 @@ export async function applyCheckpointToWorktree(input: {
   }
   await runGit(input.worktreePath, ["read-tree", "-u", "--reset", input.checkpointCommit]);
   await runGit(input.worktreePath, ["reset", "-q", input.baseCommit]);
+}
+
+/** Whether something on disk sits where a new file would go: the path itself, or a file where it needs a folder. */
+async function occupied(root: string, path: string): Promise<boolean> {
+  const segments = path.split("/");
+  for (let depth = 1; depth <= segments.length; depth += 1) {
+    const stat = await NodeFSP.lstat(NodePath.join(root, ...segments.slice(0, depth))).catch(
+      () => null,
+    );
+    if (stat === null) return false;
+    if (depth === segments.length || !stat.isDirectory()) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether the folder's files already are the checkpoint's: every file the
+ * checkpoint holds is on disk with the same content, and every file it removes
+ * is gone. Files the checkpoint never carried (secrets, oversized files) may
+ * be there as well.
+ */
+async function holdsCheckpoint(
+  root: string,
+  baseCommit: string,
+  checkpointCommit: string,
+): Promise<boolean> {
+  const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-handoff-held-"));
+  try {
+    const env = { GIT_INDEX_FILE: NodePath.join(scratch, "index") };
+    await runGit(root, ["read-tree", checkpointCommit], { env });
+    await runGit(root, ["update-index", "-q", "--refresh"], { env, allowFailure: true });
+    const differs = await runGit(root, ["diff-files", "--quiet"], { env, allowFailure: true });
+    if (differs.code !== 0) return false;
+    const removed = await runGit(root, [
+      "diff",
+      "--no-renames",
+      "--name-only",
+      "-z",
+      "--diff-filter=D",
+      baseCommit,
+      checkpointCommit,
+    ]);
+    for (const path of removed.stdout.split("\0")) {
+      if (path.length === 0) continue;
+      if ((await NodeFSP.lstat(NodePath.join(root, path)).catch(() => null)) !== null) return false;
+    }
+    return true;
+  } finally {
+    await NodeFSP.rm(scratch, { recursive: true, force: true });
+  }
+}
+
+/** Why a checkout in use could not take a checkpoint; nothing in it changed. */
+export type InPlaceRefusal = "dirty" | "moved" | "blocked" | "midway";
+
+/** What Git leaves in its folder while a merge, rebase, cherry-pick, revert or bisect is unfinished. */
+const UNFINISHED_OPERATION_MARKS = [
+  "MERGE_HEAD",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "BISECT_LOG",
+  "rebase-merge",
+  "rebase-apply",
+];
+
+async function operationUnfinished(root: string): Promise<boolean> {
+  const gitDir = (await runGit(root, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+  for (const mark of UNFINISHED_OPERATION_MARKS) {
+    if ((await NodeFSP.lstat(NodePath.join(gitDir, mark)).catch(() => null)) !== null) return true;
+  }
+  return false;
+}
+
+/**
+ * Puts the checkpoint's files into a checkout that is already in use, the
+ * project's own folder, as uncommitted changes. Only a checkout whose HEAD is
+ * the checkpoint's base commit takes it, and only when it is clean or already
+ * holds the same changes; the branch checked out there stays as it is. A file
+ * Git ignores there is never overwritten: one where the checkpoint adds a path
+ * refuses the whole apply. A retried takeover finds the folder already holding
+ * the work, so nothing is applied twice.
+ */
+export async function applyCheckpointInPlace(input: {
+  readonly root: string;
+  readonly baseCommit: string;
+  readonly checkpointCommit: string;
+}): Promise<
+  | { readonly applied: true; readonly branch: string | null }
+  | { readonly applied: false; readonly reason: InPlaceRefusal }
+> {
+  const currentBranch = async () => {
+    const result = await runGit(input.root, ["symbolic-ref", "--short", "-q", "HEAD"], {
+      allowFailure: true,
+    });
+    const branch = result.stdout.trim();
+    return result.code === 0 && branch.length > 0 ? branch : null;
+  };
+  if ((await refCommit(input.root, "HEAD")) !== input.baseCommit) {
+    return { applied: false, reason: "moved" };
+  }
+  if (await operationUnfinished(input.root)) return { applied: false, reason: "midway" };
+  // Stale file times would make the merge below refuse files that did not change.
+  await runGit(input.root, ["update-index", "-q", "--refresh"], { allowFailure: true });
+  const status = await runGit(input.root, ["status", "--porcelain"]);
+  if (status.stdout.trim().length > 0) {
+    // The source worked in this very folder (a move between sign-ins on one
+    // machine), an earlier attempt already put the work here, or the same
+    // changes were made here: nothing to apply.
+    return (await holdsCheckpoint(input.root, input.baseCommit, input.checkpointCommit))
+      ? { applied: true, branch: await currentBranch() }
+      : { applied: false, reason: "dirty" };
+  }
+  // A clean status hides ignored files, and Git writes over those.
+  const added = await runGit(input.root, [
+    "diff",
+    "--no-renames",
+    "--name-only",
+    "-z",
+    "--diff-filter=A",
+    input.baseCommit,
+    input.checkpointCommit,
+  ]);
+  for (const path of added.stdout.split("\0")) {
+    if (path.length > 0 && (await occupied(input.root, path))) {
+      return { applied: false, reason: "blocked" };
+    }
+  }
+  // A two-tree merge checks every path before it writes one.
+  const merged = await runGit(
+    input.root,
+    ["read-tree", "-u", "-m", input.baseCommit, input.checkpointCommit],
+    { allowFailure: true },
+  );
+  if (merged.code !== 0) return { applied: false, reason: "blocked" };
+  // Back to HEAD's index: the checkpoint's files stay as uncommitted changes.
+  await runGit(input.root, ["reset", "-q"]);
+  return { applied: true, branch: await currentBranch() };
 }
 
 function safeRelative(path: string): string | null {

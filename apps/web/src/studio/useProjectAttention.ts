@@ -19,6 +19,7 @@ import {
   type AttentionProjectMember,
 } from "./projectAttentionScope";
 import { useUnreachableHosts } from "./unreachableHosts";
+import { useAttentionRaise } from "./attentionRaise";
 
 export { expandAttentionProjects, projectAttentionRoots, type AttentionProjectMember };
 
@@ -116,13 +117,15 @@ export function useProjectAttention(
   projects: readonly AttentionProjectMember[],
 ) {
   const members = useAttentionMembers(projects);
+  const raises = useAttentionRaise();
   return useMemo(
     () =>
       aggregateProjectAttention({
         members,
         roots: projectAttentionRoots(threads, members),
         threads,
+        raises,
       }),
-    [members, threads],
+    [members, threads, raises],
   );
 }
