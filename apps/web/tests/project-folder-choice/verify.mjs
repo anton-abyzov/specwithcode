@@ -175,6 +175,66 @@ try {
     receipt.cases.push({ width, height, theme, mode: "clone", passed: true });
     await page.close();
   }
+  // What the form says when it cannot do something, in both themes and widths.
+  for (const [width, height, theme] of [
+    [1280, 960, "light"],
+    [390, 844, "light"],
+    [1280, 960, "dark"],
+    [390, 844, "dark"],
+  ]) {
+    const page = await browser.newPage({ viewport: { width, height } });
+    await page.goto(`http://127.0.0.1:${server.address().port}/?theme=${theme}&mode=states`);
+    // A folder the account may not read is named as the problem and never chosen.
+    await page
+      .getByText("You do not have permission to read this folder on MacBook M4.", { exact: false })
+      .waitFor();
+    assert.equal(await page.getByText("No folders inside.", { exact: true }).count(), 0);
+    assert.equal(
+      await page.locator('[data-slot="project-location-outcome"]').innerText(),
+      "Open a folder to choose where the project goes.",
+    );
+    assert.equal(
+      await page.getByRole("button", { name: "Create", exact: true }).isDisabled(),
+      true,
+    );
+    // GitHub signed out: the row stays, off, with the fix.
+    const github = page.getByRole("option", { name: /Create private repository on GitHub/ });
+    await github.waitFor();
+    assert.match(await github.innerText(), /Sign in to GitHub on MacBook M4: gh auth login/);
+    assert.equal(await github.getAttribute("aria-disabled"), "true");
+    await github.click({ force: true });
+    assert.equal(await page.evaluate(() => window.githubToggled === true), false);
+    // Machines that cannot be chosen say why, to assistive tech and on hover.
+    for (const [label, reason] of [
+      ["Studio Linux", "Offline: it cannot be used right now."],
+      ["Shared iMac", "Read-only access: this device may not create projects there."],
+      ["Old Mini", "Needs a newer SpecWithCode to create projects."],
+    ]) {
+      const radio = page.getByRole("radio", { name: new RegExp(label) });
+      assert.equal(await radio.isDisabled(), true);
+      assert.equal(
+        await radio.evaluate(
+          (el) => document.getElementById(el.getAttribute("aria-describedby"))?.textContent,
+        ),
+        reason,
+      );
+    }
+    if (width > 600) {
+      await page.getByRole("radio", { name: /Studio Linux/ }).hover({ force: true });
+      await page
+        .getByText("Offline: it cannot be used right now.", { exact: true })
+        .last()
+        .waitFor();
+    }
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      true,
+    );
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: join(output, `${width}-${theme}-states.png`), fullPage: true });
+    receipt.cases.push({ width, height, theme, mode: "states", passed: true });
+    await page.close();
+  }
   // Nothing animates when the person asked for reduced motion.
   const still = await browser.newPage({
     viewport: { width: 1280, height: 960 },
