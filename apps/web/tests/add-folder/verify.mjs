@@ -49,8 +49,8 @@ const browser = await chromium.launch({
 
 const checks = [];
 /** Opens the fixture and hands back the page with its main parts. */
-async function open(query = {}, viewport = { width: 1280, height: 900 }) {
-  const context = await browser.newContext({ viewport });
+async function open(query = {}, viewport = { width: 1280, height: 900 }, media = {}) {
+  const context = await browser.newContext({ viewport, ...media });
   const page = await context.newPage();
   await page.goto(`${origin}/?${new URLSearchParams(query)}`);
   const bar = page.getByLabel("Folder path");
@@ -435,6 +435,55 @@ try {
         }
       }
     }
+  }
+  // --- Windows contrast themes: the highlighted folder, the bar's focus and the primary stay visible.
+  for (const colorScheme of ["dark", "light"]) {
+    await check(`contrast theme (${colorScheme}): selection, focus and the primary`, async () => {
+      const view = await open({ os: "windows", path: "~/Projects/" }, undefined, {
+        forcedColors: "active",
+        colorScheme,
+      });
+      await view.rows.first().waitFor();
+      await view.bar.press("ArrowDown");
+      await view.page.locator('[aria-label^="Folders"] [aria-selected="true"]').waitFor();
+      // Rows fade between colours; read them once the fade is over.
+      await view.page.waitForTimeout(300);
+      const seen = await view.page.evaluate(() => {
+        const system = (name) => {
+          const probe = document.createElement("i");
+          probe.style.cssText = `forced-color-adjust:none;color:${name}`;
+          document.body.append(probe);
+          const value = getComputedStyle(probe).color;
+          probe.remove();
+          return value;
+        };
+        const list = document.querySelector('[role="listbox"][aria-label^="Folders"]');
+        const picked = list.querySelector('[role="option"][aria-selected="true"]');
+        const other = list.querySelector('[role="option"][aria-selected="false"]');
+        const primary = getComputedStyle(
+          document.querySelector('[data-slot="add-folder-primary"]'),
+        );
+        const bar = getComputedStyle(document.activeElement);
+        return {
+          forced: matchMedia("(forced-colors: active)").matches,
+          highlight: system("Highlight"),
+          highlightText: system("HighlightText"),
+          picked: getComputedStyle(picked).backgroundColor,
+          pickedText: getComputedStyle(picked.querySelector("span") ?? picked).color,
+          other: getComputedStyle(other).backgroundColor,
+          primary: `${primary.borderTopStyle} ${primary.borderTopWidth}`,
+          focus: `${bar.outlineStyle} ${bar.outlineWidth}`,
+        };
+      });
+      assert.equal(seen.forced, true);
+      assert.equal(seen.picked, seen.highlight, "the highlighted folder is filled");
+      assert.equal(seen.pickedText, seen.highlightText, "its name is readable on the fill");
+      assert.notEqual(seen.other, seen.highlight, "only the highlighted folder is filled");
+      assert.equal(seen.primary, "solid 1px", "the primary keeps its edge");
+      assert.equal(seen.focus, "solid 2px", "the bar shows focus as an outline");
+      await view.page.screenshot({ path: join(output, `contrast-${colorScheme}.png`) });
+      return view;
+    });
   }
 } finally {
   await browser.close();

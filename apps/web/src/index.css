@@ -748,7 +748,7 @@ code {
 
 ::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
-  border-radius: 3px;
+  border-radius: calc(var(--app-scrollbar-width) / 2);
 }
 
 ::-webkit-scrollbar-thumb:hover {
