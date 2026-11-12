@@ -9,9 +9,9 @@ import { routesViaCoordinator, useProjectMessageRouting } from "../../studio/pro
 import { questionAskerLabel } from "../../studio/coordinatorQuestionAnswers";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
-import { shouldRecommendFullAccess } from "../../onboarding/accessRecommendation.logic";
 import {
   AccessRecommendationAnchor,
+  composerAccessRecommendationFor,
   type ComposerAccessRecommendation,
 } from "./AccessRecommendation";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -2305,17 +2305,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       })),
     [carriedTeamRules, compatibleRuntimeModeOptions, teamRules.state],
   );
-  const fullAccessOption = runtimeModeMenuOptions.find((option) => option.mode === "full-access");
-  const accessRecommendation =
-    props.accessRecommendation !== undefined &&
-    shouldRecommendFullAccess({
-      ...props.accessRecommendation.input,
-      mode: compatibleRuntimeMode,
-      fullAccessOffered: fullAccessOption !== undefined,
-      fullAccessAllowed: fullAccessOption !== undefined && fullAccessOption.aboveTeamLimit !== true,
-    })
-      ? props.accessRecommendation
-      : null;
+  const accessRecommendation = composerAccessRecommendationFor(
+    props.accessRecommendation,
+    compatibleRuntimeMode,
+    runtimeModeMenuOptions,
+  );
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,

@@ -36,6 +36,30 @@ export function shouldRecommendFullAccess(input: FullAccessRecommendationInput):
   return input.fullAccessAllowed && input.fullAccessOffered;
 }
 
+/**
+ * Saves a mode on each machine, all or nothing: when any save fails, the
+ * machines that did save get `rollback`'s mode back, so a failed accept leaves
+ * no machine on Full access without a recorded answer, and a failed Undo
+ * leaves none half restored. Resolves true only when every save went through.
+ */
+export async function writeModesAllOrNothing<Id extends string>(
+  modes: ReadonlyMap<Id, RuntimeMode>,
+  rollback: ReadonlyMap<Id, RuntimeMode>,
+  write: (id: Id, mode: RuntimeMode) => Promise<boolean>,
+): Promise<boolean> {
+  const attempt = (id: Id, mode: RuntimeMode) => write(id, mode).catch(() => false);
+  const entries = [...modes];
+  const saved = await Promise.all(entries.map(([id, mode]) => attempt(id, mode)));
+  if (saved.every(Boolean)) return true;
+  await Promise.all(
+    entries.flatMap(([id], index) => {
+      const earlier = rollback.get(id);
+      return saved[index] && earlier !== undefined ? [attempt(id, earlier)] : [];
+    }),
+  );
+  return false;
+}
+
 /** The machines an accept writes, and the mode each had: only those not already on Full access. */
 export function machinesToSwitch<Id extends string>(
   machines: readonly { readonly id: Id; readonly mode: RuntimeMode | null }[],

@@ -9,7 +9,7 @@ import {
 import { useEnvironments } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
-import { machinesToSwitch } from "./accessRecommendation.logic";
+import { machinesToSwitch, writeModesAllOrNothing } from "./accessRecommendation.logic";
 
 /** The access each machine had before an accept, for Undo. */
 export type AcceptedFullAccess = ReadonlyMap<EnvironmentId, RuntimeMode>;
@@ -27,15 +27,19 @@ export function useFullAccessRecommendation() {
   const { environments } = useEnvironments();
   const save = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
 
+  // All or nothing: a partial failure puts the machines that did save back.
   const writeModes = useCallback(
-    async (modes: ReadonlyMap<EnvironmentId, RuntimeMode>) => {
-      const results = await Promise.all(
-        [...modes].map(([environmentId, mode]) =>
-          save({ environmentId, input: { patch: { defaultRuntimeMode: mode } } }),
-        ),
-      );
-      return results.every((result) => result._tag === "Success");
-    },
+    (
+      modes: ReadonlyMap<EnvironmentId, RuntimeMode>,
+      rollback: ReadonlyMap<EnvironmentId, RuntimeMode>,
+    ) =>
+      writeModesAllOrNothing(modes, rollback, async (environmentId, mode) => {
+        const result = await save({
+          environmentId,
+          input: { patch: { defaultRuntimeMode: mode } },
+        });
+        return result._tag === "Success";
+      }),
     [save],
   );
 
@@ -51,7 +55,7 @@ export function useFullAccessRecommendation() {
         })),
       );
       const fullAccess = new Map([...previous.keys()].map((id) => [id, "full-access" as const]));
-      if (!(await writeModes(fullAccess))) return null;
+      if (!(await writeModes(fullAccess, previous))) return null;
       await persistClientSettingsPatch({ fullAccessRecommendation: "accepted" });
       return previous;
     },
@@ -67,7 +71,8 @@ export function useFullAccessRecommendation() {
   /** Undo an accept: each machine gets its earlier access back, and the answer becomes a decline. */
   const undo = useCallback(
     async (previous: AcceptedFullAccess) => {
-      if (!(await writeModes(previous))) return false;
+      const fullAccess = new Map([...previous.keys()].map((id) => [id, "full-access" as const]));
+      if (!(await writeModes(previous, fullAccess))) return false;
       await persistClientSettingsPatch({ fullAccessRecommendation: "declined" });
       return true;
     },

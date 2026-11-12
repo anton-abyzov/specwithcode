@@ -108,11 +108,18 @@ export function WelcomeWizard({
   // Access is recommended once, for the machines being set up, while new chats
   // there would start below Full access and nothing else has decided it.
   const fullAccess = useFullAccessRecommendation();
-  const accessMachineIds =
-    setupIds.length > 0 ? setupIds : primaryEnvironmentId ? [primaryEnvironmentId] : [];
+  // A chat on another machine starts with this machine's access, so this
+  // machine is always one of them.
+  const accessMachineIds = [
+    ...new Set([...(primaryEnvironmentId ? [primaryEnvironmentId] : []), ...setupIds]),
+  ];
   const accessMachines = accessMachineIds.map(
     (id) => environments.find((environment) => environment.environmentId === id)?.serverConfig,
   );
+  // Decide only once every machine's settings and rules have loaded; a guess
+  // made before that could show the stage and then take it away.
+  const accessMachinesKnown =
+    accessMachines.length > 0 && accessMachines.every((config) => config != null);
   const startingMode =
     accessMachines
       .map((config) => config?.settings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE)
@@ -121,21 +128,23 @@ export function WelcomeWizard({
   const [accessAnswer, setAccessAnswer] = useState<{
     readonly accepted: AcceptedFullAccess | null;
   } | null>(null);
+  const recommendAccess = shouldRecommendFullAccess({
+    answer: fullAccess.answer,
+    settingsKnown: fullAccess.hydrated && accessMachinesKnown,
+    machineRole: fullAccess.machineRole,
+    mode: startingMode,
+    projectSetsMode: false,
+    fullAccessAllowed: accessMachines.every((config) =>
+      teamRulesModeAllowed(teamRulesFromSummary(config?.teamRules).state, "full-access"),
+    ),
+    fullAccessOffered: true,
+    chatStarted: false,
+  });
+  // Once in the bar, the stage stays for the rest of this run, whatever loads later.
+  const [accessStageShown, setAccessStageShown] = useState(false);
+  if (recommendAccess && !accessStageShown) setAccessStageShown(true);
   const showAccess =
-    accessAnswer !== null ||
-    step === "access" ||
-    shouldRecommendFullAccess({
-      answer: fullAccess.answer,
-      settingsKnown: fullAccess.hydrated,
-      machineRole: fullAccess.machineRole,
-      mode: startingMode,
-      projectSetsMode: false,
-      fullAccessAllowed: accessMachines.every((config) =>
-        teamRulesModeAllowed(teamRulesFromSummary(config?.teamRules).state, "full-access"),
-      ),
-      fullAccessOffered: true,
-      chatStarted: false,
-    });
+    accessStageShown || recommendAccess || accessAnswer !== null || step === "access";
   // The whole bar, in order. A stage that does not apply sets `when: false` and
   // drops out of the bar, of Back and of Continue.
   const stages: readonly WizardStage<WizardStageId>[] = [

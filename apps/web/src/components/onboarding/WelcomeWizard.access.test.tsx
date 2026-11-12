@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { EnvironmentId } from "@specweave-studio/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -10,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   machineRole: null as "main" | "joined" | null,
   defaultRuntimeMode: undefined as string | undefined,
   teamRules: undefined as unknown,
+  configLoaded: true,
+  primaryId: "test-env",
   accept: vi.fn(),
   decline: vi.fn(),
   undo: vi.fn(),
@@ -27,20 +30,28 @@ vi.mock("../../onboarding/accessRecommendation", () => ({
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     environments: [
+      ...(mocks.primaryId === "test-env"
+        ? []
+        : [
+            {
+              environmentId: mocks.primaryId,
+              label: "This computer",
+              serverConfig: { settings: { defaultRuntimeMode: "approval-required" } },
+            },
+          ]),
       {
         environmentId: "test-env",
         label: "Computer",
-        serverConfig:
-          mocks.defaultRuntimeMode === undefined && mocks.teamRules === undefined
-            ? null
-            : {
-                settings: { defaultRuntimeMode: mocks.defaultRuntimeMode ?? "approval-required" },
-                teamRules: mocks.teamRules,
-              },
+        serverConfig: mocks.configLoaded
+          ? {
+              settings: { defaultRuntimeMode: mocks.defaultRuntimeMode ?? "approval-required" },
+              teamRules: mocks.teamRules,
+            }
+          : null,
       },
     ],
   }),
-  usePrimaryEnvironment: () => ({ environmentId: "test-env", serverConfig: null }),
+  usePrimaryEnvironment: () => ({ environmentId: mocks.primaryId, serverConfig: null }),
 }));
 // The other steps have their own tests; here each is one button on to the next.
 vi.mock("./ConnectionStep", () => ({
@@ -85,6 +96,8 @@ beforeEach(() => {
   mocks.machineRole = null;
   mocks.defaultRuntimeMode = undefined;
   mocks.teamRules = undefined;
+  mocks.configLoaded = true;
+  mocks.primaryId = "test-env";
   mocks.accept.mockResolvedValue(new Map([["test-env", "approval-required"]]));
   mocks.decline.mockResolvedValue(undefined);
   mocks.undo.mockResolvedValue(true);
@@ -213,4 +226,35 @@ it.each([
   root = createRoot(container);
   await openAccess();
   expect(document.querySelector('[aria-label^="Access, step"]')).not.toBeNull();
+});
+
+it("waits for the machine's settings before showing Access, then keeps the stage", async () => {
+  mocks.configLoaded = false;
+  const wizard = () => <WelcomeWizard localAvailable onDone={vi.fn()} />;
+  await act(async () => root.render(wizard()));
+  // Not loaded yet: no guess that it starts Supervised.
+  expect(document.querySelector('[aria-label^="Access, step"]')).toBeNull();
+  mocks.configLoaded = true;
+  await act(async () => root.render(wizard()));
+  expect(document.querySelector('[aria-label^="Access, step"]')).not.toBeNull();
+  // A later change does not take the stage away again.
+  mocks.defaultRuntimeMode = "full-access";
+  await act(async () => root.render(wizard()));
+  expect(document.querySelector('[aria-label^="Access, step"]')).not.toBeNull();
+});
+
+it("also saves Full access on this machine, whose access chats on the others follow", async () => {
+  mocks.primaryId = "main-env";
+  await act(async () =>
+    root.render(
+      <WelcomeWizard
+        localAvailable
+        resumeEnvironmentId={EnvironmentId.make("test-env")}
+        onDone={vi.fn()}
+      />,
+    ),
+  );
+  await click("Agents continue");
+  await click(en["wizard.access.use"]);
+  expect(mocks.accept).toHaveBeenCalledWith(["main-env", "test-env"]);
 });

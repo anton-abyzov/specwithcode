@@ -41,6 +41,8 @@ vi.mock("../ui/toast", () => ({
 
 import {
   AccessRecommendationAnchor,
+  composerAccessRecommendationFor,
+  resetAccessCalloutSession,
   useComposerAccessRecommendation,
   type ComposerAccessRecommendation,
 } from "./AccessRecommendation";
@@ -50,6 +52,7 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetAccessCalloutSession();
   mocks.projectOverrides = {};
   vi.stubGlobal(
     "ResizeObserver",
@@ -155,6 +158,41 @@ describe("AccessRecommendationAnchor", () => {
     expect(decline).toHaveBeenCalledOnce();
   });
 
+  it("a press outside puts the callout away for the rest of the app session, not only this chat", async () => {
+    const { decline } = await mount();
+    expect(document.body.textContent).toContain(en["wizard.access.calloutTitle"]);
+    // A press on the page around the chip, as in the rest of the composer.
+    await act(async () => {
+      const page = { bubbles: true, button: 0, pointerType: "mouse" };
+      container.dispatchEvent(new PointerEvent("pointerdown", page));
+      container.dispatchEvent(new MouseEvent("mousedown", page));
+      container.dispatchEvent(new PointerEvent("pointerup", page));
+      container.dispatchEvent(new MouseEvent("mouseup", page));
+      container.click();
+    });
+    // The popup unmounts once its closing animation frame has run.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(document.body.textContent).not.toContain(en["wizard.access.calloutTitle"]);
+    expect(decline).not.toHaveBeenCalled();
+    // Another chat's composer mounts: the chip keeps its accent, the callout stays away.
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await mount();
+    expect(document.querySelector("[data-access-recommended]")).not.toBeNull();
+    expect(document.body.textContent).not.toContain(en["wizard.access.calloutTitle"]);
+  });
+
+  it("leaves focus in the message box when the person is typing", async () => {
+    const box = document.createElement("textarea");
+    document.body.append(box);
+    box.focus();
+    await mount();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(document.body.textContent).toContain(en["wizard.access.calloutTitle"]);
+    expect(document.activeElement).toBe(box);
+    box.remove();
+  });
+
   it("waits while the chip is folded away", async () => {
     await mount(undefined, true);
     expect(document.body.textContent).not.toContain(en["wizard.access.calloutTitle"]);
@@ -165,11 +203,14 @@ describe("useComposerAccessRecommendation", () => {
   const probe: { value: ComposerAccessRecommendation | null } = { value: null };
   function Probe(props: {
     projectId: string | null;
+    chatKey?: string;
     onChatModeChange: (mode: RuntimeMode) => void;
   }) {
     const recommendation = useComposerAccessRecommendation({
       environmentId: EnvironmentId.make("other-machine"),
       projectId: props.projectId === null ? null : ProjectId.make(props.projectId),
+      chatKey: props.chatKey ?? "chat-a",
+      newChatMode: "approval-required",
       chatStarted: false,
       onChatModeChange: props.onChatModeChange,
     });
@@ -199,6 +240,22 @@ describe("useComposerAccessRecommendation", () => {
     expect(after).toHaveBeenCalledWith("approval-required");
   });
 
+  it("Undo after moving to another chat restores the default and leaves that chat alone", async () => {
+    await act(async () => root.render(<Probe projectId={null} onChatModeChange={vi.fn()} />));
+    const previous = new Map([["main-machine", "approval-required"]]);
+    mocks.accept.mockResolvedValue(previous);
+    mocks.undo.mockResolvedValue(true);
+    await act(async () => expect(await probe.value!.accept("approval-required")).toBeNull());
+    const notice = mocks.toast.mock.calls[0]![0];
+    const otherChat = vi.fn();
+    await act(async () =>
+      root.render(<Probe projectId={null} chatKey="chat-b" onChatModeChange={otherChat} />),
+    );
+    await act(async () => notice.actionProps.onClick());
+    expect(mocks.undo).toHaveBeenCalledWith(previous);
+    expect(otherChat).not.toHaveBeenCalled();
+  });
+
   it("reports a failed save and leaves the chat as it was", async () => {
     const change = vi.fn();
     await act(async () => root.render(<Probe projectId={null} onChatModeChange={change} />));
@@ -214,5 +271,45 @@ describe("useComposerAccessRecommendation", () => {
     mocks.projectOverrides = { "project-a": { defaultRuntimeMode: "approval-required" } };
     await act(async () => root.render(<Probe projectId="project-a" onChatModeChange={vi.fn()} />));
     expect(probe.value!.input.projectSetsMode).toBe(true);
+  });
+});
+
+describe("composerAccessRecommendationFor", () => {
+  const recommendation = (newChatMode: RuntimeMode): ComposerAccessRecommendation => ({
+    input: {
+      answer: null,
+      settingsKnown: true,
+      machineRole: null,
+      projectSetsMode: false,
+      chatStarted: false,
+    },
+    accept: vi.fn(),
+    decline: vi.fn(),
+    newChatMode,
+  });
+  const modes = [{ mode: "approval-required" as const }, { mode: "full-access" as const }];
+
+  it("asks on a Supervised draft where new chats start Supervised", () => {
+    const value = recommendation("approval-required");
+    expect(composerAccessRecommendationFor(value, "approval-required", modes)).toBe(value);
+  });
+
+  it("does not ask on a draft set to Supervised by hand where new chats start on Full access", () => {
+    expect(
+      composerAccessRecommendationFor(recommendation("full-access"), "approval-required", modes),
+    ).toBeNull();
+  });
+
+  it("does not ask when the provider has no Full access or team rules cap it", () => {
+    const value = recommendation("approval-required");
+    expect(
+      composerAccessRecommendationFor(value, "approval-required", [{ mode: "approval-required" }]),
+    ).toBeNull();
+    expect(
+      composerAccessRecommendationFor(value, "approval-required", [
+        { mode: "approval-required" },
+        { mode: "full-access", aboveTeamLimit: true },
+      ]),
+    ).toBeNull();
   });
 });

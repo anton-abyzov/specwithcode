@@ -6,7 +6,10 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import { useLatestRef } from "../../hooks/useLatestRef";
 import { useFullAccessRecommendation } from "../../onboarding/accessRecommendation";
-import type { FullAccessRecommendationInput } from "../../onboarding/accessRecommendation.logic";
+import {
+  shouldRecommendFullAccess,
+  type FullAccessRecommendationInput,
+} from "../../onboarding/accessRecommendation.logic";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { FullAccessExplanation } from "../onboarding/FullAccessExplanation";
 import { Button } from "../ui/button";
@@ -24,6 +27,8 @@ export interface ComposerAccessRecommendation {
   /** Full access for this chat and new chats. Resolves to an error message when it was not saved. */
   readonly accept: (chatMode: RuntimeMode) => Promise<string | null>;
   readonly decline: () => void;
+  /** The access a new chat starts with here; a chip set by hand on one draft does not decide. */
+  readonly newChatMode: RuntimeMode;
 }
 
 /**
@@ -34,17 +39,23 @@ export interface ComposerAccessRecommendation {
 export function useComposerAccessRecommendation({
   environmentId,
   projectId,
+  chatKey,
+  newChatMode,
   chatStarted,
   onChatModeChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
+  /** Which chat is open; Switch and Undo change a chat's access only while it stays open. */
+  readonly chatKey: string;
+  readonly newChatMode: RuntimeMode;
   readonly chatStarted: boolean;
   readonly onChatModeChange: (mode: RuntimeMode) => void;
 }): ComposerAccessRecommendation {
   const t = useT();
   const recommendation = useFullAccessRecommendation();
   const settings = useEnvironment(environmentId)?.serverConfig?.settings ?? null;
+  const settingsLoaded = settings !== null;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const target = primaryEnvironmentId ?? environmentId;
   const projectSetsMode =
@@ -53,11 +64,18 @@ export function useComposerAccessRecommendation({
   const { accept: acceptFor, decline, undo } = recommendation;
   // Undo runs after the chat has re-rendered on Full access, so it needs the newest handler.
   const onChatModeChangeRef = useLatestRef(onChatModeChange);
+  const chatKeyRef = useLatestRef(chatKey);
   const accept = useCallback(
     async (chatMode: RuntimeMode) => {
+      // The newest handler acts on whichever chat is open by then, so a chat the
+      // person moved to meanwhile is left alone; new chats follow the saved default.
+      const acceptedChat = chatKeyRef.current;
+      const setChatMode = (mode: RuntimeMode) => {
+        if (chatKeyRef.current === acceptedChat) onChatModeChangeRef.current(mode);
+      };
       const previous = await acceptFor([target]);
       if (previous === null) return t("wizard.access.saveFailed");
-      onChatModeChangeRef.current("full-access");
+      setChatMode("full-access");
       const toastId = toastManager.add({
         type: "success",
         title: t("wizard.access.onTitle"),
@@ -67,7 +85,7 @@ export function useComposerAccessRecommendation({
           onClick: () => {
             toastManager.close(toastId);
             void undo(previous).then((undone) => {
-              if (undone) onChatModeChangeRef.current(chatMode);
+              if (undone) setChatMode(chatMode);
               else toastManager.add({ type: "error", title: t("wizard.access.undoFailed") });
             });
           },
@@ -75,31 +93,57 @@ export function useComposerAccessRecommendation({
       });
       return null;
     },
-    [acceptFor, onChatModeChangeRef, t, target, undo],
+    [acceptFor, chatKeyRef, onChatModeChangeRef, t, target, undo],
   );
   return useMemo(
     () => ({
       input: {
         answer: recommendation.answer,
-        settingsKnown: recommendation.hydrated && settings !== null,
+        settingsKnown: recommendation.hydrated && settingsLoaded,
         machineRole: recommendation.machineRole,
         projectSetsMode,
         chatStarted,
       },
       accept,
       decline: () => void decline(),
+      newChatMode,
     }),
     [
       accept,
       chatStarted,
       decline,
+      newChatMode,
       projectSetsMode,
       recommendation.answer,
       recommendation.hydrated,
       recommendation.machineRole,
-      settings,
+      settingsLoaded,
     ],
   );
+}
+
+/**
+ * The recommendation when it applies to this composer, else null: the chat's
+ * facts, plus the modes the chat's provider offers and whether team rules allow
+ * Full access. Asked only while new chats start below Full access and this chat
+ * is below it too, so a draft set to Supervised by hand on a Full access
+ * machine is not asked to switch back.
+ */
+export function composerAccessRecommendationFor(
+  recommendation: ComposerAccessRecommendation | undefined,
+  chatMode: RuntimeMode,
+  modeOptions: readonly { readonly mode: RuntimeMode; readonly aboveTeamLimit?: boolean }[],
+): ComposerAccessRecommendation | null {
+  if (recommendation === undefined) return null;
+  const fullAccessOption = modeOptions.find((option) => option.mode === "full-access");
+  return shouldRecommendFullAccess({
+    ...recommendation.input,
+    mode: recommendation.newChatMode === "full-access" ? "full-access" : chatMode,
+    fullAccessOffered: fullAccessOption !== undefined,
+    fullAccessAllowed: fullAccessOption !== undefined && fullAccessOption.aboveTeamLimit !== true,
+  })
+    ? recommendation
+    : null;
 }
 
 /** The callout's content: the shared explanation and its two answers. */
@@ -165,9 +209,31 @@ export function AccessRecommendationCallout({
 }
 
 /**
+ * A press outside the callout is not an answer: it puts the callout away for
+ * the rest of this app session, in every chat, and the chip keeps its accent.
+ * The callout opens again on the next launch until it is answered.
+ */
+let calloutPutAwayThisSession = false;
+
+/** Forget a put-away callout, as a new app session would. For tests. */
+export function resetAccessCalloutSession(): void {
+  calloutPutAwayThisSession = false;
+}
+
+/** Focus stays where the person is typing; the callout only takes it from elsewhere. */
+function isTextEntry(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement)) return false;
+  if (element.isContentEditable || element instanceof HTMLTextAreaElement) return true;
+  return (
+    element instanceof HTMLInputElement &&
+    !["button", "checkbox", "radio", "submit", "reset"].includes(element.type)
+  );
+}
+
+/**
  * The access chip while Full access is recommended: an accent ring and dot, and
  * the callout anchored to it. Escape, the close button and Keep decline; a
- * press elsewhere only puts the callout away until the composer opens again.
+ * press elsewhere puts the callout away for this app session.
  */
 export function AccessRecommendationAnchor({
   mode,
@@ -183,7 +249,7 @@ export function AccessRecommendationAnchor({
   readonly children: ReactNode;
 }) {
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
-  const [putAway, setPutAway] = useState(false);
+  const [putAway, setPutAway] = useState(() => calloutPutAwayThisSession);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
@@ -217,7 +283,10 @@ export function AccessRecommendationAnchor({
         onOpenChange={(open, details) => {
           if (open) return;
           if (details.reason === "escape-key") decline();
-          else if (details.reason === "outside-press") setPutAway(true);
+          else if (details.reason === "outside-press") {
+            calloutPutAwayThisSession = true;
+            setPutAway(true);
+          }
         }}
       >
         <PopoverPopup
@@ -226,7 +295,9 @@ export function AccessRecommendationAnchor({
           align="start"
           sideOffset={10}
           width="md"
-          initialFocus={primaryRef}
+          initialFocus={() =>
+            isTextEntry(document.activeElement) ? false : (primaryRef.current ?? true)
+          }
           finalFocus={false}
           className="w-[min(24rem,calc(100vw-2rem))]"
         >

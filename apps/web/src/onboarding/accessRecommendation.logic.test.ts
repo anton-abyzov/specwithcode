@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   machinesToSwitch,
   shouldRecommendFullAccess,
+  writeModesAllOrNothing,
   type FullAccessRecommendationInput,
 } from "./accessRecommendation.logic";
 
@@ -58,5 +59,51 @@ describe("machinesToSwitch", () => {
         ["d", "approval-required"],
       ]),
     );
+  });
+});
+
+describe("writeModesAllOrNothing", () => {
+  const full = new Map([
+    ["a", "full-access"],
+    ["b", "full-access"],
+    ["c", "full-access"],
+  ] as const);
+  const earlier = new Map([
+    ["a", "approval-required"],
+    ["b", "auto-accept-edits"],
+    ["c", "approval-required"],
+  ] as const);
+
+  it("resolves true and writes nothing more when every save goes through", async () => {
+    const writes: string[] = [];
+    const ok = await writeModesAllOrNothing(full, earlier, async (id, mode) => {
+      writes.push(`${id}:${mode}`);
+      return true;
+    });
+    expect(ok).toBe(true);
+    expect(writes).toEqual(["a:full-access", "b:full-access", "c:full-access"]);
+  });
+
+  it("puts the machines that saved back when another one fails", async () => {
+    const saved = new Map<string, string>();
+    const ok = await writeModesAllOrNothing(full, earlier, async (id, mode) => {
+      if (id === "b" && mode === "full-access") return false;
+      saved.set(id, mode);
+      return true;
+    });
+    expect(ok).toBe(false);
+    // No machine is left on Full access without a recorded answer.
+    expect(Object.fromEntries(saved)).toEqual({ a: "approval-required", c: "approval-required" });
+  });
+
+  it("treats a save that throws as failed", async () => {
+    const saved = new Map<string, string>();
+    const ok = await writeModesAllOrNothing(full, earlier, async (id, mode) => {
+      if (id === "c" && mode === "full-access") throw new Error("offline");
+      saved.set(id, mode);
+      return true;
+    });
+    expect(ok).toBe(false);
+    expect(Object.fromEntries(saved)).toEqual({ a: "approval-required", b: "auto-accept-edits" });
   });
 });

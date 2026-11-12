@@ -10378,6 +10378,8 @@ export default function ChatView(props: ChatViewProps) {
   const composerAccessRecommendation = useComposerAccessRecommendation({
     environmentId,
     projectId: activeThread?.projectId ?? null,
+    chatKey: routeThreadKey,
+    newChatMode: defaultRuntimeMode,
     chatStarted: isServerThread,
     onChatModeChange: handleRuntimeModeChange,
   });
