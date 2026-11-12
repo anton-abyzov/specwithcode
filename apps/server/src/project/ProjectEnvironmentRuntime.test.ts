@@ -86,6 +86,53 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
         assert.equal(providerCalls, 0);
       }),
   );
+  it.effect(
+    "gives a thread in its own folder the project folder, where the provider takes one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs
+          .makeTempDirectoryScoped({ prefix: "environment-own-folder-" })
+          .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
+        const main = path.join(root, "main");
+        const thread = path.join(root, "worktrees", "thread");
+        const plain = path.join(root, "worktrees", "plain");
+        for (const folder of [main, thread, plain])
+          yield* fs.makeDirectory(folder, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "worktrees", ".thread.worktree-set.json"),
+          '{"version":1,"members":[]}\n',
+        );
+        // Nothing is saved in Environment.
+        const project = { id: ProjectId.make("p"), workspaceRoot: main } as unknown as Project;
+        const wrap = yield* makeEnvironmentRuntime;
+        const directories = (driver: string, cwd: string) =>
+          Effect.gen(function* () {
+            let seen: ReadonlyArray<string> | undefined;
+            const runtime = wrap(
+              {
+                driver: ProviderDriverKind.make(driver),
+                startTurn: (input: ProviderAdapterV2TurnInput) =>
+                  Effect.sync(() => void (seen = input.projectAdditionalDirectories)),
+              } as unknown as ProviderAdapterV2SessionRuntime,
+              () => Effect.succeed(Option.some(project)),
+            );
+            yield* runtime.startTurn({
+              ...turn(),
+              runtimePolicy: { ...turn().runtimePolicy, cwd },
+            } as ProviderAdapterV2TurnInput);
+            return seen;
+          });
+        assert.deepEqual(yield* directories("claudeAgent", thread), [main]);
+        assert.deepEqual(yield* directories("codex", thread), [main]);
+        // A plain worktree and the project folder itself run as before.
+        assert.isUndefined(yield* directories("claudeAgent", plain));
+        assert.isUndefined(yield* directories("claudeAgent", main));
+        // A provider that takes no folder still runs, without one.
+        assert.isUndefined(yield* directories("opencode", thread));
+      }),
+  );
   it.effect("refuses a project folder that moved or went missing, naming it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

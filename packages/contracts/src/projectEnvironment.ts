@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { CommandId, NonNegativeInt, ProjectId } from "./baseSchemas.ts";
+import { CommandId, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 export const ProjectKind = Schema.Literals(["code", "personal"]);
 export type ProjectKind = typeof ProjectKind.Type;
@@ -129,6 +129,8 @@ export const ProjectEnvironmentReadInput = Schema.Struct({
   discover: Schema.optionalKey(Schema.Boolean),
   /** With `discover`: walk the folder again instead of using the cached list. */
   refresh: Schema.optionalKey(Schema.Boolean),
+  /** Also read the repositories this thread of the project holds. Older servers ignore it. */
+  threadId: Schema.optionalKey(ThreadId),
 });
 export type ProjectEnvironmentReadInput = typeof ProjectEnvironmentReadInput.Type;
 /** At most this many found repositories are listed; the rest are counted. */
@@ -165,6 +167,36 @@ export const ProjectRedundantRepositoryEntry = Schema.Struct({
   reason: Schema.Literals(["found_clone", "no_folder"]),
 });
 export type ProjectRedundantRepositoryEntry = typeof ProjectRedundantRepositoryEntry.Type;
+/** One repository a thread holds: its worktree inside the thread's folder. */
+export const ThreadRepository = Schema.Struct({
+  /** Its path inside the thread's folder, the same as in the project folder; "" is the folder itself. */
+  relativePath: Schema.String,
+  name: Schema.String,
+  path: Schema.String,
+  /** The repository's own checkout, which the worktree shares Git objects with. */
+  repository: Schema.String,
+  /** What the worktree was cut from, such as `origin/main`; null when the app did not record it. */
+  baseRef: Schema.NullOr(Schema.String),
+  /** Who added it to the running thread; null for one made at launch. */
+  addedBy: Schema.NullOr(Schema.Literals(["agent", "user"])),
+  addedAt: Schema.NullOr(Schema.String),
+  dependencies: Schema.Literals(["installed", "not_installed"]),
+  changed: Schema.Boolean,
+});
+export type ThreadRepository = typeof ThreadRepository.Type;
+/**
+ * The repositories of a thread that has its own folder (none for one that
+ * started with no repository). A thread in the project folder, or in a single
+ * worktree, has no such list.
+ */
+export const ThreadRepositories = Schema.Struct({
+  folder: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  repositories: Schema.Array(ThreadRepository),
+  /** A thread holds at most this many. */
+  limit: NonNegativeInt,
+});
+export type ThreadRepositories = typeof ThreadRepositories.Type;
 /**
  * A saved folder or repository checkout that runs skip, with the server's sentence naming
  * it and the fix. `updatePath` is offered only when a moved folder (or checkout) now
@@ -216,6 +248,8 @@ export const ProjectEnvironmentReadResult = Schema.Struct({
     Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.NullOr(Schema.String) })),
   ),
   redundantEntries: Schema.optionalKey(Schema.Array(ProjectRedundantRepositoryEntry)),
+  /** With `threadId`: that thread's repositories, when it has its own folder. */
+  thread: Schema.optionalKey(ThreadRepositories),
 });
 export type ProjectEnvironmentReadResult = typeof ProjectEnvironmentReadResult.Type;
 export const ProjectEnvironmentPrepareInput = Schema.Struct({
@@ -223,7 +257,16 @@ export const ProjectEnvironmentPrepareInput = Schema.Struct({
   repositoryId: ProjectRepositoryId,
   expectedRevision: NonNegativeInt,
   commandId: CommandId,
-  mode: Schema.Literals(["clone", "match"]),
+  /**
+   * `thread_add` adds `repository` to thread `threadId` (the thread's "Add repository"),
+   * through the same action as the agent's tool; `repositoryId` and `expectedRevision`
+   * are not read then. Older servers refuse the mode.
+   */
+  mode: Schema.Literals(["clone", "match", "thread_add"]),
+  threadId: Schema.optionalKey(ThreadId),
+  repository: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
+  ),
 });
 export type ProjectEnvironmentPrepareInput = typeof ProjectEnvironmentPrepareInput.Type;
 /** Import only describes existing checkouts. It never grants folder access or changes plan authority. */

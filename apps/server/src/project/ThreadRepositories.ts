@@ -9,14 +9,29 @@
  */
 import {
   formatStorageFreeSpace,
+  ProjectEnvironmentError,
   THREAD_REPOSITORIES_MAX,
+  type ProjectEnvironmentPrepareInput,
+  type ProjectId,
   type StorageStatus,
+  type ThreadId,
+  type ThreadRepositories as ThreadRepositoriesResult,
   type WorktreeSubmodules,
 } from "@specweave-studio/contracts";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+
+import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
+import * as DiskSpaceMonitor from "../observability/DiskSpaceMonitor.ts";
+import { projectRepositoryCheckouts } from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as ProjectService from "./ProjectService.ts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { addThreadRepository, type SetRepositoryCheckout } from "../git/worktreeSetGit.ts";
@@ -178,4 +193,126 @@ export const readThreadRepositories = Effect.fn("ThreadRepositories.read")(funct
       }),
     { concurrency: 4 },
   );
+});
+
+/**
+ * `read` and `add` for the web client, over the same services the agent's tool
+ * uses. Built where the WebSocket handlers are; a server without one of the
+ * services answers "no list" and refuses the add.
+ */
+export const makeRpc = Effect.gen(function* () {
+  const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+  const pathService = yield* Effect.serviceOption(Path.Path);
+  const gitWorkflow = yield* Effect.serviceOption(GitWorkflowService.GitWorkflowService);
+  const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
+  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const diskSpace = yield* Effect.serviceOption(DiskSpaceMonitor.DiskSpaceMonitor);
+  const broadcaster = yield* Effect.serviceOption(VcsStatusBroadcaster.VcsStatusBroadcaster);
+  /** Adds for one thread run one at a time, as the agent tool's do. */
+  const adding = new Set<string>();
+  const refused = (projectId: ProjectId, code: ProjectEnvironmentError["code"], detail: string) =>
+    new ProjectEnvironmentError({ projectId, code, detail });
+  const services =
+    Option.isSome(fileSystem) && Option.isSome(pathService) && Option.isSome(gitWorkflow)
+      ? { fs: fileSystem.value, path: pathService.value, git: gitWorkflow.value }
+      : null;
+  const provide = <A, E>(
+    effect: Effect.Effect<
+      A,
+      E,
+      FileSystem.FileSystem | Path.Path | GitWorkflowService.GitWorkflowService
+    >,
+  ) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, services!.fs),
+      Effect.provideService(Path.Path, services!.path),
+      Effect.provideService(GitWorkflowService.GitWorkflowService, services!.git),
+    );
+  const threadOf = (projectId: ProjectId, threadId: ThreadId) =>
+    Option.isNone(threads)
+      ? Effect.succeed(null)
+      : threads.value.getThreadShell(threadId).pipe(
+          Effect.map((shell) =>
+            shell === null || shell.projectId !== projectId || shell.deletedAt !== null
+              ? null
+              : shell,
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+  const read = (projectId: ProjectId, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const thread = yield* threadOf(projectId, threadId);
+      if (thread === null || thread.worktreePath === null || services === null) return null;
+      const repositories = yield* provide(readThreadRepositories(thread.worktreePath)).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (repositories === null) return null;
+      return {
+        folder: thread.worktreePath,
+        branch: thread.branch,
+        repositories,
+        limit: THREAD_REPOSITORIES_MAX,
+      } satisfies ThreadRepositoriesResult;
+    });
+  const add = (input: ProjectEnvironmentPrepareInput) =>
+    Effect.gen(function* () {
+      const { projectId, threadId, repository } = input;
+      if (threadId === undefined || repository === undefined)
+        return yield* refused(projectId, "invalid", "Name the thread and the repository to add.");
+      if (services === null || Option.isNone(projects) || Option.isNone(settingsService))
+        return yield* refused(
+          projectId,
+          "preparation_failed",
+          "This server cannot add a repository to a thread.",
+        );
+      const thread = yield* threadOf(projectId, threadId);
+      const project = Option.getOrNull(
+        yield* projects.value.getById(projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+      );
+      if (thread === null || project === null) return yield* refused(projectId, "not_found", "");
+      const settings = yield* settingsService.value.getSettings.pipe(
+        Effect.mapError(() => refused(projectId, "preparation_failed", "")),
+      );
+      const resolved = resolveProjectSettings(settings, project.id, project);
+      if (adding.has(threadId))
+        return yield* refused(
+          projectId,
+          "conflict",
+          "A repository is already being added to this thread. Try again in a moment.",
+        );
+      adding.add(threadId);
+      const added = yield* provide(
+        addRepositoryToThread({
+          threadId,
+          worktreePath: thread.worktreePath,
+          branch: thread.branch,
+          usesWorktrees: projectUsesWorktrees(resolved),
+          projectRoot: project.workspaceRoot,
+          checkouts: projectRepositoryCheckouts(project),
+          repository,
+          startFromOrigin: settings.newWorktreesStartFromOrigin,
+          submodules: resolved.settings.worktreeSubmodules,
+          storage: Option.isNone(diskSpace)
+            ? null
+            : Option.getOrNull(yield* diskSpace.value.current),
+          addedBy: "user",
+        }),
+      ).pipe(
+        Effect.mapError((refusal) =>
+          refused(
+            projectId,
+            refusal.code === "operation_failed" ? "preparation_failed" : "invalid",
+            refusal.message,
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => adding.delete(threadId))),
+      );
+      if (Option.isSome(broadcaster))
+        yield* broadcaster.value
+          .refreshStatus(added.repositoryPath)
+          .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+      return added;
+    });
+  return { read, add };
 });

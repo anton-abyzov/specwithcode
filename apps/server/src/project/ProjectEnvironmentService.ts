@@ -4,8 +4,6 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   ProjectEnvironmentError,
   ProjectEnvironmentPrepareInput,
-  ProjectEnvironmentImportPreviewInput,
-  type ProjectEnvironmentImportPreview,
   projectRepositoryIdentity,
   type ProjectEnvironmentReadResult,
   type ProjectId,
@@ -27,16 +25,12 @@ import {
   resolveCanonicalProjectEnvironment,
   resolveProjectEnvironmentForRun,
 } from "./ProjectEnvironmentPaths.ts";
-import { previewWorkspaceImport } from "./ProjectEnvironmentImport.ts";
 import { discoverProjectRepositories } from "./ProjectRepositoryDiscovery.ts";
 import { repositoryInspectionEnv } from "./ProjectRepositoryInspection.ts";
 
 export class ProjectEnvironmentService extends Context.Service<
   ProjectEnvironmentService,
   {
-    readonly previewImport: (
-      input: ProjectEnvironmentImportPreviewInput,
-    ) => Effect.Effect<ProjectEnvironmentImportPreview, ProjectEnvironmentError>;
     readonly read: (input: {
       projectId: ProjectId;
       discover?: boolean | undefined;
@@ -363,35 +357,7 @@ export const make = Effect.gen(function* () {
             : fail(input.projectId, "preparation_failed"),
         ),
       );
-  const previewImport: ProjectEnvironmentService["Service"]["previewImport"] = (input) =>
-    admission
-      .withLock(
-        input.projectId,
-        Effect.gen(function* () {
-          const { projectId } = input;
-          if (!Schema.is(ProjectEnvironmentImportPreviewInput)(input))
-            return yield* fail(projectId, "invalid");
-          const found = yield* projects.get(input.projectId);
-          if (Option.isNone(found)) return yield* fail(input.projectId, "not_found");
-          const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
-          return yield* previewWorkspaceImport({
-            ...input,
-            workspaceRoot: found.value.workspaceRoot,
-            revision: settings.revision,
-            environment: settings.environment,
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(ProcessRunner.ProcessRunner, runner),
-          );
-        }),
-      )
-      .pipe(
-        Effect.mapError((error) =>
-          error instanceof ProjectEnvironmentError ? error : fail(input.projectId, "invalid"),
-        ),
-      );
-  return ProjectEnvironmentService.of({ read, prepare, previewImport });
+  return ProjectEnvironmentService.of({ read, prepare });
 });
 export const layer = Layer.effect(ProjectEnvironmentService, make).pipe(
   Layer.provide(ProjectAdmission.layer),

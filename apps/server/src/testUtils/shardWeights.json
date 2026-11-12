@@ -160,8 +160,6 @@
   "src/project/ManagedProjectFolders.test.ts": 2,
   "src/project/ProjectActionRequests.test.ts": 0.5,
   "src/project/ProjectCloneTracker.integration.test.ts": 3.1,
-  "src/project/ProjectEnvironmentAdoption.test.ts": 0.8,
-  "src/project/ProjectEnvironmentImport.test.ts": 1.4,
   "src/project/ProjectEnvironmentService.test.ts": 3.2,
   "src/project/ProjectFolderChange.test.ts": 3.1,
   "src/project/ProjectPlanService.test.ts": 2,
