@@ -95,6 +95,10 @@ const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 export const OnboardingMachineRole = Schema.Literals(["main", "joined"]);
 export type OnboardingMachineRole = typeof OnboardingMachineRole.Type;
 
+/** How the person answered the one-time Full access recommendation. */
+export const FullAccessRecommendationAnswer = Schema.Literals(["accepted", "declined"]);
+export type FullAccessRecommendationAnswer = typeof FullAccessRecommendationAnswer.Type;
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -450,6 +454,15 @@ export const ClientSettingsSchema = Schema.Struct({
   autoConnectPrivateMachines: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Overview's "What you can do" checklist was dismissed. Settings > General brings it back. */
   whatYouCanDoDismissed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * The answer to the one-time Full access recommendation (first-run Access
+   * step or the composer's callout). `null` until answered: every install from
+   * before the recommendation decodes to it. An accept also saved
+   * `defaultRuntimeMode` on the machines; a decline changed nothing else.
+   */
+  fullAccessRecommendation: Schema.NullOr(FullAccessRecommendationAnswer).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** The first-run screen's "Star on GitHub" link was dismissed. Settings > About keeps its own. */
   starOnGitHubDismissed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -2625,6 +2638,7 @@ export const ClientSettingsPatch = Schema.Struct({
   dictationMode: Schema.optionalKey(DictationMode),
   autoConnectPrivateMachines: Schema.optionalKey(Schema.Boolean),
   whatYouCanDoDismissed: Schema.optionalKey(Schema.Boolean),
+  fullAccessRecommendation: Schema.optionalKey(Schema.NullOr(FullAccessRecommendationAnswer)),
   starOnGitHubDismissed: Schema.optionalKey(Schema.Boolean),
   machinePhoneStepDismissed: Schema.optionalKey(MachinePhoneStepDismissed),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

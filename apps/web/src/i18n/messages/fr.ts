@@ -14,6 +14,7 @@ export const fr: Messages = {
   "wizard.title": "Configurer SpecWithCode",
   "wizard.stage.connect": "Ordinateurs",
   "wizard.stage.agents": "Agents",
+  "wizard.stage.access": "Accès",
   "wizard.stage.projects": "Projets",
   "wizard.close": "Fermer la configuration",
   "wizard.noun.mac": "Mac",
@@ -107,6 +108,44 @@ export const fr: Messages = {
   "wizard.import.otherFolders": "Autres dossiers",
   "wizard.import.folderCount": { one: "{count} dossier", other: "{count} dossiers" },
   "wizard.import.now": "maintenant",
+
+  "wizard.access.title": "Laisser les agents travailler sans s'arrêter pour demander ?",
+  "wizard.access.description":
+    "Cela définit comment démarrent les nouveaux chats. Vous pouvez le changer pour chaque chat depuis la zone de message, ou plus tard dans les Réglages.",
+  "wizard.access.fullAccess": "Accès complet",
+  "wizard.access.recommended": "Recommandé",
+  "wizard.access.allowsIntro":
+    "Les agents terminent la tâche seuls. Sans demander d'abord, ils peuvent :",
+  "wizard.access.allowCommands":
+    "Exécuter des commandes de terminal : installer des paquets, lancer des tests, utiliser git",
+  "wizard.access.allowFiles": "Créer, modifier et supprimer des fichiers sur l'ordinateur",
+  "wizard.access.allowNetwork": "Utiliser le réseau et les outils que vous avez connectés",
+  "wizard.access.stillStops":
+    "S'arrête toujours pour vos décisions, vos connexions et les validations d'apps comme l'envoi d'e-mails",
+  "wizard.access.supervised": "Supervisé",
+  "wizard.access.supervisedDescription":
+    "Les agents demandent avant chaque commande et chaque modification de fichier. Le travail attend votre réponse.",
+  "wizard.access.use": "Utiliser l'accès complet",
+  "wizard.access.keepSupervised": "Rester supervisé",
+  "wizard.access.keepCurrent": "Garder l'accès actuel",
+  "wizard.access.saving": "Enregistrement…",
+  "wizard.access.askedOnce": "Demandé une seule fois. Modifiable dans Réglages > Général.",
+  "wizard.access.saveFailed":
+    "L'accès complet n'a pas été enregistré. Vérifiez la connexion et réessayez.",
+  "wizard.access.calloutTitle": "Recommandé : accès complet",
+  "wizard.access.calloutIntroSupervised":
+    "Ce chat est supervisé : l'agent s'arrête avant chaque commande et chaque modification de fichier. Avec l'accès complet, il travaille seul et peut :",
+  "wizard.access.calloutIntroOther":
+    "Ce chat demande encore avant certaines actions. Avec l'accès complet, l'agent travaille seul et peut :",
+  "wizard.access.switch": "Passer en accès complet",
+  "wizard.access.calloutNote":
+    "S'applique à ce chat et aux nouveaux. Demandé une seule fois ; modifiable ici à tout moment.",
+  "wizard.access.close": "Fermer",
+  "wizard.access.onTitle": "L'accès complet est activé",
+  "wizard.access.onDescription":
+    "Pour ce chat et les nouveaux. Modifiable depuis la zone de message ou dans Réglages > Général.",
+  "wizard.access.undo": "Annuler",
+  "wizard.access.undoFailed": "Impossible d'annuler. Modifiez-le dans Réglages > Général.",
 
   "update.downloadFailed": "Impossible de télécharger la mise à jour",
   "update.startFailed": "Impossible de lancer le téléchargement de la mise à jour",

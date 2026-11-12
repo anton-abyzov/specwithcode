@@ -10,6 +10,7 @@ import type {
   PersistentTerminalLaunchContext,
 } from "./chat/ChatViewProps";
 import { useProjectDraftSendGuard } from "./chat/ProjectDraftSendGuard";
+import { useComposerAccessRecommendation } from "./chat/AccessRecommendation";
 import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import { coordinatorForkHandoff } from "./chat/coordinatorForkHandoff";
 import { coordinatorDeviceHandoff } from "./chat/coordinatorDeviceHandoff";
@@ -10374,6 +10375,12 @@ export default function ChatView(props: ChatViewProps) {
     computerUsePermissionBannerItem,
     retryAfterComputerUsePermission,
   } = useChatViewActions(props, chatViewState);
+  const composerAccessRecommendation = useComposerAccessRecommendation({
+    environmentId,
+    projectId: activeThread?.projectId ?? null,
+    chatStarted: isServerThread,
+    onChatModeChange: handleRuntimeModeChange,
+  });
   const contextLimitRecovery = useMemo(() => {
     const failedRun = serverProjection?.runs.find((run) => run.id === activeActivityRun?.runId);
     const failureItemId = failedRun
@@ -16039,6 +16046,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activeThread={activeThread}
                                 activeThreadShell={activeThreadShell}
                                 teamRulesSummary={teamRulesSummary}
+                                accessRecommendation={composerAccessRecommendation}
                                 promptHistoryMessages={timelineMessages}
                                 sessionSkillUses={sessionSkillUses}
                                 isServerThread={isServerThread}

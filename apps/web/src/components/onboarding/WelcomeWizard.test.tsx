@@ -34,6 +34,10 @@ vi.mock("../../state/use-atom-command", () => ({
         : mocks.refresh,
 }));
 vi.mock("../../onboarding/firstRun", () => ({ useCompleteOnboarding: () => mocks.complete }));
+// The Access step has its own test; here it was answered before.
+vi.mock("../../onboarding/accessRecommendation", () => ({
+  useFullAccessRecommendation: () => ({ answer: "declined", machineRole: null, hydrated: true }),
+}));
 vi.mock("../../state/entities", () => ({
   useProjects: () => mocks.projects,
   readProjects: () => mocks.projects,

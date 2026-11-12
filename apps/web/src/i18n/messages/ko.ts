@@ -11,6 +11,7 @@ export const ko: Messages = {
   "wizard.title": "SpecWithCode 설정",
   "wizard.stage.connect": "컴퓨터",
   "wizard.stage.agents": "에이전트",
+  "wizard.stage.access": "권한",
   "wizard.stage.projects": "프로젝트",
   "wizard.close": "설정 닫기",
   "wizard.noun.mac": "Mac 컴퓨터",
@@ -92,6 +93,42 @@ export const ko: Messages = {
   "wizard.import.otherFolders": "기타 폴더",
   "wizard.import.folderCount": { other: "폴더 {count}개" },
   "wizard.import.now": "지금",
+
+  "wizard.access.title": "에이전트가 묻지 않고 작업하게 할까요?",
+  "wizard.access.description":
+    "새 채팅이 시작되는 방식을 정합니다. 각 채팅의 메시지 입력란에서, 또는 나중에 설정에서 바꿀 수 있습니다.",
+  "wizard.access.fullAccess": "전체 권한",
+  "wizard.access.recommended": "추천",
+  "wizard.access.allowsIntro":
+    "에이전트가 스스로 작업을 끝냅니다. 먼저 묻지 않고 다음을 할 수 있습니다:",
+  "wizard.access.allowCommands": "터미널 명령 실행: 패키지 설치, 테스트 실행, git 사용",
+  "wizard.access.allowFiles": "컴퓨터의 파일 만들기, 변경, 삭제",
+  "wizard.access.allowNetwork": "네트워크와 연결한 도구 사용",
+  "wizard.access.stillStops":
+    "사용자의 결정, 로그인, 이메일 보내기 같은 앱 승인에서는 계속 멈춥니다",
+  "wizard.access.supervised": "감독",
+  "wizard.access.supervisedDescription":
+    "에이전트가 명령과 파일 변경마다 먼저 묻습니다. 답할 때까지 작업이 기다립니다.",
+  "wizard.access.use": "전체 권한 사용",
+  "wizard.access.keepSupervised": "감독 유지",
+  "wizard.access.keepCurrent": "현재 권한 유지",
+  "wizard.access.saving": "저장 중…",
+  "wizard.access.askedOnce": "한 번만 묻습니다. 설정 > 일반에서 바꿀 수 있습니다.",
+  "wizard.access.saveFailed": "전체 권한이 저장되지 않았습니다. 연결을 확인하고 다시 시도하세요.",
+  "wizard.access.calloutTitle": "추천: 전체 권한",
+  "wizard.access.calloutIntroSupervised":
+    "이 채팅은 감독 모드라서 에이전트가 명령과 파일 변경마다 멈춥니다. 전체 권한이면 스스로 작업하며 다음을 할 수 있습니다:",
+  "wizard.access.calloutIntroOther":
+    "이 채팅은 일부 작업 전에 아직 묻습니다. 전체 권한이면 에이전트가 스스로 작업하며 다음을 할 수 있습니다:",
+  "wizard.access.switch": "전체 권한으로 전환",
+  "wizard.access.calloutNote":
+    "이 채팅과 새 채팅에 적용됩니다. 한 번만 묻고, 여기서 언제든 바꿀 수 있습니다.",
+  "wizard.access.close": "닫기",
+  "wizard.access.onTitle": "전체 권한이 켜졌습니다",
+  "wizard.access.onDescription":
+    "이 채팅과 새 채팅에 적용됩니다. 메시지 입력란이나 설정 > 일반에서 바꿀 수 있습니다.",
+  "wizard.access.undo": "실행 취소",
+  "wizard.access.undoFailed": "실행 취소하지 못했습니다. 설정 > 일반에서 바꾸세요.",
 
   "update.downloadFailed": "업데이트를 다운로드하지 못했습니다",
   "update.startFailed": "업데이트 다운로드를 시작하지 못했습니다",
