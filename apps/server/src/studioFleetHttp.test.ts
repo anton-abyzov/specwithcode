@@ -803,6 +803,8 @@ describe("allowing a main machine's workers from that machine", () => {
         id: "m1",
         workers: { status: "allowed", access: "auto" },
       });
+      // Not a join through the Connect account: no notice is noted for it.
+      expect(await (await coordinator.request()).json()).not.toHaveProperty("accountJoins");
     } finally {
       await coordinator.dispose();
     }
@@ -913,9 +915,37 @@ describe("a machine of this Connect account handing over its line", () => {
       });
       const fleet = (await (await main.request()).json()) as {
         machines: Array<{ id: string; label: string }>;
+        accountJoins?: Array<{ id: string; label: string; joinedAt: string }>;
       };
       // Listed under the name the line carries, which the machine reports for itself.
       expect(fleet.machines).toContainEqual(expect.objectContaining({ id: "m2", label: "M2" }));
+      // Noted for the notice this machine's app shows; nothing to accept.
+      expect(fleet.accountJoins).toEqual([
+        { id: "m2", label: "M2", joinedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/u) },
+      ]);
+    } finally {
+      await main.dispose();
+    }
+  });
+  it("notes no join for a machine that was already listed", async () => {
+    const machine = fakeMachine();
+    vi.stubGlobal("fetch", machine.fetcher);
+    const main = await connectApi(AuthStandardClientScopes);
+    try {
+      const listed = encodeFleetJoinCode({
+        url: ORIGIN,
+        environmentId: "env-m1",
+        label: "M1",
+        managementToken: "management-secret",
+      });
+      const response = await main.workers(
+        "account-join",
+        { invitation: listed, access: "auto" },
+        bearer,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ id: "m1" });
+      expect(await (await main.request()).json()).not.toHaveProperty("accountJoins");
     } finally {
       await main.dispose();
     }

@@ -88,6 +88,13 @@ export const StudioFleetInvalidEntry = Schema.Struct({
   reason: Schema.String,
 });
 export type StudioFleetInvalidEntry = typeof StudioFleetInvalidEntry.Type;
+/** A machine that joined this one through the owner's SpecWithCode Connect account. */
+export const StudioFleetAccountJoin = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  joinedAt: IsoDateTime,
+});
+export type StudioFleetAccountJoin = typeof StudioFleetAccountJoin.Type;
 export const StudioFleetSnapshot = Schema.Struct({
   configured: Schema.Boolean,
   connectPermission: Schema.Literals(["access:write", "orchestration:operate"]),
@@ -96,6 +103,8 @@ export const StudioFleetSnapshot = Schema.Struct({
   machines: Schema.Array(StudioFleetMachine),
   /** Absent when every line parsed, and from older servers. */
   invalidEntries: Schema.optionalKey(Schema.Array(StudioFleetInvalidEntry)),
+  /** Joins of the last week, newest last. Absent with none, and from older servers. */
+  accountJoins: Schema.optionalKey(Schema.Array(StudioFleetAccountJoin)),
 });
 export type StudioFleetSnapshot = typeof StudioFleetSnapshot.Type;
 export const StudioFleetConnectInput = Schema.StructWithRest(
