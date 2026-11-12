@@ -121,6 +121,9 @@ vi.mock("../../studio/machineNickname", () => ({
     runtime.nicknames[environmentId] ?? label ?? environmentId,
 }));
 vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
+vi.mock("./AddProjectToMachine", () => ({
+  AddProjectToMachine: ({ name }: { name: string }) => <span data-add-project={name} />,
+}));
 vi.mock("../../environments/primary", () => ({
   createServerPairingCredential: runtime.createCredential,
   readPrimaryEnvironmentTarget: () => ({ target: { httpBaseUrl: "https://m4max.tailnet.ts.net" } }),
@@ -249,6 +252,15 @@ describe("Settings > Machines", () => {
     expect(html.startsWith("<main>")).toBe(true);
     expect(html.endsWith("</main>")).toBe(true);
     expect(html.match(/<main>/g)).toHaveLength(1);
+  });
+
+  it("offers to add a project on a connected machine that holds none", () => {
+    setUp();
+    // MacBook Pro (m3) is connected and has a project; M1Max is not connected.
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("data-add-project");
+    runtime.projects = [];
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html.match(/data-add-project="[^"]*"/g)).toEqual(['data-add-project="MacBook Pro"']);
   });
 
   it("adds no team rules line when no machine has rules", () => {

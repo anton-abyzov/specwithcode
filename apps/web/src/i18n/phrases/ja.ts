@@ -4157,4 +4157,12 @@ export const ja: PhraseCatalog = {
     "{machine} で変更を確認できませんでした。スイッチは {machine} が報告する状態を表示しています。",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} の SpecWithCode にはこの設定がありません。先に {machine} を更新してください。",
+  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
+    "プロジェクトのワーカーは、そのコピーがないマシンをスキップします。まずこのマシンでプロジェクトを開いてから、ここで {name} に追加してください。",
+  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
+    "プロジェクトのワーカーは、そのコピーがないマシンをスキップします。{name} が作業を受けられるように、プロジェクトを追加してください。",
+  "Add {project} to {name}": "{project} を {name} に追加",
+  "Add a project to {name}": "プロジェクトを {name} に追加",
+  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
+    "次は {coordinatorLabel} で: プロジェクトのワーカーは、そのコピーがないマシンをスキップします。そちらで「設定 > マシン」を開いてこのマシンにプロジェクトを追加するか、チャットの「実行先」で「別のマシンに追加…」を選んでください。",
 };

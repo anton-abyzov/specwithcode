@@ -4183,4 +4183,12 @@ export const es: PhraseCatalog = {
     "No se pudo confirmar el cambio en {machine}. El interruptor muestra lo que indica {machine}.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} usa una versión de SpecWithCode sin este ajuste. Actualiza primero {machine}.",
+  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
+    "Los workers de un proyecto omiten un equipo que no tiene una copia de él. Abre primero un proyecto en este equipo y luego añádelo a {name} aquí.",
+  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
+    "Los workers de un proyecto omiten un equipo que no tiene una copia de él. Añade uno para que {name} pueda recibir trabajo.",
+  "Add {project} to {name}": "Añadir {project} a {name}",
+  "Add a project to {name}": "Añadir un proyecto a {name}",
+  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
+    "Siguiente paso, en {coordinatorLabel}: los workers de un proyecto omiten un equipo que no tiene una copia de él. Abre allí Ajustes > Máquinas y añade un proyecto a este equipo, o elige «Añadir a otro equipo…» en «Ejecutar en» dentro de un chat.",
 };

@@ -274,6 +274,12 @@ export function AccountJoinCardBody({
                 { coordinatorLabel: saved.coordinatorLabel },
               )}
             </p>
+            <p className="text-xs text-muted-foreground" data-testid="join-next-step">
+              {tx(
+                "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.",
+                { coordinatorLabel: saved.coordinatorLabel },
+              )}
+            </p>
             {machines.length ? (
               <Button size="xs" variant="outline" onClick={() => setSaved(null)}>
                 {tx("Allow another machine")}

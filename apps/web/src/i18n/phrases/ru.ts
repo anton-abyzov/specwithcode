@@ -4156,4 +4156,12 @@ export const ru: PhraseCatalog = {
     "Не удалось подтвердить изменение на {machine}. Переключатель показывает то, что сообщает {machine}.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "На {machine} версия SpecWithCode без этой настройки. Сначала обновите {machine}.",
+  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
+    "Воркеры проекта пропускают машину, на которой нет его копии. Сначала откройте проект на этой машине, затем добавьте его на {name} здесь.",
+  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
+    "Воркеры проекта пропускают машину, на которой нет его копии. Добавьте проект, чтобы {name} могла брать работу.",
+  "Add {project} to {name}": "Добавить {project} на {name}",
+  "Add a project to {name}": "Добавить проект на {name}",
+  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
+    "Дальше на {coordinatorLabel}: воркеры проекта пропускают машину, на которой нет его копии. Откройте там «Настройки > Машины» и добавьте проект на эту машину или выберите «Добавить на другую машину…» в меню «Запустить на» в чате.",
 };

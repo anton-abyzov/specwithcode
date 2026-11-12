@@ -4116,4 +4116,12 @@ export const ko: PhraseCatalog = {
     "{machine}에서 변경을 확인하지 못했습니다. 스위치는 {machine}이 보고하는 상태를 보여 줍니다.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine}의 SpecWithCode 버전에는 이 설정이 없습니다. 먼저 {machine}을(를) 업데이트하세요.",
+  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
+    "프로젝트의 워커는 해당 프로젝트 사본이 없는 컴퓨터를 건너뜁니다. 먼저 이 컴퓨터에서 프로젝트를 연 다음 여기에서 {name}에 추가하세요.",
+  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
+    "프로젝트의 워커는 해당 프로젝트 사본이 없는 컴퓨터를 건너뜁니다. {name}이(가) 작업을 받을 수 있도록 프로젝트를 추가하세요.",
+  "Add {project} to {name}": "{project}을(를) {name}에 추가",
+  "Add a project to {name}": "{name}에 프로젝트 추가",
+  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
+    "다음 단계, {coordinatorLabel}에서: 프로젝트의 워커는 해당 프로젝트 사본이 없는 컴퓨터를 건너뜁니다. 그쪽에서 설정 > 머신을 열어 이 컴퓨터에 프로젝트를 추가하거나, 채팅의 ‘실행 위치’에서 ‘다른 컴퓨터에 추가…’를 선택하세요.",
 };

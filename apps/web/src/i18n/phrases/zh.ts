@@ -4004,4 +4004,12 @@ export const zh: PhraseCatalog = {
     "无法确认 {machine} 上的更改。开关显示的是 {machine} 报告的状态。",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} 上的 SpecWithCode 版本没有此设置。请先更新 {machine}。",
+  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
+    "项目的工作线程会跳过没有该项目副本的电脑。请先在这台电脑上打开一个项目，然后在这里把它添加到 {name}。",
+  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
+    "项目的工作线程会跳过没有该项目副本的电脑。添加一个项目，{name} 才能接收工作。",
+  "Add {project} to {name}": "将 {project} 添加到 {name}",
+  "Add a project to {name}": "添加项目到 {name}",
+  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
+    "下一步，在 {coordinatorLabel} 上：项目的工作线程会跳过没有该项目副本的电脑。在那里打开“设置 > 机器”，为这台电脑添加一个项目，或在聊天的“运行于”中选择“添加到另一台电脑…”。",
 };

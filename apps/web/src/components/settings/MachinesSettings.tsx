@@ -60,6 +60,7 @@ import {
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { AccountJoinCard } from "./AccountJoinCard";
+import { AddProjectToMachine } from "./AddProjectToMachine";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
@@ -211,6 +212,14 @@ export function MachinesSettingsPanel() {
             row={row}
             primaryEnvironmentId={fleet.primaryEnvironmentId}
             onGranted={grants.refresh}
+          />
+        ) : null
+      }
+      addProject={
+        row.seen.state === "connected" && row.projects.own.length === 0 ? (
+          <AddProjectToMachine
+            environmentId={row.environmentId}
+            name={machineName(row.environmentId, row.label)}
           />
         ) : null
       }
@@ -658,6 +667,7 @@ export function MachineRow({
   addForAgents,
   connectBothWays,
   allowBack,
+  addProject,
 }: {
   remoteControl?: ReactNode;
   /** The Allow workers control for agents here; it sits on the first access line. */
@@ -676,6 +686,8 @@ export function MachineRow({
   connectBothWays?: ReactNode;
   /** Shown where the grant would be until that machine may run work here. */
   allowBack?: ReactNode;
+  /** The next step for a connected machine with no project of its own: add one. */
+  addProject?: ReactNode;
 }) {
   const tx = useTx();
   const seen = row.seen.state === "this-machine" || row.seen.state === "connected";
@@ -814,9 +826,12 @@ export function MachineRow({
         {row.projects.own.length > 0 ? (
           <ProjectList projects={row.projects.own} here={here} />
         ) : (
-          <p className="text-xs text-muted-foreground">
-            {seen ? tx("No projects of your own here.") : tx("Connect to see its projects.")}
-          </p>
+          <>
+            <p className="text-xs text-muted-foreground">
+              {seen ? tx("No projects of your own here.") : tx("Connect to see its projects.")}
+            </p>
+            {addProject}
+          </>
         )}
         <ArchivedDisclosure
           count={row.projects.automated.length}
