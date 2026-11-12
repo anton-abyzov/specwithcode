@@ -4,8 +4,10 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { SourceControlPublishFailureReason } from "./sourceControl.ts";
 import {
   CommandId,
+  EnvironmentId,
   ForwardCompatibleUnion,
   isUnknownUnionMember,
   IsoDateTime,
@@ -223,6 +225,69 @@ export const ProjectCreatePayload = Schema.Struct({
   origin: Schema.optional(ProjectOrigin),
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
+
+/**
+ * What the agent tool studio_project_create takes beyond a plain create, as
+ * the New project dialog does: the machine, the parent folder and GitHub.
+ * All optional; a machine on an older SpecWithCode ignores them, so the
+ * caller checks its `projectCreateOptions` feature first.
+ */
+export const ProjectCreateToolOptions = Schema.Struct({
+  machine: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(80)).annotate({
+      description:
+        "The machine to create the project on: a fleet id or label from studio_machine_list, or 'local'. Omit for this machine. The project then lives on that machine only.",
+    }),
+  ),
+  parentPath: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "An existing folder on that machine (absolute, or ~ for its home) to make the project in, as <parentPath>/<slug>. Omitted: that machine's projects folder, such as ~/Projects. Not with workspaceRoot.",
+    }),
+  ),
+  github: Schema.optional(
+    Schema.Union([
+      Schema.Boolean,
+      Schema.Struct({
+        account: TrimmedNonEmptyString.annotate({
+          description: "The GitHub account or organization to create the repository in.",
+        }),
+      }),
+    ]).annotate({
+      description:
+        "Publish a private GitHub repository after the first commit, with that machine's GitHub sign-in. A failed publish keeps the project; the result says why.",
+    }),
+  ),
+});
+export type ProjectCreateToolOptions = typeof ProjectCreateToolOptions.Type;
+
+/** How publishing went: pushed, or only the remote added (no first commit to push). */
+export const ProjectCreatePublished = Schema.Literals(["published", "remote_added"]);
+export type ProjectCreatePublished = typeof ProjectCreatePublished.Type;
+
+/** What studio_project_create reports beside the project itself. All optional. */
+export const ProjectCreateToolResultFields = {
+  commitError: Schema.optional(Schema.String),
+  existing: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "True when an existing project or folder was used as it is: nothing was made.",
+    }),
+  ),
+  published: Schema.optional(ProjectCreatePublished),
+  repository: Schema.optional(
+    Schema.String.annotate({ description: "The GitHub repository, owner/name." }),
+  ),
+  publishFailure: Schema.optional(SourceControlPublishFailureReason),
+  publishError: Schema.optional(
+    Schema.String.annotate({ description: "Why publishing failed. The project exists anyway." }),
+  ),
+  machine: Schema.optional(
+    Schema.Struct({ id: Schema.String, label: Schema.String, environmentId: EnvironmentId }),
+  ),
+  next: Schema.optional(
+    Schema.String.annotate({ description: "How to start work in the project. Follow it." }),
+  ),
+} as const;
 
 export const ProjectUpdatePayload = Schema.Struct({
   workspaceSettings: Schema.optional(ProjectWorkspacePatch),

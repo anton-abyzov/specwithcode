@@ -13,6 +13,8 @@ import {
   StoredProjectIcon,
   ProjectReadFileError,
   ProjectCreatePayload,
+  ProjectCreateToolOptions,
+  ProjectCreateToolResultFields,
   ProjectUpdatePayload,
   ProjectMutation,
   ProjectSearchContentsError,
@@ -362,5 +364,34 @@ describe("project worker machine setting", () => {
         workerMachine: { machineId: "Bad Id", environmentId: "env-m1", projectId: null },
       }),
     ).toThrow();
+  });
+});
+
+describe("studio_project_create options and result", () => {
+  const decodeOptions = Schema.decodeUnknownSync(ProjectCreateToolOptions);
+  const decodeResult = Schema.decodeUnknownSync(Schema.Struct(ProjectCreateToolResultFields));
+  it("takes a machine, a parent folder and GitHub, all optional", () => {
+    expect(decodeOptions({})).toEqual({});
+    expect(
+      decodeOptions({ machine: " M1 ", parentPath: "~/Projects", github: { account: "octo" } }),
+    ).toEqual({ machine: "M1", parentPath: "~/Projects", github: { account: "octo" } });
+    expect(decodeOptions({ github: true })).toEqual({ github: true });
+    expect(() => decodeOptions({ github: "yes" })).toThrow();
+    expect(() => decodeOptions({ machine: "x".repeat(81) })).toThrow();
+  });
+  it("reports existing, published or the publish failure, and the machine", () => {
+    expect(decodeResult({})).toEqual({});
+    expect(
+      decodeResult({
+        existing: true,
+        published: "remote_added",
+        repository: "octo/app",
+        publishFailure: "name_taken",
+        publishError: "A repository named octo/app already exists.",
+        machine: { id: "m1", label: "M1", environmentId: "env-m1" },
+        next: "Launch there.",
+      }),
+    ).toMatchObject({ existing: true, published: "remote_added", publishFailure: "name_taken" });
+    expect(() => decodeResult({ published: "pushed" })).toThrow();
   });
 });
