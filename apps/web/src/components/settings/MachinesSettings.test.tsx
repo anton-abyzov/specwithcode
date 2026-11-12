@@ -122,10 +122,29 @@ vi.mock("../../studio/machineNickname", () => ({
 }));
 vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
 vi.mock("./AddProjectToMachine", () => ({
-  AddProjectToMachine: ({ name, empty }: { name: string; empty: boolean }) => (
-    <span data-add-project={name} data-empty={String(empty)} />
+  AddProjectToMachine: ({
+    environmentId,
+    name,
+    onChoose,
+  }: {
+    environmentId: string;
+    name: string;
+    onChoose: (target: { environmentId: string; source: { id: string } }) => void;
+  }) => (
+    <button
+      type="button"
+      data-add-project={name}
+      onClick={() => onChoose({ environmentId, source: { id: "p-chosen" } })}
+    />
   ),
+  AddProjectToMachineDialog: ({
+    target,
+  }: {
+    target: { environmentId: string; source: { id: string } } | null;
+  }) =>
+    target ? <div data-add-dialog={`${target.source.id} to ${target.environmentId}`} /> : null,
 }));
+
 vi.mock("../../environments/primary", () => ({
   createServerPairingCredential: runtime.createCredential,
   readPrimaryEnvironmentTarget: () => ({ target: { httpBaseUrl: "https://m4max.tailnet.ts.net" } }),
@@ -256,18 +275,49 @@ describe("Settings > Machines", () => {
     expect(html.match(/<main>/g)).toHaveLength(1);
   });
 
-  it("mounts the add-project step on a connected machine and prompts only while it holds none", () => {
+  it("offers to add a project only on a connected machine that holds none", () => {
     setUp();
-    const mounted = (html: string) => html.match(/data-add-project="[^"]*" data-empty="[^"]*"/g);
     // MacBook Pro (m3) is connected and has a project; M1Max is not connected, M4MAX is here.
-    // It stays mounted with a project, so an open add dialog survives the project arriving.
-    expect(mounted(renderToStaticMarkup(<MachinesSettingsPanel />))).toEqual([
-      'data-add-project="MacBook Pro" data-empty="false"',
-    ]);
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("data-add-project");
     runtime.projects = [];
-    expect(mounted(renderToStaticMarkup(<MachinesSettingsPanel />))).toEqual([
-      'data-add-project="MacBook Pro" data-empty="true"',
-    ]);
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html.match(/data-add-project="[^"]*"/g)).toEqual(['data-add-project="MacBook Pro"']);
+    expect(html).not.toContain("data-add-dialog");
+  });
+
+  it("keeps the add dialog open when the card that opened it changes or leaves", async () => {
+    setUp();
+    const withProject = runtime.projects;
+    runtime.projects = [];
+    await act(async () => {
+      rendered = create(<MachinesSettingsPanel />);
+    });
+    const dialogs = () =>
+      rendered!.root
+        .findAll((node) => typeof node.props["data-add-dialog"] === "string")
+        .map((node) => node.props["data-add-dialog"]);
+    const prompts = () =>
+      rendered!.root.findAll(
+        (node) => node.type === "button" && node.props["data-add-project"] !== undefined,
+      );
+    await act(async () => prompts()[0]!.props.onClick());
+    expect(dialogs()).toEqual([`p-chosen to ${m3}`]);
+
+    // The project arrives on the machine: its prompt goes, the dialog stays.
+    runtime.projects = withProject;
+    await act(async () => rendered!.update(<MachinesSettingsPanel />));
+    expect(prompts()).toHaveLength(0);
+    expect(dialogs()).toEqual([`p-chosen to ${m3}`]);
+
+    // The machine drops out of the list for a moment, as after a failed check.
+    runtime.environments = [environment(m4, "M4MAX")];
+    runtime.fleet = {
+      ...(runtime.fleet as object),
+      snapshot: { ...snapshot, machines: [] },
+      unseen: [],
+    };
+    await act(async () => rendered!.update(<MachinesSettingsPanel />));
+    expect(dialogs()).toEqual([`p-chosen to ${m3}`]);
   });
 
   it("adds no team rules line when no machine has rules", () => {

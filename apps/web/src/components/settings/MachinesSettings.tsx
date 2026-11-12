@@ -60,7 +60,11 @@ import {
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { AccountJoinCard } from "./AccountJoinCard";
-import { AddProjectToMachine } from "./AddProjectToMachine";
+import {
+  AddProjectToMachine,
+  AddProjectToMachineDialog,
+  type AddProjectTarget,
+} from "./AddProjectToMachine";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
@@ -127,6 +131,8 @@ export function MachinesSettingsPanel() {
   const [now] = useState(Date.now);
   const hostBlocks = useHostLimitBlocks(null, now);
   const [pending, setPending] = useState<EnvironmentId | null>(null);
+  // The add dialog is the page's, not a card's: a card can leave the list while a clone runs.
+  const [addingProject, setAddingProject] = useState<AddProjectTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
   // While no machine may run work here, allowing one is this page's first step. Decided
   // once per visit, so the section does not jump away the moment a machine is allowed.
@@ -216,11 +222,11 @@ export function MachinesSettingsPanel() {
         ) : null
       }
       addProject={
-        row.seen.state === "connected" ? (
+        row.seen.state === "connected" && row.projects.own.length === 0 ? (
           <AddProjectToMachine
             environmentId={row.environmentId}
             name={machineName(row.environmentId, row.label)}
-            empty={row.projects.own.length === 0}
+            onChoose={setAddingProject}
           />
         ) : null
       }
@@ -280,6 +286,7 @@ export function MachinesSettingsPanel() {
             : controls;
         }}
       />
+      <AddProjectToMachineDialog target={addingProject} onClose={() => setAddingProject(null)} />
       <AwayAccessRequestsAll />
       {allowFirst === true || grantsPlacementPending ? null : (
         <>
@@ -687,7 +694,7 @@ export function MachineRow({
   connectBothWays?: ReactNode;
   /** Shown where the grant would be until that machine may run work here. */
   allowBack?: ReactNode;
-  /** Add a project, for a connected machine. It prompts only while the machine holds none. */
+  /** The next step for a connected machine with no project of its own: add one. */
   addProject?: ReactNode;
 }) {
   const tx = useTx();

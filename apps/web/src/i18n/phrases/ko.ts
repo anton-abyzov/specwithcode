@@ -4130,5 +4130,5 @@ export const ko: PhraseCatalog = {
   "Add {project} to {name}": "{project}을(를) {name}에 추가",
   "Add a project to {name}": "{name}에 프로젝트 추가",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "다음 단계, {coordinatorLabel}에서: 이 컴퓨터는 사본이 있는 프로젝트만 실행할 수 있습니다. 그쪽에서 설정 > 머신을 열어 이 컴퓨터에 프로젝트를 추가하세요. 그런 다음 채팅의 ‘실행 위치’에서 이 컴퓨터를 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
+    "다음 단계, {coordinatorLabel}에서: 이 컴퓨터는 사본이 있는 프로젝트만 실행할 수 있습니다. 그쪽에서 설정 > 컴퓨터를 열어 이 컴퓨터에 프로젝트를 추가하세요. 그런 다음 채팅의 ‘실행 위치’에서 이 컴퓨터를 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
 };

@@ -4197,5 +4197,5 @@ export const es: PhraseCatalog = {
   "Add {project} to {name}": "Añadir {project} a {name}",
   "Add a project to {name}": "Añadir un proyecto a {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "Siguiente paso, en {coordinatorLabel}: este equipo solo puede ejecutar un proyecto del que tiene una copia. Abre allí Ajustes > Máquinas y añade un proyecto a este equipo. Luego elígelo en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
+    "Siguiente paso, en {coordinatorLabel}: este equipo solo puede ejecutar un proyecto del que tiene una copia. Abre allí Ajustes > Equipos y añade un proyecto a este equipo. Luego elígelo en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
 };

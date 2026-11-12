@@ -48,7 +48,11 @@ vi.mock("../ui/menu", () => ({
   ),
 }));
 
-import { AddProjectToMachine, AddProjectToMachineView } from "./AddProjectToMachine";
+import {
+  AddProjectToMachine,
+  AddProjectToMachineDialog,
+  AddProjectToMachineView,
+} from "./AddProjectToMachine";
 
 const project = (title: string) =>
   ({
@@ -79,55 +83,56 @@ afterEach(async () => {
 });
 
 describe("Add a project to a joined machine", () => {
-  it("opens the add dialog for the chosen project and keeps it open once the machine has it", async () => {
+  it("hands the chosen project and the machine to the page", async () => {
     runtime.here = here;
     runtime.projects = [project("specweave")];
     runtime.live = new Set([here, there]);
-    await mount(<AddProjectToMachine environmentId={there} name="M5" empty />);
+    const onChoose = vi.fn();
+    await mount(<AddProjectToMachine environmentId={there} name="M5" onChoose={onChoose} />);
     expect(prompts()).toHaveLength(1);
-    expect(dialogs()).toHaveLength(0);
-
     await act(async () => view!.root.findByType("button").props.onClick());
+    expect(onChoose).toHaveBeenCalledExactlyOnceWith({
+      environmentId: there,
+      source: runtime.projects[0],
+    });
+  });
+
+  it("opens the add dialog for the page's target and closes it when added or dismissed", async () => {
+    const onClose = vi.fn();
+    await mount(<AddProjectToMachineDialog target={null} onClose={onClose} />);
+    expect(dialogs()).toHaveLength(0);
+    const target = { environmentId: there, source: project("specweave") };
+    await act(async () =>
+      view!.update(<AddProjectToMachineDialog target={target} onClose={onClose} />),
+    );
     expect(dialogs()).toHaveLength(1);
     expect(runtime.dialog?.source.id).toBe("p-specweave");
     expect(runtime.dialog?.destinationEnvironmentId).toBe(there);
 
-    // The project arrives on the machine: the prompt goes, the dialog must not.
-    await act(async () =>
-      view!.update(<AddProjectToMachine environmentId={there} name="M5" empty={false} />),
-    );
-    expect(prompts()).toHaveLength(0);
-    expect(dialogs()).toHaveLength(1);
-
-    await act(async () => runtime.dialog!.onAdded({}));
-    expect(dialogs()).toHaveLength(0);
-  });
-
-  it("closes the dialog when it is dismissed", async () => {
-    runtime.here = here;
-    runtime.projects = [project("specweave")];
-    runtime.live = new Set([here, there]);
-    await mount(<AddProjectToMachine environmentId={there} name="M5" empty />);
-    await act(async () => view!.root.findByType("button").props.onClick());
+    // Staying open is not a close; only a dismissal or a finished add is.
+    await act(async () => runtime.dialog!.onOpenChange(true));
+    expect(onClose).not.toHaveBeenCalled();
     await act(async () => runtime.dialog!.onOpenChange(false));
-    expect(dialogs()).toHaveLength(0);
-    expect(prompts()).toHaveLength(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await act(async () => runtime.dialog!.onAdded({}));
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 
   it("says nothing until both machines' project lists are in", async () => {
     runtime.here = here;
     runtime.projects = [];
+    const prompt = <AddProjectToMachine environmentId={there} name="M5" onChoose={vi.fn()} />;
     runtime.live = new Set([here]);
-    await mount(<AddProjectToMachine environmentId={there} name="M5" empty />);
+    await mount(prompt);
     expect(prompts()).toHaveLength(0);
     runtime.live = new Set([there]);
     await act(async () =>
-      view!.update(<AddProjectToMachine environmentId={there} name="M5" empty />),
+      view!.update(<AddProjectToMachine environmentId={there} name="M5" onChoose={vi.fn()} />),
     );
     expect(prompts()).toHaveLength(0);
     runtime.live = new Set([here, there]);
     await act(async () =>
-      view!.update(<AddProjectToMachine environmentId={there} name="M5" empty />),
+      view!.update(<AddProjectToMachine environmentId={there} name="M5" onChoose={vi.fn()} />),
     );
     expect(prompts()).toHaveLength(1);
   });
@@ -136,11 +141,11 @@ describe("Add a project to a joined machine", () => {
     runtime.projects = [project("specweave")];
     runtime.live = new Set([here, there]);
     runtime.here = here;
-    await mount(<AddProjectToMachine environmentId={here} name="M4" empty />);
+    await mount(<AddProjectToMachine environmentId={here} name="M4" onChoose={vi.fn()} />);
     expect(view!.toJSON()).toBeNull();
     runtime.here = null;
     await act(async () =>
-      view!.update(<AddProjectToMachine environmentId={there} name="M5" empty />),
+      view!.update(<AddProjectToMachine environmentId={there} name="M5" onChoose={vi.fn()} />),
     );
     expect(view!.toJSON()).toBeNull();
   });
