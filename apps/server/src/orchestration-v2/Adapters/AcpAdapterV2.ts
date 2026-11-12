@@ -716,7 +716,10 @@ function negotiatedCapabilities(
     ...base,
     sessions: {
       ...base.sessions,
-      supportsModelSwitchInSession: hasModelConfig || setup.models != null,
+      // A flavor that sets the model its own way (Muse) keeps what it declares
+      // when the agent lists no model option at session start.
+      supportsModelSwitchInSession:
+        base.sessions.supportsModelSwitchInSession || hasModelConfig || setup.models != null,
     },
     threads: {
       ...base.threads,

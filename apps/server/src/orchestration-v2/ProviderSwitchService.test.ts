@@ -72,11 +72,13 @@ function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapterV2Shape["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
+  /** What the driver itself declares, apart from any session record. */
+  declared: typeof capabilitiesWithoutModelSwitch = capabilitiesWithoutModelSwitch,
 ) {
   const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
     instanceId,
     driver,
-    getCapabilities: () => Effect.succeed(capabilitiesWithoutModelSwitch),
+    getCapabilities: () => Effect.succeed(declared),
     planSelectionTransition,
     openSession: () => Effect.die("ProviderSwitchService tests do not open sessions."),
   });
@@ -98,7 +100,7 @@ function layerTest(
             driver,
             continuationKey: value.continuationKey,
             enabled: true,
-            capabilities: capabilitiesWithoutModelSwitch,
+            capabilities: declared,
           });
     },
   });
@@ -382,6 +384,30 @@ it.effect("rejects a model change the dead record never negotiated support for",
       ),
     ),
   ),
+);
+
+// Muse sets the model at turn start though its agent lists no model option,
+// and session records saved before that was known say it cannot switch.
+it.effect.each(["live", "stopped"] as const)(
+  "accepts a model change the driver declares though the %s session record says it cannot",
+  (session) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const result = yield* service.plan({
+        projection: session === "live" ? projection() : deadNativeThreadProjection("stopped"),
+        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+      });
+      assert.equal(result.transition.type, "switch_model_in_session");
+      assert.deepEqual(result.releaseProviderSessionIds, []);
+    }).pipe(
+      Effect.provide(
+        layerTest(
+          { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+          (input) => Effect.succeed(acpSelectionTransition(input)),
+          CodexProviderCapabilitiesV2,
+        ),
+      ),
+    ),
 );
 
 it.effect("distinguishes compatible and incompatible instances of the same driver", () =>

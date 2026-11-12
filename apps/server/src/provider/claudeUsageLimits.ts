@@ -263,10 +263,13 @@ function denialReset(
  * Utilization is a 0–1 fraction on the streamed event, read from the top
  * level or else the event's own `unifiedWindows` entry; a rejected window is
  * spent whatever it reports. The other windows the event carries land too.
- * Any rejection revokes ordinary usage until it resets: a rejected model
- * weekly too, since start gates without a model cannot scope it. An
- * overage-included event before any probe has named the bucket draws no row:
- * guessing a name would draw a row the next probe cannot reconcile.
+ * A rejected account-wide window revokes ordinary usage until it resets. A
+ * rejected model weekly (Fable) that draws its row revokes nothing: the spent
+ * row refuses that model alone, and every other model keeps running. One
+ * whose bucket cannot be named still revokes ordinary usage, since nothing
+ * else would record it: an overage-included event before any probe has named
+ * the bucket draws no row, as guessing a name would draw a row the next probe
+ * cannot reconcile.
  */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
@@ -283,6 +286,7 @@ export function claudeRateLimitEventToUpdate(
   const unified = readUnifiedWindows(info);
   const windows: ServerProviderUsageWindow[] = [];
   let resetsAt: string | null | undefined;
+  let rejectedWindow: ServerProviderUsageWindow | undefined;
   if (type) {
     const own = unified[type];
     const utilization = info.utilization !== undefined ? info.utilization : own?.utilization;
@@ -301,6 +305,7 @@ export function claudeRateLimitEventToUpdate(
         ? undefined
         : eventWindow(type, (rejected ? 1 : fraction) * 100, resetsAt, names, rejected);
     if (window) windows.push(window);
+    if (rejected) rejectedWindow = window;
   }
   for (const [id, reading] of Object.entries(unified)) {
     if (id === type || !validFraction(reading.utilization)) continue;
@@ -309,15 +314,30 @@ export function claudeRateLimitEventToUpdate(
     const window = eventWindow(id, reading.utilization * 100, reset, names, false);
     if (window) windows.push(window);
   }
-  const denialResetsAt = rejected ? denialReset(type, resetsAt, unified) : undefined;
-  const denial = rejected
-    ? {
-        ordinaryUsageAllowed: false as const,
-        nativeDenialRequiresFullRead: true as const,
-        rateLimitReachedType: "rate_limit_reached",
-        ...(denialResetsAt ? { nativeDenialResetsAt: denialResetsAt } : {}),
-      }
-    : undefined;
+  // A rejected model weekly that drew its row: the row is the whole refusal,
+  // unless the event also shows an account-wide window spent.
+  const scopedOnly =
+    rejected &&
+    type !== undefined &&
+    isModelScopedType(type) &&
+    rejectedWindow?.modelScope !== undefined &&
+    !Object.entries(unified).some(
+      ([id, reading]) =>
+        id !== type &&
+        id in WINDOWS &&
+        typeof reading.utilization === "number" &&
+        reading.utilization >= 1,
+    );
+  const denialResetsAt = rejected && !scopedOnly ? denialReset(type, resetsAt, unified) : undefined;
+  const denial =
+    rejected && !scopedOnly
+      ? {
+          ordinaryUsageAllowed: false as const,
+          nativeDenialRequiresFullRead: true as const,
+          rateLimitReachedType: "rate_limit_reached",
+          ...(denialResetsAt ? { nativeDenialResetsAt: denialResetsAt } : {}),
+        }
+      : undefined;
   if (windows.length === 0 && !denial) return undefined;
   return { windows, ...denial };
 }

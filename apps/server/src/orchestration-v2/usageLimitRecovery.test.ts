@@ -251,6 +251,27 @@ it("finds room only in a read taken after the stop", () => {
     limitReadShowsRoom(read(stopMs + 1, { nativeDenialResetsAt: ahead }), stopMs, now),
     "wait",
   );
+  // A spent model weekly keeps only a thread on that model waiting.
+  const fable = {
+    id: "seven_day_fable",
+    kind: "weekly",
+    label: "Weekly · Fable",
+    modelScope: "Fable",
+    usedPercent: 100,
+    resetsAt: ahead,
+  } as const;
+  const scoped = read(stopMs + 1, { windows: [fable] });
+  assert.equal(limitReadShowsRoom(scoped, stopMs, now, "claude-fable-5-2"), "wait");
+  assert.equal(limitReadShowsRoom(scoped, stopMs, now, "claude-opus-5-5"), "room");
+  assert.equal(
+    limitReadShowsRoom(
+      read(stopMs + 1, { windows: [{ ...fable, resetsAt: undefined }] }),
+      stopMs,
+      now,
+      "claude-fable-5-2",
+    ),
+    "check",
+  );
   // A provider that reports no usage proves room by its own status read.
   const plain = { ...provider("copilot", "acpRegistry", stopMs + 1), usageLimits: undefined };
   assert.equal(limitReadShowsRoom(plain, stopMs, now), "room");

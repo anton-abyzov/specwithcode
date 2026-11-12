@@ -280,7 +280,7 @@ describe("claudeRateLimitEventToUpdate", () => {
   // Updated with the 2026-10-21 limit fix: a rejected window without a
   // utilization is spent (it used to stay at its last reading). A model
   // weekly's rejection still revokes the whole account.
-  it("publishes a rejection even when the native event omits usage or a known window", () => {
+  it("publishes a rejection even when the native event omits usage or a known window; a model weekly spends only its row", () => {
     const denial = {
       ordinaryUsageAllowed: false,
       nativeDenialRequiresFullRead: true,
@@ -321,7 +321,6 @@ describe("claudeRateLimitEventToUpdate", () => {
           windowDurationMins: 10080,
         },
       ],
-      ...denial,
     });
   });
 
@@ -427,7 +426,7 @@ describe("claudeRateLimitEventToUpdate", () => {
     ["seven_day_opus", "seven_day_opus", "Opus"],
     ["seven_day_some_new_model", "seven_day_some_new_model", "Some New Model"],
   ] as const)(
-    "a rejected model weekly (%s) spends its window and fences the account until its reset",
+    "a rejected model weekly (%s) spends its own window and leaves the account open",
     (rateLimitType, id, modelScope) => {
       const update = claudeRateLimitEventToUpdate(
         { status: "rejected", rateLimitType: rateLimitType as never, resetsAt: 1_793_000_000 },
@@ -445,13 +444,30 @@ describe("claudeRateLimitEventToUpdate", () => {
             resetsAt: "2026-10-26T07:33:20.000Z",
           },
         ],
-        ordinaryUsageAllowed: false,
-        nativeDenialRequiresFullRead: true,
-        rateLimitReachedType: "rate_limit_reached",
-        nativeDenialResetsAt: "2026-10-26T07:33:20.000Z",
       });
     },
   );
+
+  it("still denies the account when a rejected model weekly comes with a spent account-wide window", () => {
+    const update = claudeRateLimitEventToUpdate(
+      {
+        status: "rejected",
+        rateLimitType: "seven_day_opus" as never,
+        resetsAt: 1_793_000_000,
+        unifiedWindows: { seven_day: { utilization: 1, resetsAt: 1_793_100_000 } },
+      } as never,
+      noNames,
+    );
+    expect(update).toMatchObject({
+      ordinaryUsageAllowed: false,
+      nativeDenialRequiresFullRead: true,
+      nativeDenialResetsAt: "2026-10-27T11:20:00.000Z",
+    });
+    expect(update?.windows.map((window) => [window.id, window.usedPercent])).toEqual([
+      ["seven_day_opus", 100],
+      ["seven_day", 100],
+    ]);
+  });
 
   it("does not guess a model for an unnamed overage-included rejection", () => {
     expect(

@@ -2063,6 +2063,7 @@ export const layerWithOptions = (
                           runtime.instanceId,
                           input.runtimePolicy.cwd,
                           options,
+                          input.modelSelection.model,
                         );
                       }
                     }).pipe(

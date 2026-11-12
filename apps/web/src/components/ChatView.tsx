@@ -11127,6 +11127,7 @@ export default function ChatView(props: ChatViewProps) {
         Date.parse(activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt),
         // Room as the read saw it; a newer read re-renders this.
         Date.parse(accountChangedProvider?.usageLimits?.checkedAt ?? ""),
+        activeThreadShell.modelSelection.model,
       )
       ? {
           runId: activeThreadShell.latestRun.runId,

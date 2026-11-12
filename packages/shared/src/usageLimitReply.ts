@@ -23,7 +23,7 @@ const ERROR_OPENING = /^(?:\[\s*error\s*\]|(?:api\s+)?error(?:\s+\d{3})?\s*[:\-�
  * token limits are no usage limit and another provider would not help.
  */
 const LIMIT_NOUN =
-  "(?:quota|allowance|credits?|(?:usage|rate|session|weekly|monthly|daily|hourly|plan|spending|billing|request|premium\\s+request)[\\s-]limits?)";
+  "(?:(?:usage\\s+)?quota|allowance|credits?|(?:usage|rate|session|weekly|monthly|daily|hourly|plan|spending|billing|request|premium\\s+request)[\\s-]limits?)";
 
 /** Account-window wording, never an arbitrary service name such as "GitHub API". */
 const LIMIT_MODIFIER = "(?:(?:monthly|weekly|daily|hourly|premium(?:\\s+request)?|request)\\s+)?";
@@ -53,6 +53,9 @@ const LIMIT_NOTICE_END: ReadonlyArray<RegExp> = [
   /^for\s+(?:this|your)\s+account[.!]?$/iu,
   /^(?:[.!]\s*)?\(request id:\s*[a-z\d:_-]+\)[.!]?$/iu,
   /^(?:[·;,.—–-]\s*)?resets?\s+(?:at\s+)?\d{1,2}(?::\d{2})?(?:\s*[ap]m)?(?:\s*\([a-z_+-]+(?:\/[a-z_+-]+)*\))?[.!]?$/iu,
+  // The provider's pointer to its own billing page (Devin): "Visit https://… to
+  // purchase on-demand usage or turn on auto-reload." One sentence, nothing after.
+  /^[.!]\s*visit\s+https:\/\/[^\s<>"']+\s+to\s+(?:purchase|buy|add|top\s+up|upgrade)\b[^.!?\n]{0,120}[.!]?$/iu,
 ];
 
 /** The agent speaking for itself ("I'll retry", "let me"): an answer, never a provider notice. */

@@ -10,12 +10,14 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
  * Whether the instance a limited thread runs on is now signed in to another
  * account with room: the server saw the account change after the stop, and a
  * complete read of the new account, taken at or after the change, shows usage
- * left. The server's recovery uses the same proof before it resumes early.
+ * left for the thread's model. The server's recovery uses the same proof
+ * before it resumes early.
  */
 export function accountChangedWithRoom(
   provider: ServerProvider | undefined,
   stoppedAtMs: number,
   nowMs: number,
+  model?: string | null,
 ): boolean {
   const limits = provider?.usageLimits;
   const changedMs = Date.parse(limits?.accountChangedAt ?? "");
@@ -29,7 +31,7 @@ export function accountChangedWithRoom(
     Number.isFinite(fullReadMs) &&
     fullReadMs >= changedMs &&
     canTakeTurn(provider) &&
-    (providerUsedPercent(provider, nowMs) ?? 0) < 100
+    (providerUsedPercent(provider, nowMs, model) ?? 0) < 100
   );
 }
 

@@ -173,6 +173,13 @@ describe("usage limit replies", () => {
       assert.strictEqual(failure?.resetAt, "2026-11-01T00:00:00.000Z", message);
     }
     assert.strictEqual(usageLimitErrorFailure("rate limit exceeded")?.class, "usage_limit");
+    // Devin's session/prompt error (-32011) when its weekly quota is spent.
+    const devin = usageLimitErrorFailure(
+      "Your weekly usage quota has been exhausted. Visit https://app.devin.ai/settings/usage to purchase on-demand usage or turn on auto-reload.",
+    );
+    assert.strictEqual(devin?.class, "usage_limit");
+    assert.strictEqual(devin?.message, "Weekly limit used up on this provider.");
+    assert.isNull(devin?.resetAt ?? null);
     for (const message of [
       "Internal error",
       "maximum context length exceeded",

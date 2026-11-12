@@ -104,12 +104,10 @@ export function nativeQuotaDenied(
   now: number,
   model?: string | null,
 ): boolean {
-  if (
-    !limits ||
-    (limits.unavailable?.reason === "unsupported" && !limits.nativeDenialRequiresFullRead)
-  )
-    return false;
+  if (!limits) return false;
   if (spentModelWindow(limits, now, model)) return true;
+  if (limits.unavailable?.reason === "unsupported" && !limits.nativeDenialRequiresFullRead)
+    return false;
   if (nativeDenialResetPassed(limits, now)) return false;
   const negative =
     limits.ordinaryUsageAllowed === false ||

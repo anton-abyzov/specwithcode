@@ -121,6 +121,7 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
                       instanceId,
                       input.runtimePolicy.cwd,
                       options,
+                      input.modelSelection.model,
                     );
                   const binding = auth?.credentialBinding;
                   const related = binding

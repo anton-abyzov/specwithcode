@@ -2628,6 +2628,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           assert.deepEqual(candidate, {
             id: sqlShell.id,
             providerInstanceId: sqlShell.providerInstanceId,
+            model: sqlShell.modelSelection.model,
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,
