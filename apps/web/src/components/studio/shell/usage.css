@@ -178,3 +178,28 @@
   padding-top: 0;
   border-top: 0;
 }
+/* The title carries its explanation as an info tooltip instead of a paragraph. */
+.sws-machine-limits-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sws-machine-limits-info {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+}
+.sws-machine-limits-info:hover {
+  color: var(--foreground);
+}
+.sws-machine-limits-info:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-machine-limits-info svg {
+  width: 13px;
+  height: 13px;
+}

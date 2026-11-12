@@ -7,7 +7,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
-import { LinkIcon, MonitorIcon, TicketIcon } from "lucide-react";
+import {
+  CircleDashedIcon,
+  CircleSlashIcon,
+  ClockIcon,
+  LinkIcon,
+  MonitorIcon,
+  TicketIcon,
+} from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { environmentPresentations } from "../../../state/presentation";
@@ -28,6 +35,7 @@ import { blockedLabel, leftPercent, usageLeftLabel } from "../../../studio/usage
 import { loadSavedHostReadings, saveHostReadings } from "../../../studio/hostLimitsStorage";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
+import { AccountHeader, shortDuration } from "../../usage/AccountHeader";
 import { RunOutNotice } from "../../usage/RunOutNotice";
 import { getDriverOption } from "../../settings/providerDriverMeta";
 import {
@@ -103,7 +111,7 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
         <div>
           <strong>{row.label}</strong>
           <span className="sws-hl-identity">
-            {[row.identity, row.plan].filter(Boolean).join(" · ") || "Account not reported"}
+            {[row.identity, row.plan].filter(Boolean).join(" · ") || null}
           </span>
           {row.sharedWith.length > 0 ? (
             <span
@@ -337,10 +345,14 @@ function compactStatus(block: HostLimitBlock, now: number): string {
   return block.readAt === null ? "Offline" : `Offline · ${formatAgo(block.readAt, now)}`;
 }
 
-/** Who is signed in, and the other machines sharing that account's quota. */
-function accountLine(row: HostProviderRow): string {
-  const who = row.identity ?? "Account not reported";
-  return row.sharedWith.length > 0 ? `${who} · also on ${row.sharedWith.join(", ")}` : who;
+const lowerFirstWord = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+
+/**
+ * A row with no bars says why in two words; the full reason is its tooltip.
+ * "Not signed in" stays distinct, everything else reads as not reported.
+ */
+function noticeShort(notice: string): string {
+  return /not signed in/i.test(notice) ? "Not signed in" : "Usage not reported";
 }
 
 /**
@@ -360,40 +372,64 @@ function CompactWindowRow({
 }) {
   const tone = window.stale || window.blockedBy ? "stale" : usageToneOf(window.usedPercent);
   const label = windowDisplayLabel(window);
+  const spent = !window.stale && !window.blockedBy && window.usedPercent >= 100;
+  const blockerReset = window.blockedBy?.resetsAt ?? null;
+  const resetIn = window.resetsAt === null || window.resetsAt <= now ? null : window.resetsAt - now;
+  const sentence = window.blockedBy
+    ? `${label}: ${lowerFirstWord(blockedLabel(window.blockedBy, now))}`
+    : [
+        `${label}: ${window.stale ? "reset since the last reading" : usageLeftLabel(window.usedPercent)}`,
+        resetIn === null ? null : `resets in ${formatDuration(resetIn)}`,
+      ]
+        .filter(Boolean)
+        .join(", ");
+  // The window that stops the provider first says so, as the bright row shows.
+  const spoken = rank === "binding" ? `${sentence}, least left` : sentence;
   return (
-    <div className="sws-hl-compact-window" data-tone={tone} data-rank={rank ?? undefined}>
-      <span className="sws-hl-compact-window-label">
-        {label}
-        {rank === "binding" ? <span className="sr-only">, least left</span> : null}
-      </span>
-      <span className="sws-hl-bar" data-tone={tone} aria-hidden>
-        <span style={{ width: `${leftPercent(window.usedPercent)}%` }} />
-      </span>
-      {window.blockedBy ? (
-        <>
-          <Tip label={blockedLabel(window.blockedBy, now)} side="left">
-            <span className="sws-hl-compact-value">Blocked</span>
-          </Tip>
-          <span className="sws-hl-compact-aside">
-            by {window.blockedBy.label}
-            {window.blockedBy.resetsAt !== null && window.blockedBy.resetsAt > now ? (
-              <span className="sr-only">
-                {`, usable again in ${formatDuration(window.blockedBy.resetsAt - now)}`}
-              </span>
-            ) : null}
-          </span>
-        </>
-      ) : (
-        <>
-          <span className="sws-hl-compact-value">
-            {window.stale ? "reset since" : usageLeftLabel(window.usedPercent)}
-          </span>
-          <span className="sws-hl-compact-aside">
-            {window.resetsAt === null ? "" : `in ${formatDuration(window.resetsAt - now)}`}
-          </span>
-        </>
-      )}
-    </div>
+    <Tip label={sentence} side="left">
+      <div
+        className="sws-hl-compact-window"
+        data-tone={tone}
+        data-rank={rank ?? undefined}
+        role="group"
+        tabIndex={0}
+        aria-label={spoken}
+      >
+        <span className="sws-hl-compact-window-label" aria-hidden>
+          {label}
+        </span>
+        <span className="sws-hl-bar" data-tone={tone} aria-hidden>
+          <span style={{ width: `${leftPercent(window.usedPercent)}%` }} />
+        </span>
+        <span className="sws-hl-compact-value" aria-hidden>
+          {window.blockedBy ? (
+            <CircleSlashIcon />
+          ) : window.stale ? (
+            "–"
+          ) : spent ? (
+            <>
+              <CircleSlashIcon />
+              0%
+            </>
+          ) : (
+            `${leftPercent(window.usedPercent)}%`
+          )}
+        </span>
+        <span className="sws-hl-compact-aside" aria-hidden>
+          {blockerReset !== null && blockerReset > now ? (
+            <>
+              <ClockIcon />
+              {shortDuration(blockerReset - now)}
+            </>
+          ) : resetIn !== null && !window.blockedBy ? (
+            <>
+              <ClockIcon />
+              {shortDuration(resetIn)}
+            </>
+          ) : null}
+        </span>
+      </div>
+    </Tip>
   );
 }
 
@@ -406,21 +442,21 @@ function CompactProviderEntry({
   row,
   now,
   coordinator,
+  rank = null,
+  machine = null,
   tag,
-  context,
 }: {
   row: HostProviderRow;
   now: number;
   coordinator: boolean;
   /** A tag beside the name; `Coordinator` when the entry is the coordinator's. */
   tag?: string | null;
-  /** Replaces the account line: the account, where it was read and when. */
-  context?: string;
+  /** Its place in the fallback order. */
+  rank?: { position: number; label: string } | null;
+  /** Where the reading comes from, for the machine mark. */
+  machine?: { name: string; tip: string } | null;
 }) {
   const binding = row.windows.length > 1 ? bindingWindowId(row.windows) : null;
-  const account =
-    context ?? [accountLine(row), coordinator ? row.plan : null].filter(Boolean).join(" · ");
-  const shownTag = tag === undefined ? (coordinator ? "Coordinator" : null) : tag;
   return (
     <li
       className="sws-hl-compact-entry"
@@ -428,14 +464,26 @@ function CompactProviderEntry({
       data-coordinator={coordinator || undefined}
     >
       <div className="sws-hl-compact-row">
-        <ProviderIcon row={row} size="sm" />
-        <span className="sws-hl-compact-provider" data-wide="">
-          <span className="sws-hl-compact-name">{row.label}</span>
-          {shownTag ? <span className="sws-hl-tag">{shownTag}</span> : null}
-          <Tip label={account} side="left">
-            <span className="sws-hl-compact-account">{account}</span>
-          </Tip>
-        </span>
+        <AccountHeader
+          driver={row.driver}
+          label={row.label}
+          iconUrl={row.iconUrl}
+          plan={row.plan}
+          email={row.identity}
+          // Only a plan or reported windows mean a subscription with a usage page.
+          subscription={row.plan !== null || row.windows.length > 0}
+          rank={rank}
+          tag={tag === undefined ? (coordinator ? "Coordinator" : null) : tag}
+          machine={
+            machine ??
+            (row.sharedWith.length > 0
+              ? {
+                  name: row.sharedWith.join(", "),
+                  tip: `Same account on ${row.sharedWith.join(", ")}; they share one quota`,
+                }
+              : null)
+          }
+        />
       </div>
       {row.windows.map((window) => {
         const key = `${window.kind}:${window.id}`;
@@ -448,7 +496,15 @@ function CompactProviderEntry({
           />
         );
       })}
-      {row.notice !== null ? <span className="sws-hl-compact-account">{row.notice}</span> : null}
+      {row.notice !== null ? (
+        <Tip label={row.notice} side="left">
+          <span className="sws-hl-compact-account sws-hl-compact-notice" tabIndex={0}>
+            <CircleDashedIcon aria-hidden />
+            {noticeShort(row.notice)}
+            <span className="sr-only">: {row.notice}</span>
+          </span>
+        </Tip>
+      ) : null}
       {row.bankedResets > 0 ? (
         <span className="sws-hl-compact-account sws-hl-banked">
           <TicketIcon aria-hidden />
@@ -528,7 +584,7 @@ export function HostLimitsCompactView({
               {rows.length === 0 ? (
                 <p className="sws-hl-compact-empty">
                   {block.providers.length > 0
-                    ? "No limits reported"
+                    ? "Usage not reported"
                     : block.status === "online"
                       ? "No providers signed in"
                       : "No saved reading"}
@@ -553,17 +609,17 @@ export function HostLimitsCompactView({
   );
 }
 
-/** `admin@… · Max · M4 · read 3m ago · also on M3`: whose account, where read and when. */
-function groupContext(group: AccountLimitGroup, now: number): string {
-  return [
-    group.row.identity ?? "Account not reported",
-    group.row.plan,
-    group.machine,
-    group.readAt === null ? null : `read ${formatAgo(group.readAt, now)}`,
-    group.machines.length > 1 ? `also on ${group.machines.slice(1).join(", ")}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+/** The machine mark of an account: where it was read, when, and who else shares it. */
+function groupMachine(group: AccountLimitGroup, now: number): { name: string; tip: string } {
+  return {
+    name: group.machine,
+    tip: [
+      `Read on ${group.machine}${group.readAt === null ? "" : ` ${formatAgo(group.readAt, now)}`}`,
+      group.machines.length > 1 ? `also signed in on ${group.machines.slice(1).join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(", "),
+  };
 }
 
 /**
@@ -626,7 +682,7 @@ export function AccountLimitsView({
           now={now}
           coordinator={surface === "coordinator"}
           tag={null}
-          context={groupContext(groups.current, now)}
+          machine={groupMachine(groups.current, now)}
         />
       ),
     });
@@ -642,14 +698,20 @@ export function AccountLimitsView({
             row={entry.group.row}
             now={now}
             coordinator={false}
-            tag={`${index + 1}. ${entry.label}`}
-            context={groupContext(entry.group, now)}
+            rank={{ position: index + 1, label: entry.label }}
+            machine={groupMachine(entry.group, now)}
           />
         ) : (
           <li key={`${entry.instanceId}:${index}`} className="sws-hl-compact-entry">
-            <span className="sws-hl-compact-account">
-              {index + 1}. {entry.label}: not signed in on a connected machine
-            </span>
+            <Tip label="Not signed in on a connected machine" side="left">
+              <span className="sws-hl-compact-account sws-hl-compact-notice" tabIndex={0}>
+                <span className="sws-account-rank" aria-hidden>
+                  {index + 1}
+                </span>
+                {entry.label}
+                <span className="sr-only">: not signed in on a connected machine</span>
+              </span>
+            </Tip>
           </li>
         ),
       ),
@@ -665,8 +727,7 @@ export function AccountLimitsView({
           row={group.row}
           now={now}
           coordinator={false}
-          tag={null}
-          context={groupContext(group, now)}
+          machine={groupMachine(group, now)}
         />
       )),
     });

@@ -63,3 +63,25 @@ export function providerShortLabels(
   }
   return labels;
 }
+
+/**
+ * The account tag on a composer's model chip: the label that tells this account
+ * apart from another account of the same product ("Enterprise", "Personal"), or
+ * null when the product is signed in once and the logo already says it all.
+ */
+export function chipAccountTag(
+  entries: ReadonlyArray<LabelEntry>,
+  instanceId: ProviderInstanceId,
+): string | null {
+  const signedIn = entries.filter(
+    (candidate) => candidate.snapshot.auth.status === "authenticated",
+  );
+  const entry = signedIn.find((candidate) => candidate.instanceId === instanceId);
+  if (!entry) return null;
+  const brand = brandOf(entry);
+  const twins = signedIn.filter((candidate) => brandOf(candidate) === brand);
+  if (twins.length < 2) return null;
+  const tag = providerShortLabels(twins).get(instanceId) ?? null;
+  // Names that read alike fall back to the whole name: too long for a chip.
+  return tag === null || tag === entry.displayName ? null : tag;
+}

@@ -10,6 +10,9 @@ import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
 import { RunOutNotice, runOutWindowsOf } from "../usage/RunOutNotice";
 import { ComposerBanner } from "./ComposerBanner";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { providerUsageLink } from "@specweave-studio/shared/providerUsageLinks";
+import { UsagePageLink } from "../usage/AccountHeader";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 /** Driver name, then the instance when there could be more than one of that driver. */
@@ -23,6 +26,20 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
   return instance && instance.toLowerCase() !== driver.toLowerCase()
     ? `${driver} · ${instance}`
     : driver;
+}
+
+/** The provider's own logo, so the notice says whose limits these are at a glance. */
+function AccountLogo({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
+  return (
+    <ProviderInstanceIcon
+      driverKind={account.driver}
+      displayName={account.displayName ?? account.label}
+      accentColor={account.accentColor}
+      showBadge={false}
+      className="size-4 shrink-0"
+      iconClassName="size-4"
+    />
+  );
 }
 
 function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
@@ -64,7 +81,7 @@ export function usageLimitsBannerItem(
     id,
     variant: "info",
     priority: "notice",
-    icon: <GaugeIcon />,
+    icon: single ? <AccountLogo account={single} /> : <GaugeIcon />,
     title: "Usage limits",
     description: summary,
     dismissLabel: "Dismiss usage limits",
@@ -91,11 +108,30 @@ function UsageLimitsBannerBody({
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
           const notice = limitsNotice(account.limits);
           const externalUsage = account.limits.externalUsage;
+          const link = externalUsage
+            ? null
+            : providerUsageLink({
+                driver: account.driver,
+                label: account.displayName ?? account.label,
+                subscription: account.plan !== undefined || account.email !== undefined,
+              });
           return (
             <div key={account.id} className="flex min-w-0 flex-col gap-1">
-              {report.accounts.length > 1 ? (
-                <span className="truncate text-xs text-muted-foreground">
-                  <AccountSummary account={account} />
+              {report.accounts.length > 1 || link ? (
+                <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  {report.accounts.length > 1 ? (
+                    <>
+                      <AccountLogo account={account} />
+                      <span className="min-w-0 truncate">
+                        <AccountSummary account={account} />
+                      </span>
+                    </>
+                  ) : null}
+                  {link ? (
+                    <span className="ms-auto shrink-0">
+                      <UsagePageLink link={link} />
+                    </span>
+                  ) : null}
                 </span>
               ) : null}
               {notice ? (

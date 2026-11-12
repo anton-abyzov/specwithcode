@@ -102,7 +102,7 @@ describe("machine limits", () => {
       ),
     );
     expect(container.textContent).toContain("Limits by account");
-    expect(container.textContent).toContain("This project's tokens");
+    expect(container.textContent).toContain("Project tokens");
     const backButton = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "Models",
     );
@@ -125,7 +125,7 @@ describe("machine limits", () => {
       ),
     );
     const button = [...container.querySelectorAll("button")].find((element) =>
-      element.textContent?.includes("All limits and accounts"),
+      element.textContent?.includes("All accounts"),
     );
     expect(button?.getAttribute("aria-haspopup")).toBe("dialog");
     expect(container.querySelector("a")?.textContent ?? "").not.toContain("All limits");

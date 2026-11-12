@@ -10667,6 +10667,10 @@ export default function ChatView(props: ChatViewProps) {
     usageLimitRecoveryBannerItem,
     limitStopped && activeThreadShell?.latestRun
       ? {
+          provider:
+            providerStatuses.find(
+              (provider) => provider.instanceId === activeThreadShell.providerInstanceId,
+            ) ?? null,
           canCheck: providerStatuses.some(
             (provider) =>
               provider.instanceId === activeThreadShell.providerInstanceId &&
@@ -10861,6 +10865,7 @@ export default function ChatView(props: ChatViewProps) {
       !dismissedUsageApproaching.has(approachingKey)
       ? {
           id: approachingKey,
+          provider: approachingProvider,
           providerLabel: resolveProviderInstanceDisplayName(approachingProvider),
           leftPercent:
             100 -

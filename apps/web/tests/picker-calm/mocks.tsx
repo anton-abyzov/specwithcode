@@ -41,7 +41,14 @@ export const useEnvironmentIdentificationMode = () => "auto";
 export const primaryServerKeybindingsAtom = Atom.make({ bindings: [], warnings: [] });
 export const ChatGptSharingControl = () => null;
 export const serverEnvironment = { refreshProviders: { label: "refreshProviders" } };
-export const environmentPresentations = { presentationsAtom: Atom.make(new Map()) };
+// The limits scene sets `globalThis.__fixturePresentations` before the first render.
+export const environmentPresentations = {
+  presentationsAtom: Atom.make(
+    () =>
+      (globalThis as { __fixturePresentations?: Map<string, unknown> }).__fixturePresentations ??
+      new Map(),
+  ),
+};
 export const environmentSummaries = {};
 export const useEnvironmentPresentation = () => ({ presentation: null });
 

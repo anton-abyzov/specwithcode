@@ -98,13 +98,19 @@ describe("HostLimitsCompactView", () => {
     const rows = [...container.querySelectorAll(".sws-hl-compact-entry")].map((el) => ({
       value: el.querySelector(".sws-hl-compact-value")?.textContent,
       aside: el.querySelector(".sws-hl-compact-aside")?.textContent,
-      account: el.querySelector(".sws-hl-compact-account")?.textContent,
+      account: el.querySelector(".sws-account-email")?.textContent ?? null,
+      shared: el.querySelector(".sws-account-machine")?.textContent ?? null,
     }));
-    // Every provider shows its window with its reset; the account names who shares its quota.
+    // Every provider shows what is left and its reset; an unknown account prints nothing.
     expect(rows).toEqual([
-      { value: "87% left", aside: "in 2h 0m", account: "a@example.com · also on m1" },
-      { value: "Limit reached", aside: "in 2h 0m", account: "Account not reported" },
-      { value: "15% left", aside: "in 2h 0m", account: "Account not reported" },
+      {
+        value: "87%",
+        aside: "2h",
+        account: "a@example.com",
+        shared: "m1: Same account on m1; they share one quota",
+      },
+      { value: "0%", aside: "2h", account: null, shared: null },
+      { value: "15%", aside: "2h", account: null, shared: null },
     ]);
   });
 
@@ -128,12 +134,13 @@ describe("HostLimitsCompactView", () => {
     const [claude, codex] = [...container.querySelectorAll(".sws-hl-compact-entry")];
     expect(claude?.hasAttribute("data-coordinator")).toBe(true);
     expect(claude?.querySelector(".sws-hl-tag")?.textContent).toBe("Coordinator");
-    expect(claude?.querySelector(".sws-hl-compact-account")?.textContent).toBe(
-      "a@example.com · Max",
-    );
+    expect(claude?.querySelector(".sws-account-email")?.textContent).toBe("a@example.com");
+    expect(claude?.querySelector(".sws-account-plan:not(.sws-hl-tag)")?.textContent).toBe("Max");
     expect(
-      [...(claude?.querySelectorAll(".sws-hl-compact-window") ?? [])].map((el) => el.textContent),
-    ).toEqual(["Short-term87% leftin 2h 0m"]);
+      [...(claude?.querySelectorAll(".sws-hl-compact-window") ?? [])].map((el) =>
+        el.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Short-term: 87% left, resets in 2h 0m"]);
     expect(codex?.hasAttribute("data-coordinator")).toBe(false);
     expect(codex?.querySelectorAll(".sws-hl-compact-window")).toHaveLength(1);
   });
@@ -193,13 +200,17 @@ describe("HostLimitsCompactView", () => {
     const windows = [...container.querySelectorAll(".sws-hl-compact-window")].map((el) => ({
       rank: el.getAttribute("data-rank"),
       text: el.textContent,
+      name: el.getAttribute("aria-label"),
     }));
-    expect(windows).toEqual([
-      { rank: "other", text: "5-hour70% leftin 2h 0m" },
-      { rank: "binding", text: "Weekly, least left12% leftin 4d 4h" },
-      // A spent weekly: the 5-hour's 90% is not usable, and it says why.
-      { rank: "other", text: "5-hourBlockedby Weekly, usable again in 2d 2h" },
-      { rank: "binding", text: "Weekly, least leftLimit reachedin 2d 2h" },
+    expect(windows.map(({ rank, text }) => ({ rank, text }))).toEqual([
+      { rank: "other", text: "5-hour70%2h" },
+      { rank: "binding", text: "Weekly12%4d" },
+      // A spent weekly: the 5-hour's 90% is not usable; the slashed circle says so.
+      { rank: "other", text: "5-hour2d" },
+      { rank: "binding", text: "Weekly0%2d" },
     ]);
+    expect(windows[1]?.name).toBe("Weekly: 12% left, resets in 4d 4h, least left");
+    expect(windows[2]?.name).toMatch(/^5-hour: blocked by weekly limit/);
+    expect(windows[3]?.name).toBe("Weekly: Limit reached, resets in 2d 2h, least left");
   });
 });
