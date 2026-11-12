@@ -63,6 +63,8 @@ import {
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { RenameMachineDialog } from "../settings/RenameMachineDialog";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "../studio/ProjectLinkDialog";
+import { cn } from "~/lib/utils";
+import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { AddToMachineDialog } from "./AddToMachineDialog";
 import { ComposerControl } from "./ComposerControl";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -698,6 +700,11 @@ export function DraftMachinePicker(props: Props) {
   }
 
   const activeKind = resolveEnvironmentMachineKind(activeEnvironment?.serverConfig ?? null);
+  // The Run on chip wears the target machine's color before anything is sent.
+  const activeIdentity = useMachineIdentity(
+    activeEnvironment?.environmentId ?? null,
+    activeEnvironment?.label,
+  );
 
   return (
     <div className="min-w-0 px-3 pt-2" data-draft-machine-picker="">
@@ -717,13 +724,18 @@ export function DraftMachinePicker(props: Props) {
           data-composer-shortcut="composer.host"
           data-composer-context-control
           disabled={locked}
-          className="max-w-full justify-start"
+          {...machineColorProps(activeIdentity)}
+          className={cn("max-w-full justify-start", activeIdentity && "machine-chip font-semibold")}
           {...(activeEnvironment && activeLabel !== activeEnvironment.label
             ? { title: activeEnvironment.label }
             : {})}
         >
-          <EnvironmentMachineIcon aria-hidden kind={activeKind} className="size-4 shrink-0" />
-          <span className="shrink-0">{tx("Run on")}</span>
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={activeIdentity?.icon ?? activeKind}
+            className="size-4 shrink-0"
+          />
+          <span className="shrink-0 font-normal">{tx("Run on")}</span>
           <span className="min-w-0 truncate">{activeLabel}</span>
           {activeUnreachable && (
             <span

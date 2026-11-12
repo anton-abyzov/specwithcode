@@ -12,6 +12,7 @@ import {
   type LegacyProjectSettingsFields,
 } from "@specweave-studio/shared/projectSettings";
 import { CoordinatorModelPicker } from "./shell/CoordinatorModelPicker";
+import type { ProjectThreadModel } from "./shell/ProjectModelsPopover";
 import {
   coordinatorRequiresFolderGrants,
   coordinatorFolderCompatibility,
@@ -112,6 +113,11 @@ export function useProjectCoordinatorModelControls(input: {
   onChange: (value: ModelSelection) => void;
   onOpenSettings: () => void;
   onOpenProjectUsage?: () => void;
+  /** The model new threads start on, for the Models popover on the coordinator's chip. */
+  threads?: ProjectThreadModel | null;
+  /** The machines the project runs on, its coordinator's first. */
+  machines?: ReadonlyArray<{ readonly environmentId: string; readonly label?: string }>;
+  projectTitle?: string;
 }) {
   const defaults = input.environmentSettings
     ? resolveProjectSettings(input.environmentSettings, input.project.id, input.project).settings
@@ -157,6 +163,9 @@ export function useProjectCoordinatorModelControls(input: {
       onChange: input.onChange,
       onOpenSettings: input.onOpenSettings,
       ...(input.onOpenProjectUsage ? { onOpenProjectUsage: input.onOpenProjectUsage } : {}),
+      ...(input.threads ? { threads: input.threads } : {}),
+      ...(input.machines ? { machines: input.machines } : {}),
+      ...(input.projectTitle ? { projectTitle: input.projectTitle } : {}),
     }),
   };
 }

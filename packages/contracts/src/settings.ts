@@ -327,12 +327,34 @@ export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
 export const MACHINE_NICKNAME_MAX_LENGTH = 16;
 
 /**
- * A machine's short name. An empty name means "use the default short name";
- * it still carries a stamp so a reset wins over an older rename.
+ * The eight hues a machine can wear. An id, never a hex: each theme maps it to
+ * tokens that pass contrast in light and dark.
+ */
+export const MACHINE_COLOR_IDS = [
+  "violet",
+  "teal",
+  "amber",
+  "rose",
+  "blue",
+  "green",
+  "orange",
+  "slate",
+] as const;
+export const MachineColorId = Schema.Literals(MACHINE_COLOR_IDS);
+export type MachineColorId = typeof MachineColorId.Type;
+
+/**
+ * A machine's short name, with the color and icon it is told apart by. An
+ * empty name means "use the default short name"; it still carries a stamp so
+ * a reset wins over an older rename. `color` and `icon` are absent until
+ * someone picks them (a default then follows from the machine's id and kind),
+ * and a value a build does not know decodes as absent.
  */
 export const MachineNickname = Schema.Struct({
   name: Schema.String.check(Schema.isMaxLength(MACHINE_NICKNAME_MAX_LENGTH)),
   updatedAt: Schema.String.check(Schema.isMaxLength(64)),
+  color: ForwardCompatibleOptional(MachineColorId),
+  icon: ForwardCompatibleOptional(EnvironmentMachineKind),
 });
 export type MachineNickname = typeof MachineNickname.Type;
 

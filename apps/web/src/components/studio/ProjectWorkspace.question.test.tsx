@@ -52,9 +52,7 @@ function ask() {
   ];
 }
 const send = () =>
-  act(async () =>
-    container.querySelector<HTMLButtonElement>("[aria-label='Send to coordinator']")!.click(),
-  );
+  act(async () => container.querySelector<HTMLButtonElement>("button.sws-send")!.click());
 
 describe("answering the coordinator's question from the message box", () => {
   it("shows the question above the box, named as the coordinator's", async () => {

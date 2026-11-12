@@ -115,6 +115,17 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     readonly label: string;
     readonly render: (actions: { back: () => void; close: () => void }) => ReactNode;
   };
+  /** What this picker chooses, named over its search: "Model for this thread". */
+  title?: string;
+  /** What the choice applies to, such as the project's name. */
+  titleContext?: string;
+  /**
+   * A view the menu opens on instead of the model list: the project's Models
+   * popover. `openPicker` shows the model list, which then offers the way back.
+   */
+  frontView?: {
+    readonly render: (actions: { openPicker: () => void; close: () => void }) => ReactNode;
+  };
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const tx = useTx();
@@ -195,9 +206,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const usageDescriptionId = useId();
 
   const [showingSecondary, setShowingSecondary] = useState(false);
+  const [showingPicker, setShowingPicker] = useState(false);
   const setIsMenuOpen = (open: boolean) => {
-    // Every opening starts on the models.
+    // Every opening starts on the models, or on the front view when there is one.
     if (!open) setShowingSecondary(false);
+    if (!open) setShowingPicker(false);
     props.onOpenChange?.(open);
     if (props.open === undefined) {
       setUncontrolledIsMenuOpen(open);
@@ -222,7 +235,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
 
     const shouldAllowOverlayScroll = (target: EventTarget | null) => {
-      return target instanceof Element && target.closest("[data-model-picker-content]");
+      return (
+        target instanceof Element &&
+        target.closest("[data-model-picker-content], [data-project-models-popover]")
+      );
     };
     const preventBackgroundWheel = (event: WheelEvent) => {
       if (shouldAllowOverlayScroll(event.target)) {
@@ -463,18 +479,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 ) : null}
                 {parts ? (
                   <>
-                    {/* The provider's name and its separator sit one gap from the model. */}
-                    {parts.provider ? (
-                      <span
-                        className="-me-0.5 font-normal text-muted-foreground"
-                        data-model-chip-part="provider"
-                        data-picker-provider
-                        aria-hidden
-                      >
-                        {parts.provider}
-                        <span> ·</span>
-                      </span>
-                    ) : null}
+                    {/* The mark says which provider; its name is in the tooltip and the
+                        accessible name, so the chip reads logo, model, usage ring. */}
                     <span
                       className="min-w-0 shrink! truncate font-medium text-foreground"
                       data-model-chip-part="model"
@@ -546,7 +552,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         className="max-h-(--available-height) before:hidden"
         padding="none"
       >
-        {showingSecondary && props.secondaryView ? (
+        {props.frontView && !showingPicker && !showingSecondary ? (
+          props.frontView.render({
+            openPicker: () => setShowingPicker(true),
+            close: () => setIsMenuOpen(false),
+          })
+        ) : showingSecondary && props.secondaryView ? (
           <div
             className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
             data-model-picker-secondary=""
@@ -561,6 +572,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           <ModelPickerContent
             stateHeader={props.stateHeader ?? null}
             backgroundWork={props.backgroundWork ?? null}
+            {...(props.title ? { title: props.title } : {})}
+            {...(props.titleContext ? { titleContext: props.titleContext } : {})}
+            {...(props.frontView ? { onBack: () => setShowingPicker(false) } : {})}
             activeInstanceId={activeInstanceId}
             model={props.model}
             {...(props.selectedModels !== undefined

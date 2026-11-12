@@ -33,6 +33,7 @@ import {
   availabilityText,
   isAvailabilityBlocking,
   modelAvailability,
+  railLimitSentence,
   roomLeftPercent,
   type AvailabilityText,
   type ModelAvailability,
@@ -303,6 +304,28 @@ function useAccountSwitches(
   return switched.get(machine) ?? NO_SWITCHES;
 }
 
+/**
+ * A provider's mark on the picker's rail, from its account-wide windows only (a spent
+ * Fable weekly never marks all of Claude): red when every model is blocked, amber when
+ * little is left or a spent limit still takes extra usage.
+ */
+export function providerRailUsageMark(
+  usage: ModelPickerUsage | undefined,
+  entry: ProviderInstanceEntry,
+): { readonly tone: "warn" | "full"; readonly text: string } | null {
+  if (!usage) return null;
+  const state = usage.availability(entry.instanceId, null);
+  const sentence = () =>
+    railLimitSentence(state, {
+      nowMs: usage.nowMs,
+      label: usage.text(entry.instanceId, state).label,
+    });
+  if (isAvailabilityBlocking(state)) return { tone: "full", text: sentence() };
+  if (state.kind === "exhausted") return { tone: "warn", text: sentence() };
+  if (state.kind === "room" && state.tone !== "ok") return { tone: "warn", text: sentence() };
+  return null;
+}
+
 const NO_MACHINE_SWITCHES: MachineAccountSwitches = new Map();
 const NO_SWITCHES: ReadonlyMap<ProviderInstanceId, number> = new Map();
 
@@ -337,63 +360,6 @@ export function rowShowsAvailability(state: ModelAvailability, inProviderTab: bo
   return true;
 }
 
-/**
- * The account limits behind a mixed list (Favorites, search, alternatives), where
- * no provider band shows: one line, the displayed model's provider first, which
- * wraps rather than hiding providers behind "+N".
- */
-export function ModelPickerAccountLine({
-  entries,
-  usage,
-  markedInstanceId,
-}: {
-  /** Providers with visible rows, the displayed model's first. */
-  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
-  readonly usage: ModelPickerUsage;
-  /** The provider the marker names ("this thread", "coordinator"); null leaves it out. */
-  readonly markedInstanceId: ProviderInstanceId | null;
-}) {
-  const tx = useTx();
-  const marker = usage.surface === "coordinator" ? "coordinator" : "this thread";
-  const items = entries.flatMap((entry) => {
-    const state = usage.availability(entry.instanceId, null);
-    const phrase = accountLimitPhrase(state, {
-      nowMs: usage.nowMs,
-      short: usage.text(entry.instanceId, state).short,
-    });
-    if (phrase === null) return [];
-    const tone = isAvailabilityBlocking(state)
-      ? "full"
-      : state.kind === "room" && state.tone === "warn"
-        ? "warn"
-        : state.kind === "exhausted"
-          ? "warn"
-          : "muted";
-    return [
-      {
-        id: entry.instanceId,
-        text: `${entry.displayName} ${phrase}${entry.instanceId === markedInstanceId ? ` (${marker})` : ""}`,
-        tone,
-      } as const,
-    ];
-  });
-  if (items.length === 0) return null;
-  return (
-    <p
-      className="shrink-0 border-b border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
-      data-model-picker-account-line=""
-    >
-      <span className="text-foreground">{tx("Account limits:")}</span>{" "}
-      {items.map((item, index) => (
-        <span key={item.id}>
-          {index > 0 ? " · " : null}
-          <span className={cn("tabular-nums", TONE_TEXT[item.tone])}>{item.text}</span>
-        </span>
-      ))}
-    </p>
-  );
-}
-
 /** The status part of a model row's provider line: `62% left · resets in 2h 4m`. */
 export function ModelRowAvailability({ text }: { readonly text: AvailabilityText }) {
   return (
@@ -412,7 +378,7 @@ export function ModelRowAvailability({ text }: { readonly text: AvailabilityText
 }
 
 /** A 12px ring filled clockwise by the share left; dashed when the read can't be relied on. */
-function MeterRing({
+export function MeterRing({
   percent,
   tone,
   dashed,
@@ -582,6 +548,9 @@ export function ModelUsageMeter({
   if (parts === null) return null;
   const { ring, value, detail } = parts;
   const perToken = state.kind === "perToken";
+  // On a model chip the ring says how much is left; the number joins it only once it
+  // matters (80% used, a limit, extra usage). The tooltip always has the sentence.
+  const quiet = chip === true && !perToken && ring.tone !== "warn" && ring.tone !== "full";
   return (
     <span
       className="flex shrink-0 items-center gap-1 tabular-nums"
@@ -589,18 +558,24 @@ export function ModelUsageMeter({
       aria-hidden
     >
       {perToken ? null : <MeterRing {...ring} chip={chip} />}
-      <span
-        className={cn(
-          "text-xs",
-          perToken
-            ? "rounded-sm border border-border px-1 text-muted-foreground"
-            : RING_TONE_TEXT[ring.tone],
-          hideValueClassName,
-        )}
-        {...(chip ? { "data-model-chip-part": "usage-value" } : {})}
-      >
-        {value}
-      </span>
+      {quiet ? null : (
+        <span
+          className={cn(
+            "text-xs",
+            perToken
+              ? "rounded-sm border border-border px-1 text-muted-foreground"
+              : // On a chip the ring carries the tone: the chip's pressed tint is too
+                // close to the warning text color for it to stay readable.
+                chip && ring.tone === "warn"
+                ? "text-foreground"
+                : RING_TONE_TEXT[ring.tone],
+            hideValueClassName,
+          )}
+          {...(chip ? { "data-model-chip-part": "usage-value" } : {})}
+        >
+          {value}
+        </span>
+      )}
       {detail ? (
         <span
           className={cn("text-xs", RING_TONE_TEXT[ring.tone], hideValueClassName)}

@@ -1,4 +1,14 @@
-import type { EnvironmentId, ModelSelection } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ServerProviderModel,
+} from "@specweave-studio/contracts";
+import {
+  capCoordinatorEffort,
+  COORDINATOR_EFFORT_CAP_LABEL,
+  coordinatorEffortIsCapped,
+  coordinatorEffortModel,
+} from "@specweave-studio/shared/coordinatorDefault";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -20,6 +30,8 @@ export function ProjectModels({
   disabled,
   label,
   recommendedTraits,
+  title,
+  coordinator = false,
 }: {
   environmentId: EnvironmentId;
   value: ModelSelection | null;
@@ -28,6 +40,13 @@ export function ProjectModels({
   label: string;
   /** Trait values advised for this role, shown with a Recommended badge. */
   recommendedTraits?: Readonly<Record<string, string>>;
+  /** What the picker chooses, named over its search: "Coordinator model". */
+  title?: string;
+  /**
+   * The coordinator's model: its effort is not set beside the model. It runs at
+   * Medium, and Advanced offers Low, Medium and High, the levels it may run at.
+   */
+  coordinator?: boolean;
 }) {
   const environment = useEnvironment(environmentId);
   const settings = useEnvironmentSettings(environmentId);
@@ -44,6 +63,26 @@ export function ProjectModels({
   const active = entries.find((p) => p.instanceId === value?.instanceId);
   // The searchable list only fills for a ready provider; the plain list below covers the rest.
   const firstAvailable = entries.find(isProviderInstancePickerReady);
+  const traits = (
+    models: ReadonlyArray<ServerProviderModel>,
+    modelOptions: NonNullable<ModelSelection["options"]>,
+  ) =>
+    value && active ? (
+      <TraitsPicker
+        provider={active.driverKind}
+        models={models}
+        model={value.model}
+        prompt=""
+        onPromptChange={() => {}}
+        modelOptions={modelOptions}
+        allowPromptInjectedEffort={false}
+        planModeEnabled={settings.planModeEnabled}
+        recommendedOptionValues={recommendedTraits}
+        onModelOptionsChange={(o) =>
+          onChange(createModelSelection(value.instanceId, value.model, o))
+        }
+      />
+    ) : null;
   return (
     <fieldset disabled={disabled} className="project-model-field">
       <legend>{label}</legend>
@@ -63,22 +102,10 @@ export function ProjectModels({
                 ? null
                 : "Unavailable on this host";
             }}
+            {...(title ? { title } : {})}
             onInstanceModelChange={(id, model) => onChange(createModelSelection(id, model))}
           />
-          <TraitsPicker
-            provider={active.driverKind}
-            models={active.models}
-            model={value.model}
-            prompt=""
-            onPromptChange={() => {}}
-            modelOptions={value.options ?? []}
-            allowPromptInjectedEffort={false}
-            planModeEnabled={settings.planModeEnabled}
-            recommendedOptionValues={recommendedTraits}
-            onModelOptionsChange={(o) =>
-              onChange(createModelSelection(value.instanceId, value.model, o))
-            }
-          />
+          {coordinator ? null : traits(active.models, value.options ?? [])}
         </div>
       ) : firstAvailable ? (
         // Nothing chosen yet: the same list as everywhere else, opened on the first usable provider.
@@ -92,6 +119,7 @@ export function ProjectModels({
             modelOptionsByInstance={options}
             triggerLabel="Choose model"
             triggerAriaLabel={`${label}: choose model`}
+            {...(title ? { title } : {})}
             onInstanceModelChange={(id, model) => onChange(createModelSelection(id, model))}
           />
         </div>
@@ -124,6 +152,26 @@ export function ProjectModels({
             )}
         </select>
       )}
+      {coordinator && value && active ? (
+        <details className="mt-2 text-sm" data-coordinator-effort-advanced="">
+          <summary>Advanced</summary>
+          <div className="project-model-controls">
+            <span className="project-muted">Coordinator effort</span>
+            {traits(
+              active.models.map(coordinatorEffortModel),
+              capCoordinatorEffort(value, providers).options ?? [],
+            )}
+          </div>
+          <p className="project-muted">
+            The coordinator routes and replies, so it runs at Medium unless you change it here, and
+            never above {COORDINATOR_EFFORT_CAP_LABEL}. Hard work goes to threads, which keep the
+            full range.
+            {coordinatorEffortIsCapped(value, providers)
+              ? ` The saved effort is higher, so it runs at ${COORDINATOR_EFFORT_CAP_LABEL}.`
+              : ""}
+          </p>
+        </details>
+      ) : null}
       {entries.every((e) => !e.enabled || !e.isAvailable) && (
         <p className="project-muted">Connect a native provider on this host to choose a model.</p>
       )}

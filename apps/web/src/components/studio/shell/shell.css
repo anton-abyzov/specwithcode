@@ -541,6 +541,13 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-family: var(--shell-serif);
   font-weight: 600;
 }
+/* The characters a search matched, in the model's name or alias. */
+.sws-picker-mark {
+  border-radius: 3px;
+  padding: 0 1px;
+  background: color-mix(in oklab, var(--primary) 34%, transparent);
+  color: inherit;
+}
 .sws-picker-pill {
   border: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
   border-radius: 9999px;
@@ -3602,4 +3609,31 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-reply-source:disabled {
   cursor: default;
   opacity: 0.7;
+}
+
+/* A tight coordinator toolbar shows access as its icon alone: the select stays the
+   control, laid over the icon, and its tooltip and name say the mode. */
+@container composer-surface (max-width: 520px) {
+  .sws-access-field {
+    width: 28px;
+    height: 24px;
+    justify-content: center;
+  }
+  .sws-access-field .sws-access-icon {
+    left: 6px;
+  }
+  .sws-access-field .sws-access-trigger {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    padding: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .sws-access-field:focus-within {
+    border-radius: 6px;
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
 }

@@ -41,13 +41,14 @@ function measurePicker(input: { clientWidth: number; flexGrow: string; maxWidth?
 
 afterEach(() => vi.unstubAllGlobals());
 
-function measureWithMachine(chipWidth: number) {
+function measureWithMachine(chipWidth: number, nameWidth = 0) {
   const box = (width: number) => ({ getBoundingClientRect: () => ({ width }) });
+  const chip = { ...box(chipWidth), querySelector: () => (nameWidth > 0 ? box(nameWidth) : null) };
   const picker = { ...box(80), querySelector: () => null, querySelectorAll: () => [] };
   const nodes: Record<string, unknown> = {
     "[data-chat-provider-model-picker]": picker,
     "[data-resting-controls-overflow]": box(24),
-    "[data-thread-machine-chip]": box(chipWidth),
+    "[data-thread-machine-chip]": chip,
     "[data-thread-machine-separator]": box(1),
   };
   const controls = {
@@ -61,7 +62,18 @@ function measureWithMachine(chipWidth: number) {
 }
 
 describe("measureRestingComposerControls", () => {
-  it("counts the machine chip, so other controls give way before its name does", () => {
+  it("counts the machine chip at its icon, so its name gives way before any control folds", () => {
+    // A 90px chip whose name takes 56px plus the chip's 4px gap: 30px of icon and padding.
+    const shrinkable = measureWithMachine(90, 56);
+    expect(shrinkable.naturalFixedWidth).toBe(80 + 34 + 5);
+    // At 280px a chip counted whole folds a control; counted at its icon, nothing folds.
+    expect(resolveRestingComposerControlsLayout({ ...shrinkable, hostWidth: 280 })).toMatchObject({
+      hiddenCount: 0,
+      visible: true,
+    });
+  });
+
+  it("counts a machine chip without a name part whole", () => {
     const measurement = measureWithMachine(90);
 
     // The chip and its separator, each with one gap, on top of the picker.

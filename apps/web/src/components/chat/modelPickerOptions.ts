@@ -61,3 +61,24 @@ export function shouldOfferModelPickerSetup(
       !options.some((option) => !option.isUnavailable))
   );
 }
+
+/** One model of one provider instance, as the picker lists and searches it. */
+export type ModelPickerItem = {
+  slug: string;
+  name: string;
+  shortName?: string;
+  subProvider?: string;
+  aliases?: ReadonlyArray<string>;
+  /** The account behind the provider ("Claude Max"), which a search may name. */
+  accountLabel?: string;
+  badge?: "new";
+  instanceId: ProviderInstanceId;
+  driverKind: ProviderDriverKind;
+  instanceDisplayName: string;
+  instanceAccentColor?: string | undefined;
+  acpRegistryAgentId?: string | undefined;
+  acpRegistryIconUrl?: string | undefined;
+  continuationGroupKey?: string | undefined;
+  isLegacy?: boolean | undefined;
+  isUnavailable?: boolean | undefined;
+};

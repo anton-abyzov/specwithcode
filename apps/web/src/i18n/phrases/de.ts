@@ -3351,7 +3351,6 @@ export const de: PhraseCatalog = {
   "1 provider": "1 Anbieter",
   "Hide older": "Ältere ausblenden",
   "Connection: {connection}": "Verbindung: {connection}",
-  "Account limits:": "Kontolimits:",
   "Reset, not read since": "Zurückgesetzt, nicht gelesen seit",
   "Shared by every model": "Von allen Modellen geteilt",
   "Limits for one model family": "Limits für eine Modellfamilie",
@@ -3543,7 +3542,6 @@ export const de: PhraseCatalog = {
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.':
     'Dein Prompt enthält "ultrathink" im Text. Entferne es, um diese Option zu ändern.',
   "Not set: follows the Claude workflow mode": "Nicht gesetzt: folgt dem Claude-Arbeitsmodus",
-  "· Ultracode": "· Ultracode",
   "Ultrafast mode on": "Ultrafast-Modus an",
   "Fast mode on": "Schnellmodus an",
   "Turning into project...": "Wird zum Projekt...",

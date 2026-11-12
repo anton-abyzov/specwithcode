@@ -78,3 +78,54 @@ export function modelPickerGroupStarts(
   }
   return starts;
 }
+
+/** A provider's legacy models as one row of the list: how many, and whether they show. */
+export interface ModelPickerLegacySection {
+  readonly instanceId: ProviderInstanceId;
+  readonly count: number;
+  readonly isExpanded: boolean;
+}
+
+export const NO_LEGACY_SECTIONS: ReadonlyMap<string, ModelPickerLegacySection> = new Map();
+
+/**
+ * The list by provider, in display order: each provider's current models, then its
+ * legacy section, expanded in place when the person opened it.
+ */
+export function layoutProviderModels<
+  T extends { readonly instanceId: ProviderInstanceId; readonly isLegacy?: boolean | undefined },
+>(
+  models: ReadonlyArray<T>,
+  keyOf: (model: T) => string,
+  expandedLegacyInstances: ReadonlySet<ProviderInstanceId>,
+): {
+  readonly visibleModels: T[];
+  readonly keys: string[];
+  readonly legacy: ReadonlyMap<string, ModelPickerLegacySection>;
+} {
+  const legacy = new Map<string, ModelPickerLegacySection>();
+  const groups = new Map<ProviderInstanceId, T[]>();
+  for (const model of models) {
+    const group = groups.get(model.instanceId);
+    if (group) group.push(model);
+    else groups.set(model.instanceId, [model]);
+  }
+  const visibleModels: T[] = [];
+  const keys: string[] = [];
+  for (const [instanceId, group] of groups) {
+    const current = group.filter((model) => !model.isLegacy);
+    const old = group.filter((model) => model.isLegacy);
+    visibleModels.push(...current);
+    keys.push(...current.map(keyOf));
+    if (old.length === 0) continue;
+    const key = modelPickerLegacySectionKey(instanceId);
+    const isExpanded = expandedLegacyInstances.has(instanceId);
+    legacy.set(key, { instanceId, count: old.length, isExpanded });
+    keys.push(key);
+    if (isExpanded) {
+      visibleModels.push(...old);
+      keys.push(...old.map(keyOf));
+    }
+  }
+  return { visibleModels, keys, legacy };
+}

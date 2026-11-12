@@ -544,7 +544,7 @@ describe("project settings and memory", () => {
   it("names the model the coordinator thread runs on, as the project view does", async () => {
     const threadModel = { instanceId: ProviderInstanceId.make("claude"), model: "thread-model" };
     await render("general", true, { coordinatorModelSelection: null }, threadModel);
-    expect(container.textContent).toContain("Coordinator model and effort: thread-model");
+    expect(container.textContent).toContain("Coordinator model: thread-model");
     expect(container.textContent).toContain("No override saved");
   });
   it("keeps the fallback chain in one card under the model pickers", async () => {
@@ -569,7 +569,7 @@ describe("project settings and memory", () => {
   });
   it("falls back to the worker default, then the host default, with no coordinator thread", async () => {
     await render("general", true, { coordinatorModelSelection: null });
-    expect(container.textContent).toContain("Coordinator model and effort: codex-worker");
+    expect(container.textContent).toContain("Coordinator model: codex-worker");
   });
   it("saves the displayed revision and preserves edits after a conflict", async () => {
     state.update.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Revision changed") });

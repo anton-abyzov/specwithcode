@@ -9,6 +9,7 @@ vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: () => [],
+  usePrimarySettings: () => undefined,
   useUpdateClientSettings: () => vi.fn(),
 }));
 vi.mock("@legendapp/list/react", () => ({
@@ -61,21 +62,23 @@ vi.mock("./ModelListRow", () => ({
     model,
     disabledReason,
     warningReason,
-    effort,
-    providerInHeader,
+    providerAsTitle,
+    status,
+    ...rest
   }: {
     model: { name: string };
     disabledReason?: string | null;
     warningReason?: string | null;
-    effort?: { id: string } | null;
-    providerInHeader?: boolean;
+    providerAsTitle?: { label: string | null };
+    status?: ReadonlyArray<{ kind: string }>;
   }) => (
     <div
       data-model-row
       data-disabled-reason={disabledReason ?? undefined}
       data-warning-reason={warningReason ?? undefined}
-      data-effort={effort?.id}
-      data-provider-in-header={providerInHeader ? "" : undefined}
+      data-effort={"effort" in rest ? "" : undefined}
+      data-provider-as-title={providerAsTitle ? (providerAsTitle.label ?? "") : undefined}
+      data-status={status?.map((icon) => icon.kind).join(" ")}
     >
       {model.name}
     </div>
@@ -624,7 +627,8 @@ describe("Weave grouped list", () => {
     expect(groups()).toEqual([instanceId, codexId]);
     expect(rows()).toEqual(["Provider default", "GPT Codex"]);
     expect(container.textContent).toContain("Legacy models");
-    expect(container.querySelector("[data-provider-in-header]")).not.toBeNull();
+    // The group header names the provider, so its rows name the model.
+    expect(container.querySelector("[data-provider-as-title]")).toBeNull();
   });
 
   it("steps through the provider chips with Cmd+Up and Cmd+Down", async () => {
@@ -667,8 +671,8 @@ describe("Weave grouped list", () => {
       ["Medium", "true"],
       ["Max", "false"],
     ]);
-    // The picked row shows the chosen effort.
-    expect(container.querySelector("[data-model-row]")?.getAttribute("data-effort")).toBe("medium");
+    // The strip is the one place effort shows: no row is given one.
+    expect(container.querySelector("[data-model-row][data-effort]")).toBeNull();
     await keyDown({ key: "ArrowRight" });
     expect(select).toHaveBeenLastCalledWith("max");
     await keyDown({ key: "ArrowLeft" });
@@ -709,5 +713,142 @@ describe("Weave grouped list", () => {
       );
     });
     expect(document.activeElement).toBe(container.querySelector("input"));
+  });
+});
+
+describe("calm picker search", () => {
+  const provider = (
+    id: string,
+    driver: string,
+    displayName: string,
+    extra: Record<string, unknown> = {},
+  ) =>
+    deriveProviderInstanceEntries([
+      {
+        instanceId: ProviderInstanceId.make(id),
+        driver: ProviderDriverKind.make(driver),
+        displayName,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-12T12:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        ...extra,
+      } as never,
+    ])[0]!;
+  const enterprise = provider(
+    "copilot_work",
+    "acpRegistry",
+    "Copilot Enterprise (acme-robotics-on)",
+  );
+  const claude = provider("claudeAgent", "claudeAgent", "Claude Code");
+  const cursor = provider("cursor", "cursor", "Cursor", {
+    auth: { status: "unauthenticated" },
+    status: "warning",
+  });
+  const catalog = new Map([
+    [
+      enterprise.instanceId,
+      [
+        { slug: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+        { slug: "claude-opus-5.5", name: "Claude Opus 5.5" },
+        { slug: "gpt-5.3-codex", name: "GPT-5.3-Codex" },
+      ],
+    ],
+    [
+      claude.instanceId,
+      [
+        { slug: "claude-opus-5-5", name: "Claude Opus 5.5" },
+        { slug: "claude-fable-5", name: "Claude Fable 5" },
+      ],
+    ],
+  ]);
+  const type = (value: string) =>
+    act(async () => {
+      const input = container.querySelector("input")!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  const rows = () =>
+    [...container.querySelectorAll("[data-model-row]")].map((row) => row.textContent);
+  const mountCatalog = (overrides: Partial<ComponentProps<typeof ModelPickerContent>> = {}) =>
+    mount({
+      activeInstanceId: claude.instanceId,
+      model: "claude-opus-5-5",
+      instanceEntries: [claude, enterprise, cursor],
+      modelOptionsByInstance: catalog,
+      ...overrides,
+    });
+
+  it("lists only Gemini 4 Carbon for carbon and marks the matched characters", async () => {
+    await mountCatalog();
+    await type("carbon");
+    expect(rows()).toEqual(["Gemini 4 Carbon"]);
+    expect(container.querySelector("[data-model-search-mark]")?.textContent).toBe("Carbon");
+    expect(container.querySelector("[data-model-search-closest]")).toBeNull();
+  });
+
+  it("offers a signed-out provider known to have the model as a sign-in", async () => {
+    const onOpenProviderSetup = vi.fn();
+    const { calls } = await mountCatalog({ onOpenProviderSetup });
+    await type("carbon");
+    const offer = container.querySelector("[data-model-search-sign-in]")!;
+    expect(offer.textContent).toContain(
+      "Cursor also offers Gemini 4 Carbon. It's signed out here.",
+    );
+    await act(async () =>
+      offer.querySelector<HTMLButtonElement>("[data-model-search-sign-in-action]")!.click(),
+    );
+    expect(calls).toEqual(["close"]);
+    expect(onOpenProviderSetup).toHaveBeenCalledWith(cursor.instanceId);
+  });
+
+  it("labels near-misses as closest matches and says when nothing is close", async () => {
+    await mountCatalog();
+    await type("cabron");
+    expect(container.querySelector("[data-model-search-closest]")?.textContent).toBe(
+      "Closest matches",
+    );
+    expect(rows()).toEqual(["Gemini 4 Carbon"]);
+    await type("zzzzzz");
+    expect(rows()).toEqual([]);
+    expect(container.querySelector("[data-model-search-empty]")?.textContent).toContain(
+      "No model matches “zzzzzz”",
+    );
+  });
+
+  it("shows a capability word as a chip that takes the word back out", async () => {
+    await mountCatalog();
+    await type("opus 1m");
+    const chip = container.querySelector<HTMLButtonElement>(
+      '[data-model-search-capability="long"]',
+    )!;
+    expect(chip.textContent).toBe("1M context");
+    // No model here reports a 1M window, so the filter leaves nothing.
+    expect(rows()).toEqual([]);
+    await act(async () => chip.click());
+    expect(container.querySelector("input")!.value).toBe("opus");
+    expect(rows()).toEqual(["Claude Opus 5.5", "Claude Opus 5.5"]);
+  });
+
+  it("names the choice it makes", async () => {
+    await mountCatalog({ title: "Model for new threads", titleContext: "carbon-test" });
+    expect(container.querySelector("[data-model-picker-title]")?.textContent).toBe(
+      "Choosing Model for new threads · carbon-test",
+    );
+  });
+
+  it("gives search rows the provider's short label and status icons, never effort", async () => {
+    await mountCatalog();
+    await type("opus");
+    const titled = [...container.querySelectorAll("[data-provider-as-title]")].map((row) =>
+      row.getAttribute("data-provider-as-title"),
+    );
+    expect(titled).toEqual(["Claude Code", "Copilot Enterprise"]);
+    expect(container.querySelector("[data-model-row][data-effort]")).toBeNull();
   });
 });

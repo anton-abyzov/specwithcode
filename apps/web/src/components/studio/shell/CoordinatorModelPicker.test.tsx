@@ -588,9 +588,10 @@ describe("CoordinatorModelPicker folder compatibility", () => {
       value: { instanceId: "codex", model: "gpt-6" } as never,
       requiresFolderGrants: true,
     });
-    expect(container.textContent).toContain(
-      "Additional folders are available with Codex, Claude and Muse Code.",
-    );
+    // Nothing is wrong, so nothing is said under the composer: where additional folders
+    // work is said where folders are added (Project settings > Environment).
+    expect(container.querySelector("[data-coordinator-folder-guidance]")).toBeNull();
+    expect(container.textContent).not.toContain("Additional folders are available");
     expect(container.textContent).not.toContain("Choose one for the coordinator");
     expect(
       (state.pickerProps!.getModelDisabledReason as (id: string, model: string) => string | null)(
@@ -631,7 +632,7 @@ describe("coordinator ACP folder policy", () => {
         "claude-opus-5.5",
       ),
     ).toBeNull();
-    expect(container.textContent).toContain("existing full-access permissions");
+    expect(container.querySelector("[data-coordinator-folder-guidance]")).toBeNull();
     expect(container.textContent).not.toContain("choose Codex, Claude or Muse Code");
     expect(onChange).not.toHaveBeenCalled();
   });
@@ -714,7 +715,7 @@ async function mountProjectPolicy(
 describe("project coordinator actual policy precedence", () => {
   it("uses project-scoped startup settings only when no coordinator exists", async () => {
     expect(await mountProjectPolicy("full-access")).toBeNull();
-    expect(container.textContent).toContain("existing full-access permissions");
+    expect(container.querySelector("[data-coordinator-folder-guidance]")).toBeNull();
     expect(await mountProjectPolicy("approval-required")).toContain("current restricted policy");
   });
 
@@ -964,47 +965,34 @@ describe("CoordinatorModelPicker limit fallback", () => {
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ instanceId: "copilot", model: "gpt-6" });
   });
 
-  it("keeps effort editing on the saved selection when no different turn is shown", async () => {
+  it("shows no coordinator effort control and gives its picker a title, not an effort strip", async () => {
     state.entries = [entry("codex", true)];
     const selection = {
       instanceId: "codex",
       model: "gpt-6",
       options: [{ id: "reasoningEffort", value: "low" }],
     } as never;
-    const { onChange } = await mount(false, { value: selection });
-    expect(state.traitsProps).toMatchObject({
-      instanceId: "codex",
-      model: "gpt-6",
-      modelOptions: [{ id: "reasoningEffort", value: "low" }],
-    });
-    await act(async () =>
-      (state.traitsProps!.onModelOptionsChange as (options: unknown) => void)([
-        { id: "reasoningEffort", value: "high" },
-      ]),
-    );
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({
-      instanceId: "codex",
-      model: "gpt-6",
-      options: [{ id: "reasoningEffort", value: "high" }],
-    });
+    await mount(false, { value: selection });
+    expect(state.traitsProps).toBeNull();
+    expect(state.pickerProps).toMatchObject({ title: "Coordinator model" });
+    expect((state.pickerProps as { effort?: unknown }).effort).toBeUndefined();
+    // Without a thread model to edit, the chip opens the model list itself.
+    expect((state.pickerProps as { frontView?: unknown }).frontView).toBeUndefined();
   });
 
-  it("hands the model picker an effort strip for the saved model, writing the same selection", async () => {
+  it("opens the Models popover from the chip when the project's thread model is given", async () => {
     state.entries = [entry("codex", true)];
-    const selection = {
-      instanceId: "codex",
-      model: "gpt-6",
-      options: [{ id: "reasoningEffort", value: "low" }],
-    } as never;
-    const { onChange } = await mount(false, { value: selection });
-    const effort = (state.pickerProps as { effort?: { select: (id: string) => void } } | null)
-      ?.effort;
-    expect(effort).toBeDefined();
-    await act(async () => effort!.select("high"));
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({
-      instanceId: "codex",
-      model: "gpt-6",
-      options: [{ id: "reasoningEffort", value: "high" }],
+    await mount(false, {
+      value: { instanceId: "codex", model: "gpt-6" } as never,
+      projectTitle: "carbon-test",
+      threads: { value: null, inherited: null, saving: false, onChange: vi.fn() },
     });
+    expect(state.pickerProps).toMatchObject({
+      title: "Coordinator model",
+      titleContext: "carbon-test",
+    });
+    expect((state.pickerProps as { frontView?: { render: unknown } }).frontView?.render).toBeTypeOf(
+      "function",
+    );
   });
 });
