@@ -62,7 +62,10 @@ try {
   NodeAssert.equal(await carried.innerText(), "System");
   checks.push({ mode: "darwin", carriedDetectReadsAs: "System" });
   NodeAssert.deepEqual(errors, []);
-  await NodeFSP.writeFile(`${out}/voice-vocabulary-check.json`, JSON.stringify({ checks }, null, 2));
+  await NodeFSP.writeFile(
+    `${out}/voice-vocabulary-check.json`,
+    JSON.stringify({ checks }, null, 2),
+  );
   console.log("voice vocabulary fixture ok");
 } finally {
   await browser.close();
