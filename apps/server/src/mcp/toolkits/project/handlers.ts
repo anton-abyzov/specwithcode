@@ -78,6 +78,18 @@ import { receiveAgentCopy } from "../../../fleet/folderTransfer/agentCopy.ts";
 import { agentClone } from "./agentClone.ts";
 import { addProjectToMachine } from "./addToMachine.ts";
 import {
+  createProjectOnMachine,
+  GRANT_GITHUB_MESSAGE,
+  resolveCreateMachine,
+} from "./createOnMachine.ts";
+import {
+  absoluteParentPath,
+  conflictingProject,
+  createFailure,
+  publishNewProject,
+  refuseUnusableOptions,
+} from "./projectCreate.ts";
+import {
   launchRemote,
   launchTarget,
   noWorkerMachineFailure,
@@ -878,96 +890,166 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       return result.value;
     }),
   ),
-  studio_project_create: McpToolAccess.writesEnvironment(({ workspaceRoot, ...input }) =>
-    Effect.gen(function* () {
-      const projects = yield* Project.ProjectService;
-      const work = yield* workGrantOf(yield* readCaller());
-      // A named personal create can return private existing state. Refuse remote
-      // work before either create path reaches a service or changes the machine.
-      if (input.kind === "personal" && work !== undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "outside_grant_scope",
-          message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
-        });
-      // Another machine adds projects here (studio_project_add_to_machine) only
-      // under a grant covering every project, as for a clone.
-      if (work !== undefined) yield* refuseRevoked(work);
-      if (work !== undefined && work.grant.projects.kind !== "all")
-        return yield* new OrchestratorMcpFailure({
-          code: "outside_grant_scope",
-          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot add projects here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work here.`,
-        });
-      // As for studio_project_update: scripts and new folders run or land on
-      // this machine, so only its user sets them; a model default stays
-      // within the sign-ins the grant allows.
-      if (
-        work !== undefined &&
-        (input.scripts !== undefined || input.createWorkspaceRootIfMissing !== undefined)
-      )
-        return yield* new OrchestratorMcpFailure({
-          code: "outside_grant_scope",
-          message: `Project scripts run on this machine and new folders are made on it, so only its user sets them; ${work.coordinatorLabel}'s work cannot. Register an existing folder with title and workspaceRoot, and ask the user here to set scripts in project settings.`,
-        });
-      if (work !== undefined && input.defaultModelSelection != null)
-        yield* assertAccountInGrant(work, input.defaultModelSelection.instanceId);
-      if (workspaceRoot === undefined) {
-        // Project creation records no model default (only an update does), so
-        // reject what this mode would otherwise drop silently.
+  studio_project_create: McpToolAccess.writesEnvironment(
+    ({ workspaceRoot, machine, parentPath, github, ...input }) =>
+      Effect.gen(function* () {
+        const unusable = refuseUnusableOptions({ ...input, workspaceRoot, parentPath, github });
+        if (unusable !== undefined) return yield* unusable;
+        // Another machine creates it there, by its own rules and grant checks.
+        if (machine !== undefined) {
+          const target = yield* resolveCreateMachine(machine);
+          if (target.kind === "remote")
+            return yield* createProjectOnMachine({
+              machine: target.machine,
+              arguments: {
+                ...input,
+                ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+                ...(parentPath === undefined ? {} : { parentPath }),
+                ...(github === undefined ? {} : { github }),
+              },
+            });
+        }
+        const projects = yield* Project.ProjectService;
+        const work = yield* workGrantOf(yield* readCaller());
+        // A named personal create can return private existing state. Refuse remote
+        // work before either create path reaches a service or changes the machine.
+        if (input.kind === "personal" && work !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "outside_grant_scope",
+            message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+          });
+        // Another machine adds projects here (studio_project_add_to_machine) only
+        // under a grant covering every project, as for a clone.
+        if (work !== undefined) yield* refuseRevoked(work);
+        if (work !== undefined && work.grant.projects.kind !== "all")
+          return yield* new OrchestratorMcpFailure({
+            code: "outside_grant_scope",
+            message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot add projects here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work here.`,
+          });
+        // As for studio_project_update: scripts and new folders run or land on
+        // this machine, so only its user sets them; a model default stays
+        // within the sign-ins the grant allows.
         if (
-          input.scripts !== undefined ||
-          input.createWorkspaceRootIfMissing !== undefined ||
-          input.defaultModelSelection !== undefined
+          work !== undefined &&
+          (input.scripts !== undefined || input.createWorkspaceRootIfMissing !== undefined)
         )
           return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message:
-              "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with studio_project_update.",
+            code: "outside_grant_scope",
+            message: `Project scripts run on this machine and new folders are made on it, so only its user sets them; ${work.coordinatorLabel}'s work cannot. Register an existing folder with title and workspaceRoot, and ask the user here to set scripts in project settings.`,
           });
-        // A title-only project is a new repository for the person; a check brings its own folder.
-        if (input.origin === "automated")
+        // A grant covering every project may choose the parent folder (the
+        // denied-folder checks still apply), but publishing uses this machine's
+        // GitHub sign-in, which the grant does not cover.
+        if (work !== undefined && (github ?? false) !== false)
+          return yield* new OrchestratorMcpFailure({
+            code: "outside_grant_scope",
+            message: GRANT_GITHUB_MESSAGE,
+          });
+        if (work !== undefined && input.defaultModelSelection != null)
+          yield* assertAccountInGrant(work, input.defaultModelSelection.instanceId);
+        if (workspaceRoot === undefined) {
+          // Project creation records no model default (only an update does), so
+          // reject what this mode would otherwise drop silently.
+          if (
+            input.scripts !== undefined ||
+            input.createWorkspaceRootIfMissing !== undefined ||
+            input.defaultModelSelection !== undefined
+          )
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message:
+                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with studio_project_update.",
+            });
+          // A title-only project is a new repository for the person; a check brings its own folder.
+          if (input.origin === "automated")
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message:
+                "A check's project needs its own folder: pass workspaceRoot (for example under the scratch folder) with origin automated.",
+            });
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          // As in the dialog: the chosen folder, else this machine's projects folder.
+          // A personal one keeps the app's own folder.
+          const parent =
+            parentPath !== undefined
+              ? yield* absoluteParentPath(parentPath)
+              : input.kind === "personal"
+                ? undefined
+                : folders.suggestedProjectsRoot;
+          // Another machine's work starts new folders only: a parentPath that is,
+          // or holds, a project here would hand that project over, so it goes
+          // through workspaceRoot and its grant check instead.
+          if (work !== undefined && parent !== undefined) {
+            const outcome = yield* folders.previewNamedProject({
+              name: input.title,
+              parentPath: parent,
+            });
+            if (Option.isSome(outcome) && outcome.value.kind === "uses")
+              return yield* new OrchestratorMcpFailure({
+                code: "outside_grant_scope",
+                message: `${outcome.value.path} is already a folder of its own here, so ${work.coordinatorLabel}'s work cannot start a project in it. Pass a parent folder that holds no project of this name, or register an existing project with workspaceRoot.`,
+              });
+          }
+          const created = yield* folders
+            .createNamedProject({
+              name: input.title,
+              ...(parent === undefined ? {} : { parentPath: parent }),
+              // A personal one comes back as this machine's assistant when one exists.
+              ...(input.kind === undefined ? {} : { kind: input.kind }),
+            })
+            .pipe(Effect.mapError(createFailure));
+          const project = yield* projects
+            .getById(created.projectId)
+            .pipe(
+              Effect.mapError(unavailable),
+              Effect.flatMap(
+                Option.match({ onNone: () => Effect.fail(unavailable()), onSome: Effect.succeed }),
+              ),
+            );
+          // A folder used as it is keeps its own remotes; only a new repository is published.
+          const published =
+            github === undefined || github === false || created.existing === true
+              ? {}
+              : yield* publishNewProject({ workspaceRoot: created.workspaceRoot, github });
+          return {
+            ...project,
+            ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
+            ...(created.existing === true ? { existing: true } : {}),
+            ...published,
+          };
+        }
+        // An agent may mark its own check's project; only the person files a project as theirs.
+        if (input.origin === "user")
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message:
-              "A check's project needs its own folder: pass workspaceRoot (for example under the scratch folder) with origin automated.",
+              'Only the user moves a project to their own projects. Omit origin for a project they asked for, or pass origin "automated" for a check.',
           });
-        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-        const created = yield* folders
-          .createNamedProject({
-            name: input.title,
-            // A personal one comes back as this machine's assistant when one exists.
-            ...(input.kind === undefined ? {} : { kind: input.kind }),
-          })
+        const commandId = yield* newCommandId();
+        return yield* projects
+          .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
           .pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+            // A folder that is already a project returns that project; nothing is made.
+            Effect.catch((error) =>
+              conflictingProject(projects, error).pipe(
+                Effect.flatMap((existing) =>
+                  existing === undefined ||
+                  // Never hand the assistant's private project, or one the grant
+                  // does not cover, to another machine's work.
+                  (work !== undefined &&
+                    (isPersonalAssistantProject(existing) ||
+                      !projectInGrant(
+                        work.grant.projects,
+                        work.grant.coordinatorEnvironmentId,
+                        existing,
+                      )))
+                    ? Effect.fail(projectFailure(error))
+                    : Effect.succeed({ ...existing, existing: true }),
+                ),
+              ),
             ),
           );
-        const project = yield* projects
-          .getById(created.projectId)
-          .pipe(
-            Effect.mapError(unavailable),
-            Effect.flatMap(
-              Option.match({ onNone: () => Effect.fail(unavailable()), onSome: Effect.succeed }),
-            ),
-          );
-        return {
-          ...project,
-          ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
-        };
-      }
-      // An agent may mark its own check's project; only the person files a project as theirs.
-      if (input.origin === "user")
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            'Only the user moves a project to their own projects. Omit origin for a project they asked for, or pass origin "automated" for a check.',
-        });
-      const commandId = yield* newCommandId();
-      return yield* projects
-        .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
-        .pipe(Effect.mapError(projectFailure));
-    }),
+      }),
   ),
   studio_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {

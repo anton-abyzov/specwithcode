@@ -1347,6 +1347,22 @@ it.effect("refuses denied parents with New folder's words, links to them include
   ),
 );
 
+it.effect("never binds a denied folder that looks like a project", () =>
+  withScratch(() =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      // A Git marker, or a name matching the folder, would make it "the project".
+      yield* fs.makeDirectory(path.join(config.stateDir, ".git"), { recursive: true });
+      for (const name of ["Example", path.basename(config.stateDir)]) {
+        const { wire } = yield* createFailure({ name, parentPath: config.stateDir });
+        assert.deepEqual(wire, { reason: "refused", folder: config.stateDir });
+      }
+    }),
+  ),
+);
+
 // The picker's "Creates" or "Uses" comes from the same rules the create runs.
 it.effect("previews what the create does, and the create agrees", () =>
   withScratch(({ baseDir }) =>
