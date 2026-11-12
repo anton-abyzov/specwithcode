@@ -47,7 +47,6 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
