@@ -523,8 +523,6 @@ export const ja: PhraseCatalog = {
     "使用量の上限で止まったスレッドを、報告されたリセット時刻に再開します。各スレッドで予定された続行を取り消せます。",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "選択した WSL ディストリビューションを Windows と並行して実行します。プロジェクトは現在のファイルシステムに残ります。",
-  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
-    "そのマシンのターミナルでこれを 1 回実行してください。ブラウザーで claude.ai が開くので、そこで別のアカウントでサインインします。",
   "Selected by SpecWithCode.": "SpecWithCode が選択します。",
   "Set how fast panels open and close.": "パネルが開閉する速さを設定します。",
   "Set how wide messages and the composer can grow on large screens.":
@@ -4466,4 +4464,37 @@ export const ja: PhraseCatalog = {
   "{names} and {count} more": "{names} ほか {count} 件",
   "Turn on {agent}": "{agent} をオンにする",
   "Add {agent}": "{agent} を追加",
+  "Sign-in failed. Try again.": "サインインできませんでした。もう一度お試しください。",
+  "That is not the whole code. Copy it from the page again: it has two parts joined by #.":
+    "コードが途中までです。ページからもう一度コピーしてください。# でつながった 2 つの部分があります。",
+  "Could not copy. Select the text and copy it.":
+    "コピーできませんでした。テキストを選択してコピーしてください。",
+  "Signed in as {account}.": "{account} としてサインイン済みです。",
+  "Signed in.": "サインイン済みです。",
+  "Plan: {plan}.": "プラン: {plan}。",
+  "Its limits now show under Usage > Limits.": "上限は「使用状況 > 上限」に表示されます。",
+  "Run the command below once in a terminal on {machine}. It opens Claude's page in the browser.":
+    "{machine} のターミナルで下のコマンドを一度実行してください。ブラウザで Claude のページが開きます。",
+  "A sign-in for this account is in progress in another window.":
+    "このアカウントのサインインが別のウィンドウで進行中です。",
+  "Starting Claude Code's sign-in…": "Claude Code のサインインを開始しています…",
+  "Sign in on the page that opened. If it shows a code, paste it here.":
+    "開いたページでサインインしてください。コードが表示されたら、ここに貼り付けてください。",
+  "Claude's sign-in page opens in your browser. No terminal needed.":
+    "Claude のサインインページがブラウザで開きます。ターミナルは不要です。",
+  "Finish in your browser": "ブラウザで完了してください",
+  "Could not open the page. Copy the link.":
+    "ページを開けませんでした。リンクをコピーしてください。",
+  "Open the page again": "ページをもう一度開く",
+  "Link copied": "リンクをコピーしました",
+  "Copy the link": "リンクをコピー",
+  "Sign in with Claude": "Claude でサインイン",
+  "Code from the page": "ページのコード",
+  "The Claude desktop app has its own sign-in, and it does not count here.":
+    "Claude デスクトップアプリのサインインは別のもので、ここでは使われません。",
+  "A sign-in inside WSL or under another Windows user does not count either.":
+    "WSL 内や別の Windows ユーザーでのサインインも使われません。",
+  "Show command": "コマンドを表示",
+  "After a sign-in in a terminal, the app checks again when you come back to this window.":
+    "ターミナルでサインインした後は、このウィンドウに戻ったときにアプリが再確認します。",
 };

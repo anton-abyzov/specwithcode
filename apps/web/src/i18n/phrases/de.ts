@@ -528,8 +528,6 @@ export const de: PhraseCatalog = {
     "Stopps wegen Nutzungslimit zum gemeldeten Zeitpunkt des Zurücksetzens fortsetzen. Jeder Thread kann seine geplante Fortsetzung abbrechen.",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "Die ausgewählte WSL-Distribution neben Windows ausführen. Projekte bleiben in ihrem aktuellen Dateisystem.",
-  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
-    "Führe das einmal im Terminal auf dem anderen Rechner aus. Es öffnet claude.ai im Browser: Melde dich dort mit dem anderen Konto an.",
   "Selected by SpecWithCode.": "Von SpecWithCode ausgewählt.",
   "Set how fast panels open and close.": "Lege fest, wie schnell Panels sich öffnen und schließen.",
   "Set how wide messages and the composer can grow on large screens.":
@@ -4492,4 +4490,36 @@ export const de: PhraseCatalog = {
   "{names} and {count} more": "{names} und {count} weitere",
   "Turn on {agent}": "{agent} einschalten",
   "Add {agent}": "{agent} hinzufügen",
+  "Sign-in failed. Try again.": "Anmeldung fehlgeschlagen. Versuche es noch einmal.",
+  "That is not the whole code. Copy it from the page again: it has two parts joined by #.":
+    "Das ist nicht der ganze Code. Kopiere ihn noch einmal von der Seite: Er hat zwei Teile, verbunden durch #.",
+  "Could not copy. Select the text and copy it.":
+    "Kopieren nicht möglich. Markiere den Text und kopiere ihn.",
+  "Signed in as {account}.": "Angemeldet als {account}.",
+  "Signed in.": "Angemeldet.",
+  "Plan: {plan}.": "Tarif: {plan}.",
+  "Its limits now show under Usage > Limits.": "Die Limits stehen jetzt unter Nutzung > Limits.",
+  "Run the command below once in a terminal on {machine}. It opens Claude's page in the browser.":
+    "Führe den Befehl unten einmal in einem Terminal auf {machine} aus. Er öffnet die Seite von Claude im Browser.",
+  "A sign-in for this account is in progress in another window.":
+    "Eine Anmeldung für dieses Konto läuft in einem anderen Fenster.",
+  "Starting Claude Code's sign-in…": "Anmeldung von Claude Code wird gestartet…",
+  "Sign in on the page that opened. If it shows a code, paste it here.":
+    "Melde dich auf der geöffneten Seite an. Wenn sie einen Code zeigt, füge ihn hier ein.",
+  "Claude's sign-in page opens in your browser. No terminal needed.":
+    "Die Anmeldeseite von Claude öffnet sich in deinem Browser. Kein Terminal nötig.",
+  "Finish in your browser": "Im Browser abschließen",
+  "Could not open the page. Copy the link.": "Die Seite ließ sich nicht öffnen. Kopiere den Link.",
+  "Open the page again": "Seite noch einmal öffnen",
+  "Link copied": "Link kopiert",
+  "Copy the link": "Link kopieren",
+  "Sign in with Claude": "Mit Claude anmelden",
+  "Code from the page": "Code von der Seite",
+  "The Claude desktop app has its own sign-in, and it does not count here.":
+    "Die Claude-Desktop-App hat eine eigene Anmeldung, und sie zählt hier nicht.",
+  "A sign-in inside WSL or under another Windows user does not count either.":
+    "Eine Anmeldung in WSL oder unter einem anderen Windows-Benutzer zählt ebenfalls nicht.",
+  "Show command": "Befehl anzeigen",
+  "After a sign-in in a terminal, the app checks again when you come back to this window.":
+    "Nach einer Anmeldung im Terminal prüft die App erneut, sobald du zu diesem Fenster zurückkommst.",
 };

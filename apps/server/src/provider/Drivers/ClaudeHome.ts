@@ -75,6 +75,15 @@ export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesC
 );
 
 /**
+ * Sign-ins a person may take for this one. The same sentences are shown by the
+ * sign-in button in the app, so keep the two in step.
+ */
+export const claudeOtherSignInsNote = (platform: NodeJS.Platform): string =>
+  platform === "win32"
+    ? "The Claude desktop app has its own sign-in, and it does not count here. Neither does a sign-in inside WSL or under another Windows user."
+    : "The Claude desktop app has its own sign-in, and it does not count here.";
+
+/**
  * What the app itself read: a terminal can be signed in elsewhere (WSL, another
  * user, another config folder), so name the CLI and folder that said signed out.
  */
@@ -87,11 +96,7 @@ export const claudeNotSignedInMessage = (input: {
   const login = input.customConfigDir
     ? `Run \`claude auth login\` in a terminal on this machine with CLAUDE_CONFIG_DIR set to that folder`
     : "Run `claude auth login` in a terminal on this machine";
-  const elsewhere =
-    input.platform === "win32"
-      ? " A sign-in inside WSL or under another Windows user does not count here."
-      : "";
-  return `Claude Code is not signed in for this app. It ran ${input.executablePath} with the config folder ${input.configDir}. ${login}, then refresh provider status.${elsewhere}`;
+  return `Claude Code is not signed in for this app. It ran ${input.executablePath} with the config folder ${input.configDir}. ${login}, then refresh provider status. ${claudeOtherSignInsNote(input.platform)}`;
 };
 
 /**

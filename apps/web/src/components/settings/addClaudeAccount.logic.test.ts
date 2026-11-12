@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claudeAccountPlan, claudeLoginCommand } from "./addClaudeAccount.logic";
+import {
+  claudeAccountPlan,
+  claudeLoginCommand,
+  isClaudeSignInCode,
+} from "./addClaudeAccount.logic";
 
 describe("claudeAccountPlan", () => {
   it("gives a new account its own instance and Claude home", () => {
@@ -27,5 +31,34 @@ describe("claudeAccountPlan", () => {
     expect(claudeLoginCommand("~/.claude-work")).toBe(
       "CLAUDE_CONFIG_DIR=~/.claude-work command claude auth login",
     );
+  });
+
+  it("gives Windows the PowerShell form of that command", () => {
+    expect(claudeLoginCommand("~/.claude-work", "linux")).toBe(
+      "CLAUDE_CONFIG_DIR=~/.claude-work command claude auth login",
+    );
+    expect(claudeLoginCommand("~/.claude-work", "windows")).toBe(
+      '$env:CLAUDE_CONFIG_DIR = "$HOME\\.claude-work"; claude auth login',
+    );
+  });
+
+  it("knows the shape of the code Claude's page gives", () => {
+    expect(isClaudeSignInCode(" abc123#STATE1 ")).toBe(true);
+    expect(
+      isClaudeSignInCode("https://platform.claude.com/oauth/code/callback?code=abc&state=S1"),
+    ).toBe(true);
+    for (const half of [
+      "",
+      "abc123",
+      "abc123#",
+      "#STATE1",
+      "abc 123#STATE1",
+      "abc#123#STATE1",
+      "abc\u0007#STATE1",
+      "https://x.test/",
+      "https://x.test/?code=a%0Ab&state=S1",
+      "https://x.test/?code=a%23b&state=S1",
+    ])
+      expect(isClaudeSignInCode(half), half).toBe(false);
   });
 });
