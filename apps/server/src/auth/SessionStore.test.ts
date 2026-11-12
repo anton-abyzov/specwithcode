@@ -712,9 +712,14 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
   );
 
-  it.effect("persists lastConnectedAt on first connect, the last disconnect and a reconnect", () =>
+  it.effect("reports the last disconnect as last seen and stores only connects", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
+      const repository = yield* AuthSessions.AuthSessionRepository;
+      const storedAt = (sessionId: typeof issued.sessionId) =>
+        repository
+          .getById({ sessionId })
+          .pipe(Effect.map((row) => Option.getOrThrow(row).lastConnectedAt?.toString() ?? null));
       const issued = yield* sessions.issue({
         subject: "reconnect-test",
         method: "bearer-access-token",
@@ -730,6 +735,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect(firstConnect[0]?.connected).toBe(true);
       expect(firstConnectedAt).not.toBeNull();
+      expect(yield* storedAt(issued.sessionId)).toBe(firstConnectedAt?.toString());
 
       yield* TestClock.adjust(Duration.seconds(1));
       yield* sessions.markConnected(issued.sessionId);
@@ -756,6 +762,9 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(DateTime.toEpochMillis(lastSeenAt!) - DateTime.toEpochMillis(firstConnectedAt!)).toBe(
         Duration.toMillis(Duration.days(3)) + 1000,
       );
+      // A close writes no row: fleet updates read every change to this column
+      // across a restart as a reconnect (scripts/studio-fleet/auth_heartbeat.py).
+      expect(yield* storedAt(issued.sessionId)).toBe(firstConnectedAt?.toString());
 
       // A stray second close changes nothing.
       yield* TestClock.adjust(Duration.seconds(1));
@@ -770,6 +779,29 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(afterReconnect[0]?.connected).toBe(true);
       expect(afterReconnect[0]?.lastConnectedAt).not.toBeNull();
       expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(lastSeenAt?.toString());
+      expect(yield* storedAt(issued.sessionId)).toBe(
+        afterReconnect[0]?.lastConnectedAt?.toString(),
+      );
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("drops the last-seen time of a revoked session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const kept = yield* sessions.issue({ subject: "kept", method: "bearer-access-token" });
+      const ended = yield* sessions.issue({ subject: "ended", method: "bearer-access-token" });
+      for (const session of [kept, ended]) {
+        yield* sessions.markConnected(session.sessionId);
+        yield* TestClock.adjust(Duration.hours(1));
+        yield* sessions.markDisconnected(session.sessionId);
+      }
+      yield* sessions.revoke(ended.sessionId);
+      // A late close from the revoked session's socket must not bring it back.
+      yield* sessions.markDisconnected(ended.sessionId);
+
+      const active = yield* sessions.listActive();
+      expect(active.map((session) => session.sessionId)).toEqual([kept.sessionId]);
+      expect(active[0]?.connected).toBe(false);
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 

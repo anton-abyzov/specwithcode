@@ -31,6 +31,8 @@ export function RevokeUnusedClientsButton(props: {
   const { clientSessions } = props;
   // The count follows the clock by the minute; the click reads the clock again.
   const [countedAt, setCountedAt] = useState(() => Date.now());
+  // `asking` covers the question, `revoking` the requests after a yes.
+  const [asking, setAsking] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const latest = useRef(clientSessions);
   useEffect(() => {
@@ -42,22 +44,25 @@ export function RevokeUnusedClientsButton(props: {
   }, []);
   if (clientSessions === null) return null;
   const count = unusedClientSessions(clientSessions, countedAt).length;
-  if (count === 0 && !revoking) return null;
+  if (count === 0 && !asking) return null;
 
   const revokeUnused = async () => {
-    setRevoking(true);
+    setAsking(true);
     try {
       const result = await revokeUnusedClients({
         sessions: () => latest.current,
         now: () => Date.now(),
-        confirm: (asked) =>
-          ensureLocalApi().dialogs.confirm(
+        confirm: async (asked) => {
+          const confirmed = await ensureLocalApi().dialogs.confirm(
             tx(
               "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.",
               { count: asked },
             ),
             { variant: "destructive" },
-          ),
+          );
+          if (confirmed) setRevoking(true);
+          return confirmed;
+        },
         revoke: revokeServerClientSession,
       });
       if (result === null) return;
@@ -75,6 +80,7 @@ export function RevokeUnusedClientsButton(props: {
           }),
         );
     } finally {
+      setAsking(false);
       setRevoking(false);
     }
   };
@@ -83,7 +89,7 @@ export function RevokeUnusedClientsButton(props: {
     <Button
       size="xs"
       variant="outline"
-      disabled={revoking || props.disabled === true}
+      disabled={asking || props.disabled === true}
       title={tx("Computer sign-ins paired by link or code with no connection for 24 hours")}
       onClick={() => void revokeUnused()}
     >

@@ -112,20 +112,26 @@ export async function revokeClientSessions<Id extends string>(
   let failed = 0;
   let skipped = 0;
   let error: string | null = null;
-  for (let start = 0; start < sessionIds.length; start += concurrency) {
-    const chunk = sessionIds.slice(start, start + concurrency).filter(stillWanted);
-    skipped += Math.min(concurrency, sessionIds.length - start) - chunk.length;
-    const settled = await Promise.allSettled(chunk.map((sessionId) => revoke(sessionId)));
-    for (const outcome of settled) {
-      if (outcome.status === "fulfilled") {
-        revoked += 1;
+  let next = 0;
+  const worker = async () => {
+    while (next < sessionIds.length) {
+      const sessionId = sessionIds[next++]!;
+      if (!stillWanted(sessionId)) {
+        skipped += 1;
         continue;
       }
-      failed += 1;
-      error ??=
-        outcome.reason instanceof Error ? outcome.reason.message : "Could not revoke a sign-in.";
+      try {
+        await revoke(sessionId);
+        revoked += 1;
+      } catch (cause) {
+        failed += 1;
+        error ??= cause instanceof Error ? cause.message : "Could not revoke a sign-in.";
+      }
     }
-  }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, sessionIds.length)) }, worker),
+  );
   return { revoked, failed, skipped, error };
 }
 
