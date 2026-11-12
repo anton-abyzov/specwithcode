@@ -292,6 +292,23 @@ describe("the one next step", () => {
     expect(view.buttons()).toContain("Turn on");
   });
 
+  it("says so on the sign-in step too, and not once the machine is linked again", () => {
+    const revokedElsewhereAt = "2026-11-12T23:00:00.000Z";
+    world({ link: { linked: false, revokedElsewhereAt } });
+    const signedOut = page();
+    expect(signedOut.stepKind()).toBe("sign-in");
+    expect(byAttr(signedOut.root, "data-machine-deregistered-elsewhere")).toHaveLength(1);
+    signedOut.unmount();
+
+    world({
+      signedIn: true,
+      link: { linked: true, managedTunnelActive: true, revokedElsewhereAt },
+    });
+    const linked = page();
+    expect(linked.facts()[0]).toBe("Connect: linked as sam@example.com");
+    expect(byAttr(linked.root, "data-machine-deregistered-elsewhere")).toHaveLength(0);
+  });
+
   it("says nothing of the kind for a machine that was simply never linked", () => {
     world({ signedIn: true });
     expect(byAttr(page().root, "data-machine-deregistered-elsewhere")).toHaveLength(0);

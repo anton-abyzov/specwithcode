@@ -96,10 +96,12 @@ describe("deregisterFailureMessage", () => {
       }),
     });
 
-  it("says the machine left the account when only the cleanup failed", () => {
+  it("does not claim the machine left the account when the cleanup step failed", () => {
+    // The service gives this reason before and after the account lost the machine.
     const message = deregisterFailureMessage(internal("upstream_unavailable"));
-    expect(message).toContain("taken off your account");
-    expect(message).not.toContain("Try again");
+    expect(message).toContain("could not finish removing the machine");
+    expect(message).toContain("If it is still in the list, try again");
+    expect(message).not.toContain("taken off your account");
   });
 
   it("asks to try again when the service could not save or broke", () => {
@@ -119,6 +121,9 @@ describe("deregisterFailureMessage", () => {
     expect(deregisterFailureMessage(auth("missing_bearer"))).toContain("sign-in has run out");
     expect(deregisterFailureMessage(auth("not_authorized"))).toContain(
       "may not deregister that machine",
+    );
+    expect(deregisterFailureMessage(auth("device_removed"))).toContain(
+      "This device was removed from your account",
     );
     expect(
       deregisterFailureMessage(auth("invalid_dpop", { dpopFailureReason: "time_window" })),

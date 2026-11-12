@@ -279,6 +279,11 @@ describe("relay persistence on SQLite (D1)", () => {
       // Linked again under the same key: no longer revoked.
       yield* insertLink({ userId: "user-2" });
       expect(yield* credentials.linkRevoked(current)).toBe(false);
+
+      // A deleted account leaves no link row at all, only the credential: also gone for good.
+      const db = yield* RelayDb.RelayDb;
+      yield* db.delete(relayEnvironmentLinks);
+      expect(yield* credentials.linkRevoked(current)).toBe(true);
     }).pipe(Effect.provide(layer())),
   );
 

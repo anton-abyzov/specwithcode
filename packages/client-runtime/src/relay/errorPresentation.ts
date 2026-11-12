@@ -93,8 +93,10 @@ export function deregisterFailureMessage(cause: unknown): string {
     const relayError = failure.relayError;
     if (relayError?._tag === "RelayInternalError") {
       switch (relayError.reason) {
+        // The service gives this reason both before and after the account lost the
+        // machine, so the text does not claim either; the caller reads the list again.
         case "upstream_unavailable":
-          return "The machine was taken off your account, but SpecWithCode Connect could not finish cleaning up after it. Your other machines are not affected.";
+          return "SpecWithCode Connect could not finish removing the machine. If it is still in the list, try again in a minute. If it is gone, nothing more is needed.";
         case "database_unavailable":
         case "persistence_failed":
           return "SpecWithCode Connect could not save the change. Try again in a minute.";
@@ -114,6 +116,8 @@ export function deregisterFailureMessage(cause: unknown): string {
           );
         case "not_authorized":
           return "This account may not deregister that machine. Sign in with the account that linked it.";
+        case "device_removed":
+          return "This device was removed from your account. Sign in to SpecWithCode Connect again on this device, then try again.";
       }
     }
     if (failure.transportFailed === true) {
