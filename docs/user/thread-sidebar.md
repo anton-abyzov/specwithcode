@@ -112,6 +112,11 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+A thread a coordinator or agent starts is named after the lasting goal it owns, not the
+wording of the first request. A deadline at the end of the name an agent passes, such as
+"in 3 hours" or "by Friday", is left out, and a thread started without a name gets a
+generated title from its task. Agents are asked to rename a thread when its job changes.
+
 ### Fold working threads (beta)
 
 Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →

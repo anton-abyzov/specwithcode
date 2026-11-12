@@ -98,9 +98,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { lastingThreadTitle } from "../orchestration-v2/LastingThreadTitle.ts";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  taskSummary,
 } from "../orchestration-v2/SubagentProjection.ts";
 import {
   DispatchModeLimit,
@@ -792,8 +794,11 @@ function threadTitle(input: {
   readonly title: string | undefined;
   readonly index: number;
 }): string {
-  const detail = input.title?.trim() || input.prompt?.trim();
-  if (!detail) return `${input.parentTitle} thread ${input.index + 1}`;
+  // Without a title the first sentence of the task stands in, and the caller
+  // has the first message seed a generated title (see `titleSeed` below).
+  const written = input.title?.trim() || (input.prompt ? taskSummary(input.prompt).trim() : "");
+  if (!written) return `${input.parentTitle} thread ${input.index + 1}`;
+  const detail = lastingThreadTitle(written);
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
@@ -3331,6 +3336,9 @@ const make = Effect.gen(function* () {
                     attachments: [],
                     modelSelection: target.modelSelection,
                     dispatchMode: { type: "start_immediately" },
+                    // No title was passed, so the thread gets a generated one
+                    // from its task instead of keeping the prompt's first words.
+                    ...(request.title === undefined ? { titleSeed: title } : {}),
                   })
                   .pipe(
                     Effect.mapError((error) =>
