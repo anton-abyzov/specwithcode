@@ -97,7 +97,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
    * tooltip, and toolbar controls cannot quietly drift apart.
    */
   --control-radius: 0.5rem;
-  /* Dialogs, sheets and the palette; `rounded-2xl` resolves to it. */
+  /* Dialogs, sheets and the palette, through `rounded-dialog`. */
   --dialog-radius: 0.875rem;
   --sidebar-content-inset: 0.5rem;
   --sidebar-control-gap: 0.5rem;
@@ -291,8 +291,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: min(calc(var(--radius) + 4px), var(--dialog-radius));
-  --radius-2xl: var(--dialog-radius);
-  --radius-3xl: calc(var(--dialog-radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  /* `rounded-dialog`: the one large corner that follows the system's dialogs.
+     Cards and the composer keep the scale above. */
+  --radius-dialog: var(--dialog-radius);
   @keyframes skeleton {
     /* The single loading-bar breath used by every skeleton: one opacity pulse
        per container, stepped so however many bars sit under it, the compositor
@@ -1204,10 +1207,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   --dialog-radius: 0.5rem;
 }
 
-:root[data-platform="linux"] {
-  --radius: 0.5rem;
-  --control-radius: 0.375rem;
-  --dialog-radius: 0.75rem;
+/* A touch screen keeps the values above: Android reports as Linux. */
+@media (pointer: fine) {
+  :root[data-platform="linux"] {
+    --radius: 0.5rem;
+    --control-radius: 0.375rem;
+    --dialog-radius: 0.75rem;
+  }
 }
 
 /* Windows and Linux draw scrollbars people aim at with a mouse: wide enough to
@@ -1255,6 +1261,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     [role="checkbox"],
     [role="combobox"],
     [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
     [role="option"],
     [role="radio"],
     [role="slider"],
@@ -1265,12 +1273,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     outline-offset: 2px;
   }
 
-  :is(input, textarea, [role="option"], [role="menuitem"], [role="tab"]):focus-visible {
+  :is(
+    input,
+    textarea,
+    [role="option"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
+    [role="tab"]
+  ):focus-visible {
     outline-offset: -2px;
   }
 
   [role="option"][aria-selected="true"],
-  [role="menuitem"][data-highlighted] {
+  :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"])[data-highlighted] {
     forced-color-adjust: none;
     background-color: Highlight;
     color: HighlightText;
@@ -1278,7 +1294,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
 
   /* Chips and dots inside lose their fill here as they do everywhere else in
      a contrast theme; their text takes the row's colour. */
-  :is([role="option"][aria-selected="true"], [role="menuitem"][data-highlighted]) * {
+  :is(
+      [role="option"][aria-selected="true"],
+      :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"])[data-highlighted]
+    )
+    * {
     background-color: transparent;
     color: inherit;
   }

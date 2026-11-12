@@ -54,6 +54,8 @@ const DESKTOP = { width: 1100, height: 760 };
 const PHONE = { width: 390, height: 780 };
 const POPUP = "[data-slot=dialog-popup],[data-slot=alert-dialog-popup]";
 const RADIUS = { macos: [8, 14], windows: [4, 8], linux: [6, 12] };
+// A card and the composer: only dialogs take the system's corner, so macOS keeps 18 and 22.
+const CARD_RADIUS = { macos: [18, 22], windows: [14, 18], linux: [16, 20] };
 const KEYS = { macos: ["⇥", "↵", "esc", "⌘O"], other: ["Tab", "Enter", "Esc", "Ctrl+O"] };
 
 const checks = [];
@@ -228,6 +230,11 @@ for (const os of SYSTEMS) {
           ),
           control: Number.parseFloat(getComputedStyle(add).borderTopLeftRadius),
           dialog: Number.parseFloat(getComputedStyle(popup).borderTopLeftRadius),
+          cards: ["chrome-card", "chrome-composer"].map((slot) =>
+            Number.parseFloat(
+              getComputedStyle(popup.querySelector(`[data-slot="${slot}"]`)).borderTopLeftRadius,
+            ),
+          ),
           scrollbar: scroller.offsetWidth - scroller.clientWidth - border,
           overflows: scroller.scrollHeight > scroller.clientHeight,
           thumb: getComputedStyle(scroller, "::-webkit-scrollbar-thumb").backgroundColor,
@@ -237,6 +244,7 @@ for (const os of SYSTEMS) {
       assert.equal(seen.platform, os);
       assert.deepEqual(seen.keys, os === "macos" ? KEYS.macos : KEYS.other);
       assert.deepEqual([seen.control, seen.dialog], RADIUS[os]);
+      assert.deepEqual(seen.cards, CARD_RADIUS[os]);
       assert.equal(seen.overflows, true, "the list overflows");
       if (os === "macos") assert.equal(seen.scrollbar, 6, "thin on macOS");
       else assert.ok(seen.scrollbar >= 10, `at least 10 px: ${seen.scrollbar}`);

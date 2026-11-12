@@ -356,6 +356,9 @@ function Chrome() {
             className="w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             defaultValue="~/Projects/"
           />
+          {/* Corners outside a dialog: a card and the composer keep the app's own scale. */}
+          <span data-slot="chrome-card" className="rounded-2xl" hidden />
+          <span data-slot="chrome-composer" className="rounded-3xl" hidden />
           <div
             role="listbox"
             aria-label="Folders"
