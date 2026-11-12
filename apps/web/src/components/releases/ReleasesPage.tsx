@@ -23,13 +23,16 @@ function useNow(intervalMs: number) {
 }
 
 function ReleaseRunsOf({ environmentId }: { environmentId: EnvironmentId }) {
-  const { runs, skipped, loading, failed, refresh } = useReleaseRuns(environmentId);
+  const { runs, skipped, timings, installs, loading, failed, refresh } =
+    useReleaseRuns(environmentId);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const now = useNow(1_000);
   return (
     <ReleasesView
       runs={runs}
       skipped={skipped}
+      timings={timings}
+      installs={installs}
       loading={loading}
       failed={failed}
       selectedRunId={selectedRunId}

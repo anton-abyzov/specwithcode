@@ -49,6 +49,8 @@ export function useReleaseRuns(environmentId: EnvironmentId) {
   return {
     runs: snapshot?.runs ?? [],
     skipped: snapshot?.skipped ?? 0,
+    timings: snapshot?.timings,
+    installs: snapshot?.installs,
     loading: result.waiting,
     failed: result._tag === "Failure",
     refresh: () => appAtomRegistry.refresh(releaseRunsAtom(environmentId)),

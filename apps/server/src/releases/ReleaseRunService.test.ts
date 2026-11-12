@@ -159,7 +159,7 @@ describe("ReleaseRunService", () => {
             const missing = yield* (yield* ReleaseRuns.makeWithDirectory(
               `${directory}/does-not-exist`,
             )).list();
-            assert.deepStrictEqual(missing, { runs: [], skipped: 0 });
+            assert.deepStrictEqual(missing, { runs: [], skipped: 0, timings: [] });
           }),
       ),
   );
@@ -180,6 +180,250 @@ describe("ReleaseRunService", () => {
     assert.deepStrictEqual(
       ReleaseRuns.newestFirst(runs).map((run) => run.runId),
       ["c", "b", "a"],
+    );
+  });
+
+  it.effect("answers the timings of more runs than it sends whole", () =>
+    withRuns(
+      Object.fromEntries(
+        Array.from({ length: 12 }, (_, index) => {
+          const version = `1.0.${200 + index}`;
+          const startedAt = `2026-11-${String(index + 1).padStart(2, "0")}T09:00:00Z`;
+          const stages = [
+            {
+              id: "test.server",
+              needs: [],
+              state: "passed",
+              startedAt,
+              endedAt: `2026-11-${String(index + 1).padStart(2, "0")}T09:10:00Z`,
+              log: null,
+              steps: [],
+            },
+          ];
+          return [
+            `release-${version}-r${index}.json`,
+            JSON.stringify(record(version, `r${index}`, startedAt, { state: "done", stages })),
+          ];
+        }),
+      ),
+      (directory) =>
+        Effect.gen(function* () {
+          const snapshot = yield* (yield* ReleaseRuns.makeWithDirectory(directory)).list();
+          assert.strictEqual(snapshot.runs.length, ReleaseRuns.RELEASE_RUNS_LIMIT);
+          assert.strictEqual(snapshot.timings?.length, 12);
+          expect(snapshot.timings![0]).toMatchObject({
+            version: "1.0.211",
+            state: "done",
+            totalSeconds: 600,
+            stages: [{ id: "test.server", state: "passed", seconds: 600 }],
+          });
+          assert.isFalse("installs" in snapshot);
+        }),
+    ),
+  );
+});
+
+/** A receipt as update.py writes it, with the keys this reads among many it does not. */
+const receipt = (phase: string, timings: Record<string, number>, verifiedAt?: string) =>
+  JSON.stringify({
+    phase,
+    before: { rows: { threads: 12 } },
+    backup: "owned-updates/x",
+    ...(verifiedAt ? { verifiedAt } : {}),
+    timings,
+  });
+
+const withReceipts = <A, E>(
+  receipts: Record<string, string>,
+  use: (
+    files: ReleaseRuns.InstallTimingFiles & { readonly runs: string },
+  ) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const updates = path.join(
+      yield* fs.makeTempDirectoryScoped({ prefix: "installs-" }),
+      "updates",
+    );
+    const receiptsDirectory = path.join(updates, "receipts");
+    yield* fs.makeDirectory(receiptsDirectory, { recursive: true });
+    for (const [name, text] of Object.entries(receipts)) {
+      yield* fs.writeFileString(path.join(receiptsDirectory, name), text);
+    }
+    return yield* use({
+      runs: path.join(updates, "runs"),
+      receiptsDirectory,
+      historyFile: path.join(updates, ReleaseRuns.INSTALL_HISTORY_FILE),
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+describe("install timings", () => {
+  it.effect("reads verified installs from the receipts and keeps them after a receipt goes", () =>
+    withReceipts(
+      {
+        "update-1.0.201-20261110T101500123456Z.json": receipt(
+          "verified",
+          { beforeRead: 1000, serviceStop: 3000, readiness: 6000, total: 21500 },
+          "2026-11-10T10:15:21.500000+00:00",
+        ),
+        "update-1.0.202-20261111T090000000001Z.json": receipt("verified", {
+          serviceStop: 2000,
+          total: 18000,
+        }),
+        // Still installing, a refusal, a failure, and the prestate copy beside each attempt.
+        "update-1.0.203-20261112T090000000001Z.json": receipt("restart-requested", {
+          beforeRead: 900,
+        }),
+        "update-1.0.203-20261112T080000000001Z.json": receipt("preflight", { total: 400 }),
+        "update-1.0.203-20261112T070000000001Z.json": JSON.stringify({
+          phase: "prepared",
+          result: "update-failed",
+          timings: { untilFailure: 5000 },
+        }),
+        "prestate-1.0.202-20261111T090000000001Z.json": receipt("verified", { total: 1 }),
+        "update-1.0.204-20261112T110000000001Z.json": "{ not json",
+      },
+      (files) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const service = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
+          // The receipts are read in the background, never while a request waits.
+          expect((yield* service.list()).installs).toEqual([]);
+          yield* service.refreshInstalls;
+          const first = yield* service.list();
+          expect(first.installs).toEqual([
+            {
+              version: "1.0.202",
+              installedAt: "2026-11-11T09:00:00.000Z",
+              totalMs: 18000,
+              phases: { serviceStop: 2000 },
+            },
+            {
+              version: "1.0.201",
+              installedAt: "2026-11-10T10:15:21.500Z",
+              totalMs: 21500,
+              phases: { beforeRead: 1000, serviceStop: 3000, readiness: 6000 },
+            },
+          ]);
+          // The update pruned 1.0.201's receipt; a restarted service still has it.
+          yield* fs.remove(
+            path.join(files.receiptsDirectory, "update-1.0.201-20261110T101500123456Z.json"),
+          );
+          const restarted = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
+          const second = yield* restarted.list();
+          expect(second.installs?.map((install) => install.version)).toEqual([
+            "1.0.202",
+            "1.0.201",
+          ]);
+          const kept = yield* fs.readFileString(files.historyFile);
+          expect(kept).toContain('"schemaVersion":1');
+          expect(kept).not.toContain("owned-updates");
+          expect(kept).not.toContain("threads");
+        }),
+    ),
+  );
+
+  it.effect("answers none without receipts, and trims the history to its limit", () =>
+    withReceipts({}, (files) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const service = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
+        assert.deepStrictEqual((yield* service.list()).installs, []);
+        assert.isFalse(yield* fs.exists(files.historyFile));
+        const many = Array.from({ length: ReleaseRuns.INSTALL_HISTORY_LIMIT + 5 }, (_, index) => ({
+          version: `1.0.${index}`,
+          installedAt: `2026-10-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+          totalMs: 1000 + index,
+        }));
+        const merged = ReleaseRuns.mergeInstalls(many.slice(0, 20), many.slice(15));
+        assert.strictEqual(merged.length, ReleaseRuns.INSTALL_HISTORY_LIMIT);
+        assert.strictEqual(merged[0]!.version, `1.0.${ReleaseRuns.INSTALL_HISTORY_LIMIT + 4}`);
+      }),
+    ),
+  );
+
+  it.effect("never parses a receipt the history holds again, after a restart too", () =>
+    withReceipts(
+      {
+        "update-1.0.99-20261111T090000000001Z.json": receipt("verified", { total: 18000 }),
+      },
+      (files) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* (yield* ReleaseRuns.makeWithDirectory(files.runs, files)).refreshInstalls;
+          expect(yield* fs.readFileString(files.historyFile)).toContain(
+            "update-1.0.99-20261111T090000000001Z.json",
+          );
+          // A changed receipt under a name already read is not read again.
+          yield* fs.writeFileString(
+            path.join(files.receiptsDirectory, "update-1.0.99-20261111T090000000001Z.json"),
+            receipt("verified", { total: 99000 }),
+          );
+          const restarted = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
+          expect((yield* restarted.refreshInstalls).map((install) => install.totalMs)).toEqual([
+            18000,
+          ]);
+        }),
+    ),
+  );
+
+  it.effect("keeps a newer service's history as it is, and replaces a damaged one", () =>
+    withReceipts(
+      { "update-1.0.9-20261111T090000000001Z.json": receipt("verified", { total: 5000 }) },
+      (files) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const newer = '{"schemaVersion":2,"installs":[],"runs":[]}\n';
+          yield* fs.writeFileString(files.historyFile, newer);
+          const read = yield* (yield* ReleaseRuns.makeWithDirectory(files.runs, files))
+            .refreshInstalls;
+          expect(read.map((install) => install.version)).toEqual(["1.0.9"]);
+          assert.strictEqual(yield* fs.readFileString(files.historyFile), newer);
+          yield* fs.writeFileString(files.historyFile, '{"schemaVersion":1,"inst');
+          yield* (yield* ReleaseRuns.makeWithDirectory(files.runs, files)).refreshInstalls;
+          expect(yield* fs.readFileString(files.historyFile)).toContain('"version":"1.0.9"');
+          assert.isFalse(yield* fs.exists(`${files.historyFile}.tmp`));
+        }),
+    ),
+  );
+
+  it("orders receipts by their time, not by the version in the name", () => {
+    expect(
+      ReleaseRuns.newestReceiptsFirst([
+        "update-1.0.99-20261101T090000Z.json",
+        "update-1.0.258-20261112T090000123456Z.json",
+        "update-1.0.100-20261105T090000Z.json",
+      ]),
+    ).toEqual([
+      "update-1.0.258-20261112T090000123456Z.json",
+      "update-1.0.100-20261105T090000Z.json",
+      "update-1.0.99-20261101T090000Z.json",
+    ]);
+  });
+
+  it("parses only update receipts of verified installs", () => {
+    const verified = receipt("verified", { total: 5000, odd: -1, alsoOdd: 1.5 });
+    assert.isTrue(
+      Option.isSome(
+        ReleaseRuns.parseInstallReceipt("update-1.0.9-20261110T101500Z.json", verified),
+      ),
+    );
+    expect(
+      Option.getOrThrow(
+        ReleaseRuns.parseInstallReceipt("update-1.0.9-rc.1-20261110T101500Z.json", verified),
+      ),
+    ).toEqual({ version: "1.0.9-rc.1", installedAt: "2026-11-10T10:15:00.000Z", totalMs: 5000 });
+    assert.isTrue(Option.isNone(ReleaseRuns.parseInstallReceipt("update-1.0.9.json", verified)));
+    assert.isTrue(
+      Option.isNone(
+        ReleaseRuns.parseInstallReceipt(
+          "update-1.0.9-20261110T101500Z.json",
+          receipt("verified", { total: 0 }),
+        ),
+      ),
     );
   });
 });
