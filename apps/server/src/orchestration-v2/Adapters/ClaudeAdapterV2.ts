@@ -1,4 +1,3 @@
-import * as NodeCrypto from "node:crypto";
 import { CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS } from "./claudeReadOnlyMcpTools.ts";
 import {
   unknownToolInventory,
@@ -6,6 +5,7 @@ import {
 } from "../../project/workflowCapabilities.ts";
 import { nativeChildTerminalReceipt } from "../NativeChildTerminalReceipt.ts";
 import { stringifyJson } from "../../json.ts";
+import { sha256 } from "../../nodeCrypto.ts";
 import { makeProjectContextHooks } from "../../project/ProjectContextHooks.ts";
 import { makeSubagentLaunchHooks } from "./ClaudeSubagentLaunchHook.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -1923,9 +1923,7 @@ export function claudeEffectiveQueryPolicyKey(
     mcpCredential:
       mcpOverrides.mcpEnvironment === undefined
         ? undefined
-        : NodeCrypto.createHash("sha256")
-            .update(stringifyJson(mcpOverrides.mcpEnvironment))
-            .digest("hex"),
+        : sha256([stringifyJson(mcpOverrides.mcpEnvironment)], "hex"),
   });
 }
 
