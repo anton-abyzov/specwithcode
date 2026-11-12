@@ -12,12 +12,17 @@ import {
   buildCommandPaletteProjectMetadata,
   buildCommandPaletteRows,
   buildProjectActionItems,
+  buildRootGroups,
+  buildRootProjectItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   findHighlightedCommandPaletteItem,
+  latestThreadActivityByProjectKey,
+  orderProjectsForPalette,
   personalAssistantActionOffered,
+  RECENT_PROJECT_LIMIT,
   reduceCommandPaletteUiState,
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
@@ -762,6 +767,182 @@ describe("filterCommandPaletteGroups", () => {
     expect(group?.items.map((entry) => entry.value)).toEqual([
       "setting:default-model",
       "setting:keybinding-modelPicker.toggle",
+    ]);
+  });
+});
+
+describe("root Projects group", () => {
+  const item = (value: string, title = value): CommandPaletteActionItem => ({
+    kind: "action",
+    value,
+    title,
+    searchTerms: [title],
+    icon: null,
+    run: async () => undefined,
+  });
+  const projects = Array.from({ length: 10 }, (_, index) =>
+    item(`project:local:p${index}`, `Project ${index}`),
+  );
+  const actions = [item("action:new-thread", "New thread")];
+  const recentThreads = [item("thread:t1", "Fix login")];
+  const rootGroups = buildRootGroups({
+    projectItems: projects,
+    actionItems: actions,
+    recentThreadItems: recentThreads,
+  });
+  const filter = (query: string) =>
+    filterCommandPaletteGroups({
+      activeGroups: rootGroups,
+      query,
+      isInSubmenu: false,
+      projectSearchItems: projects,
+      settingsSearchItems: [],
+      threadSearchItems: recentThreads,
+    });
+
+  it("lists projects first, capped, then actions and recent threads", () => {
+    expect(rootGroups.map((group) => group.value)).toEqual([
+      "projects",
+      "actions",
+      "recent-threads",
+    ]);
+    expect(rootGroups[0]?.label).toBe("Projects");
+    expect(rootGroups[0]?.items).toHaveLength(RECENT_PROJECT_LIMIT);
+    expect(rootGroups[0]?.items.map((entry) => entry.value)).toEqual(
+      projects.slice(0, RECENT_PROJECT_LIMIT).map((entry) => entry.value),
+    );
+  });
+
+  it("shows no Projects group when there are no projects", () => {
+    const groups = buildRootGroups({
+      projectItems: [],
+      actionItems: actions,
+      recentThreadItems: recentThreads,
+    });
+    expect(groups.map((group) => group.value)).toEqual(["actions", "recent-threads"]);
+  });
+
+  it("opens with the first project highlighted on an empty query", () => {
+    const groups = filter("");
+    expect(groups.map((group) => group.value)).toEqual(["projects", "actions", "recent-threads"]);
+    expect(buildCommandPaletteRows(groups).itemValues[0]).toBe("project:local:p0");
+  });
+
+  it("lists matching projects once, in the search group, while typing", () => {
+    const groups = filter("project 9");
+    expect(groups.map((group) => group.value)).toEqual(["projects-search"]);
+    expect(groups[0]?.items.map((entry) => entry.value)).toEqual(["project:local:p9"]);
+    expect(filter("project").filter((group) => group.label === "Projects")).toHaveLength(1);
+  });
+
+  it("keeps the > prefix to actions only", () => {
+    expect(filter(">").map((group) => group.value)).toEqual(["actions"]);
+    expect(filter(">new").map((group) => group.value)).toEqual(["actions"]);
+  });
+});
+
+describe("orderProjectsForPalette", () => {
+  const order = (input: {
+    keys: string[];
+    contextualKey: string | null;
+    activity: Record<string, number>;
+  }) =>
+    orderProjectsForPalette({
+      items: input.keys,
+      keyOf: (key) => key,
+      contextualKey: input.contextualKey,
+      latestActivityByKey: new Map(Object.entries(input.activity)),
+    });
+
+  it("puts the current project first, then newest activity, then sidebar order", () => {
+    expect(
+      order({
+        keys: ["a", "b", "c", "d", "e"],
+        contextualKey: "d",
+        activity: { b: 100, e: 300, d: 50, x: 999 },
+      }),
+    ).toEqual(["d", "e", "b", "a", "c"]);
+  });
+
+  it("keeps sidebar order when nothing has activity and there is no current project", () => {
+    expect(order({ keys: ["c", "a", "b"], contextualKey: null, activity: {} })).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
+  });
+
+  it("orders projects by their newest non-archived thread", () => {
+    const environmentId = EnvironmentId.make("local");
+    const thread = (projectId: string, at: string, archivedAt: string | null = null) => ({
+      environmentId,
+      projectId: ProjectId.make(projectId),
+      createdAt: at,
+      updatedAt: at,
+      latestUserMessageAt: at,
+      archivedAt,
+    });
+    const activity = latestThreadActivityByProjectKey([
+      thread("web", "2026-11-01T10:00:00.000Z"),
+      thread("web", "2026-11-03T10:00:00.000Z"),
+      thread("api", "2026-11-02T10:00:00.000Z"),
+      thread("docs", "2026-11-05T10:00:00.000Z", "2026-11-06T10:00:00.000Z"),
+    ]);
+    expect(activity.get("local:web")).toBe(Date.parse("2026-11-03T10:00:00.000Z"));
+    expect(activity.has("local:docs")).toBe(false);
+    expect(
+      orderProjectsForPalette({
+        items: ["local:docs", "local:api", "local:web"],
+        keyOf: (key) => key,
+        contextualKey: null,
+        latestActivityByKey: activity,
+      }),
+    ).toEqual(["local:web", "local:api", "local:docs"]);
+  });
+});
+
+describe("buildRootProjectItems", () => {
+  it("counts every member of a grouped project and keeps the current project first", () => {
+    const local = EnvironmentId.make("local");
+    const remote = EnvironmentId.make("studio-mac");
+    const ref = (environmentId: EnvironmentId, id: string) => ({
+      environmentId,
+      id: ProjectId.make(id),
+    });
+    const projects = [ref(local, "docs"), ref(local, "web"), ref(local, "api")];
+    const items = projects.map((project): CommandPaletteActionItem => ({
+      kind: "action",
+      value: `project:${project.environmentId}:${project.id}`,
+      title: project.id,
+      searchTerms: [project.id],
+      icon: null,
+      run: async () => undefined,
+    }));
+    const thread = (environmentId: EnvironmentId, projectId: string, at: string) => ({
+      environmentId,
+      projectId: ProjectId.make(projectId),
+      createdAt: at,
+      updatedAt: at,
+      latestUserMessageAt: at,
+      archivedAt: null,
+    });
+    const ordered = buildRootProjectItems({
+      projects,
+      items,
+      // "web" is also cloned on another machine, where its newest thread lives.
+      groupByKey: new Map([
+        ["local:web", { memberProjects: [ref(local, "web"), ref(remote, "web-clone")] }],
+      ]),
+      contextualProject: ref(local, "api"),
+      threads: [
+        thread(local, "docs", "2026-11-02T10:00:00.000Z"),
+        thread(remote, "web-clone", "2026-11-04T10:00:00.000Z"),
+      ],
+    });
+    expect(ordered.map((entry) => entry.value)).toEqual([
+      "project:local:api",
+      "project:local:web",
+      "project:local:docs",
     ]);
   });
 });
