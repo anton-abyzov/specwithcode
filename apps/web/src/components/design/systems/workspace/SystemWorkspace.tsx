@@ -542,7 +542,7 @@ function SectionCard({
           >
             <h2
               id={headingId}
-              className="report-document truncate font-[family-name:var(--report-serif)] font-normal text-[2rem] text-foreground leading-[1.15] tracking-[-0.015em] sm:text-[2.5rem]"
+              className="report-document truncate font-serif font-normal text-[2rem] text-foreground leading-[1.15] tracking-[-0.015em] sm:text-[2.5rem]"
             >
               {section.title}
             </h2>

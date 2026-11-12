@@ -20,15 +20,15 @@ import {
 import type { PullRequestReadiness, ReadinessTone } from "./pullRequestReadiness.logic";
 
 const TONE_TEXT: Record<ReadinessTone, string> = {
-  done: "text-emerald-600 dark:text-emerald-300/90",
-  pending: "text-amber-600 dark:text-amber-400/90",
+  done: "text-success-foreground",
+  pending: "text-warning-foreground",
   blocked: "text-destructive-foreground",
   neutral: "text-muted-foreground",
 };
 
 const TONE_DOT: Record<ReadinessTone, string> = {
-  done: "bg-emerald-600/12 text-emerald-600 dark:bg-emerald-300/12 dark:text-emerald-300",
-  pending: "bg-amber-500/14 text-amber-600 dark:text-amber-400",
+  done: "bg-success/12 text-success-foreground",
+  pending: "bg-warning/14 text-warning-foreground",
   blocked: "bg-destructive/12 text-destructive-foreground",
   neutral: "bg-muted text-muted-foreground",
 };
@@ -127,7 +127,7 @@ export function RailChanges({
       <span className="tabular-nums">
         {files.toLocaleString()} {files === 1 ? "file" : "files"}
       </span>
-      <PullRequestDiffStat additions={additions} deletions={deletions} className="font-mono" />
+      <PullRequestDiffStat additions={additions} deletions={deletions} />
     </>
   );
   return onOpen ? (

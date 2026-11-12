@@ -603,7 +603,7 @@ function ProjectWhere({
                   {[copy.seen.text, copy.roleLabel].filter(Boolean).join(" · ")}
                 </span>
               </p>
-              <p className="select-text break-all pl-3 font-mono text-[11px] text-muted-foreground">
+              <p className="select-text break-all pl-3 font-mono text-2xs text-muted-foreground">
                 {copy.folder ?? missingFolderText(copy.seen)}
               </p>
             </li>

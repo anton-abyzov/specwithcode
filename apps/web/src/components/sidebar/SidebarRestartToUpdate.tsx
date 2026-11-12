@@ -661,7 +661,7 @@ function SidebarRestartToUpdateButton() {
         title={runDescription}
         className={cn(
           "inline-flex min-h-7 shrink-0 cursor-progress items-center gap-1.5 self-start rounded-lg bg-primary px-2.5 py-1 text-2xs leading-4 font-medium text-primary-foreground opacity-80",
-          runView.warning !== null && "bg-amber-600",
+          runView.warning !== null && "bg-warning",
         )}
       >
         <Spinner size="sm" className="shrink-0" />

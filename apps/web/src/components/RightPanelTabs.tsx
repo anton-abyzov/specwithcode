@@ -1513,10 +1513,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               <X aria-hidden />
               Close
               {readerHandlesEscape ? (
-                <Kbd
-                  aria-hidden
-                  className="h-4 min-w-4 px-1 text-[0.625rem] @max-[420px]/tabbar:hidden"
-                >
+                <Kbd aria-hidden className="h-4 min-w-4 px-1 text-3xs @max-[420px]/tabbar:hidden">
                   Esc
                 </Kbd>
               ) : null}

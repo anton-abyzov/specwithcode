@@ -239,7 +239,7 @@ export function WelcomeSheetView({
       }}
     >
       <div className="report-document flex flex-col gap-1">
-        <h2 id="welcome-sheet-title" className="report-document-serif text-xl text-foreground">
+        <h2 id="welcome-sheet-title" className="text-xl font-semibold text-foreground">
           Not sure where to start?
         </h2>
         <p className="text-sm text-muted-foreground">

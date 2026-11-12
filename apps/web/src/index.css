@@ -346,7 +346,7 @@ html[data-theme-token-probe] *::after {
   background: var(--popover);
   box-shadow: 0 4px 16px rgb(0 0 0 / 24%);
   color: var(--contrast-popover-foreground);
-  font-size: 0.6875rem;
+  font-size: var(--text-2xs);
   font-weight: 600;
   line-height: 1rem;
   text-overflow: ellipsis;
@@ -757,12 +757,6 @@ code {
 
 /* A worker report in its reader reads as a document: serif prose on a
    narrow measure, like a document viewer rather than a chat reply. */
-.report-document {
-  --report-serif:
-    "New York", ui-serif, "Iowan Old Style", Charter, "Bitstream Charter", "Noto Serif", Georgia,
-    serif;
-}
-
 /* The one page every report and document opens on, Markdown or HTML, in
    every project: the same measure, margins and room at the end. The prose
    measure holds about 75 characters of the serif; HTML reports get about the
@@ -843,7 +837,7 @@ code {
   min-width: 0;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.8125rem;
+  font-size: var(--text-compact);
   color: var(--muted-foreground);
   white-space: nowrap;
 }
@@ -874,7 +868,7 @@ code {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--foreground);
 }
@@ -882,7 +876,7 @@ code {
 .viewer-overlay-detail {
   flex-shrink: 0;
   padding-left: 0.375rem;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   color: var(--muted-foreground);
   white-space: nowrap;
 }
@@ -915,7 +909,7 @@ code {
   border-radius: 0.25rem;
   padding: 0 0.25rem;
   font-family: inherit;
-  font-size: 0.625rem;
+  font-size: var(--text-3xs);
   line-height: 1rem;
   color: var(--muted-foreground);
 }
@@ -996,7 +990,7 @@ code {
   display: flex;
   margin: 0 0 0.375rem;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 500;
 }
 
@@ -1010,7 +1004,7 @@ code {
   gap: 0.375rem;
   margin-inline-start: -0.375rem;
   padding: 0.125rem 0.375rem;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-sm);
   color: inherit;
   cursor: pointer;
 }
@@ -1051,7 +1045,7 @@ code {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   background: var(--card);
   text-align: left;
   transition: border-color 120ms ease;
@@ -1086,7 +1080,7 @@ code {
   align-items: center;
   gap: 0.375rem;
   padding: 0.375rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 @media (max-width: 52rem) {
@@ -1130,7 +1124,7 @@ code {
   border-radius: 0.25rem;
   background: color-mix(in srgb, var(--foreground) 8%, transparent);
   padding: 0.0625rem 0.3125rem;
-  font-size: 0.625rem;
+  font-size: var(--text-3xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--muted-foreground);
@@ -1178,7 +1172,7 @@ code {
 video.artifact-viewer-media {
   padding: 0;
   max-height: calc(100% - 2rem);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   background: black;
 }
 
@@ -1211,7 +1205,7 @@ video.artifact-viewer-media {
   gap: 0.125rem;
   transform: translateX(-50%);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 9999px;
   background: color-mix(in oklab, var(--popover) 92%, transparent);
   color: var(--popover-foreground);
   padding: 0.1875rem 0.375rem;
@@ -1220,13 +1214,13 @@ video.artifact-viewer-media {
 }
 
 .viewer-image-toolbar button {
-  border-radius: 999px;
+  border-radius: 9999px;
 }
 
 .viewer-image-zoom {
   min-width: 2.75rem;
   text-align: center;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
@@ -1263,7 +1257,7 @@ video.artifact-viewer-media {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 0.625rem;
+  border-radius: var(--radius-lg);
   background: var(--card);
   text-align: left;
   transition:
@@ -1307,7 +1301,7 @@ video.artifact-viewer-media {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.625rem;
-  font-size: 0.8125rem;
+  font-size: var(--text-compact);
 }
 
 /* Its scroller is a flex row (outline, page), so the page must not stretch to
@@ -1393,7 +1387,7 @@ video.artifact-viewer-media {
   width: 16rem;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 0.625rem;
+  border-radius: var(--radius-lg);
   background: var(--popover);
   padding: 0.375rem;
   box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.35);
@@ -1408,10 +1402,10 @@ video.artifact-viewer-media {
   display: block;
   width: 100%;
   overflow: hidden;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-sm);
   padding: 0.3125rem 0.5rem;
   text-align: left;
-  font-size: 0.8125rem;
+  font-size: var(--text-compact);
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1438,7 +1432,7 @@ video.artifact-viewer-media {
   align-items: center;
   gap: 0.25rem;
   border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   padding-inline: 0.5rem 0.125rem;
   margin-right: 0.25rem;
 }
@@ -1447,7 +1441,7 @@ video.artifact-viewer-media {
   width: 11rem;
   background: transparent;
   padding-block: 0.25rem;
-  font-size: 0.8125rem;
+  font-size: var(--text-compact);
   outline: none;
 }
 
@@ -1464,16 +1458,12 @@ video.artifact-viewer-media {
   margin-top: 1em;
 }
 
-.report-document-serif {
-  font-family: var(--report-serif);
-}
-
 /* Measured from document viewers: a 1.75em title at 1.15 and 1.35em
    section headings at 1.25, both weight 500. */
 .report-document-title {
   margin: 0;
-  font-family: var(--report-serif);
-  font-size: 1.875rem;
+  font-family: var(--font-serif);
+  font-size: var(--text-3xl);
   font-weight: 500;
   line-height: 1.15;
   letter-spacing: -0.012em;
@@ -1532,7 +1522,7 @@ video.artifact-viewer-media {
 .report-document .chat-markdown h3,
 .report-document .chat-markdown h4 {
   margin: 2rem 0 0.5rem;
-  font-family: var(--report-serif);
+  font-family: var(--font-serif);
   font-weight: 500;
   line-height: 1.25;
   letter-spacing: -0.006em;
@@ -1548,7 +1538,7 @@ video.artifact-viewer-media {
 .report-document .chat-markdown h3,
 .report-document .chat-markdown h4 {
   margin-top: 1.5rem;
-  font-size: 1.125rem;
+  font-size: var(--text-lg);
 }
 
 .report-document-prose .chat-markdown > :is(h1, h2, h3, h4) + * {
@@ -1562,7 +1552,7 @@ video.artifact-viewer-media {
 /* A plain Markdown document's opening h1 is its title, set like one. */
 .report-document-prose .chat-markdown > h1:first-child {
   margin-bottom: 0.75rem;
-  font-size: 1.875rem;
+  font-size: var(--text-3xl);
   line-height: 1.15;
   letter-spacing: -0.012em;
   text-wrap: balance;
@@ -1573,7 +1563,7 @@ video.artifact-viewer-media {
 }
 
 .report-document-prose {
-  font-family: var(--report-serif);
+  font-family: var(--font-serif);
   font-size: 1.0625rem;
   line-height: 1.65;
   color: var(--foreground);
@@ -1598,7 +1588,7 @@ video.artifact-viewer-media {
 
 .report-document .chat-markdown .chat-markdown-table-container > :first-child {
   border: 1px solid var(--border);
-  border-radius: 0.625rem;
+  border-radius: var(--radius-lg);
 }
 
 /* The root clips the viewport's ring utilities and the viewport's scroll fades
@@ -1785,21 +1775,21 @@ video.artifact-viewer-media {
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: var(--text-lg);
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: var(--text-base);
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
 }
 
 .chat-markdown h6 {
@@ -1894,7 +1884,7 @@ video.artifact-viewer-media {
   border-top: 1px solid var(--contrast-border);
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -1913,17 +1903,17 @@ video.artifact-viewer-media {
   justify-content: center;
   border-radius: 0.25rem;
   text-decoration: none;
-  font-size: 0.6875rem;
+  font-size: var(--text-2xs);
   font-weight: 600;
 }
 
 .chat-markdown :not(pre) > code {
   border: 1px solid var(--contrast-border);
-  border-radius: 0.375rem;
+  border-radius: var(--radius-sm);
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .chat-markdown pre {
@@ -1948,7 +1938,7 @@ video.artifact-viewer-media {
 }
 
 .chat-markdown pre::-webkit-scrollbar-thumb {
-  border-radius: 999px;
+  border-radius: 9999px;
   background: color-mix(in srgb, var(--contrast-border) 78%, transparent);
 }
 
@@ -2006,7 +1996,7 @@ video.artifact-viewer-media {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .chat-markdown th,
@@ -2232,7 +2222,7 @@ video.artifact-viewer-media {
 .composer-tiptap .ProseMirror-selectednode {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .composer-tiptap .composer-chip-range-selected {
@@ -2243,7 +2233,7 @@ video.artifact-viewer-media {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: Highlight;
   opacity: 0.3;
   pointer-events: none;
@@ -2363,7 +2353,7 @@ video.artifact-viewer-media {
 /* Reports are previewed in the conversation and read in the existing focus viewer. */
 .html-report-card {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   overflow: hidden;
   background: var(--background);
 }
@@ -2376,7 +2366,7 @@ video.artifact-viewer-media {
   background: var(--card);
 }
 .html-report-card-title {
-  font-size: 14px;
+  font-size: var(--text-sm);
   font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -2384,7 +2374,7 @@ video.artifact-viewer-media {
 .html-report-card-kind,
 .html-report-card-foot {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 .html-report-card-foot {
@@ -2411,7 +2401,7 @@ video.artifact-viewer-media {
   inset: 0;
   padding: 36px 22px;
   color: var(--muted-foreground);
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 .html-report-reader {
   height: 100%;
@@ -2455,9 +2445,9 @@ video.artifact-viewer-media {
   gap: 8px;
   margin-inline-start: -6px;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--muted-foreground);
-  font-size: 15px;
+  font-size: var(--text-base);
   line-height: 1.5;
 }
 .html-visual-toggle:hover {
@@ -2472,7 +2462,7 @@ video.artifact-viewer-media {
   align-self: stretch;
   padding: 20px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-xl);
   background: var(--background);
 }
 .html-visual-body[hidden] {
@@ -2485,7 +2475,7 @@ video.artifact-viewer-media {
 .html-visual-placeholder {
   padding: 12px 0;
   color: var(--muted-foreground);
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 @media (max-width: 480px) {
   .html-visual-body {
@@ -2651,7 +2641,7 @@ video.artifact-viewer-media {
 /* Send, when the message goes to another machine: its color, with its name on the button. */
 .machine-send[data-machine-color]:not(:disabled) {
   background: var(--machine);
-  color: #fff;
+  color: var(--color-white);
 }
 /* The coordinator's Send with a machine's name on it. */
 .sws-send.sws-send-target {
@@ -2659,8 +2649,8 @@ video.artifact-viewer-media {
   gap: 5px;
   padding: 0 11px 0 8px;
   border-radius: 9999px;
-  font-size: 12.5px;
-  font-weight: 650;
+  font-size: var(--text-compact);
+  font-weight: 600;
 }
 .sws-send.sws-send-target::after {
   content: attr(data-send-label);

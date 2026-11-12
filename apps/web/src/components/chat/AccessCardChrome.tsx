@@ -90,7 +90,7 @@ export function AccessChip({
 /** The small pill at a chip's right ("All"). */
 export function AccessChipTag({ children }: { readonly children: ReactNode }) {
   return (
-    <span className="rounded-full bg-access-tag px-1.5 py-px text-[0.6875rem]/4 font-medium text-access-tag-foreground">
+    <span className="rounded-full bg-access-tag px-1.5 py-px text-2xs/4 font-medium text-access-tag-foreground">
       {children}
     </span>
   );

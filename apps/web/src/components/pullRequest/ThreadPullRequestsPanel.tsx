@@ -197,7 +197,6 @@ function LinkRow({
             <PullRequestDiffStat
               additions={snapshot?.additions ?? 0}
               deletions={snapshot?.deletions ?? 0}
-              className="font-mono"
             />
           }
           meta={

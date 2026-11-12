@@ -284,7 +284,7 @@ export function PullRequestDetailGhost({
                     <PullRequestDiffStat
                       additions={seed.additions ?? 0}
                       deletions={seed.deletions ?? 0}
-                      className="shrink-0 font-mono text-xs"
+                      className="shrink-0 text-xs"
                     />
                   ) : (
                     <GhostBar className="h-3 w-20" />

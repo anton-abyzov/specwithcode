@@ -189,10 +189,10 @@ function ColorCell({
   const contrast = tokenContrast(token, system, mode);
   const badge = contrast === null ? null : <ContrastBadge check={contrast} modeName={mode.name} />;
   const text = value.inherited ? (
-    <span className="truncate text-muted-foreground text-[13px]">Inherits {baseName}</span>
+    <span className="truncate text-muted-foreground text-compact">Inherits {baseName}</span>
   ) : (
     <>
-      <span className="truncate font-mono text-[13px] tabular-nums">{label.text}</span>
+      <span className="truncate font-mono text-compact tabular-nums">{label.text}</span>
       {label.alpha !== null ? (
         <span className="shrink-0 font-mono text-muted-foreground text-xs tabular-nums">
           {label.alpha}
@@ -274,7 +274,7 @@ export function ContrastBadge({ check, modeName }: { check: ContrastCheck; modeN
       data-passes={passes}
       title={`${ratio} on ${check.against} in ${modeName}: ${verdict}`}
       className={cn(
-        "ml-auto inline-flex shrink-0 items-center gap-0.5 font-mono text-[11px] tabular-nums",
+        "ml-auto inline-flex shrink-0 items-center gap-0.5 font-mono text-2xs tabular-nums",
         passes
           ? "text-muted-foreground"
           : large
