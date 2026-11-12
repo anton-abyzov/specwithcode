@@ -773,10 +773,13 @@ export const layer = HttpApiBuilder.group(
             // The line holds a credential: never cached, never logged.
             yield* noStore;
             const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-            if (!isConnectSubject(session.subject) || session.principal !== undefined)
+            // Every session carries a principal: a device for an app's own
+            // sign-in, a coordinator for a main machine's key. Only the
+            // second is not the owner's app, so only that one is refused.
+            if (!isConnectSubject(session.subject) || session.principal?.kind === "coordinator")
               return yield* new EnvironmentHttpForbiddenError({
                 message:
-                  "Only a sign-in through this machine's own SpecWithCode Connect account can add a machine this way. Use Join a main machine on the other machine, then Add a machine here.",
+                  "Only the desktop app signed in to this machine's own SpecWithCode Connect account can add a machine this way. Sign in to SpecWithCode Connect with the same account on both machines, then choose Allow again.",
               });
             // A phone signs in through Connect too. It is known by its own word,
             // so this keeps the app's phones out of it, not a forged client.

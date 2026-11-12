@@ -4372,4 +4372,13 @@ export const zh: PhraseCatalog = {
   "Older releases were not counted.": "更早的版本未计入。",
   "Installs from npm could not be read.": "无法读取 npm 安装量。",
   "Installs from npm": "npm 安装量",
+  "View this project on": "查看此项目的电脑",
+  "Move to {machine}…": "移到 {machine}…",
+  "Start a coordinator on {machine}": "在 {machine} 上启动协调者",
+  "Machine access settings": "电脑访问设置",
+  "{machine} offline": "{machine} 离线",
+  "workers only": "仅工作节点",
+  "move pending": "移动待确认",
+  "separate project": "独立项目",
+  "not synced here": "尚未在此同步",
 };

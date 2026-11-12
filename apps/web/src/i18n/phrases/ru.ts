@@ -4547,4 +4547,13 @@ export const ru: PhraseCatalog = {
   "Older releases were not counted.": "Более старые релизы не учтены.",
   "Installs from npm could not be read.": "Не удалось прочитать установки из npm.",
   "Installs from npm": "Установки из npm",
+  "View this project on": "Смотреть проект на",
+  "Move to {machine}…": "Перенести на {machine}…",
+  "Start a coordinator on {machine}": "Запустить координатора на {machine}",
+  "Machine access settings": "Настройки доступа между машинами",
+  "{machine} offline": "{machine} не в сети",
+  "workers only": "только исполнители",
+  "move pending": "перенос не подтверждён",
+  "separate project": "отдельный проект",
+  "not synced here": "не синхронизировано здесь",
 };

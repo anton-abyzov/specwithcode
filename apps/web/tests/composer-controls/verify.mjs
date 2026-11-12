@@ -37,7 +37,7 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   for (const width of [1100, 390]) {
-    await page.setViewportSize({ width, height: 700 });
+    await page.setViewportSize({ width, height: 900 });
     await page.goto(origin);
     await page.getByRole("button", { name: "Voice", exact: true }).waitFor();
     assert.equal(await page.locator("[data-coordinator-machine]").count(), 1);
@@ -60,6 +60,22 @@ try {
     await page.keyboard.press("Escape");
     await page.locator("[data-coordinator-machine]").click();
     await page.getByRole("menuitem", { name: "Move to another machine…", exact: true }).waitFor();
+    assert.deepEqual(
+      await page.locator('[role="menu"] [data-slot="menu-label"]').allTextContents(),
+      ["View this project on", "This project", "On Build machine"],
+    );
+    assert.deepEqual(await page.getByRole("menuitemradio").allTextContents(), [
+      "Build machine",
+      "Laptopworkers only",
+      "Linux mini",
+    ]);
+    assert.ok(
+      await page.evaluate(() => {
+        const box = document.querySelector('[role="menu"]').getBoundingClientRect();
+        return box.left >= 0 && box.right <= innerWidth && box.top >= 0;
+      }),
+      "machine menu must fit viewport",
+    );
     await page.screenshot({
       animations: "disabled",
       path: resolve(output, `machine-menu-${width}.png`),

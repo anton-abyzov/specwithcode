@@ -175,6 +175,12 @@ esac
       expect(step({ FAKE_RUNS: same })).toEqual({ status: 0, dispatched: false });
       const failed = runs(["Release Windows and Linux 1.0.265", "failure"]);
       expect(step({ FAKE_RUNS: failed })).toEqual({ status: 0, dispatched: true });
+      for (const conclusion of ["cancelled", "timed_out", "startup_failure"]) {
+        const ended = runs(["Release Windows and Linux 1.0.265", conclusion]);
+        expect(step({ FAKE_RUNS: ended })).toEqual({ status: 0, dispatched: true });
+      }
+      const done = runs(["Release Windows and Linux 1.0.265", "success"]);
+      expect(step({ FAKE_RUNS: done })).toEqual({ status: 0, dispatched: false });
       const dryRun = runs(["Release Windows and Linux 1.0.265 (dry run)", "success"]);
       expect(step({ FAKE_RUNS: dryRun })).toEqual({ status: 0, dispatched: true });
     });
