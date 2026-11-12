@@ -56,6 +56,7 @@ const state = vi.hoisted(() => ({
   environmentIds: ["env-1"],
   primary: null as string | null,
   clientId: "client-self",
+  recentInput: false,
   targetReads: [] as string[],
   targetRead: (): Promise<unknown> =>
     Promise.resolve({ status: "unknown", ownerAppConnected: false }),
@@ -202,6 +203,7 @@ vi.mock("../notificationTarget", async (importOriginal) => ({
 }));
 vi.mock("../lib/backgroundActivityReporter", () => ({
   backgroundActivityClientId: () => state.clientId,
+  interactedRecentlyHere: () => state.recentInput,
   appClientId: (clientId: string) => clientId.split(":")[0],
 }));
 vi.mock("../state/shell", () => ({
@@ -279,6 +281,7 @@ beforeEach(() => {
     environmentIds: ["env-1"],
     primary: null,
     clientId: "client-self",
+    recentInput: false,
     targetReads: [],
     targetRead: () => Promise.resolve({ status: "unknown", ownerAppConnected: false }),
     executionState: undefined,
@@ -742,7 +745,8 @@ describe("only the device in use pops up", () => {
     expect(state.targetReads).toEqual([]);
   });
 
-  async function askInFocus() {
+  async function askInFocus(mode: typeof state.mode = "notifications-and-sound") {
+    state.mode = mode;
     await render();
     state.input = true;
     await render();
@@ -750,7 +754,6 @@ describe("only the device in use pops up", () => {
 
   it("keeps the toast in a focused window and stays silent when another app is in use", async () => {
     state.targetRead = target("client-other");
-    state.mode = "notifications-and-sound";
     await askInFocus();
     expect(state.targetReads).toEqual(["env-1"]);
     expect(state.add).toHaveBeenCalledTimes(1);
@@ -761,29 +764,28 @@ describe("only the device in use pops up", () => {
   it.each([
     ["this app is the one in use", () => target("client-self")],
     ["the server names nobody", () => target(null)],
-    [
-      "the server is too old or does not answer",
-      () => () => Promise.resolve({ status: "unknown", ownerAppConnected: true }),
-    ],
+    ["the server is too old or does not answer", () => state.targetRead],
   ])("plays the sound in a focused window when %s", async (_name, read) => {
     state.targetRead = read();
-    state.mode = "notifications-and-sound";
     await askInFocus();
     expect(state.add).toHaveBeenCalledTimes(1);
     expect(state.sound).toHaveBeenCalledTimes(1);
   });
 
-  it("does not ask the server for a focused window with sound off", async () => {
+  it.each([
+    ["with sound off", "notifications" as const, false, 0],
+    ["that was used a moment ago", "notifications-and-sound" as const, true, 1],
+  ])("does not ask the server for a focused window %s", async (_name, mode, recent, sounds) => {
     state.targetRead = target("client-other");
-    state.mode = "notifications";
-    await askInFocus();
+    state.recentInput = recent;
+    await askInFocus(mode);
     expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.sound).toHaveBeenCalledTimes(sounds);
     expect(state.targetReads).toEqual([]);
   });
 
   it("drops a focused window's alert answered while the server is asked", async () => {
     const answer = heldRead();
-    state.mode = "notifications-and-sound";
     await askInFocus();
     state.input = false;
     await render();
@@ -795,7 +797,6 @@ describe("only the device in use pops up", () => {
   it("follows the unfocused rules when focus is lost while the server is asked", async () => {
     const answer = heldRead();
     state.primary = "env-2";
-    state.mode = "notifications-and-sound";
     await askInFocus();
     state.focused = false;
     state.targetRead = target("client-other");

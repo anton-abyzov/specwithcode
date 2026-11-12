@@ -126,6 +126,23 @@ export function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs:
   );
 }
 
+/** The last real pointer, key, wheel or touch event in this window; null before the first one. */
+let lastRealInteractionAtMs: number | null = null;
+
+/** Records real input in this window. Passing null forgets it. */
+export function noteRealInteraction(atMs: number | null): void {
+  lastRealInteractionAtMs = atMs;
+}
+
+/**
+ * Whether this window had real input a moment ago, so the person is at it now.
+ * A window that is only focused says nothing: an app left in front on a
+ * computer nobody is at is focused too.
+ */
+export function interactedRecentlyHere(nowMs: number = Date.now()): boolean {
+  return lastRealInteractionAtMs !== null && wasRecentlyInteracted(lastRealInteractionAtMs, nowMs);
+}
+
 /** This app's own machine: the primary entry, when the catalog has one. */
 export function hostEnvironmentIdOf(
   entries: ReadonlyMap<EnvironmentId, { readonly target: { readonly _tag: string } }>,
@@ -254,6 +271,7 @@ export const layer = Layer.effectDiscard(
       const wasRecent = wasRecentlyInteracted(lastInteractionAtMs, observedAtMs);
       lastInteractionAtMs = observedAtMs;
       lastUserInteractionAtMs = observedAtMs;
+      noteRealInteraction(observedAtMs);
       if (!wasRecent) {
         requestReport();
       }

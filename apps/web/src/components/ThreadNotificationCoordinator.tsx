@@ -59,7 +59,10 @@ import {
   ownerMachineReachable,
   readNotificationTarget,
 } from "../notificationTarget";
-import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
+import {
+  backgroundActivityClientId,
+  interactedRecentlyHere,
+} from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
@@ -516,10 +519,11 @@ function EnvironmentNotifications({
             // A focused window toasts as before: the toast makes no noise and is
             // seen only by someone in front of it. Its sound is another matter. An
             // app left in front on a computer nobody is at is focused too, so a
-            // focused window asks the serving machine as well and stays silent when
-            // that names another app. With no answer it plays the sound, as before.
+            // focused window nobody touched a moment ago asks the serving machine
+            // as well and stays silent when that names another app. A window in
+            // use never asks, and with no answer the sound plays, as before.
             let soundElsewhere = false;
-            if (inApp && hasNotificationSound(mode) && soundChanged) {
+            if (inApp && hasNotificationSound(mode) && soundChanged && !interactedRecentlyHere()) {
               const read = await readNotificationTarget(environmentId);
               if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
                 return false;
