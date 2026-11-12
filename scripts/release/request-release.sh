@@ -2,12 +2,15 @@
 # Ask for a SpecWithCode release, and find out whether a commit is released. For people and agent
 # sessions alike: nobody picks a version or checks whether a release is running first.
 #
-#   bash scripts/release/request-release.sh [--by NAME]
+#   bash scripts/release/request-release.sh [--by NAME] [--wait]
 #       Dispatches Release macOS with no version and prints the run. The run waits its turn, then
 #       releases what main holds as the next version, or ends green at once when main is already
 #       released (.github/workflows/release-macos.yml, scripts/release/release_plan.py). Any number
 #       of these may be dispatched; one run cuts each version. NAME (a session or thread name) is
-#       shown in the run's title, so runs can be told apart.
+#       shown in the run's title, so runs can be told apart. --wait stays until the run ends and
+#       exits with its result (a release takes about 25 minutes, longer behind others).
+#   bash scripts/release/request-release.sh --dry-run
+#       Prints what a run dispatched now would decide. Dispatches nothing.
 #   bash scripts/release/request-release.sh --released COMMIT
 #       Prints the first release that holds COMMIT and exits 0, or exits 2 when none does yet.
 #       This is the check that a change shipped: a green run alone can be someone else's.
@@ -18,7 +21,8 @@
 set -euo pipefail
 
 REPO="${RELEASE_REPO:-anton-abyzov/specwithcode}"
-REF=main BY="" COMMIT="" MODE=request
+REF=main BY="" COMMIT="" MODE=request WAIT=0
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 die() { printf 'request-release.sh: %s\n' "$*" >&2; exit 1; }
 
@@ -27,7 +31,9 @@ while [ $# -gt 0 ]; do
     --by) [ $# -ge 2 ] || die "--by needs a name"; BY="$2"; shift ;;
     --ref) [ $# -ge 2 ] || die "--ref needs a branch"; REF="$2"; shift ;;
     --released) [ $# -ge 2 ] || die "--released needs a commit"; MODE=released; COMMIT="$2"; shift ;;
-    -h | --help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --wait) WAIT=1 ;;
+    --dry-run) MODE=dry ;;
+    -h | --help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
@@ -55,6 +61,10 @@ if [ "$MODE" = released ]; then
   exit 0
 fi
 
+if [ "$MODE" = dry ]; then
+  exec python3 -B "$HERE/release_plan.py" plan --repo "$REPO" --branch "$REF"
+fi
+
 # A label unique to this dispatch, so its run can be found among others dispatched at the same time.
 label="${BY:-$(whoami)@$(hostname -s)} $(date -u +%H%M%S)-$RANDOM"
 gh workflow run release-macos.yml -R "$REPO" --ref "$REF" -f requested_by="$label" > /dev/null
@@ -69,3 +79,9 @@ done
 echo "Requested a release of $REF: run $run, https://github.com/$REPO/actions/runs/$run"
 echo "It waits for the releases before it. Its 'Plan the release' job names the version, or says main is already released."
 echo "Check that your change shipped: bash scripts/release/request-release.sh --released <commit>"
+if [ "$WAIT" -eq 1 ]; then
+  gh run watch "$run" -R "$REPO" --exit-status --interval 30 > /dev/null ||
+    die "run $run did not succeed: gh run view $run -R $REPO --log-failed"
+  echo "Run $run finished: $(gh run view "$run" -R "$REPO" --json jobs \
+    --jq '[.jobs[] | select(.name == "Plan the release")][0].conclusion // "unknown"') plan; newest release $(gh release view -R "$REPO" --json tagName --jq .tagName)"
+fi
