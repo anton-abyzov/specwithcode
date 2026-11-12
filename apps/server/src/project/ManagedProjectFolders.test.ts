@@ -16,7 +16,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- The denied ~/.ssh is under the real home.
 import { homedir } from "node:os";
 
 import * as ServerConfig from "../config.ts";
