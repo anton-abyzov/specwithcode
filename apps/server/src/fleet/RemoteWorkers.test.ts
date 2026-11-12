@@ -561,6 +561,11 @@ describe("RemoteWorkers", () => {
     const sharedByTwo = setup({}, {}, { extraTargets: [second] }).layer.pipe(
       Layer.provide(nicknamed({ "env-m1": "studio", "env-m5": "studio" })),
     );
+    // This machine got its own name, so its host name ("M4") is free for the machine that
+    // joined under it.
+    const hereRenamed = setup({}, {}, { extraTargets: [second] }).layer.pipe(
+      Layer.provide(nicknamed({ "env-m4": "studio" })),
+    );
     // A machine was named after another machine's id.
     const namedAfterAnId = setup({}, {}, { extraTargets: [second] }).layer.pipe(
       Layer.provide(nicknamed({ "env-m5": "m1" })),
@@ -583,6 +588,16 @@ describe("RemoteWorkers", () => {
         expect(refused.message).toContain('id "m1"');
         expect(refused.message).toContain('id "m4-2"');
       }).pipe(Effect.provide(sharedByTwo));
+
+      yield* Effect.gen(function* () {
+        const workers = yield* RemoteWorkers.RemoteWorkers;
+        expect(yield* workers.resolveMachine("studio")).toEqual({ kind: "local" });
+        for (const name of ["m4", "M4"])
+          expect(yield* workers.resolveMachine(name), name).toMatchObject({
+            kind: "remote",
+            machine: m5,
+          });
+      }).pipe(Effect.provide(hereRenamed));
 
       const byId = yield* Effect.gen(function* () {
         const workers = yield* RemoteWorkers.RemoteWorkers;

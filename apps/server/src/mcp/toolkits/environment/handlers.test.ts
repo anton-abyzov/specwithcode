@@ -98,3 +98,13 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     );
   }),
 );
+
+it("gives agents the owner's name for this machine, else its host name", () => {
+  const descriptor = { environmentId: "env-here", label: "Host Name" };
+  const named = (name: string) => ({
+    machineNicknames: { "env-here": { name, updatedAt: "2026-11-11T00:00:00.000Z" } },
+  });
+  expect(EnvironmentHandlers.machineLabel(descriptor, named("studio") as never)).toBe("studio");
+  expect(EnvironmentHandlers.machineLabel(descriptor, named("   ") as never)).toBe("Host Name");
+  expect(EnvironmentHandlers.machineLabel(descriptor, { machineNicknames: {} })).toBe("Host Name");
+});

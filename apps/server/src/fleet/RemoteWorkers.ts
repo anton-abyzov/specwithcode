@@ -572,8 +572,10 @@ const make = Effect.gen(function* () {
   const namesThisMachine = (lower: string) =>
     Effect.gen(function* () {
       const descriptor = yield* environment.getDescriptor;
-      if (descriptor.label.toLowerCase() === lower) return true;
-      if ((yield* nicknames).get(descriptor.environmentId)?.toLowerCase() === lower) return true;
+      // Once the owner names this machine, its host name stops being its name here: another
+      // machine may have joined under that host name and must stay reachable by it.
+      const own = (yield* nicknames).get(descriptor.environmentId) ?? descriptor.label;
+      if (own.toLowerCase() === lower) return true;
       return (yield* everyRow).some(
         (machine) =>
           machine.environmentId === descriptor.environmentId &&

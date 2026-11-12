@@ -1,4 +1,5 @@
 import { OrchestratorMcpFailure, type ServerSettings } from "@specweave-studio/contracts";
+import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
@@ -27,6 +28,16 @@ export function preferences(settings: ServerSettings) {
     },
   };
 }
+/** The name agents are given for this machine: the owner's name for it, else its host name. */
+export function machineLabel(
+  descriptor: { readonly environmentId: string; readonly label: string },
+  settings: Pick<ServerSettings, "machineNicknames">,
+) {
+  const name = normalizeMachineNickname(
+    settings.machineNicknames[descriptor.environmentId]?.name ?? "",
+  );
+  return name === "" ? descriptor.label : name;
+}
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
   const environment = yield* Environment.ServerEnvironment;
@@ -45,7 +56,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
       return {
         environmentId: descriptor.environmentId,
-        label: descriptor.label,
+        label: machineLabel(descriptor, current),
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
         preferences: preferences(current),
