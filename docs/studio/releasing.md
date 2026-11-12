@@ -123,7 +123,7 @@ purpose (1.1.0). A version that is already tagged, or below the newest tag, is r
 in seconds. `release.sh <version>` on a Mac, the section above, is the fallback when Actions
 cannot run: start it only when nothing is queued or running in Release macOS.
 
-`--ci` means the release needs no fleet files: `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
+`--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
 and `fleet-linux`: each Mac's update agent installs the release from the public feed on its next hourly
 check, and `fleet_rollout.py --version <v>` on the M4 asks them at once over SpecWithCode Connect
 (add `--ssh-fallback` to also update the M1 and M3 apps, [desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)); `linux_rollout.py
