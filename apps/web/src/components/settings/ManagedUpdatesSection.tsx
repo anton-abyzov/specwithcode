@@ -1,7 +1,7 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import type { ServerUpdateState } from "@specweave-studio/client-runtime/state/server";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { type EnvironmentId, type ManagedUpdateStatus } from "@specweave-studio/contracts";
 import { managedUpdates } from "../../state/managedUpdates";
 import { useEnvironmentQuery } from "../../state/query";
@@ -13,6 +13,7 @@ import { Button } from "../ui/button";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useMachineNickname } from "../../studio/machineNickname";
+import { UpdatePausePolicyRow } from "./UpdatePausePolicyRow";
 
 const consentLabels = {
   "not-enrolled": "Update permission: Not granted.",
@@ -49,6 +50,11 @@ export function ManagedUpdatesView(props: {
   onRefresh: () => void;
   /** Present only where this Mac's desktop can repair its update agent. */
   onRepair?: () => void;
+  /**
+   * The machine's own update pause choice. Shown whatever the support state:
+   * a Linux machine has no update agent, but its boot service obeys it.
+   */
+  pausePolicy?: ReactNode;
 }) {
   const tx = useTx();
   const { status } = props;
@@ -121,6 +127,7 @@ export function ManagedUpdatesView(props: {
           )}
         </>
       )}
+      {props.pausePolicy}
       <p className="text-muted-foreground">
         {tx("Update permission is separate from connection and agent work access.")}
       </p>
@@ -306,6 +313,16 @@ export function ManagedUpdatesSection({
         canCheck={canMaintain}
         pending={pending}
         local={local}
+        pausePolicy={
+          <UpdatePausePolicyRow
+            // A new machine starts with no pending position or save.
+            key={environmentId}
+            environmentId={environmentId}
+            label={label}
+            reachable={reachable}
+            local={local}
+          />
+        }
         onAllow={() => void run("enroll")}
         onRevoke={() => void run("revoke")}
         onCheck={() => void run("check")}

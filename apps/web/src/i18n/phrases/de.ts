@@ -439,8 +439,6 @@ export const de: PhraseCatalog = {
     "Im Haltemodus beendet auch zweimaliges schnelles Drücken.",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "Ruhezustand im Leerlauf verhindern, solange eine Sitzung arbeitet, damit Turns auf diesem Rechner weiterlaufen. Beim Zuklappen geht er trotzdem in den Ruhezustand.",
-  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
-    "Wie lange ein automatisches Update des SpecWithCode-Dienstes auf laufende Arbeit wartet. Danach pausieren die laufenden Turns, der Dienst wird aktualisiert, und sie machen dort weiter, wo sie aufgehört haben. „Später“ in der Seitenleiste wartet eine weitere Stunde.",
   "Include text and controls when the app makes them available.":
     "Text und Bedienelemente einbeziehen, wenn die App sie bereitstellt.",
   "Install and manage Antigravity.": "Antigravity installieren und verwalten.",
@@ -588,8 +586,6 @@ export const de: PhraseCatalog = {
     "Tabgröße für dich und Agenten. Füllen passt sich dem Panel an; andere Größen zeigen die Geräteleiste.",
   "Terminal output, independent from code blocks and diffs.":
     "Terminalausgabe, unabhängig von Codeblöcken und Diffs.",
-  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
-    "Die App aktualisiert sich im Leerlauf, wenn das unten aktiviert ist, sonst beim nächsten Beenden. Der Dienst aktualisiert sich, sobald keine Sitzung arbeitet; laufende Arbeit pausiert dafür nach der Wartezeit unten und läuft nach dem Update weiter. Aus bedeutet, dass du hier installierst.",
   "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
     "Die günstigste Stufe, die jede Art von Aufgabe nutzen darf. Code, Review, Design und finale Animation gehen nie unter Standard; andere Arbeit bleibt auf Frontier. Unklare Aufgaben behalten ihr übliches Modell.",
   "The color scheme pages are told to prefer. System follows your OS setting.":
@@ -4160,4 +4156,32 @@ export const de: PhraseCatalog = {
   "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "Agents auf diesem Rechner starten bereits Arbeit auf {machines}. Eine hier erstellte Zeile erlaubt dem gewählten Rechner, Arbeit auf diesem zu starten. Um stattdessen einen neuen Rechner zu diesem hinzuzufügen, öffne SpecWithCode auf dem neuen Rechner, wähle dort „Einem Hauptrechner beitreten“ und füge dessen Zeile hier unter „Rechner hinzufügen“ ein.",
   "{count} more": "{count} weitere",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "Die App aktualisiert sich im Leerlauf, wenn das unten aktiviert ist, sonst beim nächsten Beenden. Der Dienst aktualisiert sich, sobald keine Sitzung arbeitet. Ist „Laufende Arbeit für Updates pausieren“ an, pausiert laufende Arbeit dafür nach der Wartezeit unten und läuft nach dem Update weiter. Aus bedeutet, dass du hier installierst.",
+  "Applies once “Pause running work for updates” is on: how long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "Gilt, sobald „Laufende Arbeit für Updates pausieren“ an ist: wie lange ein automatisches Update des SpecWithCode-Dienstes auf laufende Arbeit wartet. Danach pausieren die laufenden Turns, der Dienst wird aktualisiert, und sie machen dort weiter, wo sie aufgehört haben. „Später“ in der Seitenleiste wartet eine weitere Stunde.",
+  "Pause running work for updates": "Laufende Arbeit für Updates pausieren",
+  "After the wait set in “Pause running work after”, running turns pause, the update installs, and they continue where they left off.":
+    "Nach der Wartezeit unter „Laufende Arbeit pausieren nach“ pausieren laufende Turns, das Update wird installiert, und sie machen dort weiter, wo sie aufgehört haben.",
+  "After 30 minutes of waiting, running turns pause, the update installs, and they continue where they left off.":
+    "Nach 30 Minuten Wartezeit pausieren laufende Turns, das Update wird installiert, und sie machen dort weiter, wo sie aufgehört haben.",
+  "After the wait, running turns pause, the update installs, and they continue where they left off. On a Mac the wait is “Pause running work after”; on Linux it is 30 minutes.":
+    "Nach der Wartezeit pausieren laufende Turns, das Update wird installiert, und sie machen dort weiter, wo sie aufgehört haben. Auf einem Mac ist das „Laufende Arbeit pausieren nach“, unter Linux 30 Minuten.",
+  "An update waits until {machine} has no running work, however long that takes. Update now still installs right away.":
+    "Ein Update wartet, bis auf {machine} keine Arbeit mehr läuft, egal wie lange das dauert. „Jetzt aktualisieren“ installiert weiterhin sofort.",
+  "An update waits up to 30 minutes for {machine} to have no running work. If it is still busy then, {machine} stays on its version until the next update. Update now still installs right away.":
+    "Ein Update wartet bis zu 30 Minuten, bis auf {machine} keine Arbeit mehr läuft. Ist {machine} dann noch beschäftigt, bleibt es bis zum nächsten Update auf seiner Version. „Jetzt aktualisieren“ installiert weiterhin sofort.",
+  "An update waits for {machine} to have no running work. A Mac keeps waiting as long as that takes; a Linux machine waits up to 30 minutes and, if still busy, stays on its version until the next update. Update now still installs right away.":
+    "Ein Update wartet, bis auf {machine} keine Arbeit mehr läuft. Ein Mac wartet so lange wie nötig; ein Linux-Rechner wartet bis zu 30 Minuten und bleibt, wenn er dann noch beschäftigt ist, bis zum nächsten Update auf seiner Version. „Jetzt aktualisieren“ installiert weiterhin sofort.",
+  "Has no effect on {machine} while “Continue threads after restarts” is off there: paused turns would not continue, so updates wait for quiet. Turn that on in Settings > General.":
+    "Wirkt auf {machine} nicht, solange „Threads nach Neustarts fortsetzen“ dort aus ist: pausierte Turns würden nicht weiterlaufen, also warten Updates auf Ruhe. Schalte das unter Einstellungen > Allgemein ein.",
+  "{machine} is unreachable, so this setting cannot be changed now.":
+    "{machine} ist nicht erreichbar, daher lässt sich diese Einstellung gerade nicht ändern.",
+  "This connection cannot change settings on {machine}.":
+    "Diese Verbindung darf keine Einstellungen auf {machine} ändern.",
+  "Could not save update settings": "Update-Einstellungen konnten nicht gespeichert werden",
+  "The change could not be confirmed on {machine}. The switch shows what {machine} reports.":
+    "Die Änderung auf {machine} konnte nicht bestätigt werden. Der Schalter zeigt, was {machine} meldet.",
+  "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
+    "Auf {machine} läuft eine SpecWithCode-Version ohne diese Einstellung. Aktualisiere zuerst {machine}.",
 };

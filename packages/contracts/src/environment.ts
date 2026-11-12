@@ -347,6 +347,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** A linked copy adopts its coordinator's member list (`projectLink.syncMembers`),
       so machines linked after it joined are members there too. Absent on older servers. */
   linkedMembersSync: Schema.optionalKey(Schema.Boolean),
+  /** Has the per-machine "Pause running work for updates" setting
+      (`pauseWorkForUpdates`). Absent on older servers, which drop the key and
+      still pause work after their wait, so clients show no value for them. */
+  updatePauseSetting: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

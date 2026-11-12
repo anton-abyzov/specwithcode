@@ -363,6 +363,7 @@ export const make = Effect.gen(function* () {
       coordinatorStandby: true,
       coordinatorRearm: true,
       linkedMembersSync: true,
+      updatePauseSetting: true,
       linkedPlans: true,
       projectKnowledge: true,
       designSystemEditing: true,

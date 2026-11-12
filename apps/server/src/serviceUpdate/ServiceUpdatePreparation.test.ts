@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { RuntimeRequestId, ThreadId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  RuntimeRequestId,
+  type ServerSettings as ServerSettingsValue,
+  ServerSettingsError,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +23,7 @@ import { describe, expect } from "vite-plus/test";
 
 import * as FolderWork from "../fleet/folderTransfer/folderWork.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { ifIdleRestart } from "../cli/update.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -80,6 +87,8 @@ interface Fixture {
   /** Runs still `waiting` on their checkpoint when the cleanup ended stuck runs. */
   waitingAtFinalize?: number;
   readonly timings?: Preparation.ServiceUpdatePreparationTimings;
+  /** This machine's settings; absent, as in tools that build the runtime alone. */
+  readonly settings?: Partial<ServerSettingsValue> | "unreadable";
 }
 
 const run = <E>(
@@ -213,6 +222,19 @@ const run = <E>(
       fixture.hold === undefined
         ? Layer.empty
         : Layer.succeed(Hold.ServiceUpdateHold, fixture.hold),
+      fixture.settings === undefined
+        ? Layer.empty
+        : Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings:
+              fixture.settings === "unreadable"
+                ? Effect.fail(
+                    new ServerSettingsError({
+                      settingsPath: "settings.json",
+                      operation: "read-file",
+                    }),
+                  )
+                : Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, ...fixture.settings }),
+          }),
       fixture.terminals === undefined
         ? Layer.empty
         : Layer.mock(TerminalManager.TerminalManager)({
@@ -396,6 +418,57 @@ it.live("leaves a held queue in place: it is not work the update waits for", () 
       );
     }),
   );
+});
+
+describe("Pause running work for updates", () => {
+  const reported = (settings: Partial<ServerSettingsValue> | "unreadable" | undefined) => {
+    const fixture = newFixture(true, settings === undefined ? {} : { settings });
+    let answer: boolean | undefined;
+    return run(
+      fixture,
+      Effect.gen(function* () {
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        answer = (yield* preparation.prepare({ stopWork: false })).pauseWorkForUpdates;
+      }),
+    ).pipe(Effect.map(() => answer));
+  };
+
+  it.live("a look reports the machine's effective setting, which the update agent obeys", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(yield* reported({}), false);
+      assert.strictEqual(yield* reported({ pauseWorkForUpdates: true }), true);
+      // Paused turns would not continue, so the setting has no effect.
+      assert.strictEqual(
+        yield* reported({ pauseWorkForUpdates: true, continueThreadsAfterServerUpdate: false }),
+        false,
+      );
+      // Settings that cannot be read are off, never "a release older than the setting".
+      assert.strictEqual(yield* reported("unreadable"), false);
+      // No settings service: the answer leaves the key out, like a release older than it.
+      assert.strictEqual(yield* reported(undefined), undefined);
+    }),
+  );
+
+  it.live("never gates the drain itself: Update now stops the work with the setting off", () => {
+    const fixture = newFixture(true, { settings: { pauseWorkForUpdates: false } });
+    return run(
+      fixture,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'running', 'pt1')`;
+        const preparation = yield* Preparation.ServiceUpdatePreparation;
+        const result = yield* preparation.prepare({
+          stopWork: true,
+          reason: "install",
+          interactive: true,
+        });
+        assert.strictEqual(result.stoppedThreads, 1);
+        assert.strictEqual(result.idle, true);
+        assert.strictEqual(result.pauseWorkForUpdates, false);
+        assert.isTrue(fixture.dispatched.some((command) => command.type === "run.interrupt"));
+      }),
+    );
+  });
 });
 
 it.live("ends a turn whose provider never answers the interrupt", () => {

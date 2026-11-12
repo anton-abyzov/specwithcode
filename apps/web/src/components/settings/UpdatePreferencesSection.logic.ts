@@ -11,7 +11,7 @@ import {
 
 export type ServiceUpdateAction = "check" | "install" | "none";
 
-/** An automatic service install pauses running work after this long unless Settings says otherwise. */
+/** How long an automatic service install waits before it pauses running work, once "Pause running work for updates" is on. */
 export const DEFAULT_PAUSE_WORK_AFTER_MINUTES = 10;
 
 /** Choices offered in Settings, in minutes; none below 10, since the agent passes every 10 minutes. */

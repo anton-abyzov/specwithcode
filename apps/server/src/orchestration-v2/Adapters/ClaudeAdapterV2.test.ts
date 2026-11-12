@@ -76,7 +76,6 @@ import {
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import type { PromptSuggestionOffer } from "../PromptSuggestions.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import {
   CLAUDE_TOOL_RESULT_FIXTURES,
@@ -3173,7 +3172,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "reuses a background shell's query for omitted and explicit Normal, but blocks Fast",
+    "reuses a background shell's query for omitted and explicit Normal, and makes Fast wait",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -3212,26 +3211,87 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.offerAndWait(turnOneResult);
           yield* Queue.take(harness.terminalReceipts);
 
-          const refused = yield* harness.runtime
-            .startTurn(
-              turn(3, {
-                ...normal,
-                options: [{ id: "fastMode", value: true }],
-              }),
-            )
-            .pipe(Effect.result);
-          assert.equal(refused._tag, "Failure");
-          if (refused._tag === "Failure") {
-            assert.instanceOf(
-              refused.failure.cause,
-              ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
-            );
-          }
+          yield* harness.runtime.startTurn(
+            turn(3, {
+              ...normal,
+              options: [{ id: "fastMode", value: true }],
+            }),
+          );
+          const notice = yield* Queue.take(harness.systemNoticeReceipts);
+          assert.equal(
+            notice.turnItem.type === "system_notice" ? notice.turnItem.message : null,
+            "Fast mode on applies when background work finishes.",
+          );
           assert.strictEqual(harness.getOpenedOptions(), originalOptions);
-          assert.lengthOf(harness.offeredMessages, 2);
+          assert.lengthOf(harness.offeredMessages, 3);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
+  );
+
+  it.effect("saves an effort change made during background work and applies it afterwards", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const selection = (effort: string) =>
+          ({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            model: "claude-opus-5-5",
+            options: [{ id: "effort", value: effort }],
+          }) satisfies ModelSelection;
+        const turn = (ordinal: number, effort: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-effort-waits:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: selection(effort),
+          });
+        const notices = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem.message]
+              : [],
+          );
+        yield* harness.runtime.startTurn(turn(1, "high"));
+        const originalOptions = harness.getOpenedOptions();
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // The turn starts on the running process; nothing fails.
+        yield* harness.runtime.startTurn(turn(2, "xhigh"));
+        yield* Queue.take(harness.systemNoticeReceipts);
+        assert.deepEqual(notices(), ["Effort xhigh applies when background work finishes."]);
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.lengthOf(harness.offeredMessages, 2);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // The same pending choice is announced once.
+        yield* harness.runtime.startTurn(turn(3, "xhigh"));
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.lengthOf(notices(), 1);
+
+        // Once the background work ends, the next prompt runs at the saved effort.
+        yield* harness.offerAndWait(wakeNotification);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.runtime.startTurn(turn(4, "xhigh"));
+        const reopened = harness.getOpenedOptions();
+        assert.notStrictEqual(reopened, originalOptions);
+        assert.equal(originalOptions?.effort, "high");
+        assert.equal(reopened?.effort, "xhigh");
+        assert.lengthOf(notices(), 1);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
   );
 
   it.effect("keeps a background worker's launch context when saved rules change", () =>
@@ -3276,24 +3336,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.take(harness.terminalReceipts);
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
-        // A model change would still end the background work.
-        const refused = yield* harness.runtime
-          .startTurn(
-            turn(
-              3,
-              { agentInstructions: "Edited rules" },
-              { ...normal, options: [{ id: "fastMode", value: true }] },
-            ),
-          )
-          .pipe(Effect.result);
-        assert.equal(refused._tag, "Failure");
-        if (refused._tag === "Failure") {
-          assert.instanceOf(
-            refused.failure.cause,
-            ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
-          );
-        }
+        // A model option change waits too: the process and its work stay.
+        yield* harness.runtime.startTurn(
+          turn(
+            3,
+            { agentInstructions: "Edited rules" },
+            { ...normal, options: [{ id: "fastMode", value: true }] },
+          ),
+        );
         assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.lengthOf(harness.offeredMessages, 3);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
@@ -3350,23 +3403,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.include(removed.cause.message, "this folder or permission change would end them");
 
-        // A model change still ends the background work, and says so.
-        const modelChange = yield* harness.runtime
-          .startTurn(
-            turn(4, ["/approved/docs", "/approved/app"], {
-              ...normal,
-              options: [{ id: "fastMode", value: true }],
-            }),
-          )
-          .pipe(Effect.flip);
-        assert.instanceOf(
-          modelChange.cause,
-          ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
-        );
-        assert.include(modelChange.cause.message, "this model change would end them");
+        // A model change never carries a removed folder along with it.
         const modelAndFolders = yield* harness.runtime
           .startTurn(
-            turn(5, ["/approved/app"], { ...normal, options: [{ id: "fastMode", value: true }] }),
+            turn(4, ["/approved/app"], { ...normal, options: [{ id: "fastMode", value: true }] }),
           )
           .pipe(Effect.flip);
         assert.instanceOf(
@@ -3384,7 +3424,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // Once the background work ends, the next prompt gets the new folder.
         yield* harness.offerAndWait(wakeNotification);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        yield* harness.runtime.startTurn(turn(6, ["/approved/docs", "/approved/app"]));
+        yield* harness.runtime.startTurn(turn(5, ["/approved/docs", "/approved/app"]));
         const reopened = harness.getOpenedOptions();
         assert.notStrictEqual(reopened, originalOptions);
         assert.include(reopened?.additionalDirectories ?? [], "/approved/app");
@@ -9798,7 +9838,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("refuses a model change that would kill a running background subagent", () =>
+  it.effect("makes a model change wait for a running background subagent", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const SUBAGENT_TASK_ID = "task-model-change-running-subagent";
@@ -9902,12 +9942,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const settledTurn = terminals()[0]!;
 
         // The subagent runs inside the first CLI process. Another model needs
-        // another process, so the turn must not start and close this one.
+        // another process, so the turn runs on this one and the switch waits.
         const alternateModel = {
           ...CLAUDE_TEST_MODEL_SELECTION,
           model: "claude-haiku-4-5-20251001",
         } satisfies ModelSelection;
-        const switchTurn = (attempt: string) =>
+        const switchTurn = (attempt: string, providerTurnOrdinal: number) =>
           runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId,
@@ -9916,18 +9956,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attemptId: RunAttemptId.make(attempt),
               text: "Switch model while the subagent runs.",
               attachments: [],
-              providerTurnOrdinal: 2,
+              providerTurnOrdinal,
               modelSelection: alternateModel,
             }),
           );
-        const refused = yield* switchTurn("attempt-claude-model-change-running-subagent-b").pipe(
-          Effect.flip,
-        );
-        assert.equal(
-          makeProviderFailure({ cause: refused, class: "provider_error" }).message,
-          new ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError().message,
-        );
+        yield* switchTurn("attempt-claude-model-change-running-subagent-b", 2);
         assert.lengthOf(processQueues, 1);
+        yield* awaitUntil(
+          () =>
+            events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "system_notice" &&
+                /^Model claude-haiku-4-5\S*( and effort \S+ apply| applies) when background work finishes\.$/u.test(
+                  event.turnItem.message,
+                ),
+            ),
+          "pending model note",
+        );
+        assert.lengthOf(terminals(), 1);
+        yield* Queue.offer(
+          firstProcess,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000904",
+            result: "Answered on the running process.",
+          }),
+        );
+        yield* awaitUntil(() => terminals().length === 2, "deferred turn terminal");
 
         // Stop ends the background work, so the switch may replace the process.
         yield* runtime.interruptTurn({
@@ -9935,7 +9990,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerTurnId: settledTurn.providerTurnId,
           requestRuntimeRestart: true,
         });
-        yield* switchTurn("attempt-claude-model-change-running-subagent-c");
+        yield* switchTurn("attempt-claude-model-change-running-subagent-c", 3);
         assert.lengthOf(processQueues, 2);
 
         // The stopped subagent never reports its end, so it must not block
@@ -9947,7 +10002,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             result: "Switched model.",
           }),
         );
-        yield* awaitUntil(() => terminals().length === 2, "switched turn terminal");
+        yield* awaitUntil(() => terminals().length === 3, "switched turn terminal");
         yield* runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId,
@@ -9956,7 +10011,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attemptId: RunAttemptId.make("attempt-claude-model-change-running-subagent-d"),
             text: "Switch back.",
             attachments: [],
-            providerTurnOrdinal: 3,
+            providerTurnOrdinal: 4,
           }),
         );
         assert.lengthOf(processQueues, 3);
@@ -10070,23 +10125,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ...CLAUDE_TEST_MODEL_SELECTION,
             model: "claude-haiku-4-5-20251001",
           } satisfies ModelSelection;
-          const failedStart = yield* runtime
-            .startTurn(
-              makeClaudeTestTurnInput({
-                threadId,
-                providerThread: { ...providerThread, status: "active" },
-                now,
-                attemptId: RunAttemptId.make("attempt-claude-replace-open-fail-b"),
-                text: "Replace process but fail open.",
-                attachments: [],
-                providerTurnOrdinal: 2,
-                modelSelection: alternateModel,
-              }),
-            )
-            .pipe(Effect.exit);
-          assert.isTrue(Exit.isFailure(failedStart));
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: { ...providerThread, status: "active" },
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-replace-open-fail-b"),
+              text: "Replace process but fail open.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              modelSelection: alternateModel,
+            }),
+          );
           // The shell runs in the first process, so it is never closed and
-          // no replacement is opened.
+          // no replacement is opened: the turn runs there and the model waits.
           assert.equal(openCount, 1);
           assert.isTrue(yield* hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),

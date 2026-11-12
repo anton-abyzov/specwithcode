@@ -4,6 +4,9 @@
 forced install and installs in the same run; "Later" postpones the pause, and a drain that cannot
 run leaves it waiting. Reuses test-update-agent.py's temporary homes, fake GitHub and fake helper.
 
+Each case states the machine's "Pause running work for updates" (the service's look answer,
+`self.answer`): on unless a test says otherwise, so the pauses here are the setting's, never a default.
+
 Run: cd scripts/studio-fleet && python3 -B test-update-agent-pause.py
 Nothing here touches a real Studio home, service, launchd, GitHub or gh: the drain is a fake, or a
 stand-in CLI script inside the temporary home.
@@ -23,6 +26,7 @@ import service_handles  # noqa: E402
 import service_hold  # noqa: E402
 import update_agent  # noqa: E402
 import update_agent_pause as pause  # noqa: E402
+import update_policy  # noqa: E402
 import update_request  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location('agent_tests_for_pause', str(HERE / 'test-update-agent.py'))
@@ -51,6 +55,13 @@ class FakeHold(object):
         self.case.control()  # The drain stopped the work: the next snapshot is idle.
         return {'held': True, 'stoppedThreads': 1, 'interruptedRuns': 1, 'openTerminals': 0}
 
+    def look(self):
+        """The service's answer that stops nothing: the setting as the case states it, and its copies."""
+        self.calls.append(('look',))
+        if isinstance(self.case.answer, Exception):
+            raise self.case.answer
+        return dict(self.case.answer, folderCopies=self.case.counted)
+
     def counted_copies(self):
         self.calls.append(('count',))
         return self.case.counted
@@ -63,6 +74,9 @@ class FakeHold(object):
 
     def prepared(self):
         return [call for call in self.calls if call[0] == 'prepare']
+
+    def looked(self):
+        return [call for call in self.calls if call[0] == 'look']
 
     def released(self):
         return [call for call in self.calls if call[0] == 'release']
@@ -77,11 +91,16 @@ def raises(error):
 WORK = 'Waiting for running tasks, queued messages and open questions to finish (1 running task, 1 active session)'
 
 
-class AutomaticPause(AgentCase):
+class PauseCase(AgentCase):
+    """A downloaded release, a fake drain and a service with the CLI credential."""
+
     def setUp(self):
         AgentCase.setUp(self)
         self.fake.add_release()
         self.hold, self.on_prepare, self.on_release, self.counted = FakeHold(self), None, None, 0
+        # "Pause running work for updates" is on: these cases are the pause it allows. Off, unknown and
+        # a service older than the setting have cases of their own (SettingDecides).
+        self.answer = {'pauseWorkForUpdates': True}
         patcher = mock.patch.object(pause, 'HOLD', self.hold)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -125,6 +144,9 @@ class AutomaticPause(AgentCase):
         self.assertIsNone(self.read_config().get('installRequestedAt'))
         self.assertEqual(self.apply_calls(), [])
 
+
+
+class AutomaticPause(PauseCase):
     def test_waits_for_the_grace_before_pausing(self):
         before = self.now()
         state = self.busy_pass()
@@ -268,6 +290,7 @@ class AutomaticPause(AgentCase):
             self.assertEqual((state['automaticPauseAt'], state['automaticWaitSince']), (None, None))
             self.advance(10)
         self.assertEqual(self.hold.prepared(), [])
+        self.assertEqual(self.hold.looked(), [])  # Its look would open the live database too.
         self.assertEqual(self.apply_calls(), [])
         # An unreadable installation.json is not proof of a new enough release either.
         (self.own / 'installation.json').write_text('{')
@@ -573,12 +596,132 @@ class AutomaticPause(AgentCase):
         self.assertEqual(self.apply_calls(), [])
 
 
+class SettingDecides(PauseCase):
+    """The machine's own "Pause running work for updates" decides whether the agent may pause."""
+
+    def assert_waits_unpaused(self, state, why):
+        self.assertEqual(state['status'], 'waiting-for-quiet')
+        self.assertTrue(state['message'].startswith(WORK + '; '), state['message'])
+        self.assertIn('the update installs once running work finishes', state['message'])
+        self.assertIn(why, state['message'])
+        self.assertTrue(pause.running_work((state['status'], state['message'])))  # Still read as running work.
+        self.assertEqual((state['automaticPauseAt'], state['automaticWaitSince'], state['automaticLastBusyAt']),
+                         (None, None, None))
+        self.assertIsNone(self.read_config().get('installRequestedAt'))
+        self.assertEqual(self.apply_calls(), [])
+
+    def test_off_never_pauses_and_publishes_no_pause_time(self):
+        self.answer = {'pauseWorkForUpdates': False, 'idle': False}
+        for _ in range(7):  # Past the grace, and past an hour.
+            self.assert_waits_unpaused(self.busy_pass(), '"Pause running work for updates" is off on this Mac')
+            self.advance(10)
+        self.assertEqual(self.hold.prepared(), [])
+        self.assertEqual(self.hold.released(), [])
+        self.assertEqual(len(self.hold.looked()), 7)  # One look per busy pass.
+        self.control()  # Quiet at last: the update installs without any pause.
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(self.hold.prepared(), [])
+
+    def test_a_service_that_does_not_answer_is_not_paused_on_a_guess(self):
+        self.answer = service_hold.HoldUnavailable('no answer within 60s')
+        for _ in range(3):
+            self.assert_waits_unpaused(self.busy_pass(), 'the SpecWithCode service did not say whether')
+            self.advance(10)
+        self.assertEqual(self.hold.prepared(), [])
+
+    def test_turned_off_during_a_grace_forgets_the_wait(self):
+        self.assertIsNotNone(self.busy_pass()['automaticPauseAt'])  # On: the grace runs, its pause time on show.
+        self.advance(5)
+        self.answer = {'pauseWorkForUpdates': False}
+        self.assert_waits_unpaused(self.busy_pass(), '"Pause running work for updates" is off on this Mac')
+        self.advance(10)  # Past the time it showed: still nothing paused.
+        self.assert_waits_unpaused(self.busy_pass(), 'is off on this Mac')
+        self.assertEqual(self.hold.prepared(), [])
+
+    def test_a_look_that_fails_during_a_grace_keeps_the_wait_and_pauses_nothing(self):
+        state = self.busy_pass()
+        since, pause_at = (update_agent.parse_time(state[key]) for key in ('automaticWaitSince', 'automaticPauseAt'))
+        busy_at = update_agent.parse_time(state['automaticLastBusyAt'])
+        self.advance(10)  # The pause time has come, but the service does not answer this pass.
+        self.answer = service_hold.HoldUnavailable('no answer within 60s')
+        state = self.busy_pass()
+        self.assertEqual(self.hold.prepared(), [])  # Never a pause on a guess.
+        self.assertEqual(state['status'], 'waiting-for-quiet')
+        self.assertTrue(state['message'].startswith(WORK + '; '), state['message'])
+        self.assertIn('the SpecWithCode service did not say whether', state['message'])
+        self.assertEqual(update_agent.parse_time(state['automaticWaitSince']), since)  # The grace is not started again.
+        self.assertEqual(update_agent.parse_time(state['automaticPauseAt']), pause_at)  # The desktop keeps its time.
+        self.assertGreater(update_agent.parse_time(state['automaticLastBusyAt']), busy_at)  # Still a busy pass.
+        self.advance(10)  # It answers again, on: the grace it kept is over, so this pass pauses.
+        self.answer = {'pauseWorkForUpdates': True}
+        self.control(snapshotFail=True, snapshotError=BUSY)
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(len(self.hold.prepared()), 1)
+        self.assertEqual(self.state()['status'], 'installed')
+
+    def test_a_service_older_than_the_setting_pauses_as_before(self):
+        self.answer = {'idle': False}  # Answers, but names no pauseWorkForUpdates.
+        since = update_agent.parse_time(self.busy_pass()['automaticWaitSince'])
+        self.assertEqual(update_agent.parse_time(self.state()['automaticPauseAt']), since + datetime.timedelta(minutes=10))
+        self.advance(10)
+        self.control(snapshotFail=True, snapshotError=BUSY)
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(len(self.hold.prepared()), 1)
+        self.assertEqual(self.state()['status'], 'installed')
+
+    def test_on_waits_the_grace_then_pauses(self):
+        since = update_agent.parse_time(self.busy_pass()['automaticWaitSince'])
+        self.assert_waiting(self.state(), since + datetime.timedelta(minutes=10))
+        self.advance(10)
+        self.control(snapshotFail=True, snapshotError=BUSY)
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(len(self.hold.prepared()), 1)
+        self.assertEqual(len(self.hold.looked()), 2)  # The drain pass reuses its look for the copy count.
+        self.assertEqual(self.state()['status'], 'installed')
+
+    def test_turned_on_later_starts_a_fresh_grace(self):
+        self.answer = {'pauseWorkForUpdates': False}
+        self.busy_pass()
+        self.advance(10)
+        self.answer = {'pauseWorkForUpdates': True}
+        state = self.busy_pass()
+        since = update_agent.parse_time(state['automaticWaitSince'])
+        self.assert_waiting(state, since + datetime.timedelta(minutes=10))  # Ten minutes from now, not from the first pass.
+        self.assertEqual(self.hold.prepared(), [])
+
+    def test_passes_not_waiting_on_running_work_never_look(self):
+        for error in ('REFUSAL timeout lsof', 'REFUSAL idle-agents codex=1 wait=30',
+                      'AssertionError: Folder copies are in progress\nREFUSAL folder-copy operations=1'):
+            with self.subTest(error=error):
+                self.control(snapshotFail=True, snapshotError=error)
+                self.assertEqual(self.run_agent(), 0, self.log)
+        self.control()
+        self.assertEqual(self.run_agent(), 0, self.log)
+        self.assertEqual(self.hold.looked(), [])
+
+    def test_the_real_service_hold_reads_the_setting_from_the_service_cli(self):
+        cli = self.home / '.local/bin/specweave-studio'
+        cli.parent.mkdir(parents=True)
+        calls = self.home / 'cli-calls.txt'
+        cli.write_text('#!/bin/sh\necho "$@" >> %s\n'
+                       'echo \'{"idle": false, "held": false, "pauseWorkForUpdates": false}\'\n' % calls)
+        cli.chmod(0o755)
+        with mock.patch.object(pause, 'HOLD', service_hold.ServiceHold), \
+                mock.patch.object(service_hold, 'PREPARE_UPDATE_SINCE', (0, 1, 0)):
+            for _ in range(2):
+                self.assert_waits_unpaused(self.busy_pass(), 'is off on this Mac')
+                self.advance(10)
+        base = ['service', 'prepare-update', '--base-dir', str(self.own)]
+        self.assertEqual([line.split() for line in calls.read_text().splitlines()], [base + ['--json']] * 2)
+
+
 class Shipping(unittest.TestCase):
     def test_the_agent_installs_its_new_modules_beside_itself(self):
-        for name in ('update_agent_pause.py', 'service_hold.py'):
+        for name in ('update_agent_pause.py', 'service_hold.py', 'update_policy.py'):
             self.assertIn(name, update_request.AGENT_FILES)
         self.assertIs(update_agent.pause, pause)
         self.assertIs(pause.service_hold, service_hold)
+        self.assertIs(pause.update_policy, update_policy)
 
     def test_the_automatic_pause_needs_the_cli_credential_and_the_rollout_keeps_its_own_gate(self):
         self.assertEqual(pause.CLI_CREDENTIAL, ('secrets', 'local-cli-credential.bin'))

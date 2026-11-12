@@ -16,6 +16,7 @@
   "responseStreamingMode": "paragraph",
   "enableProviderUpdateChecks": true,
   "continueThreadsAfterServerUpdate": true,
+  "pauseWorkForUpdates": false,
   "enableAgentBrowserAccess": true,
   "agentBrowserProfileId": null,
   "projectAgentBrowserAccessOverrides": {},

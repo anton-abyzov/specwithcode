@@ -437,8 +437,6 @@ export const ru: PhraseCatalog = {
     "В режиме удержания выход также срабатывает на два быстрых нажатия.",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "Не давать уснуть в простое, пока сессия работает, чтобы ходы на этой машине продолжались. Если закрыть крышку, машина всё равно уснёт.",
-  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
-    "Сколько автоматическое обновление службы SpecWithCode ждёт завершения работы. Затем ходы приостанавливаются, служба обновляется, и они продолжаются с того же места. «Позже» в боковой панели ждёт ещё час.",
   "Include text and controls when the app makes them available.":
     "Включать текст и элементы управления, когда приложение их предоставляет.",
   "Install and manage Antigravity.": "Установка и управление Antigravity.",
@@ -583,8 +581,6 @@ export const ru: PhraseCatalog = {
     "Размер вкладки для вас и агентов. «Заполнить» подгоняет под панель; другие размеры показывают панель устройства.",
   "Terminal output, independent from code blocks and diffs.":
     "Вывод терминала, отдельно от блоков кода и диффов.",
-  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
-    "Приложение обновляется в простое, если это включено ниже, или при следующем выходе. Служба обновляется, когда ни одна сессия не работает; идущая работа приостанавливается для неё после ожидания ниже и продолжается после обновления. «Выключено» значит, что вы устанавливаете отсюда.",
   "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
     "Самый дешёвый уровень, который может использовать каждый тип задач. Код, ревью, дизайн и финальная анимация никогда не опускаются ниже Standard; прочая работа остаётся на Frontier. Неясные задачи остаются на своей обычной модели.",
   "The color scheme pages are told to prefer. System follows your OS setting.":
@@ -4136,4 +4132,32 @@ export const ru: PhraseCatalog = {
   "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "Агенты на этой машине уже запускают работу на {machines}. Строка, созданная здесь, позволит выбранной машине запускать работу на этой. Чтобы вместо этого добавить новую машину к этой, откройте SpecWithCode на новой машине, выберите там «Присоединиться к главной машине» и вставьте её строку здесь, в разделе «Добавить машину».",
   "{count} more": "ещё {count}",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "Приложение обновляется в простое, если это включено ниже, или при следующем выходе. Служба обновляется, когда ни одна сессия не работает. Если включено «Приостанавливать работу для обновлений», идущая работа приостанавливается для неё после ожидания ниже и продолжается после обновления. «Выключено» значит, что вы устанавливаете отсюда.",
+  "Applies once “Pause running work for updates” is on: how long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "Действует, когда включено «Приостанавливать работу для обновлений»: сколько автоматическое обновление службы SpecWithCode ждёт завершения работы. Затем ходы приостанавливаются, служба обновляется, и они продолжаются с того же места. «Позже» в боковой панели ждёт ещё час.",
+  "Pause running work for updates": "Приостанавливать работу для обновлений",
+  "After the wait set in “Pause running work after”, running turns pause, the update installs, and they continue where they left off.":
+    "После ожидания из «Приостанавливать работу через» идущие ходы приостанавливаются, обновление устанавливается, и они продолжаются с того же места.",
+  "After 30 minutes of waiting, running turns pause, the update installs, and they continue where they left off.":
+    "После 30 минут ожидания идущие ходы приостанавливаются, обновление устанавливается, и они продолжаются с того же места.",
+  "After the wait, running turns pause, the update installs, and they continue where they left off. On a Mac the wait is “Pause running work after”; on Linux it is 30 minutes.":
+    "После ожидания идущие ходы приостанавливаются, обновление устанавливается, и они продолжаются с того же места. На Mac ожидание задаёт «Приостанавливать работу через», на Linux это 30 минут.",
+  "An update waits until {machine} has no running work, however long that takes. Update now still installs right away.":
+    "Обновление ждёт, пока на {machine} не останется идущей работы, сколько бы это ни заняло. «Обновить сейчас» по-прежнему устанавливает сразу.",
+  "An update waits up to 30 minutes for {machine} to have no running work. If it is still busy then, {machine} stays on its version until the next update. Update now still installs right away.":
+    "Обновление ждёт до 30 минут, пока на {machine} не останется идущей работы. Если {machine} всё ещё занят, он остаётся на своей версии до следующего обновления. «Обновить сейчас» по-прежнему устанавливает сразу.",
+  "An update waits for {machine} to have no running work. A Mac keeps waiting as long as that takes; a Linux machine waits up to 30 minutes and, if still busy, stays on its version until the next update. Update now still installs right away.":
+    "Обновление ждёт, пока на {machine} не останется идущей работы. Mac ждёт сколько потребуется; машина с Linux ждёт до 30 минут и, если всё ещё занята, остаётся на своей версии до следующего обновления. «Обновить сейчас» по-прежнему устанавливает сразу.",
+  "Has no effect on {machine} while “Continue threads after restarts” is off there: paused turns would not continue, so updates wait for quiet. Turn that on in Settings > General.":
+    "Не действует на {machine}, пока там выключено «Продолжать треды после перезапуска»: приостановленные ходы не продолжились бы, поэтому обновления ждут затишья. Включите его в Настройки > Общие.",
+  "{machine} is unreachable, so this setting cannot be changed now.":
+    "{machine} недоступна, поэтому сейчас эту настройку не изменить.",
+  "This connection cannot change settings on {machine}.":
+    "Это подключение не может менять настройки на {machine}.",
+  "Could not save update settings": "Не удалось сохранить настройки обновлений",
+  "The change could not be confirmed on {machine}. The switch shows what {machine} reports.":
+    "Не удалось подтвердить изменение на {machine}. Переключатель показывает то, что сообщает {machine}.",
+  "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
+    "На {machine} версия SpecWithCode без этой настройки. Сначала обновите {machine}.",
 };

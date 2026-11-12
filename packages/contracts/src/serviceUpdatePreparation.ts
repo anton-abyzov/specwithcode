@@ -151,6 +151,13 @@ export const ServerPrepareServiceUpdateResult = Schema.Struct({
    * is left, so `idle` is false. Omitted when none is left or the count could not be read.
    */
   leftoverProcesses: Schema.optional(NonNegativeInt),
+  /**
+   * Whether an update may pause running work on this machine now: the
+   * `pauseWorkForUpdates` setting, and only while threads continue after a
+   * restart. The update agent and the rollout read it from this answer.
+   * Services from before the setting omit it and are treated as before.
+   */
+  pauseWorkForUpdates: Schema.optional(Schema.Boolean),
 });
 export type ServerPrepareServiceUpdateResult = typeof ServerPrepareServiceUpdateResult.Type;
 

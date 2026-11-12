@@ -10,6 +10,14 @@ downloaded version. run_once's second iteration serves that request inside the s
 the turns the drain stopped continue after the restart. state.json `automaticPauseAt` tells the
 desktop when that happens.
 
+Only when the machine's owner allows it: before a grace starts or goes on, the agent looks at the
+service (service_hold.ServiceHold.look, which stops nothing) for "Pause running work for updates"
+(update_policy). Off ends the pass waiting for quiet with no automaticPauseAt and forgets the wait,
+so nothing is paused and the update installs once the work finishes. A service that did not answer
+pauses nothing in that pass but keeps a wait already running as it is (one failed look does not
+start the grace again); it starts none. On, or a service too old to report the setting, waits and
+pauses as described here.
+
 The clock (one launchd pass every START_INTERVAL): automaticPauseAt is the first scheduled pass at
 or after the grace and any "Later", counted in whole passes from the pass that started the grace
 (since + k * START_INTERVAL, k >= 1), and a pass pauses only when the grace started in an earlier
@@ -38,6 +46,7 @@ import subprocess
 import sys
 
 import service_hold  # Shipped beside this file.
+import update_policy  # Shipped beside this file.
 import update_request  # Shipped beside this file.
 from service_handles import DETACHED_DATABASE, LOCKS_LOST  # Shipped beside this file: update.py's own texts.
 
@@ -45,10 +54,11 @@ TIMED_OUT = "The updater's check took too long; retrying"
 WAITING = 'Waiting for running sessions and open SpecWithCode terminals to finish'
 # What the snapshot helper's refusal means, in the words the app shows. The helper's
 # output is read only for its REFUSAL line or these phrases; it is never logged or kept.
+# The first two are update_policy.RUNNING_WORK, by which the rollout tells running work from the rest.
 WAITING_REASONS = (
-    ('Native work is not idle', 'Waiting for running tasks, queued messages and open questions to finish'),
-    ('has unexpected descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
-    ('unexpected or missing descendants', 'Waiting for open SpecWithCode terminals and agent processes to close'),
+    ('Native work is not idle', update_policy.RUNNING_WORK[0]),
+    ('has unexpected descendants', update_policy.RUNNING_WORK[1]),
+    ('unexpected or missing descendants', update_policy.RUNNING_WORK[1]),
 )
 # update.py idle_agent_refusal: only the service's own idle provider servers are open (idle_agents.py).
 IDLE_AGENTS = ('Waiting for a quiet moment, then closing idle agent processes so the update can install',
@@ -216,15 +226,25 @@ def after_refusal(agent, verified, refused):
     if not supported(agent):  # Its drain would open the live database read-write: wait for quiet as before.
         forget(state)
         return agent.finish(*refused)
+    hold = HOLD(agent.identity, agent.home, run=_background_run(ua))
+    policy, answer = update_policy.look(hold)  # Once per busy pass; it stops and holds nothing.
+    if policy == update_policy.OFF:  # The owner's setting: no pause, and no pause time on show.
+        forget(state)
+        return agent.finish('waiting-for-quiet', update_policy.agent_waiting(refused[1], policy))
     now = ua.utcnow()
     started = getattr(agent, 'pass_started', None) or now
+    since, last = ua.parse_time(state.get('automaticWaitSince')), ua.parse_time(state.get('automaticLastBusyAt'))
+    fresh = since is None or since > now + CLOCK_SKEW or last is None or last < started - 2 * START_INTERVAL \
+        or state.get('automaticPauseAt') is None
+    if not update_policy.allows_pause(policy):  # Unknown: never a pause on a guess, but a running wait goes on.
+        if not fresh:
+            state['automaticLastBusyAt'] = ua.iso(now)
+        return agent.finish('waiting-for-quiet', update_policy.agent_waiting(refused[1], policy))
     try:  # The snapshot took minutes: a "Later" pressed meanwhile counts.
         config = ua.load_config(agent.updates, agent.home)
     except ua.AgentError:
         config = agent.config
-    since, last = ua.parse_time(state.get('automaticWaitSince')), ua.parse_time(state.get('automaticLastBusyAt'))
-    if since is None or since > now + CLOCK_SKEW or last is None or last < started - 2 * START_INTERVAL \
-            or state.get('automaticPauseAt') is None:
+    if fresh:
         since = started
         state['automaticWaitSince'] = ua.iso(started)
     state['automaticLastBusyAt'] = ua.iso(now)
@@ -234,7 +254,7 @@ def after_refusal(agent, verified, refused):
     state['automaticPauseAt'] = ua.iso(pause_at(config, since))
     if not due(config, since, started, now):
         return agent.finish('waiting-for-quiet', WILL_PAUSE % (refused[1], clock(pause_at(config, since))))
-    return _pause_and_request(agent, verified, refused)
+    return _pause_and_request(agent, verified, refused, hold, answer)
 
 
 def _background_run(ua):
@@ -290,19 +310,17 @@ def _newer_update_now(agent):
         and not ua.install_cancelled(current)
 
 
-def _pause_and_request(agent, verified, refused):
+def _pause_and_request(agent, verified, refused, hold, answer):
     """Update now's drain and hold, then one forced request for the downloaded version, in that order:
     the hold inserts a session row, which would fail the guarded prestate of a request written first.
-    The request is served by run_once's second iteration, which installs it inside this pass's lock."""
+    The request is served by run_once's second iteration, which installs it inside this pass's lock.
+    `answer` is this pass's look at the service, None when its CLI has no such command."""
     ua, version = _ua(agent), verified['version']
-    hold = HOLD(agent.identity, agent.home, run=_background_run(ua))
-    try:
-        # The service's own count first, which stops nothing: a heartbeat it could not write must not
-        # let a drain stop running work every pass only to find a copy and let go again. Nothing was
-        # drained, so the wait stays as it is and the next busy pass may pause.
-        copies = hold.counted_copies()
-    except service_hold.HoldUnavailable:  # Unsupported or unanswered: the drain below says why.
-        copies = 0
+    # The service's own count first, which stops nothing: a heartbeat it could not write must not
+    # let a drain stop running work every pass only to find a copy and let go again. Nothing was
+    # drained, so the wait stays as it is and the next busy pass may pause. No answer counts none:
+    # the drain below says why it cannot run.
+    copies = service_hold.copies_in(answer)
     if copies:
         return agent.finish('waiting-for-quiet', copies_waiting(copies))
     agent.state['automaticPausedAt'] = {'version': version, 'at': ua.iso(ua.utcnow())}
