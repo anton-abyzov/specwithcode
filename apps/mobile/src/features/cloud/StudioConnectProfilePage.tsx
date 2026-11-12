@@ -1,4 +1,5 @@
 import { findErrorTraceId } from "@specweave-studio/client-runtime/errors";
+import { deregisterFailureMessage } from "@specweave-studio/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -100,8 +101,10 @@ export function StudioConnectProfilePage() {
     }
     if (isAtomCommandInterrupted(result)) return;
 
+    // The account can lose the machine before a later step fails, so the list is read again.
+    environmentsState.refresh();
     const cause = squashAtomCommandFailure(result);
-    const message = cause instanceof Error ? cause.message : "Could not deregister the server.";
+    const message = deregisterFailureMessage(cause);
     const traceId = findErrorTraceId(cause);
     console.error("[studio-connect] Could not deregister environment", {
       environmentId: environment.environmentId,
@@ -110,7 +113,7 @@ export function StudioConnectProfilePage() {
       cause,
     });
     Alert.alert(
-      "Could not deregister server",
+      "Deregistering did not finish",
       traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
       traceId
         ? [

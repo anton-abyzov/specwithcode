@@ -83,7 +83,7 @@ interface World {
   desktop?: boolean;
   signedIn?: boolean;
   /** null: unread. */
-  link?: { linked: boolean; managedTunnelActive?: boolean } | null;
+  link?: { linked: boolean; managedTunnelActive?: boolean; revokedElsewhereAt?: string } | null;
   phones?: ReadonlyArray<unknown> | null;
   canManage?: boolean;
   lock?: "connect" | "phones" | null;
@@ -276,6 +276,42 @@ describe("the one next step", () => {
     });
     expect(reconcileCloudState).toHaveBeenCalledWith({ managedTunnel: true, publish: true });
     expect(rememberConnectChoice).toHaveBeenCalledWith(true);
+  });
+
+  it("says the machine was deregistered from another device, and offers to turn it on again", () => {
+    world({
+      signedIn: true,
+      link: { linked: false, revokedElsewhereAt: "2026-11-12T23:00:00.000Z" },
+    });
+    const view = page();
+    expect(view.stepKind()).toBe("turn-on");
+    expect(view.facts()[0]).toBe("Connect: deregistered from another device");
+    expect(textOf(byAttr(view.root, "data-machine-deregistered-elsewhere")[0]!)).toBe(
+      "This machine was deregistered from another device, so it is off SpecWithCode Connect.",
+    );
+    expect(view.buttons()).toContain("Turn on");
+  });
+
+  it("says so on the sign-in step too, and not once the machine is linked again", () => {
+    const revokedElsewhereAt = "2026-11-12T23:00:00.000Z";
+    world({ link: { linked: false, revokedElsewhereAt } });
+    const signedOut = page();
+    expect(signedOut.stepKind()).toBe("sign-in");
+    expect(byAttr(signedOut.root, "data-machine-deregistered-elsewhere")).toHaveLength(1);
+    signedOut.unmount();
+
+    world({
+      signedIn: true,
+      link: { linked: true, managedTunnelActive: true, revokedElsewhereAt },
+    });
+    const linked = page();
+    expect(linked.facts()[0]).toBe("Connect: linked as sam@example.com");
+    expect(byAttr(linked.root, "data-machine-deregistered-elsewhere")).toHaveLength(0);
+  });
+
+  it("says nothing of the kind for a machine that was simply never linked", () => {
+    world({ signedIn: true });
+    expect(byAttr(page().root, "data-machine-deregistered-elsewhere")).toHaveLength(0);
   });
 
   it("keeps activity for phone notifications off on a link that already had it off", async () => {

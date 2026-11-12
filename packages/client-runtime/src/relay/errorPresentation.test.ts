@@ -1,6 +1,7 @@
 import {
   RelayAuthInvalidError,
   RelayEnvironmentLinkLimitExceededError,
+  RelayInternalError,
 } from "@specweave-studio/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -8,6 +9,7 @@ import {
   DPOP_CLOCK_HINT,
   DPOP_RETRY_HINT,
   DPOP_UNKNOWN_HINT,
+  deregisterFailureMessage,
   relayProtectedErrorMessage,
 } from "./errorPresentation.ts";
 
@@ -71,5 +73,82 @@ describe("relayProtectedErrorMessage", () => {
     });
 
     expect(relayProtectedErrorMessage(error)).toContain(expected);
+  });
+});
+
+describe("deregisterFailureMessage", () => {
+  const failed = (parts: Record<string, unknown> = {}) => ({
+    _tag: "ManagedRelayRequestFailedError",
+    action: "unlink the environment",
+    ...parts,
+  });
+  const internal = (reason: RelayInternalError["reason"]) =>
+    failed({
+      relayError: new RelayInternalError({ code: "internal_error", reason, traceId: "trace-1" }),
+    });
+  const auth = (reason: RelayAuthInvalidError["reason"], parts: Record<string, unknown> = {}) =>
+    failed({
+      relayError: new RelayAuthInvalidError({
+        code: "auth_invalid",
+        reason,
+        traceId: "trace-1",
+        ...parts,
+      }),
+    });
+
+  it("does not claim the machine left the account when the cleanup step failed", () => {
+    // The service gives this reason before and after the account lost the machine.
+    const message = deregisterFailureMessage(internal("upstream_unavailable"));
+    expect(message).toContain("could not finish removing the machine");
+    expect(message).toContain("If it is still in the list, try again");
+    expect(message).not.toContain("taken off your account");
+  });
+
+  it("asks to try again when the service could not save or broke", () => {
+    expect(deregisterFailureMessage(internal("persistence_failed"))).toBe(
+      "SpecWithCode Connect could not save the change. Try again in a minute.",
+    );
+    expect(deregisterFailureMessage(internal("database_unavailable"))).toBe(
+      "SpecWithCode Connect could not save the change. Try again in a minute.",
+    );
+    expect(deregisterFailureMessage(internal("internal_error"))).toBe(
+      "SpecWithCode Connect ran into a problem. Try again in a minute.",
+    );
+  });
+
+  it("tells a run-out sign-in from a refused account and a refused proof", () => {
+    expect(deregisterFailureMessage(auth("invalid_bearer"))).toContain("sign-in has run out");
+    expect(deregisterFailureMessage(auth("missing_bearer"))).toContain("sign-in has run out");
+    expect(deregisterFailureMessage(auth("not_authorized"))).toContain(
+      "may not deregister that machine",
+    );
+    expect(deregisterFailureMessage(auth("device_removed"))).toContain(
+      "This device was removed from your account",
+    );
+    expect(
+      deregisterFailureMessage(auth("invalid_dpop", { dpopFailureReason: "time_window" })),
+    ).toBe(
+      `SpecWithCode Connect did not accept this device's proof of identity. ${DPOP_CLOCK_HINT}`,
+    );
+  });
+
+  it("names a connection problem, a slow answer and an answer it cannot read", () => {
+    expect(deregisterFailureMessage(failed({ transportFailed: true }))).toBe(
+      "This device could not reach SpecWithCode Connect. Check the connection and try again.",
+    );
+    expect(
+      deregisterFailureMessage({ _tag: "ManagedRelayRequestTimeoutError", timeoutMs: 15_000 }),
+    ).toContain("did not answer in time");
+    expect(deregisterFailureMessage(failed())).toContain("did not expect");
+  });
+
+  it("covers a request this device could not sign, and anything else", () => {
+    expect(deregisterFailureMessage({ _tag: "ManagedRelayDpopKeyLoadError" })).toContain(
+      "could not sign the request",
+    );
+    expect(deregisterFailureMessage(new Error("Disk is full."))).toBe("Disk is full.");
+    expect(deregisterFailureMessage(undefined)).toBe(
+      "Deregistering failed, and the reason is not known.",
+    );
   });
 });

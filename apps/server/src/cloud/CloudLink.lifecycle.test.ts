@@ -39,6 +39,7 @@ import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_PUBLIC_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED_ELSEWHERE_AT,
   CLOUD_LINKED_USER_ID,
   decodeConfirmedOrigin,
   decodePublicOrigin,
@@ -1363,6 +1364,52 @@ describe("releaseManagedTunnelOnShutdown", () => {
         );
         expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
       }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    });
+
+    it.effect("forgets a link deregistered elsewhere, and says so until it is linked again", () => {
+      const { store, values } = makeMemorySecretStore([
+        ...managedLinkSecrets,
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        // The refused credential is not the stored one: a link made since stays.
+        expect(yield* link.unlinkRevokedElsewhere("an-earlier-credential")).toBe(false);
+        expect(yield* link.linkState()).toMatchObject({ linked: true });
+        expect(yield* link.linkState()).not.toHaveProperty("revokedElsewhereAt");
+        expect(applyConfigCalls).toEqual([]);
+
+        expect(yield* link.unlinkRevokedElsewhere("environment-credential")).toBe(true);
+        // The relay client is stopped and nothing of the link is left.
+        expect(applyConfigCalls).toEqual([null]);
+        for (const name of [
+          CLOUD_LINKED_USER_ID,
+          RELAY_URL_SECRET,
+          RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+          CLOUD_ENDPOINT_RUNTIME_CONFIG,
+          CLOUD_CLI_DESIRED_LINK_SECRET,
+        ])
+          expect(values.has(name), name).toBe(false);
+        const state = yield* link.linkState();
+        expect(state.linked).toBe(false);
+        expect(state.revokedElsewhereAt).toMatch(/^\d{4}-\d\d-\d\dT/u);
+        // Asked again, there is nothing to forget.
+        expect(yield* link.unlinkRevokedElsewhere("environment-credential")).toBe(false);
+
+        yield* link.applyRelayConfig(clientLink(ownHost));
+        expect(values.has(CLOUD_LINK_REVOKED_ELSEWHERE_AT)).toBe(false);
+        expect(yield* link.linkState()).not.toHaveProperty("revokedElsewhereAt");
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          respond: () => Response.json({ status: "ready" }),
+        }),
+      );
     });
 
     const readOrigin = (entries: Iterable<readonly [string, string]>) =>

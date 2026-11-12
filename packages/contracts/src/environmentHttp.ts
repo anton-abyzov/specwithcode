@@ -665,6 +665,9 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   // Opt-in: Studio Connect holds webhook requests while this environment is
   // offline. Optional so newer clients tolerate older environment servers.
   holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
+  // When this machine learned its owner deregistered it from another device.
+  // Only while not linked; absent otherwise and from older environment servers.
+  revokedElsewhereAt: Schema.optional(Schema.String),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 

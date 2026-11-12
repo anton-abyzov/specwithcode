@@ -26,6 +26,7 @@ import { Button } from "../ui/button";
 import {
   isPhoneStepDismissed,
   machineConnect,
+  machineDeregisteredNote,
   machineFacts,
   machineNextStep,
   machineNextStepTitle,
@@ -325,6 +326,10 @@ export function MachineNextStepHead({
   const title = machineNextStepTitle(step);
   if (title === null || !isPendingMachineStep(step)) return null;
   const cannotAct = (step.kind === "sign-in" || step.kind === "turn-on") && !step.canAct;
+  const deregistered =
+    step.kind === "sign-in" || step.kind === "turn-on"
+      ? machineDeregisteredNote(setup.connect)
+      : null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-4">
       <span className="text-2xs font-semibold tracking-wide text-primary uppercase">
@@ -354,6 +359,11 @@ export function MachineNextStepHead({
           {step.kind === "sign-in" ? tx("Sign in") : setup.busy ? tx("Turning on…") : tx("Turn on")}
         </Button>
       )}
+      {deregistered ? (
+        <p className="w-full text-xs text-muted-foreground" data-machine-deregistered-elsewhere>
+          {tx(deregistered)}
+        </p>
+      ) : null}
     </div>
   );
 }

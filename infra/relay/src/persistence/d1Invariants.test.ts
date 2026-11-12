@@ -1,3 +1,4 @@
+import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -8,6 +9,7 @@ import { sql } from "drizzle-orm";
 import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayDb from "../db.ts";
+import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import {
@@ -28,6 +30,7 @@ const layer = () => {
   return Layer.mergeAll(
     ManagedEndpointAllocations.layer,
     EnvironmentLinks.layer,
+    EnvironmentCredentials.layer.pipe(Layer.provide(NodeCryptoLayer.layer)),
     DpopProofs.layer,
     AccountDeletion.layerAccountRecords,
   ).pipe(Layer.provideMerge(dbLayer));
@@ -249,6 +252,38 @@ describe("relay persistence on SQLite (D1)", () => {
       yield* insertCredential("cred-2");
       expect(yield* revoke("user-2")).toBe(false);
       expect(yield* activeCredentialIds).toEqual(["cred-2", "cred-other-key"]);
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("tells a deregistered machine's credential from an unknown or replaced one", () =>
+    Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
+      yield* insertLink({ userId: "user-1" });
+      const key = { environmentId: "env-1", environmentPublicKey: "key-1" };
+      const replaced = yield* credentials.create(key);
+      const current = yield* credentials.create(key);
+
+      expect(Option.isSome(yield* credentials.authenticate(current))).toBe(true);
+      // Refused, but the machine is still linked: nothing says "revoked".
+      expect(Option.isNone(yield* credentials.authenticate(replaced))).toBe(true);
+      expect(yield* credentials.linkRevoked(replaced)).toBe(false);
+      expect(yield* credentials.linkRevoked(current)).toBe(false);
+      expect(yield* credentials.linkRevoked("studioenv_never_issued")).toBe(false);
+
+      expect(yield* links.revokeForUser({ userId: "user-1", ...key })).toBe(true);
+      expect(Option.isNone(yield* credentials.authenticate(current))).toBe(true);
+      expect(yield* credentials.linkRevoked(current)).toBe(true);
+      expect(yield* credentials.linkRevoked("studioenv_never_issued")).toBe(false);
+
+      // Linked again under the same key: no longer revoked.
+      yield* insertLink({ userId: "user-2" });
+      expect(yield* credentials.linkRevoked(current)).toBe(false);
+
+      // A deleted account leaves no link row at all, only the credential: also gone for good.
+      const db = yield* RelayDb.RelayDb;
+      yield* db.delete(relayEnvironmentLinks);
+      expect(yield* credentials.linkRevoked(current)).toBe(true);
     }).pipe(Effect.provide(layer())),
   );
 

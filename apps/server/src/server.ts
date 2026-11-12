@@ -189,6 +189,7 @@ import {
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as LocalCliCredential from "./auth/LocalCliCredential.ts";
 import * as CloudHttp from "./cloud/http.ts";
+import * as ConnectLinkWatch from "./cloud/ConnectLinkWatch.ts";
 import * as ConnectPhoneRevocation from "./cloud/ConnectPhoneRevocation.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
@@ -1551,6 +1552,8 @@ const layerMakeServer = Layer.unwrap(
       layerCloudDesiredLinkReconcile,
       // Ends sessions of Connect phones removed while this computer was offline.
       ConnectPhoneRevocation.layerStartupSync,
+      // Forgets the link of a machine its owner deregistered from another device.
+      ConnectLinkWatch.layerWatch,
       HeapSnapshot.layer,
     );
 

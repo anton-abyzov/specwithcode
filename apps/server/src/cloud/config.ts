@@ -24,6 +24,12 @@ export const CLOUD_ENDPOINT_CONFIRMED_ORIGIN = "cloud-endpoint-confirmed-origin"
 export const CLOUD_LINKED_USER_ID = "cloud-linked-user-id";
 /** This environment's public SpecWithCode Connect origin (https://<managed host>), for fleet invitations. */
 export const CLOUD_ENDPOINT_PUBLIC_ORIGIN = "cloud-endpoint-public-origin";
+/**
+ * When the relay told this machine its link was gone: the owner deregistered
+ * it from another device. Kept after the local link is forgotten, so Settings
+ * can say why, and removed by the next link.
+ */
+export const CLOUD_LINK_REVOKED_ELSEWHERE_AT = "cloud-link-revoked-elsewhere-at";
 export const RELAY_URL_SECRET = "cloud-relay-url";
 export const RELAY_ISSUER_SECRET = "cloud-relay-issuer";
 export const RELAY_ENVIRONMENT_CREDENTIAL_SECRET = "cloud-relay-environment-credential";

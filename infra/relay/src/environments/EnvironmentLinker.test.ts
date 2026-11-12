@@ -150,6 +150,7 @@ function layerTest(input?: {
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
           create: () => Effect.succeed("studioenv_credential_secret"),
           authenticate: () => Effect.succeedNone,
+          linkRevoked: () => Effect.succeed(false),
           revokeForEnvironmentPublicKey: () => Effect.succeed(false),
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
