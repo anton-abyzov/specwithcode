@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { Tool } from "effect/ai";
 
 import {
   STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -12,6 +13,7 @@ import {
   ScheduleTaskTool,
   ThreadUpdateTool,
 } from "../mcp/toolkits/orchestrator/tools.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 
 describe("SpecWithCode orchestration provider instructions", () => {
   it("distinguishes delegated subagents from ordinary top-level threads", () => {
@@ -59,7 +61,8 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // The Chrome line (about 35 tokens) outranks a skill that names another browser.
     // The model line (about 30 tokens) stops agents delegating to change model.
     // The access sentence (about 40 tokens) asks before driving apps or devices.
-    // The needs sentence (about 35 tokens) sends simulator and Xcode work to a Mac.
+    // The needs sentence (about 45 tokens) sends simulator and Xcode work to a Mac
+    // and points Linux and Windows callers at the build steps in `needs`.
     // The title line (about 35 tokens) keeps a thread's name about what it owns.
     assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_050);
   });
@@ -78,6 +81,28 @@ describe("SpecWithCode orchestration provider instructions", () => {
   it("tells coordinators to state that simulator and Xcode work needs a Mac", () => {
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "For iOS Simulator, Xcode build");
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, '`["ios_simulator"]`');
+  });
+
+  it("tells an agent on Linux or Windows how to get a Mac build done", () => {
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "from Linux or Windows, push the branch first (see `needs`)",
+    );
+    const launch = Tool.getJsonSchema(ProjectToolkit.tools.studio_thread_launch) as {
+      readonly properties: {
+        readonly needs: { readonly anyOf: ReadonlyArray<{ readonly description?: string }> };
+      };
+    };
+    const needs = launch.properties.needs.anyOf.map((branch) => branch.description ?? "").join();
+    assert.include(needs, "For a Mac build from Linux or Windows: commit and push the branch");
+    assert.include(needs, "studio_project_add_to_machine");
+    assert.include(
+      needs,
+      'workspaceStrategy {type:"worktree",baseRef:"<branch>",startFromOrigin:true}',
+    );
+    assert.include(needs, "studio_file_transfer");
+    assert.include(needs, "where the built app or log is");
+    assert.include(needs, "an Xcode build will fail there");
   });
 
   it("asks for app and device access before computer or device use", () => {

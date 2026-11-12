@@ -1,3 +1,5 @@
+import { OrchestratorMcpMachinePlatform } from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -126,6 +128,84 @@ describe("chooseForNeeds with the usual machines first", () => {
   });
 });
 
+describe("chooseForNeeds for Mac work and full Xcode", () => {
+  const withXcode = { os: "darwin", arch: "arm64", xcodeBuild: true } as const;
+  const toolsOnly = { os: "darwin", arch: "arm64", xcodeBuild: false } as const;
+  const olderMac = { os: "darwin", arch: "x64" } as const;
+
+  it("puts a Mac with full Xcode first, then one that has not said, then one without", () => {
+    const placed = chooseForNeeds({
+      needs: ["macos"],
+      preferred: [
+        machine("here", linux),
+        machine("tools only", toolsOnly),
+        machine("older", olderMac),
+        machine("studio mac", withXcode),
+        machine("unknown"),
+      ],
+    });
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    expect(placed.chosen.map((choice) => [choice.candidate.key, choice.fit])).toEqual([
+      ["studio mac", "yes"],
+      ["older", "yes"],
+      ["tools only", "yes"],
+      ["unknown", "unknown"],
+    ]);
+    expect(placed.chosen[0]!.note).not.toContain("no full Xcode");
+    expect(placed.chosen[2]!.note).toContain(
+      "This Mac has no full Xcode; an Xcode build will fail there.",
+    );
+    expect(placed.skipped).toEqual([{ machine: "here", reason: expect.stringContaining("Linux") }]);
+  });
+
+  it("still uses a Mac without full Xcode when it is the only Mac, and never a non-Mac", () => {
+    const placed = chooseForNeeds({
+      needs: ["macos"],
+      preferred: [machine("here", linux), machine("pc", windows), machine("laptop", toolsOnly)],
+    });
+    expect(placed.ok && placed.chosen.map((choice) => choice.candidate.key)).toEqual(["laptop"]);
+    const named = chooseForNeeds({
+      needs: ["macos"],
+      explicit: machine("laptop", toolsOnly),
+      preferred: [],
+    });
+    expect(named.ok && named.chosen[0]!.note).toContain("no full Xcode");
+    const none = chooseForNeeds({
+      needs: ["macos"],
+      preferred: [machine("here", linux), machine("pc", windows)],
+    });
+    expect(none.ok).toBe(false);
+  });
+
+  it("looks past usual Macs without full Xcode for a connected one that has it", () => {
+    const placed = chooseForNeeds({
+      needs: ["macos"],
+      preferred: [machine("laptop", toolsOnly)],
+      fallback: [machine("studio mac", withXcode), machine("pc", windows)],
+    });
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    expect(placed.chosen.map((choice) => choice.candidate.key)).toEqual(["studio mac", "laptop"]);
+    expect(placed.chosen[0]!.note).toContain("none of them reports full Xcode");
+  });
+
+  it("leaves iOS Simulator placement as it was, whatever a Mac says about Xcode builds", () => {
+    const placed = chooseForNeeds({
+      needs: ["ios_simulator"],
+      preferred: [
+        machine("first", { ...mac, xcodeBuild: false }),
+        machine("second", { ...mac, xcodeBuild: true }),
+      ],
+    });
+    expect(placed.ok && placed.chosen.map((choice) => choice.candidate.key)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(placed.ok && placed.chosen[0]!.note).not.toContain("Xcode build will fail");
+  });
+});
+
 describe("machine platform reports", () => {
   it("reads another machine's report leniently", () => {
     expect(readMachinePlatform({})).toBeUndefined();
@@ -133,10 +213,27 @@ describe("machine platform reports", () => {
     expect(
       readMachinePlatform({ platform: { os: "darwin", arch: "arm64", iosSimulators: true } }),
     ).toEqual(mac);
+    expect(
+      readMachinePlatform({ platform: { os: "darwin", arch: "arm64", xcodeBuild: false } }),
+    ).toEqual({ os: "darwin", arch: "arm64", xcodeBuild: false });
+    // An older machine that does not send xcodeBuild still reads, as not said.
+    expect(readMachinePlatform({ platform: { os: "darwin", arch: "arm64" } })).toEqual(
+      macNotYetChecked,
+    );
     // A system this build does not know is unknown, not a "no".
     expect(readMachinePlatform({ platform: { os: "plan9", arch: "riscv" } })).toEqual({
       os: "unknown",
       arch: "other",
+    });
+  });
+
+  it("decodes a report from an older machine that does not send xcodeBuild", () => {
+    const decode = Schema.decodeUnknownSync(OrchestratorMcpMachinePlatform);
+    expect(decode({ os: "darwin", arch: "arm64", iosSimulators: true })).toEqual(mac);
+    expect(decode({ os: "darwin", arch: "arm64", xcodeBuild: false })).toEqual({
+      os: "darwin",
+      arch: "arm64",
+      xcodeBuild: false,
     });
   });
 
@@ -145,6 +242,15 @@ describe("machine platform reports", () => {
     expect(localMachinePlatform({ os: "darwin", arch: "arm64" }, undefined)).toEqual(
       macNotYetChecked,
     );
+    expect(localMachinePlatform(linux, false, false)).toEqual({
+      ...linux,
+      iosSimulators: false,
+      xcodeBuild: false,
+    });
+    expect(localMachinePlatform({ os: "darwin", arch: "arm64" }, true, true)).toEqual({
+      ...mac,
+      xcodeBuild: true,
+    });
   });
 });
 

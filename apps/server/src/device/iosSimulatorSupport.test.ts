@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { IOS_SIMULATOR_RECHECK_MS, makeIosSimulatorProbe } from "./iosSimulatorSupport.ts";
+import {
+  IOS_SIMULATOR_RECHECK_MS,
+  UNKNOWN_RECHECK_MS,
+  makeIosSimulatorProbe,
+} from "./iosSimulatorSupport.ts";
 
 const deferred = () => {
   let resolve!: (value: boolean) => void;
@@ -54,5 +58,30 @@ describe("makeIosSimulatorProbe", () => {
     expect(checks).toBe(2);
     await settled();
     expect(probe.current()).toBe(true);
+  });
+
+  it("keeps a check that could not tell as unknown and checks it again soon", async () => {
+    let checks = 0;
+    let now = 0;
+    const probe = makeIosSimulatorProbe({
+      check: () => {
+        checks++;
+        return Promise.resolve(checks === 1 ? undefined : true);
+      },
+      now: () => now,
+    });
+    probe.current();
+    await settled();
+    expect(probe.current()).toBeUndefined();
+    expect(checks).toBe(1);
+    now += UNKNOWN_RECHECK_MS - 1;
+    expect(probe.current()).toBeUndefined();
+    expect(checks).toBe(1);
+    now += 1;
+    expect(probe.current()).toBeUndefined();
+    expect(checks).toBe(2);
+    await settled();
+    expect(probe.current()).toBe(true);
+    expect(UNKNOWN_RECHECK_MS).toBeLessThan(IOS_SIMULATOR_RECHECK_MS);
   });
 });
