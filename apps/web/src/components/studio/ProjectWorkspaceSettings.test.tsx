@@ -206,6 +206,11 @@ vi.mock("../settings/ProjectOverrides", () => ({
 }));
 vi.mock("../settings/ProjectDefaultsSettings", () => ({
   UseWorktreesSetting: () => <p data-use-worktrees="">Use worktrees</p>,
+  WithProjectWorktreesSwitch: ({
+    children,
+  }: {
+    children: (state: { on: boolean | null; set: (on: boolean) => void }) => React.ReactNode;
+  }) => children({ on: true, set: () => {} }),
 }));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
 vi.mock("./ProjectFolderChange", () => ({

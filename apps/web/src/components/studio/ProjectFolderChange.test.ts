@@ -6,8 +6,8 @@ import {
   nestedProjectsSummary,
   planningSummary,
   refusalSummary,
+  repositoriesFoundLine,
   workspaceRecommendationLine,
-  worktreeSourceSummary,
 } from "./ProjectFolderChange";
 
 describe("folder check summaries", () => {
@@ -138,7 +138,7 @@ describe("folder check summaries", () => {
     );
   });
 
-  it("says a non-repository umbrella needs a repository for new worktrees", () => {
+  it("says how many repositories threads can use in the new folder", () => {
     const layout = {
       kind: "nested" as const,
       rootIsRepository: false,
@@ -146,10 +146,11 @@ describe("folder check summaries", () => {
       repositoryCount: 1,
       truncated: false,
     };
-    expect(worktreeSourceSummary({ sameRepository: false, layout })).toBe(
-      "This folder is not a Git repository itself, so new worktree threads and routines need a repository chosen for them.",
+    expect(repositoriesFoundLine(layout)).toBe("1 repository found. Threads can use any of them.");
+    expect(repositoriesFoundLine({ ...layout, repositoryCount: 7, truncated: true })).toBe(
+      "7 or more repositories found. Threads can use any of them.",
     );
-    expect(worktreeSourceSummary({ sameRepository: false })).toBeNull();
+    expect(repositoriesFoundLine({ ...layout, repositories: [], repositoryCount: 0 })).toBeNull();
   });
 
   it("recommends a workspace for the new folder without choosing it", () => {
@@ -163,9 +164,9 @@ describe("folder check summaries", () => {
         repositoryCount: 1,
         separateClones: true,
       }),
-    ).toMatchObject({
-      recommended: "local",
-      text: expect.stringMatching(/^Recommended for this folder: Use worktrees off\./),
+    ).toEqual({
+      recommended: "worktree",
+      text: "Recommended for this folder: on. Each thread gets its own folder and a worktree of only the repositories it changes.",
     });
     expect(
       workspaceRecommendationLine({ ...base, kind: "single", rootIsRepository: true }),

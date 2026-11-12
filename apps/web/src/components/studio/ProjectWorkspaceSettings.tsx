@@ -67,7 +67,10 @@ import { RecommendedModelProviders } from "../settings/RecommendedModelProviders
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
 import { SettingsSection } from "../settings/settingsLayout";
 import { ProjectOverrides } from "../settings/ProjectOverrides";
-import { UseWorktreesSetting } from "../settings/ProjectDefaultsSettings";
+import {
+  UseWorktreesSetting,
+  WithProjectWorktreesSwitch,
+} from "../settings/ProjectDefaultsSettings";
 import { ProjectSettingsSearch } from "./ProjectSettingsSearch";
 import {
   findProjectSettingsAnchor,
@@ -488,14 +491,24 @@ export function ProjectWorkspaceSettings({
                   </div>
                   {/* The folder decides where every thread runs, so it sits right under the name. */}
                   {snapshot.settings.kind !== "personal" ? (
-                    <ProjectFolderChange
-                      project={project}
-                      disabled={disabled}
-                      blockedReason={
-                        dirty ? "Save or discard your unsaved changes to change the folder." : null
-                      }
-                      onChanged={onSaved}
-                    />
+                    <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
+                      <WithProjectWorktreesSwitch>
+                        {(worktrees) => (
+                          <ProjectFolderChange
+                            project={project}
+                            disabled={disabled}
+                            blockedReason={
+                              dirty
+                                ? "Save or discard your unsaved changes to change the folder."
+                                : null
+                            }
+                            onChanged={onSaved}
+                            useWorktrees={worktrees.on}
+                            onUseWorktreesChange={worktrees.set}
+                          />
+                        )}
+                      </WithProjectWorktreesSwitch>
+                    </SettingsScopeProvider>
                   ) : null}
                   {/* Where threads run, next to the folder; the same setting as Settings > Projects. */}
                   {snapshot.settings.kind !== "personal" ? (
@@ -505,7 +518,7 @@ export function ProjectWorkspaceSettings({
                         title="Workspace"
                         className="pt-3"
                       >
-                        <UseWorktreesSetting />
+                        <UseWorktreesSetting onOpenRepositories={() => setTab("environment")} />
                       </SettingsSection>
                     </SettingsScopeProvider>
                   ) : null}

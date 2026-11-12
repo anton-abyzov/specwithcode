@@ -15,7 +15,10 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type { ProjectFolderCheck } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { displayFolder } from "../../lib/displayFolder";
-import { workspaceGuidance } from "../../lib/folderLayoutGuidance";
+import {
+  worktreesSettingRecommendation,
+  worktreesSwitchDiffers,
+} from "../../lib/folderLayoutGuidance";
 import { readLocalApi } from "../../localApi";
 import { projectEnvironment } from "../../state/projects";
 import { threadEnvironment } from "../../state/threads";
@@ -149,20 +152,15 @@ export function emptyTargetSummary(
 }
 
 /**
- * For a folder holding nested repositories that is not the current repository:
- * a worktree launch without a chosen repository runs git in the project folder
- * itself (ThreadLaunchService), so it never holds the nested repositories' code.
- * Exported for tests.
+ * What threads can use in the new folder, as Environment > Repositories lists
+ * it after the change. Exported for tests.
  */
-export function worktreeSourceSummary(
-  check: Pick<ProjectFolderCheck, "layout" | "sameRepository">,
+export function repositoriesFoundLine(
+  layout: NonNullable<ProjectFolderCheck["layout"]>,
 ): string | null {
-  const layout = check.layout;
-  if (layout === undefined || check.sameRepository) return null;
-  if (layout.kind !== "umbrella" && layout.kind !== "nested") return null;
-  return layout.rootIsRepository
-    ? "New worktree threads and routines are cut from this folder's own repository, so they do not contain the nested repositories' code unless a repository is chosen for them."
-    : "This folder is not a Git repository itself, so new worktree threads and routines need a repository chosen for them.";
+  const count = layout.repositoryCount;
+  if (count === 0) return null;
+  return `${count}${layout.truncated ? " or more" : ""} ${count === 1 ? "repository" : "repositories"} found. Threads can use any of them.`;
 }
 
 /**
@@ -172,12 +170,9 @@ export function worktreeSourceSummary(
 export function workspaceRecommendationLine(
   layout: NonNullable<ProjectFolderCheck["layout"]>,
 ): { readonly recommended: "local" | "worktree"; readonly text: string } | null {
-  const guidance = workspaceGuidance(layout);
-  if (guidance === null) return null;
-  return {
-    recommended: guidance.recommended,
-    text: `Recommended for this folder: Use worktrees ${guidance.recommended === "worktree" ? "on" : "off"}. ${guidance.detail}`,
-  };
+  const recommendation = worktreesSettingRecommendation(layout);
+  if (recommendation === null) return null;
+  return { recommended: recommendation.on ? "worktree" : "local", text: recommendation.text };
 }
 
 /** The line shown once the folder changed, built from the check the change was applied with. */
@@ -227,13 +222,20 @@ export function ProjectFolderChange({
   disabled,
   blockedReason = null,
   onChanged,
+  useWorktrees = null,
+  onUseWorktreesChange,
 }: {
   project: EnvironmentProject;
   disabled: boolean;
   /** Shown under the controls, which stay disabled, while set (unsaved edits elsewhere). */
   blockedReason?: string | null;
   onChanged: () => void;
+  /** The project's Use worktrees switch, when the host knows it. */
+  useWorktrees?: boolean | null;
+  /** Flips the switch; called only when the person ticked the box and the folder changed. */
+  onUseWorktreesChange?: ((on: boolean) => void) | undefined;
 }) {
+  const [alsoSwitch, setAlsoSwitch] = useState(false);
   const [folder, setFolder] = useState("");
   const [check, setCheck] = useState<ProjectFolderCheck | null>(null);
   const [confirmRepository, setConfirmRepository] = useState(false);
@@ -275,6 +277,8 @@ export function ProjectFolderChange({
     setCheck(result.value);
     setConfirmRepository(false);
     setConfirmPlanning(false);
+    // The switch never changes unless the box is ticked for this check.
+    setAlsoSwitch(false);
   }
 
   async function choose() {
@@ -319,7 +323,13 @@ export function ProjectFolderChange({
       failed(result, "The folder did not change. Check it again and retry.");
       return;
     }
-    setDone(changedSummary(applied));
+    if (alsoSwitch && switchDiffers !== null) onUseWorktreesChange?.(switchDiffers.recommendedOn);
+    setDone(
+      changedSummary(applied) +
+        (alsoSwitch && switchDiffers !== null
+          ? ` Use worktrees is now ${switchDiffers.recommendedOn ? "on" : "off"}.`
+          : ""),
+    );
     setCheck(null);
     setFolder("");
     onChanged();
@@ -329,8 +339,12 @@ export function ProjectFolderChange({
   const refusal = check === null ? null : refusalSummary(check);
   const nested = check === null ? null : nestedProjectsSummary(check);
   const emptyTarget = check === null ? null : emptyTargetSummary(check);
-  const worktreeSource = check === null ? null : worktreeSourceSummary(check);
+  const repositoriesFound = check?.layout ? repositoriesFoundLine(check.layout) : null;
   const workspaceAdvice = check?.layout ? workspaceRecommendationLine(check.layout) : null;
+  const switchDiffers =
+    check?.layout && useWorktrees !== null && onUseWorktreesChange !== undefined
+      ? worktreesSwitchDiffers(check.layout, useWorktrees)
+      : null;
   const blocked =
     check === null ||
     refusal !== null ||
@@ -459,12 +473,32 @@ export function ProjectFolderChange({
                     </span>
                   </CheckLine>
                 ) : null}
-                {worktreeSource ? (
-                  <CheckLine tone="warn">
-                    <span data-folder-worktree-source>{worktreeSource}</span>
+                {repositoriesFound ? (
+                  <CheckLine tone="info">
+                    <span data-folder-repositories-found>{repositoriesFound}</span>
                   </CheckLine>
                 ) : null}
-                {workspaceAdvice ? (
+                {switchDiffers ? (
+                  <>
+                    <CheckLine tone="info">
+                      <span data-folder-switch-differs>
+                        {switchDiffers.text}
+                        {workspaceAdvice && switchDiffers.recommendedOn
+                          ? ` ${workspaceAdvice.text.replace(/^Recommended for this folder: on\.\s*/u, "")}`
+                          : ""}
+                      </span>
+                    </CheckLine>
+                    <label className="project-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={alsoSwitch}
+                        disabled={locked}
+                        onChange={(e) => setAlsoSwitch(e.target.checked)}
+                      />
+                      {switchDiffers.offer}
+                    </label>
+                  </>
+                ) : workspaceAdvice ? (
                   <CheckLine tone="info">
                     <span data-folder-workspace-recommendation={workspaceAdvice.recommended}>
                       {workspaceAdvice.text}
@@ -510,12 +544,6 @@ export function ProjectFolderChange({
                       Stop {plural(check.activeThreads.length, "run")}
                     </button>
                   </div>
-                ) : null}
-                {check.specweaveWorkspace ? (
-                  <CheckLine tone="info">
-                    This folder has a SpecWeave workspace. After the move, use Import SpecWeave
-                    workspace under Environment to bring in its plan.
-                  </CheckLine>
                 ) : null}
               </>
             )}

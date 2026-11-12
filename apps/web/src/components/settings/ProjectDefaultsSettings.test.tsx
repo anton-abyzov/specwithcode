@@ -317,7 +317,7 @@ describe("Use worktrees recommendation", () => {
   });
   const text = () => JSON.stringify(renderer!.toJSON());
 
-  it("recommends off for an umbrella without changing the switch", () => {
+  it("recommends on for an umbrella and offers Use recommended without changing the switch", () => {
     state.scope = "project";
     state.folderCheck = layout({
       kind: "umbrella",
@@ -327,24 +327,34 @@ describe("Use worktrees recommendation", () => {
     });
     const toggle = renderUseWorktrees();
     expect(state.checkedProject).toMatchObject({ id: "project", environmentId: "worker" });
-    expect(text()).toContain("Recommended here: off.");
-    expect(text()).toContain("an umbrella holding 2 repositories");
+    expect(text()).toContain("Worktrees are cut from the 2 repositories in this folder.");
+    expect(text()).toContain(
+      "Recommended for this folder: on. Each thread gets its own folder and a worktree of only the repositories it changes.",
+    );
     expect(toggle.props.checked).toBe(false);
     expect(state.update).not.toHaveBeenCalled();
+    // The switch differs from the recommendation: one button, and it is the person's click.
+    const useRecommended = renderer!.root.findAll(
+      (node) => node.props["data-use-recommended"] !== undefined,
+    );
+    expect(useRecommended).toHaveLength(1);
+    act(() => useRecommended[0]!.props.onClick());
+    expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "worktree" });
   });
 
   it("recommends on for one Git repository", () => {
     state.scope = "project";
     state.folderCheck = layout({});
     renderUseWorktrees();
-    expect(text()).toContain("Recommended here: on");
+    expect(text()).toContain("Recommended for this folder: on.");
+    expect(text()).toContain("Worktrees are cut from this folder's repository.");
     expect(text()).toContain("never share a checkout");
   });
 
   it("says nothing before the folder is checked", () => {
     state.scope = "project";
     renderUseWorktrees();
-    expect(text()).not.toContain("Recommended here");
+    expect(text()).not.toContain("Recommended for this folder");
   });
 });
 

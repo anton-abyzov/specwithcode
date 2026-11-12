@@ -5,7 +5,9 @@ import {
   holdsSeparateClones,
   recommendedWorkspace,
   workspaceGuidance,
+  worktreesCutFromLayout,
   worktreesSettingRecommendation,
+  worktreesSwitchDiffers,
 } from "./folderLayoutGuidance";
 
 const layout = (overrides: Partial<FolderLayout> = {}): FolderLayout => ({
@@ -32,17 +34,17 @@ const services = layout({
 });
 
 describe("workspace recommendation by folder layout", () => {
-  it("recommends the current checkout for an umbrella, also when its root is a repository", () => {
-    expect(recommendedWorkspace(umbrella)).toBe("local");
-    expect(recommendedWorkspace({ ...umbrella, rootIsRepository: false })).toBe("local");
-    expect(workspaceGuidance(umbrella)?.detail).toContain("an umbrella holding 3 repositories");
+  it("recommends worktrees for an umbrella, also when its root is no repository", () => {
+    expect(recommendedWorkspace(umbrella)).toBe("worktree");
+    expect(recommendedWorkspace({ ...umbrella, rootIsRepository: false })).toBe("worktree");
+    expect(workspaceGuidance(umbrella)?.detail).toBe(
+      "This folder holds 3 repositories. Each thread gets its own folder and a worktree of only the repositories it changes.",
+    );
   });
 
-  it("recommends the current checkout for sibling service clones", () => {
-    expect(recommendedWorkspace(services)).toBe("local");
-    expect(workspaceGuidance(services)?.detail).toContain(
-      "a multi-repository folder holding 2 repositories",
-    );
+  it("recommends worktrees for sibling service clones", () => {
+    expect(recommendedWorkspace(services)).toBe("worktree");
+    expect(workspaceGuidance(services)?.title).toBe("Several repositories: worktrees recommended");
   });
 
   it("recommends worktrees for one Git repository, submodules included", () => {
@@ -81,22 +83,48 @@ describe("workspace recommendation by folder layout", () => {
     expect(recommendedWorkspace(stray)).toBe("worktree");
   });
 
-  it("explains a non-Git umbrella without talking about worktrees of the folder", () => {
-    const detail = workspaceGuidance({ ...umbrella, rootIsRepository: false })?.detail ?? "";
-    expect(detail).toContain("not a Git repository itself");
-    expect(detail).not.toContain("A worktree of the folder");
-  });
-
   it("recommends nothing when the walk stopped before finding any clone", () => {
     expect(recommendedWorkspace(layout({ truncated: true }))).toBeNull();
-    expect(recommendedWorkspace({ ...umbrella, truncated: true })).toBe("local");
+    expect(recommendedWorkspace({ ...umbrella, truncated: true })).toBe("worktree");
   });
 
-  it("words the settings line as on or off", () => {
-    expect(worktreesSettingRecommendation(umbrella)).toMatchObject({ on: false });
-    expect(worktreesSettingRecommendation(layout())).toEqual({ on: true, detail: null });
-    expect(worktreesSettingRecommendation({ ...umbrella, truncated: true })?.detail).toContain(
-      "3 or more repositories",
+  it("words the settings line, with what on means in a folder of clones", () => {
+    expect(worktreesSettingRecommendation(umbrella)).toEqual({
+      on: true,
+      detail: "Each thread gets its own folder and a worktree of only the repositories it changes.",
+      text: "Recommended for this folder: on. Each thread gets its own folder and a worktree of only the repositories it changes.",
+    });
+    expect(worktreesSettingRecommendation(layout())).toEqual({
+      on: true,
+      detail: null,
+      text: "Recommended for this folder: on.",
+    });
+    expect(
+      worktreesSettingRecommendation(layout({ kind: "plain", rootIsRepository: false })),
+    ).toBeNull();
+  });
+
+  it("says what the switch acts on", () => {
+    expect(worktreesCutFromLayout(umbrella)).toBe(
+      "Worktrees are cut from the 3 repositories in this folder.",
     );
+    expect(worktreesCutFromLayout(layout())).toBe(
+      "Worktrees are cut from this folder's repository.",
+    );
+    expect(worktreesCutFromLayout(layout({ kind: "plain", rootIsRepository: false }))).toBe(
+      "This folder holds no Git repository, so threads work in the folder.",
+    );
+  });
+
+  it("names a switch that differs from the folder's recommendation, and nothing when they agree", () => {
+    expect(worktreesSwitchDiffers(umbrella, false)).toEqual({
+      recommendedOn: true,
+      text: "Use worktrees is off. Recommended for this folder: on.",
+      offer: "Also turn Use worktrees on",
+    });
+    expect(worktreesSwitchDiffers(umbrella, true)).toBeNull();
+    expect(
+      worktreesSwitchDiffers(layout({ kind: "plain", rootIsRepository: false }), true),
+    ).toBeNull();
   });
 });
