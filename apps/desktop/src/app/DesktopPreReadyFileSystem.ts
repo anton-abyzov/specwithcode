@@ -60,6 +60,16 @@ export const make = FileSystem.makeNoop({
     syncFs("writeFileString", path, () =>
       NodeFS.writeFileSync(path, data, { flag: options?.flag ?? "w" }),
     ),
+  readLink: (path) => syncFs("readLink", path, () => NodeFS.readlinkSync(path)),
+  rename: (oldPath, newPath) =>
+    syncFs("rename", oldPath, () => {
+      NodeFS.renameSync(oldPath, newPath);
+    }),
+  // A junction needs no privilege on Windows; the type is ignored elsewhere.
+  symlink: (fromPath, toPath) =>
+    syncFs("symlink", toPath, () => {
+      NodeFS.symlinkSync(fromPath, toPath, "junction");
+    }),
 });
 
 export const layer = Layer.succeed(FileSystem.FileSystem, make);

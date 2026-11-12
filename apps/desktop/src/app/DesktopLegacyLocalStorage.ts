@@ -13,7 +13,7 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 /**
  * Carries the renderer's localStorage (prompt stash, unsent drafts, layout,
  * theme) over from the V1 desktop profile, which V2 replaced with its own
- * `studio-v2` profile. The V1 profile is only read, never opened by Chromium,
+ * profile (`studio-v2`, since renamed `SpecWithCode`). The V1 profile is only read, never opened by Chromium,
  * so this works while V1 is still running.
  *
  * `load` runs before the window opens; the preload takes the items once,

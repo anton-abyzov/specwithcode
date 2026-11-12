@@ -154,7 +154,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/studio-v2");
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/SpecWithCode");
       }),
       { legacyPathExists: true },
     ),
