@@ -4244,4 +4244,14 @@ export const zh: PhraseCatalog = {
   "By {id}": "操作者：{id}",
   "Not finished": "未完成",
   "Setup can be closed once the import finishes.": "导入完成后即可关闭设置。",
+  "Add a folder on this machine": "添加这台电脑上的文件夹",
+  "Type a path, browse or drop a folder": "输入路径、浏览或拖入文件夹",
+  "Starting from nothing?": "从零开始？",
+  "New empty project or clone a repository": "新建空项目或克隆仓库",
+  "Add {folder}": "添加 {folder}",
+  "That drop held no folder. Type or paste the path instead.":
+    "拖入的内容中没有文件夹。请输入或粘贴路径。",
+  "Used the folder that holds the dropped file.": "已使用拖入文件所在的文件夹。",
+  "This machine keeps its folders inside WSL. Type or paste the path instead.":
+    "这台电脑的文件夹位于 WSL 中。请输入或粘贴路径。",
 };

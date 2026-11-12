@@ -4426,4 +4426,14 @@ export const pt: PhraseCatalog = {
   "Not finished": "Não concluída",
   "Setup can be closed once the import finishes.":
     "A configuração pode ser fechada quando a importação terminar.",
+  "Add a folder on this machine": "Adicionar uma pasta deste computador",
+  "Type a path, browse or drop a folder": "Digite um caminho, procure ou solte uma pasta",
+  "Starting from nothing?": "Começando do zero?",
+  "New empty project or clone a repository": "Novo projeto vazio ou clonar um repositório",
+  "Add {folder}": "Adicionar {folder}",
+  "That drop held no folder. Type or paste the path instead.":
+    "O que foi solto não tinha nenhuma pasta. Digite ou cole o caminho.",
+  "Used the folder that holds the dropped file.": "Foi usada a pasta que contém o arquivo solto.",
+  "This machine keeps its folders inside WSL. Type or paste the path instead.":
+    "Este computador mantém suas pastas dentro do WSL. Digite ou cole o caminho.",
 };

@@ -51,6 +51,8 @@ const state = vi.hoisted(() => ({
 }));
 
 // The machine choice and its invitation have their own tests.
+vi.mock("./ProjectsFolderChoice", () => ({ ProjectsFolderChoice: () => null }));
+vi.mock("../../hooks/useProjectFolderChoice", () => ({ rememberRecentFolder: () => {} }));
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNickname: (_id: string, label?: string | null) => label ?? "",
   useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,

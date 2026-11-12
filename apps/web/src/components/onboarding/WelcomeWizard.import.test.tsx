@@ -37,6 +37,26 @@ const state = vi.hoisted(() => ({
   refreshScan: vi.fn(),
 }));
 
+const folderChoice = vi.hoisted(() => ({
+  props: null as null | {
+    environmentId: string;
+    defaultOpen: boolean;
+    onFolderChange: (folder: string | null) => void;
+    onOtherWays: () => void;
+  },
+  remember: vi.fn(),
+  openPalette: vi.fn(),
+}));
+vi.mock("./ProjectsFolderChoice", () => ({
+  ProjectsFolderChoice: (props: NonNullable<typeof folderChoice.props>) => {
+    folderChoice.props = props;
+    return null;
+  },
+}));
+vi.mock("../../hooks/useProjectFolderChoice", () => ({
+  rememberRecentFolder: folderChoice.remember,
+}));
+vi.mock("../../commandPaletteBus", () => ({ openCommandPalette: folderChoice.openPalette }));
 // The machine choice and its invitation have their own tests.
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNickname: (_id: string, label?: string | null) => label ?? "",
@@ -278,6 +298,9 @@ beforeEach(() => {
   state.onDone.mockReset();
   state.scan.mockReset();
   state.refreshScan.mockReset();
+  folderChoice.props = null;
+  folderChoice.remember.mockReset();
+  folderChoice.openPalette.mockReset();
 });
 
 afterEach(async () => {
@@ -420,4 +443,53 @@ it("completes accepted imports when permission is revoked after the final server
   expect(state.importThreads).toHaveBeenCalledOnce();
   expect(state.completeOnboarding).toHaveBeenCalledOnce();
   expect(state.onDone).toHaveBeenCalledOnce();
+});
+
+it("adds a folder on this machine when setup found nothing to import", async () => {
+  state.candidates = [];
+  state.importThreads.mockResolvedValue(AsyncResult.success({ importedCount: 0, skippedCount: 0 }));
+  await mountImport();
+  expect(folderChoice.props).toMatchObject({ environmentId: primaryId, defaultOpen: true });
+  expect(button("Import 0 projects").props.disabled).toBe(true);
+
+  await act(async () => folderChoice.props!.onFolderChange("/work/site"));
+  await click("Add site");
+  expect(state.createProject).toHaveBeenCalledOnce();
+  expect(state.createProject.mock.calls[0]![0]).toMatchObject({
+    environmentId: primaryId,
+    input: { workspaceRoot: "/work/site", title: "site", createWorkspaceRootIfMissing: false },
+  });
+  expect(folderChoice.remember).toHaveBeenCalledExactlyOnceWith(primaryId, "/work/site");
+  expect(state.onDone).toHaveBeenCalledOnce();
+});
+
+it("adds the chosen folder together with the found projects, and drops it when the list closes", async () => {
+  await mountImport();
+  expect(folderChoice.props!.defaultOpen).toBe(false);
+  await act(async () => folderChoice.props!.onFolderChange("C:\\work\\site\\"));
+  expect(button("Import 3 projects").props.disabled).not.toBe(true);
+  // A folder setup already found is not added twice, however its path ends.
+  await act(async () => folderChoice.props!.onFolderChange("/projects/first/"));
+  expect(button("Import 2 projects")).toBeDefined();
+  // Choosing a found folder that was unchecked checks it in the list.
+  await click("Select none");
+  await act(async () => folderChoice.props!.onFolderChange("/projects/second"));
+  expect(button("Import 1 project")).toBeDefined();
+  await click("Select all");
+  await act(async () => folderChoice.props!.onFolderChange(null));
+  expect(button("Import 2 projects")).toBeDefined();
+});
+
+it("offers a folder only for the machine the app runs on", async () => {
+  await mountImport(true);
+  expect(folderChoice.props).toBeNull();
+});
+
+it("leaves setup for Add project when starting from nothing", async () => {
+  state.onDone.mockResolvedValue(undefined);
+  await mountImport();
+  await act(async () => folderChoice.props!.onOtherWays());
+  expect(state.completeOnboarding).toHaveBeenCalledOnce();
+  expect(state.createProject).not.toHaveBeenCalled();
+  expect(folderChoice.openPalette).toHaveBeenCalledExactlyOnceWith({ open: "add-project" });
 });

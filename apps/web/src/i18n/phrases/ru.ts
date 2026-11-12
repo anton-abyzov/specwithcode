@@ -4414,4 +4414,15 @@ export const ru: PhraseCatalog = {
   "Not finished": "Не завершено",
   "Setup can be closed once the import finishes.":
     "Настройку можно закрыть, когда импорт завершится.",
+  "Add a folder on this machine": "Добавить папку с этого компьютера",
+  "Type a path, browse or drop a folder": "Введите путь, выберите или перетащите папку",
+  "Starting from nothing?": "Начинаете с нуля?",
+  "New empty project or clone a repository": "Новый пустой проект или клонировать репозиторий",
+  "Add {folder}": "Добавить {folder}",
+  "That drop held no folder. Type or paste the path instead.":
+    "В перетащенном нет папки. Введите или вставьте путь.",
+  "Used the folder that holds the dropped file.":
+    "Использована папка, в которой лежит перетащенный файл.",
+  "This machine keeps its folders inside WSL. Type or paste the path instead.":
+    "Папки этого компьютера находятся внутри WSL. Введите или вставьте путь.",
 };

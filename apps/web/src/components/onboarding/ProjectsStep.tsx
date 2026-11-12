@@ -25,7 +25,7 @@ import {
 import { newProjectId } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, useProjects } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -40,7 +40,22 @@ import { Spinner } from "../ui/spinner";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useT, useTx } from "../../i18n";
+import { openCommandPalette } from "../../commandPaletteBus";
+import { rememberRecentFolder } from "../../hooks/useProjectFolderChoice";
+import { sameFolder } from "../studio/folderBrowser.logic";
+import { ProjectsFolderChoice } from "./ProjectsFolderChoice";
 import { StepShell, WizardStepFooter } from "./WizardFrame";
+
+/** The found project that is the given folder on the given machine, if any. */
+function foundAt<T extends { readonly environmentId: EnvironmentId; readonly path: string }>(
+  candidates: readonly T[],
+  environmentId: EnvironmentId,
+  folder: string,
+): T | undefined {
+  return candidates.find(
+    (candidate) => candidate.environmentId === environmentId && sameFolder(candidate.path, folder),
+  );
+}
 
 export function ImportStep({
   scans,
@@ -124,7 +139,46 @@ export function ImportStep({
     () => selectedPaths ?? new Set(recent.map((candidate) => candidate.key)),
     [selectedPaths, recent],
   );
-  const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
+  const found = candidates.filter((candidate) => selectedKeys.has(candidate.key));
+  // A folder on this machine, chosen by address bar, system dialog or drop, is
+  // added with the found projects. Only the machine the app runs on is offered:
+  // its disks are the ones the system dialog and a drop can name.
+  const primaryEnvironment = usePrimaryEnvironment();
+  const folderEnvironmentId =
+    primaryEnvironment !== null &&
+    scans.some((scan) => scan.environmentId === primaryEnvironment.environmentId)
+      ? primaryEnvironment.environmentId
+      : null;
+  const [folder, setFolder] = useState<string | null>(null);
+  const folderCandidate = useMemo(() => {
+    if (folder === null || folderEnvironmentId === null) return null;
+    const key = onboardingProjectKey(folderEnvironmentId, folder);
+    // A folder setup already found is that found project, not a second one.
+    if (foundAt(candidates, folderEnvironmentId, folder) !== undefined) return null;
+    const title =
+      folder
+        .replace(/[\\/]+$/, "")
+        .split(/[\\/]/)
+        .pop() || folder;
+    return {
+      path: folder,
+      title,
+      sources: [],
+      threadCount: 0,
+      lastActiveAt: null,
+      alreadyImported: false,
+      environmentId: folderEnvironmentId,
+      key,
+    } satisfies (typeof candidates)[number];
+  }, [candidates, folder, folderEnvironmentId]);
+  const selected = folderCandidate === null ? found : [...found, folderCandidate];
+  const knownProjects = useMemo(
+    () =>
+      projects
+        .filter((project) => project.environmentId === folderEnvironmentId)
+        .map((project) => ({ workspaceRoot: project.workspaceRoot, title: project.title })),
+    [projects, folderEnvironmentId],
+  );
 
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
@@ -260,6 +314,9 @@ export function ImportStep({
         if (threadImportResult.value.skippedCount === 0) {
           importedProjectsCount += 1;
           importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
+          if (candidate.key === folderCandidate?.key) {
+            rememberRecentFolder(environmentId, candidate.path);
+          }
         }
       } else if (!isAtomCommandInterrupted(threadImportResult)) {
         projectAttempts.delete(candidate.key);
@@ -315,7 +372,7 @@ export function ImportStep({
         <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span role="status">
             {t("wizard.import.selectedCount", {
-              selected: selected.length,
+              selected: found.length,
               total: candidates.length,
             })}
           </span>
@@ -323,7 +380,7 @@ export function ImportStep({
             <Button
               variant="ghost"
               size="xs"
-              disabled={isImporting || selected.length === candidates.length}
+              disabled={isImporting || found.length === candidates.length}
               onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
             >
               {t("wizard.import.selectAll")}
@@ -331,7 +388,7 @@ export function ImportStep({
             <Button
               variant="ghost"
               size="xs"
-              disabled={isImporting || selected.length === 0}
+              disabled={isImporting || found.length === 0}
               onClick={() => setSelectedPaths(new Set())}
             >
               {t("wizard.import.selectNone")}
@@ -392,6 +449,31 @@ export function ImportStep({
           })}
         </div>
       </ScrollArea>
+      {folderEnvironmentId !== null ? (
+        <ProjectsFolderChoice
+          environmentId={folderEnvironmentId}
+          machineLabel={nickname(folderEnvironmentId, primaryEnvironment?.label ?? "") || null}
+          projectsFolder={primaryEnvironment?.serverConfig?.suggestedProjectsRoot ?? null}
+          projects={knownProjects}
+          defaultOpen={candidates.length === 0}
+          disabled={isImporting}
+          folder={folder}
+          onFolderChange={(next) => {
+            setFolder(next);
+            // Choosing a folder setup already found checks it in the list.
+            const match =
+              next === null ? undefined : foundAt(candidates, folderEnvironmentId, next);
+            if (match !== undefined && !selectedKeys.has(match.key)) {
+              setSelectedPaths(new Set([...selectedKeys, match.key]));
+            }
+          }}
+          onOtherWays={() => {
+            void onDone().then((completed) => {
+              if (completed) openCommandPalette({ open: "add-project" });
+            });
+          }}
+        />
+      ) : null}
       <WizardStepFooter
         error={visibleImportError}
         // Closing is off while an import runs, so the footer says when it comes back.
@@ -405,7 +487,9 @@ export function ImportStep({
         primary={{
           label: isImporting
             ? t("wizard.import.importing")
-            : t("wizard.import.importButton", { count: selected.length }),
+            : folderCandidate !== null && found.length === 0
+              ? tx("Add {folder}", { folder: folderCandidate.title })
+              : t("wizard.import.importButton", { count: selected.length }),
           onClick: () => void runImport(selected),
           disabled: !canImport || selected.length === 0,
           busy: isImporting,

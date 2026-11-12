@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   openExternal: vi.fn(),
   linkHere: vi.fn(),
 }));
+vi.mock("./ProjectsFolderChoice", () => ({ ProjectsFolderChoice: () => null }));
+vi.mock("../../hooks/useProjectFolderChoice", () => ({ rememberRecentFolder: () => {} }));
 vi.mock("../../studio/fleet", () => {
   class FleetInviteFailure extends Error {
     constructor(

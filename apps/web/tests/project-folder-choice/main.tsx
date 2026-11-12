@@ -32,6 +32,7 @@ const MACHINES = {
 import { CommandPaletteContent } from "../../src/components/CommandPaletteContent";
 import { CommandPaletteResults } from "../../src/components/CommandPaletteResults";
 import { CommandDialog, CommandDialogPopup } from "../../src/components/ui/command";
+import { ProjectsFolderChoice } from "../../src/components/onboarding/ProjectsFolderChoice";
 import "./fixture.css";
 document.documentElement.classList.toggle(
   "dark",
@@ -171,4 +172,33 @@ function Fixture() {
     </CommandDialog>
   );
 }
-createRoot(document.getElementById("root")!).render(<Fixture />);
+// `mode=setup`: the folder choice on the Projects step of first-run setup,
+// `found=0` when setup found nothing to import.
+function SetupFolder() {
+  const [folder, setFolder] = useState<string | null>(null);
+  const machine = MACHINES.m4;
+  return (
+    <div className="mx-auto mt-10 max-w-3xl rounded-2xl border bg-zinc-25/80 px-6 py-5 dark:bg-white/2">
+      <h1 className="text-2xl font-semibold tracking-tight">Choose your projects</h1>
+      <ProjectsFolderChoice
+        environmentId={EnvironmentId.make("m4")}
+        machineLabel={machine.label}
+        projectsFolder={machine.projectsFolder}
+        projects={machine.projects}
+        defaultOpen={new URLSearchParams(location.search).get("found") === "0"}
+        disabled={false}
+        folder={folder}
+        onFolderChange={setFolder}
+        onOtherWays={() => {
+          (window as any).otherWaysClicked = true;
+        }}
+      />
+      <p data-slot="setup-folder" className="mt-3 text-sm text-muted-foreground">
+        {folder ?? "No folder chosen"}
+      </p>
+    </div>
+  );
+}
+createRoot(document.getElementById("root")!).render(
+  new URLSearchParams(location.search).get("mode") === "setup" ? <SetupFolder /> : <Fixture />,
+);
