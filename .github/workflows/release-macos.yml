@@ -72,19 +72,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::version must look like 1.2.3, got '$VERSION'"
+          # The same rule as release.sh's VERSION_RE.
+          if ! printf '%s' "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::version must be X.Y.Z without leading zeros, got '$VERSION'"
             exit 1
           fi
-          if [ "$RESUME" != "true" ] && gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
-            echo "::error::v$VERSION is already tagged, so it is released. Dispatch the next version, or resume to continue this one."
-            exit 1
+          if [ "$RESUME" != "true" ]; then
+            if out="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" 2>&1)"; then
+              echo "::error::v$VERSION is already tagged, so it is released. Dispatch the next version, or resume to continue this one."
+              exit 1
+            elif ! printf '%s' "$out" | grep -q 'HTTP 404'; then
+              # Never block a release on a GitHub API hiccup; release.sh checks again on the M1.
+              echo "::warning::could not check tag v$VERSION: $out"
+            fi
           fi
-          older="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-macos.yml --limit 30 \
+          # The oldest run for a version wins. A re-run keeps its old id, so it yields to any
+          # other run of the version.
+          if [ "${GITHUB_RUN_ATTEMPT:-1}" -gt 1 ]; then cmp='!='; else cmp='<'; fi
+          others="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-macos.yml --limit 100 \
             --json databaseId,status,displayTitle \
-            --jq "[.[] | select(.databaseId < $GITHUB_RUN_ID and .status != \"completed\" and .displayTitle == \"Release macOS $VERSION\")] | map(.databaseId | tostring) | join(\" \")")"
-          if [ -n "$older" ]; then
-            echo "::error::Release macOS for $VERSION is already queued or running (run $older)."
+            --jq "[.[] | select(.databaseId $cmp $GITHUB_RUN_ID and .status != \"completed\" and .displayTitle == \"Release macOS $VERSION\")] | map(.databaseId | tostring) | join(\" \")")"
+          if [ -n "$others" ]; then
+            echo "::error::Release macOS for $VERSION is already queued or running (run $others)."
             exit 1
           fi
           echo "No other release of $VERSION found"

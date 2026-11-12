@@ -18,3 +18,24 @@ describe("release-macos.yml runner", () => {
     );
   });
 });
+
+describe("release-macos.yml queueing", () => {
+  const parsed = parse(workflow, { uniqueKeys: true }) as {
+    concurrency?: unknown;
+    jobs?: Record<string, { needs?: unknown; concurrency?: unknown; "runs-on"?: unknown }>;
+  };
+
+  it("holds the M1 for one release at a time on the release job", () => {
+    expect(parsed.jobs?.release?.concurrency).toEqual({
+      group: "release-macos",
+      "cancel-in-progress": false,
+    });
+  });
+
+  it("refuses duplicates on a hosted runner before queueing for the M1", () => {
+    expect(parsed.concurrency).toBeUndefined();
+    expect(parsed.jobs?.preflight?.["runs-on"]).toBe("ubuntu-24.04");
+    expect(parsed.jobs?.preflight?.concurrency).toBeUndefined();
+    expect(parsed.jobs?.release?.needs).toEqual(["preflight"]);
+  });
+});
