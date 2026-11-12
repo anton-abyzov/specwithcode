@@ -42,10 +42,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type { FleetTarget } from "../studioFleet.ts";
+import { ownerMachineNames } from "./machineNames.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import { incomingMachines, matchIncoming, reverseGrantMessage } from "./incomingMachines.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import * as PhoneLinks from "./phoneLinks.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
@@ -546,10 +546,23 @@ const make = Effect.gen(function* () {
 
   // A row naming this machine itself (a line added while the server was down, or a copied
   // file) is never a remote machine: it would list as needing a grant and resolve to itself.
-  const everyRow = targets.load.pipe(
-    Effect.map((config) => config?.machines ?? []),
-    Effect.mapError(() =>
-      failure("orchestration_error", "Private machine configuration could not be read securely."),
+  const nicknames = ownerMachineNames(settings);
+  // Rows carry the owner's name for a machine, so agents see and resolve the name the app
+  // shows. The name saved when a machine joined is its host name, which can equal this one's.
+  const everyRow = Effect.all([
+    targets.load.pipe(
+      Effect.map((config) => config?.machines ?? []),
+      Effect.mapError(() =>
+        failure("orchestration_error", "Private machine configuration could not be read securely."),
+      ),
+    ),
+    nicknames,
+  ]).pipe(
+    Effect.map(([rows, names]) =>
+      rows.map((row) => {
+        const name = names.get(row.environmentId);
+        return name === undefined ? row : { ...row, label: name };
+      }),
     ),
   );
   const machines = Effect.all([everyRow, environment.getEnvironmentId]).pipe(
@@ -559,7 +572,10 @@ const make = Effect.gen(function* () {
   const namesThisMachine = (lower: string) =>
     Effect.gen(function* () {
       const descriptor = yield* environment.getDescriptor;
-      if (descriptor.label.toLowerCase() === lower) return true;
+      // Once the owner names this machine, its host name stops being its name here: another
+      // machine may have joined under that host name and must stay reachable by it.
+      const own = (yield* nicknames).get(descriptor.environmentId) ?? descriptor.label;
+      if (own.toLowerCase() === lower) return true;
       return (yield* everyRow).some(
         (machine) =>
           machine.environmentId === descriptor.environmentId &&
@@ -579,15 +595,7 @@ const make = Effect.gen(function* () {
       const labels = new Map<string, string>(
         configured.map((machine) => [machine.environmentId, machine.label]),
       );
-      if (Option.isSome(settings)) {
-        const read = yield* settings.value.getSettings.pipe(Effect.option);
-        for (const [environmentId, entry] of Object.entries(
-          Option.isSome(read) ? read.value.machineNicknames : {},
-        )) {
-          const name = normalizeMachineNickname(entry.name);
-          if (name !== "") labels.set(environmentId, name);
-        }
-      }
+      for (const [environmentId, name] of yield* nicknames) labels.set(environmentId, name);
       const hereLabel = labels.get(descriptor.environmentId) ?? descriptor.label;
       return {
         hereLabel,
@@ -628,9 +636,24 @@ const make = Effect.gen(function* () {
       if (byId) return { kind: "remote", machine: refOf(byId) } as const;
       const byEnvironment = configured.find((machine) => machine.environmentId === wanted);
       if (byEnvironment) return { kind: "remote", machine: refOf(byEnvironment) } as const;
+      // An id is the exact handle saved launches use, so it always wins. A name must point at
+      // one machine: two machines answering to it, or this machine and another, is refused
+      // instead of guessed, because the wrong guess runs work on the wrong machine.
       const byLabel = configured.filter((machine) => machine.label.toLowerCase() === lower);
-      if (byLabel.length === 1) return { kind: "remote", machine: refOf(byLabel[0]!) } as const;
-      if (yield* namesThisMachine(lower)) return { kind: "local" } as const;
+      const here = yield* namesThisMachine(lower);
+      if (byLabel.length === 1 && !here)
+        return { kind: "remote", machine: refOf(byLabel[0]!) } as const;
+      if (byLabel.length === 0 && here) return { kind: "local" } as const;
+      if (byLabel.length > 0)
+        return yield* failure(
+          "unknown_machine",
+          `More than one machine is called "${wanted}": ${[
+            ...(here ? ['this machine (machine "local")'] : []),
+            ...byLabel.map((machine) => `the one with id "${machine.id}"`),
+          ].join(
+            ", ",
+          )}. Pass the id from studio_machine_list, and tell the user to give one of them another name in Settings > Machines.`,
+        );
       return yield* notConfigured(wanted, configured);
     });
 
@@ -794,7 +817,7 @@ const make = Effect.gen(function* () {
       return {
         local: {
           id: "local" as const,
-          label: descriptor.label,
+          label: (yield* nicknames).get(descriptor.environmentId) ?? descriptor.label,
           environmentId: descriptor.environmentId,
         },
         machines: rows,

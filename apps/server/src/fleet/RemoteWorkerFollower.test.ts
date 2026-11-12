@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import type { CoordinatorStandbyShadowWorker } from "../project/CoordinatorStandbyStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 import type { FakeToolHandler } from "./fakeStudioMcp.testkit.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
@@ -331,6 +332,30 @@ describe("RemoteWorkerFollower", () => {
         "remote-worker-wake:rwt:command-1:b-run-2",
       );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("names the worker's machine the way the owner named it", () => {
+    const { world, layer } = setup(
+      { studio_thread_wait: (args) => machineDown(args) },
+      { lostContactMs: 30 },
+    );
+    const named = Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Effect.succeed({
+        machineNicknames: { "env-m1": { name: "studio", updatedAt: "2026-11-11T00:00:00.000Z" } },
+      } as never),
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      yield* workers.launch(launchInput());
+      yield* eventually(
+        Effect.sync(() => world.wakes.length),
+        (count) => count === 1,
+      );
+      expect(world.notices[0]?.summary).toBe(
+        "Lost contact with [Fix the flaky test](studio://thread/env-m1/b-thread-1) on studio.",
+      );
+    }).pipe(Effect.provide(layer.pipe(Layer.provide(named))));
   });
 
   it.live("tells the caller once per outage that its worker's machine is gone", () => {
