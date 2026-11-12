@@ -161,6 +161,9 @@ CREATE TABLE orchestration_v2_projection_runs (
   provider_thread_id TEXT, status TEXT NOT NULL, requested_at TEXT NOT NULL, completed_at TEXT, payload_json TEXT NOT NULL,
   provider_instance_id TEXT);
 CREATE UNIQUE INDEX orchestration_v2_projection_runs_thread_ordinal_idx ON orchestration_v2_projection_runs(thread_id, ordinal);
+CREATE TABLE orchestration_v2_projection_messages (
+  message_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, node_id TEXT, role TEXT NOT NULL,
+  streaming INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL);
 CREATE TABLE orchestration_v2_projection_runtime_requests (
   runtime_request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, node_id TEXT NOT NULL, kind TEXT NOT NULL,
   status TEXT NOT NULL, created_at TEXT NOT NULL, payload_json TEXT NOT NULL);

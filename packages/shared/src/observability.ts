@@ -145,11 +145,126 @@ const isDiskFullCode = (code: string | undefined): boolean =>
 const isDiskFailureCode = (code: string | undefined): boolean =>
   isDiskFullCode(code) || code === "EIO";
 
+/**
+ * How the local trace file thins out fast successful spans. A span that
+ * failed or was interrupted, ran for `slowMs` or longer, carries an event
+ * other than a transaction commit, or is part of an update, restart, release
+ * or provider session is always written. Of the rest, each span name gets
+ * `burst` records per window and then one in `rate`.
+ */
+export interface TraceSamplingOptions {
+  readonly rate: number;
+  readonly burst: number;
+  readonly windowMs: number;
+  readonly slowMs: number;
+}
+
+export const DEFAULT_TRACE_SAMPLING: TraceSamplingOptions = {
+  rate: 50,
+  burst: 5,
+  windowMs: 60_000,
+  slowMs: 200,
+};
+
+/**
+ * Written once per window in which records were left out. Its
+ * `sampling.dropped` attribute maps each span name to `[count, total ms]` of
+ * the records left out, so totals can still be added up.
+ */
+export const TRACE_SAMPLING_SUMMARY_SPAN = "trace.sampling.summary";
+
+const LIFECYCLE_SPAN_NAME =
+  /update|restart|release|install|shutdown|startup|lifecycle|providersession|providerturn/i;
+const ROUTINE_SPAN_EVENTS: ReadonlySet<string> = new Set(["db.transaction.commit"]);
+const OTLP_STATUS_CODE_ERROR = "2";
+
+/** Whether sampling must write this record whatever its span name's count is. */
+export function isTraceRecordAlwaysKept(record: TraceRecord, slowMs: number): boolean {
+  if (record.type === "effect-span") {
+    if (record.exit._tag !== "Success") return true;
+  } else if (record.status?.code === OTLP_STATUS_CODE_ERROR) {
+    return true;
+  }
+  if (record.durationMs >= slowMs) return true;
+  if (record.events.some((event) => !ROUTINE_SPAN_EVENTS.has(event.name))) return true;
+  return LIFECYCLE_SPAN_NAME.test(record.name);
+}
+
+function makeTraceSampler(options: TraceSamplingOptions, nowMs: () => number) {
+  const rate = Math.max(1, Math.floor(options.rate));
+  const burst = Math.max(0, Math.floor(options.burst));
+  let windowStartMs = nowMs();
+  let seen = new Map<string, number>();
+  let dropped = new Map<string, [count: number, durationMs: number]>();
+  let summaryCount = 0;
+
+  return {
+    admit(record: TraceRecord): boolean {
+      if (isTraceRecordAlwaysKept(record, options.slowMs)) return true;
+      const count = seen.get(record.name) ?? 0;
+      seen.set(record.name, count + 1);
+      if (count < burst || (count - burst) % rate === rate - 1) return true;
+      const entry = dropped.get(record.name);
+      if (entry === undefined) dropped.set(record.name, [1, record.durationMs]);
+      else {
+        entry[0] += 1;
+        entry[1] += record.durationMs;
+      }
+      return false;
+    },
+    /** The summary of a window that has ended (or of the open one when `force`). */
+    takeSummary(force: boolean): EffectTraceRecord | undefined {
+      const now = nowMs();
+      if (!force && now - windowStartMs < options.windowMs) return undefined;
+      const startedAtMs = windowStartMs;
+      const left = dropped;
+      windowStartMs = now;
+      seen = new Map();
+      dropped = new Map();
+      if (left.size === 0) return undefined;
+      summaryCount += 1;
+      let total = 0;
+      for (const [count] of left.values()) total += count;
+      const at = String(BigInt(Math.round(now)) * 1_000_000n);
+      return {
+        type: "effect-span",
+        name: TRACE_SAMPLING_SUMMARY_SPAN,
+        traceId: Math.round(startedAtMs).toString(16).padStart(32, "0"),
+        spanId: summaryCount.toString(16).padStart(16, "0"),
+        sampled: true,
+        kind: "internal",
+        // Zero length, so trace readers never rank the window as a slow span.
+        startTimeUnixNano: at,
+        endTimeUnixNano: at,
+        durationMs: 0,
+        attributes: {
+          "sampling.rate": rate,
+          "sampling.burst": burst,
+          "sampling.slow_ms": options.slowMs,
+          "sampling.window_ms": Math.round(now - startedAtMs),
+          "sampling.dropped_total": total,
+          "sampling.dropped": Object.fromEntries(
+            [...left].map(([name, [count, durationMs]]) => [
+              name,
+              [count, Math.round(durationMs * 1000) / 1000],
+            ]),
+          ),
+        },
+        events: [],
+        links: [],
+        exit: { _tag: "Success" },
+      };
+    },
+  };
+}
+
 export interface TraceSinkOptions {
   readonly filePath: string;
   readonly maxBytes: number;
   readonly maxFiles: number;
   readonly batchWindowMs: number;
+  /** Omitted, or a `rate` of 1 or less: every record is written. */
+  readonly sampling?: TraceSamplingOptions | undefined;
   readonly onFlush?: (stats: TraceSinkFlushStats) => Effect.Effect<void>;
 }
 
@@ -402,8 +517,17 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   };
 
   const suspended = () => writeFailing && clock.currentTimeMillisUnsafe() < retryAtMs;
+  const sampler =
+    options.sampling === undefined || options.sampling.rate <= 1
+      ? undefined
+      : makeTraceSampler(options.sampling, () => clock.currentTimeMillisUnsafe());
+  let closing = false;
 
   const flushUnsafe = () => {
+    const summary = sampler?.takeSummary(closing);
+    if (summary !== undefined) {
+      buffer.push(`${JSON.stringify(summary)}\n`);
+    }
     if (buffer.length === 0) {
       return;
     }
@@ -503,7 +627,13 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
   );
 
-  yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
+  // The last flush also writes the open window's summary.
+  const close = Effect.suspend(() => {
+    closing = true;
+    return flush;
+  });
+
+  yield* Effect.addFinalizer(() => close.pipe(Effect.ignore));
   yield* Effect.forkScoped(
     Effect.sleep(`${options.batchWindowMs} millis`).pipe(Effect.andThen(flush), Effect.forever),
   );
@@ -516,6 +646,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
         droppedCount += 1;
         return;
       }
+      if (sampler !== undefined && !sampler.admit(record)) {
+        return;
+      }
       try {
         buffer.push(`${JSON.stringify(record)}\n`);
         if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {
@@ -526,7 +659,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       }
     },
     flush,
-    close: () => flush,
+    close: () => close,
   } satisfies TraceSink;
 });
 
@@ -613,6 +746,7 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
       maxBytes: options.maxBytes,
       maxFiles: options.maxFiles,
       batchWindowMs: options.batchWindowMs,
+      ...(options.sampling ? { sampling: options.sampling } : {}),
       ...(options.onFlush ? { onFlush: options.onFlush } : {}),
     }));
 

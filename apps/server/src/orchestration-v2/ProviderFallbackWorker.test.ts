@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
@@ -2082,6 +2083,92 @@ describe("sweep switch path with a stale fallback read", () => {
       yield* TestClock.adjust("5 minutes");
       yield* sweep();
       expect(state.refreshed).toEqual([codexId, codexId]);
+    }),
+  );
+});
+
+describe("sweep over threads with nothing to do", () => {
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerLimitAction: "switch" as const,
+    providerLimitFallbackModelSelection: { instanceId: codexId, model: "gpt-6" },
+  };
+  const threads = Array.from({ length: 40 }, (_, index) => ({
+    ...idle,
+    id: ThreadId.make(`quiet-${index}`),
+    latestRunId: RunId.make(`quiet-run-${index}`),
+    projectId: null,
+  }));
+
+  itEffect.effect("opens no span per thread once each thread's way back is known", () =>
+    Effect.gen(function* () {
+      const spans: string[] = [];
+      const runReads: string[] = [];
+      const deps = Layer.mergeAll(
+        Layer.mock(Projects.ProjectService)({
+          getById: () => Effect.succeed(Option.some(legacyProject)),
+        }),
+        fallbackPolicyTestLayer(settings),
+        Layer.mock(Providers.ProviderRegistry)({
+          getProviders: Effect.succeed([
+            withUsage(provider(claudeId, "claudeAgent", now), 10),
+            withUsage(provider(codexId, "codex", now), 10),
+          ]),
+          refreshInstance: () => Effect.succeed([]),
+        }),
+        Layer.mock(Instances.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(undefined),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getShellSnapshot: () => Effect.succeed({ threads } as never),
+          getThreadShell: (threadId) =>
+            Effect.succeed(threads.find((thread) => thread.id === threadId) as never),
+          getThreadRecords: (threadId) =>
+            Effect.sync(() => {
+              runReads.push(threadId);
+              return { thread: null, runs: [], turnItems: [] } as never;
+            }),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [] }),
+        }),
+      );
+      const perThread = () =>
+        spans.filter(
+          (name) =>
+            name === "ProviderFallbackWorker.refreshStaleTargets" ||
+            name === "ProviderFallbackWorker.apiCreditReturnPlan",
+        );
+      yield* Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        const sweep = yield* makeSweep;
+        yield* sweep();
+        // The first sweep learns, once per thread, that there is no way back.
+        expect(perThread()).toEqual(
+          threads.map(() => "ProviderFallbackWorker.apiCreditReturnPlan"),
+        );
+        expect(runReads).toHaveLength(threads.length);
+        spans.length = 0;
+        for (let round = 0; round < 3; round += 1) {
+          yield* TestClock.adjust("31 seconds");
+          yield* sweep();
+        }
+        expect(spans.filter((name) => name === "ProviderFallbackWorker.sweep")).toHaveLength(3);
+        expect(perThread()).toEqual([]);
+        expect(runReads).toHaveLength(threads.length);
+      }).pipe(
+        Effect.provide(deps),
+        Effect.provideService(ProviderFallbackEnv, {}),
+        Effect.provideService(
+          Tracer.Tracer,
+          Tracer.make({
+            span: (options) => {
+              spans.push(options.name);
+              return new Tracer.NativeSpan(options);
+            },
+          }),
+        ),
+      );
     }),
   );
 });

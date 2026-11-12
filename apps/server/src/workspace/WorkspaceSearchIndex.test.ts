@@ -496,3 +496,92 @@ it.effect("indexes a project folder and turns off fff's root and home scanning",
     expect(finder.destroy).toHaveBeenCalledTimes(1);
   }),
 );
+
+it.effect("turns off fff's watcher and rescans once for a burst of changes", () =>
+  Effect.gen(function* () {
+    const scanFiles = vi.fn(() => ({ ok: true as const, value: undefined }));
+    const finder = {
+      destroy: vi.fn(),
+      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+      scanFiles,
+    } as unknown as FileFinder;
+    const create = vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+    let now = 0;
+    const timers: Array<{ at: number; run: () => void; cancelled: boolean }> = [];
+    const clock = {
+      now: () => now,
+      setTimeout: (run: () => void, delayMs: number) => {
+        const timer = { at: now + delayMs, run, cancelled: false };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimeout: (handle: unknown) => {
+        (handle as { cancelled: boolean }).cancelled = true;
+      },
+    };
+    const advance = (ms: number) => {
+      now += ms;
+      for (const timer of timers.splice(0)) {
+        if (timer.cancelled) continue;
+        if (timer.at <= now) timer.run();
+        else timers.push(timer);
+      }
+    };
+    const watchers: Array<(relativePath: string | null) => void> = [];
+    const stopWatching = vi.fn();
+    const watch = vi.fn((_root: string, onChange: (relativePath: string | null) => void) => {
+      watchers.push(onChange);
+      return stopWatching;
+    });
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* WorkspaceSearchIndex.make("/workspace/project", "paths", {
+          ...inProcess,
+          watch,
+          refresh: { clock },
+        });
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ disableWatch: true }));
+        expect(watch).toHaveBeenCalledWith("/workspace/project", expect.any(Function));
+
+        for (let index = 0; index < 200; index += 1) {
+          watchers[0]?.(`src/file-${index}.ts`);
+          watchers[0]?.(".git/index");
+          advance(5);
+        }
+        expect(scanFiles).not.toHaveBeenCalled();
+        advance(2_000);
+        yield* Effect.promise(() => Promise.resolve());
+        expect(scanFiles).toHaveBeenCalledTimes(1);
+        expect(stopWatching).not.toHaveBeenCalled();
+      }),
+    );
+
+    expect(stopWatching).toHaveBeenCalledTimes(1);
+    expect(finder.destroy).toHaveBeenCalledTimes(1);
+    // A change reported after the index is released starts nothing.
+    watchers[0]?.("src/late.ts");
+    advance(60_000);
+    expect(scanFiles).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.effect("leaves watching to fff where the service has no native recursive watch", () =>
+  Effect.gen(function* () {
+    const finder = {
+      destroy: vi.fn(),
+      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+    } as unknown as FileFinder;
+    const create = vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+    yield* Effect.scoped(
+      WorkspaceSearchIndex.make("/home/anton/code/app", "paths", {
+        ...inProcess,
+        homeDir: "/home/anton",
+        platform: "linux",
+      }),
+    );
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ disableWatch: false }));
+  }),
+);

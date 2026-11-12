@@ -31,6 +31,16 @@ import { elapsedMs, newestFinite, olderThan } from "./failClosedAge.ts";
 import * as GitManager from "./git/GitManager.ts";
 import { makeHomeUsageGuard } from "./homeUsage/guard.ts";
 import { listProcessCwds } from "./homeUsage/processCwds.ts";
+import {
+  CLONE_SWEEP_PROJECTS_SQL,
+  type CloneSweepContext,
+  cloneSweepLivePaths,
+  cloneSweepRoots,
+  ghMergedPullRequest,
+  planCloneSweep,
+  registeredRepositories,
+  removeClone,
+} from "./mergedCloneSweep.ts";
 import * as DiskSpaceMonitor from "./observability/DiskSpaceMonitor.ts";
 import { casesFoldOn } from "./scratchPrune.ts";
 import { worktreeHasNoAdditionalChanges } from "./git/worktreeIntegration.ts";
@@ -100,6 +110,9 @@ const decodeStorageCleanupState = Schema.decodeUnknownOption(
   Schema.fromJsonString(StorageCleanupState),
 );
 const encodeStorageCleanupState = Schema.encodeSync(Schema.fromJsonString(StorageCleanupState));
+
+/** The merged-clone sweep runs at most this often. */
+export const MERGED_CLONE_SWEEP_INTERVAL_MS = 3_600_000;
 
 /** Whether the orphan sweep may run at `now`, given when it last started (null: never). */
 export function orphanSweepDue(lastSweepAt: number | null, now: number): boolean {
@@ -782,6 +795,21 @@ export const make = Effect.gen(function* () {
       // Unrecorded, the next start sweeps again: slower, never unsafe.
       Effect.catch((error) => Effect.logWarning("storage cleanup state write failed", { error })),
     );
+  /** The database of another instance on this base dir (a dev server), or null. */
+  const anotherInstanceDatabase = Effect.gen(function* () {
+    for (const name of yield* fs
+      .readDirectory(config.baseDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))) {
+      if (path.join(config.baseDir, name) === path.resolve(config.stateDir)) continue;
+      const database = path.join(config.baseDir, name, "statev2.sqlite");
+      const found = yield* fs.stat(database).pipe(
+        Effect.map(() => true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (found) return database;
+    }
+    return null;
+  });
   const cleanOrphanWorktrees = Effect.fn("StorageCleanup.cleanOrphanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
@@ -795,21 +823,12 @@ export const make = Effect.gen(function* () {
     // Another instance on this base dir (a dev server) shares its worktree and
     // Scratch folders but records its threads in its own database, so their
     // folders would look unowned here: sweep only when this is the only one.
-    for (const name of yield* fs
-      .readDirectory(config.baseDir)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))) {
-      if (path.join(config.baseDir, name) === path.resolve(config.stateDir)) continue;
-      const database = path.join(config.baseDir, name, "statev2.sqlite");
-      const found = yield* fs.stat(database).pipe(
-        Effect.map(() => true),
-        Effect.orElseSucceed(() => false),
-      );
-      if (found) {
-        yield* Effect.logInfo("storage cleanup skipped orphan worktrees: another instance", {
-          database,
-        });
-        return;
-      }
+    const otherInstance = yield* anotherInstanceDatabase;
+    if (otherInstance !== null) {
+      yield* Effect.logInfo("storage cleanup skipped orphan worktrees: another instance", {
+        database: otherInstance,
+      });
+      return;
     }
     // The current folders only: earlier worktree settings may name a general code
     // folder that holds worktrees made by hand or by other tools.
@@ -1020,6 +1039,77 @@ export const make = Effect.gen(function* () {
     yield* visit(realRoot);
   });
 
+  /**
+   * Review and scratch clones of registered projects' repositories whose work
+   * is merged (mergedCloneSweep.ts, `specweave-studio clones sweep`). Hourly at
+   * most: each candidate costs several git commands and maybe a pull request
+   * lookup. Every clone is logged with what happened to it and why.
+   */
+  let lastMergedCloneSweepAt = Number.NEGATIVE_INFINITY;
+  const cleanMergedClones = Effect.fn("StorageCleanup.cleanMergedClones")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+  ) {
+    if (!serverSettings.storageCleanup.removeMergedClones) return;
+    if (now - lastMergedCloneSweepAt < MERGED_CLONE_SWEEP_INTERVAL_MS) return;
+    lastMergedCloneSweepAt = now;
+    // As for orphan worktrees: another instance's threads are not in this database.
+    const otherInstance = yield* anotherInstanceDatabase;
+    if (otherInstance !== null) {
+      yield* Effect.logInfo("storage cleanup skipped merged clones: another instance", {
+        database: otherInstance,
+      });
+      return;
+    }
+    const projects = yield* sql.unsafe<{
+      readonly workspace_root: string;
+      readonly workspace_settings_json: string | null;
+    }>(CLONE_SWEEP_PROJECTS_SQL);
+    const registered = yield* Effect.promise(() => registeredRepositories(projects));
+    const readContext = Effect.gen(function* () {
+      const bindings = yield* readBindings;
+      const terminalPaths = [...liveTerminals.values()]
+        .flatMap((entries) => [...entries.values()])
+        .filter((terminal) => terminal.status === "starting" || terminal.status === "running")
+        .map((terminal) => ({
+          paths: [path.resolve(terminal.cwd)],
+          owner: `terminal of thread ${terminal.threadId}`,
+        }));
+      return {
+        registeredRemotes: registered.remotes,
+        livePaths: [...cloneSweepLivePaths(bindings, registered.checkouts), ...terminalPaths],
+        processCwds: yield* listProcessCwds(platform),
+        now: yield* Clock.currentTimeMillis,
+        foldCase: casesFoldOn(platform),
+        mergedPullRequest: ghMergedPullRequest,
+      } satisfies CloneSweepContext;
+    });
+    const context = yield* readContext;
+    const decisions = yield* Effect.promise(() =>
+      planCloneSweep(cloneSweepRoots(config.baseDir, registered.projectRoots), context, {
+        sourceTreeNames: registered.sourceTreeNames,
+      }),
+    );
+    for (const decision of decisions) {
+      if (decision.action !== "remove") {
+        yield* Effect.logInfo("merged clone sweep kept", {
+          path: decision.path,
+          reason: decision.reason,
+        });
+        continue;
+      }
+      // The setting and the owners are read again right before each removal.
+      if (!(yield* settingsService.getSettings).storageCleanup.removeMergedClones) return;
+      const fresh = yield* readContext;
+      const removal = yield* Effect.promise(() => removeClone(decision, fresh));
+      yield* Effect.logInfo(`merged clone sweep ${removal.result}`, {
+        path: decision.path,
+        reason: decision.reason,
+        ...(removal.detail === undefined ? {} : { detail: removal.detail }),
+      });
+    }
+  });
+
   /** Set by `start`: sweeps before it are left to the first scheduled one. */
   let sweepsNotBefore = Number.NEGATIVE_INFINITY;
   const sweep = Effect.fn("StorageCleanup.sweep")(function* () {
@@ -1037,6 +1127,9 @@ export const make = Effect.gen(function* () {
     );
     yield* cleanOrphanWorktrees(serverSettings, now).pipe(
       Effect.catch((error) => Effect.logWarning("orphan worktree cleanup failed", { error })),
+    );
+    yield* cleanMergedClones(serverSettings, now).pipe(
+      Effect.catch((error) => Effect.logWarning("merged clone cleanup failed", { error })),
     );
     yield* cleanFiles(
       config.browserArtifactsDir,

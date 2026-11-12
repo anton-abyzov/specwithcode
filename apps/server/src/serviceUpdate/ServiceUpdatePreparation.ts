@@ -303,6 +303,28 @@ const TERMINAL_EFFECTS_SQL = quoted(TERMINAL_EFFECT_STATUSES);
 const WORKING_SESSIONS_SQL = quoted(WORKING_SESSION_STATUSES);
 
 /**
+ * Threads whose active run still works in the background: a subagent, or a
+ * background task the provider reports pending. Neither has a blocker row,
+ * so a thread asking a question meanwhile is still at work.
+ *
+ * The subagent half reads a partial index from migration 074 that holds only
+ * live subagent nodes; without it each call walked every node. A partial
+ * index is used only when the query repeats its WHERE: keep that predicate
+ * and the migration's identical.
+ */
+export const selectBackgroundBusyThreads = (sql: SqlClient.SqlClient) =>
+  sql<{ readonly thread_id: string }>`
+      SELECT n.thread_id AS thread_id FROM orchestration_v2_projection_nodes n
+        JOIN orchestration_v2_projection_runs r ON r.run_id = n.run_id
+       WHERE n.kind = 'subagent' AND n.status IN ('pending', 'running', 'waiting')
+         AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+      UNION
+      SELECT thread_id FROM orchestration_v2_projection_provider_threads
+       WHERE thread_id IS NOT NULL
+         AND json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+    `;
+
+/**
  * The service and what its sweep uses: `releaseStaleWaits` and whether this
  * process holds itself for an update.
  */
@@ -390,21 +412,9 @@ export const makePartsWithTimings = (
       }));
     });
 
-    /**
-     * Threads whose active run still works in the background: a subagent, or a
-     * background task the provider reports pending. Neither has a blocker row,
-     * so a thread asking a question meanwhile is still at work.
-     */
-    const readBackgroundBusy = sql<{ readonly thread_id: string }>`
-      SELECT n.thread_id AS thread_id FROM orchestration_v2_projection_nodes n
-        JOIN orchestration_v2_projection_runs r ON r.run_id = n.run_id
-       WHERE n.kind = 'subagent' AND n.status IN ('pending', 'running', 'waiting')
-         AND r.status IN ('preparing', 'starting', 'running', 'waiting')
-      UNION
-      SELECT thread_id FROM orchestration_v2_projection_provider_threads
-       WHERE thread_id IS NOT NULL
-         AND json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
-    `.pipe(Effect.map((found) => new Set(found.map((row) => row.thread_id))));
+    const readBackgroundBusy = selectBackgroundBusyThreads(sql).pipe(
+      Effect.map((found) => new Set(found.map((row) => row.thread_id))),
+    );
 
     const readActiveRuns = sql<{
       readonly run_id: string;

@@ -17,6 +17,7 @@ import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  DEFAULT_PROVIDER_SESSION_IDLE_MINUTES,
   ModelSelection,
   type ManualCodexCreditIntent,
   OrchestrationV2DomainEvent,
@@ -86,8 +87,16 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunLiveness from "./RunLiveness.ts";
 import { sessionScopedRuntimeRequestThreadId } from "./SessionScopedRuntimeRequests.ts";
 
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_IDLE_TIMEOUT_MS = DEFAULT_PROVIDER_SESSION_IDLE_MINUTES * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
+/** Latest-run states of a thread that still needs its provider session. */
+const UNFINISHED_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 
 /** The identity a turn's start and its `turn.terminal` share. */
@@ -308,6 +317,7 @@ type ProviderSessionEventSignal =
     };
 
 export interface ProviderSessionManagerV2LayerOptions {
+  /** Fixes the idle window; otherwise the machine's `providerSessionIdleMinutes` decides. */
   readonly idleTimeoutMs?: number;
   /** Cap on how long idle release may be deferred for pending background work. */
   readonly maxIdlePinMs?: number;
@@ -490,7 +500,20 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
       }) => `${input.providerSessionId}\u0000${input.threadId}`;
-      const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
+      // The idle window now, or null while this machine keeps idle sessions
+      // open. Read each time it is needed, so a changed setting applies to
+      // sessions that are already waiting.
+      const idleTimeoutMs: Effect.Effect<number | null> =
+        options.idleTimeoutMs !== undefined
+          ? Effect.succeed(Math.max(1, options.idleTimeoutMs))
+          : Option.isNone(serverSettings)
+            ? Effect.succeed(DEFAULT_IDLE_TIMEOUT_MS)
+            : serverSettings.value.getSettings.pipe(
+                Effect.map(({ providerSessionIdleMinutes }) =>
+                  providerSessionIdleMinutes === 0 ? null : providerSessionIdleMinutes * 60 * 1000,
+                ),
+                Effect.orElseSucceed(() => DEFAULT_IDLE_TIMEOUT_MS),
+              );
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
@@ -1213,6 +1236,64 @@ export const layerWithOptions = (
           ),
         );
 
+      /**
+       * Sleeps one idle window, then until the session's last activity is a
+       * full window old. False when the session went away, turned busy or was
+       * rescheduled meanwhile. While the machine keeps idle sessions open this
+       * looks again every default window, so turning the setting back on
+       * reaches sessions that were already waiting.
+       */
+      const waitUntilIdle = (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly generation: number;
+      }): Effect.Effect<boolean> =>
+        Effect.gen(function* () {
+          let waitMs = (yield* idleTimeoutMs) ?? DEFAULT_IDLE_TIMEOUT_MS;
+          while (true) {
+            yield* Effect.sleep(Duration.millis(waitMs));
+            const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+            if (
+              entry === undefined ||
+              entry.busyTurns.size > 0 ||
+              entry.idleGeneration !== input.generation
+            ) {
+              return false;
+            }
+            const timeoutMs = yield* idleTimeoutMs;
+            if (timeoutMs === null) {
+              waitMs = DEFAULT_IDLE_TIMEOUT_MS;
+              continue;
+            }
+            const remainingMs =
+              entry.lastActivityAtMs + timeoutMs - (yield* Clock.currentTimeMillis);
+            if (remainingMs <= 0) return true;
+            waitMs = remainingMs;
+          }
+        });
+
+      /**
+       * Whether a thread on this session still needs it: a run that is
+       * queued, held in the queue or in flight, or a request waiting for an
+       * answer. A thread that cannot be read counts, so a failed read never
+       * closes a session.
+       */
+      const threadsHoldSession = (entry: LiveSessionEntry) =>
+        Effect.gen(function* () {
+          for (const threadId of entry.attachedThreadIds) {
+            const shell = yield* projectionStore.getThreadShell(threadId);
+            if (shell === null) continue;
+            if (
+              shell.activeRunId !== null ||
+              shell.pendingRuntimeRequest !== null ||
+              UNFINISHED_RUN_STATUSES.has(shell.status) ||
+              (shell.heldQueuedCount ?? 0) > 0
+            ) {
+              return true;
+            }
+          }
+          return false;
+        }).pipe(Effect.catchCause(() => Effect.succeed(true)));
+
       // Annotated to break the releaseIfStillIdle <-> scheduleIdleReleaseInternal
       // inference cycle introduced by the pin re-arm below.
       const releaseIfStillIdle = (input: {
@@ -1228,6 +1309,15 @@ export const layerWithOptions = (
             entry.busyTurns.size > 0 ||
             entry.idleGeneration !== input.generation
           ) {
+            return;
+          }
+          // Not a pin: a queued turn or an open request keeps its session
+          // for as long as it stands.
+          if (yield* threadsHoldSession(entry)) {
+            yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-held", {
+              providerSessionId: input.providerSessionId,
+            });
+            if (yield* waitUntilIdle(input)) yield* releaseIfStillIdle(input);
             return;
           }
           // Capture runtime identity before yielding: a replacement session
@@ -1269,8 +1359,8 @@ export const layerWithOptions = (
               // Re-check on this fiber after another idle window. Do not call
               // scheduleIdleReleaseInternal: that cancels entry.idleFiber, which
               // is this fiber, and can self-deadlock on Fiber.interrupt.
-              yield* Effect.sleep(Duration.millis(idleTimeoutMs));
-              return yield* releaseIfStillIdle(input);
+              if (yield* waitUntilIdle(input)) yield* releaseIfStillIdle(input);
+              return;
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
               providerSessionId: input.providerSessionId,
@@ -1322,8 +1412,10 @@ export const layerWithOptions = (
 
           yield* cancelIdleFiber(entry.idleFiber);
           const generation = entry.idleGeneration + 1;
-          const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
-            Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
+          const idleFiber = yield* waitUntilIdle({ providerSessionId, generation }).pipe(
+            Effect.flatMap((idle) =>
+              idle ? releaseIfStillIdle({ providerSessionId, generation }) : Effect.void,
+            ),
             Effect.forkIn(layerScope),
           );
           const lastActivityAtMs = yield* Clock.currentTimeMillis;

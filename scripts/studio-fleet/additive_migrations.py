@@ -104,6 +104,22 @@ DECLARED = {
          "CREATE TABLE team_rules_settings_changes ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
          "occurred_at TEXT NOT NULL, paths_json TEXT NOT NULL, person TEXT, os_user TEXT, device_json TEXT )"),
     )),
+    # 074_ShellReadIndexes.ts
+    74: ('ShellReadIndexes', (
+        ('index', 'orchestration_v2_projection_nodes_live_subagent_idx', 'orchestration_v2_projection_nodes',
+         "CREATE INDEX orchestration_v2_projection_nodes_live_subagent_idx ON "
+         "orchestration_v2_projection_nodes(run_id, thread_id) WHERE kind = 'subagent' AND status IN ('pending', 'running', 'waiting')"),
+        ('index', 'orchestration_v2_projection_runs_active_latest_idx', 'orchestration_v2_projection_runs',
+         "CREATE INDEX orchestration_v2_projection_runs_active_latest_idx ON "
+         "orchestration_v2_projection_runs(thread_id, ordinal DESC, run_id DESC) WHERE status IN ('preparing', 'starting', 'running')"),
+        ('index', 'orchestration_v2_projection_runs_working_latest_idx', 'orchestration_v2_projection_runs',
+         "CREATE INDEX orchestration_v2_projection_runs_working_latest_idx ON "
+         "orchestration_v2_projection_runs(thread_id, ordinal DESC, run_id DESC) WHERE status IN ('preparing', 'starting', 'running', 'waiting')"),
+        ('index', 'orchestration_v2_projection_messages_fallback_notice_idx', 'orchestration_v2_projection_messages',
+         "CREATE INDEX orchestration_v2_projection_messages_fallback_notice_idx ON "
+         "orchestration_v2_projection_messages(thread_id, created_at DESC, message_id DESC) "
+         "WHERE message_id LIKE 'limit-fallback:%' OR message_id LIKE 'provider-fallback:%'"),
+    )),
 }
 
 # Server migrations the page proof refuses (a rebuild, alter, drop or rename): an update that runs

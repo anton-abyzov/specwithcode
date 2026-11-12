@@ -67,6 +67,47 @@ export function subagentHostThread<T extends LineageShell>(
   return null;
 }
 
+/**
+ * One machine's shells by id, and its subagents by parent. Every listed thread
+ * asks about the same list, and an update replaces the list instead of changing
+ * it, so the index is built once per list, not once per thread.
+ */
+interface LineageIndex<T> {
+  readonly byId: ReadonlyMap<string, T>;
+  readonly children: ReadonlyMap<string, readonly T[]>;
+}
+const lineageIndexes = new WeakMap<
+  readonly unknown[],
+  WeakMap<ReadonlySet<string>, Map<string, LineageIndex<unknown>>>
+>();
+function lineageIndex<T extends LineageShell & Pick<EnvironmentThreadShell, "deletedAt">>(
+  shells: readonly T[],
+  environmentId: string,
+  coordinatorIds: ReadonlySet<string>,
+): LineageIndex<T> {
+  let byCoordinators = lineageIndexes.get(shells);
+  if (!byCoordinators) lineageIndexes.set(shells, (byCoordinators = new WeakMap()));
+  let byEnvironment = byCoordinators.get(coordinatorIds);
+  if (!byEnvironment) byCoordinators.set(coordinatorIds, (byEnvironment = new Map()));
+  let index = byEnvironment.get(environmentId) as LineageIndex<T> | undefined;
+  if (!index) {
+    const byId = new Map<string, T>();
+    const children = new Map<string, T[]>();
+    for (const shell of shells) {
+      if (shell.environmentId !== environmentId) continue;
+      byId.set(String(shell.id), shell);
+      if (shell.deletedAt !== null || !isNestedSubagentThread(shell, coordinatorIds)) continue;
+      const key = shell.lineage.parentThreadId!;
+      const list = children.get(key);
+      if (list) list.push(shell);
+      else children.set(key, [shell]);
+    }
+    index = { byId, children };
+    byEnvironment.set(environmentId, index);
+  }
+  return index;
+}
+
 /** Every subagent below a thread, nearest first, with its depth below it. */
 export function subagentDescendants<
   T extends LineageShell & Pick<EnvironmentThreadShell, "deletedAt">,
@@ -75,15 +116,7 @@ export function subagentDescendants<
   parent: Pick<EnvironmentThreadShell, "id" | "environmentId">,
   coordinatorIds: ReadonlySet<string> = EMPTY_IDS,
 ): Array<{ readonly thread: T; readonly depth: number }> {
-  const children = new Map<string, T[]>();
-  for (const shell of shells) {
-    if (shell.deletedAt !== null || shell.environmentId !== parent.environmentId) continue;
-    if (!isNestedSubagentThread(shell, coordinatorIds)) continue;
-    const key = shell.lineage.parentThreadId!;
-    const list = children.get(key);
-    if (list) list.push(shell);
-    else children.set(key, [shell]);
-  }
+  const { children } = lineageIndex(shells, parent.environmentId, coordinatorIds);
   const result: Array<{ thread: T; depth: number }> = [];
   const seen = new Set<string>([parent.id]);
   const walk = (id: string, depth: number) => {
@@ -175,11 +208,7 @@ export function threadSubagentEntries(input: {
   );
   const entries: SubagentEntry[] = [];
   const listed = new Set<string>();
-  const sameHost = new Map(
-    input.shells
-      .filter((shell) => shell.environmentId === input.parent.environmentId)
-      .map((shell) => [String(shell.id), shell]),
-  );
+  const sameHost = lineageIndex(input.shells, input.parent.environmentId, coordinatorIds).byId;
   for (const { thread, depth } of subagentDescendants(input.shells, input.parent, coordinatorIds)) {
     const agent = byChild.get(thread.id);
     listed.add(thread.id);
