@@ -297,7 +297,11 @@ function CoordinatorComposerForm(props: {
             className={sendsElsewhere ? "sws-send sws-send-target machine-send" : "sws-send"}
             // The name is drawn from this attribute, so the button's text stays "Send".
             {...(sendsElsewhere
-              ? { ...machineColorProps(machine), "data-send-label": `Send to ${machine.name}` }
+              ? {
+                  ...machineColorProps(machine),
+                  "data-send-label": `Send to ${machine.name}`,
+                  "data-send-short": machine.short,
+                }
               : {})}
             aria-label={
               sendsElsewhere ? `Send to the coordinator on ${machine.name}` : "Send to coordinator"

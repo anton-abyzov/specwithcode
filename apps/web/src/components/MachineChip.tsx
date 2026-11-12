@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 import { cn } from "~/lib/utils";
 import { machineColorProps, type MachineIdentity } from "../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useMachineNameFit } from "./machineNameFit";
+import { machineShortCharsProps, useMachineNameFit } from "./machineNameFit";
 
 /**
  * A machine as a chip: its icon and name in its color. Where the chip has
@@ -28,8 +28,9 @@ export function MachineChip({
       {...machineColorProps(identity)}
       data-machine-chip={identity.environmentId}
       {...(fit.compact ? { "data-machine-compact": "" } : {})}
+      {...machineShortCharsProps(identity.short)}
       className={cn(
-        "machine-chip inline-flex h-6 max-w-40 min-w-10 shrink-0 items-center gap-1.5 rounded-full ps-1.5 pe-2 text-xs font-semibold",
+        "machine-chip inline-flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-full ps-1.5 pe-2 text-xs font-semibold",
         className,
       )}
       {...props}
@@ -40,7 +41,12 @@ export function MachineChip({
         aria-hidden
         data-machine-full=""
       />
-      <span ref={fit.ref} className="min-w-0 truncate" data-machine-full="">
+      <span
+        ref={fit.ref}
+        className="min-w-0 truncate"
+        data-machine-full=""
+        data-machine-name-slot=""
+      >
         {text}
       </span>
       {fit.compact ? <span className="sr-only">{text}</span> : null}

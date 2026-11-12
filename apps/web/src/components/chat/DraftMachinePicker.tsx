@@ -61,7 +61,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { useMachineNameFit } from "../machineNameFit";
+import { machineShortCharsProps, useMachineNameFit } from "../machineNameFit";
 import { RenameMachineDialog } from "../settings/RenameMachineDialog";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "../studio/ProjectLinkDialog";
 import { cn } from "~/lib/utils";
@@ -729,10 +729,8 @@ export function DraftMachinePicker(props: Props) {
           disabled={locked}
           {...machineColorProps(activeIdentity)}
           {...(fit.compact && activeIdentity ? { "data-machine-compact": "" } : {})}
-          className={cn(
-            "max-w-full min-w-12 justify-start",
-            activeIdentity && "machine-chip font-semibold",
-          )}
+          {...(activeIdentity ? machineShortCharsProps(activeIdentity.short) : {})}
+          className={cn("max-w-full justify-start", activeIdentity && "machine-chip font-semibold")}
           {...(activeEnvironment && activeLabel !== activeEnvironment.label
             ? { title: activeEnvironment.label }
             : {})}
@@ -746,7 +744,12 @@ export function DraftMachinePicker(props: Props) {
           <span className="shrink-0 font-normal" data-machine-full="">
             {tx("Run on")}
           </span>
-          <span ref={fit.ref} className="min-w-0 truncate" data-machine-full="">
+          <span
+            ref={fit.ref}
+            className="min-w-0 truncate"
+            data-machine-full=""
+            data-machine-name-slot=""
+          >
             {activeLabel}
           </span>
           {activeIdentity ? (

@@ -112,11 +112,27 @@ try {
             `${where}: only ${shown.toFixed(1)} characters of the name show`,
           );
         }
-        assert.ok(chip.name.includes("linux-mini") || chip.name.includes("M1"), `${where}: name`);
+        assert.ok(/linux-mini|M1|Workstation W/.test(chip.name), `${where}: name`);
       }
-      const narrowest = chips.find((chip) => chip.row === "110");
-      assert.ok(narrowest?.compact, `${tag}: the narrowest chip did not switch to its short label`);
-      assert.equal(narrowest.short, "LM", `${tag}: linux-mini's short label`);
+      const narrowest = chips.filter((chip) => chip.row === "110");
+      assert.deepEqual(
+        narrowest.map((chip) => chip.short),
+        ["LM", "M1", "WWW"],
+        `${tag}: the narrowest chips' short labels`,
+      );
+      // The coordinator's Send to another machine: the name with room, the short label without.
+      const sends = await page
+        .locator("[data-send-row] button")
+        .evaluateAll((buttons) =>
+          buttons.map((button) => getComputedStyle(button, "::after").content.replace(/"/g, "")),
+        );
+      assert.deepEqual(
+        sends,
+        size === "390"
+          ? ["LM", "M1", "WWW"]
+          : ["Send to linux-mini", "Send to M1", "Send to Workstation W"],
+        `${tag}: send button labels`,
+      );
       await page.screenshot({ path: join(output, `machine-chips-${tag}.png`), fullPage: true });
       await page.evaluate(axeSource);
       const result = await page.evaluate(() =>

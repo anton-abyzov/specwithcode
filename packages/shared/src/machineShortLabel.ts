@@ -24,11 +24,19 @@ export interface MachineShortLabelInput {
 /** Fewer characters than this do not tell machines apart. */
 export const MACHINE_SHORT_LABEL_MIN_LENGTH = 2;
 
-const fold = (value: string) => value.toLocaleUpperCase();
+// Locale-free, so every device folds a name the same way.
+const fold = (value: string) => value.toUpperCase();
+
+/** Visible characters, so "é" written as e plus an accent counts once. */
+export function graphemeLength(value: string): number {
+  const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  if (Segmenter === undefined) return [...value.normalize("NFC")].length;
+  return Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(value)).length;
+}
 
 function ownLabel(name: string): string | null {
-  const trimmed = name.trim();
-  const length = [...trimmed].length;
+  const trimmed = name.trim().normalize("NFC");
+  const length = graphemeLength(trimmed);
   return length >= MACHINE_SHORT_LABEL_MIN_LENGTH &&
     length <= MACHINE_SHORT_NAME_MAX_LENGTH &&
     !/\s/.test(trimmed)
@@ -71,8 +79,8 @@ export function assignMachineShortLabels(
   };
   // A chosen label always shows, even when two machines were given the same one.
   for (const id of ids) {
-    const chosen = byId.get(id)!.short?.trim() ?? "";
-    if ([...chosen].length >= MACHINE_SHORT_LABEL_MIN_LENGTH) claim(id, chosen);
+    const chosen = byId.get(id)!.short?.trim().normalize("NFC") ?? "";
+    if (graphemeLength(chosen) >= MACHINE_SHORT_LABEL_MIN_LENGTH) claim(id, chosen);
   }
   for (const id of ids) {
     if (labels.has(id)) continue;
@@ -81,8 +89,28 @@ export function assignMachineShortLabels(
   }
   for (const id of ids) {
     if (labels.has(id)) continue;
-    const candidates = machineShortLabelCandidates(byId.get(id)!.name);
-    claim(id, candidates.find((candidate) => !taken.has(candidate)) ?? candidates[0]!);
+    claim(id, pickMachineShortLabel(byId.get(id)!.name, undefined, taken));
   }
   return labels;
 }
+
+/**
+ * One machine's label against labels already in use (folded to capitals), for a
+ * machine the fleet map does not hold or a name it holds differently. The other
+ * machines keep theirs, so the result never duplicates one already showing.
+ */
+export function pickMachineShortLabel(
+  name: string,
+  short: string | undefined,
+  taken: ReadonlySet<string>,
+): string {
+  const chosen = short?.trim().normalize("NFC") ?? "";
+  if (graphemeLength(chosen) >= MACHINE_SHORT_LABEL_MIN_LENGTH) return chosen;
+  const own = ownLabel(name);
+  if (own !== null && !taken.has(fold(own))) return own;
+  const candidates = machineShortLabelCandidates(name);
+  return candidates.find((candidate) => !taken.has(candidate)) ?? candidates[0]!;
+}
+
+/** The folded form `pickMachineShortLabel` compares against. */
+export const foldMachineShortLabel = fold;

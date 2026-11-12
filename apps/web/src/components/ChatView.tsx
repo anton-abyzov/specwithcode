@@ -5074,7 +5074,7 @@ function useChatViewState(props: ChatViewProps) {
       composerMachine &&
       primaryEnvironmentId !== null &&
       composerMachine.environmentId !== primaryEnvironmentId
-        ? { name: composerMachine.name, color: composerMachine.color }
+        ? { name: composerMachine.name, color: composerMachine.color, short: composerMachine.short }
         : null,
     [composerMachine, primaryEnvironmentId],
   );

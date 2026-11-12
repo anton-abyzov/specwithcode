@@ -2570,6 +2570,13 @@ video.artifact-viewer-media {
 [data-machine-short] {
   display: none;
 }
+/* Room for the short label: about 0.8em a character (capitals, bold) plus the padding. */
+[data-machine-short-chars] {
+  min-width: calc(var(--machine-short-chars) * 0.8em + 1.25rem);
+}
+[data-machine-short-chars] [data-machine-name-slot] {
+  min-width: calc(var(--machine-short-chars) * 0.8em - 1.25rem);
+}
 [data-machine-compact] {
   position: relative;
 }
@@ -2662,13 +2669,14 @@ video.artifact-viewer-media {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* Narrow, the machine's short label stays beside the arrow, never the arrow alone. */
 @media (max-width: 520px) {
   .sws-send.sws-send-target {
-    width: 32px;
-    padding: 0;
+    gap: 3px;
+    padding: 0 9px 0 7px;
   }
   .sws-send.sws-send-target::after {
-    content: none;
+    content: attr(data-send-short);
   }
 }
 /* The window's own machine, always on: a 3px bar along the top edge and a hairline

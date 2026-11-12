@@ -157,7 +157,7 @@ export function RenameMachineDialog({
               className="w-24"
               value={shortValue}
               maxLength={MACHINE_SHORT_NAME_MAX_LENGTH}
-              placeholder={identity?.short ?? ""}
+              placeholder={identity?.derivedShort ?? ""}
               aria-describedby={shortHintId}
               aria-invalid={!shortValid || undefined}
               autoComplete="off"
@@ -233,7 +233,7 @@ export function RenameMachineDialog({
             <Button
               variant="ghost"
               className="me-auto"
-              disabled={lock !== null}
+              disabled={lock !== null || !shortValid}
               onClick={() => save("")}
             >
               {renderRich(tx("Use {defaultName}"), { defaultName: defaultName })}

@@ -1,6 +1,6 @@
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { useMachineNameFit } from "../machineNameFit";
+import { machineShortCharsProps, useMachineNameFit } from "../machineNameFit";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ComposerControl,
@@ -40,8 +40,9 @@ export function ThreadMachineComposerChip({
               data-thread-machine-chip=""
               {...(machine.color ? { "data-machine-color": machine.color } : {})}
               {...(fit.compact ? { "data-machine-compact": "" } : {})}
+              {...machineShortCharsProps(machine.short ?? machine.label)}
               className={cn(
-                "max-w-48 min-w-10 shrink cursor-default overflow-hidden",
+                "max-w-48 shrink cursor-default overflow-hidden",
                 machine.color ? "machine-chip font-semibold" : "hover:bg-transparent",
                 !machine.warning && "@max-[520px]/composer-surface:max-w-26",
               )}
@@ -62,6 +63,7 @@ export function ThreadMachineComposerChip({
             className="min-w-0 truncate"
             data-thread-machine-name=""
             data-machine-full=""
+            data-machine-name-slot=""
           >
             {machine.label}
           </span>

@@ -62,17 +62,33 @@ const machine = (
   environment: { environmentId, label, platform: { os: "darwin", arch: "arm64", machine: kind } },
   settings: { machineNicknames: nicknames },
 });
+const machinesScene = new URLSearchParams(location.search).get("scene") === "machines";
 const nicknames = {
   "env-m4": { name: "M4", updatedAt: "2026-11-10T12:00:00.000Z", color: "violet", icon: "laptop" },
   "env-m1": { name: "M1", updatedAt: "2026-11-10T12:00:00.000Z", color: "teal", icon: "mac-mini" },
+  // The narrow-chip scene: a wide label someone chose.
+  ...(machinesScene
+    ? {
+        "env-ww": {
+          name: "Workstation W",
+          updatedAt: "2026-11-10T12:00:00.000Z",
+          color: "amber",
+          icon: "desktop",
+          short: "WWW",
+        },
+      }
+    : {}),
 };
 export const environmentServerConfigsAtom = Atom.make(
   new Map([
     ["env-m4", machine("env-m4", "Fixture MacBook", "laptop", nicknames)],
     ["env-m1", machine("env-m1", "Fixture mini", "mac-mini", nicknames)],
     // The narrow-chip scene adds a machine with a long name and no nickname.
-    ...(new URLSearchParams(location.search).get("scene") === "machines"
-      ? [["env-lm", machine("env-lm", "linux-mini", "server", nicknames)] as const]
+    ...(machinesScene
+      ? [
+          ["env-lm", machine("env-lm", "linux-mini", "server", nicknames)] as const,
+          ["env-ww", machine("env-ww", "Workstation W", "desktop", nicknames)] as const,
+        ]
       : []),
   ]),
 );

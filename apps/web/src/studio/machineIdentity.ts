@@ -27,7 +27,11 @@ import {
   normalizeMachineNickname,
   normalizeMachineShortName,
 } from "@specweave-studio/shared/machineNicknames";
-import { assignMachineShortLabels } from "@specweave-studio/shared/machineShortLabel";
+import {
+  assignMachineShortLabels,
+  foldMachineShortLabel,
+  pickMachineShortLabel,
+} from "@specweave-studio/shared/machineShortLabel";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { createContext, useMemo } from "react";
@@ -53,8 +57,14 @@ export interface MachineIdentity {
   readonly name: string;
   readonly color: MachineColorId;
   readonly icon: EnvironmentMachineKind;
-  /** Two or three characters, unique in the fleet: what a chip keeps when it runs out of room. */
+  /**
+   * Two or three characters, unique among the machines this device knows: what a
+   * chip keeps when it runs out of room. Without a chosen label it follows the
+   * machine's name, so a device that names a machine differently may differ.
+   */
   readonly short: string;
+  /** The label it would have with none chosen, for the rename dialog's placeholder. */
+  readonly derivedShort: string;
 }
 
 /** The kind of hardware each connected machine reports, for its default icon. */
@@ -85,18 +95,39 @@ export function resolveMachineIdentities(input: {
       environmentId,
       fallbackLabel ?? input.labels.get(environmentId),
     );
-  const fleetOf = (extra?: { readonly id: string; readonly name: string }) => {
-    const ids = new Set([...known, ...Object.keys(input.nicknames)]);
-    if (extra) ids.add(extra.id);
-    return assignMachineShortLabels(
-      [...ids].map((id) => ({
-        environmentId: id,
-        name: id === extra?.id ? extra.name : nameOf(id),
-        short: input.nicknames[id]?.short,
-      })),
+  const ids = [...new Set([...known, ...Object.keys(input.nicknames)])];
+  const shorts = assignMachineShortLabels(
+    ids.map((id) => ({
+      environmentId: id,
+      name: nameOf(id),
+      short: input.nicknames[id]?.short,
+    })),
+  );
+  // Labels already showing for every other machine, folded, so a machine resolved on
+  // its own (first seen here, or named differently by the caller) never repeats one.
+  const takenBesides = (environmentId: string) =>
+    new Set(
+      [...shorts]
+        .filter(([id]) => id !== environmentId)
+        .map(([, label]) => foldMachineShortLabel(label)),
     );
+  const cache = new Map<string, { readonly short: string; readonly derivedShort: string }>();
+  const labelsOf = (environmentId: string, name: string) => {
+    const key = `${environmentId}\u0000${name}`;
+    let entry = cache.get(key);
+    if (entry === undefined) {
+      const taken = takenBesides(environmentId);
+      const chosen = input.nicknames[environmentId]?.short;
+      const derivedShort = pickMachineShortLabel(name, undefined, taken);
+      const short =
+        name === nameOf(environmentId) && shorts.has(environmentId)
+          ? shorts.get(environmentId)!
+          : pickMachineShortLabel(name, chosen, taken);
+      entry = { short, derivedShort };
+      cache.set(key, entry);
+    }
+    return entry;
   };
-  const shorts = fleetOf();
   return (environmentId, fallbackLabel) => {
     const name = nameOf(environmentId, fallbackLabel);
     return {
@@ -107,10 +138,7 @@ export function resolveMachineIdentities(input: {
         colors.get(environmentId) ??
         assignMachineColors([...known, environmentId], input.nicknames).get(environmentId)!,
       icon: input.nicknames[environmentId]?.icon ?? input.kinds.get(environmentId) ?? "server",
-      // A machine first seen here, or named differently by the caller, gets a label of its own.
-      short:
-        (name === nameOf(environmentId) ? shorts.get(environmentId) : undefined) ??
-        fleetOf({ id: environmentId, name }).get(environmentId)!,
+      ...labelsOf(environmentId, name),
     };
   };
 }
@@ -148,10 +176,9 @@ export function useMachineIdentity(
  * composer's Send takes its color and names it ("Send to M1"). Null on this
  * machine, where Send stays as it is.
  */
-export const MachineSendTargetContext = createContext<Pick<
-  MachineIdentity,
-  "name" | "color"
-> | null>(null);
+export const MachineSendTargetContext = createContext<
+  (Pick<MachineIdentity, "name" | "color"> & { readonly short?: string | undefined }) | null
+>(null);
 
 /** The attribute that gives an element and its children a machine's color tokens. */
 export function machineColorProps(identity: Pick<MachineIdentity, "color"> | null | undefined): {

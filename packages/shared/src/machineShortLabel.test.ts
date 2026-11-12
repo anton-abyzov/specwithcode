@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { assignMachineShortLabels, machineShortLabelCandidates } from "./machineShortLabel.ts";
+import {
+  assignMachineShortLabels,
+  graphemeLength,
+  machineShortLabelCandidates,
+  pickMachineShortLabel,
+} from "./machineShortLabel.ts";
 
 const fleet = (...machines: Array<[string, string, string?]>) =>
   Object.fromEntries(
@@ -37,6 +42,22 @@ describe("machine short labels", () => {
     const two = fleet(["z", "Studio"], ["y", "studio-2"], ["x", "studio"]);
     expect(one).toEqual(two);
     expect(new Set(Object.values(one)).size).toBe(3);
+  });
+
+  it("folds the same way whatever the device's locale", () => {
+    expect(fleet(["a", "istanbul-mac"])).toEqual({ a: "IM" });
+  });
+
+  it("counts visible characters, so an accent written apart is one", () => {
+    expect(graphemeLength("e\u0301")).toBe(1);
+    // One visible character is not enough: it is derived instead.
+    expect(fleet(["a", "e\u0301"])).toEqual({ a: "E1" });
+    expect(fleet(["a", "Ops", "e\u0301"]).a).toBe("Ops");
+  });
+
+  it("picks one machine's label around the labels already showing", () => {
+    expect(pickMachineShortLabel("linux-mini", undefined, new Set(["LM"]))).toBe("LI");
+    expect(pickMachineShortLabel("linux-mini", "Lx", new Set(["LX"]))).toBe("Lx");
   });
 
   it("always has at least two characters", () => {
