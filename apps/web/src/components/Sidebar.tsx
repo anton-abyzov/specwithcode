@@ -1875,7 +1875,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {draftIndicator}
             {title}
             {pinIndicator}
-            {props.plan ? <PlanProgressChip plan={props.plan} /> : null}
+            {props.plan ? <PlanProgressChip plan={props.plan} showCriteria={false} /> : null}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -2212,7 +2212,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
-              {props.plan ? <PlanProgressChip plan={props.plan} /> : null}
+              {props.plan ? <PlanProgressChip plan={props.plan} showCriteria={false} /> : null}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (

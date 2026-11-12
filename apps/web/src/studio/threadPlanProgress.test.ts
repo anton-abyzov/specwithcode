@@ -212,6 +212,39 @@ describe("compactThreadPlan", () => {
   });
 });
 
+describe("acceptance criteria on the compact plan", () => {
+  const criteria: ThreadIncrementProgress["criteria"] = [
+    { id: "AC-01", text: "Search", met: true, state: "verified" },
+    { id: "AC-02", text: "Pages", met: true, state: "declared" },
+    { id: "AC-03", text: "Filter", met: false, state: "open" },
+    { id: "AC-04", text: "Counts", met: false, state: "evidenced" },
+  ];
+
+  it("counts verified criteria for a bound increment that has them", () => {
+    const compact = compactThreadPlan(increment({ criteria }), null)!;
+    expect(compact.criteria).toEqual({ verified: 1, total: 4 });
+    expect(describeThreadPlan(compact)).toBe(
+      "Increment 0930-studio-plan-card: 2 of 5 tasks done. 1 of 4 acceptance criteria verified. Now: Reader. Next: Card.",
+    );
+  });
+
+  it("leaves plans without criteria as they were", () => {
+    const bare = compactThreadPlan(increment(), null)!;
+    expect(bare).not.toHaveProperty("criteria");
+    expect(describeThreadPlan(bare)).not.toContain("acceptance criteria");
+    const noTasks = compactThreadPlan(increment({ tasks: [], criteria }), null)!;
+    expect(noTasks).not.toHaveProperty("criteria");
+    expect(describeThreadPlan(noTasks)).toBe("Increment 0930-studio-plan-card: no tasks yet.");
+    const checklist = compactThreadPlan(null, {
+      completed: 1,
+      total: 2,
+      current: null,
+      next: null,
+    })!;
+    expect(checklist).not.toHaveProperty("criteria");
+  });
+});
+
 describe("displayFolder", () => {
   it("abbreviates home folders", () => {
     expect(displayFolder("/Users/anton/Projects/x")).toBe("~/Projects/x");

@@ -6,10 +6,7 @@ import { useTx } from "../../i18n";
  * marked done is a declaration, not proof, so only `verified` (ledger
  * evidence plus a passing `specweave verify` after it) gets a check.
  */
-import type {
-  ThreadIncrementCriterion,
-  ThreadIncrementCriterionState,
-} from "@specweave-studio/contracts";
+import type { ThreadIncrementCriterion } from "@specweave-studio/contracts";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
@@ -21,8 +18,13 @@ import {
 } from "lucide-react";
 
 import { cn } from "~/lib/utils";
+import {
+  criterionState,
+  verifiedCriteriaCount,
+  type CriterionPresentationState,
+} from "../../studio/threadCriteria";
 
-type CriterionPresentationState = ThreadIncrementCriterionState | "mixed" | "skipped-accepted";
+export { criterionState, verifiedCriteriaCount };
 
 export const CRITERION_LABEL: Record<CriterionPresentationState, string> = {
   verified: "verified",
@@ -48,15 +50,6 @@ const ORDER: ReadonlyArray<CriterionPresentationState> = [
   "unknown",
 ];
 
-/** A server that predates per-AC states sends only `met`; that is a declaration at most. */
-export function criterionState(criterion: ThreadIncrementCriterion): CriterionPresentationState {
-  // A waiver never hides an unfinished sibling requirement or unreadable ledger.
-  if (criterion.state === "open" || criterion.state === "unknown") return criterion.state;
-  if (criterion.acceptance === "mixed" || criterion.acceptance === "skipped-accepted")
-    return criterion.acceptance;
-  return criterion.state ?? (criterion.met ? "declared" : "open");
-}
-
 /** "2 verified · 1 open · 1 no task", strongest first, zero counts left out. */
 export function criteriaSummary(criteria: ReadonlyArray<ThreadIncrementCriterion>): string {
   const counts = new Map<CriterionPresentationState, number>();
@@ -67,17 +60,6 @@ export function criteriaSummary(criteria: ReadonlyArray<ThreadIncrementCriterion
   return ORDER.filter((state) => counts.has(state))
     .map((state) => `${counts.get(state)} ${CRITERION_LABEL[state]}`)
     .join(" · ");
-}
-
-/** Criteria proven `verified` out of all of them, for the plan card's "AC 1/4". */
-export function verifiedCriteriaCount(criteria: ReadonlyArray<ThreadIncrementCriterion>): {
-  verified: number;
-  total: number;
-} {
-  return {
-    verified: criteria.filter((criterion) => criterionState(criterion) === "verified").length,
-    total: criteria.length,
-  };
 }
 
 function CriterionIcon({ state }: { state: CriterionPresentationState }) {

@@ -1425,7 +1425,9 @@ export default function StudioSidebar() {
                               </>
                             }
                           >
-                            {plan ? <PlanProgressChip plan={plan} tip={false} /> : null}
+                            {plan ? (
+                              <PlanProgressChip plan={plan} tip={false} showCriteria={false} />
+                            ) : null}
                             <span className="sr-only">
                               , {label.full}
                               {stateDescription}, {tx(THREAD_TONE_LABELS[tone])}

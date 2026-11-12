@@ -16,6 +16,8 @@ import {
   type PlanStepState,
 } from "@specweave-studio/shared/planProgress";
 
+import { verifiedCriteriaCount } from "./threadCriteria";
+
 /** "none": a worker thread with neither, whose card offers to link an increment. */
 export type ThreadPlanSource = "increment" | "todo" | "none";
 
@@ -52,6 +54,8 @@ export interface ThreadPlanCompact extends PlanProgressSummary {
   readonly source: Exclude<ThreadPlanSource, "none">;
   /** The increment id when the progress comes from one. */
   readonly label: string | null;
+  /** Acceptance criteria verified out of all of them; only for a bound increment that has any. */
+  readonly criteria?: { readonly verified: number; readonly total: number };
 }
 
 /** `0996` for `0996-connect-launches`: what a chip or card header has room for. */
@@ -179,6 +183,9 @@ export function compactThreadPlan(
       source: "increment",
       label: increment.incrementId,
       ...summarizeIncrementSteps(incrementPlanSteps(increment)),
+      ...(increment.criteria.length > 0
+        ? { criteria: verifiedCriteriaCount(increment.criteria) }
+        : {}),
     };
   }
   if (increment !== null) {
@@ -211,7 +218,8 @@ export const BINDING_LABELS: Record<ThreadIncrementProgress["binding"], string> 
 
 /**
  * One sentence for a tooltip or screen reader: "Increment 0920: 3 of 5 tasks
- * done. Now: …. Next: …", or the agent's checklist named as not an increment.
+ * done. 1 of 4 acceptance criteria verified. Now: …. Next: …", or the agent's
+ * checklist named as not an increment.
  */
 export function describeThreadPlan(plan: ThreadPlanCompact): string {
   const head =
@@ -222,6 +230,9 @@ export function describeThreadPlan(plan: ThreadPlanCompact): string {
       : `The agent's checklist, not an increment: ${plan.completed} of ${plan.total} steps done.`;
   return [
     head,
+    plan.criteria
+      ? `${plan.criteria.verified} of ${plan.criteria.total} acceptance criteria verified.`
+      : null,
     plan.current ? `Now: ${plan.current}.` : null,
     plan.next ? `Next: ${plan.next}.` : null,
   ]
