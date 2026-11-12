@@ -228,10 +228,26 @@ describe("running helpers", () => {
     await NodeFSP.rm(NodePath.join(voiceDir(), "ggml-silero-v5.1.2.bin"));
     const run = vi.fn<RunCommand>(async () => "hello");
     const speech = engine({ run, fetch: fetchFailingAll() as never });
-    await expect(speech.prepare()).resolves.toBeUndefined();
     expect(await speech.missingBytes()).toBe(885_098);
+    expect(await speech.isSetUp()).toBe(true);
+    await expect(speech.prepare()).resolves.toBeUndefined();
     expect(await speech.transcribe("/a.wav", "")).toBe("hello");
     expect(run.mock.calls[0]![1]).not.toContain("--vad");
+  });
+
+  it("asks for the detector once, not on every call after a failed download", async () => {
+    await NodeFSP.rm(NodePath.join(voiceDir(), "ggml-silero-v5.1.2.bin"));
+    const speech = engine({ fetch: fetchFailingAll() as never });
+    await speech.prepare();
+    expect(await speech.missingBytes()).toBe(0);
+    // The next start of the app offers it again.
+    expect(await engine().missingBytes()).toBe(885_098);
+  });
+
+  it("is not set up while a required file is missing", async () => {
+    const model = linuxSpeechAssets("x64")[0]!;
+    await NodeFSP.rm(NodePath.join(voiceDir(), model.file));
+    expect(await engine().isSetUp()).toBe(false);
   });
 
   it("omits an empty prompt", async () => {

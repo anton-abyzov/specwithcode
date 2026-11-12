@@ -144,12 +144,18 @@ describe("product vocabulary", () => {
         terms,
       ),
     ).toBe("Open the SpecWithCode coordinator and start a thread in a worktree.");
-    expect(correctTranscript("ask claude to run spec weave verify in cloud code", terms)).toBe(
+    expect(correctTranscript("ask claude to run spec weave verify in claude code", terms)).toBe(
       "ask Claude to run SpecWeave verify in Claude Code",
     );
     expect(correctTranscript("install the v skill over mcp on git hub", terms)).toBe(
       "install the vskill over MCP on GitHub",
     );
+  });
+
+  it("leaves ordinary English that sounds like a product name alone", () => {
+    const terms = withProductVocabulary([]);
+    const phrase = "deploy it with Google cloud code";
+    expect(correctTranscript(phrase, terms)).toBe(phrase);
   });
 
   it("only hints words that are also ordinary ones", () => {
@@ -160,10 +166,10 @@ describe("product vocabulary", () => {
 
   it("lets a line of the person's own win when it says something", () => {
     const respelled = withProductVocabulary(
-      parseVocabulary("Specweave\ncloud code => Cloud Code").terms,
+      parseVocabulary("Specweave\nultra code => ultra code").terms,
     );
-    expect(correctTranscript("spec weave in cloud code", respelled)).toBe(
-      "Specweave in Cloud Code",
+    expect(correctTranscript("spec weave in ultra code", respelled)).toBe(
+      "Specweave in ultra code",
     );
     expect(whisperPrompt(respelled).startsWith("SpecWithCode, Specweave,")).toBe(true);
     expect(respelled).toHaveLength(PRODUCT_VOCABULARY.length);
@@ -324,6 +330,27 @@ describe("silence", () => {
     ).toBe("SpecWeave verify");
     expect(judgeTranscript("こんにちは", { prompt: "", peak: 0.5, language: "ja" }).text).toBe(
       "こんにちは",
+    );
+  });
+
+  it("keeps a soft voice that Apple's recognizer heard", () => {
+    const soft = { engine: "apple", prompt: "", peak: 0.01 } as const;
+    expect(judgeTranscript("Merge it after the checks pass.", soft)).toEqual({
+      text: "Merge it after the checks pass.",
+      dropped: null,
+    });
+    expect(judgeTranscript("Thank you.", soft).dropped).toBe("quiet");
+    expect(judgeTranscript("you", soft).dropped).toBe("quiet");
+    expect(judgeTranscript("you", { ...soft, peak: 0.5 }).text).toBe("you");
+  });
+
+  it("keeps two product names said together and drops a run of the hint list", () => {
+    const prompt = "SpecWithCode, SpecWeave, worktree, Claude Code, Codex.";
+    expect(judgeTranscript("SpecWithCode, SpecWeave", { prompt, peak: 0.5 }).text).toBe(
+      "SpecWithCode, SpecWeave",
+    );
+    expect(judgeTranscript("SpecWeave, worktree, Claude Code", { prompt, peak: 0.5 }).dropped).toBe(
+      "echo",
     );
   });
 

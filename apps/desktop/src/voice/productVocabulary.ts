@@ -7,7 +7,8 @@ import type { VocabularyTerm } from "./vocabulary.ts";
  *
  * A plain term fixes casing and split forms ("spec weave"). A `hintOnly` term is
  * also an ordinary word (cursor, fable), so it is offered to the recognizer but
- * never rewritten. A `heard => written` pair fixes a known mishearing.
+ * never rewritten. A `heard => written` pair fixes a known mishearing, and only
+ * one that is not ordinary English itself: "cloud code" is real, so it is not here.
  */
 export const PRODUCT_VOCABULARY: readonly VocabularyTerm[] = [
   { phrase: "SpecWithCode" },
@@ -18,7 +19,6 @@ export const PRODUCT_VOCABULARY: readonly VocabularyTerm[] = [
   { phrase: "coordinator", hintOnly: true },
   { phrase: "v skill", replacement: "vskill" },
   { phrase: "Claude Code" },
-  { phrase: "cloud code", replacement: "Claude Code" },
   { phrase: "Claude" },
   { phrase: "Codex" },
   { phrase: "Devin" },

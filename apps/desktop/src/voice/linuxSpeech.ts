@@ -252,6 +252,8 @@ export class LinuxSpeech {
   private cpuReason: Promise<string | null> | null = null;
   private downloaded = 0;
   private downloadTotal = 0;
+  /** Optional files whose download failed in this run; setup does not ask for them again. */
+  private readonly skipped = new Set<string>();
   /** One recognition at a time keeps memory flat and text in the order it was spoken. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -284,7 +286,14 @@ export class LinuxSpeech {
 
   /** What the first use still has to download, for the consent text. */
   async missingBytes(): Promise<number> {
-    return (await this.missingAssets()).reduce((sum, asset) => sum + asset.bytes, 0);
+    return (await this.missingAssets())
+      .filter((asset) => !this.skipped.has(asset.id))
+      .reduce((sum, asset) => sum + asset.bytes, 0);
+  }
+
+  /** Whether speech can run now. An optional file may still be on its way. */
+  async isSetUp(): Promise<boolean> {
+    return (await this.missingAssets()).every((asset) => asset.optional === true);
   }
 
   /** Download progress from 0 to 100 while preparing; null otherwise. */
@@ -345,10 +354,12 @@ export class LinuxSpeech {
       try {
         await this.download(asset);
       } catch (error) {
-        // Still missing, so the next setup asks for it again.
         if (asset.optional !== true) throw error;
+        // Voice works without it, so setup stops asking until the app starts again.
+        this.skipped.add(asset.id);
         continue;
       }
+      this.skipped.delete(asset.id);
       if (asset.extractTo) await this.extract(asset);
     }
   }
@@ -432,7 +443,7 @@ export class LinuxSpeech {
 
   /** Downloads only ever follow the consent dialog, so a file gone mid-session just stops here. */
   private async requireAssets(): Promise<void> {
-    if ((await this.missingAssets()).some((asset) => asset.optional !== true)) {
+    if (!(await this.isSetUp())) {
       throw new LinuxSpeechError("Speech files are missing. Start voice again to set them up.");
     }
   }

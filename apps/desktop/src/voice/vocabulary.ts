@@ -282,6 +282,9 @@ export const SPEECH_PEAK = 0.02;
 const INVENTIONS =
   /^(?:\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|[\p{P}\p{S}\s]+|you|(?:thanks|thank you)(?: so much)? for watching|(?:(?:we|i)(?:'ll| will) )?see you (?:in the next (?:video|one)|next time)|subtitles by .*|(?:please |don't forget to )?(?:like and )?subscribe(?: to (?:my|the|our) channel)?|спасибо за просмотр|продолжение следует|субтитры .*)[.!…]*$/iu;
 
+/** Real words when spoken, and what a recognizer makes of a near-silent recording. */
+const QUIET_WORDS = /^(?:thank you|thanks|bye|спасибо)[.!]?$/iu;
+
 const LATIN_LANGUAGES = new Set(
   (
     "en de es fr pt tr pl ca nl sv it id fi vi ms cs ro da hu no hr lt la mi cy sk lv az sl et br eu " +
@@ -334,6 +337,8 @@ export type TranscriptVerdict = {
 export function judgeTranscript(
   text: string,
   recording: {
+    /** Whisper invents text on noise; Apple's recognizer does not. Whisper when not given. */
+    readonly engine?: "whisper" | "apple";
     readonly prompt: string;
     readonly peak: number;
     readonly terms?: readonly VocabularyTerm[];
@@ -344,6 +349,11 @@ export function judgeTranscript(
   const { prompt, peak, terms = [], language } = recording;
   const trimmed = text.trim();
   if (!trimmed) return { text: "", dropped: null };
+  if (recording.engine === "apple") {
+    // A soft voice is still speech here; only a stock word from a near-silent recording goes.
+    const stock = peak < SPEECH_PEAK && (INVENTIONS.test(trimmed) || QUIET_WORDS.test(trimmed));
+    return stock ? { text: "", dropped: "quiet" } : { text: trimmed, dropped: null };
+  }
   if (peak < SPEECH_PEAK) return { text: "", dropped: "quiet" };
   if (INVENTIONS.test(trimmed)) return { text: "", dropped: "invented" };
   if (inForeignScript(trimmed, language)) return { text: "", dropped: "script" };
@@ -353,7 +363,9 @@ export function judgeTranscript(
   if (
     prompt &&
     !writtenForms(terms).some((word) => unpunctuated(word) === bare) &&
-    (bare === unpunctuated(prompt) || (bare.length >= 20 && prompt.includes(bare)))
+    (bare === unpunctuated(prompt) ||
+      // Two names said together are speech; a run of three or more is the hint list.
+      (bare.length >= 20 && bare.split(", ").length >= 3 && prompt.includes(bare)))
   ) {
     return { text: "", dropped: "echo" };
   }

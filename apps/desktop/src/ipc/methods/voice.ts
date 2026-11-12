@@ -263,7 +263,7 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       handler: ({ voiceId, rate }) =>
         Effect.promise(async () => {
           if (linux !== null) {
-            if ((await linux.missingBytes()) > 0) {
+            if (!(await linux.isSetUp())) {
               return {
                 ok: false as const,
                 error: "The free voice downloads with your first call or dictation.",
@@ -447,7 +447,9 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       "voice.audioMs": Math.round(seconds * 1000),
       "voice.peak": Math.round(peak * 1000) / 1000,
     };
-    if (peak < SPEECH_PEAK) {
+    // Whisper answers a recording with no speech in it with an invented sentence,
+    // so it is never asked. Apple's recognizer hears a soft voice and stays silent otherwise.
+    if (linux !== null && peak < SPEECH_PEAK) {
       return {
         result: { ok: true as const, text: "" },
         trace: { ...trace, "voice.outcome": "quiet" },
@@ -476,6 +478,7 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
         return reply.text ?? "";
       });
       const verdict = judgeTranscript(heard, {
+        engine: linux !== null ? "whisper" : "apple",
         prompt,
         peak,
         terms,
