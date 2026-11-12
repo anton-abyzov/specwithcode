@@ -3973,6 +3973,22 @@ export const zh: PhraseCatalog = {
   "Happens by itself after you sign in.": "登录后会自动完成。",
   "Checking this {machine}…": "正在检查这台{machine}…",
   "Linking this {machine}…": "正在关联这台{machine}…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "正在获取 Connect 助手：检查已安装内容（第 1 步，共 7 步）",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "正在获取 Connect 助手：等待另一个安装完成（第 2 步，共 7 步）",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "正在获取 Connect 助手：正在下载（第 3 步，共 7 步）",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "正在获取 Connect 助手：正在校验下载（第 4 步，共 7 步）",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "正在获取 Connect 助手：正在安装（第 5 步，共 7 步）",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "正在获取 Connect 助手：正在测试（第 6 步，共 7 步）",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "正在获取 Connect 助手：正在启用（第 7 步，共 7 步）",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "仍在关联。在新的{machine}上可能需要一分钟。你可以继续，它会自行完成。",
   "This {machine} is linked": "这台{machine}已关联",
   "Your other machines and your phone can reach it.": "你的其他电脑和手机可以连接到它。",
   "This {machine} could not be linked": "无法关联这台{machine}",

@@ -4158,6 +4158,22 @@ export const fr: PhraseCatalog = {
   "Happens by itself after you sign in.": "Se fait tout seul une fois connecté.",
   "Checking this {machine}…": "Vérification de ce {machine}…",
   "Linking this {machine}…": "Liaison de ce {machine}…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Récupération de l’assistant Connect : vérification de ce qui est installé (étape 1 sur 7)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Récupération de l’assistant Connect : attente de la fin d’une autre installation (étape 2 sur 7)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Récupération de l’assistant Connect : téléchargement (étape 3 sur 7)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Récupération de l’assistant Connect : vérification du téléchargement (étape 4 sur 7)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Récupération de l’assistant Connect : installation (étape 5 sur 7)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Récupération de l’assistant Connect : test (étape 6 sur 7)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Récupération de l’assistant Connect : activation (étape 7 sur 7)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "Liaison toujours en cours. Sur un nouveau {machine}, cela peut prendre une minute. Vous pouvez continuer : elle se termine toute seule.",
   "This {machine} is linked": "Ce {machine} est lié",
   "Your other machines and your phone can reach it.":
     "Vos autres machines et votre téléphone peuvent le joindre.",

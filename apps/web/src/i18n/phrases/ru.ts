@@ -4121,6 +4121,22 @@ export const ru: PhraseCatalog = {
   "Happens by itself after you sign in.": "Происходит само после входа.",
   "Checking this {machine}…": "Проверяем этот {machine}…",
   "Linking this {machine}…": "Привязываем этот {machine}…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Получаем помощник Connect: проверяем, что уже установлено (шаг 1 из 7)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Получаем помощник Connect: ждём завершения другой установки (шаг 2 из 7)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Получаем помощник Connect: загрузка (шаг 3 из 7)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Получаем помощник Connect: проверяем загруженный файл (шаг 4 из 7)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Получаем помощник Connect: установка (шаг 5 из 7)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Получаем помощник Connect: проверяем работу (шаг 6 из 7)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Получаем помощник Connect: включаем (шаг 7 из 7)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "Привязка ещё идёт. На новом {machine} это может занять минуту. Можно продолжить: она завершится сама.",
   "This {machine} is linked": "Этот {machine} привязан",
   "Your other machines and your phone can reach it.":
     "Другие ваши компьютеры и телефон могут к нему подключаться.",

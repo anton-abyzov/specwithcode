@@ -9,6 +9,7 @@ import {
   requestRelayClientInstallConfirmation,
   resetRelayClientInstallDialogForTests,
   respondToRelayClientInstallConfirmation,
+  startRelayClientInstallInline,
 } from "./relayClientInstallDialog";
 
 describe("relay client install dialog coordinator", () => {
@@ -50,6 +51,41 @@ describe("relay client install dialog coordinator", () => {
 
     completeRelayClientInstallDialogClose();
     expect(readRelayClientInstallDialogState()).toEqual({ status: "idle" });
+  });
+
+  it("runs an agreed installation with no question and no dialog to close", () => {
+    startRelayClientInstallInline("2026.5.2");
+    expect(readRelayClientInstallDialogState()).toEqual({
+      status: "installing",
+      version: "2026.5.2",
+      stage: "checking",
+      inline: true,
+    });
+
+    reportRelayClientInstallProgress({ type: "progress", stage: "verifying" });
+    expect(readRelayClientInstallDialogState()).toEqual({
+      status: "installing",
+      version: "2026.5.2",
+      stage: "verifying",
+      inline: true,
+    });
+
+    // No dialog was open, so nothing has to report that it closed.
+    finishRelayClientInstall();
+    expect(readRelayClientInstallDialogState()).toEqual({ status: "idle" });
+  });
+
+  it("refuses an agreed installation while another one is on screen", async () => {
+    const confirmation = requestRelayClientInstallConfirmation("2026.5.2");
+    expect(() => startRelayClientInstallInline("2026.6.0")).toThrow(
+      RelayClientInstallConfirmationConflictError,
+    );
+    expect(readRelayClientInstallDialogState()).toEqual({
+      status: "confirming",
+      version: "2026.5.2",
+    });
+    respondToRelayClientInstallConfirmation(false);
+    await expect(confirmation).resolves.toBe(false);
   });
 
   it("returns to idle when installation is declined", async () => {

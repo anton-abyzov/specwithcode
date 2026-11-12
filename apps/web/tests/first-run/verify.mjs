@@ -1,4 +1,4 @@
-// Headless check of first-run setup's connection and Projects steps in their
+// Headless check of first-run setup's sign-in, connection and Projects steps in their
 // real frame, per system, theme, width and language. The Agents step is not
 // here: its rows need a live provider probe and have their own fixture. Run after building:
 //   node node_modules/vite-plus/bin/vp build --config apps/web/tests/first-run/vite.config.ts
@@ -176,6 +176,75 @@ for (const [view, byLang] of Object.entries(sentences)) {
   }
 }
 
+// The sign-in step: signed out, while the Connect helper a new machine lacks is installed, and
+// linked. The install shows in the link row, and no second dialog opens over setup to ask.
+const helperRow = {};
+for (const [name, query] of [
+  ["signed-out", {}],
+  ["helper", { link: "helper", stage: "downloading" }],
+  ["linked", { link: "linked" }],
+]) {
+  for (const platform of ["macos", "windows", "linux"]) {
+    for (const theme of ["light", "dark"]) {
+      for (const [width, height] of [
+        [840, 620],
+        [390, 844],
+      ]) {
+        const at = `signin ${name} ${platform} ${theme} ${width}`;
+        const { context, page } = await open(
+          { view: "signin", platform, theme, ...query },
+          width,
+          height,
+        );
+        const state = await stepState(page, height);
+        for (const problem of state.found) problems.push(`${at}: ${problem}`);
+        if (name === "helper") {
+          const row = (await page.locator('[data-part="link"]').innerText()).replace(/\s+/g, " ");
+          if (!row.includes("Getting the Connect helper: downloading (step 3 of 7)")) {
+            problems.push(`${at}: the link row does not show the helper's install ("${row}")`);
+          }
+          const dialogs = await page.locator('[data-slot="dialog-popup"]').count();
+          if (dialogs !== 1)
+            problems.push(`${at}: ${dialogs} dialogs on screen, expected setup only`);
+          if ((await page.getByRole("button", { name: "Continue" }).count()) !== 1) {
+            problems.push(`${at}: no way on while the helper installs`);
+          }
+          const asked = await page.evaluate(() =>
+            window.fixtureCalls.map((call) => call.join(" ")),
+          );
+          if (!asked.some((call) => call.includes('"relayClientInstall":"agreed"'))) {
+            problems.push(`${at}: the link was not asked for without the question (${asked})`);
+          }
+        }
+        await page.screenshot({
+          path: NodePath.join(output, `signin-${name}-${platform}-${width}-${theme}.png`),
+        });
+        shots += 1;
+        for (const problem of await focusProblems(page)) problems.push(`${at}: ${problem}`);
+        await context.close();
+      }
+    }
+  }
+}
+for (const lang of ["en", "de", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]) {
+  const { context, page } = await open(
+    { view: "signin", link: "helper", stage: "downloading", lang, platform: "windows" },
+    390,
+    844,
+  );
+  const state = await stepState(page, 844);
+  for (const problem of state.found) problems.push(`signin helper ${lang} 390: ${problem}`);
+  helperRow[lang] = (await page.locator('[data-part="link"]').innerText()).replace(/\s+/g, " ");
+  await page.screenshot({ path: NodePath.join(output, `signin-helper-lang-${lang}-390.png`) });
+  shots += 1;
+  await context.close();
+}
+for (const [lang, row] of Object.entries(helperRow)) {
+  if (lang !== "en" && row === helperRow.en) {
+    problems.push(`signin helper ${lang}: the link row is still English`);
+  }
+}
+
 // With nothing found, a typed folder gives the step a main button that works.
 {
   const { context, page } = await open({ view: "projects", found: "0" }, 840, 620);
@@ -206,7 +275,7 @@ await browser.close();
 server.close();
 await NodeFSP.writeFile(
   NodePath.join(output, "first-run-report.json"),
-  JSON.stringify({ problems, sentences }, null, 2),
+  JSON.stringify({ problems, sentences, helperRow }, null, 2),
 );
 console.log(`${shots} screenshots in ${output}`);
 console.log(problems.length ? problems.join("\n") : "no problems");

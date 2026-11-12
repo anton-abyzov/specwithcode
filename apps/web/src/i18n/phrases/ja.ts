@@ -4122,6 +4122,22 @@ export const ja: PhraseCatalog = {
   "Happens by itself after you sign in.": "サインイン後に自動で行われます。",
   "Checking this {machine}…": "この{machine}を確認中…",
   "Linking this {machine}…": "この{machine}をリンク中…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Connect ヘルパーを取得中: インストール済みの内容を確認 (ステップ 1/7)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Connect ヘルパーを取得中: 別のインストールの完了を待機 (ステップ 2/7)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Connect ヘルパーを取得中: ダウンロード中 (ステップ 3/7)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Connect ヘルパーを取得中: ダウンロードを検証中 (ステップ 4/7)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Connect ヘルパーを取得中: インストール中 (ステップ 5/7)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Connect ヘルパーを取得中: 動作を確認中 (ステップ 6/7)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Connect ヘルパーを取得中: 有効化中 (ステップ 7/7)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "まだリンク中です。新しい{machine}では 1 分ほどかかることがあります。続行しても自動で完了します。",
   "This {machine} is linked": "この{machine}はリンク済みです",
   "Your other machines and your phone can reach it.":
     "ほかのマシンとスマートフォンから接続できます。",

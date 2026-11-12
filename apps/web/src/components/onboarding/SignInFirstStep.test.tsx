@@ -87,6 +87,12 @@ import {
   markConnectSignInStarted,
   readConnectSignInStarted,
 } from "../../cloud/connectSignInStarted";
+import {
+  finishRelayClientInstall,
+  reportRelayClientInstallProgress,
+  resetRelayClientInstallDialogForTests,
+  startRelayClientInstallInline,
+} from "../../cloud/relayClientInstallDialog";
 import { SignInFirstStep } from "./SignInFirstStep";
 
 const here = EnvironmentId.make("here");
@@ -123,6 +129,8 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  resetRelayClientInstallDialogForTests();
+  vi.useRealTimers();
 });
 
 const step = () => (
@@ -183,7 +191,11 @@ it("links this Mac by itself once signed in, and shows it as it happens", async 
   await render();
   expect(row("sign-in").textContent).toContain("Signed in as ada@example.com");
   expect(row("sign-in").dataset.state).toBe("done");
-  expect(world.reconcile).toHaveBeenCalledExactlyOnceWith({ managedTunnel: true, publish: true });
+  expect(world.reconcile).toHaveBeenCalledExactlyOnceWith({
+    managedTunnel: true,
+    publish: true,
+    relayClientInstall: "agreed",
+  });
   expect(row("link").textContent).toContain("Linking this Mac…");
   expect(mainButtons()).toEqual([]);
 
@@ -197,6 +209,54 @@ it("links this Mac by itself once signed in, and shows it as it happens", async 
   // Rendering again never links a second time.
   await render();
   expect(world.reconcile).toHaveBeenCalledOnce();
+});
+
+it("installs the Connect helper a new Mac lacks in the link row, with no question", async () => {
+  signIn();
+  world.link.data = { linked: false };
+  let finish!: (ok: boolean) => void;
+  world.reconcile.mockImplementation(() => new Promise<boolean>((resolve) => (finish = resolve)));
+  await render();
+  expect(row("link").textContent).toBe("Linking this Mac…");
+
+  // What the link request does when the machine has no helper yet.
+  await act(async () => startRelayClientInstallInline("2026.10.4"));
+  expect(row("link").textContent).toContain(
+    "Getting the Connect helper: checking what is installed (step 1 of 7)",
+  );
+  await act(async () =>
+    reportRelayClientInstallProgress({ type: "progress", stage: "downloading" }),
+  );
+  expect(row("link").textContent).toContain(
+    "Getting the Connect helper: downloading (step 3 of 7)",
+  );
+  expect(row("link").dataset.state).toBe("busy");
+  // Going on stays possible, and nothing else asks for attention.
+  expect(button("Continue")).toBeDefined();
+  expect(mainButtons()).toEqual([]);
+
+  await act(async () => finishRelayClientInstall());
+  expect(row("link").textContent).toBe("Linking this Mac…");
+  world.link.data = { linked: true, managedTunnelActive: true };
+  await act(async () => finish(true));
+  expect(row("link").textContent).toContain("This Mac is linked");
+});
+
+it("says so when the link takes long, and that going on is fine", async () => {
+  vi.useFakeTimers();
+  signIn();
+  world.link.data = { linked: false };
+  world.reconcile.mockImplementation(() => new Promise<boolean>(() => {}));
+  await render();
+  expect(row("link").textContent).toBe("Linking this Mac…");
+  await act(async () => vi.advanceTimersByTime(19_000));
+  expect(row("link").textContent).toBe("Linking this Mac…");
+  await act(async () => vi.advanceTimersByTime(2_000));
+  expect(row("link").textContent).toContain(
+    "Still linking. This can take a minute on a new Mac. You can continue: it finishes by itself.",
+  );
+  await act(async () => button("Continue")!.click());
+  expect(onContinue).toHaveBeenCalledOnce();
 });
 
 it("links a session that a reloading sign-in left behind", async () => {
@@ -262,7 +322,11 @@ it("keeps Connect off where the owner turned it off, with one button to turn it 
   expect(mainButtons()).toEqual(["Turn on SpecWithCode Connect"]);
 
   await act(async () => button("Turn on SpecWithCode Connect")!.click());
-  expect(world.reconcile).toHaveBeenCalledExactlyOnceWith({ managedTunnel: true, publish: true });
+  expect(world.reconcile).toHaveBeenCalledExactlyOnceWith({
+    managedTunnel: true,
+    publish: true,
+    relayClientInstall: "agreed",
+  });
   expect(row("link").textContent).toContain("This Mac is linked");
   expect(JSON.parse(window.localStorage.getItem(CONNECT_TURNED_OFF_STORAGE_KEY)!)).toEqual({
     accounts: [],
@@ -276,7 +340,11 @@ it("keeps an activity choice when it turns the tunnel on for an existing link", 
   await render();
   expect(world.reconcile).not.toHaveBeenCalled();
   await act(async () => button("Turn on SpecWithCode Connect")!.click());
-  expect(world.reconcile).toHaveBeenCalledExactlyOnceWith({ managedTunnel: true, publish: false });
+  expect(world.reconcile).toHaveBeenCalledExactlyOnceWith({
+    managedTunnel: true,
+    publish: false,
+    relayClientInstall: "agreed",
+  });
 });
 
 it("says why when Team rules or permissions keep Connect off, with no button", async () => {

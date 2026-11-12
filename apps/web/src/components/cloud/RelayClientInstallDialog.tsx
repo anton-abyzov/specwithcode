@@ -47,7 +47,9 @@ export function RelayClientInstallDialog() {
 
   return (
     <Dialog
-      open={state.status === "confirming" || state.status === "installing"}
+      open={
+        state.status === "confirming" || (state.status === "installing" && state.inline !== true)
+      }
       onOpenChange={(open) => {
         if (!open && isConfirming) {
           respondToRelayClientInstallConfirmation(false);

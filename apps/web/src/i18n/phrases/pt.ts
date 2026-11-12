@@ -4134,6 +4134,22 @@ export const pt: PhraseCatalog = {
   "Happens by itself after you sign in.": "Acontece sozinho depois que você entra.",
   "Checking this {machine}…": "Verificando este {machine}…",
   "Linking this {machine}…": "Vinculando este {machine}…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Obtendo o auxiliar do Connect: verificando o que está instalado (etapa 1 de 7)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Obtendo o auxiliar do Connect: aguardando outra instalação terminar (etapa 2 de 7)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Obtendo o auxiliar do Connect: baixando (etapa 3 de 7)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Obtendo o auxiliar do Connect: verificando o download (etapa 4 de 7)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Obtendo o auxiliar do Connect: instalando (etapa 5 de 7)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Obtendo o auxiliar do Connect: testando (etapa 6 de 7)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Obtendo o auxiliar do Connect: ativando (etapa 7 de 7)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "Ainda vinculando. Em um {machine} novo isso pode levar um minuto. Você pode continuar: termina sozinho.",
   "This {machine} is linked": "Este {machine} está vinculado",
   "Your other machines and your phone can reach it.":
     "Suas outras máquinas e seu telefone podem alcançá-lo.",
