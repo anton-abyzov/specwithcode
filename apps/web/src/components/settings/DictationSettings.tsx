@@ -30,6 +30,7 @@ export const DICTATION_LANGUAGES: ReadonlyArray<{
   readonly label: string;
 }> = [
   { value: "", label: "System" },
+  { value: DETECT_DICTATION_LANGUAGE, label: "Detect from speech" },
   { value: "en-US", label: "English (US)" },
   { value: "en-GB", label: "English (UK)" },
   { value: "ru-RU", label: "Russian" },
@@ -45,7 +46,6 @@ export const DICTATION_LANGUAGES: ReadonlyArray<{
   { value: "ja-JP", label: "Japanese" },
   { value: "ko-KR", label: "Korean" },
   { value: "zh-CN", label: "Chinese (Simplified)" },
-  { value: DETECT_DICTATION_LANGUAGE, label: "Detect from speech" },
 ];
 
 const MODE_LABELS: Record<DictationMode, string> = {
