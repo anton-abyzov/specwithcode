@@ -2,6 +2,7 @@ import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts"
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ASSISTANT_TOPIC_STAYS,
   HANDOFF_CONTINUED,
   movedAwayBanner,
   threadMoveBanner,
@@ -70,6 +71,12 @@ describe("threadMoveBlockedReason", () => {
       ),
     ).toBe('Already moved to "Audit".');
   });
+
+  it("keeps an Aide topic in Aide", () => {
+    expect(
+      threadMoveBlockedReason(thread(), { id: specweave, workspaceSettings: { kind: "personal" } }),
+    ).toBe(ASSISTANT_TOPIC_STAYS);
+  });
 });
 
 describe("threadMoveTargets", () => {
@@ -89,6 +96,24 @@ describe("threadMoveTargets", () => {
     expect(
       threadMoveTargets(thread(), projects, () => "/scratch").map((project) => project.id),
     ).toEqual([easychamp]);
+  });
+
+  it("never offers Aide, and moves none of Aide's topics", () => {
+    const aide = ProjectId.make("project-aide");
+    const projects = [
+      { environmentId: here, id: specweave, workspaceRoot: "/repos/specweave" },
+      { environmentId: here, id: easychamp, workspaceRoot: "/repos/easychamp" },
+      {
+        environmentId: here,
+        id: aide,
+        workspaceRoot: "/assistants/aide",
+        workspaceSettings: { kind: "personal" },
+      },
+    ];
+    expect(
+      threadMoveTargets(thread(), projects, () => "/scratch").map((project) => project.id),
+    ).toEqual([easychamp]);
+    expect(threadMoveTargets(thread({ projectId: aide }), projects, () => "/scratch")).toEqual([]);
   });
 });
 

@@ -256,3 +256,21 @@ it("opens a modern project's coordinator without retargeting or clearing the exi
   expect(runtime.coordinator).toHaveBeenCalledWith(scopeProjectRef(m1, ProjectId.make("target")));
   expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBe(before);
 });
+
+it("keeps Aide as the chosen row of a draft aimed at it, and never offers it to another draft", async () => {
+  runtime.projects[0].workspaceSettings = { archived: false, kind: "personal" } as any;
+  runtime.projects.push(project(m1, "app", "App"));
+  await render();
+  const aide = [...container.querySelectorAll("button")].filter((node) =>
+    node.textContent?.startsWith("Source"),
+  );
+  expect(aide.map((node) => [node.textContent, node.disabled])).toEqual([["Source", false]]);
+  expect(document.body.textContent).not.toContain("not available here");
+
+  runtime.projects = [
+    project(m4, "source", "Source"),
+    { ...project(m1, "aide", "Aide"), workspaceSettings: { archived: false, kind: "personal" } },
+  ];
+  await render();
+  expect(document.body.textContent).not.toContain("Aide");
+});

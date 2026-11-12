@@ -40,10 +40,16 @@ const targetProjectId = ProjectId.make("project:move-target");
 const archivedProjectId = ProjectId.make("project:move-archived");
 const otherProjectId = ProjectId.make("project:move-other");
 const scratchProjectId = ProjectId.make("project:move-scratch");
+const assistantProjectId = ProjectId.make("project:move-aide");
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.1-codex" };
 const targetModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.2-codex" };
 
-const projectRow = (id: ProjectId, title: string, archived = false) => ({
+const projectRow = (
+  id: ProjectId,
+  title: string,
+  archived = false,
+  kind: "code" | "personal" = "code",
+) => ({
   id,
   title,
   workspaceRoot: `/repos/${title}`,
@@ -52,7 +58,7 @@ const projectRow = (id: ProjectId, title: string, archived = false) => ({
   defaultModelSelection: id === targetProjectId ? targetModel : modelSelection,
   defaultThreadEnvMode: null,
   scripts: [],
-  workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, archived },
+  workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, archived, kind },
   createdAt: "2026-10-01T00:00:00.000Z",
   updatedAt: "2026-10-01T00:00:00.000Z",
   deletedAt: null,
@@ -63,6 +69,7 @@ const projectsById = new Map([
   [archivedProjectId, projectRow(archivedProjectId, "Old", true)],
   [otherProjectId, projectRow(otherProjectId, "vskill")],
   [scratchProjectId, projectRow(scratchProjectId, "No project")],
+  [assistantProjectId, projectRow(assistantProjectId, "Aide", false, "personal")],
 ]);
 
 const adapter = {
@@ -80,6 +87,7 @@ const layerDatabase = fixtureProjectDatabase([
   archivedProjectId,
   otherProjectId,
   scratchProjectId,
+  assistantProjectId,
 ]);
 const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
   { name: "thread-move" },
@@ -499,5 +507,36 @@ it.effect("refuses coordinators, agents, the same project and unavailable projec
     assert.equal(shell, null);
     const source = yield* orchestrator.getThreadProjection(plain);
     assert.equal(source.thread.archivedAt, null);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the personal assistant's topics in it and moves nothing into it", () =>
+  Effect.gen(function* () {
+    const moves = yield* ThreadMove.ThreadMoveService;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const topic = ThreadId.make("thread:move-aide-topic");
+    const plain = ThreadId.make("thread:move-into-aide");
+    yield* createThread(topic, assistantProjectId);
+    yield* createThread(plain);
+    const refused = (command: ThreadMove.ThreadMoveCommand) =>
+      moves.move(command).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+    assert.include(
+      yield* refused(moveCommand(topic, ThreadId.make("thread:move-aide-topic-target"))),
+      "Aide's topics stay private",
+    );
+    assert.include(
+      yield* refused(
+        moveCommand(plain, ThreadId.make("thread:move-into-aide-target"), {
+          targetProjectId: assistantProjectId,
+        }),
+      ),
+      "cannot move into Aide",
+    );
+    const kept = yield* orchestrator.getThreadProjection(topic);
+    assert.equal(kept.thread.archivedAt, null);
+    assert.equal(kept.thread.projectId, assistantProjectId);
   }).pipe(Effect.provide(layerTest)),
 );

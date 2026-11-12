@@ -1644,10 +1644,6 @@ export const ru: PhraseCatalog = {
   "Make default": "Сделать основным",
   "Morning briefing": "Утренняя сводка",
   "Not connected": "Не подключено",
-  "Let a project's agents read your Gmail, Calendar and Drive, so a Personal project can brief you on your day, find a document or check who is coming to a meeting.":
-    "Позвольте агентам проекта читать ваши Gmail, Календарь и Диск, чтобы личный проект мог рассказать о вашем дне, найти документ или проверить, кто придёт на встречу.",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only your Personal project starts with access.":
-    "Агенты читают. Если включены черновики Gmail, они сохраняют черновики ответов и отправляют один, только когда вы нажмёте «Отправить» на карточке ответа; они ничего не меняют и не удаляют. SpecWithCode работает с Google с этой машины, хранит вход в закрытом файле на этой машине и не даёт проекту ничего, пока вы не включите это ниже. Доступ сразу есть только у вашего личного проекта.",
   "The SpecWithCode service this app is connected to (version {serverVersion}) is older than Google account support. Update that service to use it.":
     "Сервис SpecWithCode, к которому подключено это приложение (версия {serverVersion}), старше поддержки аккаунтов Google. Обновите этот сервис, чтобы ею пользоваться.",
   "Your own OAuth client": "Свой OAuth-клиент",
@@ -1684,12 +1680,32 @@ export const ru: PhraseCatalog = {
   "Finish sign-in": "Завершить вход",
   "Projects that may read each account": "Проекты, которые могут читать каждый аккаунт",
   "Projects that may read it": "Проекты, которые могут его читать",
-  "Agents in a project see only the services you turn on for it.{value}":
-    "Агенты в проекте видят только те сервисы, которые вы для него включили.{value}",
+  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
+    "Позвольте Aide и выбранным проектам читать ваши Gmail, Calendar и Drive, чтобы Aide мог рассказать о вашем дне, найти документ или проверить, кто придёт на встречу.",
+  "Agents in a project see only the services you turn on for it.":
+    "Агенты в проекте видят только те сервисы, которые вы для него включили.",
+  "Agents use the default account unless asked for another, and may read every account turned on here.":
+    "Агенты используют аккаунт по умолчанию, если не попросить другой, и могут читать все аккаунты, включённые здесь.",
+  "Your personal assistant. It starts with access when you connect an account.":
+    "Ваш личный ассистент. Он получает доступ, как только вы подключаете аккаунт.",
+  "Hidden on this machine. You can still turn its access off here.":
+    "Скрыт на этой машине. Здесь всё ещё можно отключить его доступ.",
+  "Proactive briefing": "Проактивная сводка",
+  "No projects yet. Aide above can already use this account.":
+    "Проектов пока нет. Aide выше уже может пользоваться этим аккаунтом.",
+  "No projects yet. Add one to let its agents read this account.":
+    "Проектов пока нет. Добавьте проект, чтобы его агенты могли читать этот аккаунт.",
+  "Enable {service} for all active projects": "Включить {service} для всех активных проектов",
+  "Disable {service} for all projects": "Отключить {service} для всех проектов",
+  "{service} for {title}": "{service} для {title}",
+  "Make {account} the default for {title}": "Сделать {account} основным для {title}",
+  "this account": "этот аккаунт",
+  "Aide is opened from its own entry, not as a project":
+    "Aide открывается из своего раздела, а не как проект",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
+    "Агенты читают. Если включены черновики Gmail, они сохраняют черновики ответов и отправляют один, только когда вы нажмёте «Отправить» на карточке ответа; они ничего не меняют и не удаляют. SpecWithCode работает с Google с этой машины, хранит вход в закрытом файле на этой машине и не даёт проекту ничего, пока вы не включите это ниже. Доступ сразу есть только у Aide.",
   "Enable for all active projects": "Включить для всех активных проектов",
   "Not now": "Не сейчас",
-  "Add a project first. A Personal project suits a personal agent.":
-    "Сначала добавьте проект. Для личного агента подойдёт личный проект.",
   "{span} · {onCount} of {length} active": "{span} · {onCount} из {length} активных",
   "No active projects of your own here.": "Здесь нет ваших активных проектов.",
   automated: "автоматический",
@@ -4556,4 +4572,9 @@ export const ru: PhraseCatalog = {
   "move pending": "перенос не подтверждён",
   "separate project": "отдельный проект",
   "not synced here": "не синхронизировано здесь",
+  "{value}Messages go to Aide. {value2}": "{value}Сообщения идут в Aide. {value2}",
+  "Show only topics that need you in {project}":
+    "Показать только темы, которые ждут вас в {project}",
+  "New topic in {title}": "Новая тема в {title}",
+  Aide: "Aide",
 };

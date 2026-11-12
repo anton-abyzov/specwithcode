@@ -9,6 +9,8 @@ import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useProjectDeletionWorktrees } from "./ProjectDeletionWorktrees";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import { paneWords } from "../../studio/assistantTerms";
 
 export function threadCountLabel(count: number): string {
   return count === 1 ? "1 thread" : `${count} threads`;
@@ -27,9 +29,12 @@ export function ProjectThreadsDeletion({
   project: EnvironmentProject;
   disabled: boolean;
 }) {
+  // Aide calls its threads topics.
+  const personal = isPersonalAssistantProject(project);
+  const say = paneWords(personal);
   const deleteThreads = useAtomCommand(projectEnvironment.threadsDelete, { reportFailure: false });
   const worktrees = useProjectDeletionWorktrees({
-    failureTitle: "The threads were deleted, but their worktrees were kept",
+    failureTitle: say("The threads were deleted, but their worktrees were kept"),
     threadsOnly: true,
   });
   // The server's own list, so the count matches what it deletes: null while unknown.
@@ -76,7 +81,7 @@ export function ProjectThreadsDeletion({
     setBusy(false);
     if (result._tag === "Failure") {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "The threads could not be deleted.");
+      setError(cause instanceof Error ? cause.message : say("The threads could not be deleted."));
       return;
     }
     const confirmed = worktrees.confirmed();
@@ -87,27 +92,30 @@ export function ProjectThreadsDeletion({
     void countThreads();
     toastManager.add({
       type: "success",
-      title: `Deleted ${threadCountLabel(result.value.deletedThreadIds.length)}`,
-      description: "Project memory, plan and routines were kept.",
+      title: say(`Deleted ${threadCountLabel(result.value.deletedThreadIds.length)}`),
+      description: personal
+        ? "Aide's memory, plan and routines were kept."
+        : "Project memory, plan and routines were kept.",
     });
     if (confirmed !== null) void worktrees.remove(target, confirmed);
   }
   return (
     <>
-      <h4>Delete all threads</h4>
+      <h4>{say("Delete all threads")}</h4>
       <p>
-        Permanently delete {threadCount === null ? "every thread" : threadCountLabel(threadCount)}{" "}
-        in this project, archived ones and threads you started included. This cannot be undone.
+        {say(
+          `Permanently delete ${threadCount === null ? "every thread" : threadCountLabel(threadCount)} ${personal ? "in Aide" : "in this project"}, archived ones and threads you started included. This cannot be undone.`,
+        )}
       </p>
       <p className="project-muted">
-        The coordinator and its own subagents, project memory, plan, routines and connections stay,
-        so you can start fresh threads with what the project already knows. Running threads must
-        stop first.
+        {personal
+          ? "Aide and its own subagents, its memory, plan, routines and connections stay, so you can start fresh topics with what Aide already knows. Running topics must stop first."
+          : "The coordinator and its own subagents, project memory, plan, routines and connections stay, so you can start fresh threads with what the project already knows. Running threads must stop first."}
       </p>
       <label>
         Type {project.title} to confirm
         <input
-          aria-label="Confirm deleting all threads"
+          aria-label={say("Confirm deleting all threads")}
           autoComplete="off"
           value={confirmation}
           onChange={(e) => typeConfirmation(e.target.value)}
@@ -125,11 +133,13 @@ export function ProjectThreadsDeletion({
         disabled={disabled || busy || threadCount === 0 || confirmation !== project.title}
         onClick={() => void run()}
       >
-        {busy
-          ? "Deleting threads…"
-          : threadCount === null
-            ? "Delete all threads"
-            : `Delete ${threadCountLabel(threadCount)}`}
+        {say(
+          busy
+            ? "Deleting threads…"
+            : threadCount === null
+              ? "Delete all threads"
+              : `Delete ${threadCountLabel(threadCount)}`,
+        )}
       </button>
       <hr className="my-6 border-border" />
     </>

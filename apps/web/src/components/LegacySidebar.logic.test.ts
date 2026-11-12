@@ -2,8 +2,11 @@ import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ProjectListMember } from "../studio/projectListVisibility";
+import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import {
+  legacySidebarAssistantLinks,
   legacySidebarProjectSections,
+  withoutAssistants,
   legacySidebarWaitingCount,
   type LegacySidebarWaitingThread,
 } from "./LegacySidebar.logic";
@@ -118,5 +121,62 @@ describe("legacySidebarProjectSections", () => {
     ]);
     expect(legacySidebarWaitingCount([bot], threads)).toBe(3);
     expect(legacySidebarWaitingCount([], threads)).toBe(0);
+  });
+});
+
+describe("Aide in the legacy sidebars", () => {
+  const assistant = (
+    projectKey: string,
+    environmentId: string,
+    environmentLabel: string,
+    settings: { archived?: boolean; origin?: "automated" } = {},
+  ) =>
+    ({
+      projectKey,
+      displayName: "Aide",
+      memberProjects: [
+        {
+          environmentId,
+          id: projectKey,
+          environmentLabel,
+          workspaceRoot: `/work/${projectKey}`,
+          createdAt: "2026-11-01",
+          workspaceSettings: { kind: "personal", ...settings },
+        },
+      ],
+    }) as unknown as SidebarProjectSnapshot;
+  const own = assistant("aide", "host", "Main Mac");
+  const archivedOther = assistant("aide-m1", "m1", "M1", { archived: true });
+  const automatedAide = assistant("aide-bot", "m3", "M3", { origin: "automated" });
+
+  it("puts no assistant in any section, automated or archived ones included", () => {
+    const sections = legacySidebarProjectSections(
+      [...groups, own, archivedOther, automatedAide],
+      scratchRootFor,
+      "aide",
+      { automated: true, archived: true },
+    );
+    for (const list of [sections.listed, sections.automated, sections.archived, sections.visible]) {
+      expect(list.map((entry) => entry.projectKey)).not.toEqual(
+        expect.arrayContaining(["aide", "aide-m1", "aide-bot"]),
+      );
+    }
+    expect(sections.listed).toEqual([scratch, atlas]);
+    expect(withoutAssistants([atlas, own])).toEqual([atlas]);
+  });
+
+  it("links each assistant above the list, this machine's first, naming machines", () => {
+    const projects = [atlas as unknown as SidebarProjectSnapshot, archivedOther, own];
+    expect(legacySidebarAssistantLinks(projects, "host")).toEqual([
+      { projectKey: "aide", title: "Aide", hint: "Main Mac" },
+      { projectKey: "aide-m1", title: "Aide", hint: "M1" },
+    ]);
+    expect(legacySidebarAssistantLinks([own], "host")).toEqual([
+      { projectKey: "aide", title: "Aide", hint: undefined },
+    ]);
+    // Aide off: the sidebars leave it out of their groups, so nothing is linked.
+    expect(
+      legacySidebarAssistantLinks([atlas as unknown as SidebarProjectSnapshot], "host"),
+    ).toEqual([]);
   });
 });

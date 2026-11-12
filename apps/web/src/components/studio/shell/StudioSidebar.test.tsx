@@ -1476,6 +1476,36 @@ describe("cleaning up the projects list", () => {
     });
   });
 
+  it("lists an archived personal assistant only in its own entry, with no count", async () => {
+    state.groups.push({
+      projectKey: "host:/aide",
+      displayName: "Aide",
+      memberProjects: [
+        {
+          environmentId: "host",
+          id: "aide",
+          workspaceSettings: { kind: "personal", archived: true, revision: 2 },
+        },
+      ],
+    } as never);
+    state.shells = [
+      shell("aide-ask", {
+        projectId: "aide" as EnvironmentThreadShell["projectId"],
+        hasPendingUserInput: true,
+      }),
+    ];
+    await render();
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent ?? "");
+    expect(labels.some((label) => label.startsWith("Archived ("))).toBe(false);
+    const entry = container.querySelector('.sws-side-actions [aria-label="Personal assistant"]')!;
+    expect(entry.textContent).toContain("Aide");
+    expect(entry.querySelector(".sws-project-row")?.hasAttribute("data-archived")).toBe(true);
+    expect(entry.querySelector(".sws-count-waiting")).toBeNull();
+    expect(
+      container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent,
+    ).not.toContain("Aide");
+  });
+
   it("opens Automated while one of its projects is open", async () => {
     state.groups.push(automatedSample);
     state.params = { projectKey: automatedSample.projectKey };

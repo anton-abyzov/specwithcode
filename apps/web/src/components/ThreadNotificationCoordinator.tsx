@@ -65,6 +65,8 @@ import {
 } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
+import { paneWords } from "../studio/assistantTerms";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
 
 /** A system notification still on screen, until the user comes back. */
@@ -239,11 +241,15 @@ function EnvironmentNotifications({
   // when it is delivered, so a change in the project menu applies at once.
   const projects = useProjects();
   const levels = useRef(new Map<ProjectId, ProjectNotificationLevel>());
+  // Aide's threads are topics, so its alerts say topic.
+  const assistantIds = useRef(new Set<ProjectId>());
   useLayoutEffect(() => {
+    const here = projects.filter((project) => project.environmentId === environmentId);
     levels.current = new Map(
-      projects
-        .filter((project) => project.environmentId === environmentId)
-        .map((project) => [project.id, projectNotificationLevel(project)]),
+      here.map((project) => [project.id, projectNotificationLevel(project)]),
+    );
+    assistantIds.current = new Set(
+      here.filter((project) => isPersonalAssistantProject(project)).map((project) => project.id),
     );
   }, [projects, environmentId]);
   const latest = useRef({ threads, mode, inAppNotificationsEnabled, inputNeededAlertsEnabled });
@@ -492,7 +498,10 @@ function EnvironmentNotifications({
             const checked = stillCurrent();
             if (checked === null) return false;
             const { currentRaw, currentThread } = checked;
-            const title =
+            const say = paneWords(
+              thread.projectId != null && assistantIds.current.has(thread.projectId),
+            );
+            const title = say(
               kind === "stalled"
                 ? "No activity in thread"
                 : kind === "completion"
@@ -511,7 +520,8 @@ function EnvironmentNotifications({
                             ? "Usage limit reached"
                             : status === "failed"
                               ? "Thread failed"
-                              : "Input needed";
+                              : "Input needed",
+            );
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
             const focusedNow = () => document.visibilityState === "visible" && document.hasFocus();
@@ -620,7 +630,7 @@ function EnvironmentNotifications({
                     ),
                 },
                 actionProps: {
-                  children: "Open thread",
+                  children: say("Open thread"),
                   onClick: () => {
                     toastManager.close(toastId);
                     void openChat({

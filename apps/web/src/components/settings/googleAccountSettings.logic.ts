@@ -7,6 +7,7 @@ import {
   type ProjectListMember,
   type ScratchRootLookup,
 } from "../../studio/projectListVisibility";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { visibleWithAideKeeping } from "../../studio/personalAssistant";
 
 interface GoogleProjectAccess {
@@ -15,10 +16,10 @@ interface GoogleProjectAccess {
 }
 
 /**
- * The projects Google access is offered to: the person's own active ones in the main list,
- * those a check or agent made for itself (acceptance runs, fixtures, tests) and archived ones
- * apart, so their access can still be checked. Scratch is not a project. Personal projects
- * lead, since a personal agent lives there; a hidden one shows only while it holds access.
+ * The spaces Google access is offered to. Aide, the personal assistant, has its own group and
+ * is never a project; a hidden one shows only while it holds access, so it can be turned off.
+ * Projects are the person's own active ones, those a check or agent made for itself
+ * (acceptance runs, fixtures, tests) and archived ones apart. Scratch is not a project.
  */
 export function partitionGoogleProjects<
   P extends ProjectListMember & {
@@ -33,22 +34,40 @@ export function partitionGoogleProjects<
     keepIds: [],
   },
 ) {
-  // A hidden personal assistant (Settings → General) is left out, unless it
-  // still holds Google access: it stays listed so that access can be seen and revoked.
   const sorted = visibleWithAideKeeping(projects, aide.enabled, aide.keepIds)
     .filter((project) => !isScratchMember(project, scratchRootFor))
-    .toSorted(
-      (left, right) =>
-        Number(right.workspaceSettings?.kind === "personal") -
-          Number(left.workspaceSettings?.kind === "personal") ||
-        left.title.localeCompare(right.title),
-    );
-  const current = sorted.filter((project) => !isArchivedMember(project));
+    .toSorted((left, right) => left.title.localeCompare(right.title));
+  const regular = sorted.filter((project) => !isPersonalAssistantProject(project));
+  const current = regular.filter((project) => !isArchivedMember(project));
   return {
+    assistants: sorted.filter(isPersonalAssistantProject),
     active: current.filter((project) => !isAutomatedMember(project)),
     automated: current.filter(isAutomatedMember),
-    archived: sorted.filter(isArchivedMember),
+    archived: regular.filter(isArchivedMember),
   };
+}
+
+/** The services that set up Aide's own briefing routine once the assistant may read one. */
+const BRIEFING_SERVICES: ReadonlyArray<GoogleService> = ["gmail", "calendar"];
+
+/**
+ * The briefing a row offers. The machine's assistant gets the Proactive briefing routine on
+ * its own once it may read Gmail or Calendar, so its row opens Routines instead of proposing a
+ * second briefing. A hidden assistant runs no routines; any other row may add a Morning briefing.
+ */
+export function googleBriefingAction(
+  services: ReadonlyArray<GoogleService>,
+  row: {
+    readonly machineAssistant: boolean;
+    readonly assistant: boolean;
+    readonly aideEnabled: boolean;
+  },
+): "proactive" | "morning" | null {
+  if (services.length === 0) return null;
+  if (row.assistant && !row.aideEnabled) return null;
+  if (row.machineAssistant && services.some((service) => BRIEFING_SERVICES.includes(service)))
+    return "proactive";
+  return "morning";
 }
 
 /** The access changes that turn one service on or off for the given projects; unchanged ones are left out. */

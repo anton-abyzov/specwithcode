@@ -941,6 +941,7 @@ export const serverEnvironment = withFallback({
   setGoogleProjectAccess: "googleAccess",
   scheduledTasksLive: () => ({ kind: "routines" }),
   configValueAtom: () => noServerConfig,
+  settingsValueAtom: (environmentId) => fixtureAtom(`settings:${environmentId}`, null),
   updateSettings: "updateSettings",
   setScheduledTaskEnabled: "routineToggle",
   runScheduledTaskNow: "routineRun",
@@ -1386,6 +1387,9 @@ export const useEnvironments = () => ({
   presentationById: new Map(),
 });
 export const usePrimaryEnvironmentId = () => (fallbackFixture ? "this-mac" : "host");
+// One stable array, as the real atom gives, so effects keyed on it do not re-run.
+const FIXTURE_ENVIRONMENT_IDS = ["host"];
+export const useEnvironmentIds = () => FIXTURE_ENVIRONMENT_IDS;
 export const usePrimaryEnvironment = () => ({ environmentId: "host" });
 export const useServerConfigs = () => new Map();
 export const environmentProjects = fixtureAnything("environmentProjects");
@@ -1742,3 +1746,5 @@ export const useProviderQuickSetup = () => ({
   steps: new Map(),
   turnedOn: [],
 });
+// state/server: the update action for a host too old to connect; never run here.
+export const updateOutdatedServer = fixtureAnything("updateOutdatedServer");

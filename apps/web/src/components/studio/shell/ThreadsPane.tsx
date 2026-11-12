@@ -563,7 +563,7 @@ export function ThreadsPane({
                           <button
                             type="button"
                             className="sws-icon-button"
-                            aria-label="Thread actions"
+                            aria-label={say("Thread actions")}
                             data-bulk-thread-actions
                           />
                         }
@@ -606,7 +606,9 @@ export function ThreadsPane({
                         <button
                           type="button"
                           className="sws-icon-button"
-                          aria-label={`Sort threads, by ${THREAD_SORT_LABELS[sortBy].toLowerCase()}`}
+                          aria-label={say(
+                            `Sort threads, by ${THREAD_SORT_LABELS[sortBy].toLowerCase()}`,
+                          )}
                         />
                       }
                     />
@@ -661,7 +663,9 @@ export function ThreadsPane({
           {offerStarters ? <h2>Welcome.</h2> : null}
           <p role="status">
             {offerStarters && !props.attention
-              ? say("No threads yet. Pick a first task, or ask the coordinator for one.")
+              ? props.personal
+                ? "No topics yet. Ask Aide for a new topic, or pick one below."
+                : "No threads yet. Pick a first task, or ask the coordinator for one."
               : say(
                   threadsSummary(
                     allThreads,
@@ -690,7 +694,7 @@ export function ThreadsPane({
               }
             >
               <span className="sws-dot" data-tone="waiting" aria-hidden />
-              {machine ? `${machine} coordinator` : "Coordinator"} ·{" "}
+              {props.personal ? "Aide" : machine ? `${machine} coordinator` : "Coordinator"} ·{" "}
               {attentionActionWord(action.reason)}
             </button>
           ))}
@@ -758,7 +762,7 @@ export function ThreadsPane({
                   type="button"
                   className="sws-filter-chip"
                   data-filter-chip="agent"
-                  aria-label={`Showing ${agentFilter} threads. Remove this filter`}
+                  aria-label={say(`Showing ${agentFilter} threads. Remove this filter`)}
                   onClick={() => updatePaneFilters({ agent: null })}
                 >
                   {agentFilter}
@@ -770,7 +774,7 @@ export function ThreadsPane({
                   type="button"
                   className="sws-filter-chip"
                   data-filter-chip="pull-request"
-                  aria-label="Showing threads with an open pull request. Remove this filter"
+                  aria-label={say("Showing threads with an open pull request. Remove this filter")}
                   onClick={() => updatePaneFilters({ openPullRequest: false })}
                 >
                   Open pull request
@@ -787,11 +791,11 @@ export function ThreadsPane({
                             <button
                               type="button"
                               className="sws-filter-more"
-                              aria-label={
+                              aria-label={say(
                                 activeMenuFilters > 0
                                   ? `Filter threads, ${activeMenuFilters} on`
-                                  : "Filter threads"
-                              }
+                                  : "Filter threads",
+                              )}
                               data-thread-filter-menu
                             />
                           }
@@ -938,7 +942,7 @@ export function ThreadsPane({
                   <span className="sws-group-count">
                     {threads.length}
                     {openEverything ? " shown" : ""}
-                    <span className="sr-only"> threads</span>
+                    <span className="sr-only">{say(" threads")}</span>
                   </span>
                 </button>
               </h3>

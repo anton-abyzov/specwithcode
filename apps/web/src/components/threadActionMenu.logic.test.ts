@@ -403,6 +403,53 @@ describe("buildThreadActionMenuItems", () => {
   });
 });
 
+describe("buildThreadActionMenuItems for an Aide topic", () => {
+  const labels = (state: ThreadActionMenuState): string[] => {
+    const flatten = (items: ReturnType<typeof buildThreadActionMenuItems>): string[] =>
+      items.flatMap((item) => [item.label, ...(item.children ? flatten(item.children) : [])]);
+    return flatten(buildThreadActionMenuItems(state));
+  };
+  const handoff = { mode: "inherit", effective: "on", continued: false } as const;
+  const moving = {
+    ...baseState,
+    branch: "main",
+    handoff,
+    moveToProjectBlockedReason: null,
+    supports: { ...baseState.supports, projectMove: true },
+  } satisfies ThreadActionMenuState;
+
+  it("says topic, never thread", () => {
+    const topic = labels({ ...moving, isPersonal: true });
+    expect(topic).toEqual(
+      expect.arrayContaining([
+        "New topic on main",
+        "Pin topic",
+        "Resolve topic",
+        "Rename topic",
+        "Topic ID",
+        "Archive topic",
+      ]),
+    );
+    expect(topic.filter((label) => /thread/i.test(label))).toEqual([]);
+    expect(labels({ ...moving, isPersonal: true, isPinned: true })).toContain("Unpin topic");
+    expect(labels({ ...moving, isPersonal: true, isSnoozed: true })).toContain("Wake topic");
+    expect(labels({ ...moving, isPersonal: true, isSettled: true })).toContain("Reopen topic");
+    expect(labels(moving)).toEqual(expect.arrayContaining(["Pin thread", "Archive thread"]));
+  });
+
+  it("offers no move to a project or another machine", () => {
+    const topic = allIds({ ...moving, isPersonal: true });
+    for (const id of ["move-to-project", "hand-off", "switch-model", "handoff-mode"]) {
+      expect(topic).not.toContain(id);
+    }
+    expect(allIds(moving)).toEqual(expect.arrayContaining(["move-to-project", "hand-off"]));
+    const archive = buildThreadActionMenuItems({ ...moving, isPersonal: true }).find(
+      (item) => item.id === "archive",
+    );
+    expect(archive?.separatorBefore).toBe(true);
+  });
+});
+
 describe("buildDraftActionMenuItems", () => {
   it("offers only the copy values the draft has", () => {
     const items = buildDraftActionMenuItems({

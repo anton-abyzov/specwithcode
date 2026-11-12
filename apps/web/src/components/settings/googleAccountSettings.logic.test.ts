@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   bulkServiceChanges,
   enableAllChanges,
+  googleBriefingAction,
   partitionGoogleProjects,
 } from "./googleAccountSettings.logic";
 
@@ -24,10 +25,11 @@ const A = ProjectId.make("a");
 const B = ProjectId.make("b");
 
 describe("partitionGoogleProjects", () => {
-  it("lists active projects, personal first, and keeps automated, archived and scratch apart", () => {
-    const { active, automated, archived } = partitionGoogleProjects(
+  it("puts Aide in its own group and keeps automated, archived and scratch projects apart", () => {
+    const { assistants, active, automated, archived } = partitionGoogleProjects(
       [
-        project("code", "Alpha"),
+        project("code", "Beta"),
+        project("alpha", "Alpha"),
         project("old", "Old", { archived: true }),
         project("aide", "Zeta", { kind: "personal" }),
         project("scratch", "No project", {}, "/scratch"),
@@ -42,20 +44,54 @@ describe("partitionGoogleProjects", () => {
       ],
       () => "/scratch",
     );
-    expect(active.map((entry) => entry.id)).toEqual(["aide", "code"]);
+    expect(assistants.map((entry) => entry.id)).toEqual(["aide"]);
+    expect(active.map((entry) => entry.id)).toEqual(["alpha", "code"]);
     expect(automated.map((entry) => entry.id)).toEqual(["demo", "check"]);
     expect(archived.map((entry) => entry.id)).toEqual(["old", "oldcheck"]);
+  });
+
+  it("never counts an archived Aide among projects", () => {
+    const { assistants, archived } = partitionGoogleProjects(
+      [project("aide", "Aide", { kind: "personal", archived: true })],
+      () => null,
+    );
+    expect(assistants.map((entry) => entry.id)).toEqual(["aide"]);
+    expect(archived).toEqual([]);
   });
 
   it("leaves a hidden personal assistant out unless it still holds Google access", () => {
     const projects = [project("code", "Alpha"), project("aide", "Zeta", { kind: "personal" })];
     const hidden = partitionGoogleProjects(projects, () => null, { enabled: false, keepIds: [] });
+    expect(hidden.assistants).toEqual([]);
     expect(hidden.active.map((entry) => entry.id)).toEqual(["code"]);
     const withAccess = partitionGoogleProjects(projects, () => null, {
       enabled: false,
       keepIds: ["aide"],
     });
-    expect(withAccess.active.map((entry) => entry.id)).toEqual(["aide", "code"]);
+    expect(withAccess.assistants.map((entry) => entry.id)).toEqual(["aide"]);
+    expect(withAccess.active.map((entry) => entry.id)).toEqual(["code"]);
+  });
+});
+
+describe("googleBriefingAction", () => {
+  const aide = { assistant: true, machineAssistant: true, aideEnabled: true };
+  const regular = { assistant: false, machineAssistant: false, aideEnabled: true };
+
+  it("points Aide at its own Proactive briefing once it may read Gmail or Calendar", () => {
+    expect(googleBriefingAction(["gmail"], aide)).toBe("proactive");
+    expect(googleBriefingAction(["calendar", "drive"], aide)).toBe("proactive");
+  });
+
+  it("offers a Morning briefing where no routine is set up on its own", () => {
+    expect(googleBriefingAction(["drive"], aide)).toBe("morning");
+    expect(googleBriefingAction(["gmail"], regular)).toBe("morning");
+    expect(googleBriefingAction(["gmail"], { ...aide, machineAssistant: false })).toBe("morning");
+  });
+
+  it("offers nothing without access or for a hidden Aide", () => {
+    expect(googleBriefingAction([], aide)).toBeNull();
+    expect(googleBriefingAction([], regular)).toBeNull();
+    expect(googleBriefingAction(["gmail"], { ...aide, aideEnabled: false })).toBeNull();
   });
 });
 

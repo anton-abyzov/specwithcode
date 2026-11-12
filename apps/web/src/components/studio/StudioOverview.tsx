@@ -14,8 +14,20 @@ import { useAideEnabled } from "../../hooks/useSettings";
 import { threadsVisibleWithAide, visibleWithAide } from "../../studio/personalAssistant";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
+  DEFAULT_PERSONAL_ASSISTANT_NAME,
+  PERSONAL_ASSISTANT_LABEL,
+} from "@specweave-studio/contracts";
+import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import {
+  assistantGroupHint,
+  assistantGroupsOf,
+  assistantMembersOf,
+  sortAssistantGroups,
+} from "./assistantEntries";
+import {
   archivedMemberKeys,
   automatedMemberKeys,
+  isAssistantGroup,
   partitionProjectGroups,
   projectPickerMembers,
   type ScratchRootLookup,
@@ -164,9 +176,17 @@ export function StudioOverview() {
     [configs],
   );
   // Projects in use: no machine's "No project" folder, nothing archived and no check's project.
-  const listedGroups = useMemo(
-    () => partitionProjectGroups(projectGroups, scratchRootFor).listed,
+  const partition = useMemo(
+    () => partitionProjectGroups(projectGroups, scratchRootFor),
     [projectGroups, scratchRootFor],
+  );
+  const listedGroups = partition.listed;
+  // The assistants the sidebar's Aide block lists, an archived one included.
+  const assistantGroups = useMemo(() => assistantGroupsOf(partition), [partition]);
+  // Aide is its own space, not a project: it has its own entry and stays out of every project count.
+  const ownProjectGroups = useMemo(
+    () => listedGroups.filter((group) => !isAssistantGroup(group)),
+    [listedGroups],
   );
   // Threads of archived and automated projects stay out of Overview, as the projects
   // stay out of its cards, so its counts match the projects it shows.
@@ -183,6 +203,7 @@ export function StudioOverview() {
   const { environments, isReady, networkStatus } = useEnvironments();
   const canOperate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
   const openDestination = useNewChatDestination();
+  const handleNewThread = useNewThreadHandler();
   const [request, setRequest] = useState<DraftRequest | null>(null);
   const [selectedProject, setSelectedProject] = useState("");
   const [starting, setStarting] = useState(false);
@@ -248,7 +269,7 @@ export function StudioOverview() {
   const projectCards = useMemo(
     () =>
       summarizeProjects(
-        listedGroups,
+        [...listedGroups, ...assistantGroups.filter((group) => !listedGroups.includes(group))],
         // With a machine picked, each project counts only its chats there.
         machineScope === null
           ? sessions
@@ -267,7 +288,7 @@ export function StudioOverview() {
             ),
           ),
       })),
-    [listedGroups, sessions, attentionMembers, attentionComplete, machineScope],
+    [listedGroups, assistantGroups, sessions, attentionMembers, attentionComplete, machineScope],
   );
   const providerEntries = useProviderEntriesByEnvironment();
   const providersFor = (environmentId: SessionView["thread"]["environmentId"]) =>
@@ -400,16 +421,26 @@ export function StudioOverview() {
       version: environment.serverConfig?.environment.serverVersion ?? null,
       attention: attention.filter((s) => s.thread.environmentId === environment.environmentId)
         .length,
-      projects: listedGroups.filter((group) =>
+      projects: ownProjectGroups.filter((group) =>
         group.memberProjectRefs.some((ref) => ref.environmentId === environment.environmentId),
       ).length,
       thisMachine: environment.environmentId === primaryEnvironmentId,
     };
   });
+  const inMachineScope = (card: (typeof projectCards)[number]) =>
+    machineScope === null ||
+    card.group.memberProjectRefs.some((ref) => ref.environmentId === machineScope);
   const railProjects = projectCards.filter(
-    (card) =>
-      machineScope === null ||
-      card.group.memberProjectRefs.some((ref) => ref.environmentId === machineScope),
+    (card) => inMachineScope(card) && !isAssistantGroup(card.group),
+  );
+  // One row per assistant, as the sidebar lists them: this machine's first.
+  const assistantMembers = assistantMembersOf(assistantGroups);
+  const railAssistants = sortAssistantGroups(
+    projectCards
+      .filter((card) => inMachineScope(card) && isAssistantGroup(card.group))
+      .map((card) => ({ ...card, memberProjects: card.group.memberProjects })),
+    assistantMembers,
+    primaryEnvironmentId,
   );
   const [allProjects, setAllProjects] = useState(false);
   const scopeLabel =
@@ -468,8 +499,8 @@ export function StudioOverview() {
           count: sessions.length,
         }),
         projects: linkButton(
-          tx(listedGroups.length === 1 ? "{count} project" : "{count} projects", {
-            count: listedGroups.length,
+          tx(ownProjectGroups.length === 1 ? "{count} project" : "{count} projects", {
+            count: ownProjectGroups.length,
           }),
           "studio-projects-title",
         ),
@@ -591,9 +622,7 @@ export function StudioOverview() {
           )}
           <WhatYouCanDo
             known={bootstrapped && isReady}
-            hasProject={listedGroups.some(
-              (group) => !group.memberProjects.some(isPersonalAssistantProject),
-            )}
+            hasProject={ownProjectGroups.length > 0}
             hasSession={catalogShells.length > 0}
             hasOtherMachine={environments.length > 1}
             onNewSession={() => openDraftChooser()}
@@ -912,6 +941,61 @@ export function StudioOverview() {
             </div>
 
             <aside className="studio-rail" aria-label={tx("Projects and machines")}>
+              {railAssistants.length > 0 && (
+                <section aria-labelledby="studio-assistant-title">
+                  <SectionHeading
+                    title={DEFAULT_PERSONAL_ASSISTANT_NAME}
+                    id="studio-assistant-title"
+                  />
+                  <div
+                    className="studio-list"
+                    role="group"
+                    aria-label={tx(PERSONAL_ASSISTANT_LABEL)}
+                  >
+                    {railAssistants.map((card) => {
+                      const member = card.memberProjects.find(isPersonalAssistantProject);
+                      // A new topic is a draft aimed at Aide, never the chooser of projects.
+                      const target =
+                        member !== undefined &&
+                        member.workspaceSettings?.archived !== true &&
+                        canOperate.has(member.environmentId) &&
+                        connectedIds.has(member.environmentId)
+                          ? member
+                          : undefined;
+                      return (
+                        <ProjectRow
+                          key={card.group.projectKey}
+                          card={card}
+                          personal
+                          hosts={
+                            assistantGroupHint(
+                              card.group,
+                              assistantMembers,
+                              (environmentId) => hostNames.get(environmentId as never),
+                              environments.length,
+                            ) ?? ""
+                          }
+                          filtered={projectScope === card.group.projectKey}
+                          canStart={target !== undefined}
+                          onFilter={() => {
+                            setMachineScope(null);
+                            setProjectScope(
+                              projectScope === card.group.projectKey ? null : card.group.projectKey,
+                            );
+                            jump("studio-attention-title");
+                          }}
+                          onNewChat={() => {
+                            if (!target) return;
+                            void handleNewThread(scopeProjectRef(target.environmentId, target.id), {
+                              environmentSelection: "manual",
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
               <section aria-labelledby="studio-projects-title">
                 <SectionHeading
                   title={tx("Projects")}

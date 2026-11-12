@@ -53,7 +53,15 @@ export const GoogleProjectStatus = Schema.Struct({
 });
 export type GoogleProjectStatus = typeof GoogleProjectStatus.Type;
 
+/** How refusals name the caller: Aide by name, any other project as "this project". */
+const googleCallerName = (assistant: boolean) => (assistant ? "Aide" : "this project");
+
+export const googleServiceOff = (label: string, assistant: boolean, which = "") =>
+  `${label} is not turned on for ${googleCallerName(assistant)}${which}. The user can turn it on under Settings > Google account.`;
+
 export function projectGoogleStatus(input: {
+  /** The caller is the personal assistant. */
+  assistant?: boolean;
   clientConfigured: boolean;
   connected: boolean;
   email: string | null;
@@ -75,17 +83,14 @@ export function projectGoogleStatus(input: {
         : services.length === 0
           ? "scope_required"
           : "configured";
+  const who = googleCallerName(input.assistant === true);
   const guidance = {
-    not_configured:
-      "Open Settings > Google account and configure a Google client, then connect Google and enable services for this project.",
-    disconnected:
-      "Open Settings > Google account, connect Google, then enable the needed services for this project. Connections in other apps do not connect this SpecWithCode host.",
-    project_access_required:
-      "Open Settings > Google account and enable the needed services for this project.",
-    scope_required:
-      "Reconnect in Settings > Google account and approve the services enabled for this project.",
+    not_configured: `Open Settings > Google account and configure a Google client, then connect Google and enable services for ${who}.`,
+    disconnected: `Open Settings > Google account, connect Google, then enable the needed services for ${who}. Connections in other apps do not connect this SpecWithCode host.`,
+    project_access_required: `Open Settings > Google account and enable the needed services for ${who}.`,
+    scope_required: `Reconnect in Settings > Google account and approve the services enabled for ${who}.`,
     configured:
-      "Saved Google sign-in and project access are available. Live access has not been checked; use checkConnection: true before relying on it.",
+      "Saved Google sign-in and access are available. Live access has not been checked; use checkConnection: true before relying on it.",
   }[connectionState];
   return {
     email: services.length > 0 ? input.email : null,
@@ -101,7 +106,7 @@ export function projectGoogleStatus(input: {
           ? "scope_missing"
           : "not_checked",
       message: !allowed.has(service)
-        ? "This project has no access to this service."
+        ? `${input.assistant === true ? "Aide has" : "This project has"} no access to this service.`
         : input.connected && !granted.has(service)
           ? "Reconnect Google and approve this service."
           : null,

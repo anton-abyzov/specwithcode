@@ -596,7 +596,7 @@ function TaskForm({
   );
   const catalog = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
-  const projects = projectPickerMembers(catalog, () => config?.scratchWorkspaceRoot);
+  const projects = projectPickerMembers(catalog, () => config?.scratchWorkspaceRoot, "any");
   const currentProject = catalog.find((project) => project.id === draft.projectId);
   const currentUnavailable =
     currentProject !== undefined && !projects.some((project) => project.id === currentProject.id);

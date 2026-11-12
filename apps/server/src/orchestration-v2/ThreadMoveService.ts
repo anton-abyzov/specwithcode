@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -109,6 +110,11 @@ const make = Effect.gen(function* () {
         "A project's coordinator stays with its project. Start a new thread in the other project instead.",
       );
     }
+    // The personal assistant's topics stay private to it, and it takes no
+    // project's work in, so neither side of a move may be the assistant.
+    if (Option.isSome(sourceProject) && isPersonalAssistantProject(sourceProject.value)) {
+      return yield* refuse("Aide's topics stay private, so they cannot move to a project.");
+    }
     const targetProject = yield* projects
       .getById(command.targetProjectId)
       .pipe(Effect.mapError(failed("That project could not be read.")));
@@ -116,6 +122,9 @@ const make = Effect.gen(function* () {
       return yield* refuse("That project is not on this machine.");
     }
     const target = targetProject.value;
+    if (isPersonalAssistantProject(target)) {
+      return yield* refuse("A thread cannot move into Aide. Start a new topic there instead.");
+    }
     if (target.workspaceSettings?.archived || target.workspaceSettings?.paused) {
       return yield* refuse(`Resume or restore ${target.title} before moving threads into it.`);
     }

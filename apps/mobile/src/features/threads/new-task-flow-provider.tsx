@@ -284,6 +284,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           projects: projectPickerMembers(
             projects,
             (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+            "any",
           ),
           environmentId: null,
           projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
@@ -395,6 +396,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         : (projectPickerMembers(
             projectsForEnvironment,
             (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+            "any",
           )[0] ?? null));
 
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(

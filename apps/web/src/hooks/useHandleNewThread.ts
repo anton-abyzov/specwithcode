@@ -38,7 +38,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { followNewestModels } from "./followNewestModels";
-import { useAideEnabled, useClientSettings, useLegacySidebarEnabled } from "./useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "./useSettings";
 import { defaultNewThreadProjectRef } from "./defaultNewThreadProjectRef";
 
 interface NewThreadWorkspaceOptions {
@@ -527,11 +527,10 @@ export function useHandleNewThread() {
       : null,
   );
   const projects = useProjects();
-  // A hidden personal assistant (Settings → General) is never the default target.
-  const aideEnabled = useAideEnabled();
+  // A personal assistant is never the default target, on or off.
   const defaultProjectRef = useMemo(
-    () => defaultNewThreadProjectRef({ projects, projectOrder, aideEnabled }),
-    [aideEnabled, projectOrder, projects],
+    () => defaultNewThreadProjectRef({ projects, projectOrder }),
+    [projectOrder, projects],
   );
   const handleNewThread = useNewThreadHandler();
 

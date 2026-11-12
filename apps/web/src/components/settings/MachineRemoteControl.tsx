@@ -17,7 +17,11 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
 import { connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { settingsScopeNoticeCheckouts, type ScopeNoticeEntry } from "./settingsScopeNoticeChoices";
+import {
+  machineProjectGroups,
+  settingsScopeNoticeCheckouts,
+  type ScopeNoticeEntry,
+} from "./settingsScopeNoticeChoices";
 import {
   buildRemoteSheetModel,
   isTemporaryWorkspace,
@@ -217,14 +221,7 @@ function MachineRemoteSheet({
 
   const checkouts = useMemo(() => {
     const entries = settingsScopeNoticeCheckouts(
-      groups
-        .map((group) => ({
-          ...group,
-          memberProjects: group.memberProjects.filter(
-            (member) => member.environmentId === environmentId,
-          ),
-        }))
-        .filter((group) => group.memberProjects.length > 0),
+      machineProjectGroups(groups, environmentId),
       (id) => configs.get(id)?.scratchWorkspaceRoot ?? null,
       undefined,
     );

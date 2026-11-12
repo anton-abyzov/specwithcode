@@ -1632,10 +1632,6 @@ export const ko: PhraseCatalog = {
   "Make default": "기본값으로 설정",
   "Morning briefing": "아침 브리핑",
   "Not connected": "연결 안 됨",
-  "Let a project's agents read your Gmail, Calendar and Drive, so a Personal project can brief you on your day, find a document or check who is coming to a meeting.":
-    "프로젝트의 에이전트가 Gmail, 캘린더, 드라이브를 읽도록 허용하면, 개인 프로젝트에서 하루 일정을 브리핑하고, 문서를 찾고, 회의 참석자를 확인할 수 있습니다.",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only your Personal project starts with access.":
-    "에이전트는 읽기만 합니다. Gmail 초안을 켜면 답장 초안을 저장하고, 답장 카드에서 보내기를 선택했을 때만 하나를 보냅니다. 아무것도 변경하거나 삭제하지 않습니다. SpecWithCode는 이 컴퓨터에서 Google과 통신하고, 로그인 정보를 이 컴퓨터의 비공개 파일에 보관하며, 아래에서 켜기 전까지 프로젝트에 아무것도 주지 않습니다. 처음부터 액세스 권한이 있는 것은 개인 프로젝트뿐입니다.",
   "The SpecWithCode service this app is connected to (version {serverVersion}) is older than Google account support. Update that service to use it.":
     "이 앱이 연결된 SpecWithCode 서비스(버전 {serverVersion})는 Google 계정 지원 이전 버전입니다. 사용하려면 해당 서비스를 업데이트하세요.",
   "Your own OAuth client": "자체 OAuth 클라이언트",
@@ -1672,12 +1668,32 @@ export const ko: PhraseCatalog = {
   "Finish sign-in": "로그인 마치기",
   "Projects that may read each account": "각 계정을 읽을 수 있는 프로젝트",
   "Projects that may read it": "읽을 수 있는 프로젝트",
-  "Agents in a project see only the services you turn on for it.{value}":
-    "프로젝트의 에이전트는 그 프로젝트에 켠 서비스만 볼 수 있습니다.{value}",
+  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
+    "Aide와 선택한 프로젝트가 Gmail, Calendar, Drive를 읽도록 허용하면, Aide가 하루 일정을 브리핑하고, 문서를 찾고, 회의 참석자를 확인할 수 있습니다.",
+  "Agents in a project see only the services you turn on for it.":
+    "프로젝트의 에이전트는 그 프로젝트에 켠 서비스만 볼 수 있습니다.",
+  "Agents use the default account unless asked for another, and may read every account turned on here.":
+    "에이전트는 다른 계정을 요청받지 않는 한 기본 계정을 사용하며, 여기에서 켠 모든 계정을 읽을 수 있습니다.",
+  "Your personal assistant. It starts with access when you connect an account.":
+    "내 개인 어시스턴트입니다. 계정을 연결하면 바로 액세스할 수 있습니다.",
+  "Hidden on this machine. You can still turn its access off here.":
+    "이 컴퓨터에서 숨겨져 있습니다. 여기에서 액세스를 끌 수는 있습니다.",
+  "Proactive briefing": "프로액티브 브리핑",
+  "No projects yet. Aide above can already use this account.":
+    "아직 프로젝트가 없습니다. 위의 Aide는 이미 이 계정을 사용할 수 있습니다.",
+  "No projects yet. Add one to let its agents read this account.":
+    "아직 프로젝트가 없습니다. 프로젝트를 추가하면 해당 에이전트가 이 계정을 읽을 수 있습니다.",
+  "Enable {service} for all active projects": "모든 활성 프로젝트에 {service} 사용",
+  "Disable {service} for all projects": "모든 프로젝트에 {service} 사용 안 함",
+  "{service} for {title}": "{title}의 {service}",
+  "Make {account} the default for {title}": "{account}을(를) {title}의 기본값으로 설정",
+  "this account": "이 계정",
+  "Aide is opened from its own entry, not as a project":
+    "Aide는 프로젝트가 아니라 전용 항목에서 엽니다",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
+    "에이전트는 읽기만 합니다. Gmail 초안을 켜면 답장 초안을 저장하고, 답장 카드에서 보내기를 선택했을 때만 하나를 보냅니다. 아무것도 변경하거나 삭제하지 않습니다. SpecWithCode는 이 컴퓨터에서 Google과 통신하고, 로그인 정보를 이 컴퓨터의 비공개 파일에 보관하며, 아래에서 켜기 전까지 프로젝트에 아무것도 주지 않습니다. 처음부터 액세스 권한이 있는 것은 Aide뿐입니다.",
   "Enable for all active projects": "모든 활성 프로젝트에 사용",
   "Not now": "나중에",
-  "Add a project first. A Personal project suits a personal agent.":
-    "먼저 프로젝트를 추가하세요. 개인 에이전트에는 개인 프로젝트가 적합합니다.",
   "{span} · {onCount} of {length} active": "{span} · 활성 {length}개 중 {onCount}개",
   "No active projects of your own here.": "여기에는 내 활성 프로젝트가 없습니다.",
   automated: "자동",
@@ -4508,4 +4524,8 @@ export const ko: PhraseCatalog = {
   "move pending": "이동 대기 중",
   "separate project": "별도 프로젝트",
   "not synced here": "여기서 동기화되지 않음",
+  "{value}Messages go to Aide. {value2}": "{value}메시지는 Aide에게 전달됩니다. {value2}",
+  "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
+  "New topic in {title}": "{title}에서 새 주제",
+  Aide: "Aide",
 };

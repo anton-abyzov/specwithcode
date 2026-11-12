@@ -83,14 +83,14 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     id: "project-coordinator-model",
     title: "Coordinator model",
     tab: "general",
-    anchors: ["Coordinator model"],
+    anchors: ["Coordinator model", "Aide's model"],
     searchTerms: ["provider reasoning thinking effort advanced"],
   },
   {
     id: "project-worker-model",
     title: "Recommended model for threads",
     tab: "general",
-    anchors: ["Recommended model for threads"],
+    anchors: ["Recommended model for threads", "Recommended model for topics"],
     searchTerms: ["default worker subagent provider reasoning"],
   },
   {
@@ -120,7 +120,7 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     id: "project-auto-resume",
     title: "Auto-continue when limits reset",
     tab: "general",
-    anchors: ["Auto-continue this project's threads"],
+    anchors: ["Auto-continue this project's threads", "Auto-continue Aide's topics"],
     searchTerms: ["resume quota limit stop auto-continue recovery"],
   },
   {

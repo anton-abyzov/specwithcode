@@ -10,6 +10,7 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { getThreadSortTimestamp, sortThreads, type ThreadSortInput } from "../lib/threadSort";
+import { findMachineAssistant } from "../studio/personalAssistant";
 import { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
@@ -121,12 +122,66 @@ export function reduceCommandPaletteUiState(
   }
 }
 
-/** Whether the palette offers to set up a personal assistant: only while it is on and a machine can hold one. */
+/**
+ * Whether the palette offers to set up a personal assistant: only while it is on, a
+ * machine can hold one and this machine has none yet. Once it has one, the Aide entry
+ * opens it instead.
+ */
 export function personalAssistantActionOffered(input: {
   readonly aideEnabled: boolean;
   readonly newProjectMachineCount: number;
+  readonly hasOwnAssistant?: boolean | undefined;
 }): boolean {
-  return input.aideEnabled && input.newProjectMachineCount > 0;
+  return input.aideEnabled && input.newProjectMachineCount > 0 && input.hasOwnAssistant !== true;
+}
+
+/**
+ * Whether the machine already has its own assistant, archived or not: setup is not
+ * offered while one exists, since unarchiving it is the way back.
+ */
+export function machineHasOwnAssistant(
+  projects: readonly PaletteAssistantCandidate[],
+  environmentId: string | null,
+): boolean {
+  return environmentId !== null && findMachineAssistant(projects, environmentId) !== undefined;
+}
+
+interface PaletteAssistantCandidate {
+  readonly id: string;
+  readonly environmentId: string;
+  readonly createdAt?: string;
+  readonly workspaceSettings?:
+    | { readonly kind?: string | undefined; readonly archived?: boolean | undefined }
+    | null
+    | undefined;
+}
+
+/**
+ * The palette's Aide entries: each machine's own assistant, this machine's first. An
+ * archived assistant or a duplicate from before one assistant per machine is left out;
+ * the sidebar still lists those.
+ */
+export function paletteAssistants<T extends PaletteAssistantCandidate>(
+  projects: readonly T[],
+  ownEnvironmentId: string | null,
+): T[] {
+  const machines = [
+    ...new Set(
+      projects
+        .filter((project) => project.workspaceSettings?.kind === "personal")
+        .map((project) => project.environmentId),
+    ),
+  ];
+  return machines
+    .flatMap((environmentId) => {
+      const assistant = findMachineAssistant(projects, environmentId);
+      return assistant && assistant.workspaceSettings?.archived !== true ? [assistant] : [];
+    })
+    .toSorted(
+      (left, right) =>
+        Number(right.environmentId === ownEnvironmentId) -
+        Number(left.environmentId === ownEnvironmentId),
+    );
 }
 
 export interface CommandPaletteThreadContentMatch {
@@ -636,6 +691,8 @@ export function buildRootGroups(input: {
   projectItems: ReadonlyArray<CommandPaletteActionItem>;
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
+  /** Aide's own entry, apart from projects. */
+  assistantItems?: ReadonlyArray<CommandPaletteActionItem> | undefined;
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
   if (input.projectItems.length > 0) {
@@ -647,6 +704,9 @@ export function buildRootGroups(input: {
   }
   if (input.actionItems.length > 0) {
     groups.push({ value: "actions", label: "Actions", items: input.actionItems });
+  }
+  if (input.assistantItems && input.assistantItems.length > 0) {
+    groups.push({ value: "assistant", label: "Aide", items: input.assistantItems });
   }
   if (input.recentThreadItems.length > 0) {
     groups.push({

@@ -17,6 +17,7 @@ import { DEFAULT_WEBHOOK_PROMPT } from "@specweave-studio/client-runtime/schedul
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  PERSONAL_ASSISTANT_LABEL,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
 } from "@specweave-studio/contracts";
@@ -25,7 +26,9 @@ import {
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
 
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useAideEnabled, useEnvironmentSettings } from "../../hooks/useSettings";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import { visibleWithAideKeeping } from "../../studio/personalAssistant";
 import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
 import { teamRulesReachLock, type TeamRulesLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
@@ -438,9 +441,19 @@ function ScheduledTaskEditorDialog({
   );
   // Only the person's own projects are choices. A task whose project was since archived or
   // made by a check shows it apart (unavailableProject below), and saving needs another.
+  // Routines are Aide's too, so it is offered, first; a hidden Aide stays only while saved.
+  const aideEnabled = useAideEnabled();
   const projects = useMemo(
-    () => projectPickerMembers(scopedProjects, scratchRootFor),
-    [scopedProjects, scratchRootFor],
+    () =>
+      projectPickerMembers(
+        visibleWithAideKeeping(scopedProjects, aideEnabled, [task?.projectId, preset?.projectId]),
+        scratchRootFor,
+        { purpose: "any" },
+      ).toSorted(
+        (left, right) =>
+          Number(isPersonalAssistantProject(right)) - Number(isPersonalAssistantProject(left)),
+      ),
+    [aideEnabled, preset?.projectId, scopedProjects, scratchRootFor, task?.projectId],
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =
@@ -478,6 +491,7 @@ function ScheduledTaskEditorDialog({
     scopedProjects,
     selectedProjectId ? { environmentId, id: selectedProjectId as ProjectId } : null,
     scratchRootFor,
+    "any",
   );
 
   // The real model picker is keyed by a `${instanceId}:${model}` string, which
@@ -744,6 +758,11 @@ function ScheduledTaskEditorDialog({
                     {projects.map((project) => (
                       <SelectItem key={project.id} value={project.id}>
                         {project.title}
+                        {isPersonalAssistantProject(project) ? (
+                          <span className="ms-2 text-muted-foreground text-xs">
+                            {tx(PERSONAL_ASSISTANT_LABEL)}
+                          </span>
+                        ) : null}
                       </SelectItem>
                     ))}
                   </SelectPopup>

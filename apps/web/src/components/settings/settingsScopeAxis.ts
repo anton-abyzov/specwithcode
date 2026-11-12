@@ -1,6 +1,7 @@
 import type { EnvironmentPresentation } from "../../state/environments";
 import {
   ineligibleSelectedGroup,
+  isAssistantGroup,
   projectPickerGroups,
   type IneligibleProjectSelection,
   type ProjectListGroup,
@@ -29,6 +30,7 @@ export const ALL_PROJECTS_VALUE = "all";
 /**
  * The projects the scope picker offers (see {@link projectPickerGroups}), and the current
  * scope when it is not one of them, which the picker shows as a row that cannot be chosen.
+ * Aide has settings of its own, so it is a choice too, listed first.
  */
 export function settingsScopeProjectChoices<G extends ProjectListGroup>(
   groups: readonly G[],
@@ -36,9 +38,16 @@ export function settingsScopeProjectChoices<G extends ProjectListGroup>(
   selectedProjectKey: string | undefined,
 ): { readonly choices: G[]; readonly unavailable: IneligibleProjectSelection<G> | null } {
   return {
-    choices: projectPickerGroups(groups, scratchRootFor),
-    unavailable: ineligibleSelectedGroup(groups, selectedProjectKey, scratchRootFor),
+    choices: assistantsFirst(projectPickerGroups(groups, scratchRootFor, { purpose: "any" })),
+    unavailable: ineligibleSelectedGroup(groups, selectedProjectKey, scratchRootFor, "any"),
   };
+}
+
+/** Aide leads a list that offers it; the rest keep their order. */
+export function assistantsFirst<G extends ProjectListGroup>(groups: readonly G[]): G[] {
+  return groups.toSorted(
+    (left, right) => Number(isAssistantGroup(right)) - Number(isAssistantGroup(left)),
+  );
 }
 
 /**

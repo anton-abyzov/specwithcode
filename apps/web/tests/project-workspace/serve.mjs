@@ -59,7 +59,11 @@ const server = await createServer({
           ? NodePath.join(app, "src", source.slice(2))
           : source.startsWith(".")
             ? NodePath.resolve(NodePath.dirname(importer), source)
-            : null;
+            : // The "~" alias may already have made this one absolute; left real, it
+              // imports this fixture's session stub back while that stub loads.
+              source.replace(/\.(tsx?|jsx?)$/, "") === NodePath.join(app, "src/state/server")
+              ? source
+              : null;
         if (target === null) return;
         const resolved = target.replace(/\.(tsx?|jsx?)$/, "");
         if (

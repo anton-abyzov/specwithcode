@@ -15,6 +15,7 @@ import type {
   ProjectOrigin,
   ProjectWorkspacePatch,
 } from "@specweave-studio/contracts";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { projectOrigin } from "@specweave-studio/shared/projectOrigin";
 import {
   DEFAULT_PROJECT_NOTIFICATION_LEVEL,
@@ -184,11 +185,12 @@ export function partitionProjectGroups<G extends ProjectListGroup>(
 }
 
 /**
- * What a picker chooses a project for. "work" (the default) and "design" offer every
- * project of the person's own, personal assistants included; "code" offers only code
- * projects, for flows that read a codebase (Design from code, Scan from code).
+ * What a picker chooses a project for. "work" (the default) offers the person's own
+ * projects but no personal assistant, which is opened from its own entry; "design" and
+ * "any" offer assistants too; "code" offers only code projects, for flows that read a
+ * codebase (Design from code, Scan from code).
  */
-export type ProjectPickerPurpose = "work" | "design" | "code";
+export type ProjectPickerPurpose = "work" | "design" | "code" | "any";
 
 export interface ProjectPickerOptions {
   readonly purpose?: ProjectPickerPurpose | undefined;
@@ -200,18 +202,24 @@ export interface ProjectPickerOptions {
 }
 
 /** Why a project is not an ordinary choice in a picker. */
-export type IneligibleProjectReason = "scratch" | "archived" | "automated" | "not-code";
+export type IneligibleProjectReason =
+  | "scratch"
+  | "archived"
+  | "automated"
+  | "not-code"
+  | "assistant";
+
+/** True when any member of the group is a personal assistant. */
+export function isAssistantGroup(group: ProjectListGroup): boolean {
+  return group.memberProjects.some(isPersonalAssistantProject);
+}
 
 /** A project without a kind is a code project, as the workspace settings decode it. */
 function fitsPurpose(member: ProjectListMember, purpose: ProjectPickerPurpose) {
-  return purpose !== "code" || (member.workspaceSettings?.kind ?? "code") === "code";
+  if (purpose === "code") return (member.workspaceSettings?.kind ?? "code") === "code";
+  return purpose !== "work" || !isPersonalAssistantProject(member);
 }
 
-/**
- * Why one machine's project is not an ordinary choice, or null when it is: a machine's
- * "No project" folder, an archived project, a project a check or agent made for itself,
- * or, for a code picker, a project that is not a code project.
- */
 /** True when a picker offers this project: one of the person's own, fit for the purpose. */
 export function isOrdinaryProjectChoice(
   member: ProjectListMember,
@@ -241,6 +249,7 @@ function groupFitsPurpose(
   scratchRootFor: ScratchRootLookup,
   purpose: ProjectPickerPurpose,
 ) {
+  if (purpose === "work" && isAssistantGroup(group)) return false;
   return (
     purpose !== "code" ||
     group.memberProjects.some(
@@ -251,8 +260,8 @@ function groupFitsPurpose(
 
 /**
  * The projects a project picker offers: only the person's own, so neither a machine's
- * "No project" folder, an archived project nor a project a check or agent made for itself
- * is a choice, not even the one already selected. A picker whose current selection is
+ * "No project" folder, an archived project, a project a check or agent made for itself
+ * nor, for "work", a personal assistant is a choice, not even the one already selected. A picker whose current selection is
  * one of those shows it apart, as a row that cannot be chosen; see
  * {@link ineligibleSelectedGroup}.
  */
@@ -337,6 +346,7 @@ const INELIGIBLE_PROJECT_LABELS: Record<IneligibleProjectReason, string> = {
   archived: "Archived project, not available here",
   automated: "Automated project, not available here",
   "not-code": "Not a code project, not available here",
+  assistant: "Aide is opened from its own entry, not as a project",
 };
 
 /** What a picker says beside a current selection it does not offer. */

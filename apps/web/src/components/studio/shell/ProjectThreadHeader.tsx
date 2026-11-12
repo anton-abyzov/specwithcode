@@ -131,12 +131,13 @@ export function ProjectThreadHeader(props: {
   // Set once Enter, Escape or blur ends an edit, so the blur that follows the
   // input's removal neither saves twice nor saves an edit Escape cancelled.
   const renameSettled = useRef(false);
+  const say = paneWords(props.personal);
   const startRename = () => {
     if (props.renameBlockedReason !== null) {
       toastManager.add({
         type: "warning",
-        title: "Can't rename this thread",
-        description: props.renameBlockedReason,
+        title: say("Can't rename this thread"),
+        description: say(props.renameBlockedReason),
       });
       return;
     }
@@ -184,7 +185,7 @@ export function ProjectThreadHeader(props: {
     setRenaming(null);
     const title = value.trim();
     if (title.length === 0) {
-      toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+      toastManager.add({ type: "warning", title: say("Thread title cannot be empty") });
       return;
     }
     if (title === thread.title) return;
@@ -196,14 +197,13 @@ export function ProjectThreadHeader(props: {
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: "Failed to rename thread",
+          title: say("Failed to rename thread"),
           description: error instanceof Error ? error.message : "An error occurred.",
         });
       }
     });
   };
 
-  const say = paneWords(props.personal);
   return (
     <div className={cn("sws-pane-head sws-thread-head", isElectron && "drag-region")}>
       <Tip label={say("Back to threads (Esc)")}>
@@ -224,7 +224,7 @@ export function ProjectThreadHeader(props: {
         {renaming !== null ? (
           <input
             className="sws-thread-rename"
-            aria-label="Thread title"
+            aria-label={say("Thread title")}
             autoFocus
             defaultValue={renaming}
             onBlur={(event) => commitRename(event.currentTarget.value)}
@@ -238,8 +238,8 @@ export function ProjectThreadHeader(props: {
             }}
           />
         ) : (
-          <Tip label={thread.title || "Untitled thread"}>
-            <h2 onDoubleClick={startRename}>{thread.title || "Untitled thread"}</h2>
+          <Tip label={thread.title || say("Untitled thread")}>
+            <h2 onDoubleClick={startRename}>{thread.title || say("Untitled thread")}</h2>
           </Tip>
         )}
         <span className="sws-thread-head-chips">
@@ -299,13 +299,13 @@ export function ProjectThreadHeader(props: {
         project={headerProject}
       />
       <span ref={setToolsSlot} className="sws-thread-head-tools" />
-      <Tip label={`${resolveLabel} thread`}>
+      <Tip label={say(`${resolveLabel} thread`)}>
         <button
           type="button"
           className="sws-icon-button sws-thread-resolve"
           style={{ width: "auto", paddingInline: 8, gap: 5, flexShrink: 0 }}
           data-state={settled || archived ? "resolved" : "open"}
-          aria-label={`${resolveLabel} thread`}
+          aria-label={say(`${resolveLabel} thread`)}
           disabled={!props.canChange}
           onClick={props.onToggleResolved}
         >
@@ -313,12 +313,12 @@ export function ProjectThreadHeader(props: {
           <span className="sws-thread-resolve-label">{resolveLabel}</span>
         </button>
       </Tip>
-      <Tip label="Thread actions">
+      <Tip label={say("Thread actions")}>
         <button
           ref={menuButton}
           type="button"
           className="sws-icon-button"
-          aria-label="Thread actions"
+          aria-label={say("Thread actions")}
           aria-haspopup="menu"
           onClick={() => {
             const rect = menuButton.current?.getBoundingClientRect();
@@ -349,7 +349,7 @@ export function ProjectThreadHeader(props: {
         <button
           type="button"
           className="sws-icon-button"
-          aria-label="Close thread pane"
+          aria-label={say("Close thread pane")}
           onClick={props.onClose}
         >
           <XIcon aria-hidden />

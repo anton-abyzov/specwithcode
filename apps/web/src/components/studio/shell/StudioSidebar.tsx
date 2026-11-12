@@ -15,7 +15,12 @@ import { useAttentionRaise } from "../../../studio/attentionRaise";
  * menu says otherwise, and the menu's choices are remembered per browser.
  */
 import {
-  isExtraAssistant,
+  assistantGroupHint,
+  assistantGroupsOf,
+  assistantMembersOf,
+  sortAssistantGroups,
+} from "../assistantEntries";
+import {
   machineNeedsAssistantSetup,
   PERSONAL_ASSISTANT_PER_MACHINE_LINE,
   threadsVisibleWithAide,
@@ -426,14 +431,14 @@ export default function StudioSidebar() {
   // person archived them, so nothing in them asks for attention here.
   // Projects checks and agents made for themselves leave the main list for Automated,
   // so the main list holds only the person's own projects.
-  const {
-    listed: listedProjects,
-    automated: automatedProjects,
-    archived: archivedProjects,
-  } = useMemo(
+  // A personal assistant is listed only in its own block, even automated or archived.
+  const partition = useMemo(
     () => partitionProjectGroups(projectGroups, scratchRootFor),
     [projectGroups, scratchRootFor],
   );
+  const listedProjects = partition.listed;
+  const automatedProjects = partition.automated.filter((group) => !isPersonalGroup(group));
+  const archivedProjects = partition.archived.filter((group) => !isPersonalGroup(group));
   const archivedOpen =
     showArchived ?? archivedProjects.some((group) => group.projectKey === activeProjectKey);
   const automatedOpen =
@@ -810,8 +815,8 @@ export default function StudioSidebar() {
   // Every project the sidebar can show, archived ones too, so no two share a name.
   const namedProjects: NamedProject[] = [
     ...listedProjects.map((group) => ({ group, archived: false })),
-    ...automatedProjects.map((group) => ({ group, archived: false })),
-    ...archivedProjects.map((group) => ({ group, archived: true })),
+    ...partition.automated.map((group) => ({ group, archived: false })),
+    ...partition.archived.map((group) => ({ group, archived: true })),
   ].map(({ group, archived }) => ({
     projectKey: group.projectKey,
     name: displayNameOf(group, displayedCheckouts.get(group.projectKey)),
@@ -860,29 +865,17 @@ export default function StudioSidebar() {
   // project and outside the project paging, so it is always one click away.
   // Each machine has its own: this machine's leads, and with more than one
   // machine each row names its machine. A duplicate from before that rule is marked extra.
-  // Archived ones too: an archived earlier assistant is still its machine's own.
-  const assistantMembers = [...listedProjects, ...automatedProjects, ...archivedProjects]
-    .filter(isPersonalGroup)
-    .flatMap((group) => group.memberProjects);
-  const assistantOf = (group: (typeof listedProjects)[number]) =>
-    group.memberProjects.find((member) => member.workspaceSettings?.kind === "personal");
-  const assistantRank = (group: (typeof listedProjects)[number]) => {
-    const member = assistantOf(group);
-    if (member === undefined) return 3;
-    const here = member.environmentId === primaryEnvironmentId ? 0 : 1;
-    return isExtraAssistant(member, assistantMembers) ? here + 2 : here;
-  };
-  const assistants = listedProjects
-    .filter(isPersonalGroup)
-    .toSorted((left, right) => assistantRank(left) - assistantRank(right));
-  const assistantHint = (group: (typeof listedProjects)[number]) => {
-    const member = assistantOf(group);
-    if (member === undefined) return undefined;
-    const machine =
-      environments.length > 1 ? (machineLabels.get(member.environmentId) ?? null) : null;
-    const extra = isExtraAssistant(member, assistantMembers) ? "extra" : null;
-    return [machine, extra].filter(Boolean).join(" · ") || undefined;
-  };
+  // Archived and automated ones are listed here too, never under Automated or Archived.
+  const assistantGroups = assistantGroupsOf(partition);
+  const assistantMembers = assistantMembersOf(assistantGroups);
+  const assistants = sortAssistantGroups(assistantGroups, assistantMembers, primaryEnvironmentId);
+  const assistantHint = (group: SidebarProjectSnapshot) =>
+    assistantGroupHint(
+      group,
+      assistantMembers,
+      (environmentId) => machineLabels.get(environmentId as EnvironmentId),
+      environments.length,
+    );
   // Pinned projects lead, then the rest, both in the person's order.
   const arranged = arrangeProjects(
     listedProjects.filter((group) => !isPersonalGroup(group)),
@@ -1001,7 +994,12 @@ export default function StudioSidebar() {
                     group={group}
                     displayedProject={displayedCheckouts.get(group.projectKey)}
                     archived={isArchivedGroup(group, scratchRootFor)}
-                    waiting={waitingByProject.get(group.projectKey) ?? 0}
+                    // An archived one asks for nothing here, as under Archived.
+                    waiting={
+                      isArchivedGroup(group, scratchRootFor)
+                        ? 0
+                        : (waitingByProject.get(group.projectKey) ?? 0)
+                    }
                     attentionLabel={attentionByProject.get(group.projectKey)?.label}
                     attentionComplete={attentionByProject.get(group.projectKey)?.complete}
                     current={group.projectKey === activeProjectKey}

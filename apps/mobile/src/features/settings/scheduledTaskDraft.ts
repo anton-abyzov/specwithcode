@@ -42,7 +42,7 @@ export function scheduledTaskProjectForScope(
 ): EnvironmentProject | null {
   if (scope === undefined) return null;
   const catalog = projects.filter((project) => project.environmentId === environmentId);
-  const eligible = projectPickerMembers(catalog, scratchRootFor);
+  const eligible = projectPickerMembers(catalog, scratchRootFor, "any");
   if (scope === null) return eligible[0] ?? null;
   const inScope = (project: EnvironmentProject) =>
     scope.members.some(

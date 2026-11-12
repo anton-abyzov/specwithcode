@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
     threadId: "owned-new-thread",
   })),
   setModel: vi.fn(),
+  newThread: vi.fn(async () => ({ draftId: "aide-draft", threadId: "aide-topic" })),
   validateDraft: vi.fn(() => true),
   /** The worker project's coordinator, which routes its other threads to its page. */
   workerCoordinator: null as string | null,
@@ -199,6 +200,9 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("../../hooks/useNewChatDestination", () => ({
   useNewChatDestination: () => state.createDraft,
+}));
+vi.mock("../../hooks/useHandleNewThread", () => ({
+  useNewThreadHandler: () => state.newThread,
 }));
 vi.mock("../../composerDraftStore", () => ({
   useComposerDraftStore: { getState: () => ({ setModelSelection: state.setModel }) },
@@ -678,6 +682,80 @@ describe("deliberate native session entry", () => {
     await render();
     expect(container.querySelectorAll(".studio-session-item")).toHaveLength(2);
     expect(container.textContent).toContain("Worker project");
+  });
+  it("gives the personal assistant its own entry, outside Projects and every project count", async () => {
+    state.shells = [shell("aide-ask", { hasPendingApprovals: true })];
+    state.workerPersonal = true;
+    await render();
+    const projectsPanel = container.querySelector('[aria-labelledby="studio-projects-title"]')!;
+    expect(projectsPanel.textContent).not.toContain("Worker project");
+    expect(projectsPanel.querySelectorAll(".studio-project")).toHaveLength(1);
+    expect(projectsPanel.querySelector(".studio-count")?.textContent).toBe("1");
+    expect(container.querySelector(".studio-intro")?.textContent).toContain("in 1 project on");
+    const workerMac = [...container.querySelectorAll(".studio-machine")].find((row) =>
+      row.textContent?.includes("Worker Mac"),
+    );
+    expect(workerMac?.textContent).toContain("0 projects");
+
+    const entry = container.querySelector('[aria-labelledby="studio-assistant-title"]')!;
+    expect(container.querySelector("#studio-assistant-title")?.textContent).toBe("Aide");
+    // The entry sits above Projects in the rail.
+    expect(
+      entry.compareDocumentPosition(projectsPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const rows = entry.querySelectorAll(
+      '[role="group"][aria-label="Personal assistant"] .studio-project',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.querySelector("a")?.getAttribute("href")).toBe("/projects/worker");
+    // More than one machine: the row names the machine it lives on.
+    expect(rows[0]!.textContent).toContain("Worker Mac");
+    expect(rows[0]!.querySelector(".studio-pill.amber")?.textContent).toBe("1");
+    expect(rows[0]!.querySelector('[aria-label^="New chat in"]')).toBeNull();
+    expect(
+      rows[0]!.querySelector('[aria-label="Show only topics that need you in Worker project"]'),
+    ).not.toBeNull();
+    // Its "+" starts a new topic aimed at Aide, not the chooser of projects.
+    state.newThread.mockClear();
+    const newTopic = rows[0]!.querySelector<HTMLButtonElement>(
+      '[aria-label="New topic in Worker project"]',
+    )!;
+    expect(newTopic.disabled).toBe(false);
+    await act(async () => newTopic.click());
+    expect(state.newThread).toHaveBeenCalledWith(
+      { environmentId: "host-worker", projectId: "project-worker" },
+      { environmentSelection: "manual" },
+    );
+    expect(container.querySelector("#studio-project")).toBeNull();
+    // Its topics that need the person are still real work waiting on them.
+    expect(container.querySelector("#studio-heading")?.textContent).toBe("1 chat needs you");
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
+    // A new chat's project picker does not offer it.
+    await click("New chat");
+    expect(option("host-local:project-local")).not.toBeNull();
+    expect(option("host-worker:project-worker")).toBeNull();
+  });
+  it("lists an archived assistant, as the sidebar does, with no new topic", async () => {
+    state.workerPersonal = true;
+    state.workerArchived = true;
+    await render();
+    const rows = container.querySelectorAll(
+      '[aria-labelledby="studio-assistant-title"] .studio-project',
+    );
+    expect(rows).toHaveLength(1);
+    expect(
+      rows[0]!.querySelector<HTMLButtonElement>('[aria-label="New topic in Worker project"]')
+        ?.disabled,
+    ).toBe(true);
+  });
+  it("shows no assistant entry while Aide is off or none exists", async () => {
+    await render();
+    expect(container.querySelector("#studio-assistant-title")).toBeNull();
+    state.workerPersonal = true;
+    state.aideEnabled = false;
+    await render();
+    expect(container.querySelector("#studio-assistant-title")).toBeNull();
+    expect(container.querySelector(".studio-intro")?.textContent).toContain("in 1 project on");
   });
   it("advances the displayed session age without new session observations or work", async () => {
     vi.useFakeTimers();

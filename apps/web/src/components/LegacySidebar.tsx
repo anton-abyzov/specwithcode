@@ -99,7 +99,13 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useSidebarProjects } from "../state/projectClones";
-import { legacySidebarProjectSections, legacySidebarWaitingCount } from "./LegacySidebar.logic";
+import {
+  legacySidebarAssistantLinks,
+  legacySidebarProjectSections,
+  legacySidebarWaitingCount,
+  type LegacySidebarAssistantLink,
+} from "./LegacySidebar.logic";
+import { LegacySidebarAssistantLinks } from "./LegacySidebarAssistantLinks";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -2944,6 +2950,8 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
+  /** Aide's own links above the Projects list. */
+  assistantLinks: readonly LegacySidebarAssistantLink[];
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2994,6 +3002,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
     projectsLength,
+    assistantLinks,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -3085,6 +3094,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       ) : null}
       <LocalSecondaryStatus />
+      <LegacySidebarAssistantLinks
+        links={assistantLinks}
+        activeProjectKey={activeRouteProjectKey}
+      />
       <SidebarGroup>
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-xs font-medium text-sidebar-muted-foreground">Projects</span>
@@ -3543,6 +3556,10 @@ export default function LegacySidebar() {
       }),
     [activeRouteProjectKey, scratchRootFor, showArchived, showAutomated, sortedProjects],
   );
+  const assistantLinks = useMemo(
+    () => legacySidebarAssistantLinks(sortedProjects, primaryEnvironmentId),
+    [primaryEnvironmentId, sortedProjects],
+  );
   const automatedWaiting = useMemo(
     () => legacySidebarWaitingCount(projectSections.automated, threadsByProjectKey),
     [projectSections.automated, threadsByProjectKey],
@@ -3927,6 +3944,7 @@ export default function LegacySidebar() {
           projectSections.automated.length +
           projectSections.archived.length
         }
+        assistantLinks={assistantLinks}
       />
       <SidebarChromeFooter />
     </>

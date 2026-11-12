@@ -1,6 +1,7 @@
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import type { ContextMenuItem, HandoffModeSnapshot, ProjectId } from "@specweave-studio/contracts";
 import type { SnoozePreset } from "@specweave-studio/client-runtime/state/thread-settled";
+import { paneWords } from "../studio/assistantTerms";
 
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
@@ -149,6 +150,11 @@ export interface ThreadActionMenuState {
    * thread: it is never resolved, only archived or moved into a project.
    */
   readonly isChat?: boolean;
+  /**
+   * True for a topic of the personal assistant: labels say topic, and a topic never
+   * moves to a project or another machine.
+   */
+  readonly isPersonal?: boolean;
   readonly isSettled: boolean;
   /** False while the user has turned automatic settlement off for this thread. */
   readonly autoSettleEnabled: boolean;
@@ -230,12 +236,18 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const offersRename = !state.titleLocked || state.renameFromHeading === true;
+  const say = paneWords(state.isPersonal);
+  const offersProjectMove =
+    !state.isPersonal &&
+    state.supports.projectMove === true &&
+    state.moveToProjectBlockedReason !== undefined;
+  const handoff = state.isPersonal ? undefined : state.handoff;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.branch
       ? [
           {
             id: "new-thread-on-branch" as const,
-            label: `New thread on ${state.branch}`,
+            label: say(`New thread on ${state.branch}`),
             icon: "message-square-plus",
           },
         ]
@@ -243,8 +255,8 @@ export function buildThreadActionMenuItems(
     ...(state.supports.pinning
       ? [
           state.isPinned
-            ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
-            : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+            ? { id: "unpin" as const, label: say("Unpin thread"), icon: "pin-off" }
+            : { id: "pin" as const, label: say("Pin thread"), icon: "pin" },
         ]
       : []),
     // Both lifecycle actions stay available on pinned threads: settling
@@ -255,12 +267,12 @@ export function buildThreadActionMenuItems(
           state.isSettled
             ? {
                 id: "unsettle" as const,
-                label: THREAD_LIFECYCLE_LABELS.reopenThread,
+                label: say(THREAD_LIFECYCLE_LABELS.reopenThread),
                 icon: "circle-check",
               }
             : {
                 id: "settle" as const,
-                label: THREAD_LIFECYCLE_LABELS.resolveThread,
+                label: say(THREAD_LIFECYCLE_LABELS.resolveThread),
                 icon: "circle-check",
               },
         ]
@@ -268,7 +280,7 @@ export function buildThreadActionMenuItems(
     ...(state.supports.snooze
       ? [
           state.isSnoozed
-            ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
+            ? { id: "unsnooze" as const, label: say("Wake thread"), icon: "clock" }
             : {
                 id: "snooze" as const,
                 label: "Snooze",
@@ -285,7 +297,14 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     ...(offersRename
-      ? [{ id: "rename" as const, label: "Rename thread", icon: "pencil", separatorBefore: true }]
+      ? [
+          {
+            id: "rename" as const,
+            label: say("Rename thread"),
+            icon: "pencil",
+            separatorBefore: true,
+          },
+        ]
       : []),
     ...(state.supports.titleRegeneration && !state.titleLocked
       ? [
@@ -349,7 +368,7 @@ export function buildThreadActionMenuItems(
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
-        { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
+        { id: "copy-thread-id", label: say("Thread ID"), icon: "hash" },
       ],
     },
     ...(state.canOpenProjectWindow
@@ -367,7 +386,7 @@ export function buildThreadActionMenuItems(
     // (stays visible in the Settled shelf) and Delete (clears history for
     // good), so it sits beside Delete without borrowing its destructive
     // styling.
-    ...(state.supports.projectMove && state.moveToProjectBlockedReason !== undefined
+    ...(offersProjectMove
       ? [
           {
             id: "move-to-project" as const,
@@ -378,20 +397,20 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.handoff
+    ...(handoff
       ? [
           {
             id: "hand-off" as const,
             label: "Move thread…",
             icon: "laptop",
             separatorBefore: true,
-            disabled: state.handoff.continued,
+            disabled: handoff.continued,
           },
           {
             id: "switch-model" as const,
             label: "Switch model and continue…",
             icon: "refresh-cw",
-            disabled: state.handoff.continued,
+            disabled: handoff.continued,
           },
           {
             id: "handoff-mode" as const,
@@ -400,14 +419,14 @@ export function buildThreadActionMenuItems(
             children: [
               {
                 id: "handoff-mode:inherit" as const,
-                label: threadHandoffDefaultLabel(state.handoff),
-                checked: state.handoff.mode === "inherit",
+                label: threadHandoffDefaultLabel(handoff),
+                checked: handoff.mode === "inherit",
               },
-              { id: "handoff-mode:on" as const, label: "On", checked: state.handoff.mode === "on" },
+              { id: "handoff-mode:on" as const, label: "On", checked: handoff.mode === "on" },
               {
                 id: "handoff-mode:off" as const,
                 label: "Off",
-                checked: state.handoff.mode === "off",
+                checked: handoff.mode === "off",
               },
             ],
           },
@@ -421,18 +440,16 @@ export function buildThreadActionMenuItems(
             id: "adversarial-review" as const,
             label: ADVERSARIAL_REVIEW_LABEL,
             icon: "shield-check",
-            ...(state.handoff ? {} : { separatorBefore: true }),
+            ...(handoff ? {} : { separatorBefore: true }),
           },
         ]
       : []),
     {
       id: "archive",
-      label: state.isChat ? "Archive chat" : "Archive thread",
+      label: state.isChat ? "Archive chat" : say("Archive thread"),
       icon: "archive",
       disabled: state.isRunning,
-      separatorBefore: !(
-        state.supports.projectMove && state.moveToProjectBlockedReason !== undefined
-      ),
+      separatorBefore: !offersProjectMove,
     },
     {
       id: "delete",

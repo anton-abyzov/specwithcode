@@ -4,6 +4,7 @@ import type { EnvironmentId, ProjectId, TelegramChannelStatus } from "@specweave
 import {
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
+  PERSONAL_ASSISTANT_LABEL,
   TELEGRAM_BOT_TOKEN_PATTERN,
 } from "@specweave-studio/contracts";
 import {
@@ -84,7 +85,7 @@ export function MessagingSettingsPanel() {
         aideEnabled,
         [savedProjectId, projectDraft],
       )
-        // Personal projects first: they are the natural home for a phone agent.
+        // Aide first: it is the natural home for a phone agent.
         .toSorted(
           (left, right) =>
             Number(right.workspaceSettings?.kind === "personal") -
@@ -102,8 +103,13 @@ export function MessagingSettingsPanel() {
   // Only the person's own projects are choices. A channel whose project was since archived
   // or made by a check shows it apart: saving needs another project, unless the channel is
   // turned off, so no work goes there.
-  const projectChoices = projectPickerMembers(projects, scratchRootFor);
-  const unavailableProject = ineligibleSelectedMember(projects, selectedProject, scratchRootFor);
+  const projectChoices = projectPickerMembers(projects, scratchRootFor, { purpose: "any" });
+  const unavailableProject = ineligibleSelectedMember(
+    projects,
+    selectedProject,
+    scratchRootFor,
+    "any",
+  );
 
   // While a code waits for the phone, re-read so the pairing shows up here.
   const waitingForPairing = status !== null && status.configured && !status.paired;
@@ -250,11 +256,7 @@ export function MessagingSettingsPanel() {
                     className="max-w-sm"
                   >
                     <SelectValue>
-                      {() =>
-                        selectedProject
-                          ? `${selectedProject.title}${selectedProject.workspaceSettings?.kind === "personal" ? " (personal)" : ""}`
-                          : "Choose a project"
-                      }
+                      {() => (selectedProject ? selectedProject.title : "Choose a project")}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectPopup alignItemWithTrigger={false}>
@@ -269,24 +271,36 @@ export function MessagingSettingsPanel() {
                     {projectChoices.map((project) => (
                       <SelectItem key={project.id} value={project.id}>
                         {project.title}
-                        {project.workspaceSettings?.kind === "personal" ? " (personal)" : ""}
+                        {project.workspaceSettings?.kind === "personal" ? (
+                          <span className="ms-2 text-muted-foreground text-xs">
+                            {tx(PERSONAL_ASSISTANT_LABEL)}
+                          </span>
+                        ) : null}
                       </SelectItem>
                     ))}
                   </SelectPopup>
                 </Select>
                 <span className="text-muted-foreground text-xs">
-                  {renderRich(tx("{value}Messages go to this project's coordinator. {value2}"), {
-                    value: unavailableProject
-                      ? tx("{reason}. Choose another project to save, or turn the channel off. ", {
-                          reason: tx(ineligibleProjectLabel(unavailableProject.reason)),
-                        })
-                      : null,
-                    value2: tx(
-                      aideEnabled
-                        ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
-                        : "A code project works for checking on builds from your phone.",
-                    ),
-                  })}
+                  {renderRich(
+                    selectedProject?.workspaceSettings?.kind === "personal"
+                      ? tx("{value}Messages go to Aide. {value2}")
+                      : tx("{value}Messages go to this project's coordinator. {value2}"),
+                    {
+                      value: unavailableProject
+                        ? tx(
+                            "{reason}. Choose another project to save, or turn the channel off. ",
+                            {
+                              reason: tx(ineligibleProjectLabel(unavailableProject.reason)),
+                            },
+                          )
+                        : null,
+                      value2: tx(
+                        aideEnabled
+                          ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
+                          : "A code project works for checking on builds from your phone.",
+                      ),
+                    },
+                  )}
                 </span>
               </div>
 

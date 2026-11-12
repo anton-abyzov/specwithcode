@@ -37,7 +37,7 @@ export function matchesScheduledTaskScope(
   return true;
 }
 
-/** Opens the editor with a ready-made routine, such as the one Settings > Google links to. */
+/** Opens the editor with a ready-made routine, such as the one Settings > Google account links to. */
 export const MORNING_BRIEFING_TEMPLATE = "morning-briefing" as const;
 /** Opens a blank editor with the linked project chosen, from a project's Routines tab. */
 export const NEW_ROUTINE_TEMPLATE = "new" as const;

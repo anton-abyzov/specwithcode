@@ -156,6 +156,8 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useAideEnabled, useClientSettings } from "../hooks/useSettings";
 import { threadsVisibleWithAide, visibleWithAide } from "../studio/personalAssistant";
+import { legacySidebarAssistantLinks, withoutAssistants } from "./LegacySidebar.logic";
+import { LegacySidebarAssistantLinks } from "./LegacySidebarAssistantLinks";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -2595,6 +2597,11 @@ export default function Sidebar() {
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
+  // Aide is a link of its own above the project tree, never one of its rows.
+  const assistantLinks = useMemo(
+    () => legacySidebarAssistantLinks(projectGroups, primaryEnvironmentId),
+    [primaryEnvironmentId, projectGroups],
+  );
   // Threads on non-primary environments (Studio Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
   // are driver slugs, so a flat map would collide across environments.
@@ -4704,6 +4711,9 @@ export default function Sidebar() {
                   }
                 : null,
               isPinned,
+              isPersonal: isPersonalAssistantProject(
+                projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
+              ),
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
@@ -5393,8 +5403,11 @@ export default function Sidebar() {
                   onDraftContextMenu={handleDraftContextMenu}
                 />
               </ul>
+              <LegacySidebarAssistantLinks links={assistantLinks} activeProjectKey={null} />
               <SidebarProjectTree
-                projectGroups={scopedProjectGroup === null ? projectGroups : [scopedProjectGroup]}
+                projectGroups={withoutAssistants(
+                  scopedProjectGroup === null ? projectGroups : [scopedProjectGroup],
+                )}
                 threads={threads}
                 routeThreadKey={routeThreadKey}
                 routeProject={routeDraftThread}

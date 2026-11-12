@@ -8,6 +8,7 @@ import {
   ineligibleSelectedGroup,
   ineligibleSelectedMember,
   isArchivedGroup,
+  isAssistantGroup,
   isAutomatedGroup,
   isOrdinaryProjectChoice,
   membersToMark,
@@ -174,17 +175,15 @@ describe("project pickers", () => {
     id: id as ProjectId,
   });
 
-  it("offers only the person's own projects: no archived, automated or No project row", () => {
+  it("offers only the person's own projects: no archived, automated, Aide or No project row", () => {
     expect(projectPickerGroups(pickerGroups, scratchRootFor).map((g) => g.projectKey)).toEqual([
       "atlas",
       "shared",
-      "aide",
       "typed",
     ]);
     expect(projectPickerMembers(members, scratchRootFor).map((m) => m.id)).toEqual([
       "a1",
       "h2",
-      "p1",
       "t1",
     ]);
   });
@@ -203,7 +202,13 @@ describe("project pickers", () => {
       member("remote", "old-code", "/work/code", { kind: "code", archived: true }),
     );
     expect(projectPickerGroups([wrongKinds], scratchRootFor, { purpose: "code" })).toEqual([]);
-    expect(projectPickerGroups([wrongKinds], scratchRootFor)).toEqual([wrongKinds]);
+    expect(projectPickerGroups([wrongKinds], scratchRootFor)).toEqual([]);
+    expect(ineligibleSelectedGroup([wrongKinds], "kinds", scratchRootFor)?.reason).toBe(
+      "assistant",
+    );
+    expect(projectPickerGroups([wrongKinds], scratchRootFor, { purpose: "any" })).toEqual([
+      wrongKinds,
+    ]);
   });
 
   it("never offers an archived or automated selection; describes it apart instead", () => {
@@ -217,6 +222,7 @@ describe("project pickers", () => {
     // An archived automated project reads as archived, as the sidebar files it.
     expect(describeGroup("old-check")).toEqual(["old-check", "archived"]);
     expect(describeGroup("host:scratch")).toEqual(["host:scratch", "scratch"]);
+    expect(describeGroup("aide")).toEqual(["aide", "assistant"]);
     expect(describeGroup("atlas")).toBeNull();
     expect(describeGroup("gone")).toBeNull();
     expect(describeGroup(null)).toBeNull();
@@ -226,6 +232,7 @@ describe("project pickers", () => {
     expect(describeMember("remote", "r1")).toBe("archived");
     expect(describeMember("host", "c1")).toBe("automated");
     expect(describeMember("host", "s1")).toBe("scratch");
+    expect(describeMember("host", "p1")).toBe("assistant");
     // Machine and id both have to match.
     expect(describeMember("host", "r1")).toBeNull();
     expect(describeMember("host", "a1")).toBeNull();
@@ -237,13 +244,17 @@ describe("project pickers", () => {
     expect(ineligibleProjectLabel("automated")).toBe("Automated project, not available here");
     expect(ineligibleProjectLabel("scratch")).toBe("No project, not available here");
     expect(ineligibleProjectLabel("not-code")).toBe("Not a code project, not available here");
+    expect(ineligibleProjectLabel("assistant")).toBe(
+      "Aide is opened from its own entry, not as a project",
+    );
   });
 
-  it("keeps personal assistants for work and design, and only code projects for code", () => {
+  it("keeps personal assistants for design and any, never for work, and only code for code", () => {
     const offered = (purpose: ProjectPickerPurpose) =>
       projectPickerMembers(members, scratchRootFor, { purpose }).map((m) => m.id);
-    expect(offered("work")).toEqual(["a1", "h2", "p1", "t1"]);
+    expect(offered("work")).toEqual(["a1", "h2", "t1"]);
     expect(offered("design")).toEqual(["a1", "h2", "p1", "t1"]);
+    expect(offered("any")).toEqual(["a1", "h2", "p1", "t1"]);
     // A project saved before kinds existed is a code project.
     expect(offered("code")).toEqual(["a1", "h2", "t1"]);
     expect(
@@ -258,6 +269,27 @@ describe("project pickers", () => {
       "not-code",
     );
     expect(ineligibleSelectedGroup(pickerGroups, "aide", scratchRootFor, "design")).toBeNull();
+    expect(ineligibleSelectedGroup(pickerGroups, "aide", scratchRootFor, "any")).toBeNull();
+    expect(ineligibleSelectedGroup(pickerGroups, "aide", scratchRootFor, "work")?.reason).toBe(
+      "assistant",
+    );
+    expect(
+      projectPickerGroups(pickerGroups, scratchRootFor, { purpose: "any" }).map(
+        (g) => g.projectKey,
+      ),
+    ).toEqual(["atlas", "shared", "aide", "typed"]);
+  });
+
+  it("tells an assistant group apart from a project group", () => {
+    expect(isAssistantGroup(aide)).toBe(true);
+    expect(isAssistantGroup(typed)).toBe(false);
+    expect(isAssistantGroup(atlas)).toBe(false);
+    const sharedAide = group(
+      "both",
+      member("host", "x1", "/work/x", { kind: "code" }),
+      member("remote", "x2", "/work/aide", { kind: "personal" }),
+    );
+    expect(isAssistantGroup(sharedAide)).toBe(true);
   });
 
   it("lists automated projects after the person's own only when a management list asks", () => {
@@ -265,10 +297,31 @@ describe("project pickers", () => {
       projectPickerGroups(pickerGroups, scratchRootFor, { includeAutomated: true }).map(
         (g) => g.projectKey,
       ),
-    ).toEqual(["atlas", "shared", "aide", "typed", "check", "flagged"]);
+    ).toEqual(["atlas", "shared", "typed", "check", "flagged"]);
     expect(
       projectPickerMembers(members, scratchRootFor, { includeAutomated: true }).map((m) => m.id),
-    ).toEqual(["a1", "h2", "p1", "t1", "c1", "f1"]);
+    ).toEqual(["a1", "h2", "t1", "c1", "f1"]);
+  });
+
+  it("never offers an automated assistant for work, even to a management list", () => {
+    const autoAide = group(
+      "auto-aide",
+      member("host", "q1", "/work/auto-aide", { kind: "personal", origin: "automated" }),
+    );
+    const autoMembers = autoAide.memberProjects;
+    expect(ineligibleSelectedGroup([autoAide], "auto-aide", scratchRootFor)?.reason).toBe(
+      "automated",
+    );
+    expect(projectPickerGroups([autoAide], scratchRootFor, { includeAutomated: true })).toEqual([]);
+    expect(projectPickerMembers(autoMembers, scratchRootFor, { includeAutomated: true })).toEqual(
+      [],
+    );
+    expect(
+      projectPickerGroups([autoAide], scratchRootFor, { includeAutomated: true, purpose: "any" }),
+    ).toEqual([autoAide]);
+    expect(
+      projectPickerMembers(autoMembers, scratchRootFor, { includeAutomated: true, purpose: "any" }),
+    ).toEqual(autoMembers);
   });
 
   // Part B of the 1041 dropdown audit: every ordinary project choice and the helper it uses.
@@ -295,7 +348,7 @@ describe("project pickers", () => {
   ];
 
   it.each(AUDITED_PICKERS)("%s: own projects only, a stale selection apart", (_, purpose, rows) => {
-    const own = ["a1", "h2", ...(purpose === "code" ? [] : ["p1"]), "t1"];
+    const own = ["a1", "h2", ...(purpose === "design" || purpose === "any" ? ["p1"] : []), "t1"];
     if (rows === "group") {
       const offered = projectPickerGroups(pickerGroups, scratchRootFor, { purpose });
       expect(offered.flatMap((g) => g.memberProjects).map((m) => m.id)).toEqual(

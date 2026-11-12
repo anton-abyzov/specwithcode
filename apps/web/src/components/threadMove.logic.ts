@@ -6,6 +6,7 @@ import {
   type ThreadExecutionRecord,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   threadRuntimeCanArchive,
   type EnvironmentThreadShell,
@@ -32,13 +33,17 @@ export function threadMoveBlockedReason(
     | {
         readonly id: ProjectId;
         readonly workspaceSettings?:
-          | { readonly coordinatorThreadId?: string | null | undefined }
+          | {
+              readonly coordinatorThreadId?: string | null | undefined;
+              readonly kind?: string | undefined;
+            }
           | null
           | undefined;
       }
     | undefined,
 ): string | null {
   if (thread.movedTo != null) return `Already moved to "${thread.movedTo.title}".`;
+  if (isPersonalAssistantProject(project)) return ASSISTANT_TOPIC_STAYS;
   const coordinatorThreadId = project?.workspaceSettings?.coordinatorThreadId;
   if (
     isProjectCoordinatorThreadId(thread.id, {
@@ -51,12 +56,23 @@ export function threadMoveBlockedReason(
   return null;
 }
 
-/** Projects the thread can move to: the same machine's main project list, minus its own. */
+/** Why a topic of the personal assistant has no Move to project. */
+export const ASSISTANT_TOPIC_STAYS =
+  "Aide's topics stay private, so they cannot move to a project.";
+
+/**
+ * Projects the thread can move to: the same machine's main project list, minus its own.
+ * A personal assistant is never a target, and its own topics move nowhere.
+ */
 export function threadMoveTargets<M extends ProjectListMember>(
   thread: MovableThread,
   projects: ReadonlyArray<M>,
   scratchRootFor: ScratchRootLookup,
 ): M[] {
+  const source = projects.find(
+    (project) => project.environmentId === thread.environmentId && project.id === thread.projectId,
+  );
+  if (isPersonalAssistantProject(source)) return [];
   return projectPickerMembers(
     projects.filter(
       (project) =>

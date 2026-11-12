@@ -2,7 +2,7 @@ import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@specweave-studio/contracts";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { getProjectOrderKey } from "../logicalProject";
-import { visibleWithAide } from "../studio/personalAssistant";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
 
 type OrderableProject = Parameters<typeof getProjectOrderKey>[0] & {
@@ -15,16 +15,15 @@ type OrderableProject = Parameters<typeof getProjectOrderKey>[0] & {
 
 /**
  * Where New thread lands with no chat or project in context (Cmd+N, the
- * palette on Overview): the first project in sidebar order. A hidden personal
- * assistant (Settings → General) is skipped, so a new chat never opens in it.
+ * palette on Overview): the first project in sidebar order. A personal assistant
+ * is never it, on or off: Aide has its own entry, so a new chat never opens there.
  */
 export function defaultNewThreadProjectRef<T extends OrderableProject>(input: {
   readonly projects: readonly T[];
   readonly projectOrder: readonly string[];
-  readonly aideEnabled: boolean;
 }): ScopedProjectRef | null {
   const ordered = orderItemsByPreferredIds({
-    items: visibleWithAide(input.projects, input.aideEnabled),
+    items: input.projects.filter((project) => !isPersonalAssistantProject(project)),
     preferredIds: input.projectOrder,
     getId: getProjectOrderKey,
     getPreferenceIds: (project) => [

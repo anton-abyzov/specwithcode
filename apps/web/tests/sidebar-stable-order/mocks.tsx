@@ -237,3 +237,14 @@ export const useProviderEntriesByEnvironment = () => NO_ENTRIES;
 // sidebar chrome: the brand header and footer are not under test
 export const SidebarChromeHeader = () => null;
 export const SidebarChromeFooter = () => null;
+// Later app imports reached through the sidebar (attention raise, Run on menu).
+let environmentIdsFor: unknown = null;
+let environmentIds: string[] = [];
+const currentEnvironmentIds = () => {
+  if (environmentIdsFor !== fixture.environments) {
+    environmentIdsFor = fixture.environments;
+    environmentIds = fixture.environments.map((environment) => environment.environmentId);
+  }
+  return environmentIds;
+};
+export const useEnvironmentIds = () => useFixture(currentEnvironmentIds);

@@ -154,6 +154,7 @@ export function CommandPalette(props: {
       projectPickerMembers(
         allProjects,
         (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+        "any",
       ),
     [allProjects, serverConfigs],
   );

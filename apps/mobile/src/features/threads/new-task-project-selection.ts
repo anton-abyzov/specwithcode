@@ -29,7 +29,8 @@ export function newTaskDestinationProjects(
   selected: EnvironmentProject | null,
   scratchRootFor: ScratchRootLookup,
 ): EnvironmentProject[] {
-  return projectPickerMembers(projects, scratchRootFor).filter(
+  // Mobile has no Aide entry of its own, so it stays a destination here.
+  return projectPickerMembers(projects, scratchRootFor, "any").filter(
     (project) => resolveEnvironmentProjectMatch([project], selected) !== null,
   );
 }
@@ -43,7 +44,7 @@ export function newTaskProjectUnavailableReason(
   if (missingFromCatalog)
     return "This project is no longer available. Choose an active project to start this task.";
   if (project === null) return "Choose an active project to start this task.";
-  const reason = projectChoiceIneligibleReason(project, scratchRootFor);
+  const reason = projectChoiceIneligibleReason(project, scratchRootFor, "any");
   // Starting without a project is a separate, explicit action in the task flow.
   if (reason === null || reason === "scratch") return null;
   return reason === "archived"

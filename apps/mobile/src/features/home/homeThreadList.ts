@@ -78,7 +78,7 @@ export function homeProjectPickerScopes(
   return scopes.flatMap((scope) => {
     if (
       scope.projects.some(
-        (project) => projectChoiceIneligibleReason(project, scratchRootFor) === null,
+        (project) => projectChoiceIneligibleReason(project, scratchRootFor, "any") === null,
       )
     )
       return [scope];

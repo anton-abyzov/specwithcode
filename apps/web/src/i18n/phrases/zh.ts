@@ -1590,10 +1590,6 @@ export const zh: PhraseCatalog = {
   "Make default": "设为默认",
   "Morning briefing": "晨间简报",
   "Not connected": "未连接",
-  "Let a project's agents read your Gmail, Calendar and Drive, so a Personal project can brief you on your day, find a document or check who is coming to a meeting.":
-    "让项目的智能体读取你的 Gmail、日历和云端硬盘，这样个人项目就能为你简报当天安排、查找文档或查看谁会参加会议。",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only your Personal project starts with access.":
-    "智能体只读取。开启 Gmail 草稿后，它们会保存回复草稿，只有当你在回复卡片上选择“发送”时才会发送；它们从不更改或删除任何内容。SpecWithCode 从这台电脑与 Google 通信，将登录信息保存在这台电脑上的私有文件中，在你于下方开启之前不会向任何项目提供访问。只有你的个人项目一开始就有访问权限。",
   "The SpecWithCode service this app is connected to (version {serverVersion}) is older than Google account support. Update that service to use it.":
     "此应用连接的 SpecWithCode 服务（版本 {serverVersion}）早于 Google 账户支持。请更新该服务以使用此功能。",
   "Your own OAuth client": "你自己的 OAuth 客户端",
@@ -1630,12 +1626,31 @@ export const zh: PhraseCatalog = {
   "Finish sign-in": "完成登录",
   "Projects that may read each account": "可读取每个账户的项目",
   "Projects that may read it": "可读取它的项目",
-  "Agents in a project see only the services you turn on for it.{value}":
-    "项目中的智能体只能看到你为它开启的服务。{value}",
+  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
+    "让 Aide 和你选择的项目读取你的 Gmail、Calendar 和 Drive，这样 Aide 就能为你简报当天安排、查找文档或查看谁会参加会议。",
+  "Agents in a project see only the services you turn on for it.":
+    "项目中的智能体只能看到你为它开启的服务。",
+  "Agents use the default account unless asked for another, and may read every account turned on here.":
+    "除非被要求使用其他账户，智能体会使用默认账户，并且可以读取这里开启的所有账户。",
+  "Your personal assistant. It starts with access when you connect an account.":
+    "你的个人助手。连接账户后它就能立即访问。",
+  "Hidden on this machine. You can still turn its access off here.":
+    "已在这台电脑上隐藏。你仍可以在这里关闭它的访问权限。",
+  "Proactive briefing": "主动简报",
+  "No projects yet. Aide above can already use this account.":
+    "还没有项目。上方的 Aide 已经可以使用这个账户。",
+  "No projects yet. Add one to let its agents read this account.":
+    "还没有项目。添加一个项目，让它的智能体读取这个账户。",
+  "Enable {service} for all active projects": "为所有活跃项目启用 {service}",
+  "Disable {service} for all projects": "为所有项目停用 {service}",
+  "{service} for {title}": "{title} 的 {service}",
+  "Make {account} the default for {title}": "将 {account} 设为 {title} 的默认账户",
+  "this account": "这个账户",
+  "Aide is opened from its own entry, not as a project": "Aide 从它自己的入口打开，而不是作为项目",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
+    "智能体只读取。开启 Gmail 草稿后，它们会保存回复草稿，只有当你在回复卡片上选择“发送”时才会发送；它们从不更改或删除任何内容。SpecWithCode 从这台电脑与 Google 通信，将登录信息保存在这台电脑上的私有文件中，在你于下方开启之前不会向任何项目提供访问。只有 Aide 一开始就有访问权限。",
   "Enable for all active projects": "为所有活跃项目启用",
   "Not now": "暂不",
-  "Add a project first. A Personal project suits a personal agent.":
-    "请先添加一个项目。个人项目适合个人智能体。",
   "{span} · {onCount} of {length} active": "{span} · {length} 个活跃中的 {onCount} 个",
   "No active projects of your own here.": "这里没有你自己的活跃项目。",
   automated: "自动",
@@ -4381,4 +4396,8 @@ export const zh: PhraseCatalog = {
   "move pending": "移动待确认",
   "separate project": "独立项目",
   "not synced here": "尚未在此同步",
+  "{value}Messages go to Aide. {value2}": "{value}消息会发送给 Aide。{value2}",
+  "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
+  "New topic in {title}": "在 {title} 中新建主题",
+  Aide: "Aide",
 };
