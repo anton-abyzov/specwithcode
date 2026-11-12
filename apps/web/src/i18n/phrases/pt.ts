@@ -4192,4 +4192,76 @@ export const pt: PhraseCatalog = {
   "Add a project to {name}": "Adicionar um projeto a {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "Próximo passo, em {coordinatorLabel}: esta máquina só pode executar um projeto do qual tem uma cópia. Abra lá Configurações > Máquinas e adicione um projeto a esta máquina. Depois escolha-a em “Executar em” num chat, ou inclua-a em “Machines for workers” nas configurações do projeto.",
+  "Connect admin": "Administração do Connect",
+  Totals: "Totais",
+  "Tunnel address": "Endereço do túnel",
+  "No tunnel address": "Sem endereço de túnel",
+  "Machine id": "ID da máquina",
+  Linked: "Vinculada",
+  "Last update": "Última atualização",
+  Unlinked: "Desvinculada",
+  "Connection last changed": "Última mudança de conexão",
+  "App {version}": "App {version}",
+  "Last seen {time}": "Última atividade: {time}",
+  "Never seen": "Nunca visto",
+  "Loading machines and phones…": "Carregando máquinas e celulares…",
+  "No machine has been linked to this account.": "Nenhuma máquina foi vinculada a esta conta.",
+  Phones: "Celulares",
+  "No phone is signed in to this account.": "Nenhum celular entrou nesta conta.",
+  "Founder #{number}": "Fundador nº {number}",
+  "Machines: {count}": "Máquinas: {count}",
+  "Phones: {count}": "Celulares: {count}",
+  "First seen {time}": "Primeira atividade: {time}",
+  "Loading totals…": "Carregando totais…",
+  "Search accounts": "Buscar contas",
+  "Email, name or account id": "E-mail, nome ou ID da conta",
+  "Loading accounts…": "Carregando contas…",
+  "Names and emails could not be read from Clerk. Account ids are shown instead.":
+    "Não foi possível ler nomes e e-mails do Clerk. Os IDs das contas são mostrados no lugar.",
+  "More accounts match than are shown. Narrow the search.":
+    "Há mais contas correspondentes do que as mostradas. Refine a busca.",
+  "No account matches that search.": "Nenhuma conta corresponde a essa busca.",
+  "No one has signed in to SpecWithCode Connect yet.":
+    "Ninguém entrou no SpecWithCode Connect ainda.",
+  "Checking this account…": "Verificando esta conta…",
+  "Could not check whether this account is an owner.":
+    "Não foi possível verificar se esta conta é proprietária.",
+  "This page is only for the owners of SpecWithCode Connect.":
+    "Esta página é apenas para os proprietários do SpecWithCode Connect.",
+  "No machine limit, set by an owner": "Sem limite de máquinas, definido por um proprietário",
+  "No machine limit": "Sem limite de máquinas",
+  "Machine limit: {count}, set by an owner":
+    "Limite de máquinas: {count}, definido por um proprietário",
+  "Machine limit: {count}, founder": "Limite de máquinas: {count}, fundador",
+  "Machine limit: {count}, free plan": "Limite de máquinas: {count}, plano gratuito",
+  "Linked machines": "Máquinas vinculadas",
+  "Tunnels ready, of allocated": "Túneis prontos, dos alocados",
+  "Founder seats taken": "Vagas de fundador ocupadas",
+  "Machines on the free plan": "Máquinas no plano gratuito",
+  "Tunnel cap for all accounts": "Teto de túneis para todas as contas",
+  "No cap": "Sem teto",
+  "Linked without a Connect tunnel": "Vinculada sem túnel do Connect",
+  "Tunnel is being set up": "O túnel está sendo configurado",
+  "Offline: the machine gave its tunnel back": "Offline: a máquina devolveu o túnel",
+  "Online, connection degraded": "Online, conexão degradada",
+  "Offline: the tunnel is down": "Offline: o túnel está fora do ar",
+  "Offline: the tunnel never connected": "Offline: o túnel nunca se conectou",
+  "Tunnel ready, live status not read": "Túnel pronto, status ao vivo não lido",
+  "This page needs a Connect session in this window.":
+    "Esta página precisa de uma sessão do Connect nesta janela.",
+  "This account is not a Connect owner": "Esta conta não é proprietária do Connect",
+  "SpecWithCode Connect does not list this account as an owner.":
+    "O SpecWithCode Connect não lista esta conta como proprietária.",
+  "No Connect account has that id": "Nenhuma conta do Connect tem esse ID",
+  "It may have been deleted since the list was read.":
+    "Ela pode ter sido excluída depois que a lista foi lida.",
+  "SpecWithCode Connect could not read its data":
+    "O SpecWithCode Connect não conseguiu ler seus dados",
+  "Nothing was changed. Try again in a moment.": "Nada foi alterado. Tente de novo em instantes.",
+  "SpecWithCode Connect did not answer in time": "O SpecWithCode Connect não respondeu a tempo",
+  "Could not reach SpecWithCode Connect": "Não foi possível acessar o SpecWithCode Connect",
+  "Check this computer's connection, then try again.":
+    "Verifique a conexão deste computador e tente de novo.",
+  "SpecWithCode Connect sent an answer this page could not read":
+    "O SpecWithCode Connect enviou uma resposta que esta página não conseguiu ler",
 };

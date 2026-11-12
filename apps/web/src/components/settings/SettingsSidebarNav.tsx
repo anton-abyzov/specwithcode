@@ -29,10 +29,12 @@ import {
   ShieldCheckIcon,
   SparklesIcon,
   SwatchBookIcon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
+import { useIsConnectAdmin } from "~/cloud/connectAdminState";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -93,6 +95,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/connections": Link2Icon,
   "/settings/machines": LaptopIcon,
   "/settings/chrome": ChromeIcon,
+  "/settings/connect-admin": UsersIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -144,10 +147,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
+  const isConnectAdmin = useIsConnectAdmin();
   const navItems = SETTINGS_NAV_ITEMS.filter(
     // Skills also has a machine-wide view, so it shows without a project.
     (item) =>
       item.to !== "/settings/connections" &&
+      // Only an account the relay calls an owner sees this entry.
+      (item.to !== "/settings/connect-admin" || isConnectAdmin) &&
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)),
   );
   const searchInputRef = useRef<HTMLInputElement>(null);

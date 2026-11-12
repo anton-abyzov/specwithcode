@@ -39,6 +39,7 @@ import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsDesignSystemsRouteImport } from './routes/settings.design-systems'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
+import { Route as SettingsConnectAdminRouteImport } from './routes/settings.connect-admin'
 import { Route as SettingsChromeRouteImport } from './routes/settings.chrome'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
@@ -200,6 +201,11 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsConnectAdminRoute = SettingsConnectAdminRouteImport.update({
+  id: '/connect-admin',
+  path: '/connect-admin',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsChromeRoute = SettingsChromeRouteImport.update({
   id: '/chrome',
   path: '/chrome',
@@ -270,6 +276,7 @@ export interface FileRoutesByFullPath {
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/chrome': typeof SettingsChromeRoute
+  '/settings/connect-admin': typeof SettingsConnectAdminRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/design-systems': typeof SettingsDesignSystemsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -310,6 +317,7 @@ export interface FileRoutesByTo {
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/chrome': typeof SettingsChromeRoute
+  '/settings/connect-admin': typeof SettingsConnectAdminRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/design-systems': typeof SettingsDesignSystemsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -353,6 +361,7 @@ export interface FileRoutesById {
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/chrome': typeof SettingsChromeRoute
+  '/settings/connect-admin': typeof SettingsConnectAdminRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/design-systems': typeof SettingsDesignSystemsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -397,6 +406,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/chrome'
+    | '/settings/connect-admin'
     | '/settings/connections'
     | '/settings/design-systems'
     | '/settings/diagnostics'
@@ -437,6 +447,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/chrome'
+    | '/settings/connect-admin'
     | '/settings/connections'
     | '/settings/design-systems'
     | '/settings/diagnostics'
@@ -479,6 +490,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/chrome'
+    | '/settings/connect-admin'
     | '/settings/connections'
     | '/settings/design-systems'
     | '/settings/diagnostics'
@@ -730,6 +742,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/connect-admin': {
+      id: '/settings/connect-admin'
+      path: '/connect-admin'
+      fullPath: '/settings/connect-admin'
+      preLoaderRoute: typeof SettingsConnectAdminRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/chrome': {
       id: '/settings/chrome'
       path: '/chrome'
@@ -837,6 +856,7 @@ interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsChromeRoute: typeof SettingsChromeRoute
+  SettingsConnectAdminRoute: typeof SettingsConnectAdminRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDesignSystemsRoute: typeof SettingsDesignSystemsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
@@ -863,6 +883,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsChromeRoute: SettingsChromeRoute,
+  SettingsConnectAdminRoute: SettingsConnectAdminRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDesignSystemsRoute: SettingsDesignSystemsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,

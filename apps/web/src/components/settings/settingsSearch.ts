@@ -34,6 +34,7 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/machines"
   | "/settings/chrome"
+  | "/settings/connect-admin"
   | "/settings/archived";
 
 /**
@@ -121,6 +122,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/integrations": "Integrations",
   "/settings/messaging": "Messaging",
   "/settings/google": "Google account",
+  // Owners of SpecWithCode Connect only; the sidebar hides it from everyone else.
+  "/settings/connect-admin": "Connect admin",
 };
 
 /**
@@ -167,7 +170,12 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     label: "Accounts & integrations",
-    paths: ["/settings/integrations", "/settings/messaging", "/settings/google"],
+    paths: [
+      "/settings/integrations",
+      "/settings/messaging",
+      "/settings/google",
+      "/settings/connect-admin",
+    ],
   },
 ];
 
@@ -1374,6 +1382,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/machines": null,
   "/settings/chrome": null,
+  "/settings/connect-admin": null,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
