@@ -203,6 +203,10 @@ describe("specweave-studio clones sweep", () => {
             "in use by a thread": 1,
             "origin is not a registered project's repository": 1,
           },
+          dependenciesPrunable: 0,
+          dependenciesPruned: 0,
+          dependenciesSkipped: 0,
+          dependenciesFailed: 0,
         });
         assert.isFalse(NodeFS.existsSync(NodePath.dirname(fixture.merged)));
         assert.isTrue(NodeFS.existsSync(NodePath.join(fixture.dirty, "notes.md")));
@@ -214,6 +218,29 @@ describe("specweave-studio clones sweep", () => {
         );
       }),
     ),
+  );
+
+  it.effect.skipIf(noProcessList)(
+    "lists the dependency installs of a kept clone and leaves one that just changed",
+    () =>
+      withHome((fixture) =>
+        Effect.gen(function* () {
+          const install = NodePath.join(fixture.dirty, "node_modules");
+          NodeFS.mkdirSync(NodePath.join(install, "left-pad"), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(install, ".modules.yaml"), "layoutVersion: 5\n");
+          NodeFS.writeFileSync(NodePath.join(fixture.dirty, "package.json"), "{}");
+          NodeFS.writeFileSync(NodePath.join(fixture.dirty, "pnpm-lock.yaml"), "");
+          assert.strictEqual(yield* sweep(fixture, "--apply"), 0);
+          const lines = (yield* TestConsole.logLines).map(String);
+          const at = lines.findIndex((line) => line.includes(`${fixture.dirty}  `));
+          assert.match(
+            lines[at + 1] ?? "",
+            /^keep\s+1 dependency install in it: changed 0 h ago, inside the 24 h idle period$/,
+          );
+          assert.notInclude(lines.join("\n"), "Dependency installs");
+          assert.isTrue(NodeFS.existsSync(NodePath.join(install, "left-pad")));
+        }),
+      ),
   );
 
   it.effect("refuses without a readable database and removes nothing", () =>

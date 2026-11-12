@@ -29,6 +29,25 @@ Every check runs again right before each removal. Only the clone's folder goes, 
 
 A linked worktree (`.git` is a file) is kept. A source tree without `.git` whose `package.json` name matches a registered repository is reported and never removed.
 
+## Dependency installs of copies that stay
+
+A copy the sweep leaves in place can still hold several gigabytes of dependency installs. Builds made outside the checkout leave source trees without `.git`, which are never removed, and a clone with untracked notes is kept for good. On one machine 30 such copies of one repository were most of a 173 GB app folder.
+
+So a kept clone of a registered repository, a clone with no origin or another one whose `package.json` name is a registered repository's, and a source tree without `.git`, loses its `node_modules` folders once it sat unused for a day. Every other file stays exactly as it was, and `pnpm install` brings the installs back.
+
+| Check                 | How                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| It is an install      | A real folder named `node_modules` beside a `package.json`, at most four folders below the copy, that a package manager wrote and can write again: the copy has a lockfile, and the folder holds the manager's state file (`.modules.yaml`, `.package-lock.json`, `.yarn-integrity`) or only links into a root install that has one. A symlinked `node_modules`, one made by hand and, in a clone, one with a tracked file in it are left. |
+| Nobody is bound to it | No project, non-archived thread, live agent session or live terminal uses the copy, a folder inside it, or a folder around it below the scan root (a thread working in the dated folder uses the copy in it too).                                                                                                                                                                                                                          |
+| No process uses it    | As for clones: no working folder inside it and no file open in it. If that cannot be read, the installs stay.                                                                                                                                                                                                                                                                                                                              |
+| Nothing changed in it | No file or folder outside the installs changed for 24 hours, by the newer of its modification and status-change times, and no install finished in that time (`.modules.yaml`, `.package-lock.json`, `.yarn-integrity`).                                                                                                                                                                                                                    |
+
+The checks run again right before the installs go. A copy with more than 200,000 entries outside its installs, or with anything that cannot be read, keeps them. A clone whose origin and `package.json` name are no registered repository's is not looked at, and neither is a linked worktree.
+
+The plan lists these under the copy's own line, as `would go`, `prune` or `keep` with the number of installs and the reason. The running service logs `merged clone sweep dependencies pruned`, `skipped` or `failed`. The same setting turns both off.
+
+When you finish with a copy you made yourself, do not wait for this: remove the copy, or at least its `node_modules`, once its pull request merged.
+
 ## Running it
 
 ```sh

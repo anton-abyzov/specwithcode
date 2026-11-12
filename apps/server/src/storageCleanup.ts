@@ -36,8 +36,10 @@ import {
   type CloneSweepContext,
   cloneSweepLivePaths,
   cloneSweepRoots,
+  decideDependencyPrune,
   ghMergedPullRequest,
   planCloneSweep,
+  pruneDependencies,
   registeredRepositories,
   removeClone,
 } from "./mergedCloneSweep.ts";
@@ -1077,6 +1079,7 @@ export const make = Effect.gen(function* () {
         }));
       return {
         registeredRemotes: registered.remotes,
+        sourceTreeNames: registered.sourceTreeNames,
         livePaths: [...cloneSweepLivePaths(bindings, registered.checkouts), ...terminalPaths],
         processCwds: yield* listProcessCwds(platform),
         now: yield* Clock.currentTimeMillis,
@@ -1095,6 +1098,18 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("merged clone sweep kept", {
           path: decision.path,
           reason: decision.reason,
+        });
+        // A copy that stays still loses its dependency installs once it sat unused for a day.
+        const prune = yield* Effect.promise(() => decideDependencyPrune(decision, context));
+        if (prune?.action !== "prune") continue;
+        if (!(yield* settingsService.getSettings).storageCleanup.removeMergedClones) return;
+        const current = yield* readContext;
+        const pruned = yield* Effect.promise(() => pruneDependencies(decision, current));
+        yield* Effect.logInfo(`merged clone sweep dependencies ${pruned.result}`, {
+          path: decision.path,
+          reason: prune.reason,
+          installs: pruned.removed.length,
+          ...(pruned.detail === undefined ? {} : { detail: pruned.detail }),
         });
         continue;
       }
