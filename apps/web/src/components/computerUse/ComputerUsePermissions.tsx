@@ -244,7 +244,7 @@ export function ComputerUsePermissionChecklist({
                 granted ? (
                   <span
                     role="status"
-                    className="flex items-center gap-1 rounded-full bg-access-allowed px-1.5 py-px text-[0.6875rem]/4 font-medium text-access-allowed-foreground"
+                    className="flex items-center gap-1 rounded-full bg-access-allowed px-1.5 py-px text-2xs/4 font-medium text-access-allowed-foreground"
                   >
                     <CircleCheckIcon className="size-3.5" aria-hidden="true" />
                     Allowed

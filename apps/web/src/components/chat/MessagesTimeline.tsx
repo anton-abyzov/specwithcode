@@ -3484,7 +3484,7 @@ function AssistantMessageMeta({
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
       {projectedItem && projectedItem.item.status !== "completed" ? (
-        <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
+        <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-3xs text-muted-foreground">
           {projectedItem.item.status}
         </span>
       ) : null}
@@ -3741,7 +3741,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
           {item.status !== "completed" ? (
             <span
               className={cn(
-                "shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-3xs",
+                "shrink-0 rounded-full border px-1.5 py-0.5 text-3xs",
                 item.status === "failed"
                   ? "border-destructive/40 text-destructive-foreground"
                   : "border-border/70 text-muted-foreground",
@@ -3829,7 +3829,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             {item.status !== "completed" ? (
               <span
                 className={cn(
-                  "rounded-full border px-1.5 py-0.5 font-mono text-3xs",
+                  "rounded-full border px-1.5 py-0.5 text-3xs",
                   item.status === "failed"
                     ? "border-destructive/40 text-destructive-foreground"
                     : "border-border/70 text-muted-foreground",
@@ -6578,7 +6578,7 @@ function WorkEntryOutcomeChip({
   return (
     <span
       className={cn(
-        "shrink-0 rounded-sm px-1 font-mono text-3xs leading-4 tabular-nums",
+        "shrink-0 rounded-sm px-1 text-3xs leading-4 tabular-nums",
         chip.kind === "failed"
           ? "bg-tool-error-icon/10 text-tool-error-icon"
           : "bg-muted text-muted-foreground",

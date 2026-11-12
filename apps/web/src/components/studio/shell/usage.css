@@ -21,7 +21,7 @@
 }
 .sws-machine-limits-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-compact);
   font-weight: 500;
   color: var(--foreground);
 }
@@ -31,7 +31,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .sws-usage-popover-head {
   display: flex;
@@ -40,7 +40,7 @@
 }
 .sws-usage-popover-head > p {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--text-2xs);
   color: var(--muted-foreground);
 }
 .sws-usage-provider {
@@ -54,7 +54,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 13px;
+  font-size: var(--text-compact);
 }
 .sws-usage-plan {
   min-width: 0;
@@ -62,7 +62,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .sws-usage-banked {
   margin-left: auto;
@@ -156,7 +156,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--muted-foreground);
   cursor: pointer;
 }
@@ -194,7 +194,7 @@
   place-items: center;
   width: 18px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: 9999px;
   color: var(--muted-foreground);
 }
 .sws-machine-limits-info:hover {

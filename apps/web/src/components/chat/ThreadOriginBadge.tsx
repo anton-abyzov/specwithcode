@@ -56,7 +56,7 @@ export function ThreadOriginBadge({
             className={cn(
               variant === "chip"
                 ? "sws-chip"
-                : "inline-flex min-w-0 max-w-48 shrink items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground",
+                : "inline-flex min-w-0 max-w-48 shrink items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-2xs text-muted-foreground",
               className,
             )}
           />

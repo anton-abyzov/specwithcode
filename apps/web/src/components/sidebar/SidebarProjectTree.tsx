@@ -275,7 +275,7 @@ function ProjectRow(props: {
         ) : (
           <FolderIcon aria-hidden className="size-[18px] shrink-0 text-sidebar-muted-foreground" />
         )}
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold tracking-[-0.005em]">
+        <span className="min-w-0 flex-1 truncate text-compact font-semibold tracking-[-0.005em]">
           {group.label}
         </span>
       </button>
@@ -283,7 +283,7 @@ function ProjectRow(props: {
         {group.attentionCount > 0 ? (
           <span
             title={`${group.attentionCount} need${group.attentionCount === 1 ? "s" : ""} you`}
-            className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-warning/15 px-1.5 text-[10px] font-semibold text-warning-foreground"
+            className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-warning/15 px-1.5 text-3xs font-semibold text-warning-foreground"
           >
             {group.attentionCount}
           </span>
@@ -295,7 +295,7 @@ function ProjectRow(props: {
           />
         ) : null}
         {group.attentionCount === 0 && group.sessions.length > 0 ? (
-          <span className="pr-1 text-[11px] tabular-nums text-sidebar-muted-foreground">
+          <span className="pr-1 text-2xs tabular-nums text-sidebar-muted-foreground">
             {group.sessions.length}
           </span>
         ) : null}
@@ -360,13 +360,13 @@ function SessionRow(props: {
         <StatusGlyph status={session.status} label={session.statusLabel} />
         <span
           className={cn(
-            "min-w-0 flex-1 truncate text-[13px]",
+            "min-w-0 flex-1 truncate text-compact",
             session.status === "attention" && "font-medium",
           )}
         >
           {title}
         </span>
-        <span className="shrink-0 text-[11px] tabular-nums text-sidebar-muted-foreground">
+        <span className="shrink-0 text-2xs tabular-nums text-sidebar-muted-foreground">
           {compactAge(session.updatedAt, props.now)}
         </span>
       </button>

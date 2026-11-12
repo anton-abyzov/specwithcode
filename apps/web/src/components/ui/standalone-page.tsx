@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 
 const backdropClassNames = {
   pairing:
-    "absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-emerald-500)_14%,transparent),transparent)]",
+    "absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--success)_14%,transparent),transparent)]",
   error:
-    "absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]",
+    "absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--destructive)_16%,transparent),transparent)]",
   brand:
     "absolute inset-x-0 top-0 h-72 bg-[radial-gradient(48rem_20rem_at_top,color-mix(in_srgb,var(--primary)_12%,transparent),transparent)]",
 };
@@ -57,7 +57,7 @@ export function StandalonePageHeader({
 }) {
   return (
     <>
-      <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+      <p className="text-2xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
         {eyebrow}
       </p>
       <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>

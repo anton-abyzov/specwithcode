@@ -12,6 +12,8 @@ import {
   ProviderInteractionMode,
   Project,
   ProjectCreatePayload,
+  ProjectCreateToolOptions,
+  ProjectCreateToolResultFields,
   ProjectLinkAcceptInput,
   ProjectLinkAcceptResult,
   ProjectUpdatePayload,
@@ -30,7 +32,6 @@ import {
   ProviderInstanceId,
   TaskRoutingDecision,
   SourceControlCloneProtocol,
-  SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   OrchestratorMcpModelPreferenceInput,
   OrchestratorMcpModelPreferenceResult,
@@ -58,6 +59,7 @@ import * as SourceControlRepositoryService from "../../../sourceControl/SourceCo
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { INCREMENT_LAUNCH_INSTRUCTION } from "../../../project/launchIncrement.ts";
+import { AgentCloneInput } from "./agentClone.ts";
 
 const shared = {
   success: Project,
@@ -96,13 +98,14 @@ const ProjectReadTool = Tool.make("studio_project_read", {
 const ProjectCreateTool = Tool.make("studio_project_create", {
   ...shared,
   description:
-    "Register a project directory through the existing project service. Set createWorkspaceRootIfMissing to create a directory. Omit workspaceRoot to start a new project from just its title: the app makes a Git repository for it in its own projects folder, with a README, an icon, and a first commit (commitError says why a commit failed; the project exists either way). Each call creates a new request; an existing registered workspace is rejected. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
+    "Start a project the way the New project dialog does, or register an existing folder. With just title: a new Git repository with a README, an icon and a first commit, in <parentPath>/<slug> (a -2, -3 suffix when taken; the result has the final workspaceRoot), parentPath defaulting to the machine's projects folder such as ~/Projects. A parentPath that already is a project, or holds a project of that name, is used as it is. github:true (or {account}) then publishes a private GitHub repository with that machine's GitHub sign-in; published, repository, publishFailure and publishError say how it went, and a failed publish keeps the project. commitError says why a commit failed; the project exists either way. machine creates it on another machine in the fleet (id or label from studio_machine_list), under that machine's worker grant covering all its projects (parentPath works there; github does not, because publishing uses that machine's own sign-in and is its user's to do): it lives there only, and the result's next is the studio_thread_launch call that starts work there. With workspaceRoot instead, an existing folder is registered (createWorkspaceRootIfMissing makes it); a folder that is already a project returns that project. existing:true means nothing was made. Clone separately with studio_project_clone when needed. Create a project only for the user's own work. A check, test, acceptance run or fixture rarely needs one: use studio_thread_launch with scratch:true, or a test server with its own home. When a check must drive a real project, pass origin:\"automated\" with its workspaceRoot; the sidebar then lists it under Automated, never among the user's projects. Delete it with studio_project_request when the check ends.",
   parameters: Schema.Struct({
     ...ProjectCreatePayload.fields,
     workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
+    ...ProjectCreateToolOptions.fields,
   }),
-  success: Schema.Struct({ ...Project.fields, commitError: Schema.optional(Schema.String) }),
-  dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders],
+  success: Schema.Struct({ ...Project.fields, ...ProjectCreateToolResultFields }),
+  dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders, Path.Path],
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("studio_project_update", {
   ...shared,
@@ -161,12 +164,13 @@ const ProjectDeleteTool = Tool.make("studio_project_delete", {
 const ProjectCloneTool = Tool.make("studio_project_clone", {
   ...shared,
   description:
-    "Clone a repository using the app's source-control service. This only clones; register the returned cwd with studio_project_create. An existing destination is not adopted or removed on failure.",
-  parameters: SourceControlCloneRepositoryInput,
+    "Clone a repository using the app's source-control service. This only clones; register the returned cwd with studio_project_create. It runs up to 10 minutes; a failed clone into a missing or empty folder removes what it left there. An existing destination is never removed, and is used only with resumeExisting when it is a clean clone of the same repository.",
+  parameters: AgentCloneInput,
   success: SourceControlCloneRepositoryResult,
   dependencies: [
     ...shared.dependencies,
     SourceControlRepositoryService.SourceControlRepositoryService,
+    GitVcsDriver.GitVcsDriver,
   ],
 })
   .annotate(Tool.Destructive, true)

@@ -54,7 +54,11 @@ import { stackedThreadToast } from "./ui/toastHelpers";
 /** Clone snapshots stay on the server this long after "done"; older jobs are checked on disk. */
 const CLONE_DONE_RETENTION_MS = 30_000;
 
-/** One pass per job per page load: a failure waits for a reload instead of retrying in a loop. */
+/**
+ * One pass per job per page load: a failure waits for a reload instead of
+ * retrying in a loop. It lives in memory only, so the next app start in this
+ * browser runs every job still in localStorage again.
+ */
 const attempted = new Set<string>();
 
 interface LinkReview {
@@ -191,6 +195,12 @@ function DestinationJobs({
         if (projectsReady && delivered && !clone && age > CLONE_DONE_RETENTION_MS) {
           attempted.add(key);
           finish(job);
+          reportGivenUp(
+            job,
+            latest.current,
+            "the project never appeared there. Add it to that machine again from Run on.",
+            "never-added",
+          );
         } else if (!clone) later(CLONE_DONE_RETENTION_MS - age + 1000);
         continue;
       }
@@ -219,6 +229,39 @@ function finish(job: AddToMachineJob): void {
   notifyAddToMachineJobs();
 }
 
+type Labels = Pick<RunContext, "environments" | "names">;
+
+const machineLabel = (context: Labels, environmentId: EnvironmentId) =>
+  context.names(
+    environmentId,
+    context.environments.find((entry) => entry.environmentId === environmentId)?.label,
+  );
+
+/** Says why a job was dropped, so a clone the runner gave up on is not left silently unlinked. */
+function reportGivenUp(
+  job: AddToMachineJob,
+  context: Labels,
+  reason: string,
+  stage: "never-added" | "added" = "added",
+): void {
+  const source = readProject(scopeProjectRef(job.source.environmentId, job.source.projectId));
+  const folder = job.destination.workspaceRoot.split(/[\\/]/).findLast(Boolean);
+  const title = source ? logicalProjectTitle(source) : (folder ?? "The project");
+  const destName = machineLabel(context, job.destination.environmentId);
+  // A job is saved when the add starts, so a project that never appeared was not cloned.
+  const headline =
+    stage === "never-added"
+      ? `${title} was not added to ${destName}`
+      : `${title} was cloned on ${destName} but is not linked`;
+  toastManager.add(
+    stackedThreadToast({
+      type: "warning",
+      title: headline,
+      description: `${headline}: ${reason}`,
+    }),
+  );
+}
+
 interface RunContext {
   readonly verify: boolean;
   readonly commands: CopyCommands;
@@ -236,16 +279,13 @@ interface RunContext {
 }
 
 async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> {
-  const label = (environmentId: EnvironmentId) =>
-    context.names(
-      environmentId,
-      context.environments.find((entry) => entry.environmentId === environmentId)?.label,
-    );
+  const label = (environmentId: EnvironmentId) => machineLabel(context, environmentId);
   const sourceName = label(job.source.environmentId);
   const destName = label(job.destination.environmentId);
   const source = readProject(scopeProjectRef(job.source.environmentId, job.source.projectId));
   if (!source) {
     finish(job);
+    reportGivenUp(job, context, "its source project is no longer on this machine.");
     return;
   }
   const title = logicalProjectTitle(source);

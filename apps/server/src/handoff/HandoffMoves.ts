@@ -81,6 +81,7 @@ import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handof
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
+import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
   effectiveHandoffMode,
@@ -795,8 +796,10 @@ export const make = Effect.gen(function* () {
       }
       const modelSelection = input.modelSelection ?? null;
 
-      // 1. Replicate and preflight. Nothing on the source changes until both pass.
+      // 1. Replicate and preflight: every refusal comes before the hold, so no turn stops for it.
       const first = yield* prepare(input.threadId, destination);
+      if (Resume.hasUnsettledChild(first.checkpoint))
+        return yield* failed("failed", Resume.UNSETTLED_CHILD_REFUSAL);
       const checked = yield* peerPreflight(destination, [
         { shell: first.shell, sequence: first.checkpoint.sequence, modelSelection },
       ]);
@@ -822,8 +825,8 @@ export const make = Effect.gen(function* () {
       const heldShell = yield* shellOf(input.threadId).pipe(
         Effect.tapError(() => releaseHold(input.threadId, null)),
       );
-
       let checkpoint = first.checkpoint;
+      const resume = Resume.resumeInterruptedTurn(orchestrator, heldShell);
       if (heldShell.activeRunId !== null) {
         yield* updateRecord(input.threadId, (record) => ({
           ...record,
@@ -834,22 +837,19 @@ export const make = Effect.gen(function* () {
           Effect.tapError((error) =>
             releaseHold(
               input.threadId,
-              `The handoff stopped the running turn but could not send its last checkpoint: ${error.message} Hand it off again to resume that turn.`.slice(
+              `The handoff stopped the running turn but could not send its last checkpoint: ${error.message} The turn continues here; hand it off again to move it.`.slice(
                 0,
                 1000,
               ),
-            ),
+            ).pipe(Effect.andThen(resume)),
           ),
         );
         checkpoint = again.checkpoint;
       }
 
-      if (checkpoint.children?.some((child) => child.disposition === "unknown")) {
-        yield* releaseHold(input.threadId, null);
-        return yield* failed(
-          "failed",
-          "A child's owning process or machine has not settled its work. Keep it unknown and reconcile it on the owning host before handing off.",
-        );
+      if (Resume.hasUnsettledChild(checkpoint)) {
+        yield* releaseHold(input.threadId, null).pipe(Effect.andThen(resume));
+        return yield* failed("failed", Resume.UNSETTLED_CHILD_REFUSAL);
       }
 
       // 3. The destination takes over at the next epoch.
@@ -874,7 +874,7 @@ export const make = Effect.gen(function* () {
                 destinationRefused(error) && error.check === "grant"
                   ? `Not moved: ${error.message}`.slice(0, 1000)
                   : null,
-              ),
+              ).pipe(Effect.andThen(resume)),
         ),
         Effect.mapError(fromPeer),
       );

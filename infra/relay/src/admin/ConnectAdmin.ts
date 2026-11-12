@@ -12,6 +12,7 @@ import {
   type RelayAdminTunnelLive,
   RelayAdminUnavailableError,
 } from "@specweave-studio/contracts/relayAdmin";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,6 +33,7 @@ import { currentTraceId } from "../http/mapErrorTags.ts";
 import * as PhoneRemovalApi from "../http/PhoneRemovalApi.ts";
 import { readHttpAuthorizationCredential } from "../http/requestCredentials.ts";
 import * as AdminIdentities from "./AdminIdentities.ts";
+import * as AdminSignUps from "./AdminSignUps.ts";
 import * as ConnectAdminQueries from "./ConnectAdminQueries.ts";
 
 /** Distinctive log message: every admin request an owner made, for Workers Logs. */
@@ -141,6 +143,7 @@ export const layerApi = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const queries = yield* ConnectAdminQueries.ConnectAdminQueries;
     const identities = yield* AdminIdentities.AdminIdentities;
+    const signUps = yield* AdminSignUps.AdminSignUps;
     const tunnels = yield* ManagedEndpointProvider.ManagedEndpointTunnelClient;
 
     /** Email and name for a page. A Clerk failure leaves the page with ids only. */
@@ -201,6 +204,30 @@ export const layerApi = HttpApiBuilder.group(
           return yield* queries
             .overview()
             .pipe(Effect.catch(() => unavailable("persistence_failed")));
+        }),
+      )
+      .handle(
+        "usage",
+        Effect.fn("relay.api.admin.usage")(function* () {
+          const now = yield* DateTime.now;
+          const nowMs = DateTime.toEpochMillis(now);
+          const [connect, people] = yield* Effect.all(
+            [
+              queries.usage(nowMs).pipe(Effect.catch(() => unavailable("persistence_failed"))),
+              // Clerk not answering leaves the sign-up numbers out; Connect's own stand.
+              signUps
+                .read(nowMs)
+                .pipe(
+                  Effect.catch(() =>
+                    Effect.logWarning("Connect admin could not read sign-ups").pipe(
+                      Effect.as(null),
+                    ),
+                  ),
+                ),
+            ],
+            { concurrency: 2 },
+          );
+          return { generatedAt: DateTime.formatIso(now), signUps: people, connect };
         }),
       )
       .handle(

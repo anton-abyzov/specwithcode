@@ -4468,4 +4468,35 @@ export const ko: PhraseCatalog = {
     "{agent} 로그인이 여기에서 실행 중입니다. 끝나면 해당 행이 업데이트됩니다.",
   "The sign-in ended before {agent} was signed in. Try again.":
     "{agent}에 로그인되기 전에 로그인이 끝났습니다. 다시 시도하세요.",
+  Usage: "사용 현황",
+  "Loading usage…": "사용 현황을 불러오는 중…",
+  "Signed up in total": "전체 가입자",
+  "Last 24 hours": "최근 24시간",
+  "New sign-ups": "신규 가입",
+  "People active": "활동한 사람",
+  "New accounts on Connect": "Connect의 새 계정",
+  "Accounts seen by Connect": "Connect에 접속한 계정",
+  "Machines linked": "연결된 컴퓨터",
+  "Sign-ups could not be read from Clerk. The numbers from SpecWithCode Connect are shown.":
+    "Clerk에서 가입자 수를 읽지 못했습니다. SpecWithCode Connect의 수치를 표시합니다.",
+  "Clerk returned only part of the people in these periods. The sign-up numbers are at least this many.":
+    "Clerk가 이 기간의 사람 중 일부만 반환했습니다. 가입자 수는 최소 이만큼입니다.",
+  "Sign-ups per week": "주간 가입자",
+  "New accounts on Connect per week": "주간 Connect 새 계정",
+  "Week of {date}: {count}": "{date} 주: {count}",
+  "These numbers count people signed in to SpecWithCode Connect. The app sends no usage data, so use without signing in is not counted.":
+    "이 수치는 SpecWithCode Connect에 로그인한 사람을 셉니다. 앱은 사용 데이터를 보내지 않으므로 로그인 없이 사용한 경우는 포함되지 않습니다.",
+  "As of {time}": "{time} 기준",
+  Downloads: "다운로드",
+  "Loading downloads…": "다운로드 수를 불러오는 중…",
+  "Installer downloads could not be read from GitHub.":
+    "GitHub에서 설치 프로그램 다운로드 수를 읽지 못했습니다.",
+  "Mac installer": "Mac 설치 프로그램",
+  "Windows installer": "Windows 설치 프로그램",
+  "Linux packages": "Linux 패키지",
+  "Installer downloads added up over {count} releases on GitHub. Mac counts new installs. Windows and Linux also count updates.":
+    "GitHub 릴리스 {count}개의 설치 프로그램 다운로드를 합한 수입니다. Mac은 새 설치만 셉니다. Windows와 Linux는 업데이트도 포함합니다.",
+  "Older releases were not counted.": "이전 릴리스는 포함되지 않았습니다.",
+  "Installs from npm could not be read.": "npm 설치 수를 읽지 못했습니다.",
+  "Installs from npm": "npm 설치",
 };

@@ -4516,4 +4516,35 @@ export const ru: PhraseCatalog = {
     "Вход в {agent} выполняется здесь. Строка обновится, когда он завершится.",
   "The sign-in ended before {agent} was signed in. Try again.":
     "Вход завершился до того, как {agent} вошёл в аккаунт. Попробуйте ещё раз.",
+  Usage: "Использование",
+  "Loading usage…": "Загрузка данных об использовании…",
+  "Signed up in total": "Всего регистраций",
+  "Last 24 hours": "Последние 24 часа",
+  "New sign-ups": "Новые регистрации",
+  "People active": "Активные люди",
+  "New accounts on Connect": "Новые аккаунты в Connect",
+  "Accounts seen by Connect": "Аккаунты, которые видел Connect",
+  "Machines linked": "Привязано машин",
+  "Sign-ups could not be read from Clerk. The numbers from SpecWithCode Connect are shown.":
+    "Не удалось прочитать регистрации из Clerk. Показаны данные SpecWithCode Connect.",
+  "Clerk returned only part of the people in these periods. The sign-up numbers are at least this many.":
+    "Clerk вернул только часть людей за эти периоды. Регистраций не меньше, чем показано.",
+  "Sign-ups per week": "Регистрации по неделям",
+  "New accounts on Connect per week": "Новые аккаунты в Connect по неделям",
+  "Week of {date}: {count}": "Неделя с {date}: {count}",
+  "These numbers count people signed in to SpecWithCode Connect. The app sends no usage data, so use without signing in is not counted.":
+    "Эти цифры считают людей, вошедших в SpecWithCode Connect. Приложение не отправляет данных об использовании, поэтому работа без входа не учитывается.",
+  "As of {time}": "По состоянию на {time}",
+  Downloads: "Загрузки",
+  "Loading downloads…": "Загрузка данных о загрузках…",
+  "Installer downloads could not be read from GitHub.":
+    "Не удалось прочитать загрузки установщика с GitHub.",
+  "Mac installer": "Установщик для Mac",
+  "Windows installer": "Установщик для Windows",
+  "Linux packages": "Пакеты для Linux",
+  "Installer downloads added up over {count} releases on GitHub. Mac counts new installs. Windows and Linux also count updates.":
+    "Загрузки установщика, суммарно по {count} релизам на GitHub. Для Mac это новые установки. Для Windows и Linux сюда входят и обновления.",
+  "Older releases were not counted.": "Более старые релизы не учтены.",
+  "Installs from npm could not be read.": "Не удалось прочитать установки из npm.",
+  "Installs from npm": "Установки из npm",
 };

@@ -240,7 +240,7 @@ export function DesignGalleryView(props: DesignGalleryViewProps) {
                     <button
                       type="button"
                       data-testid="design-grouping"
-                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[13px] text-muted-foreground outline-none transition-colors duration-[120ms] ease-out-quint hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-compact text-muted-foreground outline-none transition-colors duration-[120ms] ease-out-quint hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                     />
                   }
                 >

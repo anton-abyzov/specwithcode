@@ -114,7 +114,7 @@ function Input({
           aria-hidden
           data-slot="character-count"
           className={cn(
-            "pointer-events-none absolute inset-y-0 end-2 flex items-center text-[11px] text-muted-foreground tabular-nums",
+            "pointer-events-none absolute inset-y-0 end-2 flex items-center text-2xs text-muted-foreground tabular-nums",
             countLength >= countMax * 0.9 && "text-warning-foreground",
             countLength > countMax && "text-destructive-foreground",
           )}

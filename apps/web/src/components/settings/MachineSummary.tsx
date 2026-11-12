@@ -250,7 +250,7 @@ export function MachineSummary({
       />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <h2 className="truncate text-[15px] font-semibold text-foreground" data-machine-name>
+          <h2 className="truncate text-base font-semibold text-foreground" data-machine-name>
             {name}
           </h2>
           <span className="text-xs text-muted-foreground" data-machine-about>
@@ -327,7 +327,7 @@ export function MachineNextStepHead({
   const cannotAct = (step.kind === "sign-in" || step.kind === "turn-on") && !step.canAct;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-4">
-      <span className="text-[11px] font-semibold tracking-wide text-primary uppercase">
+      <span className="text-2xs font-semibold tracking-wide text-primary uppercase">
         {tx("Next step")}
       </span>
       <h2 className="min-w-0 flex-1 text-sm font-semibold text-foreground">{tx(title)}</h2>

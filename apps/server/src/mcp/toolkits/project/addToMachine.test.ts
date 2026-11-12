@@ -96,6 +96,10 @@ const setup = (
     readonly noRemote?: boolean;
     /** M1 runs a version without studio_folder_copy_receive. */
     readonly noFolderCopy?: boolean;
+    /** M1 refuses the first link and accepts the next. */
+    readonly linkAcceptFailsOnce?: boolean;
+    /** An earlier clone is at the destination; with resumeExisting M1 answers this. */
+    readonly earlierClone?: "clean" | "dirty" | "older";
   } = {},
 ) => {
   const caller = {
@@ -111,6 +115,7 @@ const setup = (
   } as OrchestrationV2ThreadShell;
   const calls: RemoteCall[] = [];
   const handoffCalls: string[] = [];
+  let linkAccepts = 0;
   const project = projectFixture(projectId, {
     title: "Widgets",
     workspaceRoot: "/Users/example/Projects/widgets",
@@ -200,6 +205,24 @@ const setup = (
             ...(options.olderM1 ? {} : { includeArchived: true }),
           });
         if (input.tool === "studio_project_clone") {
+          if (options.earlierClone !== undefined) {
+            const resuming = input.arguments.resumeExisting === true;
+            if (!resuming || options.earlierClone === "older")
+              return Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: "M1: Destination path already exists and is not empty.",
+                }),
+              );
+            if (options.earlierClone === "dirty")
+              return Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message:
+                    "M1: /home/example/Projects/widgets has local changes, so it was left as it is.",
+                }),
+              );
+          }
           if (options.cloneFails !== undefined)
             return Effect.fail(
               new OrchestratorMcpFailure({
@@ -223,7 +246,8 @@ const setup = (
             machine: M1,
           });
         if (input.tool === "studio_project_link_accept") {
-          if (options.noLinkAccept)
+          linkAccepts += 1;
+          if (options.noLinkAccept || (options.linkAcceptFailsOnce && linkAccepts === 1))
             return Effect.fail(
               new OrchestratorMcpFailure({
                 code: "orchestration_error",
@@ -475,14 +499,67 @@ describe("studio_project_add_to_machine", () => {
     });
   });
 
-  it.effect("keeps the copy and says how to link it when that machine cannot", () => {
-    const { add, linkCalls } = setup({ noLinkAccept: true });
+  it.effect("keeps the copy and fails with how to link it when that machine cannot", () => {
+    const { add, calls, linkCalls } = setup({ noLinkAccept: true });
     return Effect.gen(function* () {
       const result = yield* add({ machine: "M1", projectId });
-      expect(result).toMatchObject({ projectId: "remote-widgets", linked: false });
-      expect(String(result.linkProblem)).toContain("Tool studio_project_link_accept not found");
-      expect(String(result.linkProblem)).toContain("Link…");
-      expect(linkCalls.map((entry) => entry.step)).toEqual(["prepare"]);
+      // A launch there would be refused, so this is a failure with no launch instruction.
+      expect(result).toMatchObject({ code: "project_unavailable_on_machine" });
+      expect(String(result.message)).toContain("remote-widgets");
+      expect(String(result.message)).toContain("/home/example/Projects/widgets");
+      expect(String(result.message)).toContain("Tool studio_project_link_accept not found");
+      expect(String(result.message)).toContain("Link…");
+      expect(String(result.message)).not.toContain("studio_thread_launch");
+      expect(String(result.message)).not.toContain("studio_project_add_to_machine");
+      // The link is tried once more before giving up; the copy is never cloned again.
+      expect(linkCalls.map((entry) => entry.step)).toEqual(["prepare", "prepare"]);
+      expect(calls.filter((entry) => entry.tool === "studio_project_clone")).toHaveLength(1);
+    });
+  });
+
+  it.effect("tries the link once more and launches when it takes", () => {
+    const { add, linkCalls } = setup({ linkAcceptFailsOnce: true });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(result).toMatchObject({ projectId: "remote-widgets", linked: true });
+      expect(String(result.next)).toContain('machineProjectId:"remote-widgets"');
+      expect(linkCalls.map((entry) => entry.step)).toEqual(["prepare", "prepare", "commit"]);
+    });
+  });
+
+  it.effect("registers and links a clean clone an earlier call left there", () => {
+    const { add, calls } = setup({ earlierClone: "clean" });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(calls.map((entry) => entry.tool)).toEqual([
+        "studio_project_clone",
+        "studio_project_clone",
+        "studio_project_create",
+        "studio_project_link_accept",
+      ]);
+      expect(calls[0]?.arguments.resumeExisting).toBeUndefined();
+      expect(calls[1]?.arguments).toMatchObject({
+        destinationPath: "~/Projects/widgets",
+        resumeExisting: true,
+      });
+      expect(result).toMatchObject({ projectId: "remote-widgets", linked: true });
+    });
+  });
+
+  it.effect("still refuses a folder there with local changes, and an older M1", () => {
+    const dirty = setup({ earlierClone: "dirty" });
+    const older = setup({ earlierClone: "older" });
+    return Effect.gen(function* () {
+      const refused = yield* dirty.add({ machine: "M1", projectId });
+      expect(refused).toMatchObject({ code: "orchestration_error" });
+      expect(String(refused.message)).toContain("has local changes");
+      expect(dirty.calls.map((entry) => entry.tool)).toEqual([
+        "studio_project_clone",
+        "studio_project_clone",
+      ]);
+      const old = yield* older.add({ machine: "M1", projectId });
+      expect(String(old.message)).toBe("M1: Destination path already exists and is not empty.");
+      expect(older.calls.map((entry) => entry.tool)).not.toContain("studio_project_create");
     });
   });
 
@@ -752,8 +829,11 @@ describe("add-to-machine helpers", () => {
         includeSubagents: true,
       });
       expect(linkCalls).toEqual([]);
-      expect(result).toMatchObject({ projectId: "m1-widgets", linked: false, existingCopy: true });
-      expect(String(result.linkProblem)).toContain("Link…");
+      expect(result).toMatchObject({ code: "project_unavailable_on_machine" });
+      expect(String(result.message)).toContain("m1-widgets");
+      expect(String(result.message)).toContain("threads of its own");
+      expect(String(result.message)).toContain("Link…");
+      expect(String(result.message)).not.toContain("studio_thread_launch");
     });
   });
 
@@ -834,7 +914,9 @@ describe("add-to-machine helpers", () => {
       ).toEqual([]);
       const result = yield* older.add({ machine: "M1", projectId });
       expect(older.linkCalls).toEqual([]);
-      expect(result).toMatchObject({ projectId: "m1-widgets", linked: false, existingCopy: true });
+      expect(result).toMatchObject({ code: "project_unavailable_on_machine" });
+      expect(String(result.message)).toContain("m1-widgets");
+      expect(String(result.message)).toContain("Link…");
     });
   });
 

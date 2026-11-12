@@ -1000,6 +1000,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     /** Positive support is required before forwarding acknowledgeResult: false. */
     readThreadWithoutAcknowledgement: Schema.optional(Schema.Boolean),
     scheduledTasks: Schema.Boolean,
+    /** studio_project_create takes parentPath and github. Older machines omit it. */
+    projectCreateOptions: Schema.optional(Schema.Boolean),
     maxBatchThreads: Schema.Number,
     /** Most unfinished delegate_task children one parent run may hold at once. */
     maxLiveChildTasks: Schema.optional(Schema.Number),

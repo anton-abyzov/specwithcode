@@ -361,7 +361,7 @@ function TypeRow(
     >
       <div role="cell" className="flex min-w-0 flex-col gap-1 py-1">
         {style === null ? (
-          <span className="truncate font-mono text-[13px] text-muted-foreground">
+          <span className="truncate font-mono text-compact text-muted-foreground">
             {base?.raw ?? "—"}
           </span>
         ) : (

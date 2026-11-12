@@ -56,7 +56,7 @@ export function Swatch({ color, label }: { color: string | null; label: string }
       title="Copy"
       aria-label={`Copy ${label}`}
       disabled={color === null}
-      className="relative size-5 shrink-0 overflow-hidden rounded-[5px] outline-none ring-1 ring-black/10 ring-inset focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default dark:ring-white/15"
+      className="relative size-5 shrink-0 overflow-hidden rounded-sm outline-none ring-1 ring-black/10 ring-inset focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default dark:ring-white/15"
       style={color === null ? undefined : CHECKER}
       onClick={() => void copyText(label)}
     >
@@ -189,10 +189,10 @@ function ColorCell({
   const contrast = tokenContrast(token, system, mode);
   const badge = contrast === null ? null : <ContrastBadge check={contrast} modeName={mode.name} />;
   const text = value.inherited ? (
-    <span className="truncate text-muted-foreground text-[13px]">Inherits {baseName}</span>
+    <span className="truncate text-muted-foreground text-compact">Inherits {baseName}</span>
   ) : (
     <>
-      <span className="truncate font-mono text-[13px] tabular-nums">{label.text}</span>
+      <span className="truncate font-mono text-compact tabular-nums">{label.text}</span>
       {label.alpha !== null ? (
         <span className="shrink-0 font-mono text-muted-foreground text-xs tabular-nums">
           {label.alpha}
@@ -274,7 +274,7 @@ export function ContrastBadge({ check, modeName }: { check: ContrastCheck; modeN
       data-passes={passes}
       title={`${ratio} on ${check.against} in ${modeName}: ${verdict}`}
       className={cn(
-        "ml-auto inline-flex shrink-0 items-center gap-0.5 font-mono text-[11px] tabular-nums",
+        "ml-auto inline-flex shrink-0 items-center gap-0.5 font-mono text-2xs tabular-nums",
         passes
           ? "text-muted-foreground"
           : large

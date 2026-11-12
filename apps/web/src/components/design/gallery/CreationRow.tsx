@@ -152,7 +152,7 @@ export function CreationRow({
           data-testid="design-import-pptx"
           onClick={() => fileInput.current?.click()}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-md text-[13px] font-medium outline-none transition-colors duration-[120ms] ease-out-quint focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity) motion-reduce:transition-none [&_svg]:size-3.5",
+            "inline-flex items-center gap-1.5 rounded-md text-compact font-medium outline-none transition-colors duration-[120ms] ease-out-quint focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity) motion-reduce:transition-none [&_svg]:size-3.5",
             compact
               ? "h-8 border border-border/80 px-2.5 text-foreground/80 hover:border-foreground/20 hover:bg-accent hover:text-foreground"
               : "self-start px-0.5 text-muted-foreground hover:text-foreground",
@@ -189,7 +189,7 @@ export function CreationRow({
               data-kind={kind}
               onClick={() => onCreate(kind)}
               className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium outline-none transition-[background-color,border-color,color] duration-[120ms] ease-out-quint focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity) motion-reduce:transition-none [&_svg]:size-3.5",
+                "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-compact font-medium outline-none transition-[background-color,border-color,color] duration-[120ms] ease-out-quint focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity) motion-reduce:transition-none [&_svg]:size-3.5",
                 primary
                   ? "bg-primary text-primary-foreground hover:bg-primary/90"
                   : "border border-border/80 text-foreground/80 hover:border-foreground/20 hover:bg-accent hover:text-foreground",
