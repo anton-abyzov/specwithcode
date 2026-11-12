@@ -319,11 +319,11 @@ function LoadedSystem(
 }
 
 const CRUMB =
-  "inline-flex h-7 min-w-0 shrink items-center gap-1.5 rounded-md px-1.5 text-[13px] text-muted-foreground outline-none transition-colors duration-[120ms] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
+  "inline-flex h-7 min-w-0 shrink items-center gap-1.5 rounded-md px-1.5 text-compact text-muted-foreground outline-none transition-colors duration-[120ms] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
 
 function Slash() {
   return (
-    <span aria-hidden className="shrink-0 select-none text-[13px] text-muted-foreground">
+    <span aria-hidden className="shrink-0 select-none text-compact text-muted-foreground">
       /
     </span>
   );

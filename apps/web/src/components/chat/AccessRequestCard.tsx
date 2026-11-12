@@ -307,9 +307,9 @@ function AccessSubjectChip({ subject }: { readonly subject: AccessRequestSubject
       title={subject.kind === "app" ? detail || undefined : undefined}
       icon={
         iconUrl !== null ? (
-          <img src={iconUrl} alt="" className="size-5 rounded-[0.3125rem] object-contain" />
+          <img src={iconUrl} alt="" className="size-5 rounded-sm object-contain" />
         ) : (
-          <span className="flex size-5 items-center justify-center rounded-[0.3125rem] bg-card text-muted-foreground shadow-xs ring-1 ring-border/70 dark:bg-white/[0.08] dark:ring-white/10">
+          <span className="flex size-5 items-center justify-center rounded-sm bg-card text-muted-foreground shadow-xs ring-1 ring-border/70 dark:bg-white/[0.08] dark:ring-white/10">
             <Glyph className="size-3" />
           </span>
         )

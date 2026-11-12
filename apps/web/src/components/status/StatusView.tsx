@@ -49,7 +49,8 @@ const NARROW_DAYS = 30;
 const LEVEL_TEXT: Record<StatusLevel, string> = {
   operational: "text-success-foreground",
   degraded: "text-warning-foreground",
-  partial_outage: "text-orange-600 dark:text-orange-400",
+  partial_outage:
+    "text-[color-mix(in_oklab,var(--warning-foreground)_50%,var(--error-foreground))]",
   major_outage: "text-destructive-foreground",
   maintenance: "text-info-foreground",
   unknown: "text-muted-foreground",
@@ -234,7 +235,7 @@ export function StatusDayBars({
         </div>
       ) : null}
       <div
-        className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground"
+        className="mt-1.5 flex items-center gap-2 text-2xs text-muted-foreground"
         data-testid="status-uptime-line"
       >
         <span>{shown} days ago</span>
@@ -253,7 +254,7 @@ function ComponentRow({ component }: { component: StatusComponent }) {
       <div className="min-w-0">
         <p className="text-xs">{component.name}</p>
         {component.detail ? (
-          <p className="break-words text-[11px] text-muted-foreground">{component.detail}</p>
+          <p className="break-words text-2xs text-muted-foreground">{component.detail}</p>
         ) : null}
       </div>
       <LevelLabel level={component.level} />
@@ -319,7 +320,7 @@ function ServiceRow({
               <ComponentRow key={component.id} component={component} />
             ))}
           </ul>
-          <div className="flex flex-wrap items-center gap-1.5 border-t py-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5 border-t py-2 text-2xs">
             <span className="text-muted-foreground">Used by</span>
             {service.dependents.map((dependent) => (
               <span key={dependent} className="rounded border bg-background px-1.5 py-px">
@@ -327,7 +328,7 @@ function ServiceRow({
               </span>
             ))}
           </div>
-          <p className="border-t py-1.5 text-[11px] text-muted-foreground">
+          <p className="border-t py-1.5 text-2xs text-muted-foreground">
             Source:{" "}
             {service.sourceUrl ? (
               <ExternalLink href={service.sourceUrl}>{service.source}</ExternalLink>
@@ -385,7 +386,7 @@ function OpenIncidents({
             incident.level === "major_outage"
               ? "border-s-destructive"
               : incident.level === "partial_outage"
-                ? "border-s-orange-500"
+                ? "border-s-[color:color-mix(in_oklab,var(--warning)_50%,var(--error))]"
                 : incident.level === "maintenance"
                   ? "border-s-info"
                   : "border-s-warning",
@@ -404,8 +405,8 @@ function OpenIncidents({
           </div>
           <p className="mt-1 text-muted-foreground text-xs">
             {names.get(incident.serviceId) ?? incident.serviceId} ·{" "}
-            {incident.origin === "public" ? "Provider status page" : "Seen by this machine"} · Started{" "}
-            {formatStatusTime(incident.startedAt)}
+            {incident.origin === "public" ? "Provider status page" : "Seen by this machine"} ·
+            Started {formatStatusTime(incident.startedAt)}
             {incident.url ? (
               <>
                 {" · "}
@@ -467,12 +468,12 @@ function PastIncidents({
                       <p className="break-words text-xs">
                         {entry.title}
                         {entry.count > 1 ? (
-                          <span className="ms-1.5 rounded bg-muted px-1 py-px font-medium text-[10px] text-muted-foreground tabular-nums">
+                          <span className="ms-1.5 rounded bg-muted px-1 py-px font-medium text-3xs text-muted-foreground tabular-nums">
                             ×{entry.count}
                           </span>
                         ) : null}
                       </p>
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-2xs text-muted-foreground">
                         {names.get(entry.serviceId) ?? entry.serviceId} ·{" "}
                         {entry.count > 1
                           ? `${formatClock(entry.firstStartedAt)} to ${formatClock(entry.lastResolvedAt)}`
@@ -580,11 +581,11 @@ export function StatusView({
       <PastIncidents incidents={incidents} names={names} />
 
       {snapshot !== null && services.length > 0 ? (
-        <p className="px-1 text-[11px] text-muted-foreground leading-relaxed">
-          Checked every 5 minutes; history stays on this machine for 90 days. Each bar is one day at the
-          worst level seen, and a single failed check among many shows as Needs attention. Provider
-          rows combine their public status pages with sign-in, usage limits and failed turns seen
-          here in the last hour. A machine offline for over a day is not counted.
+        <p className="px-1 text-2xs text-muted-foreground leading-relaxed">
+          Checked every 5 minutes; history stays on this machine for 90 days. Each bar is one day at
+          the worst level seen, and a single failed check among many shows as Needs attention.
+          Provider rows combine their public status pages with sign-in, usage limits and failed
+          turns seen here in the last hour. A machine offline for over a day is not counted.
         </p>
       ) : null}
     </div>

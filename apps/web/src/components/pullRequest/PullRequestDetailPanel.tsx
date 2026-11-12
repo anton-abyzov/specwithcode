@@ -2432,7 +2432,7 @@ export function PullRequestDetailPanel({
                     <PullRequestDiffStat
                       additions={detail.additions}
                       deletions={detail.deletions}
-                      className="shrink-0 font-mono text-2xs"
+                      className="shrink-0 text-2xs"
                     />
                   </span>
                 </div>
@@ -2619,7 +2619,7 @@ export function PullRequestDetailPanel({
                     <PullRequestDiffStat
                       additions={detail.additions}
                       deletions={detail.deletions}
-                      className="shrink-0 font-mono text-xs"
+                      className="shrink-0 text-xs"
                     />
                   </span>
                 </div>

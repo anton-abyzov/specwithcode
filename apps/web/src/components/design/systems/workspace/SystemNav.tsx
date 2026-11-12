@@ -84,7 +84,7 @@ export function filesTitle(fileCount: number | null): string {
 }
 
 const ROW =
-  "group/nav flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] text-muted-foreground outline-none transition-colors duration-[120ms] hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
+  "group/nav flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-compact text-muted-foreground outline-none transition-colors duration-[120ms] hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
 const ACTIVE = "bg-accent text-foreground hover:bg-accent";
 
 export interface SystemNavProps {

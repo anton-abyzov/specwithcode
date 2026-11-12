@@ -26,11 +26,11 @@
   height: 26px;
   padding: 0 9px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--foreground);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--text-compact);
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -89,7 +89,7 @@
   align-items: center;
   gap: 2px 6px;
   color: var(--muted-foreground);
-  font-size: 12.5px;
+  font-size: var(--text-compact);
 }
 .project-message-source-prefix {
   flex: none;
@@ -108,9 +108,9 @@
   gap: 4px;
   padding: 1px 7px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 9999px;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 .sws-machine-chip svg {
@@ -128,7 +128,7 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
   padding-left: 18px;
-  font-size: 12.5px;
+  font-size: var(--text-compact);
   line-height: 1.45;
   color: var(--shell-waiting);
 }
@@ -139,7 +139,7 @@
   flex: 1 0 100%;
   overflow: hidden;
   padding-left: 18px;
-  font-size: 12.5px;
+  font-size: var(--text-compact);
   line-height: 1.45;
   color: var(--muted-foreground);
   text-overflow: ellipsis;
@@ -184,7 +184,7 @@
   flex: none;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--shell-waiting) 14%, transparent);
   color: var(--shell-waiting);
 }
@@ -203,13 +203,13 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  font-size: 14px;
+  font-size: var(--text-sm);
   font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 .sws-access-wait-subtitle {
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--muted-foreground);
 }
@@ -218,11 +218,11 @@
   height: 28px;
   padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 9999px;
   background: transparent;
   color: var(--foreground);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-compact);
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -241,7 +241,7 @@
 .sws-access-wait-line {
   margin: 0;
   max-width: 640px;
-  font-size: 13.5px;
+  font-size: var(--text-sm);
   line-height: 1.6;
   color: var(--muted-foreground);
 }

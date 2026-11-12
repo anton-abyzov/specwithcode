@@ -49,8 +49,8 @@ export function providerGroupUsage(
 }
 
 /**
- * The heading over one provider's models in the grouped list: its mark, its name in the
- * shell serif, then small chips for the plan, the account and the account-wide limit.
+ * The heading over one provider's models in the grouped list: its mark, its name in
+ * bold, then small chips for the plan, the account and the account-wide limit.
  * It sits above the group's first row and is never a row itself.
  */
 export const ProviderGroupHeader = memo(function ProviderGroupHeader(props: {

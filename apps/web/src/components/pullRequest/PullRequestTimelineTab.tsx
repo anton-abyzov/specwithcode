@@ -398,7 +398,7 @@ function CommitEvent({
           <PullRequestDiffStat
             additions={event.additions}
             deletions={event.deletions}
-            className="ml-auto shrink-0 font-mono text-3xs"
+            className="ml-auto shrink-0 text-3xs"
           />
         ) : null}
       </div>

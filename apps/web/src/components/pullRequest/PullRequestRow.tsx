@@ -206,11 +206,7 @@ function PullRequestRowImpl({
                   }
                 />
               ) : null}
-              <PullRequestDiffStat
-                additions={entry.additions}
-                deletions={entry.deletions}
-                className="font-mono"
-              />
+              <PullRequestDiffStat additions={entry.additions} deletions={entry.deletions} />
             </>
           }
           metaClassName="@container/pr-row-meta"
