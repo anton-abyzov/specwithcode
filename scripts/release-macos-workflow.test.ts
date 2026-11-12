@@ -94,11 +94,26 @@ describe("release-macos.yml: one run cuts each version", () => {
   });
 
   it("skips the follow-on jobs when nothing was released", () => {
-    for (const job of ["windows_linux", "attest_macos", "follow_up"]) {
+    for (const job of ["attest_macos", "follow_up"]) {
       // A skipped release job skips what needs it; none of them forces itself with always().
       expect(parsed.jobs[job]?.needs, job).toEqual(["plan", "release"]);
       expect(parsed.jobs[job]?.if ?? "", job).not.toMatch(/always\(\)|failure\(\)|cancelled\(\)/);
     }
+  });
+
+  it("starts the Windows and Linux build after a release that failed once macOS was published", () => {
+    // 1.0.261 failed at its merge stage after publishing, which skipped this job and left the
+    // version with macOS files only. The job runs unless the run was cancelled or nothing was
+    // planned, and its step dispatches only for a published release.
+    const job = parsed.jobs.windows_linux;
+    expect(job?.needs).toEqual(["plan", "release"]);
+    expect(job?.if).toBe(
+      "${{ !cancelled() && needs.plan.outputs.action == 'release' && inputs.stop_after == '' }}",
+    );
+    expect(job?.if ?? "").not.toMatch(/always\(\)/);
+    const run = String(job?.steps?.[0]?.run ?? "");
+    expect(run).toMatch(/gh release view "v\$VERSION"/);
+    expect(run.indexOf("gh release view")).toBeLessThan(run.indexOf("gh workflow run"));
   });
 
   it("asks for another run only after a run with no version continued an older candidate", () => {

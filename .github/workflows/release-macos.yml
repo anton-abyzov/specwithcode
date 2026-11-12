@@ -335,9 +335,12 @@ jobs:
   # release.sh dispatches the Windows and Linux build with RELEASE_GH_TOKEN, which may lack
   # Actions write (v1.0.207: HTTP 403). This run's own token may dispatch it, so start it here
   # unless release.sh already did.
+  # Runs after a failed release job too: release.sh publishes macOS before its later stages (fleet,
+  # merge), and 1.0.261 failed at merge after publishing, which skipped this job and left that
+  # version with macOS files only. The step below dispatches only when the release is published.
   windows_linux:
     needs: [plan, release]
-    if: ${{ inputs.stop_after == '' }}
+    if: ${{ !cancelled() && needs.plan.outputs.action == 'release' && inputs.stop_after == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -351,6 +354,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A release job that failed before publish-public left nothing to build against.
+          if ! gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json isDraft \
+            --jq 'if .isDraft then error("draft") else empty end' > /dev/null 2>&1; then
+            echo "v$VERSION is not published; nothing to build for Windows and Linux"
+            exit 0
+          fi
           # Since the release job started, not since the run was dispatched: a run that waited
           # its turn would count the build the release before it started.
           since="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
