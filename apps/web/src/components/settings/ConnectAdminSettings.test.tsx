@@ -54,8 +54,12 @@ vi.mock("~/cloud/connectAdminState", () => ({
         ),
       searchAccounts: (input: { query: string }) => record({ kind: "search", query: input.query }),
       account: (input: { userId: string }) => record({ kind: "account", userId: input.userId }),
+      // The recent changes have their own tests in ConnectAdminActions.test.tsx.
+      listActions: () => ({ kind: "actions" }),
     };
-    return Promise.resolve(state.answer(read(client, "clerk-token")) as ConnectAdminRead<unknown>);
+    const call = read(client, "clerk-token") as { readonly kind: string };
+    if (call.kind === "actions") return Promise.resolve({ ok: true, value: { actions: [] } });
+    return Promise.resolve(state.answer(call) as ConnectAdminRead<unknown>);
   },
 }));
 vi.mock("./settingsLayout", async (original) => ({

@@ -4249,4 +4249,47 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터의 연결을 확인한 뒤 다시 시도하세요.",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect가 이 페이지에서 읽을 수 없는 응답을 보냈습니다",
+  "Change limit": "한도 변경",
+  "Machine limit": "컴퓨터 한도",
+  "Machine limit for {account}": "{account}의 컴퓨터 한도",
+  "It applies to the account's next link. Machines already linked stay linked.":
+    "이 계정의 다음 연결부터 적용됩니다. 이미 연결된 컴퓨터는 그대로 유지됩니다.",
+  "Now: {limit}": "현재: {limit}",
+  "Plan default": "요금제 기본값",
+  "This many machines": "이 대수까지",
+  "Number of machines": "컴퓨터 대수",
+  "Enter a whole number from 0 to {max}.": "0에서 {max} 사이의 정수를 입력하세요.",
+  "Account id: {id}": "계정 ID: {id}",
+  "The change is recorded with your account id.": "이 변경은 내 계정 ID와 함께 기록됩니다.",
+  "Unlink “{machine}” from {account}?": "{account}에서 “{machine}” 연결을 해제할까요?",
+  "The machine loses its Connect link, its credentials and its tunnel. The account can link it again from that machine.":
+    "이 컴퓨터는 Connect 연결, 자격 증명, 터널을 잃습니다. 계정은 그 컴퓨터에서 다시 연결할 수 있습니다.",
+  "Unlink machine": "컴퓨터 연결 해제",
+  "Unlinking…": "연결 해제 중…",
+  "Remove “{phone}” from {account}?": "{account}에서 “{phone}”을(를) 제거할까요?",
+  "The phone is signed out of SpecWithCode Connect, and the account's machines stop accepting its keys.":
+    "이 휴대폰은 SpecWithCode Connect에서 로그아웃되고, 계정의 컴퓨터는 그 키를 더 이상 받지 않습니다.",
+  "That machine or phone is no longer on this account":
+    "그 컴퓨터나 휴대폰은 더 이상 이 계정에 없습니다",
+  "Refresh to see the account as it is now.": "새로 고치면 계정의 현재 상태가 표시됩니다.",
+  "SpecWithCode Connect could not record the change":
+    "SpecWithCode Connect가 변경을 기록하지 못했습니다",
+  "The change stopped part way": "변경이 도중에 멈췄습니다",
+  "It is recorded as failed. Check the account, then send it again if needed.":
+    "실패로 기록되었습니다. 계정을 확인한 뒤 필요하면 다시 보내세요.",
+  "No clear answer from SpecWithCode Connect": "SpecWithCode Connect에서 분명한 응답이 없습니다",
+  "The change may or may not have been made. Close this and check the account.":
+    "변경이 적용되었을 수도, 아닐 수도 있습니다. 이 창을 닫고 계정을 확인하세요.",
+  "Recent changes": "최근 변경",
+  "Loading recent changes…": "최근 변경을 불러오는 중…",
+  "No owner has changed anything yet.": "아직 소유자가 변경한 것이 없습니다.",
+  "Unlinked machine {name}": "컴퓨터 {name} 연결 해제",
+  "Removed phone {name}": "휴대폰 {name} 제거",
+  "Changed the machine limit": "컴퓨터 한도 변경",
+  "Set the machine limit to {count}": "컴퓨터 한도를 {count}(으)로 설정",
+  "Removed the machine limit": "컴퓨터 한도 해제",
+  "Reset the machine limit to the plan default": "컴퓨터 한도를 요금제 기본값으로 되돌림",
+  "Account {id}": "계정 {id}",
+  "By {id}": "실행: {id}",
+  "Not finished": "완료되지 않음",
 };

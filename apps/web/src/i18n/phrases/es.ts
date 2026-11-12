@@ -4319,4 +4319,48 @@ export const es: PhraseCatalog = {
     "Comprueba la conexión de este ordenador y vuelve a intentarlo.",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect envió una respuesta que esta página no pudo leer",
+  "Change limit": "Cambiar límite",
+  "Machine limit": "Límite de equipos",
+  "Machine limit for {account}": "Límite de equipos de {account}",
+  "It applies to the account's next link. Machines already linked stay linked.":
+    "Se aplica a la próxima vinculación de la cuenta. Los equipos ya vinculados siguen vinculados.",
+  "Now: {limit}": "Ahora: {limit}",
+  "Plan default": "Valor del plan",
+  "This many machines": "Este número de equipos",
+  "Number of machines": "Número de equipos",
+  "Enter a whole number from 0 to {max}.": "Introduce un número entero de 0 a {max}.",
+  "Account id: {id}": "ID de la cuenta: {id}",
+  "The change is recorded with your account id.":
+    "El cambio queda registrado con el ID de tu cuenta.",
+  "Unlink “{machine}” from {account}?": "¿Desvincular «{machine}» de {account}?",
+  "The machine loses its Connect link, its credentials and its tunnel. The account can link it again from that machine.":
+    "El equipo pierde su vínculo con Connect, sus credenciales y su túnel. La cuenta puede volver a vincularlo desde ese equipo.",
+  "Unlink machine": "Desvincular equipo",
+  "Unlinking…": "Desvinculando…",
+  "Remove “{phone}” from {account}?": "¿Quitar «{phone}» de {account}?",
+  "The phone is signed out of SpecWithCode Connect, and the account's machines stop accepting its keys.":
+    "El teléfono cierra sesión en SpecWithCode Connect y los equipos de la cuenta dejan de aceptar sus claves.",
+  "That machine or phone is no longer on this account":
+    "Ese equipo o teléfono ya no está en esta cuenta",
+  "Refresh to see the account as it is now.": "Actualiza para ver la cuenta como está ahora.",
+  "SpecWithCode Connect could not record the change":
+    "SpecWithCode Connect no pudo registrar el cambio",
+  "The change stopped part way": "El cambio se detuvo a medias",
+  "It is recorded as failed. Check the account, then send it again if needed.":
+    "Queda registrado como fallido. Revisa la cuenta y envíalo de nuevo si hace falta.",
+  "No clear answer from SpecWithCode Connect": "SpecWithCode Connect no dio una respuesta clara",
+  "The change may or may not have been made. Close this and check the account.":
+    "Puede que el cambio se haya hecho o no. Cierra esto y revisa la cuenta.",
+  "Recent changes": "Cambios recientes",
+  "Loading recent changes…": "Cargando cambios recientes…",
+  "No owner has changed anything yet.": "Ningún propietario ha cambiado nada todavía.",
+  "Unlinked machine {name}": "Equipo {name} desvinculado",
+  "Removed phone {name}": "Teléfono {name} quitado",
+  "Changed the machine limit": "Límite de equipos cambiado",
+  "Set the machine limit to {count}": "Límite de equipos fijado en {count}",
+  "Removed the machine limit": "Límite de equipos quitado",
+  "Reset the machine limit to the plan default": "Límite de equipos restablecido al valor del plan",
+  "Account {id}": "Cuenta {id}",
+  "By {id}": "Por {id}",
+  "Not finished": "Sin terminar",
 };

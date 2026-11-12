@@ -260,6 +260,83 @@ describe("RelayAdminClient", () => {
     },
   );
 
+  it.effect("sends each owner action as a POST with the ids in the path", () => {
+    const test = relayAdminTest((request) => {
+      if (request.url.endsWith("/machine-limit")) {
+        return Response.json({ limit: { maxMachines: 5, source: "override" } });
+      }
+      if (request.url.endsWith("/unlink")) return Response.json({ unlinked: true });
+      if (request.url.endsWith("/remove")) return Response.json({ removed: true });
+      return Response.json({ actions: [] });
+    });
+    return Effect.gen(function* () {
+      const limit = yield* run(test, (client) =>
+        client.setMachineLimit({
+          clerkToken: "t",
+          userId: "user_a",
+          limit: { kind: "limited", maxMachines: 5 },
+        }),
+      );
+      expect(limit.limit).toEqual({ maxMachines: 5, source: "override" });
+      expect(
+        yield* run(test, (client) =>
+          client.unlinkMachine({ clerkToken: "t", userId: "user_a", environmentId: "env-1" }),
+        ),
+      ).toEqual({ unlinked: true });
+      expect(
+        yield* run(test, (client) =>
+          client.removePhone({ clerkToken: "t", userId: "user_a", deviceId: "phone-1" }),
+        ),
+      ).toEqual({ removed: true });
+      expect(yield* run(test, (client) => client.listActions({ clerkToken: "t" }))).toEqual({
+        actions: [],
+      });
+      expect(test.seen.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+        ["POST", "/v1/admin/accounts/user_a/machine-limit"],
+        ["POST", "/v1/admin/accounts/user_a/machines/env-1/unlink"],
+        ["POST", "/v1/admin/accounts/user_a/phones/phone-1/remove"],
+        ["GET", "/v1/admin/actions"],
+      ]);
+      expect(test.seen[0]?.body).toBe('{"limit":{"kind":"limited","maxMachines":5}}');
+      expect(test.seen.every((request) => request.authorization === "Bearer t")).toBe(true);
+    });
+  });
+
+  it.effect.each([
+    ["record_failed", "not_recorded"],
+    ["action_failed", "action_failed"],
+    ["persistence_failed", "unavailable"],
+  ] as const)("reads a 503 with reason %s as its own failure", ([reason, kind]) => {
+    const test = relayAdminTest(() =>
+      Response.json(
+        { _tag: "RelayAdminUnavailableError", code: "admin_unavailable", reason, traceId: "t-1" },
+        { status: 503 },
+      ),
+    );
+    return Effect.gen(function* () {
+      const error = yield* run(test, (client) =>
+        client.unlinkMachine({ clerkToken: "t", userId: "user_a", environmentId: "env-1" }),
+      ).pipe(Effect.flip);
+      expect(error.kind).toBe(kind);
+      expect(error.status).toBe(503);
+    });
+  });
+
+  it.effect("tells a machine or phone that is not the account's from a missing account", () => {
+    const test = relayAdminTest(() =>
+      Response.json(
+        { _tag: "RelayAdminTargetNotFoundError", code: "target_not_found", target: "phone" },
+        { status: 404 },
+      ),
+    );
+    return Effect.gen(function* () {
+      const error = yield* run(test, (client) =>
+        client.removePhone({ clerkToken: "t", userId: "user_a", deviceId: "phone-9" }),
+      ).pipe(Effect.flip);
+      expect(error.kind).toBe("target_not_found");
+    });
+  });
+
   it.effect("gives up after 20 seconds and says it timed out", () => {
     const test = relayAdminTest(() => new Promise<Response>(() => undefined));
     return Effect.gen(function* () {

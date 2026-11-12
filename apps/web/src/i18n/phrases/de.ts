@@ -4317,4 +4317,50 @@ export const de: PhraseCatalog = {
     "Prüfen Sie die Verbindung dieses Computers und versuchen Sie es erneut.",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect hat eine Antwort gesendet, die diese Seite nicht lesen konnte",
+  "Change limit": "Limit ändern",
+  "Machine limit": "Rechnerlimit",
+  "Machine limit for {account}": "Rechnerlimit für {account}",
+  "It applies to the account's next link. Machines already linked stay linked.":
+    "Es gilt für die nächste Verknüpfung des Kontos. Bereits verknüpfte Rechner bleiben verknüpft.",
+  "Now: {limit}": "Jetzt: {limit}",
+  "Plan default": "Standard des Tarifs",
+  "This many machines": "So viele Rechner",
+  "Number of machines": "Anzahl der Rechner",
+  "Enter a whole number from 0 to {max}.": "Eine ganze Zahl von 0 bis {max} eingeben.",
+  "Account id: {id}": "Konto-ID: {id}",
+  "The change is recorded with your account id.":
+    "Die Änderung wird mit Ihrer Konto-ID aufgezeichnet.",
+  "Unlink “{machine}” from {account}?": "Verknüpfung von „{machine}“ mit {account} lösen?",
+  "The machine loses its Connect link, its credentials and its tunnel. The account can link it again from that machine.":
+    "Der Rechner verliert seine Connect-Verknüpfung, seine Zugangsdaten und seinen Tunnel. Das Konto kann ihn von diesem Rechner aus erneut verknüpfen.",
+  "Unlink machine": "Rechner lösen",
+  "Unlinking…": "Verknüpfung wird gelöst…",
+  "Remove “{phone}” from {account}?": "„{phone}“ von {account} entfernen?",
+  "The phone is signed out of SpecWithCode Connect, and the account's machines stop accepting its keys.":
+    "Das Telefon wird von SpecWithCode Connect abgemeldet, und die Rechner des Kontos akzeptieren seine Schlüssel nicht mehr.",
+  "That machine or phone is no longer on this account":
+    "Dieser Rechner oder dieses Telefon gehört nicht mehr zu diesem Konto",
+  "Refresh to see the account as it is now.":
+    "Aktualisieren, um das Konto im jetzigen Zustand zu sehen.",
+  "SpecWithCode Connect could not record the change":
+    "SpecWithCode Connect konnte die Änderung nicht aufzeichnen",
+  "The change stopped part way": "Die Änderung wurde nicht zu Ende geführt",
+  "It is recorded as failed. Check the account, then send it again if needed.":
+    "Sie ist als fehlgeschlagen aufgezeichnet. Konto prüfen und bei Bedarf erneut senden.",
+  "No clear answer from SpecWithCode Connect": "Keine eindeutige Antwort von SpecWithCode Connect",
+  "The change may or may not have been made. Close this and check the account.":
+    "Die Änderung wurde vielleicht vorgenommen, vielleicht nicht. Dies schließen und das Konto prüfen.",
+  "Recent changes": "Letzte Änderungen",
+  "Loading recent changes…": "Letzte Änderungen werden geladen…",
+  "No owner has changed anything yet.": "Bisher hat kein Eigentümer etwas geändert.",
+  "Unlinked machine {name}": "Rechner {name} gelöst",
+  "Removed phone {name}": "Telefon {name} entfernt",
+  "Changed the machine limit": "Rechnerlimit geändert",
+  "Set the machine limit to {count}": "Rechnerlimit auf {count} gesetzt",
+  "Removed the machine limit": "Rechnerlimit aufgehoben",
+  "Reset the machine limit to the plan default":
+    "Rechnerlimit auf den Standard des Tarifs zurückgesetzt",
+  "Account {id}": "Konto {id}",
+  "By {id}": "Von {id}",
+  "Not finished": "Nicht abgeschlossen",
 };

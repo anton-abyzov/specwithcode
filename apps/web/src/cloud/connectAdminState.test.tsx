@@ -33,6 +33,10 @@ vi.mock("../lib/runtime", async () => {
     listAccounts: () => Effect.fail(down()),
     searchAccounts: () => Effect.fail(down()),
     account: () => Effect.fail(down()),
+    listActions: () => Effect.fail(down()),
+    setMachineLimit: () => Effect.fail(down()),
+    unlinkMachine: () => Effect.fail(down()),
+    removePhone: () => Effect.fail(down()),
   });
   // The owner check only takes the relay client from the app runtime.
   return {
@@ -201,6 +205,10 @@ describe("reading through the Connect admin client", () => {
       listAccounts: () => Effect.fail(unavailable()),
       searchAccounts: () => Effect.fail(unavailable()),
       account: () => Effect.fail(unavailable()),
+      listActions: () => Effect.fail(unavailable()),
+      setMachineLimit: () => Effect.fail(unavailable()),
+      unlinkMachine: () => Effect.fail(unavailable()),
+      removePhone: () => Effect.fail(unavailable()),
     }),
   );
   const overview = (client: RelayAdmin.RelayAdminClientShape, clerkToken: string) =>

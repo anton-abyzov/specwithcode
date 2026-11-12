@@ -302,7 +302,8 @@ export const relayDpopProofs = sqliteTable(
 /**
  * What an owner did from the Connect admin page: one row per action, written
  * before the action runs. Rows are never updated except for `outcome`, and
- * never deleted. `beforeJson` and `afterJson` hold no key, credential or token.
+ * deleted only with the account they name, when that person deletes it.
+ * `beforeJson` and `afterJson` hold no key, credential or token.
  */
 export const relayAdminActions = sqliteTable(
   "relay_admin_actions",

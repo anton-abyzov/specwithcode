@@ -1,6 +1,7 @@
 import type {
   RelayAdminAccount,
   RelayAdminAccountResponse,
+  RelayAdminAction,
   RelayAdminMachine,
   RelayAdminOverviewResponse,
   RelayAdminPhone,
@@ -19,6 +20,11 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import {
+  type ConnectAdminChange,
+  ConnectAdminChangeDialog,
+  ConnectAdminRecentChanges,
+} from "./ConnectAdminActions";
+import {
   accountListOf,
   accountSubtitle,
   accountTitle,
@@ -32,6 +38,7 @@ import {
   machineLimitText,
   machineState,
   overviewTiles,
+  withAccount,
 } from "./ConnectAdminSettings.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
@@ -98,9 +105,11 @@ function Fact({ label, children }: { readonly label: string; readonly children: 
 function MachineRow({
   machine,
   locale,
+  onUnlink,
 }: {
   readonly machine: RelayAdminMachine;
   readonly locale: string | undefined;
+  readonly onUnlink: () => void;
 }) {
   const tx = useTx();
   const state = machineState(machine);
@@ -114,6 +123,11 @@ function MachineRow({
         <Badge variant={state.tone} size="sm">
           {tx(state.phrase)}
         </Badge>
+        {machine.unlinkedAt === null ? (
+          <Button className="ml-auto" size="xs" variant="outline" onClick={onUnlink}>
+            {tx("Unlink")}
+          </Button>
+        ) : null}
       </div>
       <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
         <Fact label={tx("Tunnel address")}>{machine.hostname ?? tx("No tunnel address")}</Fact>
@@ -136,15 +150,24 @@ function MachineRow({
 function PhoneRow({
   phone,
   locale,
+  onRemove,
 }: {
   readonly phone: RelayAdminPhone;
   readonly locale: string | undefined;
+  readonly onRemove: () => void;
 }) {
   const tx = useTx();
   const platform = phone.platform === "ios" ? "iOS" : "Android";
   return (
     <li className="space-y-1 py-2.5" data-testid="connect-admin-phone">
-      <p className="text-sm font-medium break-words text-foreground">{phone.label}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 text-sm font-medium break-words text-foreground">
+          {phone.label}
+        </span>
+        <Button className="ml-auto" size="xs" variant="outline" onClick={onRemove}>
+          {tx("Remove")}
+        </Button>
+      </div>
       <p className={MUTED}>
         {[
           platform,
@@ -165,17 +188,32 @@ function AccountDetail({
   detail,
   locale,
   onRetry,
+  onChange,
 }: {
   readonly detail: Loadable<RelayAdminAccountResponse>;
   readonly locale: string | undefined;
   readonly onRetry: () => void;
+  readonly onChange: (change: ConnectAdminChange) => void;
 }) {
   const tx = useTx();
   if (detail.status === "loading") return <Pending>{tx("Loading machines and phones…")}</Pending>;
   if (detail.status === "failed") return <Failure failure={detail.failure} onRetry={onRetry} />;
-  const { machines, phones } = detail.value;
+  const { account, machines, phones } = detail.value;
   return (
     <div className={`${ROW} space-y-4 pt-0`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 text-xs break-words text-foreground">
+          {machineLimitText(tx, account.limit)}
+        </span>
+        <Button
+          className="ml-auto"
+          size="xs"
+          variant="outline"
+          onClick={() => onChange({ kind: "limit", account })}
+        >
+          {tx("Change limit")}
+        </Button>
+      </div>
       <div>
         <h4 className="text-xs font-semibold text-foreground">{tx("Machines")}</h4>
         {machines.length === 0 ? (
@@ -183,7 +221,12 @@ function AccountDetail({
         ) : (
           <ul className="divide-y divide-border/50">
             {machines.map((machine) => (
-              <MachineRow key={machine.environmentId} machine={machine} locale={locale} />
+              <MachineRow
+                key={machine.environmentId}
+                machine={machine}
+                locale={locale}
+                onUnlink={() => onChange({ kind: "unlink", account, machine })}
+              />
             ))}
           </ul>
         )}
@@ -195,7 +238,12 @@ function AccountDetail({
         ) : (
           <ul className="divide-y divide-border/50">
             {phones.map((phone) => (
-              <PhoneRow key={phone.deviceId} phone={phone} locale={locale} />
+              <PhoneRow
+                key={phone.deviceId}
+                phone={phone}
+                locale={locale}
+                onRemove={() => onChange({ kind: "remove-phone", account, phone })}
+              />
             ))}
           </ul>
         )}
@@ -211,6 +259,7 @@ function AccountRow({
   locale,
   onToggle,
   onRetryDetail,
+  onChange,
 }: {
   readonly account: RelayAdminAccount;
   readonly open: boolean;
@@ -218,6 +267,7 @@ function AccountRow({
   readonly locale: string | undefined;
   readonly onToggle: () => void;
   readonly onRetryDetail: () => void;
+  readonly onChange: (change: ConnectAdminChange) => void;
 }) {
   const tx = useTx();
   const subtitle = accountSubtitle(account);
@@ -258,7 +308,14 @@ function AccountRow({
           </span>
         </span>
       </button>
-      {open ? <AccountDetail detail={detail} locale={locale} onRetry={onRetryDetail} /> : null}
+      {open ? (
+        <AccountDetail
+          detail={detail}
+          locale={locale}
+          onRetry={onRetryDetail}
+          onChange={onChange}
+        />
+      ) : null}
     </div>
   );
 }
@@ -272,6 +329,8 @@ interface ConnectAdminViewProps {
   readonly more: "idle" | "loading" | ConnectAdminFailure;
   readonly selectedUserId: string | null;
   readonly detail: Loadable<RelayAdminAccountResponse>;
+  /** The recorded owner changes, newest first. */
+  readonly actions: Loadable<ReadonlyArray<RelayAdminAction>>;
   /** A refresh keeps what is on screen until the new answers arrive. */
   readonly refreshing: boolean;
   readonly locale: string | undefined;
@@ -284,12 +343,14 @@ interface ConnectAdminViewProps {
   readonly onLoadMore: () => void;
   readonly onToggleAccount: (userId: string) => void;
   readonly onRetryDetail: () => void;
+  readonly onRetryActions: () => void;
+  readonly onChange: (change: ConnectAdminChange) => void;
 }
 
-/** The page without its reads: totals, the account list and one open account. */
+/** The page without its reads: totals, the account list, one open account, recent changes. */
 function ConnectAdminView(props: ConnectAdminViewProps) {
   const tx = useTx();
-  const { overview, list, more } = props;
+  const { overview, list, more, actions } = props;
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     props.onSearch();
@@ -377,6 +438,7 @@ function ConnectAdminView(props: ConnectAdminViewProps) {
                   locale={props.locale}
                   onToggle={() => props.onToggleAccount(account.userId)}
                   onRetryDetail={props.onRetryDetail}
+                  onChange={props.onChange}
                 />
               ))
             )}
@@ -396,6 +458,18 @@ function ConnectAdminView(props: ConnectAdminViewProps) {
               </div>
             ) : null}
           </>
+        )}
+      </SettingsSection>
+
+      <SettingsSection title="Recent changes">
+        {actions.status === "loading" ? (
+          <Pending>{tx("Loading recent changes…")}</Pending>
+        ) : actions.status === "failed" ? (
+          <Failure failure={actions.failure} onRetry={props.onRetryActions} />
+        ) : actions.value.length === 0 ? (
+          <Notice>{tx("No owner has changed anything yet.")}</Notice>
+        ) : (
+          <ConnectAdminRecentChanges actions={actions.value} locale={props.locale} />
         )}
       </SettingsSection>
     </>
@@ -420,9 +494,12 @@ function ConnectAdminPage() {
   const [more, setMore] = useState<"idle" | "loading" | ConnectAdminFailure>("idle");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Loadable<RelayAdminAccountResponse>>(LOADING);
+  const [actions, setActions] = useState<Loadable<ReadonlyArray<RelayAdminAction>>>(LOADING);
+  const [change, setChange] = useState<ConnectAdminChange | null>(null);
   const overviewRequest = useRef(0);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
+  const actionsRequest = useRef(0);
   const refreshRequest = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -455,9 +532,26 @@ function ConnectAdminPage() {
       (result) => {
         if (detailRequest.current !== request) return;
         setDetail(result.ok ? ready(result.value) : failed(result.failure));
+        // The account's row shows the same reading as its open detail.
+        if (result.ok) {
+          const { account } = result.value;
+          setList((current) =>
+            current.status === "ready" ? ready(withAccount(current.value, account)) : current,
+          );
+        }
       },
     );
   };
+
+  const fetchActions = useCallback(() => {
+    const request = ++actionsRequest.current;
+    return readConnectAdmin((client, clerkToken) => client.listActions({ clerkToken })).then(
+      (result) => {
+        if (actionsRequest.current !== request) return;
+        setActions(result.ok ? ready(result.value.actions) : failed(result.failure));
+      },
+    );
+  }, []);
 
   const loadOverview = () => {
     setOverview(LOADING);
@@ -479,14 +573,17 @@ function ConnectAdminPage() {
     const overviewRequests = overviewRequest;
     const listRequests = listRequest;
     const detailRequests = detailRequest;
+    const actionsRequests = actionsRequest;
     void fetchOverview();
     void fetchList(null);
+    void fetchActions();
     return () => {
       overviewRequests.current += 1;
       listRequests.current += 1;
       detailRequests.current += 1;
+      actionsRequests.current += 1;
     };
-  }, [fetchList, fetchOverview]);
+  }, [fetchActions, fetchList, fetchOverview]);
 
   const loadMore = () => {
     // Not during a refresh: its first page would be joined to a page of the old list.
@@ -518,67 +615,87 @@ function ConnectAdminPage() {
   };
 
   return (
-    <ConnectAdminView
-      overview={overview}
-      list={list}
-      search={search}
-      draft={draft}
-      more={more}
-      selectedUserId={selectedUserId}
-      detail={detail}
-      refreshing={refreshing}
-      locale={locale}
-      onDraftChange={setDraft}
-      onSearch={() => {
-        const query = draft.trim();
-        if (query.length === 0) return;
-        closeAccount();
-        setSearch(query);
-        loadList(query);
-      }}
-      onShowAll={() => {
-        closeAccount();
-        setDraft("");
-        setSearch(null);
-        loadList(null);
-      }}
-      onRefresh={() => {
-        // Re-read in place: the list, an open account and the totals stay on
-        // screen until their new answers arrive. Pages loaded with "Load more"
-        // are read again from the first page.
-        const request = ++refreshRequest.current;
-        setRefreshing(true);
-        setMore("idle");
-        void Promise.all([
-          fetchOverview(),
-          fetchList(search),
-          selectedUserId === null ? undefined : fetchDetail(selectedUserId),
-        ]).then(() => {
-          if (refreshRequest.current === request) setRefreshing(false);
-        });
-      }}
-      onRetryOverview={loadOverview}
-      onRetryList={() => loadList(search)}
-      onLoadMore={loadMore}
-      onToggleAccount={(userId) => {
-        if (selectedUserId === userId) {
+    <>
+      <ConnectAdminView
+        overview={overview}
+        list={list}
+        search={search}
+        draft={draft}
+        more={more}
+        selectedUserId={selectedUserId}
+        detail={detail}
+        actions={actions}
+        refreshing={refreshing}
+        locale={locale}
+        onDraftChange={setDraft}
+        onSearch={() => {
+          const query = draft.trim();
+          if (query.length === 0) return;
           closeAccount();
-          return;
-        }
-        setSelectedUserId(userId);
-        loadDetail(userId);
-      }}
-      onRetryDetail={() => {
-        if (selectedUserId !== null) loadDetail(selectedUserId);
-      }}
-    />
+          setSearch(query);
+          loadList(query);
+        }}
+        onShowAll={() => {
+          closeAccount();
+          setDraft("");
+          setSearch(null);
+          loadList(null);
+        }}
+        onRefresh={() => {
+          // Re-read in place: the list, an open account, the totals and the recent
+          // changes stay on screen until their new answers arrive. Pages loaded
+          // with "Load more" are read again from the first page.
+          const request = ++refreshRequest.current;
+          setRefreshing(true);
+          setMore("idle");
+          void Promise.all([
+            fetchOverview(),
+            fetchList(search),
+            selectedUserId === null ? undefined : fetchDetail(selectedUserId),
+            fetchActions(),
+          ]).then(() => {
+            if (refreshRequest.current === request) setRefreshing(false);
+          });
+        }}
+        onRetryOverview={loadOverview}
+        onRetryList={() => loadList(search)}
+        onLoadMore={loadMore}
+        onToggleAccount={(userId) => {
+          if (selectedUserId === userId) {
+            closeAccount();
+            return;
+          }
+          setSelectedUserId(userId);
+          loadDetail(userId);
+        }}
+        onRetryDetail={() => {
+          if (selectedUserId !== null) loadDetail(selectedUserId);
+        }}
+        onRetryActions={() => {
+          setActions(LOADING);
+          void fetchActions();
+        }}
+        onChange={setChange}
+      />
+      <ConnectAdminChangeDialog
+        change={change}
+        onClose={() => setChange(null)}
+        onSettled={(settled) => {
+          // In place, like a refresh: the account as it is now, the totals and the record.
+          if (selectedUserId === settled.account.userId) void fetchDetail(selectedUserId);
+          void fetchOverview();
+          void fetchActions();
+        }}
+      />
+    </>
   );
 }
 
 /**
  * Settings > Connect admin: who uses SpecWithCode Connect, with each account's
- * machines and phones. Read-only. The relay answers only for an owner, so for
- * anyone else this page has nothing to show.
+ * machines and phones, and what an owner can change: an account's machine
+ * limit, a machine's link, a phone. The relay answers only for an owner, so
+ * for anyone else this page has nothing to show.
  */
 export function ConnectAdminSettings() {
   const tx = useTx();
