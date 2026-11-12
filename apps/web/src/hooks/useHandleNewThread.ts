@@ -93,6 +93,11 @@ export function useNewThreadHandler() {
         startFromOrigin?: boolean;
         environmentSelection?: "auto" | "manual";
         replace?: boolean;
+        /**
+         * Called when nothing is opened at all: the machine offers no Scratch
+         * folder for a new chat. The caller says so; the result is then null.
+         */
+        onNotOpened?: (reason: "no_scratch") => void;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -155,8 +160,10 @@ export function useNewThreadHandler() {
         !legacySidebarEnabled &&
         project &&
         !environmentServerConfigs.get(projectRef.environmentId)?.scratchWorkspaceRoot
-      )
+      ) {
+        options?.onNotOpened?.("no_scratch");
         return Promise.resolve(null);
+      }
       // Project work belongs to its retained coordinator. Independent chats start
       // in Scratch; existing drafts and the legacy workflow remain recoverable.
       if (
