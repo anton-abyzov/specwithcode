@@ -50,6 +50,24 @@ describe("accountJoinFailureMessage", () => {
     expect(accountJoinFailureMessage(cause, "M4")).toBe(message);
   });
 
+  it("says to update a machine whose older build refuses every Connect sign-in", async () => {
+    const message =
+      "Only a sign-in through this machine's own SpecWithCode Connect account can add a machine this way. Use Join a main machine on the other machine, then Add a machine here.";
+    const cause = await failureOf(new EnvironmentHttpForbiddenError({ message }));
+    expect(accountJoinFailureMessage(cause, "M4", true)).toBe(
+      "M4 runs an older SpecWithCode that cannot do this yet. Update SpecWithCode on M4, then choose Allow again.",
+    );
+    // Not through Connect, the refusal is meant: keep that machine's words.
+    expect(accountJoinFailureMessage(cause, "M4")).toBe(message);
+  });
+
+  it("keeps the words of a current build that refuses a Connect sign-in", async () => {
+    const message =
+      "Only the desktop app signed in to this machine's own SpecWithCode Connect account can add a machine this way. Sign in to SpecWithCode Connect with the same account on both machines, then choose Allow again.";
+    const cause = await failureOf(new EnvironmentHttpForbiddenError({ message }));
+    expect(accountJoinFailureMessage(cause, "M4", true)).toBe(message);
+  });
+
   it("says a retry is safe and where to tidy up when the machine never answered", async () => {
     const said = accountJoinFailureMessage(await failureOf(new TypeError("timed out")), "M4");
     expect(said).toContain("M4 did not answer in time.");

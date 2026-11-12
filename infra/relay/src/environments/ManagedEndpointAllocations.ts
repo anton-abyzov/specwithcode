@@ -68,6 +68,7 @@ export class ManagedEndpointAllocationPersistenceError extends Schema.TaggedErro
       "lock-tunnel",
       "claim-release",
       "claim-deprovision",
+      "clear-dns",
       "remove",
       "remove-claimed",
       "get-by-tunnel-name",
@@ -144,6 +145,10 @@ interface RemoveClaimedManagedEndpointAllocationInput extends ManagedEndpointAll
   readonly generation: number;
 }
 
+interface ClearClaimedManagedEndpointDnsInput extends ManagedEndpointAllocationKey {
+  readonly generation: number;
+}
+
 export class ManagedEndpointAllocations extends Context.Service<
   ManagedEndpointAllocations,
   {
@@ -211,6 +216,16 @@ export class ManagedEndpointAllocations extends Context.Service<
     readonly claimDeprovision: (
       input: ClaimManagedEndpointDeprovisionInput,
     ) => Effect.Effect<number | null, ManagedEndpointAllocationPersistenceError>;
+    /**
+     * Forgets the DNS record of an allocation claimed for teardown, once that
+     * record is deleted, so a tunnel that could not be deleted yet stops
+     * counting toward the global cap. The allocation keeps its tunnel.
+     *
+     * Returns false when a concurrent provision has superseded the claim.
+     */
+    readonly clearClaimedDns: (
+      input: ClearClaimedManagedEndpointDnsInput,
+    ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
     readonly remove: (
       input: ManagedEndpointAllocationKey,
     ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
@@ -797,6 +812,34 @@ export const make = Effect.gen(function* () {
           ),
         );
       return claimed;
+    }),
+    clearClaimedDns: Effect.fn("relay.managed_endpoint_allocations.clear_claimed_dns")(function* (
+      input: ClearClaimedManagedEndpointDnsInput,
+    ) {
+      return yield* db
+        .update(relayManagedEndpointAllocations)
+        // Like a claim, this leaves updated_at alone: it is not a provisioning write.
+        .set({ dnsRecordId: null })
+        .where(
+          and(
+            whereAllocation(input),
+            eq(relayManagedEndpointAllocations.generation, input.generation),
+          ),
+        )
+        .returning({ userId: relayManagedEndpointAllocations.userId })
+        .pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointAllocationPersistenceError({
+                operation: "clear-dns",
+                stage: "database-request",
+                userId: input.userId,
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
     }),
     remove: Effect.fn("relay.managed_endpoint_allocations.remove")(function* (
       input: ManagedEndpointAllocationKey,

@@ -146,6 +146,38 @@ describe("relay persistence on SQLite (D1)", () => {
     }).pipe(Effect.provide(layer())),
   );
 
+  it.effect("forgets the DNS record of a claimed allocation and keeps its tunnel", () =>
+    Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const key = { userId: "user-1", environmentId: "env-1" };
+      const recorded = yield* allocations.recordDns({
+        ...key,
+        tunnelId: "tunnel-id-1",
+        dnsRecordId: "dns-record-1",
+        generation: yield* provision(),
+      });
+      const generation = recorded!;
+      const before = yield* allocations.get(key);
+      expect(before?.dnsRecordId).toBe("dns-record-1");
+
+      const claimed = yield* allocations.claimDeprovision({ ...key, generation });
+      // A stale claim changes nothing.
+      expect(yield* allocations.clearClaimedDns({ ...key, generation })).toBe(false);
+      expect((yield* allocations.get(key))?.dnsRecordId).toBe(before?.dnsRecordId);
+
+      expect(yield* allocations.clearClaimedDns({ ...key, generation: claimed! })).toBe(true);
+      const after = yield* allocations.get(key);
+      expect(after).toMatchObject({
+        dnsRecordId: null,
+        tunnelId: before?.tunnelId,
+        generation: claimed,
+        updatedAt: before?.updatedAt,
+      });
+      // The teardown can still finish with the same claim.
+      expect(yield* allocations.removeClaimed({ ...key, generation: claimed! })).toBe(true);
+    }).pipe(Effect.provide(layer())),
+  );
+
   it.effect("runs the claimed tunnel effect only for the current generation", () =>
     Effect.gen(function* () {
       const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
