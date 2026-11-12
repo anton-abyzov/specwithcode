@@ -11,8 +11,8 @@ dry_candidate_ok() {
   STUB_ENV=(HOME="$DRY_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV= "${CHANNEL_ENV[@]}")
   run 0 9.9.9 --dry-run || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$CANDIDATE_ORDER" ] || return 1
-  has 'fleet_rollout.py --version 9.9.9 --only m4 --hold-minutes 15 --channel candidate --channel-since 1.0.190' &&
-    has 'fleet_rollout.py --version 9.9.9 --only workers --channel candidate --channel-since 1.0.190' &&
+  has 'fleet_rollout.py --version 9.9.9 --only m4 --hold-minutes 15 --channel candidate --channel-since 1.0.190 --require-all' &&
+    has 'fleet_rollout.py --version 9.9.9 --only workers --channel candidate --channel-since 1.0.190 --require-all' &&
     has 'r2_publish.py publish-candidate --version 9.9.9 --dir ' && has 'r2_publish.py check --channel candidate --version 9.9.9' &&
     has 'canary_soak.py --fleet-dir ' && has '--seconds 900' && has 'r2_publish.py promote --version 9.9.9' &&
     has 'preflight: channel candidate (r2://studio-releases, hosts from 1.0.190)' && lacks 'fleet-feed: stop unless' || return 1
@@ -124,7 +124,7 @@ candidate_finish_ok() {
   grep -qF "$(printf 'publish-candidate\tpublish-candidate\tpython3 -B %s/r2_publish.py publish-candidate --version 1.7.0 --dir %s/assets-' "$HERE" "$STAGE")" "$STUB_LOG" &&
     grep -qF -- '--source-commit '"$SHA_A" "$STUB_LOG" &&
     grep -qF "$(printf 'promote-stable\tpromote-stable\tpython3 -B %s/r2_publish.py promote --version 1.7.0' "$HERE")" "$STUB_LOG" &&
-    grep -qF 'fleet_rollout.py --version 1.7.0 --only workers --channel candidate --channel-since 1.0.190' "$STUB_LOG" &&
+    grep -qF 'fleet_rollout.py --version 1.7.0 --only workers --channel candidate --channel-since 1.0.190 --require-all' "$STUB_LOG" &&
     grep -qF -- "canary_soak.py --fleet-dir $R/trees.noindex/build/scripts/studio-fleet --identity m4 --seconds 900" "$STUB_LOG" &&
     [ "$(cat "$STAGE/published.sha")" = "$SHA_A" ]
 }

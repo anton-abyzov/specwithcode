@@ -43,14 +43,16 @@ struct ProjectOverviewView: View {
       if groups.isEmpty {
         emptyState.plainListRow()
       } else {
-        section("Needs you", groups.needsYou)
-        section("Working", groups.working)
-        section("Offline", groups.offline)
-        section("Idle", groups.idle)
+        // One machine says nothing a row needs; several make it the question.
+        let showsMachine = machines.count > 1
+        section("Needs you", groups.needsYou, showsMachine: showsMachine)
+        section("Working", groups.working, showsMachine: showsMachine)
+        section("Offline", groups.offline, showsMachine: showsMachine)
+        section("Idle", groups.idle, showsMachine: showsMachine)
         if !groups.resolved.isEmpty {
           resolvedToggle(count: groups.resolved.count).plainListRow()
           if showResolved || searching {
-            ForEach(groups.resolved) { row($0) }
+            ForEach(groups.resolved) { row($0, showsMachine: showsMachine) }
           }
         }
       }
@@ -83,13 +85,13 @@ struct ProjectOverviewView: View {
 
   // MARK: Sections
 
-  @ViewBuilder private func section(_ title: String, _ threads: [ThreadSummary]) -> some View {
+  @ViewBuilder private func section(_ title: String, _ threads: [ThreadSummary], showsMachine: Bool) -> some View {
     if !threads.isEmpty {
       SectionHeader(title, count: threads.count)
         .padding(.horizontal, WeaveSpacing.s6)
         .padding(.top, WeaveSpacing.s3)
         .plainListRow()
-      ForEach(threads) { row($0) }
+      ForEach(threads) { row($0, showsMachine: showsMachine) }
     }
   }
 
@@ -118,11 +120,18 @@ struct ProjectOverviewView: View {
     .accessibilityAddTraits(.isHeader)
   }
 
-  private func row(_ thread: ThreadSummary) -> some View {
-    WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + meta(thread), titleLineLimit: 1, subtitleLineLimit: 3, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
+  private func row(_ thread: ThreadSummary, showsMachine: Bool) -> some View {
+    WeaveRow(thread.title, subtitle: thread.identity.label, note: Self.note(thread, showsMachine: showsMachine), titleLineLimit: 1, subtitleLineLimit: 1, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
       ThreadIdentityMarks(identity: thread.identity)
     } trailing: {
       HStack(spacing: WeaveSpacing.s2) {
+        if let age = Self.age(thread) {
+          Text(age)
+            .font(.weave(.caption))
+            .monospacedDigit()
+            .foregroundStyle(Color.weave.muted)
+            .accessibilityHidden(true)
+        }
         if thread.isPinned {
           Image(systemName: "pin.fill")
             .font(.system(size: 11, weight: .semibold))
@@ -170,30 +179,38 @@ struct ProjectOverviewView: View {
     }
   }
 
-  private func meta(_ thread: ThreadSummary) -> String {
-    Self.meta(thread)
+  /// The line under "Claude Code · Opus 5.5", only when the thread has
+  /// something to say: where it runs when that tells threads apart (the
+  /// project spans machines, the thread runs away from home, or its machine is
+  /// unreachable), then its plan while it works, why it failed or what it
+  /// waits for. A quiet thread on the project's only machine has none.
+  static func note(_ thread: ThreadSummary, showsMachine: Bool, now: Date = .now) -> String? {
+    let machine = showsMachine || thread.placement.runsOn != nil || thread.isUnknown ? thread.placement.label : nil
+    let parts = [machine, status(thread, now: now)].compactMap(\.self).filter { !$0.isEmpty }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
   }
 
-  /// "M4 → Minis · 2m · 3/5 tasks": where the thread lives and runs, then its state.
-  static func meta(_ thread: ThreadSummary, now: Date = .now) -> String {
-    if thread.isUnknown { return thread.placement.subtitle(now: now) }
-    return "\(thread.placement.label) · \(status(thread))"
-  }
-
-  private static func status(_ thread: ThreadSummary) -> String {
+  private static func status(_ thread: ThreadSummary, now: Date) -> String? {
+    if thread.isUnknown { return thread.placement.unknownLabel(now: now) }
     switch thread.activity {
     case .working where !thread.isResolved:
-      var parts = [Elapsed.short(since: thread.workStartedAt ?? thread.updatedAt)]
-      if let plan = thread.planProgress { parts.append("\(plan.completed)/\(plan.total) tasks") }
-      return parts.joined(separator: " · ")
+      return thread.planProgress.map { "\($0.completed)/\($0.total) tasks" }
     case .failed where !thread.isResolved:
       return "Failed" + (thread.preview.map { " · \($0)" } ?? "")
     default:
-      return thread.preview ?? Elapsed.short(since: thread.updatedAt)
+      return thread.preview
     }
   }
 
-  /// The title plus any preview. The visual meta abbreviates ("2m", "3/5
+  /// "28m" at the row's edge: how long it has worked, else how long since it
+  /// last changed. Nothing while its machine is unreachable; the note says when it was last seen.
+  static func age(_ thread: ThreadSummary, now: Date = .now) -> String? {
+    if thread.isUnknown { return nil }
+    let working = thread.activity == .working && !thread.isResolved
+    return Elapsed.short(since: working ? thread.workStartedAt ?? thread.updatedAt : thread.updatedAt, now: now)
+  }
+
+  /// The title plus any preview. The visual row abbreviates ("2m", "3/5
   /// tasks"), which speech reads as units and fractions; status and time are
   /// spoken in full in the value instead.
   static func spokenLabel(_ thread: ThreadSummary) -> String {

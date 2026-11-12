@@ -2,11 +2,9 @@ import { threadPullRequestSearchTerms } from "@specweave-studio/shared/threadPul
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
   type EnvironmentId,
-  type FilesystemBrowseEntry,
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@specweave-studio/contracts";
-import { filterFilesystemBrowseEntries } from "@specweave-studio/client-runtime/state/filesystem";
 import type { SidebarThreadSortOrder } from "@specweave-studio/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -37,19 +35,6 @@ export function buildLinkedThreadActionItems(
     icon: input.icon,
     run: () => input.runThread({ environmentId: input.environmentId, id: thread.id }),
   }));
-}
-
-export function browseInputEndPaddingClass(input: {
-  readonly willCreateProjectPath: boolean;
-  readonly hasHighlightedBrowseItem: boolean;
-}): string {
-  if (input.willCreateProjectPath) {
-    return "*:data-[slot=autocomplete-input]:pe-38!";
-  }
-  if (input.hasHighlightedBrowseItem) {
-    return "*:data-[slot=autocomplete-input]:pe-30!";
-  }
-  return "*:data-[slot=autocomplete-input]:pe-24!";
 }
 
 /**
@@ -192,6 +177,8 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+  /** Add project > Local folder: the input is an address bar whatever is typed in it. */
+  readonly addFolder?: boolean;
 }
 
 export type CommandPaletteRow =
@@ -540,67 +527,6 @@ export function filterCommandPaletteGroups(input: {
 
     return [{ value: group.value, label: group.label, items }];
   });
-}
-
-export function buildBrowseGroups(input: {
-  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
-  browseQuery: string;
-  canBrowseUp: boolean;
-  upIcon: ReactNode;
-  directoryIcon: ReactNode;
-  browseUp: () => void | Promise<void>;
-  browseTo: (name: string) => void | Promise<void>;
-}): CommandPaletteGroup[] {
-  const items: CommandPaletteActionItem[] = [];
-
-  if (input.canBrowseUp) {
-    items.push({
-      kind: "action",
-      value: "browse:up",
-      searchTerms: [input.browseQuery, ".."],
-      title: "..",
-      icon: input.upIcon,
-      keepOpen: true,
-      run: async () => {
-        await input.browseUp();
-      },
-    });
-  }
-
-  for (const entry of input.browseEntries) {
-    items.push({
-      kind: "action",
-      value: `browse:${entry.fullPath}`,
-      searchTerms: [input.browseQuery, entry.fullPath, entry.name],
-      title: entry.name,
-      icon: input.directoryIcon,
-      keepOpen: true,
-      run: async () => {
-        await input.browseTo(entry.name);
-      },
-    });
-  }
-
-  return [{ value: "directories", label: "Directories", items }];
-}
-
-export function filterPinnedBrowseEntries(input: {
-  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
-  filterQuery: string;
-  pinnedDirectoryName: string;
-  caseSensitive: boolean;
-}): ReturnType<typeof filterFilesystemBrowseEntries> {
-  const namesMatch = (left: string, right: string) =>
-    input.caseSensitive ? left === right : left.toLowerCase() === right.toLowerCase();
-  const visibleFilterQuery = namesMatch(input.filterQuery, input.pinnedDirectoryName)
-    ? ""
-    : input.filterQuery;
-  const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
-  const exactEntry =
-    input.filterQuery.length > 0
-      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
-      : null;
-  return { visibleEntries, exactEntry };
 }
 
 export function getCommandPaletteMode(input: {

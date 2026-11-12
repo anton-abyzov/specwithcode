@@ -95,6 +95,7 @@ import {
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { ModelPickerAlternativesNote } from "./ModelPickerAlternativesNote";
+import { ModelPickerBackgroundWorkNote } from "./ModelPickerBackgroundWorkNote";
 import {
   providerRailUsageMark,
   ModelPickerRunningNote,
@@ -132,6 +133,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   activeInstanceId: ProviderInstanceId;
   model: string;
   stateHeader?: ModelStateHeader | null;
+  /** Background work the thread's process still runs; a pick waits for it. */
+  backgroundWork?: string | null;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   /**
@@ -313,11 +316,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [focusSearchInput]);
 
-  // Create a Set for efficient lookup. Favorites are keyed by
-  // `${instanceId}:${slug}`; the storage schema widened from ProviderDriverKind
-  // to ProviderInstanceId so pre-migration favorites keyed by driver slugs
-  // (e.g. `"codex:gpt-5"`) still resolve — the default instance id equals
-  // the driver slug.
+  // Create a Set for efficient lookup. Favorites are keyed by `${instanceId}:${slug}`; the
+  // storage schema widened from ProviderDriverKind to ProviderInstanceId so pre-migration
+  // favorites keyed by driver slugs (e.g. `"codex:gpt-5"`) still resolve — the default
+  // instance id equals the driver slug.
   const favoritesSet = useMemo(() => {
     return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   }, [favorites]);
@@ -369,10 +371,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     props.quickSetup,
   ]);
 
-  // Flatten models into a searchable array. One pass over the
-  // instance-keyed map; each model carries its instance id + driver kind
-  // so the list row can render the right icon and display name without
-  // another lookup.
+  // Flatten models into a searchable array: each model carries its instance id and driver
+  // kind, so the list row renders the right icon and display name without another lookup.
   const flatModels = useMemo(() => {
     const out: ModelPickerItem[] = [];
     for (const [instanceId, models] of modelOptionsByInstance) {
@@ -1472,6 +1472,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 hideEmpty={alternativesFor !== null}
               />
               {runningNote}
+              {props.backgroundWork ? (
+                <ModelPickerBackgroundWorkNote work={props.backgroundWork} />
+              ) : null}
               {effort ? (
                 <ModelPickerEffortStrip
                   effort={effort}

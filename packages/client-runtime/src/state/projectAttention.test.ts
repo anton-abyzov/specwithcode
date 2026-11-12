@@ -408,6 +408,43 @@ describe("project conversation aggregation", () => {
   });
 });
 
+describe("one thread list aggregated for several projects", () => {
+  const other: AttentionMember = { ...member, projectId: "other", coordinatorThreadId: null };
+  const ask = { reportedBlocker: "Ship it now, or wait for the review?" };
+  it("gives each project its own answer from the same list", () => {
+    const root = thread("root", ask);
+    const elsewhere = thread("elsewhere", {
+      projectId: "other",
+    } as Partial<EnvironmentThreadShell>);
+    const threads = [root, elsewhere, child("helper", "elsewhere", active)];
+    expect(aggregateProjectAttention({ members: [member], roots: [root], threads })).toMatchObject({
+      count: 1,
+      working: 0,
+    });
+    expect(
+      aggregateProjectAttention({ members: [other], roots: [elsewhere], threads }),
+    ).toMatchObject({ count: 0, working: 1 });
+    expect(aggregateProjectAttention({ members: [member], roots: [root], threads })).toMatchObject({
+      count: 1,
+      working: 0,
+    });
+  });
+  it("reads a thread's change from the list that replaces the old one", () => {
+    const root = thread("root", ask);
+    const before = [root, child("helper", "root")];
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [root], threads: before }),
+    ).toMatchObject({ count: 1, working: 0 });
+    const answered = { ...root, reportedBlocker: null };
+    const after = [answered, child("helper", "root", active)];
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [answered], threads: after }),
+    ).toMatchObject({ count: 0, working: 1 });
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [root], threads: before }),
+    ).toMatchObject({ count: 1, working: 0 });
+  });
+});
 describe("native child and fallback generations", () => {
   it("folds a native child with a different project ID into its explicit parent", () => {
     const root = thread("root");

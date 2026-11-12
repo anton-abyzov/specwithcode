@@ -24,6 +24,12 @@ import * as NodePath from "node:path";
  * fff 0.9.4 has no ignore or exclude option for its walk, so refusing the
  * root is the supported way to keep it out of these folders: every folder
  * above them is refused, and an allowed root is always below them.
+ *
+ * Below an allowed root the walk skips only what `.gitignore`, `.ignore` and
+ * `.git/info/exclude` name (0.11.0 is the same). A folder that is neither
+ * tracked nor ignored, such as a clone left in an un-ignored `scratch/`, is
+ * still walked on every scan; WorkspaceSearchRefresh only keeps changes in
+ * such folders from starting one.
  */
 export interface SearchRootGuardOptions {
   readonly homeDir?: string;

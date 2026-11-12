@@ -34,7 +34,7 @@ export function NewProjectFolderPicker({
   defaultPath?: string | null;
   /** The machine whose folders are listed; null names no machine. */
   machineLabel?: string | null;
-  /** Shown when this machine is the device in front of the person, e.g. "Choose in Finder…". */
+  /** Shown when this machine is the device in front of the person, e.g. "Choose…" on macOS, "Browse…" elsewhere. */
   nativePickerLabel?: string | null;
   /** The project's name, to say exactly which folder is made. Omit when no project is being named. */
   projectName?: string;

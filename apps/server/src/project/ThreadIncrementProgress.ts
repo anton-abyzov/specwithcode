@@ -10,12 +10,20 @@
  *      task claim|done|…`, `pickup`, `note`). Its root must lie inside the
  *      thread's checkout or the project folder, be the umbrella that plans
  *      them, or be another checkout Git registered for one of their
- *      repositories (registeredCheckout.ts).
+ *      repositories (registeredCheckout.ts). A root none of these accept
+ *      (the agent made a new repository elsewhere and planned there) counts
+ *      when the thread itself changed files inside it (`ThreadWorkEvidence`).
  *   2. branch — the thread's worktree branch is `inc/NNNN-*` and exactly one
  *      `NNNN-*` increment exists, or an event in a recent increment's ledger
  *      has a `by` that names the branch. Nothing is written for it.
  *   3. checkpoint / name — the report resolver: SpecWeave's session checkpoint
  *      pointer, then an increment number or folder in the title or branch.
+ *   4. written spec — when none of the above names one: the thread itself
+ *      completed a write of an increment's `spec.md`
+ *      (`ThreadWorkEvidence.writtenSpecs`), the newest first. It covers an
+ *      increment made mid-run before its first ledger write and providers
+ *      that never get the thread id. Reported as `claim`, with no task, so
+ *      an older client on another machine still decodes the reply.
  * Only folders that exist count. Without a claim the increment is read from
  * the thread's worktree when that checkout has its own `.specweave/increments`,
  * because the agent appends to the ledger there before anything is merged.
@@ -60,6 +68,19 @@ const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
 const CARD_LINK_HOSTS = new Set(["github.com", "claude.ai"]);
 const COMMIT_SHA = /^[0-9a-f]{7,40}$/u;
 
+/**
+ * What a thread's own turns prove about where it works. The service answers
+ * from the server's projection of the thread's file changes, which no other
+ * thread and no file on disk can write, so it may widen what the claim file
+ * alone (a file in the user's home) is trusted for.
+ */
+export interface ThreadWorkEvidence {
+  /** Whether a completed edit of the thread itself lies inside one of `roots` (spellings of one folder). */
+  readonly workedIn: (roots: ReadonlyArray<string>) => Promise<boolean>;
+  /** The increment `spec.md` paths the thread itself finished writing, newest first, as its provider named them. */
+  readonly writtenSpecs: () => Promise<ReadonlyArray<string>>;
+}
+
 export interface ThreadIncrementSource {
   readonly threadId: string;
   readonly title: string | null;
@@ -69,6 +90,8 @@ export interface ThreadIncrementSource {
   readonly link?: { readonly incrementId: string | null };
   /** Home holding SpecWeave's checkpoint pointers; tests override it. */
   readonly home?: string;
+  /** Absent for callers that only follow the checkout rules, such as a launch. */
+  readonly evidence?: ThreadWorkEvidence;
 }
 
 function inside(root: string, candidate: string): boolean {
@@ -386,16 +409,22 @@ async function ledgerWrittenAt(folder: string): Promise<number> {
  * by hand, a launch's explicit ref): its own checkout when that holds the
  * folder, otherwise the registered checkout of its own repositories that holds it,
  * the one with the newest ledger write when several do (the first in
- * registeredCheckouts' order on a tie). Null when none holds it.
+ * registeredCheckouts' order on a tie). Before those, a folder the thread
+ * itself worked in (`workedRoots`, see evidencedRoots) that holds it. Null
+ * when none holds it.
  */
 export async function linkedIncrementRoot(
   workspaceRoot: string,
   worktreePath: string | null,
   incrementId: string,
+  workedRoots: ReadonlyArray<string> = [],
 ): Promise<string | null> {
   if (!INCREMENT_FOLDER.test(incrementId)) return null;
   const own = await incrementRootFor(workspaceRoot, worktreePath);
   if (await isDirectory(NodePath.join(own, INCREMENTS_DIR, incrementId))) return own;
+  for (const root of workedRoots) {
+    if (await isDirectory(NodePath.join(root, INCREMENTS_DIR, incrementId))) return root;
+  }
   const allowed = [workspaceRoot, ...(worktreePath === null ? [] : [worktreePath])];
   let best: { readonly root: string; readonly at: number } | null = null;
   for (const top of await planningCheckouts(allowed)) {
@@ -407,10 +436,70 @@ export async function linkedIncrementRoot(
   return best?.root ?? null;
 }
 
+/** Evidence never fails a read: a lookup that throws answers no. */
+async function workedIn(thread: ThreadIncrementSource, roots: ReadonlyArray<string>) {
+  return (await thread.evidence?.workedIn(roots).catch(() => false)) ?? false;
+}
+
+const WRITTEN_SPEC = /^(.+)\/\.specweave\/increments\/([^/]+)\/spec\.md$/u;
+/** Written specs looked at for one thread; the newest that still exists wins. */
+const WRITTEN_SPECS_CHECKED = 20;
+
+/**
+ * The increments whose `spec.md` the thread itself wrote, newest write first,
+ * each once: the folder must still exist. A path its provider gave relative
+ * is taken from the thread's checkout, where its session starts.
+ */
+export async function writtenSpecIncrements(
+  workspaceRoot: string,
+  thread: ThreadIncrementSource,
+): Promise<Array<{ readonly root: string; readonly incrementId: string }>> {
+  const specs = (await thread.evidence?.writtenSpecs().catch(() => [])) ?? [];
+  const found: Array<{ readonly root: string; readonly incrementId: string }> = [];
+  const seen = new Set<string>();
+  for (const spec of specs.slice(0, WRITTEN_SPECS_CHECKED)) {
+    const resolved = NodePath.resolve(thread.worktreePath ?? workspaceRoot, spec);
+    // On POSIX a backslash is part of a name, never a separator.
+    const match = WRITTEN_SPEC.exec(
+      resolved.startsWith("/") ? resolved : resolved.replaceAll("\\", "/"),
+    );
+    const incrementId = match?.[2];
+    if (match === null || incrementId === undefined || !INCREMENT_FOLDER.test(incrementId)) {
+      continue;
+    }
+    const root = await NodeFSP.realpath(match[1]!).catch(() => null);
+    if (root === null || seen.has(`${root}\u0000${incrementId}`)) continue;
+    seen.add(`${root}\u0000${incrementId}`);
+    if (await isDirectory(NodePath.join(root, INCREMENTS_DIR, incrementId))) {
+      found.push({ root, incrementId });
+    }
+  }
+  return found;
+}
+
+/**
+ * The folders outside the checkout rules that the thread itself plans in: the
+ * root of its accepted claim, then the roots of the specs it wrote. The Link
+ * picker lists their increments and a hand-made link resolves in them.
+ */
+export async function evidencedRoots(
+  workspaceRoot: string,
+  thread: ThreadIncrementSource,
+): Promise<string[]> {
+  const allowedRoots = [workspaceRoot, ...(thread.worktreePath ? [thread.worktreePath] : [])];
+  const claimed = await claimedBinding(thread, allowedRoots);
+  const written = await writtenSpecIncrements(workspaceRoot, thread);
+  return [
+    ...new Set([...(claimed === null ? [] : [claimed.root]), ...written.map(({ root }) => root)]),
+  ];
+}
+
 /**
  * The increment SpecWeave bound this thread to by a ledger write, when its
- * root lies inside one of `allowedRoots` or is exactly the umbrella workspace
- * that plans for the thread's checkout, and the increment folder exists.
+ * root lies inside one of `allowedRoots`, is exactly the umbrella workspace
+ * that plans for the thread's checkout, is another registered checkout of
+ * their repository, or is a folder the thread itself changed files in, and
+ * the increment folder exists.
  */
 async function claimedBinding(
   thread: ThreadIncrementSource,
@@ -428,16 +517,18 @@ async function claimedBinding(
     return null;
   }
   const root = await NodeFSP.realpath(binding.root).catch(() => null);
+  if (root === null) return null;
+  if (!(await isDirectory(NodePath.join(root, INCREMENTS_DIR, binding.incrementId)))) return null;
   if (
-    root === null ||
     !(
       (await bindingRootAccepted(root, allowedRoots)) ||
-      (await registeredRootAccepted(root, allowedRoots))
+      (await registeredRootAccepted(root, allowedRoots)) ||
+      // A folder outside the project: only where the thread's own turns changed files.
+      (await workedIn(thread, [...new Set([binding.root, root])]))
     )
   ) {
     return null;
   }
-  if (!(await isDirectory(NodePath.join(root, INCREMENTS_DIR, binding.incrementId)))) return null;
   return {
     root,
     incrementId: binding.incrementId,
@@ -620,8 +711,10 @@ export async function readThreadIncrementProgress(
           root = claimed.root;
         } else {
           root =
-            (await linkedIncrementRoot(workspaceRoot, thread.worktreePath, incrementId)) ??
-            (await incrementRootFor(workspaceRoot, thread.worktreePath));
+            (await linkedIncrementRoot(workspaceRoot, thread.worktreePath, incrementId, [
+              ...(claimed === null ? [] : [claimed.root]),
+              ...(await writtenSpecIncrements(workspaceRoot, thread)).map((spec) => spec.root),
+            ])) ?? (await incrementRootFor(workspaceRoot, thread.worktreePath));
           boundTaskId = null;
         }
       } else if (claimed !== null) {
@@ -638,14 +731,22 @@ export async function readThreadIncrementProgress(
             branch: thread.branch,
             ...(thread.home === undefined ? {} : { home: thread.home }),
           }));
-        if (resolved === null) return null;
-        incrementId = resolved;
-        binding =
-          byBranch !== null
-            ? "branch"
-            : (await checkpointNames(thread, incrementId))
-              ? "checkpoint"
-              : "name";
+        if (resolved !== null) {
+          incrementId = resolved;
+          binding =
+            byBranch !== null
+              ? "branch"
+              : (await checkpointNames(thread, incrementId))
+                ? "checkpoint"
+                : "name";
+        } else {
+          // Nothing names an increment: the newest one whose spec the thread
+          // wrote itself, like a claim; its task is not known yet.
+          const [written] = await writtenSpecIncrements(workspaceRoot, thread);
+          if (written === undefined) return null;
+          ({ root, incrementId } = written);
+          binding = "claim";
+        }
       }
       const key = `${root}\u0000${incrementId}`;
       let read = reads.get(key);
@@ -722,26 +823,36 @@ export interface IncrementQuery {
  * One page of the increments in the thread's checkout, newest first, with the
  * total that match and every status's count. On demand only: folder names come
  * from one readdir, and each metadata.json is parsed once until it changes.
+ * `workedRoots` (see evidencedRoots) adds the increments of folders the thread
+ * itself plans in; a folder name both hold is listed once, where a link to it
+ * resolves (linkedIncrementRoot): the checkout first.
  */
 export async function queryProjectIncrements(
   workspaceRoot: string,
   worktreePath: string | null,
   input: IncrementQuery = {},
+  workedRoots: ReadonlyArray<string> = [],
 ): Promise<{
   increments: ProjectIncrementSummary[];
   total: number;
   statusCounts: Record<string, number>;
 }> {
-  const root = await incrementRootFor(workspaceRoot, worktreePath);
-  const folder = NodePath.join(root, INCREMENTS_DIR);
-  const ids = await incrementIds(root);
+  const own = await incrementRootFor(workspaceRoot, worktreePath);
+  const rootOf = new Map<string, string>();
+  for (const root of new Set([own, ...workedRoots])) {
+    for (const id of await incrementIds(root)) if (!rootOf.has(id)) rootOf.set(id, root);
+  }
+  const ids = [...rootOf.keys()].toSorted((left, right) =>
+    right.localeCompare(left, undefined, { numeric: true }),
+  );
   const metas: IncrementMeta[] = [];
   for (let start = 0; start < ids.length; start += METADATA_READ_BATCH) {
     metas.push(
       ...(await Promise.all(
-        ids
-          .slice(start, start + METADATA_READ_BATCH)
-          .map((id) => incrementMeta(root, NodePath.join(folder, id, "metadata.json"))),
+        ids.slice(start, start + METADATA_READ_BATCH).map((id) => {
+          const root = rootOf.get(id)!;
+          return incrementMeta(root, NodePath.join(root, INCREMENTS_DIR, id, "metadata.json"));
+        }),
       )),
     );
   }

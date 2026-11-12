@@ -1,5 +1,8 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
+import { useState } from "react";
 import { createRoot } from "react-dom/client";
+import { ManagedUpdatesView } from "../../src/components/settings/ManagedUpdatesSection";
+import { UpdatePausePolicyView } from "../../src/components/settings/UpdatePausePolicyRow";
 import {
   AddForAgentsView,
   MachineRow,
@@ -82,26 +85,94 @@ const rows = buildMachineRows({
 
 const row = (index: number): MachineRowModel => rows[index]!;
 
+// `?scene=update-pause-off` and `?scene=update-pause-on`: the update cards of a
+// Mac and of a Linux worker (no update agent) with "Pause running work for
+// updates" in that position. The switches flip locally; nothing is saved.
+// `?scene=update-pause-old`: the Linux worker's release predates the setting.
+const scene = params.get("scene");
+const updateStatus = {
+  environmentId: m4,
+  installationId: "m4-desktop",
+  support: "supported",
+  localAutomation: "enabled",
+  remoteConsent: "not-enrolled",
+  revision: 1,
+  operation: "waiting-for-quiet",
+  currentVersion: "1.0.242",
+  availableVersion: "1.0.243",
+  checkedAt: "2026-11-11T19:00:00Z",
+} as const;
+
+function UpdateCard(props: {
+  label: string;
+  local: boolean;
+  os: "darwin" | "linux";
+  support: "supported" | "unsupported";
+}) {
+  const [checked, setChecked] = useState(scene === "update-pause-on");
+  return (
+    <ManagedUpdatesView
+      label={props.label}
+      reachable
+      status={{
+        ...updateStatus,
+        support: props.support,
+        currentVersion: props.os === "linux" ? "1.0.236" : updateStatus.currentVersion,
+      }}
+      error={false}
+      canManage
+      canCheck
+      pending={false}
+      local={props.local}
+      onAllow={() => undefined}
+      onRevoke={() => undefined}
+      onCheck={() => undefined}
+      onRefresh={() => undefined}
+      pausePolicy={
+        <UpdatePausePolicyView
+          machineLabel={props.label}
+          local={props.local}
+          os={props.os}
+          checked={checked}
+          continuationOff={false}
+          reachable
+          readOnly={false}
+          unsupported={scene === "update-pause-old" && props.os === "linux"}
+          writeAccess="granted"
+          onCheckedChange={setChecked}
+        />
+      }
+    />
+  );
+}
+
 createRoot(document.getElementById("root")!).render(
   <TooltipProvider>
     <main className="min-h-screen bg-background p-4 text-foreground sm:p-8">
-      <ul className="mx-auto max-w-3xl divide-y divide-border/60 rounded-xl border">
-        <MachineRow row={row(0)} pending={null} onConnect={() => undefined} />
-        <MachineRow
-          row={row(1)}
-          pending={null}
-          onConnect={() => undefined}
-          addForAgents={
-            <AddForAgentsView
-              machineLabel="PRCTY-AABYZOV"
-              allowed
-              adding={false}
-              error={null}
-              onAdd={() => undefined}
-            />
-          }
-        />
-      </ul>
+      {scene?.startsWith("update-pause") ? (
+        <div className="mx-auto max-w-xl" data-scene={scene}>
+          <UpdateCard label="M4" local os="darwin" support="supported" />
+          <UpdateCard label="Minisforum" local={false} os="linux" support="unsupported" />
+        </div>
+      ) : (
+        <ul className="mx-auto max-w-3xl divide-y divide-border/60 rounded-xl border">
+          <MachineRow row={row(0)} pending={null} onConnect={() => undefined} />
+          <MachineRow
+            row={row(1)}
+            pending={null}
+            onConnect={() => undefined}
+            addForAgents={
+              <AddForAgentsView
+                machineLabel="PRCTY-AABYZOV"
+                allowed
+                adding={false}
+                error={null}
+                onAdd={() => undefined}
+              />
+            }
+          />
+        </ul>
+      )}
     </main>
   </TooltipProvider>,
 );

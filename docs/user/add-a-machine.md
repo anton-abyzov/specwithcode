@@ -32,6 +32,14 @@ manage its access, updates and skills. It needs the desktop app, SpecWithCode
 Connect linked on that machine and a connection with full access to it;
 otherwise use the steps below.
 
+Two machines signed in to the same SpecWithCode Connect account need none of
+this: on the machine that should take work, choose the other one under **Let
+another of your machines run work here** and press **Allow**. The join line
+steps below are for a machine on another account, or one that cannot reach
+SpecWithCode Connect. In **Settings → Machines** they sit under **Another
+account, or no Connect**: choose **Show** to open **Add a machine** and **Join
+a main machine**.
+
 ## Why the steps ask for an environment ID
 
 The invitation line grants access, so it names the one machine allowed to use

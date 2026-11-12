@@ -281,4 +281,12 @@ struct ToleranceTests {
     #expect(try encodeToJSON(event)["occurredAt"] == .string("2026-10-18T06:00:05.123Z"))
     #expect(event.payload == .unknown(.null))
   }
+
+  @Test func aSnapshotKeepsTheThreadsItCanRead() throws {
+    let good = String(decoding: try Fixture.data("threadShell.min.json"), as: UTF8.self)
+    let snapshot = try decodeJSON(ShellSnapshot.self, #"{"snapshotSequence":7,"threads":[{"id":5},"# + good + #",{"title":"no id"}],"archivedThreads":[null],"projects":[]}"#)
+    #expect(snapshot.snapshotSequence == 7)
+    #expect(snapshot.threads.map(\.id) == ["thr_1"])
+    #expect(snapshot.archivedThreads.isEmpty)
+  }
 }

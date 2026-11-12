@@ -10,9 +10,16 @@ notice.
 Server updates restart the connection and can interrupt active agents and
 terminal commands. Saved threads, settings, and project files remain.
 
-**Settings → General → Continue threads after restarts** is off by default.
-Enable it to resume supported active threads after an update, crash, or machine
-restart. Changes are saved to connected environments that support this setting;
+**Settings → General → Continue threads after restarts** is on by default.
+It resumes supported active threads after an update, crash, or machine
+restart. A thread that had ended its turn while a background command, subagent
+or Workflow was still running is continued too: that work stops with the
+provider's process and never reports back, so the server starts one turn that
+lists what was lost and tells the agent to check what finished and carry on.
+This also happens without a restart, about two minutes after the provider's
+process ends between turns. It reads **Resumed after restart** in the thread.
+A thread you stopped, settled or archived, a paused project and a loss older
+than 24 hours are left alone. Changes are saved to connected environments that support this setting;
 update older servers first. If a supported environment was offline or has a
 different value, use **Apply to all** in Settings after it connects.
 SpecWithCode must start again on that machine;
@@ -20,6 +27,42 @@ the setting does not enable automatic startup. Terminal commands may still be
 interrupted, and threads without saved provider resume state need a new message.
 If you previously enabled continuation for updates, enable this setting once
 to allow recovery without a connected client.
+
+### When a machine is busy
+
+An update that installs by itself never interrupts running work unless you allow it.
+**Pause running work for updates** is off by default on every machine. With it off, an
+automatic update waits until that machine has no running task, queued message or open
+terminal:
+
+- A Mac keeps waiting however long that takes. Its update agent tries again every 10
+  minutes and installs once the machine is quiet.
+- A Linux machine waits up to 30 minutes. If it is still busy then, it stays on its version
+  until the next update request: the next release rollout, or **Update now**.
+
+Nothing asks you about it.
+
+An open question or approval does not hold an update back, with the setting on or off. It
+is closed after about 2 minutes and asked again after the restart.
+
+Turn the setting on per machine, on that machine's update card in **Settings → General**
+(this machine) or **Settings → Machines** (any machine you are connected to). Each machine
+keeps its own value. A machine on a SpecWithCode version older than the setting shows the
+switch locked and asks you to update that machine first; until then its updates pause
+running work after their wait, as they did before. With it on:
+
+- A Mac waits the time set in **Pause running work after** (10, 30 or 60 minutes), then
+  pauses the running turns, installs, and the turns continue where they left off. It pauses
+  at most once per version per hour, and **Later** in the sidebar waits another hour.
+- A Linux machine waits 30 minutes, then does the same.
+- A folder copy to or from another machine is never interrupted; the update waits for it.
+
+The setting has no effect while **Continue threads after restarts** is off on that machine,
+because paused turns would not continue.
+
+**Update now**, **Restart now** and `specweave-studio update` are your own choice and work
+either way. A fleet update that asks a machine to stop its work for the update is refused
+by a machine that has the setting off, and that machine is reported as left for later.
 
 Updates from the previous orchestration system preserve conversation transcripts but cannot carry
 every kind of runtime history forward. Read [Threads from older SpecWithCode versions](./thread-migration.md)

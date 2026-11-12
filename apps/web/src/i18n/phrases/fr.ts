@@ -438,8 +438,6 @@ export const fr: PhraseCatalog = {
     "En mode maintien, deux appuis rapides quittent aussi.",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "Empêcher la mise en veille d’inactivité pendant qu’une session travaille, pour que les tours sur cette machine continuent. Fermer le capot la met tout de même en veille.",
-  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
-    "Combien de temps une mise à jour automatique du service SpecWithCode attend le travail en cours. Ensuite, les tours en cours se mettent en pause, le service se met à jour et ils reprennent là où ils s’étaient arrêtés. Plus tard, dans la barre latérale, attend une heure de plus.",
   "Include text and controls when the app makes them available.":
     "Inclure le texte et les contrôles quand l’app les rend disponibles.",
   "Install and manage Antigravity.": "Installez et gérez Antigravity.",
@@ -586,8 +584,6 @@ export const fr: PhraseCatalog = {
     "Taille de l’onglet pour vous et les agents. Ajuster remplit le panneau ; les autres tailles affichent la barre d’appareil.",
   "Terminal output, independent from code blocks and diffs.":
     "Sortie du terminal, indépendante des blocs de code et des diffs.",
-  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
-    "L’app se met à jour au repos si c’est activé ci-dessous, sinon à la prochaine fermeture. Le service se met à jour quand aucune session ne travaille ; le travail en cours se met en pause pour lui après l’attente ci-dessous et reprend après la mise à jour. Désactivé signifie que vous installez d’ici.",
   "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
     "Le niveau le moins cher que chaque type de tâche peut utiliser. Le code, la revue, le design et l’animation finale ne descendent jamais sous Standard ; le reste du travail reste sur Frontier. Les tâches peu claires gardent leur modèle habituel.",
   "The color scheme pages are told to prefer. System follows your OS setting.":
@@ -1327,6 +1323,13 @@ export const fr: PhraseCatalog = {
     "Pas de QR code pour cette adresse. Un autre appareil scannant un lien loopback s'appellerait lui-même ; copiez plutôt l'URL pour l'utiliser sur cette machine.",
   "Client scopes": "Autorisations du client",
   "Revoke others": "Révoquer les autres",
+  "Revoke {count} unused": "Révoquer {count} connexions inutilisées",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Connexions d'ordinateurs associées par lien ou par code, sans connexion depuis 24 heures",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "Révoquer {count} connexions d'ordinateurs restées sans connexion depuis 24 heures ? Un ordinateur simplement éteint pendant une journée en fait partie et aura besoin d'un nouveau lien ou code d'association. Cette app, les clients connectés, les téléphones, vos autres machines et leurs clés sont conservés.",
+  "Revoked {count} unused sign-ins": "{count} connexions inutilisées révoquées",
+  "Could not revoke {count} sign-ins": "Impossible de révoquer {count} connexions",
   "Create link": "Créer le lien",
   "Create pairing link": "Créer un lien d'association",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -1744,10 +1747,6 @@ export const fr: PhraseCatalog = {
   Never: "Jamais",
   "{input} days": "{input} jours",
   "Archive after days": "Archiver après (jours)",
-  "Allow another machine to run work here": "Autoriser une autre machine à exécuter du travail ici",
-  "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.":
-    "Choisissez la machine qui enverra du travail à celle-ci. Cela n'accorde aucun accès automatique aux secrets ; chaque transfert de secret nécessite toujours votre approbation.",
-  "Machine sending work{select}": "Machine qui envoie le travail{select}",
   "Machine sending work": "Machine qui envoie le travail",
   "Choose a machine": "Choisissez une machine",
   "Most access for this work{select}": "Accès maximal pour ce travail{select}",
@@ -4165,4 +4164,46 @@ export const fr: PhraseCatalog = {
     "Chaque nouveau fil reçoit sa propre branche et son worktree, donc les fils parallèles ne partagent jamais un checkout. Désactivé : les fils travaillent dans le dossier du projet.",
   "Recommended here: on": "Recommandé ici : activé",
   "Recommended here: off": "Recommandé ici : désactivé",
+  "Adding a machine to this one?": "Ajouter une machine à celle-ci ?",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Les agents de {here} lancent déjà du travail sur {machines}. Une ligne créée ici permet à la machine choisie de lancer du travail sur {here}. Pour ajouter plutôt une nouvelle machine à {here}, ouvrez SpecWithCode sur la nouvelle machine, choisissez-y « Rejoindre une machine principale » et collez sa ligne ici, sous « Ajouter une machine ».",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
+    "Les agents de cette machine lancent déjà du travail sur {machines}. Une ligne créée ici permet à la machine choisie de lancer du travail sur celle-ci. Pour ajouter plutôt une nouvelle machine à celle-ci, ouvrez SpecWithCode sur la nouvelle machine, choisissez-y « Rejoindre une machine principale » et collez sa ligne ici, sous « Ajouter une machine ».",
+  "{count} more": "{count} autres",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "L’app se met à jour au repos si c’est activé ci-dessous, sinon à la prochaine fermeture. Le service se met à jour quand aucune session ne travaille. Avec « Mettre en pause le travail pour les mises à jour » activé, le travail en cours se met en pause pour lui après l’attente ci-dessous et reprend après la mise à jour. Désactivé signifie que vous installez d’ici.",
+  "Applies once “Pause running work for updates” is on: how long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "S’applique une fois « Mettre en pause le travail pour les mises à jour » activé : combien de temps une mise à jour automatique du service SpecWithCode attend le travail en cours. Ensuite, les tours en cours se mettent en pause, le service se met à jour et ils reprennent là où ils s’étaient arrêtés. Plus tard, dans la barre latérale, attend une heure de plus.",
+  "Pause running work for updates": "Mettre en pause le travail pour les mises à jour",
+  "After the wait set in “Pause running work after”, running turns pause, the update installs, and they continue where they left off.":
+    "Après l’attente réglée dans « Mettre en pause le travail en cours après », les tours en cours se mettent en pause, la mise à jour s’installe et ils reprennent là où ils s’étaient arrêtés.",
+  "After 30 minutes of waiting, running turns pause, the update installs, and they continue where they left off.":
+    "Après 30 minutes d’attente, les tours en cours se mettent en pause, la mise à jour s’installe et ils reprennent là où ils s’étaient arrêtés.",
+  "After the wait, running turns pause, the update installs, and they continue where they left off. On a Mac the wait is “Pause running work after”; on Linux it is 30 minutes.":
+    "Après l’attente, les tours en cours se mettent en pause, la mise à jour s’installe et ils reprennent là où ils s’étaient arrêtés. Sur un Mac, l’attente est « Mettre en pause le travail en cours après » ; sous Linux, 30 minutes.",
+  "An update waits until {machine} has no running work, however long that takes. Update now still installs right away.":
+    "Une mise à jour attend que {machine} n’ait plus de travail en cours, quel que soit le temps nécessaire. Mettre à jour maintenant installe toujours tout de suite.",
+  "An update waits up to 30 minutes for {machine} to have no running work. If it is still busy then, {machine} stays on its version until the next update. Update now still installs right away.":
+    "Une mise à jour attend jusqu’à 30 minutes que {machine} n’ait plus de travail en cours. S’il est encore occupé, {machine} reste sur sa version jusqu’à la prochaine mise à jour. Mettre à jour maintenant installe toujours tout de suite.",
+  "An update waits for {machine} to have no running work. A Mac keeps waiting as long as that takes; a Linux machine waits up to 30 minutes and, if still busy, stays on its version until the next update. Update now still installs right away.":
+    "Une mise à jour attend que {machine} n’ait plus de travail en cours. Un Mac attend aussi longtemps qu’il le faut ; une machine Linux attend jusqu’à 30 minutes et, si elle est encore occupée, reste sur sa version jusqu’à la prochaine mise à jour. Mettre à jour maintenant installe toujours tout de suite.",
+  "Has no effect on {machine} while “Continue threads after restarts” is off there: paused turns would not continue, so updates wait for quiet. Turn that on in Settings > General.":
+    "Sans effet sur {machine} tant que « Reprendre les fils après un redémarrage » y est désactivé : les tours mis en pause ne reprendraient pas, donc les mises à jour attendent le calme. Activez-le dans Réglages > Général.",
+  "{machine} is unreachable, so this setting cannot be changed now.":
+    "{machine} est injoignable, ce réglage ne peut donc pas être modifié pour l’instant.",
+  "This connection cannot change settings on {machine}.":
+    "Cette connexion ne peut pas modifier les réglages de {machine}.",
+  "Could not save update settings": "Impossible d’enregistrer les réglages de mise à jour",
+  "The change could not be confirmed on {machine}. The switch shows what {machine} reports.":
+    "Le changement n’a pas pu être confirmé sur {machine}. L’interrupteur indique ce que {machine} signale.",
+  "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
+    "{machine} utilise une version de SpecWithCode sans ce réglage. Mettez d’abord {machine} à jour.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ouvrez d’abord un projet sur cette machine, puis ajoutez-le à {name} ici.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ajoutez-en un, puis choisissez {name} sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
+  "Add {project} to {name}": "Ajouter {project} à {name}",
+  "Add a project to {name}": "Ajouter un projet à {name}",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "Étape suivante, sur {coordinatorLabel} : cette machine ne peut exécuter qu’un projet dont elle a une copie. Ouvrez-y Réglages > Machines et ajoutez un projet à cette machine. Choisissez-la ensuite sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
 };

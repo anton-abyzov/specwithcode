@@ -455,14 +455,18 @@ describe("skill authoring", () => {
       if (input.operation === "status" && held) {
         held = false;
         await new Promise<void>((resolve) => (release = resolve));
+        // The background check saved a newer revision.
+        return { draft: { ...draft, revision: draft.revision + 1 } };
       }
-      return { draft };
+      return { draft: { ...draft, revision: draft.revision + 1 } };
     });
     await mount(request);
     const clicked = act(async () => button("Check status").click());
     await act(async () => release());
     await clicked;
-    expect(request.mock.calls.filter(([input]) => input.operation === "status")).toHaveLength(2);
+    const statuses = request.mock.calls.filter(([input]) => input.operation === "status");
+    expect(statuses).toHaveLength(2);
+    expect(statuses[1]?.[0].revision).toBe(draft.revision + 1);
   });
   it("notes when the thread's provider is not ready", async () => {
     const request = vi.fn(async (_input: AuthoringRequest) => ({ draft: null }));

@@ -1,19 +1,19 @@
 import { renderRich } from "../../i18n/rich";
 import { useLocale, useTx } from "../../i18n";
 import { useState } from "react";
-import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
-import type {
-  StudioFleetWorkerAccess,
-  StudioWorkGrantsSnapshot,
-} from "@specweave-studio/contracts/studioFleet";
+import {
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+} from "@specweave-studio/contracts";
+import type { StudioFleetWorkerAccess } from "@specweave-studio/contracts/studioFleet";
 import { isElectron } from "../../env";
-import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
-import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   addVisibleMachineToStudioFleet,
   allowIncomingStudioFleetWorkers,
   allowStudioFleetWorkers,
+  joinAccountMachineForWorkers,
   readStudioFleetMachines,
 } from "../../studio/fleet";
 import {
@@ -95,115 +95,45 @@ export async function setUpIncomingWorkers(
   }
 }
 
-export function IncomingWorkerSetup({
-  environmentId,
-  snapshot,
-  onGranted,
-}: {
-  environmentId: EnvironmentId;
-  snapshot: StudioWorkGrantsSnapshot;
-  onGranted: () => void;
-}) {
-  const tx = useTx();
-  const { environments } = useEnvironments();
-  const name = useMachineNicknames();
-  const [selected, setSelected] = useState<EnvironmentId | null>(null);
-  // Kept here, not in the action: a granted machine leaves the candidates once
-  // the snapshot refreshes, which unmounts the action.
-  const [saved, setSaved] = useState<{
-    coordinator: EnvironmentId;
-    coordinatorLabel: string;
-    access: StudioFleetWorkerAccess;
-    expiresAt: string | null;
-  } | null>(null);
-  const savedGrant = saved
-    ? snapshot.grants.find((grant) => grant.coordinatorEnvironmentId === saved.coordinator)
-    : undefined;
-  const candidates = environments.filter(
-    (environment) =>
-      environment.environmentId !== environmentId &&
-      !snapshot.grants.some(
-        (grant) => grant.coordinatorEnvironmentId === environment.environmentId,
-      ),
-  );
-  const chosen = candidates.find((environment) => environment.environmentId === selected);
-  const here = environments.find((environment) => environment.environmentId === environmentId);
+/**
+ * The account's machines the card offers beside the ones this app already
+ * opened: never this machine, and never one already listed or allowed.
+ */
+export function accountMachinesToOffer<
+  Record extends { readonly environmentId: EnvironmentId },
+>(input: {
+  readonly discovered: ReadonlyArray<Record>;
+  readonly here: EnvironmentId;
+  readonly known: ReadonlyArray<EnvironmentId>;
+}): Record[] {
+  const skip = new Set<EnvironmentId>([input.here, ...input.known]);
+  return input.discovered.filter((record) => !skip.has(record.environmentId));
+}
+
+/** The join line could not be made because this machine is not linked to SpecWithCode Connect. */
+function isConnectOffHere(failure: unknown): boolean {
   return (
-    <div className="space-y-2 border-t border-border/60 px-3 py-3 sm:px-4">
-      <p className="text-sm font-medium">{tx("Allow another machine to run work here")}</p>
-      <p className="text-xs text-muted-foreground">
-        {tx(
-          "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.",
-        )}
-      </p>
-      <label className="flex flex-wrap items-center gap-2 text-xs">
-        {renderRich(tx("Machine sending work{select}"), {
-          select: (
-            <select
-              aria-label={tx("Machine sending work")}
-              className="min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1"
-              value={chosen?.environmentId ?? ""}
-              onChange={(event) =>
-                setSelected(
-                  candidates.find((item) => item.environmentId === event.target.value)
-                    ?.environmentId ?? null,
-                )
-              }
-            >
-              <option value="">{tx("Choose a machine")}</option>
-              {candidates.map((environment) => (
-                <option key={environment.environmentId} value={environment.environmentId}>
-                  {name(environment.environmentId, environment.label)}
-                </option>
-              ))}
-            </select>
-          ),
-        })}
-      </label>
-      {saved ? (
-        <IncomingWorkerSaved
-          coordinatorLabel={saved.coordinatorLabel}
-          access={saved.access}
-          expiresAt={saved.expiresAt ?? savedGrant?.expiresAt ?? null}
-        />
-      ) : null}
-      {!candidates.length && !saved ? (
-        <p className="text-xs text-muted-foreground">
-          Connect the other machine in Settings &gt; Machines first. Machines already listed above
-          use their existing access controls.
-        </p>
-      ) : null}
-      {chosen ? (
-        <IncomingWorkerAction
-          key={chosen.environmentId}
-          here={environmentId}
-          coordinator={chosen.environmentId}
-          hereLabel={name(environmentId, here?.label ?? "this machine")}
-          coordinatorLabel={name(chosen.environmentId, chosen.label)}
-          connected={chosen.connection.phase === "connected"}
-          onGranted={(grant) => {
-            setSaved({
-              coordinator: chosen.environmentId,
-              coordinatorLabel: name(chosen.environmentId, chosen.label),
-              ...grant,
-            });
-            setSelected(null);
-            onGranted();
-          }}
-        />
-      ) : null}
-    </div>
+    typeof failure === "object" &&
+    failure !== null &&
+    (failure as { readonly reason?: unknown }).reason === "connect_not_linked"
   );
+}
+
+function connectOffHereMessage(hereLabel: string, coordinatorLabel: string): string {
+  return `SpecWithCode Connect is off on ${hereLabel}, so ${coordinatorLabel} has no address to reach it. On ${hereLabel}, turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow again.`;
 }
 
 export function IncomingWorkerSaved({
   coordinatorLabel,
   access,
   expiresAt,
+  renewable = false,
 }: {
   coordinatorLabel: string;
   access: StudioFleetWorkerAccess;
   expiresAt: string | null;
+  /** That machine renews the grant itself, so no end date is shown. */
+  renewable?: boolean;
 }) {
   const tx = useTx();
   const locale = useLocale();
@@ -219,16 +149,21 @@ export function IncomingWorkerSaved({
   return (
     <div role="status" className="space-y-1 text-xs">
       <p className="font-medium">
-        {date
-          ? tx("{coordinatorLabel} can run work here · {access} · until {date}", {
+        {renewable
+          ? tx("{coordinatorLabel} can run work here · {access} · renews by itself", {
               coordinatorLabel,
               access: accessLabel,
-              date,
             })
-          : tx("{coordinatorLabel} can run work here · {access}", {
-              coordinatorLabel,
-              access: accessLabel,
-            })}
+          : date
+            ? tx("{coordinatorLabel} can run work here · {access} · until {date}", {
+                coordinatorLabel,
+                access: accessLabel,
+                date,
+              })
+            : tx("{coordinatorLabel} can run work here · {access}", {
+                coordinatorLabel,
+                access: accessLabel,
+              })}
       </p>
       <p className="text-muted-foreground">
         {tx("On {coordinatorLabel}: done", { coordinatorLabel })}
@@ -237,16 +172,8 @@ export function IncomingWorkerSaved({
   );
 }
 
-export function IncomingWorkerAction({
-  here,
-  coordinator,
-  hereLabel,
-  coordinatorLabel,
-  connected,
-  coordinatorFleetId,
-  actionLabel,
-  onGranted,
-}: {
+/** What Allow needs to know about the two machines. */
+export interface IncomingWorkerAllowInput {
   here: EnvironmentId;
   coordinator: EnvironmentId;
   hereLabel: string;
@@ -258,25 +185,70 @@ export function IncomingWorkerAction({
    * with Manage access is needed there.
    */
   coordinatorFleetId?: string | undefined;
-  /** The button's words where the card already names the direction; "Allow <machine>" otherwise. */
-  actionLabel?: string;
-  onGranted: (grant: { access: StudioFleetWorkerAccess; expiresAt: string | null }) => void;
-}) {
+  /**
+   * The coordinator takes this machine's line from a sign-in through its own
+   * SpecWithCode Connect account (`fleetAccountJoinWorkers`). With neither a
+   * sign-in that manages access there nor a fleet line, this app hands the
+   * line over through its Connect sign-in.
+   */
+  accountJoin?: boolean | undefined;
+  /** The cap, when the caller keeps it across choices; kept here otherwise. */
+  access?: StudioFleetWorkerAccess | undefined;
+  onAccessChange?: ((access: StudioFleetWorkerAccess) => void) | undefined;
+  /** Told while Allow runs, so the caller can hold its own controls still. */
+  onPendingChange?: ((pending: boolean) => void) | undefined;
+  onGranted: (grant: {
+    access: StudioFleetWorkerAccess;
+    expiresAt: string | null;
+    renewable: boolean;
+  }) => void;
+}
+
+/**
+ * Allowing one machine to run work on this one: which route applies, why it
+ * cannot run yet, and the call itself. Shared by the card and the machine rows.
+ */
+export function useIncomingWorkerAllow({
+  here,
+  coordinator,
+  hereLabel,
+  coordinatorLabel,
+  connected,
+  coordinatorFleetId,
+  accountJoin,
+  access: controlledAccess,
+  onAccessChange,
+  onPendingChange,
+  onGranted,
+}: IncomingWorkerAllowInput) {
   const tx = useTx();
   const manageHere = useEnvironmentScope(here, AuthAccessWriteScope);
   const manageThere = useEnvironmentScope(coordinator, AuthAccessWriteScope);
-  const [access, setAccess] = useState<StudioFleetWorkerAccess>(DEFAULT_FLEET_WORKER_ACCESS);
-  const [pending, setPending] = useState(false);
+  const operateThere = useEnvironmentScope(coordinator, AuthOrchestrationOperateScope);
+  const [ownAccess, setOwnAccess] = useState<StudioFleetWorkerAccess>(DEFAULT_FLEET_WORKER_ACCESS);
+  const access = controlledAccess ?? ownAccess;
+  const setAccess = (next: StudioFleetWorkerAccess) => {
+    setOwnAccess(next);
+    onAccessChange?.(next);
+  };
+  const [pending, setOwnPending] = useState(false);
+  const setPending = (next: boolean) => {
+    setOwnPending(next);
+    onPendingChange?.(next);
+  };
   const [error, setError] = useState<string | null>(null);
   // Without a sign-in there, this machine's server asks the coordinator itself.
   const fromHere = !manageThere && coordinatorFleetId !== undefined;
+  // With neither, the two machines' shared SpecWithCode Connect account carries the line.
+  const throughAccount =
+    !manageThere && coordinatorFleetId === undefined && accountJoin === true && operateThere;
   const unavailable = !isElectron
     ? tx("Open the installed desktop app to set this up.")
     : !connected
       ? tx("Connect to {coordinatorLabel} first.", { coordinatorLabel })
       : !manageHere
         ? tx("Manage access is needed on {hereLabel}.", { hereLabel })
-        : !manageThere && coordinatorFleetId === undefined
+        : !manageThere && coordinatorFleetId === undefined && !throughAccount
           ? tx(
               "On {hereLabel}, open Settings > Machines > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.",
               { hereLabel, coordinatorLabel },
@@ -284,6 +256,24 @@ export function IncomingWorkerAction({
           : null;
   async function allowIncomingFromHere(fleetId: string) {
     const result = await allowIncomingStudioFleetWorkers(here, fleetId, access);
+    if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
+      throw new Error(
+        `${coordinatorLabel} added ${hereLabel}, but worker access was not confirmed. Refresh, then retry.`,
+      );
+    return result;
+  }
+  async function allowThroughAccount() {
+    const result = await joinAccountMachineForWorkers({
+      here,
+      coordinator,
+      coordinatorLabel,
+      access,
+    }).catch((failure: unknown) => {
+      // This machine has no Connect address to hand over: name the switch that gives it one.
+      if (isConnectOffHere(failure))
+        throw new Error(connectOffHereMessage(hereLabel, coordinatorLabel), { cause: failure });
+      throw failure;
+    });
     if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
       throw new Error(
         `${coordinatorLabel} added ${hereLabel}, but worker access was not confirmed. Refresh, then retry.`,
@@ -299,11 +289,16 @@ export function IncomingWorkerAction({
         `Allow ${coordinatorLabel} to run work on ${hereLabel}?\n${coordinatorLabel} receives a management key to ${hereLabel} for a year, including access, update and skill management, plus worker access capped at ${FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access}. Existing project and sign-in limits stay in force. Each secret transfer still needs your approval.`,
       );
       if (confirmed !== true) return;
-      const result =
-        fromHere && coordinatorFleetId !== undefined
+      const result = throughAccount
+        ? await allowThroughAccount()
+        : fromHere && coordinatorFleetId !== undefined
           ? await allowIncomingFromHere(coordinatorFleetId)
           : await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
-      onGranted({ access, expiresAt: result.workers.expiresAt });
+      onGranted({
+        access,
+        expiresAt: result.workers.expiresAt,
+        renewable: result.workers.renewable,
+      });
     } catch (failure) {
       setError(
         failure instanceof Error
@@ -314,6 +309,19 @@ export function IncomingWorkerAction({
       setPending(false);
     }
   }
+  return { access, setAccess, pending, error, unavailable, throughAccount, allow };
+}
+
+export function IncomingWorkerAction({
+  actionLabel,
+  ...input
+}: IncomingWorkerAllowInput & {
+  /** The button's words where the card already names the direction; "Allow <machine>" otherwise. */
+  actionLabel?: string;
+}) {
+  const tx = useTx();
+  const { hereLabel, coordinatorLabel } = input;
+  const { access, setAccess, pending, error, unavailable, allow } = useIncomingWorkerAllow(input);
   return (
     <div className="space-y-2">
       {/* A caller's own label already names the direction. */}

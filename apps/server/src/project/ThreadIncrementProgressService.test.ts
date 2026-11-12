@@ -189,12 +189,14 @@ it.layer(layerTest)("ThreadIncrementProgressService", (it) => {
         snapshot.threads.map((thread) => thread.threadId),
         ids.map(String),
       );
-      assert.deepStrictEqual(progressReads[0]?.[0], {
+      const { evidence, ...first } = progressReads[0]![0]!;
+      assert.deepStrictEqual(first, {
         threadId: ThreadId.make("thread:batch:00"),
         title: "Thread thread:batch:00",
         branch: "inc/thread:batch:00",
         worktreePath: "/work/thread:batch:00",
       });
+      assert.strictEqual(typeof evidence?.workedIn, "function");
     }),
   );
 
@@ -565,4 +567,284 @@ it.layer(layerTest)("ThreadIncrementProgressService", (it) => {
       assert.strictEqual(snapshot.unplanned, undefined);
     }),
   );
+
+  /** A file_change item of the thread naming `path`, at `ordinal`. */
+  const addChange = Effect.fn("addChange")(function* (
+    threadId: ThreadId,
+    ordinal: number,
+    path: string,
+    status = "completed",
+    at = "2026-11-11T19:00:00Z",
+  ) {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${`${threadId}:change:${ordinal}`}, ${threadId}, NULL, ${ordinal}, 'file_change', ${status}, ${at}, ${JSON.stringify({ fileName: path })})`;
+  });
+  const evidenceOf = (
+    service: ThreadIncrementProgressService.ThreadIncrementProgressService["Service"],
+  ) =>
+    Effect.fn("evidenceOf")(function* (threadId: ThreadId) {
+      progressReads.length = 0;
+      yield* TestClock.adjust("6 seconds");
+      yield* service.read({ projectId: PROJECT, threadIds: [threadId] });
+      return progressReads[0]![0]!.evidence!;
+    });
+
+  it.effect("tells the reader which folders a thread itself changed files in", () =>
+    Effect.gen(function* () {
+      const worker = yield* addThread("thread:evidence:worker");
+      const other = yield* addThread("thread:evidence:other");
+      const parent = yield* addThread("thread:evidence:parent");
+      const child = yield* addThread("thread:evidence:child", {
+        providerChild: true,
+        parent: "thread:evidence:parent",
+      });
+      yield* addChange(worker, 1, "/home/anton/live/spec-os/server/src/app.ts");
+      yield* addChange(other, 1, "/home/anton/live/spec-os-two/a.ts");
+      yield* addChange(child, 1, "/srv/elsewhere/client/src/dock.tsx");
+      const sql = yield* SqlClient.SqlClient;
+      // Codex and ACP name their paths in `changes`, a move's old path included.
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('thread:evidence:other:moved', ${other}, NULL, 2, 'file_change', 'completed', '2026-11-11T19:00:00Z', ${JSON.stringify({ fileName: "b.ts", changes: [{ operation: "move", path: "/tmp/out/b.ts", oldPath: "/opt/moved/b.ts" }] })})`;
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+
+      const worked = yield* evidence(worker);
+      assert.isTrue(yield* Effect.promise(() => worked.workedIn(["/home/anton/live/spec-os"])));
+      assert.isTrue(yield* Effect.promise(() => worked.workedIn(["/nope", "/home/anton/live"])));
+      // A folder whose name only starts the same is another folder.
+      assert.isFalse(yield* Effect.promise(() => worked.workedIn(["/home/anton/live/spec"])));
+
+      // Another thread's work proves nothing for this one, whatever a claim file says.
+      const others = yield* evidence(other);
+      assert.isFalse(yield* Effect.promise(() => others.workedIn(["/home/anton/live/spec-os"])));
+      assert.isTrue(yield* Effect.promise(() => others.workedIn(["/opt/moved"])));
+
+      // A provider-native subagent's edits belong to the thread that spawned it.
+      const parents = yield* evidence(parent);
+      assert.isTrue(yield* Effect.promise(() => parents.workedIn(["/srv/elsewhere"])));
+    }),
+  );
+
+  it.effect("lists the specs a thread wrote newest first, reading only what is new", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:specs");
+      const specOf = (id: string) => `/home/anton/live/spec-os/.specweave/increments/${id}/spec.md`;
+      yield* addChange(thread, 1, specOf("0001-first"));
+      yield* addChange(thread, 2, "/home/anton/live/spec-os/.specweave/config.json");
+      yield* addChange(thread, 3, "/home/anton/live/spec-os/docs/spec.md");
+      yield* addChange(thread, 4, specOf("0002-second"));
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+      const read = (source: { readonly writtenSpecs: () => Promise<ReadonlyArray<string>> }) =>
+        Effect.promise(() => source.writtenSpecs());
+
+      assert.deepStrictEqual(yield* read(yield* evidence(thread)), [
+        specOf("0002-second"),
+        specOf("0001-first"),
+      ]);
+
+      // What was read stays read: a later poll takes only newer items.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{"fileName":"/rewritten"}' WHERE thread_id = ${thread} AND ordinal <= 4`;
+      yield* addChange(thread, 5, specOf("0001-first"));
+      // Still being written: seen now, and read again once it settles.
+      yield* addChange(thread, 6, "", "running");
+      yield* addChange(thread, 7, specOf("0003-third"));
+      assert.deepStrictEqual(yield* read(yield* evidence(thread)), [
+        specOf("0003-third"),
+        specOf("0001-first"),
+        specOf("0002-second"),
+      ]);
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'completed', payload_json = ${JSON.stringify({ fileName: specOf("0004-fourth") })} WHERE thread_id = ${thread} AND ordinal = 6`;
+      assert.deepStrictEqual(yield* read(yield* evidence(thread)), [
+        specOf("0003-third"),
+        specOf("0004-fourth"),
+        specOf("0001-first"),
+        specOf("0002-second"),
+      ]);
+    }),
+  );
+
+  it.effect("starts a long thread's evidence at its newest thousand file changes", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:long");
+      const sql = yield* SqlClient.SqlClient;
+      yield* addChange(thread, 1, "/old/.specweave/increments/0001-old/spec.md");
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i + 1 FROM n WHERE i < 1001)
+        INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+        SELECT ${thread} || ':bulk:' || i, ${thread}, NULL, i, 'file_change', 'completed', '2026-11-11T19:00:00Z', '{"fileName":"/work/src/a.ts"}' FROM n
+      `;
+      yield* addChange(thread, 1002, "/new/.specweave/increments/0002-new/spec.md");
+      const { service } = yield* makeService();
+      const evidence = yield* evidenceOf(service)(thread);
+      assert.deepStrictEqual(yield* Effect.promise(() => evidence.writtenSpecs()), [
+        "/new/.specweave/increments/0002-new/spec.md",
+      ]);
+      assert.isFalse(yield* Effect.promise(() => evidence.workedIn(["/old"])));
+      assert.isTrue(yield* Effect.promise(() => evidence.workedIn(["/work"])));
+    }),
+  );
+
+  it.effect("counts only edits that completed, and waits for the ones still running", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:status");
+      const spec = "/srv/never/.specweave/increments/0001-never/spec.md";
+      yield* addChange(thread, 1, "/srv/never/a.ts", "failed");
+      yield* addChange(thread, 2, spec, "cancelled");
+      yield* addChange(thread, 3, "/srv/never/b.ts", "interrupted");
+      // Stuck for good, like an edit whose provider process died.
+      yield* addChange(thread, 4, "/srv/stuck/a.ts", "running");
+      yield* addChange(thread, 5, "/srv/waiting/a.ts", "pending");
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+      const inside = (root: string) =>
+        Effect.gen(function* () {
+          const source = yield* evidence(thread);
+          return yield* Effect.promise(() => source.workedIn([root]));
+        });
+
+      // An edit that failed, was cancelled or was cut off was never applied.
+      assert.isFalse(yield* inside("/srv/never"));
+      assert.isFalse(yield* inside("/srv/stuck"));
+      assert.isFalse(yield* inside("/srv/waiting"));
+      const first = yield* evidence(thread);
+      assert.deepStrictEqual(yield* Effect.promise(() => first.writtenSpecs()), []);
+
+      // The stuck one never hides what comes after it, and the waiting one counts once it lands.
+      const sql = yield* SqlClient.SqlClient;
+      yield* addChange(thread, 6, "/srv/later/a.ts");
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'completed' WHERE thread_id = ${thread} AND ordinal = 5`;
+      assert.isTrue(yield* inside("/srv/later"));
+      assert.isTrue(yield* inside("/srv/waiting"));
+      assert.isFalse(yield* inside("/srv/stuck"));
+      // An edit that settles as failed stops being waited for.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'failed' WHERE thread_id = ${thread} AND ordinal = 4`;
+      assert.isFalse(yield* inside("/srv/stuck"));
+    }),
+  );
+
+  it.effect("keeps a rolled-back run's edits as proof of where the thread worked", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:rolled-back");
+      yield* addRun(thread, { status: "rolled_back", changed: false });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('thread:evidence:rolled-back:edit', ${thread}, ${`${thread}:run:1`}, 1, 'file_change', 'completed', '2026-11-11T19:00:00Z', ${JSON.stringify({ fileName: "/srv/undone/.specweave/increments/0001-undone/spec.md" })})`;
+      const { service } = yield* makeService();
+      const evidence = yield* evidenceOf(service)(thread);
+      // The thread did write there; whether the folder is still there is the reader's check.
+      assert.isTrue(yield* Effect.promise(() => evidence.workedIn(["/srv/undone"])));
+      assert.deepStrictEqual(yield* Effect.promise(() => evidence.writtenSpecs()), [
+        "/srv/undone/.specweave/increments/0001-undone/spec.md",
+      ]);
+    }),
+  );
+
+  it.effect("orders a subagent's specs with its parent's by when each was written", () =>
+    Effect.gen(function* () {
+      const parent = yield* addThread("thread:evidence:order:parent");
+      const child = yield* addThread("thread:evidence:order:child", {
+        providerChild: true,
+        parent: "thread:evidence:order:parent",
+      });
+      const specOf = (id: string) => `/srv/plan/.specweave/increments/${id}/spec.md`;
+      yield* addChange(
+        parent,
+        40,
+        specOf("0001-parent-early"),
+        "completed",
+        "2026-11-11T10:00:00Z",
+      );
+      yield* addChange(child, 1, specOf("0002-child-later"), "completed", "2026-11-11T12:00:00Z");
+      yield* addChange(parent, 41, specOf("0003-parent-last"), "completed", "2026-11-11T13:00:00Z");
+      const { service } = yield* makeService();
+      const evidence = yield* evidenceOf(service)(parent);
+      assert.deepStrictEqual(yield* Effect.promise(() => evidence.writtenSpecs()), [
+        specOf("0003-parent-last"),
+        specOf("0002-child-later"),
+        specOf("0001-parent-early"),
+      ]);
+    }),
+  );
+
+  it.effect("counts a subagent started after the first read, within a minute or so", () =>
+    Effect.gen(function* () {
+      const parent = yield* addThread("thread:evidence:late:parent");
+      yield* addChange(parent, 1, "/srv/parent/a.ts");
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+      const inside = (root: string) =>
+        Effect.gen(function* () {
+          const source = yield* evidence(parent);
+          return yield* Effect.promise(() => source.workedIn([root]));
+        });
+      assert.isFalse(yield* inside("/srv/child"));
+
+      const child = yield* addThread("thread:evidence:late:child", {
+        providerChild: true,
+        parent: "thread:evidence:late:parent",
+      });
+      yield* addChange(child, 1, "/srv/child/a.ts");
+      // The project's subagents are listed again after a minute.
+      yield* TestClock.adjust("61 seconds");
+      assert.isTrue(yield* inside("/srv/child"));
+      // Another project's thread is never this one's subagent.
+      const foreign = yield* addThread("thread:evidence:late:foreign", {
+        projectId: OTHER_PROJECT,
+        providerChild: true,
+        parent: "thread:evidence:late:parent",
+      });
+      yield* addChange(foreign, 1, "/srv/foreign/a.ts");
+      yield* TestClock.adjust("61 seconds");
+      assert.isFalse(yield* inside("/srv/foreign"));
+    }),
+  );
+
+  it.effect("reads a thread afresh once its history was purged and its ordinals start over", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:evidence:purged");
+      const specOf = (id: string) => `/srv/purged/.specweave/increments/${id}/spec.md`;
+      yield* addChange(thread, 40, specOf("0001-before"));
+      const { service } = yield* makeService();
+      const evidence = evidenceOf(service);
+      const specs = Effect.gen(function* () {
+        const source = yield* evidence(thread);
+        return yield* Effect.promise(() => source.writtenSpecs());
+      });
+      assert.deepStrictEqual(yield* specs, [specOf("0001-before")]);
+
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${thread}`;
+      assert.deepStrictEqual(yield* specs, []);
+      yield* addChange(thread, 1, specOf("0002-after"));
+      assert.deepStrictEqual(yield* specs, [specOf("0002-after")]);
+    }),
+  );
+
+  it("compares paths as text, and proves nothing from a relative one or one with dots up", () => {
+    const inside = ThreadIncrementProgressService.isInsideAny;
+    assert.isTrue(inside("/home/a/live/spec-os/src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isTrue(inside("/home/a/live/spec-os/src/app.ts", ["/home/a/live/spec-os/"]));
+    // `..` may cross a link, so where it lands cannot be told from the text: it proves nothing.
+    assert.isFalse(inside("/home/a/live/spec-os/../other/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("/home/a/live/spec-os/../other/app.ts", ["/home/a/live/other"]));
+    assert.isFalse(inside("/proj/link/../victim/f.ts", ["/proj/victim"]));
+    assert.isFalse(inside("/home/a/live/spec-os/app.ts", ["/home/a/live/x/../spec-os"]));
+    // On POSIX a backslash is part of a file name, never a separator.
+    assert.isFalse(inside("/elsewhere/a\\..\\..\\root/x.ts", ["/root"]));
+    assert.isFalse(inside("/elsewhere\\root/x.ts", ["/elsewhere/root"]));
+    assert.isTrue(inside("/home/a/live/./spec-os//src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("/home/a/live/spec-os-two/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("/home/a/live/spec-os", ["/home/a/live/spec-os"]));
+    // Windows spellings: either separator, any drive-letter case.
+    assert.isTrue(inside("C:\\work\\spec-os\\src\\app.ts", ["c:/work/spec-os"]));
+    assert.isFalse(inside("C:\\work\\spec-os\\..\\x.ts", ["C:\\work\\spec-os"]));
+    assert.isFalse(inside("D:/work/spec-os/app.ts", ["C:/work/spec-os"]));
+    // Nothing here knows which folder a relative path was meant from.
+    assert.isFalse(inside("src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("../spec-os/src/app.ts", ["/home/a/live/spec-os"]));
+    assert.isFalse(inside("/home/a/app.ts", ["live/spec-os"]));
+    // A filesystem or drive root is never a planning folder.
+    assert.isFalse(inside("/etc/hosts", ["/"]));
+    assert.isFalse(inside("C:/Windows/system.ini", ["C:/"]));
+  });
 });

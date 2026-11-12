@@ -37,6 +37,128 @@ export function canRevokeOtherClients(
   return clientSessions === null || clientSessions.some((session) => !session.current);
 }
 
+/** How long a sign-in may go without a connection before Revoke unused offers it. */
+export const UNUSED_CLIENT_AFTER_MS = 24 * 60 * 60_000;
+/** Sign-ins a person paired by link or by code. Fleet keys, worker grants and Connect are not these. */
+const PAIRED_CLIENT_SUBJECTS: ReadonlySet<string> = new Set(["one-time-token", "device-approval"]);
+/** The label another machine of the fleet pairs under (`studioFleet.ts`); a second guard beside its principal. */
+const FLEET_BROWSER_LABEL = "Private fleet browser";
+
+/** One authorized client, flattened to what the unused rule reads. */
+export interface UnusedClientCandidate<Id extends string = string> {
+  readonly sessionId: Id;
+  readonly subject: string;
+  /** The label the client paired under, when it gave one. */
+  readonly label: string | undefined;
+  readonly deviceType: string;
+  /** Who the server established the client to be; "coordinator" is another machine of the fleet. */
+  readonly principalKind: string | undefined;
+  readonly issuedAt: string;
+  /** When it last connected, or, once its last connection closed, when that was. */
+  readonly lastConnectedAt: string | null;
+  readonly connected: boolean;
+  readonly current: boolean;
+}
+
+/**
+ * The sign-ins Revoke unused removes: paired by link or code, from a computer's
+ * browser or app, connected at least once and with no connection for a day.
+ * Headless checks leave these behind by the dozen.
+ *
+ * Kept whatever their age, because disuse cannot be shown or re-pairing is
+ * costly: this app, a connected client, phones and tablets, the fleet's
+ * machines, management keys, worker grants, Connect sign-ins (they expire by
+ * themselves), a client of an unknown kind or a script (`bot`, `unknown`), and
+ * one that never opened a connection: the server records connections, not
+ * plain requests, so a script that only makes requests looks never used.
+ */
+export function unusedClientSessions<Session extends UnusedClientCandidate>(
+  sessions: ReadonlyArray<Session>,
+  now: number,
+): ReadonlyArray<Session> {
+  return sessions.filter((session) => {
+    if (session.current || session.connected) return false;
+    if (!PAIRED_CLIENT_SUBJECTS.has(session.subject)) return false;
+    if (session.deviceType !== "desktop") return false;
+    if (session.principalKind === "coordinator" || session.label === FLEET_BROWSER_LABEL)
+      return false;
+    if (session.lastConnectedAt === null) return false;
+    const lastSeen = Date.parse(session.lastConnectedAt);
+    // An unreadable time is not proof of disuse.
+    return Number.isFinite(lastSeen) && now - lastSeen >= UNUSED_CLIENT_AFTER_MS;
+  });
+}
+
+export interface RevokeUnusedResult {
+  readonly revoked: number;
+  readonly failed: number;
+  /** Left alone: no longer unused by the time its turn came. */
+  readonly skipped: number;
+  /** The first failure's message, for the notice. */
+  readonly error: string | null;
+}
+
+/**
+ * Revokes a few at a time: one request per sign-in, since the server has no
+ * bulk call for a subset. `stillWanted` is asked right before each request.
+ */
+export async function revokeClientSessions<Id extends string>(
+  sessionIds: ReadonlyArray<Id>,
+  revoke: (sessionId: Id) => Promise<void>,
+  stillWanted: (sessionId: Id) => boolean = () => true,
+  concurrency = 4,
+): Promise<RevokeUnusedResult> {
+  let revoked = 0;
+  let failed = 0;
+  let skipped = 0;
+  let error: string | null = null;
+  let next = 0;
+  const worker = async () => {
+    while (next < sessionIds.length) {
+      const sessionId = sessionIds[next++]!;
+      if (!stillWanted(sessionId)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        await revoke(sessionId);
+        revoked += 1;
+      } catch (cause) {
+        failed += 1;
+        error ??= cause instanceof Error ? cause.message : "Could not revoke a sign-in.";
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, sessionIds.length)) }, worker),
+  );
+  return { revoked, failed, skipped, error };
+}
+
+/**
+ * Revoke unused, start to end. The owner confirms a number, so nothing beyond
+ * the sign-ins counted then is revoked, and each is checked against the newest
+ * list again before its request: a client that connects while the question is
+ * open, or while the others are being revoked, is left alone. Null when
+ * nothing was asked or the owner said no.
+ */
+export async function revokeUnusedClients<Id extends string>(input: {
+  /** The newest list; null while it is unknown. */
+  readonly sessions: () => ReadonlyArray<UnusedClientCandidate<Id>> | null;
+  readonly now: () => number;
+  readonly confirm: (count: number) => Promise<boolean>;
+  readonly revoke: (sessionId: Id) => Promise<void>;
+}): Promise<RevokeUnusedResult | null> {
+  const unusedNow = () =>
+    new Set(
+      unusedClientSessions(input.sessions() ?? [], input.now()).map((session) => session.sessionId),
+    );
+  const asked = [...unusedNow()];
+  if (asked.length === 0) return null;
+  if (!(await input.confirm(asked.length))) return null;
+  return revokeClientSessions(asked, input.revoke, (sessionId) => unusedNow().has(sessionId));
+}
+
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
 
 /**

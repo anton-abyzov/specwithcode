@@ -1563,10 +1563,10 @@ runpy.run_path(script, run_name='__main__')
         build = (HERE.parent / 'lib/studio-service-updater.ts').read_text()
         shipped = re.search(r'MAC_SERVICE_UPDATER_FILES = \[([^\]]*)\]', build).group(1)
         # migrate_home is its own entry point, shipped and installed beside the agent; service_hold,
-        # service_handles and its live_database are update_agent_pause's own imports.
+        # update_policy, service_handles and its live_database are update_agent_pause's own imports.
         self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)),
                          sorted(['update_agent', 'managed_updates', 'migrate_home', 'service_hold', 'service_handles',
-                                 'live_database', 'relay_ownership'] + imported))
+                                 'live_database', 'relay_ownership', 'update_policy'] + imported))
         self.assertEqual(imported, ['installation_descriptor', 'studio_paths', 'update_agent_cache', 'update_agent_pause',
                                     'update_agent_reap', 'update_agent_recovery', 'update_agent_run', 'update_request'])
 

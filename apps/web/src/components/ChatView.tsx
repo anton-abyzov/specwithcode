@@ -242,6 +242,7 @@ import { CHAT_LIST_ANCHOR_OFFSET } from "@specweave-studio/shared/chatList";
 import {
   deriveActiveRunWork,
   derivePendingBackgroundWork,
+  providerHostedBackgroundWork,
 } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -662,6 +663,8 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
+import { useBackgroundWorkBlockRecovery } from "./chat/BackgroundWorkBlockRecovery";
+import { pickerBackgroundWorkLabel } from "./chat/ModelPickerBackgroundWorkNote";
 import {
   QueuedRunsControl,
   type QueuedRunsControlHandle,
@@ -9002,9 +9005,9 @@ function useChatViewActions(
   const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
   const isStoppingBackgroundWork =
     stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
-  const handleStopBackgroundWork = useCallback(async () => {
+  const handleStopBackgroundWork = useCallback(async (): Promise<boolean> => {
     if (!activeThread || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
-      return;
+      return false;
     const requestKey = `${environmentId}:${activeThread.id}`;
     setStoppingBackgroundWorkKey(requestKey);
     const result = await interruptThreadTurn({
@@ -9022,7 +9025,9 @@ function useChatViewActions(
           error instanceof Error ? error.message : "Failed to stop background work.",
         );
       }
+      return false;
     }
+    return true;
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
   const onOpenRelatedThread = useCallback(
     (threadId: ThreadId) => {
@@ -9668,6 +9673,8 @@ function useChatViewActions(
     appCommandsOffered,
     autoEnvironmentLabel,
     backgroundWorkBannerItem,
+    handleStopBackgroundWork,
+    isStoppingBackgroundWork,
     beginEditingQueuedRun,
     branchRestoreConfirmOpen,
     canInterruptRunningThread,
@@ -10235,6 +10242,8 @@ export default function ChatView(props: ChatViewProps) {
     appCommandsOffered,
     autoEnvironmentLabel,
     backgroundWorkBannerItem,
+    handleStopBackgroundWork,
+    isStoppingBackgroundWork,
     beginEditingQueuedRun,
     branchRestoreConfirmOpen,
     canInterruptRunningThread,
@@ -10404,6 +10413,28 @@ export default function ChatView(props: ChatViewProps) {
     );
     return failedRun ? latestRootProviderFailureItem(failedRun, serverProjection!.turnItems) : null;
   }, [serverProjection, activeActivityRun?.runId]);
+  // A start that background work refused: while that work runs, stopping it
+  // and continuing is the one action, in the timeline and in the banner.
+  const continueRefusedRun = useCallback(
+    () => resumeForAppCommandRef.current(),
+    [resumeForAppCommandRef],
+  );
+  const backgroundWorkBlockRecovery = useBackgroundWorkBlockRecovery({
+    threadKey: activeThread ? `${environmentId}:${activeThread.id}` : null,
+    failureCode: latestFailureItem?.failure.code ?? null,
+    backgroundWorkRunning:
+      !isWorking && providerHostedBackgroundWork(chatViewState.pendingBackgroundTasks).length > 0,
+    enabled:
+      canOperateThread &&
+      isServerThread &&
+      !suspendChatInput &&
+      composerMounted &&
+      resumableRunId !== null &&
+      resumableRunId === latestFailureItem?.runId,
+    stopping: isStoppingBackgroundWork,
+    stopBackgroundWork: handleStopBackgroundWork,
+    continueRun: continueRefusedRun,
+  });
   const failureRecovery = useMemo(() => {
     if (!canOperateThread || !isServerThread || suspendChatInput || !composerMounted) {
       return undefined;
@@ -10416,6 +10447,7 @@ export default function ChatView(props: ChatViewProps) {
       onContinue: () => resumeForAppCommandRef.current(),
       continueBusy,
       onSwitchModel: () => composerRef.current?.openModelPicker(),
+      backgroundWorkBlock: backgroundWorkBlockRecovery,
     };
   }, [
     canOperateThread,
@@ -10427,6 +10459,7 @@ export default function ChatView(props: ChatViewProps) {
     resumeForAppCommandRef,
     continueBusy,
     composerRef,
+    backgroundWorkBlockRecovery,
   ]);
   const resolveActiveThread = useMemo(
     () =>
@@ -11094,6 +11127,10 @@ export default function ChatView(props: ChatViewProps) {
             autoApprove: limitRule.autoApproveSubscriptionChange !== false,
             runId: activeThreadShell.latestRun.runId,
             limitRecovery: activeThreadShell.limitRecovery,
+            resetAt: serverRuntime?.usageLimitResetAt,
+            stoppedAtMs: Date.parse(
+              activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
+            ),
             settledOverride: activeThreadShell.settledOverride,
             snoozedUntil: activeThreadShell.snoozedUntil,
             pendingRequest:
@@ -15619,6 +15656,11 @@ export default function ChatView(props: ChatViewProps) {
                     : undefined
                 }
                 continueBusy={continueBusy}
+                backgroundWorkBlockRecovery={
+                  localServerError === null && visibleThreadError === serverRuntimeError
+                    ? backgroundWorkBlockRecovery
+                    : undefined
+                }
                 onSwitchModel={failureRecovery?.onSwitchModel}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
@@ -15953,6 +15995,11 @@ export default function ChatView(props: ChatViewProps) {
                                 limitNextTurn={threadNextTurn}
                                 limitFallbackOrder={threadFallbackOrder}
                                 modelStateHeader={modelStateHeader}
+                                pickerBackgroundWork={pickerBackgroundWorkLabel({
+                                  driver: lockedProvider,
+                                  working: isWorking,
+                                  tasks: chatViewState.pendingBackgroundTasks,
+                                })}
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={
                                   serverConfig?.environment.capabilities

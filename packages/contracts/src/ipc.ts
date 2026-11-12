@@ -436,11 +436,17 @@ export interface PickFolderOptions {
   // project that lives inside WSL). Omitting it keeps the historical
   // behavior so non-WSL users never see a different picker.
   targetEnvironmentId?: string;
+  /** The dialog's title, where the system shows one. Says what the folder is for. */
+  title?: string;
+  /** The confirm button's words, naming what choosing does, instead of "Open". */
+  buttonLabel?: string;
 }
 
 export const PickFolderOptionsSchema = Schema.Struct({
   initialPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
   targetEnvironmentId: Schema.optionalKey(Schema.String),
+  title: Schema.optionalKey(Schema.String),
+  buttonLabel: Schema.optionalKey(Schema.String),
 });
 
 /**

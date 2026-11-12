@@ -114,7 +114,11 @@ import { isClaudeSessionId } from "../../provider/Drivers/ClaudeTranscriptTransf
 import { encodeClaudeProjectDir } from "../../usage/projectFolderSessions.ts";
 import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
-import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
+import {
+  compileClaudeModelSelection,
+  describeBackgroundWork,
+  describeDeferredClaudeSelection,
+} from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
@@ -169,7 +173,11 @@ import {
 import { withManualWorktreeGuard } from "../../provider/ManualWorktreeGuard.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
-import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+  redactProviderFailureText,
+} from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
@@ -458,6 +466,8 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
     // What needs a new process: the thread's model selection, or its
     // folders, permissions or tools (a project folder removed, a mode change).
     change: Schema.optional(Schema.Literals(["model", "settings", "model_and_settings"])),
+    // The work that process still runs, named (see describeBackgroundWork).
+    blockedBy: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
@@ -467,7 +477,7 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
         : this.change === "model_and_settings"
           ? "model, folder or permission change"
           : "model change";
-    return `Claude is still running background agents or commands, and this ${change} would end them. Wait for them to finish, or press Stop, then send the message again.`;
+    return `Claude is still running ${this.blockedBy ?? "background agents or commands"}, and this ${change} would end that work. Stop the background work to continue now, or wait until it finishes and press Continue.`;
   }
 }
 
@@ -3356,6 +3366,14 @@ interface ClaudeLiveQueryContext {
   readonly queryCoreBaseKey: string;
   readonly projectAdditionalDirectories: ReadonlyArray<string>;
   readonly selectionKey: string;
+  // The effort keyword this process's prompts carry (see promptEffort). A
+  // selection that waits for the next process keeps this one until then.
+  readonly openedPromptEffort: string | undefined;
+  // A model, effort or option change made while this process runs background
+  // work waits for the next process: the selection it waits with, and the
+  // note not yet shown for it.
+  deferredSelectionKey: string | null;
+  deferredSelectionNotice: string | null;
   readonly closed: Deferred.Deferred<void, never>;
   // Whether this CLI process echoes a prompt's uuid on the first frame of
   // the turn answering it ("early") or only on its result. Learned from the
@@ -7919,6 +7937,47 @@ export function makeClaudeAdapterV2(
           return false;
         });
 
+        // That same work, for the notes and refusals that name it.
+        const liveProcessBackgroundWork = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+        ) {
+          const work: Array<{
+            readonly kind: string;
+            readonly description?: string | null | undefined;
+          }> = Array.from(
+            rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              live.nativeThreadId,
+            ).values(),
+          );
+          const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
+          for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
+            if (
+              subagent.task.status === "running" &&
+              !live.subagentsFromEarlierProcesses.has(subagent) &&
+              !buffered.some(
+                (message) =>
+                  message.type === "system" &&
+                  message.subtype === "task_notification" &&
+                  message.task_id === taskId,
+              )
+            ) {
+              work.push({
+                kind: "subagent",
+                description: subagent.task.title ?? subagent.task.prompt,
+              });
+            }
+          }
+          // Provider-written names reach a note and an error message.
+          return describeBackgroundWork(
+            work.map(({ kind, description }) => ({
+              kind,
+              description:
+                description == null ? description : redactProviderFailureText(description),
+            })),
+          );
+        });
+
         // Subagents still running in the registry when a new process opens ran
         // in the process that is gone, which never reports their end. Each is
         // settled now, with its original run, so the run still ingesting for
@@ -8212,13 +8271,17 @@ export function makeClaudeAdapterV2(
               yield* existing.query.setPermissionMode(existing.openedPermissionMode);
               existing.permissionMode = existing.openedPermissionMode;
             }
+            existing.deferredSelectionKey = null;
+            existing.deferredSelectionNotice = null;
             yield* reconnectStudioMcp(existing);
             return existing;
           }
 
           // Background agents and shells run inside the CLI process, so a
-          // new selection would kill them and lose their results. Refuse until
-          // they finish or the user presses Stop, which closes the process.
+          // new process would kill them and lose their results. A new model,
+          // effort or option waits for them. A narrower permission, tool or
+          // folder set is refused until they finish or the user presses
+          // Stop, which closes the process.
           // Another native thread on this session is one the app thread has
           // left (Claude sessions serve one app thread), so it is replaced.
           if (
@@ -8232,7 +8295,9 @@ export function makeClaudeAdapterV2(
             // ones it started with, and the next process opened once the
             // background work is done uses the saved ones. Newly approved
             // project folders wait the same way (the process keeps less
-            // access than granted). Only a model, permission, tool or removed
+            // access than granted), and so does a new model, effort or model
+            // option: this turn runs on the process's selection and the next
+            // process takes the saved one. Only a permission, tool or removed
             // folder change needs a new process now.
             const onlyFoldersAdded =
               existing.queryCoreKey !== queryCoreKey &&
@@ -8240,10 +8305,22 @@ export function makeClaudeAdapterV2(
               existing.projectAdditionalDirectories.every((directory) =>
                 projectAdditionalDirectories.includes(directory),
               );
-            if (
-              (existing.queryCoreKey === queryCoreKey || onlyFoldersAdded) &&
-              existing.selectionKey === compiledSelection.queryIdentity
-            ) {
+            const modelChanged = existing.selectionKey !== compiledSelection.queryIdentity;
+            if (existing.queryCoreKey === queryCoreKey || onlyFoldersAdded) {
+              if (!modelChanged) {
+                existing.deferredSelectionKey = null;
+                existing.deferredSelectionNotice = null;
+              } else if (existing.deferredSelectionKey !== compiledSelection.queryIdentity) {
+                existing.deferredSelectionKey = compiledSelection.queryIdentity;
+                existing.deferredSelectionNotice = describeDeferredClaudeSelection(
+                  existing.selectionKey,
+                  compiledSelection.queryIdentity,
+                  yield* liveProcessBackgroundWork(existing),
+                );
+                yield* Effect.logInfo("claude.query.selection-deferred", {
+                  threadId: turnInput.threadId,
+                });
+              }
               if (onlyFoldersAdded) {
                 yield* Effect.logInfo("claude.query.folder-grant-deferred", {
                   threadId: turnInput.threadId,
@@ -8259,10 +8336,10 @@ export function makeClaudeAdapterV2(
               yield* reconnectStudioMcp(existing);
               return existing;
             }
-            const modelChanged = existing.selectionKey !== compiledSelection.queryIdentity;
-            const settingsChanged = existing.queryCoreKey !== queryCoreKey && !onlyFoldersAdded;
+            const blockedBy = (yield* liveProcessBackgroundWork(existing))?.label;
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError({
-              change: !modelChanged ? "settings" : settingsChanged ? "model_and_settings" : "model",
+              change: modelChanged ? "model_and_settings" : "settings",
+              ...(blockedBy === undefined ? {} : { blockedBy }),
             });
           }
 
@@ -8398,6 +8475,9 @@ export function makeClaudeAdapterV2(
             queryCoreBaseKey,
             projectAdditionalDirectories,
             selectionKey: compiledSelection.queryIdentity,
+            openedPromptEffort: compiledSelection.promptEffort,
+            deferredSelectionKey: null,
+            deferredSelectionNotice: null,
             closed,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
@@ -8592,25 +8672,37 @@ export function makeClaudeAdapterV2(
             // produced instead of prompting it again: drain the buffered wake
             // messages into this turn and let any still-streaming messages
             // follow live. The continuation prompt text never reaches the CLI.
-            const userMessage =
-              promptUuid === null
-                ? null
-                : yield* makeClaudeUserMessageWithAttachments({
-                    text: applyClaudePromptEffortPrefix(
-                      turnInput.message.text,
-                      compileClaudeModelSelection(
-                        turnInput.modelSelection,
-                        adapterOptions.modelCatalog?.(),
-                      ).promptEffort,
-                    ),
-                    attachments: turnInput.message.attachments,
-                    origin: claudeHumanMessageOrigin(turnInput.message),
-                    attachmentsDir,
-                    fileSystem,
-                    skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
-                    uuid: promptUuid,
-                  });
+            const selectedPromptEffort = compileClaudeModelSelection(
+              turnInput.modelSelection,
+              adapterOptions.modelCatalog?.(),
+            ).promptEffort;
+            const makeUserMessage = Effect.fnUntraced(function* (
+              uuid: NonNullable<typeof promptUuid>,
+              promptEffort: string | undefined,
+            ) {
+              return yield* makeClaudeUserMessageWithAttachments({
+                text: applyClaudePromptEffortPrefix(turnInput.message.text, promptEffort),
+                attachments: turnInput.message.attachments,
+                origin: claudeHumanMessageOrigin(turnInput.message),
+                attachmentsDir,
+                fileSystem,
+                skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
+                uuid,
+              });
+            });
+            // Built before the query opens, so a prompt that cannot be sent
+            // opens no process.
+            const selectedUserMessage =
+              promptUuid === null ? null : yield* makeUserMessage(promptUuid, selectedPromptEffort);
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            // A selection that waits for background work keeps the effort
+            // keyword its process opened with.
+            const userMessage =
+              promptUuid !== null &&
+              querySession.deferredSelectionKey !== null &&
+              querySession.openedPromptEffort !== selectedPromptEffort
+                ? yield* makeUserMessage(promptUuid, querySession.openedPromptEffort)
+                : selectedUserMessage;
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
               type: "provider_turn.updated",
@@ -8621,6 +8713,40 @@ export function makeClaudeAdapterV2(
                 completedAt: null,
               }),
             });
+            const deferredSelectionNotice = querySession.deferredSelectionNotice;
+            if (deferredSelectionNotice !== null) {
+              querySession.deferredSelectionNotice = null;
+              const nativeItemId = `selection-deferred:${providerTurnId}`;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: turnInput.threadId,
+                  runId: turnInput.runId,
+                  nodeId: turnInput.rootNodeId,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: nativeItemId,
+                    strength: "weak",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                  type: "system_notice",
+                  status: "completed",
+                  title: deferredSelectionNotice,
+                  message: deferredSelectionNotice,
+                  startedAt,
+                  completedAt: startedAt,
+                  updatedAt: startedAt,
+                },
+              });
+            }
             if (userMessage !== null) {
               // A user turn that races a wake leaves the buffer alone: the
               // continuation run the worker queued behind this run drains it
@@ -8857,10 +8983,12 @@ export function makeClaudeAdapterV2(
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
-                compileClaudeModelSelection(
-                  currentTurn.input.modelSelection,
-                  adapterOptions.modelCatalog?.(),
-                ).promptEffort,
+                existing.deferredSelectionKey !== null
+                  ? existing.openedPromptEffort
+                  : compileClaudeModelSelection(
+                      currentTurn.input.modelSelection,
+                      adapterOptions.modelCatalog?.(),
+                    ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
               origin: claudeHumanMessageOrigin(turnInput.message),

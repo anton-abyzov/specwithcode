@@ -205,6 +205,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       `/api/studio/fleet/workers/self-allow`. Absent on older servers: the
       coordinator asks the owner to add it there by hand. */
   fleetSelfAllowWorkers: Schema.optionalKey(Schema.Boolean),
+  /** Server adds a machine and allows its workers for a sign-in through this
+      account's SpecWithCode Connect at `/api/studio/fleet/workers/account-join`.
+      Absent on older servers: the other machine's owner uses a join line. */
+  fleetAccountJoinWorkers: Schema.optionalKey(Schema.Boolean),
   /** Server reports its disk room for a release at `/api/studio/fleet/disk-room`.
       Absent on older servers: the primary reports `unsupported`. */
   fleetDiskRoom: Schema.optionalKey(Schema.Boolean),
@@ -343,6 +347,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** A linked copy adopts its coordinator's member list (`projectLink.syncMembers`),
       so machines linked after it joined are members there too. Absent on older servers. */
   linkedMembersSync: Schema.optionalKey(Schema.Boolean),
+  /** Has the per-machine "Pause running work for updates" setting
+      (`pauseWorkForUpdates`). Absent on older servers, which drop the key and
+      still pause work after their wait, so clients show no value for them. */
+  updatePauseSetting: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

@@ -65,6 +65,8 @@ export function fakeMachine(
     readonly offline?: ReadonlySet<string>;
     /** Advertise DPoP and issue key-bound grants to token requests with a valid proof. */
     readonly dpop?: boolean;
+    /** What a management token holds here, as `/api/auth/session` reports it (default: not said). */
+    readonly permissions?: ReadonlyArray<string>;
   } = {},
 ) {
   const origins = overrides.origins ?? [ORIGIN];
@@ -200,6 +202,11 @@ export function fakeMachine(
           scope: "orchestration:read orchestration:operate",
         });
       }
+      case "/api/auth/session":
+        if (overrides.permissions === undefined) return json(404, {});
+        return managementAuthorized(headers, method, url)
+          ? json(200, { authenticated: true, permissions: overrides.permissions })
+          : json(401, {});
       case "/api/auth/clients":
         if (!managementAuthorized(headers, method, url)) return json(401, {});
         if (overrides.clientsStatus !== undefined)

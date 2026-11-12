@@ -1,5 +1,14 @@
 import * as Schema from "effect/Schema";
 
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+
+/**
+ * How every reader of the SpecWithCode Connect account asks Clerk for it. A
+ * pending session already has its account, so a choice made during one is
+ * saved for the same account the sign-in wizard later reads it for.
+ */
+export const CONNECT_ACCOUNT_AUTH = { treatPendingAsSignedOut: false } as const;
+
 /**
  * Accounts that opted out of the post-sign-in Studio Connect onboarding wizard
  * ("Don't show this again"). The wizard otherwise shows on every sign-in,
@@ -16,3 +25,118 @@ export type ConnectOnboardingOptOutState = typeof ConnectOnboardingOptOutSchema.
 export const EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE: ConnectOnboardingOptOutState = {
   optOutAccounts: [],
 };
+
+/**
+ * Accounts whose owner turned SpecWithCode Connect off on this machine. A
+ * sign-in turns Connect on by itself, and must never undo that choice.
+ */
+export const CONNECT_TURNED_OFF_STORAGE_KEY = "studio:connect-turned-off:v1";
+
+export const ConnectTurnedOffSchema = Schema.Struct({
+  accounts: Schema.Array(Schema.String),
+});
+
+export type ConnectTurnedOffState = typeof ConnectTurnedOffSchema.Type;
+
+export const EMPTY_CONNECT_TURNED_OFF_STATE: ConnectTurnedOffState = { accounts: [] };
+
+/**
+ * Whether the saved off choices can be read on this device. A value that is
+ * there but does not decode says nothing about what the owner chose, so a
+ * sign-in must not take it for "nobody turned Connect off".
+ */
+export function connectTurnedOffReadable(): boolean {
+  try {
+    getLocalStorageItem(CONNECT_TURNED_OFF_STORAGE_KEY, ConnectTurnedOffSchema);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Called when the owner sets the switch themselves. Saved choices that cannot
+ * be read are then replaced by this one choice, so a damaged value does not
+ * hold every later sign-in back for good. A sign-in never calls this: it
+ * leaves the stored value as it is. Returns whether it wrote.
+ */
+export function replaceUnreadableConnectChoices(account: string, on: boolean): boolean {
+  if (connectTurnedOffReadable()) return false;
+  try {
+    setLocalStorageItem(
+      CONNECT_TURNED_OFF_STORAGE_KEY,
+      withConnectChoice(EMPTY_CONNECT_TURNED_OFF_STATE, account, on),
+      ConnectTurnedOffSchema,
+    );
+    return true;
+  } catch {
+    // Storage that cannot be written holds no choice either; the sign-in stays held back.
+    return false;
+  }
+}
+
+/** The owner's latest choice for an account: off is remembered, on forgets it. */
+export function withConnectChoice(
+  state: ConnectTurnedOffState,
+  account: string,
+  on: boolean,
+): ConnectTurnedOffState {
+  const listed = state.accounts.includes(account);
+  if (on) {
+    return listed ? { accounts: state.accounts.filter((entry) => entry !== account) } : state;
+  }
+  return listed ? state : { accounts: [...state.accounts, account] };
+}
+
+export type ConnectAtSignIn = "wait" | "skip" | "turn-on";
+
+export interface ConnectAtSignInInput {
+  /** The account that just signed in during this session. */
+  readonly account: string;
+  /** The desktop app on the machine itself: the only client that runs its managed tunnel. */
+  readonly desktopApp: boolean;
+  /** The session's scopes and the link target are settled. */
+  readonly sessionKnown: boolean;
+  /** Relay read and write on this machine, with a link target to apply them to. */
+  readonly canManageLink: boolean;
+  /** This machine's Team rules have been read. */
+  readonly rulesKnown: boolean;
+  /** Team rules forbid reaching this machine over SpecWithCode Connect. */
+  readonly rulesLockConnect: boolean;
+  /** Null until the server's link state has been read. */
+  readonly linkState: { readonly linked: boolean } | null;
+  readonly linkStatePending: boolean;
+  readonly linkStateFailed: boolean;
+  /** The owner turned Connect off here for these accounts. */
+  readonly turnedOffAccounts: ReadonlyArray<string>;
+  /** The saved off choices are there but cannot be read (`connectTurnedOffReadable`). */
+  readonly turnedOffUnreadable: boolean;
+  /** These accounts chose "Don't show this again" on the wizard. */
+  readonly wizardOptOutAccounts: ReadonlyArray<string>;
+  /** The phone card is about to turn Connect on itself. */
+  readonly phoneCardPending: boolean;
+}
+
+/**
+ * Whether a sign-in that just completed turns SpecWithCode Connect on for this
+ * machine by itself. Only a machine that is not linked at all is turned on:
+ * a link the owner already shaped (tunnel off, another account) is theirs to
+ * change, as is a choice to turn it off or to stop hearing about it.
+ */
+export function connectAtSignIn(input: ConnectAtSignInInput): ConnectAtSignIn {
+  if (!input.desktopApp || input.phoneCardPending) return "skip";
+  // Fail closed: an unreadable choice may be an off choice, and turning Connect on is not undone by guessing.
+  if (input.turnedOffUnreadable) return "skip";
+  if (
+    input.turnedOffAccounts.includes(input.account) ||
+    input.wizardOptOutAccounts.includes(input.account)
+  ) {
+    return "skip";
+  }
+  if (!input.sessionKnown) return "wait";
+  if (!input.canManageLink) return "skip";
+  if (!input.rulesKnown) return "wait";
+  if (input.rulesLockConnect || input.linkStateFailed) return "skip";
+  if (input.linkState === null || input.linkStatePending) return "wait";
+  return input.linkState.linked ? "skip" : "turn-on";
+}

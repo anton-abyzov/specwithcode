@@ -9,6 +9,7 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -72,6 +73,8 @@ export const claudeSweepHarness = (input: {
   runInstance?: ProviderInstanceId;
   /** Earlier runs in the thread's records, such as the run a detour continued. */
   runs?: ReadonlyArray<Partial<OrchestrationV2ThreadProjection["runs"][number]>>;
+  /** Dispatches that fail without a receipt, as a busy thread's does; a retry may pass. */
+  fails?: (command: OrchestrationV2ServerCommand) => boolean;
   /** Commands the orchestrator rejects; a rejected id is rejected again on replay. */
   refuses?: (command: OrchestrationV2ServerCommand) => boolean;
   /**
@@ -82,6 +85,8 @@ export const claudeSweepHarness = (input: {
   refusesResume?: (command: OrchestrationV2ServerCommand) => boolean;
   /** Runs after a resume is built and before it is sent (the handoff check). */
   beforeSend?: (state: { current: ProjectionStore.ProjectionLimitRecoveryCandidate }) => void;
+  /** Every thread on the machine, as the shell snapshot lists them. */
+  shells?: () => ReadonlyArray<Partial<OrchestrationV2ThreadShell>>;
   /** More server settings, such as `autoApproveSubscriptionChange`. */
   settings?: Parameters<typeof Settings.layerTest>[0];
   /** What the native availability check answers; the default is a provider without one. */
@@ -97,6 +102,12 @@ export const claudeSweepHarness = (input: {
     commands: [] as OrchestrationV2ServerCommand[],
     /** The persisted handoff state keeps the thread from starting a turn here. */
     handoffBlocked: false,
+    /** The project is paused. */
+    projectPaused: false,
+    /** The project is archived. */
+    projectArchived: false,
+    /** Shell snapshot reads. */
+    snapshotReads: 0,
     /** A busy Codex process on the instance still holds the previous subscription. */
     replacementPending: false,
     /** The registry snapshot, replaced by each refresh. */
@@ -136,21 +147,34 @@ export const claudeSweepHarness = (input: {
             workspaceSettings: {
               ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
               autoResume: state.projectAutoResume,
+              paused: state.projectPaused,
+              archived: state.projectArchived,
             },
           } as ProjectStore.ProjectRow),
         ),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getLimitRecoveryCandidates: () => Effect.sync(() => [state.current]),
-      getThreadShell: () =>
-        Effect.sync(
-          () =>
-            ({
-              ...state.current,
-              projectId,
-              ...(input.pending ? { pendingRuntimeRequest: input.pending.summary } : {}),
-            }) as never,
-        ),
+      getShellSnapshot: () =>
+        Effect.sync(() => {
+          state.snapshotReads += 1;
+          return {
+            schemaVersion: 1,
+            snapshotSequence: 0,
+            threads: (input.shells?.() ?? []).map((shell) => ({ projectId, ...shell })),
+            archivedThreads: [],
+          } as never;
+        }),
+      getThreadShell: (threadId) =>
+        Effect.sync(() => {
+          const listed = input.shells?.().find((shell) => shell.id === threadId);
+          if (listed) return { projectId, ...listed } as never;
+          return {
+            ...state.current,
+            projectId,
+            ...(input.pending ? { pendingRuntimeRequest: input.pending.summary } : {}),
+          } as never;
+        }),
       getThreadProjection: (threadId) =>
         Effect.sync(
           () =>
@@ -183,6 +207,14 @@ export const claudeSweepHarness = (input: {
                   commandId: command.commandId,
                   commandType: command.type,
                   detail: "refused",
+                }),
+              );
+            if (input.fails?.(command))
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "busy",
                 }),
               );
             if (input.refuses?.(command)) {

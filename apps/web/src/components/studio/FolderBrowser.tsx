@@ -18,6 +18,8 @@ import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/file
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { cn } from "../../lib/utils";
+import { PathField } from "./PathField";
+import { cleanPastedPath, typedDirectory } from "./pathField.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   collapseCrumbs,
@@ -57,11 +59,135 @@ function errorText(error: unknown): string {
 
 const NO_PLACES: readonly FolderPlace[] = [];
 const NO_PROJECTS: readonly KnownProject[] = [];
+const NO_NAMES: readonly string[] = [];
 const PLACE_ICONS = { projects: FolderIcon, home: HouseIcon, recent: ClockIcon } as const;
 const ROW =
   "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm outline-none motion-safe:transition-colors";
 const TOOL =
   "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 motion-safe:transition-colors";
+
+/** Places to jump to beside a folder list: suggested folders, then recent ones. */
+export function FolderPlaces({
+  places,
+  currentPath,
+  disabled = false,
+  onOpen,
+}: {
+  readonly places: readonly FolderPlace[];
+  readonly currentPath: string | null;
+  readonly disabled?: boolean;
+  readonly onOpen: (path: string) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Places"
+      className="flex gap-0.5 overflow-x-auto border-b p-1.5 sm:flex-col sm:overflow-visible sm:border-r sm:border-b-0"
+    >
+      {places.map((place, index) => {
+        const Icon = PLACE_ICONS[place.kind];
+        const recent = place.kind === "recent";
+        const heading =
+          index === 0
+            ? recent
+              ? "Recent"
+              : "Suggested"
+            : recent && places[index - 1]!.kind !== "recent"
+              ? "Recent"
+              : null;
+        return (
+          <div key={`${place.kind}:${place.path}`} className="contents">
+            {heading ? (
+              <p className="hidden px-2 pt-1.5 pb-0.5 text-xs text-muted-foreground first:pt-0.5 sm:block">
+                {heading}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              disabled={disabled}
+              aria-current={
+                currentPath !== null && sameFolder(currentPath, place.path) ? "true" : undefined
+              }
+              onClick={() => onOpen(place.path)}
+              className={cn(
+                ROW,
+                "w-auto shrink-0 py-1 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring aria-[current=true]:bg-muted sm:w-full",
+              )}
+            >
+              <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="truncate">{place.label}</span>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The rows of a folder list, marking repositories and existing projects. The
+ * owner decides what selects a row: `onHover` is left out where the pointer
+ * must not change what Enter does.
+ */
+export function FolderRows({
+  listId,
+  entries,
+  active,
+  projects,
+  disabled = false,
+  onHover,
+  onOpen,
+}: {
+  readonly listId: string;
+  readonly entries: FolderListing["entries"];
+  readonly active: number | null;
+  readonly projects: readonly KnownProject[];
+  readonly disabled?: boolean;
+  readonly onHover?: (index: number) => void;
+  readonly onOpen: (path: string) => void;
+}) {
+  return entries.map((entry, index) => {
+    const project = projectAt(entry.fullPath, projects);
+    const Icon = project ? FolderCheckIcon : entry.kind === "git" ? FolderGit2Icon : FolderIcon;
+    return (
+      <button
+        type="button"
+        role="option"
+        id={`${listId}-${index}`}
+        data-row={index}
+        key={entry.fullPath}
+        tabIndex={-1}
+        aria-selected={index === active}
+        disabled={disabled}
+        onMouseEnter={onHover ? () => onHover(index) : undefined}
+        onClick={() => onOpen(entry.fullPath)}
+        className={cn(ROW, "group aria-selected:bg-muted", !onHover && "hover:bg-muted/50")}
+      >
+        <Icon
+          aria-hidden
+          className={cn(
+            "size-4 shrink-0",
+            project
+              ? "text-primary"
+              : entry.kind === "git"
+                ? "text-foreground"
+                : "text-muted-foreground",
+          )}
+        />
+        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+        {project || entry.kind === "git" ? (
+          <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">
+            {project ? `Project: ${project.title}` : "Git repository"}
+          </span>
+        ) : null}
+        <ChevronRightIcon
+          aria-hidden
+          className="size-3.5 shrink-0 text-muted-foreground opacity-0 group-aria-selected:opacity-100"
+        />
+      </button>
+    );
+  });
+}
 
 /**
  * Browses folders on one machine: a breadcrumb for where you are, places to
@@ -148,6 +274,16 @@ export function FolderBrowser({
   );
   const hiddenCount = entries.length - visible.length;
   const windows = currentPath !== null && /^[A-Za-z]:\\/.test(currentPath);
+  // A home under /Users is a Mac's, where names match whatever their case.
+  const machine = {
+    windows,
+    ignoresCase: windows || (homePath ?? currentPath ?? "").startsWith("/Users/"),
+  };
+  // Completion knows the folder being shown; a path typed elsewhere is opened as it is.
+  const draftNames = (typed: string) =>
+    currentPath !== null && sameFolder(typedDirectory(typed, windows) || "/", currentPath)
+      ? entries.map((entry) => entry.name)
+      : NO_NAMES;
 
   // Report the folder shown, and nothing while it is loading or unreadable, so
   // a stale folder is never taken for the choice.
@@ -271,38 +407,53 @@ export function FolderBrowser({
     <div
       data-slot="folder-browser"
       className="overflow-hidden rounded-lg border"
+      onPaste={(event) => {
+        if (disabled || event.target instanceof HTMLInputElement) return;
+        const pasted = cleanPastedPath(event.clipboardData.getData("text"), machine);
+        if (pasted.length === 0) return;
+        event.preventDefault();
+        setPathDraft(pasted);
+      }}
       onKeyDown={(event) => {
         if (event.key !== "Escape") event.stopPropagation();
       }}
     >
       <div className="flex min-h-10 items-center gap-1 border-b px-2 py-1.5">
         {pathDraft !== null ? (
-          <input
+          <PathField
             autoFocus
             aria-label="Folder path"
-            className="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={pathDraft}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
+            names={draftNames}
+            machine={machine}
             disabled={disabled}
-            onChange={(event) => setPathDraft(event.target.value)}
-            onBlur={() => setPathDraft(null)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && pathDraft.trim()) {
-                event.preventDefault();
-                open(pathDraft.trim());
-              } else if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
+            onChange={setPathDraft}
+            // Leaving an edited path keeps it; an untouched one turns back into the breadcrumb.
+            onBlur={() => {
+              if (sameFolder(pathDraft.trim() || "/", currentPath ?? browsePath))
                 setPathDraft(null);
-                listRef.current?.focus();
-              }
+            }}
+            onSubmit={(path) => open(path)}
+            onCancel={() => {
+              setPathDraft(null);
+              listRef.current?.focus();
             }}
           />
         ) : (
-          <nav aria-label={`Current folder${onMachine}`} className="flex min-w-0 flex-1">
-            <ol className={cn("flex min-w-0 items-center", expandedCrumbs && "flex-wrap")}>
+          <nav
+            aria-label={`Current folder${onMachine}`}
+            className="flex min-w-0 flex-1 cursor-text self-stretch"
+            onClick={(event) => {
+              if (event.target !== event.currentTarget || disabled || !access.canReadFiles) return;
+              setPathDraft(currentPath ?? browsePath);
+            }}
+          >
+            <ol
+              className={cn(
+                "flex min-w-0 cursor-default items-center",
+                expandedCrumbs && "flex-wrap",
+              )}
+            >
               {head.map((crumb, index) =>
                 crumbButton(crumb, hidden.length === 0 && index === head.length - 1),
               )}
@@ -389,50 +540,12 @@ export function FolderBrowser({
       </div>
       <div className={cn("grid", places.length > 0 && "sm:grid-cols-[10.5rem_1fr]")}>
         {places.length > 0 ? (
-          <div
-            role="group"
-            aria-label="Places"
-            className="flex gap-0.5 overflow-x-auto border-b p-1.5 sm:flex-col sm:overflow-visible sm:border-r sm:border-b-0"
-          >
-            {places.map((place, index) => {
-              const Icon = PLACE_ICONS[place.kind];
-              const recent = place.kind === "recent";
-              const heading =
-                index === 0
-                  ? recent
-                    ? "Recent"
-                    : "Suggested"
-                  : recent && places[index - 1]!.kind !== "recent"
-                    ? "Recent"
-                    : null;
-              return (
-                <div key={`${place.kind}:${place.path}`} className="contents">
-                  {heading ? (
-                    <p className="hidden px-2 pt-1.5 pb-0.5 text-xs text-muted-foreground first:pt-0.5 sm:block">
-                      {heading}
-                    </p>
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    aria-current={
-                      currentPath !== null && sameFolder(currentPath, place.path)
-                        ? "true"
-                        : undefined
-                    }
-                    onClick={() => open(place.path)}
-                    className={cn(
-                      ROW,
-                      "w-auto shrink-0 py-1 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring aria-[current=true]:bg-muted sm:w-full",
-                    )}
-                  >
-                    <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="truncate">{place.label}</span>
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+          <FolderPlaces
+            places={places}
+            currentPath={currentPath}
+            disabled={disabled}
+            onOpen={(path) => open(path)}
+          />
         ) : null}
         <div className="h-52 overflow-y-auto overscroll-contain p-1.5">
           {!access.canReadFiles && !access.isPending && !access.error ? (
@@ -554,51 +667,15 @@ export function FolderBrowser({
               data-folder-enter={direction ?? undefined}
               className="flex flex-col gap-px"
             >
-              {(loaded ? visible : []).map((entry, index) => {
-                const project = projectAt(entry.fullPath, projects);
-                const Icon = project
-                  ? FolderCheckIcon
-                  : entry.kind === "git"
-                    ? FolderGit2Icon
-                    : FolderIcon;
-                return (
-                  <button
-                    type="button"
-                    role="option"
-                    id={`${listId}-${index}`}
-                    data-row={index}
-                    key={entry.fullPath}
-                    tabIndex={-1}
-                    aria-selected={index === active}
-                    disabled={disabled}
-                    onMouseEnter={() => setActive(index)}
-                    onClick={() => open(entry.fullPath, "forward")}
-                    className={cn(ROW, "group aria-selected:bg-muted")}
-                  >
-                    <Icon
-                      aria-hidden
-                      className={cn(
-                        "size-4 shrink-0",
-                        project
-                          ? "text-primary"
-                          : entry.kind === "git"
-                            ? "text-foreground"
-                            : "text-muted-foreground",
-                      )}
-                    />
-                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                    {project || entry.kind === "git" ? (
-                      <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">
-                        {project ? `Project: ${project.title}` : "Git repository"}
-                      </span>
-                    ) : null}
-                    <ChevronRightIcon
-                      aria-hidden
-                      className="size-3.5 shrink-0 text-muted-foreground opacity-0 group-aria-selected:opacity-100"
-                    />
-                  </button>
-                );
-              })}
+              <FolderRows
+                listId={listId}
+                entries={loaded ? visible : []}
+                active={active}
+                projects={projects}
+                disabled={disabled}
+                onHover={setActive}
+                onOpen={(path) => open(path, "forward")}
+              />
             </div>
           </div>
           {loaded && visible.length === 0 && newName === null ? (

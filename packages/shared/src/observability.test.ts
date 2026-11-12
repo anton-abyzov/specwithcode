@@ -21,13 +21,16 @@ import {
   causeErrorTag,
   compactTraceAttributes,
   decodeOtlpTraceRecords,
+  DEFAULT_TRACE_SAMPLING,
   errorTag,
+  isTraceRecordAlwaysKept,
   makeLocalFileTracer,
   makeTraceSink,
   type EffectTraceRecord,
   type TraceRecord,
   type TraceSinkFlushStats,
   OtlpHeadersFromString,
+  TRACE_SAMPLING_SUMMARY_SPAN,
   truncateTraceAttributes,
 } from "./observability.ts";
 
@@ -856,5 +859,226 @@ describe("OtlpHeadersFromString", () => {
     { name: "rejects a malformed percent-encoding", input: "authorization=%E0" },
   ])("$name", ({ input }) => {
     expect(() => decode(input)).toThrow();
+  });
+});
+
+describe("trace sampling", () => {
+  const fast = (name: string, suffix = ""): EffectTraceRecord =>
+    makeRecord(name, suffix) as EffectTraceRecord;
+  const slowMs = DEFAULT_TRACE_SAMPLING.slowMs;
+
+  it("always keeps failures, slow spans, flagged events and lifecycle spans", () => {
+    const kept: ReadonlyArray<TraceRecord> = [
+      { ...fast("sql.execute"), exit: { _tag: "Failure", cause: "boom" } },
+      { ...fast("sql.execute"), exit: { _tag: "Interrupted", cause: "interrupted" } },
+      { ...fast("sql.execute"), durationMs: slowMs },
+      {
+        ...fast("sql.transaction"),
+        events: [
+          { name: "db.transaction.commit", timeUnixNano: "2", attributes: {} },
+          { name: "sqlite.slow_statement", timeUnixNano: "2", attributes: {} },
+        ],
+      },
+      {
+        ...fast("EnvironmentRpc.request"),
+        events: [{ name: "exception", timeUnixNano: "2", attributes: {} }],
+      },
+      {
+        ...fast("ProjectService.hydrate"),
+        events: [
+          { name: "slow read", timeUnixNano: "2", attributes: { "effect.logLevel": "WARN" } },
+        ],
+      },
+      fast("ws.rpc.server.prepareServiceUpdate"),
+      fast("desktop.updates.restartStep"),
+      fast("cli.update.install"),
+      fast("server.startup.heartbeat"),
+      fast("ProviderSessionManagerV2.release"),
+      fast("orchestrationV2.providerTurnStart.start"),
+      fast("readServerReleaseSourceCommit"),
+      {
+        type: "otlp-span",
+        name: "client.render",
+        traceId: "trace",
+        spanId: "span",
+        sampled: true,
+        kind: "internal",
+        startTimeUnixNano: "1",
+        endTimeUnixNano: "2",
+        durationMs: 1,
+        attributes: {},
+        resourceAttributes: {},
+        scope: { attributes: {} },
+        events: [],
+        links: [],
+        status: { code: "2" },
+      },
+    ];
+    for (const record of kept) {
+      assert.isTrue(isTraceRecordAlwaysKept(record, slowMs), record.name);
+    }
+
+    const sampled: ReadonlyArray<TraceRecord> = [
+      fast("sql.execute"),
+      { ...fast("sql.execute"), durationMs: slowMs - 1 },
+      {
+        ...fast("sql.transaction"),
+        events: [{ name: "db.transaction.commit", timeUnixNano: "2", attributes: {} }],
+      },
+      fast("ProviderFallbackWorker.refreshStaleTargets"),
+      fast("ThreadSettlementServiceV2.settleThread"),
+      fast("WorktreeOwnership.canonicalPath"),
+    ];
+    for (const record of sampled) {
+      assert.isFalse(isTraceRecordAlwaysKept(record, slowMs), record.name);
+    }
+  });
+
+  nodeServicesIt("node services", (it) => {
+    const makeSamplingSink = Effect.fn("makeSamplingSink")(function* (
+      sampling: typeof DEFAULT_TRACE_SAMPLING | undefined,
+    ) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-trace-sampling-",
+      });
+      const tracePath = path.join(tempDir, "shared.trace.ndjson");
+      const sink = yield* makeTraceSink({
+        filePath: tracePath,
+        maxBytes: 4 * 1024 * 1024,
+        maxFiles: 2,
+        batchWindowMs: 1_000,
+        sampling,
+      });
+      return { sink, tracePath };
+    });
+
+    it.effect("writes a burst, then one in fifty, per span name and window", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { sink, tracePath } = yield* makeSamplingSink(DEFAULT_TRACE_SAMPLING);
+          for (let index = 0; index < 205; index += 1) {
+            sink.push(fast("sql.execute", String(index)));
+          }
+          for (let index = 0; index < 3; index += 1) {
+            sink.push(fast("rare.span", String(index)));
+          }
+          sink.push({ ...fast("sql.execute", "failed"), exit: { _tag: "Failure", cause: "x" } });
+          sink.push({ ...fast("sql.execute", "slow"), durationMs: 900 });
+          yield* sink.flush;
+
+          const first = yield* readTraceRecords(tracePath);
+          const payloads = (name: string) =>
+            first.filter((line) => line.name === name).map((line) => line.attributes["payload"]);
+          // Five in the burst, then every fiftieth of the 200 after it.
+          assert.deepStrictEqual(payloads("sql.execute"), [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "54",
+            "104",
+            "154",
+            "204",
+            "failed",
+            "slow",
+          ]);
+          assert.deepStrictEqual(payloads("rare.span"), ["0", "1", "2"]);
+          assert.isFalse(first.some((line) => line.name === TRACE_SAMPLING_SUMMARY_SPAN));
+
+          // The window ends: its summary carries what was left out, and the
+          // next window starts with a fresh burst.
+          yield* TestClock.adjust(DEFAULT_TRACE_SAMPLING.windowMs);
+          sink.push(fast("sql.execute", "next-window"));
+          yield* sink.flush;
+          const second = yield* readTraceRecords(tracePath);
+          const summaries = second.filter((line) => line.name === TRACE_SAMPLING_SUMMARY_SPAN);
+          assert.equal(summaries.length, 1);
+          assert.equal(summaries[0]?.attributes["sampling.dropped_total"], 196);
+          assert.deepStrictEqual(summaries[0]?.attributes["sampling.dropped"], {
+            "sql.execute": [196, 196],
+          });
+          assert.equal(summaries[0]?.attributes["sampling.rate"], 50);
+          assert.equal(second.at(-1)?.attributes["payload"], "next-window");
+        }),
+      ),
+    );
+
+    it.effect("writes the open window's summary when the sink closes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { sink, tracePath } = yield* makeSamplingSink(DEFAULT_TRACE_SAMPLING);
+          for (let index = 0; index < 10; index += 1) {
+            sink.push(fast("loop.span", String(index)));
+          }
+          yield* sink.close();
+          const lines = yield* readTraceRecords(tracePath);
+          assert.equal(lines.filter((line) => line.name === "loop.span").length, 5);
+          assert.deepStrictEqual(lines.at(-1)?.attributes["sampling.dropped"], {
+            "loop.span": [5, 5],
+          });
+        }),
+      ),
+    );
+
+    it.effect("writes every record without sampling or at a rate of one", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          for (const sampling of [undefined, { ...DEFAULT_TRACE_SAMPLING, rate: 1 }]) {
+            const { sink, tracePath } = yield* makeSamplingSink(sampling);
+            for (let index = 0; index < 120; index += 1) {
+              sink.push(fast("sql.execute", String(index)));
+            }
+            yield* sink.close();
+            assert.equal((yield* readTraceRecords(tracePath)).length, 120);
+          }
+        }),
+      ),
+    );
+
+    it.effect("keeps a slow parent and still exports every span to the delegate", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { sink, tracePath } = yield* makeSamplingSink(DEFAULT_TRACE_SAMPLING);
+          const exported: Array<string> = [];
+          const tracer = yield* makeLocalFileTracer({
+            filePath: tracePath,
+            maxBytes: 4 * 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 1_000,
+            sink,
+            delegate: Tracer.make({
+              span: (options) => {
+                exported.push(options.name);
+                return new Tracer.NativeSpan(options);
+              },
+            }),
+          });
+
+          yield* Effect.gen(function* () {
+            for (let index = 0; index < 60; index += 1) {
+              yield* Effect.void.pipe(Effect.withSpan("child.step"));
+            }
+            yield* TestClock.adjust(DEFAULT_TRACE_SAMPLING.slowMs);
+          }).pipe(Effect.withSpan("slow.parent"), Effect.provideService(Tracer.Tracer, tracer));
+          yield* sink.flush;
+
+          const lines = yield* readTraceRecords(tracePath);
+          const parent = lines.find((line) => line.name === "slow.parent");
+          assert.isDefined(parent);
+          const children = lines.filter((line) => line.name === "child.step");
+          // Five in the burst and the fiftieth after it, each still naming its parent.
+          assert.equal(children.length, 6);
+          for (const child of children) {
+            assert.equal(child.parentSpanId, parent?.spanId);
+          }
+          // The delegate, which is what OTLP export reads, saw all of them.
+          assert.equal(exported.filter((name) => name === "child.step").length, 60);
+          assert.equal(exported.filter((name) => name === "slow.parent").length, 1);
+        }),
+      ),
+    );
   });
 });

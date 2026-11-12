@@ -960,9 +960,11 @@ export const makeSweep = Effect.gen(function* () {
       { readonly next: number; readonly failures: number; readonly lastFailureAt: number }
     >(),
   );
+  const originKeyOf = (thread: FallbackThread) =>
+    `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}:${thread.modelSelection.model}`;
   // Whether this thread, as given, has a way back to send. Reads only the
   // thread's runs, once per latest run and selection; never the current shell.
-  const apiCreditReturnPlan = Effect.fn("ProviderFallbackWorker.apiCreditReturnPlan")(function* (
+  const planApiCreditReturn = Effect.fn("ProviderFallbackWorker.apiCreditReturnPlan")(function* (
     thread: FallbackThread,
     providers: ReadonlyArray<ServerProvider>,
     nowMs: number,
@@ -975,7 +977,7 @@ export const makeSweep = Effect.gen(function* () {
     const apiCredits = isClaudeApiKeyProvider(
       providers.find((provider) => provider.instanceId === thread.providerInstanceId),
     );
-    const key = `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}:${thread.modelSelection.model}`;
+    const key = originKeyOf(thread);
     let origin = (yield* Ref.get(origins)).get(key);
     // A pre-switch since this was cached is read again (1075): one onto a
     // model the person had picked before with the same latest run, or one from
@@ -1104,6 +1106,21 @@ export const makeSweep = Effect.gen(function* () {
     if (command === null) return null;
     return { ...way, command, tries, originKey: key };
   });
+  // Nearly every swept thread has no run, or a cached answer that it has no
+  // way back. Those are answered here, without a span for each thread.
+  const apiCreditReturnPlan = (
+    thread: FallbackThread,
+    providers: ReadonlyArray<ServerProvider>,
+    nowMs: number,
+    ruleOn: boolean,
+    rule: ProviderFallbackRule,
+  ) =>
+    Effect.flatMap(Ref.get(origins), (cached) =>
+      thread.latestRunId === null ||
+      (cached.get(originKeyOf(thread)) === null && thread.modelIdentity?.preswitched !== true)
+        ? Effect.succeed(null)
+        : planApiCreditReturn(thread, providers, nowMs, ruleOn, rule),
+    );
   // A pre-switch origin is cached until its way back goes out or a newer
   // pre-switch replaces it: the same idle thread can pre-switch to the same
   // model again with no run between (1075).
@@ -1286,20 +1303,12 @@ export const makeSweep = Effect.gen(function* () {
   const unreportedStops = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   /** When each of those holds' latest limit stop happened (see `releaseRecoveredHolds`). */
   const unreportedStopsSince = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-  const refreshStaleTargets = Effect.fn("ProviderFallbackWorker.refreshStaleTargets")(function* (
+  const readStaleTargets = Effect.fn("ProviderFallbackWorker.refreshStaleTargets")(function* (
     thread: FallbackThread,
     candidates: ReadonlyArray<ServerProvider>,
     rule: ProviderFallbackRule,
     nowMs: number,
-    unopenable: UnopenableStop | null = null,
   ) {
-    const stopped =
-      unopenable !== null
-        ? unopenableStopIsLive(thread, unopenable, nowMs)
-        : stoppedOnLimit(thread) &&
-          !waitsForReset(thread, rule, nowMs) &&
-          limitStopIsCurrent(thread, nowMs);
-    if (rule.providerLimitAction !== "switch" || !stopped) return false;
     const readAt = yield* Ref.get(targetReads);
     const recentlyRead = (provider: ServerProvider) =>
       nowMs - (readAt.get(provider.instanceId) ?? -Infinity) < FALLBACK_USAGE_MAX_AGE_MS;
@@ -1360,6 +1369,24 @@ export const makeSweep = Effect.gen(function* () {
     });
     return true;
   });
+  // Only a thread stopped under the `switch` rule has targets to read; every
+  // other swept thread is answered here, without a span for each one.
+  const refreshStaleTargets = (
+    thread: FallbackThread,
+    candidates: ReadonlyArray<ServerProvider>,
+    rule: ProviderFallbackRule,
+    nowMs: number,
+    unopenable: UnopenableStop | null = null,
+  ) => {
+    if (rule.providerLimitAction !== "switch") return Effect.succeed(false);
+    const stopped =
+      unopenable !== null
+        ? unopenableStopIsLive(thread, unopenable, nowMs)
+        : stoppedOnLimit(thread) &&
+          !waitsForReset(thread, rule, nowMs) &&
+          limitStopIsCurrent(thread, nowMs);
+    return stopped ? readStaleTargets(thread, candidates, rule, nowMs) : Effect.succeed(false);
+  };
   // refreshStaleTargets skips providers that report no usage, so a cached
   // "ready" for one (an ACP agent whose registry moved past the prepared
   // version) would take every fallback. The target is read once more first.

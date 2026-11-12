@@ -8,7 +8,6 @@ import {
 import type { Project, Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
-  buildBrowseGroups,
   collapseRestartedBrowsePath,
   buildCommandPaletteProjectMetadata,
   buildCommandPaletteRows,
@@ -16,7 +15,6 @@ import {
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   enumerateCommandPaletteItems,
-  filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   findHighlightedCommandPaletteItem,
   personalAssistantActionOffered,
@@ -736,122 +734,6 @@ describe("buildThreadActionItems", () => {
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
   });
-});
-
-describe("buildBrowseGroups", () => {
-  it("waits for asynchronous browse navigation actions", async () => {
-    let finishNavigation: (() => void) | undefined;
-    const browseTo = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishNavigation = resolve;
-        }),
-    );
-    const groups = buildBrowseGroups({
-      browseEntries: [{ name: "Downloads", fullPath: "/Users/test/Downloads" }],
-      browseQuery: "~/",
-      canBrowseUp: false,
-      upIcon: null,
-      directoryIcon: null,
-      browseUp: vi.fn(),
-      browseTo,
-    });
-    const item = groups[0]?.items[0];
-    if (!item || item.kind !== "action") {
-      throw new Error("Expected a browse action");
-    }
-
-    let actionSettled = false;
-    const action = item.run().then(() => {
-      actionSettled = true;
-    });
-    await Promise.resolve();
-
-    expect(browseTo).toHaveBeenCalledWith("Downloads");
-    expect(actionSettled).toBe(false);
-
-    finishNavigation?.();
-    await action;
-    expect(actionSettled).toBe(true);
-  });
-});
-
-describe("filterPinnedBrowseEntries", () => {
-  const entries = [
-    { name: "repo", fullPath: "/projects/repo" },
-    { name: "work", fullPath: "/projects/work" },
-  ];
-
-  it("shows sibling folders without losing an existing pinned destination", () => {
-    expect(
-      filterPinnedBrowseEntries({
-        browseEntries: entries,
-        filterQuery: "repo",
-        pinnedDirectoryName: "repo",
-        caseSensitive: true,
-      }),
-    ).toEqual({ visibleEntries: entries, exactEntry: entries[0] });
-  });
-
-  it("matches an existing pinned destination without Windows casing", () => {
-    const windowsEntries = [
-      { name: "Repo", fullPath: "C:\\projects\\Repo" },
-      { name: "work", fullPath: "C:\\projects\\work" },
-    ];
-    expect(
-      filterPinnedBrowseEntries({
-        browseEntries: windowsEntries,
-        filterQuery: "repo",
-        pinnedDirectoryName: "repo",
-        caseSensitive: false,
-      }),
-    ).toEqual({
-      visibleEntries: windowsEntries,
-      exactEntry: windowsEntries[0],
-    });
-  });
-});
-
-it.each([
-  "#10839",
-  "10839",
-  "anton-abyzov/specwithcode#10839",
-  "https://github.com/anton-abyzov/specwithcode/pull/10839",
-])("finds linked threads from PR query %s", (query) => {
-  const items = buildThreadActionItems({
-    threads: [
-      makeThread({
-        title: "Implementation",
-        pullRequests: [
-          {
-            host: "github.com",
-            repository: "anton-abyzov/specwithcode",
-            number: 10839,
-            url: "https://github.com/anton-abyzov/specwithcode/pull/10839",
-            source: "manual",
-            linkedAt: "2026-09-08T00:00:00Z",
-            snapshot: null,
-            stack: null,
-          },
-        ],
-      }),
-      makeThread({ id: ThreadId.make("unrelated"), title: "Other work" }),
-    ],
-    projectTitleById: new Map(),
-    sortOrder: "updated_at",
-    icon: null,
-    runThread: async () => undefined,
-  });
-  const groups = filterCommandPaletteGroups({
-    activeGroups: [],
-    query,
-    isInSubmenu: false,
-    projectSearchItems: [],
-    threadSearchItems: items,
-  });
-  expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
-    "Implementation",
-  ]);
 });
 
 describe("filterCommandPaletteGroups", () => {

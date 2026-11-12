@@ -11,6 +11,7 @@ import {
   CONTEXT_HANDOFF_TOO_LARGE_MESSAGE,
   LEGACY_GENERIC_PROVIDER_FAILURE_MESSAGE,
   LIVE_THREAD_ERROR_WINDOW_MS,
+  BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE,
   LOCAL_STORAGE_FAILURE_CODE,
   LOCAL_STORAGE_FAILURE_MESSAGE,
   PREVIOUS_TURN_ACTIVE_FAILURE_CODE,
@@ -208,6 +209,16 @@ describe("resumableRunId", () => {
         lastErrorClass: "provider_error",
       }),
     ).toBe("run:29");
+  });
+
+  it("continues and names a start that background work refused", () => {
+    const refusal = {
+      class: "provider_error",
+      code: BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE,
+      message: 'Claude is still running subagent "Review", and this folder or permission change…',
+    } as const;
+    expect(resumableRunId({ ...failed(refusal), lastErrorClass: "provider_error" })).toBe("run:29");
+    expect(providerFailureDisplayTitle(refusal)).toBe("Background work is still running");
   });
 
   it("continues provider errors and unclassified failures", () => {

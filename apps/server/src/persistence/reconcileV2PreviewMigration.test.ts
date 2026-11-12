@@ -54,6 +54,7 @@ describe("V2 preview upgrade", () => {
         [71, "HotReadPartialIndexes"],
         [72, "RetentionHorizon"],
         [73, "TeamRulesRecords"],
+        [74, "ShellReadIndexes"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -150,6 +151,7 @@ describe("V2 preview upgrade", () => {
         [71, "HotReadPartialIndexes"],
         [72, "RetentionHorizon"],
         [73, "TeamRulesRecords"],
+        [74, "ShellReadIndexes"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

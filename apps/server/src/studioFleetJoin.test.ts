@@ -551,6 +551,47 @@ describe("adding machines to the fleet file", () => {
     await expect(NodeFSP.stat(join(baseDir, "studio-fleet.json"))).rejects.toThrow();
   });
 
+  it("saves access management for a machine of the owner's account, so its grant renews", async () => {
+    const baseDir = await home();
+    await addFleetMachine({
+      baseDir,
+      code: encodeFleetJoinCode(invite()),
+      fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }),
+      renewWorkers: true,
+    });
+    const saved = (await readFleetConfig(baseDir))?.machines[0];
+    expect(saved?.scopes).toEqual([...AuthStandardClientScopes, AuthAccessWriteScope]);
+    // Asked for again on a machine already listed, its saved scopes gain it once.
+    await addFleetMachine({
+      baseDir,
+      code: encodeFleetJoinCode(invite()),
+      fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }),
+      renewWorkers: true,
+    });
+    expect((await readFleetConfig(baseDir))?.machines[0]?.scopes).toEqual([
+      ...AuthStandardClientScopes,
+      AuthAccessWriteScope,
+    ]);
+  });
+
+  it("leaves the scopes alone without the ask, without the token's word, or for a limited token", async () => {
+    const standard = [...AuthStandardClientScopes];
+    for (const [options, tokenScopes] of [
+      [{}, undefined],
+      [{ renewWorkers: true }, "unsupported"],
+      [{ renewWorkers: true }, standard],
+    ] as const) {
+      const baseDir = await home();
+      await addFleetMachine({
+        baseDir,
+        code: encodeFleetJoinCode(invite()),
+        fetcher: fetcher({ "https://m1.fixture.ts.net": "environment-m1" }, tokenScopes),
+        ...options,
+      });
+      expect((await readFleetConfig(baseDir))?.machines[0]?.scopes).toEqual(standard);
+    }
+  });
+
   it("adds a machine whose server does not report its token's scopes", async () => {
     const baseDir = await home();
     const added = await addFleetMachine({

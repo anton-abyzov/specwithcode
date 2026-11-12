@@ -340,7 +340,7 @@ export const en = {
     "When the usage that reached the limit or the threshold resets within this time, nothing switches, redeems or spends: the thread waits and resumes on the same provider at the reset. A weekly window that is also full keeps the wait from applying.",
   "limitSettings.subscription.title": "Continue on a new subscription automatically",
   "limitSettings.subscription.description":
-    "When a thread with auto-continue on is waiting on a limit and its CLI is signed in to another subscription that has room, continue the thread there without asking. Off, or with auto-continue off: the thread shows the change and waits for you to confirm it. The provider and model stay the same.",
+    "When a thread is waiting on a usage limit and its CLI is signed in to another subscription that has room, continue the thread there without asking, whether or not auto-continue is on. A thread whose last report was blocked on a usage limit is told about the change too. A thread you stopped stays stopped. Off: the thread shows the change and waits for you to confirm it. The provider and model stay the same.",
   "limitSettings.redeem.title": "Redeem a banked reset first",
   "limitSettings.redeem.description":
     "When a turn stops on the limit and a fresh usage read confirms the account is at it, use one of the account's banked resets (Claude and Codex grant them) and continue on the same provider before any fallback. At most one per limit window, never while limits are simulated.",

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Plain temp folders shaped like a version manager's home.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -75,12 +76,18 @@ describe("nodeToolDirs", () => {
       const home = yield* Effect.promise(tempHome);
       const versions = NodePath.join(home, ".nvm", "versions", "node");
       const alias = NodePath.join(home, ".nvm", "alias");
+      // nvm's `lts/*` alias is a file named `*`, which Windows cannot hold (and nvm
+      // does not run there), so a Windows host starts the chain one hop later.
+      const starAlias = HostProcessPlatform.defaultValue() !== "win32";
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(NodePath.join(versions, "v22.20.0", "bin"), { recursive: true });
         await NodeFSP.mkdir(NodePath.join(versions, "v25.1.0", "bin"), { recursive: true });
         await NodeFSP.mkdir(NodePath.join(alias, "lts"), { recursive: true });
-        await NodeFSP.writeFile(NodePath.join(alias, "default"), "lts/*\n");
-        await NodeFSP.writeFile(NodePath.join(alias, "lts", "*"), "lts/jod\n");
+        await NodeFSP.writeFile(
+          NodePath.join(alias, "default"),
+          starAlias ? "lts/*\n" : "lts/jod\n",
+        );
+        if (starAlias) await NodeFSP.writeFile(NodePath.join(alias, "lts", "*"), "lts/jod\n");
         await NodeFSP.writeFile(NodePath.join(alias, "lts", "jod"), "v22.20.0\n");
       });
 

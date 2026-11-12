@@ -49,6 +49,7 @@ import {
 } from "@specweave-studio/shared/git";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { makeProjectExclusionFilter } from "./AgentSessionScannerExclusions.ts";
+import { humanPromptText, humanPromptTitle } from "./AgentSessionPrompt.ts";
 import { findClaudeSessionFile, findCodexSessionFile } from "./nativeSessionFiles.ts";
 import { normalizeProjectPathForComparison } from "@specweave-studio/shared/path";
 
@@ -413,7 +414,12 @@ function parseAgentSessionRecords(
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
   ) => {
-    if (firstUserMessage === undefined && message.role === "user") {
+    // Setup a harness wrote as a user message is not the person's first prompt.
+    if (
+      firstUserMessage === undefined &&
+      message.role === "user" &&
+      humanPromptText(message.text) !== ""
+    ) {
       firstUserMessage = message;
     }
     messages.push(message);
@@ -533,25 +539,30 @@ function parseAgentSessionRecords(
     });
   }
 
-  const visibleMessages = messages.map(
-    ({ codexResponseUser: _codexResponseUser, ...message }) => message,
-  );
+  // Nothing a person typed (a bot wake-up, a setup-only rollout): not a thread to import.
   if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
+  const visibleMessages = messages
+    .filter((message) => message.role !== "user" || humanPromptText(message.text) !== "")
+    .map(({ codexResponseUser: _codexResponseUser, ...message }) => message);
   const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
   const retainedMessages = firstUserMessageRetained
     ? visibleMessages
     : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
-  const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
+  const derivedTitle = humanPromptTitle(visibleFirstUserMessage.text);
+  // The file time is when the transcript was last written or copied; the last
+  // message is when the session was last used.
+  const lastMessageAt = retainedMessages.at(-1)?.createdAt ?? fallbackTimestamp;
 
   return {
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: title ?? (derivedTitle && derivedTitle.length > 0 ? derivedTitle : "Imported thread"),
+    title: title ?? (derivedTitle.length > 0 ? derivedTitle : "Imported thread"),
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
-    updatedAt: fallbackTimestamp,
+    updatedAt:
+      Date.parse(lastMessageAt) <= input.lastActiveAtMs ? lastMessageAt : fallbackTimestamp,
     messages: retainedMessages,
   };
 }
@@ -1489,7 +1500,12 @@ export const make = Effect.gen(function* () {
             },
             snapshot.records,
           );
-          if (parsedThread === null) {
+          // A copied home makes every file look recent; the session's own time decides.
+          if (parsedThread === null || Date.parse(parsedThread.updatedAt) < cutoffMs) {
+            // Not a thread: its place goes to the next session, so bot wake-ups
+            // and old sessions cannot crowd real ones out of the import. The
+            // bytes and records it cost stay spent; they bound each scan.
+            transcriptsRemaining += 1;
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 

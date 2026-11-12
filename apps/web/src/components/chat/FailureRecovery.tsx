@@ -1,6 +1,11 @@
 import { useTx } from "../../i18n";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import {
+  BackgroundWorkBlockRecovery,
+  isBackgroundWorkBlockFailureCode,
+  type BackgroundWorkBlockRecoveryActions,
+} from "./BackgroundWorkBlockRecovery";
 import type { WorkspaceMissingRecoveryActions } from "./WorkspaceMissingRecovery";
 
 export interface FailureRecoveryActions {
@@ -16,6 +21,11 @@ export interface FailureRecoveryActions {
   failureCode?: string | null;
   /** Set when that failure is a missing thread folder; it replaces these actions. */
   workspaceMissing?: WorkspaceMissingRecoveryActions | undefined;
+  /**
+   * Set when that failure is a start background work refused and the work
+   * still runs; it replaces these actions.
+   */
+  backgroundWorkBlock?: BackgroundWorkBlockRecoveryActions | undefined;
 }
 
 /**
@@ -37,12 +47,21 @@ export function FailureRecovery({
 }) {
   const tx = useTx();
   if (!recovery || recovery.failureItemId !== itemId) return null;
+  if (recovery.backgroundWorkBlock !== undefined) {
+    return (
+      <div className="flex flex-wrap gap-2" data-failure-recovery>
+        <BackgroundWorkBlockRecovery recovery={recovery.backgroundWorkBlock} />
+      </div>
+    );
+  }
   const showContinue =
     allowContinue &&
     recovery.onContinue !== undefined &&
     runId !== null &&
     recovery.continueRunId === runId;
-  const showSwitch = recovery.onSwitchModel !== undefined;
+  // Another model would be refused the same way while the work runs.
+  const showSwitch =
+    recovery.onSwitchModel !== undefined && !isBackgroundWorkBlockFailureCode(recovery.failureCode);
   if (!showContinue && !showSwitch) return null;
   return (
     <div className="flex flex-wrap gap-2" data-failure-recovery>

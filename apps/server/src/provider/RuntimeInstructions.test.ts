@@ -7,6 +7,7 @@ import {
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_HEADLESS_INSTRUCTIONS,
+  STUDIO_HEAVY_CHECKS_INSTRUCTIONS,
   STUDIO_MEDIA_INSTRUCTIONS,
   STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
   STUDIO_PRESENTATION_INSTRUCTIONS,
@@ -71,6 +72,20 @@ describe("buildRuntimeInstructions", () => {
     expect(STUDIO_HEADLESS_INSTRUCTIONS).toContain("headless: true");
     expect(STUDIO_HEADLESS_INSTRUCTIONS).toContain("without the user's approval");
     expect(HEADLESS_BROWSER_ENVIRONMENT).toEqual({ PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" });
+  });
+
+  it("sends full suites through the heavy-check gate in the one verification copy", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Codex" });
+    expect(instructions.match(/<heavy_checks>/g)).toHaveLength(1);
+    expect(instructions).toContain("specweave-studio checks run -- <command>");
+    expect(instructions).toContain("specweave-studio checks copy <repository> --ref <ref>");
+    expect(instructions).toContain("Never clone the repository per thread");
+    // Every turn carries it.
+    expect(
+      STUDIO_HEAVY_CHECKS_INSTRUCTIONS.replaceAll(/<\/?heavy_checks>/g, "")
+        .trim()
+        .split(/\s+/).length,
+    ).toBeLessThan(60);
   });
 
   it("does not police the product name: the text agents read already says SpecWithCode", () => {
@@ -251,13 +266,14 @@ describe("buildRuntimeInstructions", () => {
     // Bounded shared guidance includes 1130's assignment/goal and no-manual-relay rules.
     // The presentation block added about 190 tokens on purpose (October 21, 2026),
     // and the short-cell comparison rule about 10 more (October 27, 2026).
+    // The heavy-check gate rule added about 60 (November 11, 2026).
     for (const responseStyle of ["concise", "detailed"] as const) {
       const instructions = buildRuntimeInstructions({
         harness: "Claude Code",
         model: "claude-opus-5-5",
         responseStyle,
       });
-      expect(instructions.length).toBeLessThanOrEqual(5_050);
+      expect(instructions.length).toBeLessThanOrEqual(5_300);
     }
   });
 

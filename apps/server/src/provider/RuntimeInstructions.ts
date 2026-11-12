@@ -129,6 +129,14 @@ Run every automated browser check, screenshot, recording and scraper headless (h
 </browser_automation>`;
 
 /**
+ * Four threads running full suites at once, each in its own clone, put a
+ * 16-core machine at a load of 54. See docs/operations/heavy-checks.md.
+ */
+export const STUDIO_HEAVY_CHECKS_INSTRUCTIONS = `<heavy_checks>
+Run full lint, typecheck and test suites only through \`specweave-studio checks run -- <command>\`, inside the copy from \`specweave-studio checks copy <repository> --ref <ref>\`. Never clone the repository per thread.
+</heavy_checks>`;
+
+/**
  * The thread's own branch pull request is detected by ThreadPullRequestService,
  * so only pull requests the server cannot see need the tool.
  */
@@ -245,7 +253,7 @@ export function buildRuntimeInstructions(runtime: {
     agentInstructions.length === 0
       ? ""
       : `<agent_instructions>\n${agentInstructions}\n</agent_instructions>\n\n`;
-  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. ${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}`;
+  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. ${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}\n\n${STUDIO_HEAVY_CHECKS_INSTRUCTIONS}`;
 }
 
 function toSingleLine(value: string): string {

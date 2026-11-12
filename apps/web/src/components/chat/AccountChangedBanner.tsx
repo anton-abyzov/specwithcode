@@ -40,12 +40,16 @@ const SUBSCRIPTION_CHANGE_DRIVERS = new Set(["claudeAgent", "codex"]);
  * Whether the server will continue this stop by itself on the new
  * subscription, so the notice may say "continues shortly". The early resume
  * (UsageLimitRecoveryWorker) needs the project to approve subscription changes
- * by itself (`autoApproveSubscriptionChange`, on by default) and keeps the
- * same gates as the reset-time resume: recovery armed for this stop with
- * auto-continue on, not settled, not snoozed, no approval or question waiting
- * on the person (the server refuses the resume while one blocks), and a
- * project that is neither paused nor archived. Anything else asks the person
- * to confirm.
+ * by itself (`autoApproveSubscriptionChange`, on by default). Auto-continue
+ * at the reset need not be on: the server arms the stop for the change
+ * itself (`accountChangeArmCommand`), unless the person chose for this stop,
+ * by turning its resume off or stopping the thread, and only while the old
+ * limit still holds the thread: before its reset, or for a stop with no
+ * reset, within five hours of it. It keeps the other gates
+ * of the reset-time resume: not settled, not snoozed, no approval or question
+ * waiting on the person (the server refuses the resume while one blocks), and
+ * a project that is neither paused nor archived. Anything else asks the
+ * person to confirm.
  */
 export function accountChangeAutoContinues(input: {
   readonly driver: string | undefined;
@@ -53,9 +57,18 @@ export function accountChangeAutoContinues(input: {
   readonly autoApprove: boolean;
   readonly runId: RunId;
   readonly limitRecovery:
-    | { readonly runId: RunId; readonly autoResume: boolean }
+    | {
+        readonly runId: RunId;
+        readonly autoResume: boolean;
+        /** The command that made the choice; a rule's arm starts with `limit-arm:`. */
+        readonly requestId?: string | undefined;
+      }
     | null
     | undefined;
+  /** The reset the stop reported, if it reported one. */
+  readonly resetAt: string | null | undefined;
+  /** When the run stopped on its limit. */
+  readonly stoppedAtMs: number;
   readonly settledOverride: string | null | undefined;
   readonly snoozedUntil: string | null | undefined;
   /** The shell shows an approval or question waiting on the person. */
@@ -67,13 +80,47 @@ export function accountChangeAutoContinues(input: {
     input.driver !== undefined &&
     SUBSCRIPTION_CHANGE_DRIVERS.has(input.driver) &&
     input.autoApprove &&
-    input.limitRecovery?.runId === input.runId &&
-    input.limitRecovery.autoResume &&
+    !personChoseForStop(input.limitRecovery, input.runId) &&
+    ((input.limitRecovery?.runId === input.runId && input.limitRecovery.autoResume) ||
+      limitStillHolds(input.resetAt, input.stoppedAtMs, input.nowMs)) &&
     input.settledOverride !== "settled" &&
     !(input.snoozedUntil != null && Date.parse(input.snoozedUntil) > input.nowMs) &&
     !input.pendingRequest &&
     input.project?.paused !== true &&
     input.project?.archived !== true
+  );
+}
+
+/** The longest the server keeps arming a stop that reported no reset (LIMIT_REARM_MAX_DELAY_MS). */
+const UNARMED_STOP_WINDOW_MS = 5 * 60 * 60_000;
+
+/** The server arms a stop for a subscription change only while its old limit still holds it. */
+function limitStillHolds(
+  resetAt: string | null | undefined,
+  stoppedAtMs: number,
+  nowMs: number,
+): boolean {
+  const resetMs = Date.parse(resetAt ?? "");
+  return Number.isFinite(resetMs) ? resetMs > nowMs : nowMs - stoppedAtMs < UNARMED_STOP_WINDOW_MS;
+}
+
+/** A person turned this stop's resume off, or stopped the thread: only they continue it. */
+function personChoseForStop(
+  recovery:
+    | {
+        readonly runId: RunId;
+        readonly autoResume: boolean;
+        readonly requestId?: string | undefined;
+      }
+    | null
+    | undefined,
+  runId: RunId,
+): boolean {
+  return (
+    recovery != null &&
+    recovery.runId === runId &&
+    !recovery.autoResume &&
+    !(recovery.requestId ?? "").startsWith("limit-arm:")
   );
 }
 

@@ -25,8 +25,10 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
+import { ownerMachineNames } from "./machineNames.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
 import {
   isTerminalThreadStatus,
@@ -164,6 +166,8 @@ const make = Effect.gen(function* () {
   const client = yield* RemoteStudioMcpClient.RemoteStudioMcpClient;
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
   const targets = yield* FleetTargets.FleetTargets;
+  // Read here, not at each wake: a wake runs in the follower's own fibers.
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const timings = yield* RemoteWorkerFollowerTimings;
@@ -214,12 +218,14 @@ const make = Effect.gen(function* () {
   const setReachable = (machineId: string, value: boolean) =>
     Ref.update(reachability, (current) => new Map(current).set(machineId, value));
 
+  // The owner's name first: an agent reads this name in a wake and may ask for it next.
   const machineLabel = (machineId: string) =>
-    targets.load.pipe(
-      Effect.map(
-        (config) =>
-          config?.machines.find((machine) => machine.id === machineId)?.label ?? machineId,
-      ),
+    Effect.all([targets.load, ownerMachineNames(settings)]).pipe(
+      Effect.map(([config, names]) => {
+        const machine = config?.machines.find((row) => row.id === machineId);
+        if (machine === undefined) return machineId;
+        return names.get(machine.environmentId) ?? machine.label;
+      }),
       Effect.orElseSucceed(() => machineId),
     );
 

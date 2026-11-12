@@ -6,6 +6,7 @@
  *
  * @module ServerConfig
  */
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -18,11 +19,28 @@ import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@specweave-studio/shared/observability";
+import {
+  DEFAULT_SIGNAL_EXPORT,
+  DEFAULT_TRACE_SAMPLING,
+  type SignalExport,
+  type TraceSamplingOptions,
+} from "@specweave-studio/shared/observability";
 import * as OtelEnvironment from "@specweave-studio/shared/otelEnvironment";
 
 import { STUDIO_DEFAULT_PORT } from "@specweave-studio/shared/studioIdentity";
 export const DEFAULT_PORT = STUDIO_DEFAULT_PORT;
+
+/**
+ * How the local trace file samples fast successful spans.
+ * `STUDIO_TRACE_SAMPLE_RATE` keeps one in that many per span name; 1 writes
+ * every span. OTLP export is not sampled.
+ */
+export const traceSampling: Config.Config<TraceSamplingOptions> = Config.Int(
+  "STUDIO_TRACE_SAMPLE_RATE",
+).pipe(
+  Config.withDefault(DEFAULT_TRACE_SAMPLING.rate),
+  Config.map((rate) => ({ ...DEFAULT_TRACE_SAMPLING, rate })),
+);
 
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;

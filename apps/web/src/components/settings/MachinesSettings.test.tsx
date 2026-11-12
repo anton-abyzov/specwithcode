@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
+import * as Option from "effect/Option";
 import type {
   StudioFleetMachine,
   StudioFleetSnapshot,
@@ -18,9 +19,13 @@ const runtime = vi.hoisted(() => ({
   projects: [] as unknown[],
   blocks: [] as unknown[],
   grants: null as unknown,
+  discovered: new Map<string, unknown>(),
   nicknames: {} as Record<string, string>,
   connect: vi.fn(async () => {}),
   createCredential: vi.fn(),
+  // What the fleet roster hands a composed card: its controls and its own extras.
+  controls: null as ReactNode,
+  card: undefined as { actions: ReactNode; gone: ReactNode } | undefined,
 }));
 
 vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => [] }));
@@ -78,7 +83,15 @@ vi.mock("../away/AwayAccessRequests", () => ({ AwayAccessRequestsAll: () => null
 vi.mock("./usePrimaryFleet", () => ({ usePrimaryFleet: () => runtime.fleet }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
+  useRelayEnvironmentDiscovery: () => ({
+    environments: runtime.discovered,
+    refreshing: false,
+    offline: false,
+  }),
 }));
+vi.mock("../../connection/catalog", () => ({ environmentCatalog: {} }));
+vi.mock("../../state/relay", () => ({ relayEnvironmentDiscovery: {} }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => runtime.projects,
   useThreadShells: () => [],
@@ -108,6 +121,30 @@ vi.mock("../../studio/machineNickname", () => ({
     runtime.nicknames[environmentId] ?? label ?? environmentId,
 }));
 vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
+vi.mock("./AddProjectToMachine", () => ({
+  AddProjectToMachine: ({
+    environmentId,
+    name,
+    onChoose,
+  }: {
+    environmentId: string;
+    name: string;
+    onChoose: (target: { environmentId: string; source: { id: string } }) => void;
+  }) => (
+    <button
+      type="button"
+      data-add-project={name}
+      onClick={() => onChoose({ environmentId, source: { id: "p-chosen" } })}
+    />
+  ),
+  AddProjectToMachineDialog: ({
+    target,
+  }: {
+    target: { environmentId: string; source: { id: string } } | null;
+  }) =>
+    target ? <div data-add-dialog={`${target.source.id} to ${target.environmentId}`} /> : null,
+}));
+
 vi.mock("../../environments/primary", () => ({
   createServerPairingCredential: runtime.createCredential,
   readPrimaryEnvironmentTarget: () => ({ target: { httpBaseUrl: "https://m4max.tailnet.ts.net" } }),
@@ -119,7 +156,8 @@ vi.mock("./ConnectionsSettings", () => ({
       <ul>
         {additionalMachines}
         {(runtime.fleet as { snapshot?: StudioFleetSnapshot })?.snapshot?.machines?.map(
-          (machine: any) => renderMachine(machine.environmentId, null),
+          (machine: any) =>
+            renderMachine(machine.environmentId, runtime.controls, null, runtime.card),
         )}
       </ul>
     </>
@@ -222,6 +260,8 @@ let rendered: ReactTestRenderer | null = null;
 afterEach(async () => {
   if (rendered) await act(async () => rendered!.unmount());
   rendered = null;
+  runtime.controls = null;
+  runtime.card = undefined;
   vi.clearAllMocks();
 });
 
@@ -233,6 +273,51 @@ describe("Settings > Machines", () => {
     expect(html.startsWith("<main>")).toBe(true);
     expect(html.endsWith("</main>")).toBe(true);
     expect(html.match(/<main>/g)).toHaveLength(1);
+  });
+
+  it("offers to add a project only on a connected machine that holds none", () => {
+    setUp();
+    // MacBook Pro (m3) is connected and has a project; M1Max is not connected, M4MAX is here.
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("data-add-project");
+    runtime.projects = [];
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html.match(/data-add-project="[^"]*"/g)).toEqual(['data-add-project="MacBook Pro"']);
+    expect(html).not.toContain("data-add-dialog");
+  });
+
+  it("keeps the add dialog open when the card that opened it changes or leaves", async () => {
+    setUp();
+    const withProject = runtime.projects;
+    runtime.projects = [];
+    await act(async () => {
+      rendered = create(<MachinesSettingsPanel />);
+    });
+    const dialogs = () =>
+      rendered!.root
+        .findAll((node) => typeof node.props["data-add-dialog"] === "string")
+        .map((node) => node.props["data-add-dialog"]);
+    const prompts = () =>
+      rendered!.root.findAll(
+        (node) => node.type === "button" && node.props["data-add-project"] !== undefined,
+      );
+    await act(async () => prompts()[0]!.props.onClick());
+    expect(dialogs()).toEqual([`p-chosen to ${m3}`]);
+
+    // The project arrives on the machine: its prompt goes, the dialog stays.
+    runtime.projects = withProject;
+    await act(async () => rendered!.update(<MachinesSettingsPanel />));
+    expect(prompts()).toHaveLength(0);
+    expect(dialogs()).toEqual([`p-chosen to ${m3}`]);
+
+    // The machine drops out of the list for a moment, as after a failed check.
+    runtime.environments = [environment(m4, "M4MAX")];
+    runtime.fleet = {
+      ...(runtime.fleet as object),
+      snapshot: { ...snapshot, machines: [] },
+      unseen: [],
+    };
+    await act(async () => rendered!.update(<MachinesSettingsPanel />));
+    expect(dialogs()).toEqual([`p-chosen to ${m3}`]);
   });
 
   it("adds no team rules line when no machine has rules", () => {
@@ -316,6 +401,28 @@ describe("Settings > Machines", () => {
     expect(html).toContain('<span class="sr-only">also on M4MAX</span>');
     expect(html).toContain("Connect to see its accounts.");
     expect(html).toContain("Make pairing link");
+  });
+
+  it("puts a machine's actions and its no-longer-answers line on the card, not under Connection details", () => {
+    setUp();
+    runtime.controls = <li>route and readiness</li>;
+    runtime.card = {
+      actions: <button aria-label="More actions for MacBook Pro">…</button>,
+      gone: <p>No longer answers.</p>,
+    };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    // One machine's card, up to the end of its closed disclosure.
+    const start = html.indexOf('<li class="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"');
+    const card = html.slice(start, html.indexOf("</details>", start));
+    const details = card.indexOf("<details");
+    expect(details).toBeGreaterThan(-1);
+    // Both sit before the disclosure, so Remove needs no extra click to find.
+    expect(card.indexOf("More actions for MacBook Pro")).toBeGreaterThan(-1);
+    expect(card.indexOf("More actions for MacBook Pro")).toBeLessThan(details);
+    expect(card.indexOf("No longer answers.")).toBeGreaterThan(-1);
+    expect(card.indexOf("No longer answers.")).toBeLessThan(details);
+    expect(card.slice(details)).toContain("route and readiness");
+    expect(card.slice(details)).not.toContain("More actions for MacBook Pro");
   });
 
   it("names two other machines as chips, folds the rest into +N and reads them all aloud", () => {
@@ -407,6 +514,70 @@ describe("Settings > Machines", () => {
     expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
     expect(html.match(/>Agents on MacBook Pro can start work on M4MAX</g)).toHaveLength(1);
     expect(html).not.toContain("use this machine too");
+  });
+
+  it("puts allowing a machine first while none may run work here, with the account's machines", () => {
+    setUp();
+    runtime.grants = { grants: [], projects: [], accounts: [] };
+    const m5 = EnvironmentId.make("env-m5");
+    runtime.discovered = new Map([
+      [
+        m5,
+        {
+          environment: { environmentId: m5, label: "MacBook Pro (2)" },
+          availability: "online",
+          status: Option.none(),
+        },
+      ],
+    ]);
+    try {
+      const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+      // The one card comes first, then who can run work here, then the machines.
+      const card = html.indexOf('id="machines-join-card"');
+      const section = html.indexOf('aria-label="Who can run work here"');
+      expect(card).toBeGreaterThan(-1);
+      expect(card).toBeLessThan(section);
+      expect(section).toBeLessThan(html.indexOf("<ul>"));
+      expect(html.match(/id="machines-join-card"/g)).toHaveLength(1);
+      expect(html).toContain("Let another of your machines run work here");
+      // A machine of the same Connect account this app never opened is offered by name.
+      expect(html).toMatch(/<input type="radio"[^>]* value="env-m5"/);
+      expect(html).toContain("MacBook Pro (2)");
+      expect(html).not.toContain("Allow another machine to run work here");
+    } finally {
+      runtime.discovered = new Map();
+    }
+  });
+
+  it("keeps who can run work here below the machines once a machine may", () => {
+    setUp();
+    runtime.grants = {
+      grants: [
+        {
+          coordinatorEnvironmentId: m3,
+          machineLabel: "MacBook Pro",
+          projects: { kind: "all" },
+          accounts: { kind: "all" },
+          owner: "self",
+          hopLimit: 2,
+          runtimeCap: "auto",
+          expiresAt: null,
+          status: "active",
+          revokedAt: null,
+          interruptAt: null,
+          runningThreads: 0,
+          legacy: false,
+        },
+      ],
+      projects: [],
+      accounts: [],
+    };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    const section = html.indexOf('aria-label="Who can run work here"');
+    expect(section).toBeGreaterThan(html.indexOf("<ul>"));
+    // Allowing one more machine then follows the list instead of leading the page.
+    expect(html.indexOf('id="machines-join-card"')).toBeGreaterThan(section);
+    expect(html.match(/id="machines-join-card"/g)).toHaveLength(1);
   });
 
   it("offers letting a connected machine without a grant here use this machine too", () => {

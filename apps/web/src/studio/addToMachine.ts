@@ -120,7 +120,8 @@ const repositoryKey = (project: Pick<EnvironmentProject, "repositoryIdentity">) 
     ? repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase()
     : null;
 
-const usableCopy = (project: EnvironmentProject) =>
+/** A copy Run on may use: not archived, a real project folder, not the personal assistant. */
+export const usableCopy = (project: EnvironmentProject) =>
   !isArchivedMember(project) &&
   isProjectFolder(project.workspaceRoot, project.id) &&
   project.workspaceSettings?.kind !== "personal";

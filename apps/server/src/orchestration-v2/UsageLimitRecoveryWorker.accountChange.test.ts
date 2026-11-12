@@ -79,6 +79,22 @@ const afterSwitch = (
     return h;
   });
 
+/** Auto-continue off for the project and globally, then an hour on with the new account read. */
+const unarmedAfterSwitch = (harness: Partial<Parameters<typeof claudeSweepHarness>[0]> = {}) =>
+  Effect.gen(function* () {
+    const snapshot = (at: number) => claudeRead(at, { changedAt: HOUR });
+    const h = claudeSweepHarness({
+      thread: claudeLimitStop(RESET),
+      provider: snapshot,
+      ...harness,
+    });
+    yield* h.sweep;
+    assert.deepEqual(h.state.commands, []);
+    yield* TestClock.adjust("1 hour");
+    h.state.snapshot = snapshot(HOUR);
+    return h;
+  });
+
 describe("usage-limit recovery after the account changes", () => {
   it.effect("resumes once before the old reset when the new account has room", () =>
     Effect.gen(function* () {
@@ -156,19 +172,194 @@ describe("usage-limit recovery after the account changes", () => {
       }),
   );
 
-  describe("keeps what a person or the thread chose", () => {
-    it.effect("auto-continue off arms nothing and resumes nothing", () =>
+  describe("with auto-continue off", () => {
+    it.effect("the change arms the stop, then resumes it once", () =>
       Effect.gen(function* () {
-        const h = claudeSweepHarness({
-          thread: claudeLimitStop(RESET),
-          provider: (at) => claudeRead(at, { changedAt: HOUR }),
+        const h = yield* unarmedAfterSwitch();
+        yield* h.sweep;
+        assert.lengthOf(h.state.commands, 1);
+        const arm = h.state.commands[0]!;
+        assert.equal(arm.commandId, `limit-arm:claude-limited:failed-run:${RESET}:acct:${HOUR}`);
+        assert.deepEqual(arm.type === "thread.metadata.update" ? arm.limitRecovery : null, {
+          runId: RunId.make("failed-run"),
+          resetAt: iso(RESET),
+          autoResume: true,
+          snooze: false,
         });
         yield* h.sweep;
+        const sent = resumes(h.state.commands);
+        assert.lengthOf(sent, 1);
+        assert.include(sent[0], `:acct:${HOUR}:`);
+        yield* TestClock.adjust("10 seconds");
+        yield* h.sweep;
+        assert.deepEqual([...new Set(resumes(h.state.commands))], sent);
+        assert.lengthOf(
+          h.state.commands.filter((command) => command.type === "thread.metadata.update"),
+          1,
+        );
+      }),
+    );
+
+    it.effect.each([
+      ["the same account", (at: number) => claudeRead(at)],
+      [
+        "a new account that is spent too",
+        (at: number) => claudeRead(at, { changedAt: HOUR, usedPercent: 100 }),
+      ],
+      [
+        "a read without a complete allowance",
+        (at: number) => claudeRead(at, { changedAt: HOUR, fullReadAt: null }),
+      ],
+    ] as const)("%s arms nothing", ([, snapshot]) =>
+      Effect.gen(function* () {
+        const h = claudeSweepHarness({ thread: claudeLimitStop(RESET), provider: snapshot });
+        yield* h.sweep;
         yield* TestClock.adjust("1 hour");
-        h.state.snapshot = claudeRead(HOUR, { changedAt: HOUR });
+        h.state.snapshot = snapshot(HOUR);
+        yield* h.sweep;
         yield* h.sweep;
         assert.deepEqual(h.state.commands, []);
       }),
+    );
+
+    it.effect("the arm does not outlive the change: a new account that fills up waits", () =>
+      Effect.gen(function* () {
+        let spent = false;
+        const snapshot = (at: number) =>
+          claudeRead(at, { changedAt: HOUR, ...(spent ? { usedPercent: 100 } : {}) });
+        const h = yield* unarmedAfterSwitch({ provider: snapshot });
+        yield* h.sweep;
+        assert.lengthOf(h.state.commands, 1);
+        // Armed for the change, but the new subscription is spent before the resume.
+        spent = true;
+        h.state.snapshot = snapshot(HOUR);
+        yield* h.sweep;
+        assert.deepEqual(resumes(h.state.commands), []);
+        // The old reset passes. Auto-continue is off, so nothing resumes by itself.
+        yield* TestClock.adjust("5 hours");
+        h.state.snapshot = snapshot(6 * HOUR);
+        yield* h.sweep;
+        yield* h.sweep;
+        yield* h.sweep;
+        assert.deepEqual(resumes(h.state.commands), []);
+        // The arm is taken back once, so the thread shows no resume that will not come.
+        assert.lengthOf(h.state.commands, 2);
+        const lapse = h.state.commands[1]!;
+        assert.equal(
+          lapse.commandId,
+          `limit-arm:claude-limited:failed-run:${RESET}:acct:${HOUR}:lapsed`,
+        );
+        assert.equal(h.state.current.limitRecovery?.autoResume, false);
+        assert.equal(h.state.current.limitRecovery?.explicitArm, false);
+      }),
+    );
+
+    it.effect("the arm stays while the old reset is ahead, for a new account that gets room", () =>
+      Effect.gen(function* () {
+        let spent = false;
+        const snapshot = (at: number) =>
+          claudeRead(at, { changedAt: HOUR, ...(spent ? { usedPercent: 100 } : {}) });
+        const h = yield* unarmedAfterSwitch({ provider: snapshot });
+        yield* h.sweep;
+        spent = true;
+        h.state.snapshot = snapshot(HOUR);
+        yield* h.sweep;
+        assert.lengthOf(h.state.commands, 1);
+        assert.equal(h.state.current.limitRecovery?.autoResume, true);
+        spent = false;
+        yield* TestClock.adjust("10 minutes");
+        h.state.snapshot = snapshot(HOUR + 10 * 60_000);
+        yield* h.sweep;
+        assert.lengthOf(resumes(h.state.commands), 1);
+      }),
+    );
+
+    it.effect("a resume held past the old reset still leaves while the change is proven", () =>
+      Effect.gen(function* () {
+        const h = yield* unarmedAfterSwitch();
+        yield* h.sweep;
+        h.state.handoffBlocked = true;
+        yield* h.sweep;
+        assert.deepEqual(resumes(h.state.commands), []);
+        yield* TestClock.adjust("4 hours");
+        yield* TestClock.adjust("30 minutes");
+        h.state.handoffBlocked = false;
+        h.state.snapshot = claudeRead(5 * HOUR + 30 * 60_000, { changedAt: HOUR });
+        yield* h.sweep;
+        assert.lengthOf(resumes(h.state.commands), 1);
+      }),
+    );
+
+    it.effect("the reset passing still resumes nothing", () =>
+      Effect.gen(function* () {
+        const h = claudeSweepHarness({
+          thread: claudeLimitStop(RESET),
+          provider: (at) => claudeRead(at),
+        });
+        yield* h.sweep;
+        yield* TestClock.adjust("6 hours");
+        h.state.snapshot = claudeRead(6 * HOUR);
+        yield* h.sweep;
+        yield* h.sweep;
+        assert.deepEqual(h.state.commands, []);
+      }),
+    );
+  });
+
+  describe("keeps what a person or the thread chose", () => {
+    it.effect("with subscription changes left to the person, nothing is armed or resumed", () =>
+      Effect.gen(function* () {
+        const h = yield* unarmedAfterSwitch({ settings: { autoApproveSubscriptionChange: false } });
+        yield* h.sweep;
+        yield* h.sweep;
+        assert.deepEqual(h.state.commands, []);
+      }),
+    );
+
+    it.effect("a stop the person turned auto-continue off for stays off", () =>
+      Effect.gen(function* () {
+        const stop = claudeLimitStop(RESET);
+        const h = yield* unarmedAfterSwitch({
+          thread: {
+            ...stop,
+            limitRecovery: {
+              runId: stop.latestRunId,
+              resetAt: stop.usageLimitResetAt,
+              autoResume: false,
+              snooze: false,
+              checkNow: false,
+              explicitArm: false,
+              requestId: "web:auto-resume-off",
+            } as never,
+          },
+        });
+        yield* h.sweep;
+        yield* h.sweep;
+        assert.deepEqual(h.state.commands, []);
+      }),
+    );
+
+    it.effect("a thread moved off the stopped run's instance is not armed", () =>
+      Effect.gen(function* () {
+        const h = yield* unarmedAfterSwitch({
+          runInstance: ProviderInstanceId.make("claudeAgent-work"),
+        });
+        yield* h.sweep;
+        yield* h.sweep;
+        assert.deepEqual(h.state.commands, []);
+      }),
+    );
+
+    it.effect.each(["projectPaused", "projectArchived"] as const)(
+      "a project with %s keeps its threads stopped",
+      (held) =>
+        Effect.gen(function* () {
+          const h = yield* unarmedAfterSwitch();
+          h.state[held] = true;
+          yield* h.sweep;
+          yield* h.sweep;
+          assert.deepEqual(h.state.commands, []);
+        }),
     );
 
     it.effect("a person's snooze holds the thread", () =>

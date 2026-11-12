@@ -598,12 +598,11 @@ public enum ShellSummaries {
     let activity = activity(thread)
     let attention = ThreadAttention.attention(thread)
     let working = activity == .working || activity == .needsYou
-    let title = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
     var summary = ThreadSummary(
       ref: ThreadRef(environmentId: environmentId, threadId: thread.id),
       projectRef: ProjectRef(environmentId: environmentId, projectId: thread.projectId),
       projectTitle: projectTitle,
-      title: title.isEmpty ? "New thread" : title,
+      title: ThreadTitle.shown(thread.title),
       activity: activity,
       preview: preview(thread, attention: attention),
       updatedAt: thread.updatedAt,

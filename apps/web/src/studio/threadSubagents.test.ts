@@ -55,6 +55,47 @@ const nested = shell("nested", "native", {
 const all = [shell(COORDINATOR, null), worker, native, nested];
 const lookup = (id: string) => all.find((thread) => thread.id === id);
 
+describe("one shell list asked about several threads", () => {
+  const second = shell("second", COORDINATOR);
+  const helper = shell("helper", "second", {
+    runtime: { status: "running" } as EnvironmentThreadShell["runtime"],
+  });
+  const shells = [...all, second, helper];
+  it("counts each thread's own subagents from the same list", () => {
+    const counts = listedRunningSubagents({
+      threads: [worker, second],
+      shells,
+      coordinatorIds: new Set(),
+      selected: null,
+      selectedEntries: [],
+    });
+    expect([...counts]).toEqual([
+      ["env:worker", 1],
+      ["env:second", 1],
+    ]);
+    expect(runningSubagentCount(shells, worker)).toBe(1);
+  });
+  it("reads a stopped subagent from the list that replaces the old one", () => {
+    const stopped = shells.map((item) => (item === helper ? shell("helper", "second") : item));
+    expect(runningSubagentCount(stopped, second)).toBe(0);
+    expect(runningSubagentCount(shells, second)).toBe(1);
+  });
+  it("keeps the coordinators it is told about apart", () => {
+    const lead = shell("lead", null);
+    const report = shell("report", "lead");
+    const list = [lead, report, shell("deep", "report")];
+    expect(threadSubagentEntries({ parent: lead, projected: [], shells: list })).toHaveLength(2);
+    expect(
+      threadSubagentEntries({
+        parent: lead,
+        projected: [],
+        shells: list,
+        coordinatorIds: new Set(["lead"]),
+      }),
+    ).toHaveLength(0);
+  });
+});
+
 describe("thread subagents", () => {
   it("keeps a coordinator's workers as threads and hides their subagents", () => {
     expect(isNestedSubagentThread(worker)).toBe(false);

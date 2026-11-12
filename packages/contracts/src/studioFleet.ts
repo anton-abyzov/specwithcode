@@ -143,6 +143,16 @@ export const StudioFleetWorkersSelfAllowInput = exactStruct({
 export type StudioFleetWorkersSelfAllowInput = typeof StudioFleetWorkersSelfAllowInput.Type;
 
 /**
+ * Another machine of the same SpecWithCode Connect account hands this one its
+ * invitation line: this machine adds it and lets its own agents work there.
+ */
+export const StudioFleetWorkersAccountJoinInput = exactStruct({
+  invitation: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384)),
+  access: StudioFleetWorkerAccess,
+});
+export type StudioFleetWorkersAccountJoinInput = typeof StudioFleetWorkersAccountJoinInput.Type;
+
+/**
  * Asks this server to let a machine in its fleet run workers here, through
  * the management token it holds on that machine.
  */
@@ -715,6 +725,13 @@ export const StudioFleetUpdateStatus = Schema.Struct({
   lastError: Schema.optionalKey(Schema.String),
   lastErrorReason: Schema.optionalKey(StudioFleetUpdateRefusal),
   agent: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  /**
+   * Whether an update may pause running work on this machine (its
+   * `pauseWorkForUpdates` setting, while threads continue after a restart).
+   * False: a forced request is refused and a busy machine is left for later.
+   * Absent from machines older than the setting.
+   */
+  pauseWorkForUpdates: Schema.optionalKey(Schema.Boolean),
 });
 export type StudioFleetUpdateStatus = typeof StudioFleetUpdateStatus.Type;
 

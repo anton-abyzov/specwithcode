@@ -58,8 +58,9 @@ const PROBLEMS: Record<NonNullable<StudioFleetWorkers["problem"]>, string> = {
   unsupported: "That machine's SpecWithCode is too old to run workers for another machine.",
   route_mismatch: "That machine answers on a different address than configured here.",
   pairing_unavailable:
-    "This server cannot create a pairing code there. Paste a code made on that machine.",
-  pairing_code_rejected: "That machine did not accept the pairing code. Make a new one.",
+    "This machine's key there cannot make a code. On that machine, open Settings > Machines > Let another of your machines run work here and choose this machine.",
+  pairing_code_rejected:
+    "That machine did not accept the code. A code from Create link does not work here. On that machine, open Settings > Machines > Let another of your machines run work here and choose this machine.",
   unreachable: "That machine could not be reached.",
   identity_mismatch: "A different SpecWithCode answers at that machine's address.",
 };
@@ -84,11 +85,18 @@ export interface FleetWorkersView {
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
-/** What the Workers row of a fleet machine says and offers. */
-export function fleetWorkersView(workers: StudioFleetWorkers): FleetWorkersView {
+/**
+ * What the Workers row of a fleet machine says and offers. `pairingConfigured`
+ * is whether this server holds a key on that machine: with one it makes the
+ * code itself, so nothing is pasted unless that already failed.
+ */
+export function fleetWorkersView(
+  workers: StudioFleetWorkers,
+  pairingConfigured = false,
+): FleetWorkersView {
   const problem = workers.problem ? PROBLEMS[workers.problem] : null;
   const codeNeeded =
-    !workers.renewable ||
+    (!workers.renewable && !pairingConfigured) ||
     workers.problem === "pairing_unavailable" ||
     workers.problem === "pairing_code_rejected";
   switch (workers.status) {
@@ -101,7 +109,7 @@ export function fleetWorkersView(workers: StudioFleetWorkers): FleetWorkersView 
         problem,
         action: "stop",
         codeNeeded: false,
-        changeCodeNeeded: !workers.renewable,
+        changeCodeNeeded: codeNeeded,
         accessHint:
           workers.access !== null && workers.access !== "full-access"
             ? `Workers there run at most at ${accessLabel(workers.access)}, even when their coordinator has Full access.`

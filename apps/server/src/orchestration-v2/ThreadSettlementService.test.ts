@@ -29,6 +29,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import { TestClock } from "effect/testing";
 
 import * as GitManager from "../git/GitManager.ts";
@@ -1569,6 +1570,46 @@ describe("ThreadSettlementServiceV2 settings reads", () => {
           // One read when the service starts, one for the sweep.
           expect(yield* Ref.get(fixture.settingsReads)).toBe(2);
         }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+});
+
+describe("ThreadSettlementServiceV2 sweep spans", () => {
+  it.effect("opens no span for a candidate with nothing to settle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const threads = Array.from({ length: 12 }, (_, index) =>
+          makeThread(`open-branch-${index}`, { branch: `feature-${index}` }),
+        );
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(threads),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          branchPullRequest: () => Effect.succeed(makeBranchPullRequest("open")),
+        });
+        const spans: string[] = [];
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          // Every candidate was still looked up; none was due.
+          expect(yield* Ref.get(fixture.branchCalls)).toHaveLength(threads.length);
+          expect(yield* Ref.get(fixture.commands)).toEqual([]);
+          expect(spans).toContain("ThreadSettlementServiceV2.sweep");
+          expect(spans).not.toContain("ThreadSettlementServiceV2.settleThread");
+        }).pipe(
+          Effect.provide(fixture.layer),
+          Effect.provideService(
+            Tracer.Tracer,
+            Tracer.make({
+              span: (options) => {
+                spans.push(options.name);
+                return new Tracer.NativeSpan(options);
+              },
+            }),
+          ),
+        );
       }),
     ),
   );

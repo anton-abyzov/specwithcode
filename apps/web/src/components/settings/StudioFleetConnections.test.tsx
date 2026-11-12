@@ -13,12 +13,21 @@ const runtime = vi.hoisted(() => ({
   allowWorkers: vi.fn(),
   stopWorkers: vi.fn(),
   addMachine: vi.fn(),
+  removeMachine: vi.fn(),
+  confirm: vi.fn(),
   environments: [] as Array<{ readonly entry: unknown }>,
   removeSupported: true,
   closeTerminal: vi.fn(),
+  nicknames: {} as Record<string, string>,
+  cloud: true,
+}));
+vi.mock("../../cloud/publicConfig", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../cloud/publicConfig")>()),
+  hasCloudPublicConfig: () => runtime.cloud,
 }));
 vi.mock("../../studio/machineNickname", () => ({
-  useMachineNicknames: () => (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) =>
+    runtime.nicknames[id] ?? label ?? "",
 }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -34,6 +43,7 @@ vi.mock("react/compiler-runtime", async () => ({
 }));
 vi.mock("../../studio/fleet", () => ({
   addStudioFleetMachine: runtime.addMachine,
+  removeStudioFleetMachine: runtime.removeMachine,
   pairStudioFleet: runtime.pair,
   allowStudioFleetWorkers: runtime.allowWorkers,
   stopStudioFleetWorkers: runtime.stopWorkers,
@@ -45,6 +55,7 @@ vi.mock("../../studio/fleet", () => ({
     refresh: vi.fn(),
   }),
 }));
+vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: runtime.confirm }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("./MachineReadinessChecklist", () => ({ MachineReadinessChecklist: () => null }));
 vi.mock("./ProvisionMachineSheet", () => ({ ProvisionMachineButton: () => null }));
@@ -75,7 +86,10 @@ vi.mock("../../studio/machineHandoff", () => ({ machineHandoff: { sentSecrets: {
 vi.mock("./settingsLayout", () => ({ SettingsRow: () => null, SettingsSection: () => null }));
 import { MachineTerminal, MachineTerminalButton } from "./MachineTerminal";
 import { SettingHelp } from "./SettingHelp";
+import { ConnectDeregisterHint, ConnectDeregisterHintView } from "./ConnectDeregisterHint";
+import { OtherAccountJoinFold } from "./OtherAccountJoinFold";
 import {
+  type FleetMachineCardExtras,
   FleetWorkersRow,
   fleetConnectionReason,
   fleetMachineAddress,
@@ -203,6 +217,8 @@ describe("private machine roster", () => {
     runtime.connect.mockReset();
     runtime.updateSettings.mockReset();
     runtime.addMachine.mockReset();
+    runtime.removeMachine.mockReset();
+    runtime.confirm.mockReset();
     runtime.environments = [];
     runtime.autoConnect = true;
     runtime.removeSupported = true;
@@ -240,6 +256,123 @@ describe("private machine roster", () => {
     expect(onRemove).toHaveBeenCalledExactlyOnceWith(snapshot.machines[1]);
     expect(removeButton(render({ onRemove, canManageWorkers: false }))).toBeNull();
     expect(removeButton(render({ canManageWorkers: true }))).toBeNull();
+  });
+  it("hands a composed card Remove machine for its header and keeps it out of Connection details", () => {
+    const onRemove = vi.fn();
+    const removeButton = (tree: unknown) =>
+      visitElements(tree, (element) => element.props.children === "Remove machine");
+    const cards: Array<{ id: string; controls: unknown; card?: FleetMachineCardExtras }> = [];
+    render({
+      onRemove,
+      canManageWorkers: true,
+      renderMachine: (id, controls, _workers, card) => {
+        cards.push({ id, controls, ...(card ? { card } : {}) });
+        return controls;
+      },
+    });
+    const other = cards.find((entry) => entry.id === m1)!;
+    // The controls are what the card folds under Connection details.
+    expect(removeButton(other.controls)).toBeNull();
+    (removeButton(other.card?.actions)?.props.onClick as () => void)();
+    expect(onRemove).toHaveBeenCalledExactlyOnceWith(snapshot.machines[1]);
+    // A machine that answers gets no warning line, and this machine no Remove at all.
+    expect(other.card?.gone).toBeNull();
+    const own = cards.find((entry) => entry.id === m4)!;
+    expect(own.card?.actions).toBeNull();
+    expect(own.card?.gone).toBeNull();
+  });
+  it("says a machine no longer answers and removes it from that line while it is unreachable", () => {
+    const onRemove = vi.fn();
+    const gone = {
+      ...snapshot,
+      machines: [
+        snapshot.machines[0]!,
+        { ...snapshot.machines[1]!, status: "unreachable" as const },
+      ],
+    };
+    const line = (tree: unknown) =>
+      visitElements(
+        tree,
+        (element) =>
+          typeof element.props.children === "string" &&
+          element.props.children.startsWith("No longer answers."),
+      );
+    const removeHere = (tree: unknown) =>
+      visitElements(tree, (element) => element.props.children === "Remove");
+    let card: FleetMachineCardExtras | undefined;
+    render({
+      snapshot: gone,
+      onRemove,
+      canManageWorkers: true,
+      renderMachine: (id, controls, _workers, extras) => {
+        if (id === m1) card = extras;
+        return controls;
+      },
+    });
+    expect(line(card?.gone)?.props.children).toBe(
+      "No longer answers. If it was wiped or reinstalled, remove it here; a fresh install joins as a new machine.",
+    );
+    const button = removeHere(card?.gone);
+    expect(button?.props.disabled).toBe(false);
+    (button?.props.onClick as () => void)();
+    expect(onRemove).toHaveBeenCalledExactlyOnceWith(gone.machines[1]);
+    // The plain list on Connections says it too, under the machine.
+    expect(line(render({ snapshot: gone, onRemove, canManageWorkers: true }))).not.toBeNull();
+    // Without Manage access, or on a server that cannot remove, the line is not offered.
+    expect(line(render({ snapshot: gone, onRemove, canManageWorkers: false }))).toBeNull();
+    expect(line(render({ snapshot: gone, canManageWorkers: true }))).toBeNull();
+    // A machine that answers is never called gone.
+    expect(line(render({ onRemove, canManageWorkers: true }))).toBeNull();
+  });
+  it("says before and after a removal that the machine stays on the Connect account", async () => {
+    runtime.connect.mockResolvedValue({ _tag: "Success", value: { entries: [] } });
+    runtime.confirm.mockResolvedValue(true);
+    runtime.removeMachine.mockResolvedValue({
+      id: "m1",
+      label: "Mac M1",
+      managementToken: "revoked",
+      workerAccess: "revoked",
+      managementSessionId: null,
+    });
+    const container = () => {
+      hooks.beginRender();
+      return StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    };
+    const hint = (tree: unknown) =>
+      visitElements(tree, (element) => element.type === ConnectDeregisterHint);
+    const before = container();
+    expect(hint(StudioFleetRoster(before.props))).toBeNull();
+    before.props.onRemove(snapshot.machines[1]!);
+    await vi.waitFor(() => expect(runtime.removeMachine).toHaveBeenCalledExactlyOnceWith(m4, "m1"));
+    expect(runtime.confirm.mock.calls[0]![0]).toContain(
+      "If Mac M1 is on your SpecWithCode Connect account, it stays registered there until you deregister it: account menu > Manage account > SpecWithCode Connect > Deregister.",
+    );
+    await vi.waitFor(() => expect(container().props.removedLabel).toBe("Mac M1"));
+    expect(hint(StudioFleetRoster(container().props))?.props.label).toBe("Mac M1");
+    // The next change takes the notice down, so it never outlives its removal.
+    runtime.stopWorkers.mockResolvedValue({ remoteSessionKept: false });
+    container().props.onWorkers(snapshot.machines[0]!, "stop");
+    await vi.waitFor(() => expect(container().props.removedLabel).toBeNull());
+  });
+  it("offers the Connect account page after a removal only when it can be opened", () => {
+    const open = vi.fn();
+    const button = (tree: unknown) =>
+      visitElements(
+        tree,
+        (element) => element.props.children === "Open SpecWithCode Connect settings",
+      );
+    const signedIn = ConnectDeregisterHintView({ label: "Mac M1", onOpen: open });
+    (button(signedIn)?.props.onClick as () => void)();
+    expect(open).toHaveBeenCalledOnce();
+    expect(
+      visitElements(
+        signedIn,
+        (element) =>
+          element.props.children ===
+          "If Mac M1 is on your SpecWithCode Connect account, it is still registered there. Deregister it under account menu > Manage account > SpecWithCode Connect.",
+      ),
+    ).not.toBeNull();
+    expect(button(ConnectDeregisterHintView({ label: "Mac M1", onOpen: null }))).toBeNull();
   });
   it("keeps the list working against a server from before 1.0.58 and says only removal needs an update", () => {
     const removeButton = (tree: unknown) =>
@@ -504,6 +637,8 @@ describe("adding a machine", () => {
     hooks.reset();
     runtime.snapshot = snapshot;
     runtime.addMachine.mockReset();
+    runtime.removeMachine.mockReset();
+    runtime.confirm.mockReset();
     runtime.environments = [];
   });
   const addForm = (tree: unknown) =>
@@ -677,6 +812,8 @@ describe("workers on private machines", () => {
     const props = {
       machine: {
         ...withWorkers.machines[1]!,
+        // No key on that machine, so this server cannot make the code itself.
+        pairingConfigured: false,
         workers: {
           ...notAllowed,
           status: "allowed" as const,
@@ -707,6 +844,14 @@ describe("workers on private machines", () => {
     const raised = FleetWorkersRow({ ...props, draft: { access: "full-access", pairingCode: "" } });
     expect(code(raised)).not.toBeNull();
     expect(button(raised, "Change access")?.props.disabled).toBe(true);
+    // With a key there the change needs nothing pasted.
+    const keyed = FleetWorkersRow({
+      ...props,
+      machine: { ...props.machine, pairingConfigured: true },
+      draft: { access: "full-access", pairingCode: "" },
+    });
+    expect(code(keyed)).toBeNull();
+    expect(button(keyed, "Change access")?.props.disabled).toBe(false);
     const full = FleetWorkersRow({
       ...props,
       machine: { ...props.machine, workers: { ...props.machine.workers, access: "full-access" } },
@@ -734,9 +879,51 @@ describe("workers on private machines", () => {
     });
   });
 
-  it("needs a pasted code before Allow when this server cannot pair there", () => {
+  it("allows without a code on a machine added by a join line", () => {
+    // The join line left a key there, but the grant does not renew by itself.
     const props = {
       machine: { ...withWorkers.machines[1]!, workers: { ...notAllowed, renewable: false } },
+      disabled: false,
+      canManage: true,
+      draft: { access: "full-access" as const, pairingCode: "" },
+      onDraftChange: vi.fn(),
+      onAction: vi.fn(),
+    };
+    expect(props.machine.pairingConfigured).toBe(true);
+    const row = FleetWorkersRow(props);
+    expect(
+      visitElements(
+        row,
+        (element) => element.props["aria-label"] === "Pairing code made on Mac M1",
+      ),
+    ).toBeNull();
+    const allow = button(row, "Allow workers")!;
+    expect(allow.props.disabled).toBe(false);
+    (allow.props.onClick as () => void)();
+    expect(props.onAction).toHaveBeenCalledExactlyOnceWith("allow");
+    // Once that machine refused the code this server made, a code can be pasted.
+    const refused = FleetWorkersRow({
+      ...props,
+      machine: {
+        ...props.machine,
+        workers: { ...props.machine.workers, problem: "pairing_unavailable" as const },
+      },
+    });
+    const field = visitElements(
+      refused,
+      (element) => element.props["aria-label"] === "Pairing code made on Mac M1",
+    );
+    expect(field?.props.placeholder).toBe("Code made on Mac M1 for this machine");
+    expect(button(refused, "Allow workers")?.props.disabled).toBe(true);
+  });
+
+  it("needs a pasted code before Allow when this server cannot pair there", () => {
+    const props = {
+      machine: {
+        ...withWorkers.machines[1]!,
+        pairingConfigured: false,
+        workers: { ...notAllowed, renewable: false },
+      },
       disabled: false,
       canManage: true,
       draft: { access: "auto" as const, pairingCode: "" },
@@ -876,6 +1063,65 @@ describe("inviting this machine from its own roster", () => {
     expect(hint).not.toContain("Tailscale");
     expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Join a main machine"));
   });
+  describe("folded under Another account, or no Connect", () => {
+    const fold = (tree: unknown) =>
+      visitElements(tree, (element) => element.type === OtherAccountJoinFold) as {
+        props: { openFor: boolean; targetIds: ReadonlyArray<string>; children: unknown };
+      } | null;
+    const both = {
+      onAddMachine: vi.fn(),
+      onInvitationChange: vi.fn(),
+      onInvite: vi.fn(),
+      canManageWorkers: true,
+    };
+    it("keeps the join line and the code steps, closed, inside one section", () => {
+      const section = fold(render(both))!;
+      expect(section.props.openFor).toBe(false);
+      // Nothing is removed: both are still there, only inside the fold.
+      const inside = label(section.props.children);
+      expect(inside).toContain("Add a machine");
+      expect(inside).toContain("It works once, within an hour.");
+      expect(inside).toContain("Join a main machine");
+      expect(inviteButton(section.props.children)).not.toBeNull();
+      // Settings search can still jump to either one, which opens the section.
+      expect(section.props.targetIds).toEqual(["private-machines-add", "private-machines-invite"]);
+      const outside = label(render(both)).replace(inside, "");
+      expect(outside).not.toContain("Make a join line");
+      expect(outside).not.toContain("It works once, within an hour.");
+    });
+    it("opens for a typed join line, a running add and the open join dialog", () => {
+      expect(fold(render({ ...both, invitation: "swc-machine-abc" }))!.props.openFor).toBe(true);
+      expect(fold(render({ ...both, invitation: "   " }))!.props.openFor).toBe(false);
+      expect(fold(render({ ...both, pending: "add-machine" }))!.props.openFor).toBe(true);
+      expect(fold(render({ ...both, pending: "m1" }))!.props.openFor).toBe(false);
+      expect(fold(render({ ...both, inviteOpen: true }))!.props.openFor).toBe(true);
+    });
+    it("stays open in a build without SpecWithCode Connect, where it is the only way to join", () => {
+      runtime.cloud = false;
+      try {
+        expect(fold(render(both))!.props.openFor).toBe(true);
+      } finally {
+        runtime.cloud = true;
+      }
+    });
+    it("is left out where neither path is offered", () => {
+      expect(fold(render())).toBeNull();
+      expect(fold(render({ onInvite: vi.fn() }))).not.toBeNull();
+    });
+    it("is told when Make a join line opened its dialog", () => {
+      hooks.reset();
+      runtime.snapshot = snapshot;
+      runtime.environments = [];
+      hooks.beginRender();
+      const tree = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+      expect(tree.props.inviteOpen).toBe(false);
+      (tree.props.onInvite as () => void)();
+      hooks.beginRender();
+      expect(
+        StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] }).props.inviteOpen,
+      ).toBe(true);
+    });
+  });
   it("hands the dialog to the roster with this machine's name and permission", () => {
     hooks.reset();
     runtime.snapshot = snapshot;
@@ -890,5 +1136,37 @@ describe("inviting this machine from its own roster", () => {
     hooks.beginRender();
     const opened = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
     expect((opened.props.inviteDialog as { props: { open: boolean } }).props.open).toBe(true);
+  });
+  it("tells the join dialog which machines agents here may start work on, by nickname", () => {
+    const workers = (status: "allowed" | "expired") => ({
+      status,
+      access: null,
+      expiresAt: null,
+      renewable: true,
+      problem: null,
+    });
+    hooks.reset();
+    runtime.snapshot = {
+      ...snapshot,
+      machines: [
+        { ...snapshot.machines[0]!, workers: workers("allowed") },
+        { ...snapshot.machines[1]!, workers: workers("allowed") },
+        {
+          ...snapshot.machines[1]!,
+          id: "m3",
+          environmentId: EnvironmentId.make("env-m3"),
+          label: "Mac M3",
+          workers: workers("expired"),
+        },
+      ],
+    };
+    runtime.environments = [];
+    runtime.nicknames = { "env-m1": "Studio Mac" };
+    hooks.beginRender();
+    const tree = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    runtime.nicknames = {};
+    const dialog = tree.props.inviteDialog as { props: { managedMachines: string[] } };
+    // Not this machine, not the expired grant, and the name the person gave it.
+    expect(dialog.props.managedMachines).toEqual(["Studio Mac"]);
   });
 });

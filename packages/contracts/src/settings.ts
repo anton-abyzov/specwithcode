@@ -1483,6 +1483,18 @@ export const ProviderLimitWaitUnderMinutes = Schema.Int.check(
 );
 export type ProviderLimitWaitUnderMinutes = typeof ProviderLimitWaitUnderMinutes.Type;
 
+export const DEFAULT_PROVIDER_SESSION_IDLE_MINUTES = 15;
+/**
+ * Minutes after its last activity at which this machine closes an agent
+ * process whose thread has no turn running, no open request and nothing
+ * queued. The thread resumes its native session on its next message. `0`
+ * keeps idle agent processes open.
+ */
+export const ProviderSessionIdleMinutes = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 1440 }),
+);
+export type ProviderSessionIdleMinutes = typeof ProviderSessionIdleMinutes.Type;
+
 /**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
@@ -1769,6 +1781,13 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   /**
+   * Whether an update may pause running work on this machine: the update
+   * agent's automatic pause, a forced fleet request and a rollout's drain. Off
+   * by default, so an update waits until the machine is quiet. A person's own
+   * Update now is never gated. Per machine, never copied to another.
+   */
+  pauseWorkForUpdates: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `studio-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
@@ -1861,6 +1880,10 @@ export const ServerSettings = Schema.Struct({
    * of asking the user to pick an unnamed browser. Off keeps Claude in Chrome.
    */
   preferSpecWithCodeBrowser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** A machine-wide choice with no project override; see `ProviderSessionIdleMinutes`. */
+  providerSessionIdleMinutes: ProviderSessionIdleMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_SESSION_IDLE_MINUTES)),
+  ),
   /**
    * Whether this server may install and run Studio's device helper processes.
    * Kept separate from agent access so enabling the user's Device panel does
@@ -1893,7 +1916,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // On by default: a thread a usage limit stopped goes on at the reset by
+  // itself when no other model takes it over.
+  autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   providerLimitAction: ProviderLimitAction.pipe(
     Schema.withDecodingDefault(Effect.succeed("switch" as const)),
   ),
@@ -2365,6 +2390,7 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  pauseWorkForUpdates: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   agentBrowserProfileId: Schema.optionalKey(Schema.NullOr(BrowserProfileId)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
@@ -2402,6 +2428,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
+  providerSessionIdleMinutes: Schema.optionalKey(ProviderSessionIdleMinutes),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),
   promptSuggestions: Schema.optionalKey(PromptSuggestionsMode),

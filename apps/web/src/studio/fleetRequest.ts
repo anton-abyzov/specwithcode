@@ -9,6 +9,7 @@ import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import type {
   StudioFleetAddInput,
   StudioFleetInviteInput,
+  StudioFleetWorkersAccountJoinInput,
   StudioFleetWorkersAllowInput,
   StudioFleetWorkersIncomingInput,
   StudioWorkGrantUpdateInput,
@@ -179,6 +180,30 @@ export function requestFleetWorkersIncoming(
       timeoutMs: 90000,
       request: ({ client, headers }) =>
         client.allowIncomingFleetWorkers({ headers, payload: input }),
+    });
+  });
+}
+/**
+ * Hands another machine of the same SpecWithCode Connect account this
+ * machine's line: it adds this machine and lets its own agents work here.
+ */
+export function requestFleetWorkersAccountJoin(
+  prepared: PreparedConnection,
+  input: StudioFleetWorkersAccountJoinInput,
+) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "POST",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/workers/account-join"),
+      // That machine checks this one's address and redeems the line first.
+      timeoutMs: 90000,
+      request: ({ client, headers }) => client.accountJoinFleetWorkers({ headers, payload: input }),
     });
   });
 }

@@ -21,12 +21,20 @@ import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
 import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { isBlockingRuntimeRequest, withPendingRequestDetail } from "./blockingRuntimeRequest.ts";
+import {
+  accountChangeArmCommand,
+  accountChangeArmLapse,
+  accountChangeArmOf,
+  isLimitBlockedThread,
+  limitBlockedContinuation,
+} from "./limitLifted.ts";
 import {
   LIMIT_CHECK_INTERVAL_MS,
   LIMIT_REARM_MAX,
@@ -234,6 +242,17 @@ export function waitRuleArmsResume(
  */
 export const LIMIT_RECOVERY_QUIET_RECHECK_MS = 30_000;
 
+/** How often a failed read, or a failed message to one thread, is tried for one account change. */
+export const LIMIT_BLOCKED_ATTEMPTS = 3;
+
+interface LimitBlockedProgress {
+  readonly changedMs: number;
+  readonly done: boolean;
+  readonly readFailures: number;
+  readonly sent: ReadonlySet<ThreadId>;
+  readonly failed: ReadonlyMap<ThreadId, number>;
+}
+
 /** The least time between two resumes on one instance after its account changed. */
 export const ACCOUNT_RESUME_SPACING_MS = 5_000;
 
@@ -431,6 +450,172 @@ export const makeSweep = Effect.gen(function* () {
   // threads follow one at a time, so a new account that fills up stops the
   // rest at its next read instead of taking every thread at once.
   const accountResumedAt = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  // Per instance, the account change its limit-blocked threads are being
+  // continued for: the threads that took their message, the ones whose send
+  // failed and how often, and whether a pass found nothing left to send.
+  const blockedContinuedFor = yield* Ref.make<ReadonlyMap<string, LimitBlockedProgress>>(new Map());
+  /**
+   * A thread can sit Blocked on a report that names a usage limit (often a
+   * coordinator relaying its worker's). No run of its own failed, so recovery
+   * has no stop to resume, and its Blocked state ends only with a message.
+   * When an instance here moves to another subscription with room, each such
+   * thread gets one message saying so, unless its project asks the person to
+   * approve subscription changes.
+   *
+   * One message per instance and sweep, like the resumes: a new account that
+   * fills up stops the rest, since room is proven again on every sweep. While
+   * a process of the instance still runs on the previous subscription nothing
+   * is sent, or the turn would hit the old limit. The threads are read once
+   * per sweep until a pass finds nothing left to send or to wait for, within
+   * LIMIT_REARM_MAX_DELAY_MS of the change.
+   */
+  const continueLimitBlocked = Effect.fn("UsageLimitRecoveryWorker.continueLimitBlocked")(
+    function* (nowMs: number) {
+      if (Option.isNone(registry)) return;
+      for (const provider of yield* registry.value.getProviders) {
+        const changedMs = Date.parse(provider.usageLimits?.accountChangedAt ?? "");
+        const instance = String(provider.instanceId);
+        const known = (yield* Ref.get(blockedContinuedFor)).get(instance);
+        const progress: LimitBlockedProgress =
+          known?.changedMs === changedMs
+            ? known
+            : { changedMs, done: false, readFailures: 0, sent: new Set(), failed: new Map() };
+        if (
+          !Number.isFinite(changedMs) ||
+          progress.done ||
+          progress.readFailures >= LIMIT_BLOCKED_ATTEMPTS ||
+          nowMs - changedMs > LIMIT_REARM_MAX_DELAY_MS ||
+          // The same proof an early resume needs: a complete, recent read of
+          // the new account that shows room.
+          !accountChangeShowsRoom(provider, changedMs - 1, nowMs)
+        )
+          continue;
+        const pending = Option.isSome(sessionManager)
+          ? sessionManager.value.replacementPending
+          : undefined;
+        if (pending && (yield* pending(provider.instanceId))) continue;
+        const save = (next: LimitBlockedProgress) =>
+          Ref.update(blockedContinuedFor, (previous) => new Map([...previous, [instance, next]]));
+        const snapshot = yield* Effect.exit(
+          Effect.suspend(() =>
+            projections.getShellSnapshot({
+              location: "active",
+              unsettledOnly: true,
+              maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+            }),
+          ),
+        );
+        if (Exit.isFailure(snapshot)) {
+          yield* save({ ...progress, readFailures: progress.readFailures + 1 });
+          continue;
+        }
+        // One turn per instance at a time, shared with the resumes below.
+        const lastAt = (yield* Ref.get(accountResumedAt)).get(instance);
+        if (
+          lastAt !== undefined &&
+          nowMs - lastAt >= 0 &&
+          nowMs - lastAt < ACCOUNT_RESUME_SPACING_MS
+        )
+          continue;
+        const failed = new Map(progress.failed);
+        let sentTo: ThreadId | null = null;
+        // A failed send, or a thread held for now (a paused project, a handoff
+        // in flight), is looked at again on a later sweep.
+        let again = false;
+        for (const shell of snapshot.value.threads) {
+          if (
+            progress.sent.has(shell.id) ||
+            (failed.get(shell.id) ?? 0) >= LIMIT_BLOCKED_ATTEMPTS ||
+            !isLimitBlockedThread(shell, changedMs, nowMs)
+          )
+            continue;
+          const outcome = yield* admission
+            .withLock(
+              shell.projectId,
+              Effect.gen(function* () {
+                const project = yield* projects.get(shell.projectId);
+                if (
+                  Option.isNone(project) ||
+                  project.value.deletedAt != null ||
+                  project.value.workspaceSettings?.archived
+                )
+                  return "skip" as const;
+                if (
+                  projectExecutionIsFenced(
+                    project.value.workspaceSettings,
+                    shell.projectId,
+                    shell.id,
+                  ) ||
+                  project.value.workspaceSettings?.paused
+                )
+                  return "held" as const;
+                // Lock order as for the arms: project admission -> settings.
+                // The message is decided under the settings snapshot and sent
+                // after it, so no settings write waits on a starting turn.
+                const message = yield* settings.withSettingsSnapshot((currentSettings) =>
+                  Effect.gen(function* () {
+                    if (
+                      resolveProjectSettings(currentSettings, shell.projectId).settings
+                        .autoApproveSubscriptionChange === false
+                    )
+                      return "skip" as const;
+                    // Read again under the lock: a reply, a Stop or a settle
+                    // since the snapshot wins over this message.
+                    const current = yield* projections.getThreadShell(shell.id);
+                    if (
+                      !current ||
+                      current.projectId !== shell.projectId ||
+                      !isLimitBlockedThread(current, changedMs, yield* Clock.currentTimeMillis)
+                    )
+                      return "skip" as const;
+                    return limitBlockedContinuation(
+                      current,
+                      provider.displayName ?? String(provider.driver),
+                      changedMs,
+                    );
+                  }),
+                );
+                if (message === "skip") return message;
+                if (yield* machineHandoff.localTurnBlocked(shell.id)) return "held" as const;
+                return (yield* send(message)) ? ("sent" as const) : ("skip" as const);
+              }),
+            )
+            .pipe(
+              Effect.catchCause((cause) => {
+                failed.set(shell.id, (failed.get(shell.id) ?? 0) + 1);
+                return Effect.logWarning(
+                  "orchestration-v2.limit-recovery.blocked-continue-failed",
+                  { threadId: shell.id, cause },
+                ).pipe(
+                  Effect.as(
+                    failed.get(shell.id)! < LIMIT_BLOCKED_ATTEMPTS
+                      ? ("held" as const)
+                      : ("skip" as const),
+                  ),
+                );
+              }),
+            );
+          if (outcome === "held") again = true;
+          if (outcome === "sent") {
+            sentTo = shell.id;
+            yield* Ref.update(
+              accountResumedAt,
+              (previous) => new Map([...previous, [instance, nowMs]]),
+            );
+            break;
+          }
+        }
+        yield* save({
+          ...progress,
+          readFailures: 0,
+          sent: sentTo === null ? progress.sent : new Set([...progress.sent, sentTo]),
+          failed,
+          // Done once a pass sends nothing and leaves nothing to look at again.
+          done: sentTo === null && !again,
+        });
+      }
+    },
+  );
   // The last read that found no candidate, and what it was read against.
   const quiet = yield* Ref.make<{
     readonly writeCount: number;
@@ -441,6 +626,13 @@ export const makeSweep = Effect.gen(function* () {
     const preferences = yield* settings.getSettings;
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
+    // Before the quiet check: an account change writes nothing to a thread.
+    // Its failure never costs the stopped threads their sweep.
+    yield* continueLimitBlocked(nowMs).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("orchestration-v2.limit-recovery.blocked-sweep-failed", { cause }),
+      ),
+    );
     // Taken before the read, so a write that lands during it forces the next
     // one. A store that cannot count its writes is read on every tick.
     const counted =
@@ -577,8 +769,60 @@ export const makeSweep = Effect.gen(function* () {
           const limitHolds = Number.isFinite(resetMs)
             ? resetMs > nowMs
             : nowMs - limitStopMs(thread) < LIMIT_REARM_MAX_DELAY_MS;
-          if (limitHolds && !recoverySnoozeBlocks(thread, nowMs, true))
-            yield* accountChange(thread);
+          if (!limitHolds || recoverySnoozeBlocks(thread, nowMs, true)) return;
+          const changedMs = yield* accountChange(thread);
+          // Signing in to another subscription with room is the person's own
+          // go-ahead, so the stop is armed for it unless the project asks them
+          // to approve the change or they chose for this stop already. The
+          // next sweep resumes it on the armed path, with every gate it has.
+          const armForChange =
+            changedMs !== null && rule.autoApproveSubscriptionChange !== false
+              ? accountChangeArmCommand(thread, changedMs, nowMs)
+              : null;
+          if (armForChange === null || (yield* Ref.get(refused)).has(armForChange.commandId))
+            return;
+          yield* admission.withLock(
+            shell.projectId,
+            Effect.gen(function* () {
+              const currentProject = yield* projects.get(shell.projectId);
+              if (
+                Option.isNone(currentProject) ||
+                currentProject.value.deletedAt != null ||
+                projectExecutionIsFenced(
+                  currentProject.value.workspaceSettings,
+                  shell.projectId,
+                  thread.id,
+                ) ||
+                currentProject.value.workspaceSettings?.paused ||
+                currentProject.value.workspaceSettings?.archived
+              )
+                return;
+              yield* settings.withSettingsSnapshot((currentSettings) =>
+                Effect.gen(function* () {
+                  const current = yield* readShell(thread.id);
+                  if (!current || current.projectId !== shell.projectId) return;
+                  const currentRule = resolveProjectSettings(
+                    currentSettings,
+                    shell.projectId,
+                  ).settings;
+                  if (
+                    currentRule.autoApproveSubscriptionChange === false ||
+                    (yield* detourRefused(current, currentRule))
+                  )
+                    return;
+                  const freshArm = accountChangeArmCommand(
+                    current,
+                    changedMs!,
+                    DateTime.toEpochMillis(yield* DateTime.now),
+                  );
+                  if (freshArm === null) return;
+                  const ranOn = yield* stoppedOn(current);
+                  if (ranOn !== undefined && ranOn !== current.providerInstanceId) return;
+                  yield* send(freshArm);
+                }),
+              );
+            }),
+          );
           return;
         }
         if (recoverySnoozeBlocks(thread, nowMs, true)) return;
@@ -652,12 +896,14 @@ export const makeSweep = Effect.gen(function* () {
                   (checked.mayResume !== true || !hasFreshLimitPermission(current, at))
                 )
                   return null;
-                const next = limitRecoveryCommand(
-                  current,
+                const policyResumes =
                   autoResumeByDefault(
                     currentProject.value.workspaceSettings?.autoResume,
                     currentSettings,
-                  ) || waitRuleArmsResume(current, currentRule, at),
+                  ) || waitRuleArmsResume(current, currentRule, at);
+                const next = limitRecoveryCommand(
+                  current,
+                  policyResumes,
                   at,
                   currentSettings.snoozeLimitedThreads,
                   // The read was taken for this stop on this instance.
@@ -670,6 +916,23 @@ export const makeSweep = Effect.gen(function* () {
                     : null,
                   yield* detourRefused(current, currentRule),
                 );
+                // A stop armed only for a subscription change resumes only
+                // while that change is still proven: with auto-continue off,
+                // its old reset passing resumes nothing, whether the new
+                // account filled up or the project now asks first.
+                if (
+                  next?.type === "message.dispatch" &&
+                  subscriptionChangeMs === null &&
+                  accountChangeArmOf(current.limitRecovery?.requestId) !== null &&
+                  !policyResumes
+                ) {
+                  // Once the old limit no longer holds the thread, the arm is
+                  // taken back, so the thread never shows a resume that will
+                  // not come. The person continues it.
+                  const lapse = accountChangeArmLapse(current, at);
+                  if (lapse !== null) yield* send(lapse);
+                  return null;
+                }
                 // The observed stop may have changed during the probe. Any new
                 // policy arm uses the same settings/commit ordering as above.
                 if (next?.type === "thread.metadata.update") {

@@ -1,6 +1,7 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { ConnectionsSettings } from "./ConnectionsSettings";
+import type { FleetMachineCardExtras } from "./StudioFleetConnections";
 import { MachineRemoteControl } from "./MachineRemoteControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -58,13 +59,24 @@ import {
   ACCOUNT_NOT_REPORTED,
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
+import { AccountJoinCard } from "./AccountJoinCard";
+import {
+  AddProjectToMachine,
+  AddProjectToMachineDialog,
+  type AddProjectTarget,
+} from "./AddProjectToMachine";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingHelp } from "./SettingHelp";
-import { SettingsPageContainer, SettingsSection, TeamRulesLabel } from "./settingsLayout";
+import {
+  scrollToSettingsTarget,
+  SettingsPageContainer,
+  SettingsSection,
+  TeamRulesLabel,
+} from "./settingsLayout";
 import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
@@ -119,7 +131,16 @@ export function MachinesSettingsPanel() {
   const [now] = useState(Date.now);
   const hostBlocks = useHostLimitBlocks(null, now);
   const [pending, setPending] = useState<EnvironmentId | null>(null);
+  // The add dialog is the page's, not a card's: a card can leave the list while a clone runs.
+  const [addingProject, setAddingProject] = useState<AddProjectTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // While no machine may run work here, allowing one is this page's first step. Decided
+  // once per visit, so the section does not jump away the moment a machine is allowed.
+  const [allowFirst, setAllowFirst] = useState<boolean | null>(null);
+  if (allowFirst === null && grants.snapshot && !grants.loading && !grants.failed)
+    setAllowFirst(grants.snapshot.grants.length === 0);
+  // Until the first read says where it goes, the section waits instead of jumping.
+  const grantsPlacementPending = allowFirst === null && grants.loading && !grants.snapshot;
 
   const rows = useMemo(
     () =>
@@ -161,12 +182,19 @@ export function MachinesSettingsPanel() {
     }
   }
 
-  const renderRow = (row: MachineRowModel, details?: ReactNode, workersControl?: ReactNode) => (
+  const renderRow = (
+    row: MachineRowModel,
+    details?: ReactNode,
+    workersControl?: ReactNode,
+    card?: FleetMachineCardExtras,
+  ) => (
     <MachineRow
       key={row.environmentId}
       row={row}
       hereLabel={hereLabel}
       workersControl={workersControl}
+      actions={card?.actions}
+      gone={card?.gone}
       pending={pending}
       onConnect={(machine) => void connect(machine)}
       remoteControl={
@@ -193,9 +221,28 @@ export function MachinesSettingsPanel() {
           />
         ) : null
       }
+      addProject={
+        row.seen.state === "connected" && row.projects.own.length === 0 ? (
+          <AddProjectToMachine
+            environmentId={row.environmentId}
+            name={machineName(row.environmentId, row.label)}
+            onChoose={setAddingProject}
+          />
+        ) : null
+      }
       details={details}
     />
   );
+  const workGrants = fleet.primaryEnvironmentId ? (
+    <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
+  ) : null;
+  // One card allows a machine of this SpecWithCode Connect account. It reads the grants itself.
+  const joinCard = fleet.primaryEnvironmentId ? (
+    <AccountJoinCard
+      environmentId={fleet.primaryEnvironmentId}
+      onShowConnectSwitch={() => scrollToSettingsTarget("connections-environment")}
+    />
+  ) : null;
   // The page container is the scroll area: without it Settings > Machines cannot scroll.
   return (
     <SettingsPageContainer width="wide">
@@ -209,6 +256,12 @@ export function MachinesSettingsPanel() {
           {error}
         </p>
       ) : null}
+      {allowFirst === true ? (
+        <>
+          {joinCard}
+          {workGrants}
+        </>
+      ) : null}
       <ConnectionsSettings
         additionalMachines={rows
           .filter(
@@ -218,7 +271,7 @@ export function MachinesSettingsPanel() {
               ),
           )
           .map((row) => renderRow(row))}
-        renderMachine={(environmentId, controls, workersControl) => {
+        renderMachine={(environmentId, controls, workersControl, card) => {
           const row = rows.find((item) => item.environmentId === environmentId);
           return row
             ? renderRow(
@@ -228,14 +281,19 @@ export function MachinesSettingsPanel() {
                   <ul>{controls}</ul>
                 </details>,
                 workersControl,
+                card,
               )
             : controls;
         }}
       />
+      <AddProjectToMachineDialog target={addingProject} onClose={() => setAddingProject(null)} />
       <AwayAccessRequestsAll />
-      {fleet.primaryEnvironmentId ? (
-        <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
-      ) : null}
+      {allowFirst === true || grantsPlacementPending ? null : (
+        <>
+          {workGrants}
+          {joinCard}
+        </>
+      )}
       {fleet.primaryEnvironmentId ? (
         <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
       ) : null}
@@ -607,6 +665,8 @@ function ProjectList({
 export function MachineRow({
   remoteControl,
   workersControl,
+  actions,
+  gone,
   details,
   row,
   hereLabel,
@@ -615,10 +675,15 @@ export function MachineRow({
   addForAgents,
   connectBothWays,
   allowBack,
+  addProject,
 }: {
   remoteControl?: ReactNode;
   /** The Allow workers control for agents here; it sits on the first access line. */
   workersControl?: ReactNode;
+  /** Stop workers and Remove machine, shown in the header so they need no disclosure. */
+  actions?: ReactNode;
+  /** Shown under the header when the machine no longer answers: says so and offers Remove. */
+  gone?: ReactNode;
   details?: ReactNode;
   row: MachineRowModel;
   /** This machine's name, so each grant line names its direction. */
@@ -629,6 +694,8 @@ export function MachineRow({
   connectBothWays?: ReactNode;
   /** Shown where the grant would be until that machine may run work here. */
   allowBack?: ReactNode;
+  /** The next step for a connected machine with no project of its own: add one. */
+  addProject?: ReactNode;
 }) {
   const tx = useTx();
   const seen = row.seen.state === "this-machine" || row.seen.state === "connected";
@@ -692,8 +759,10 @@ export function MachineRow({
             ) : null}
           </div>
         ) : null}
+        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </div>
 
+      {gone ? <div className="pl-7">{gone}</div> : null}
       {details}
       {row.connect && row.connectLock ? (
         <div className="pl-7">
@@ -769,6 +838,7 @@ export function MachineRow({
             {seen ? tx("No projects of your own here.") : tx("Connect to see its projects.")}
           </p>
         )}
+        {addProject}
         <ArchivedDisclosure
           count={row.projects.automated.length}
           label={tx("automated")}
@@ -858,6 +928,10 @@ export function AllowBack({
         coordinatorLabel={coordinatorLabel}
         connected={row.seen.state === "connected"}
         coordinatorFleetId={row.fleetMachine?.id}
+        accountJoin={
+          environments.find((environment) => environment.environmentId === row.environmentId)
+            ?.serverConfig?.environment.capabilities.fleetAccountJoinWorkers === true
+        }
         actionLabel={tx("Allow {coordinatorLabel}", { coordinatorLabel })}
         onGranted={onGranted}
       />

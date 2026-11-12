@@ -49,6 +49,14 @@ export const StorageCleanupSettings = Schema.Struct({
    */
   scratchAfterDays: ScratchRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /**
+   * Remove review and scratch clones of registered projects' repositories once
+   * their work is merged, hourly, and only when the clone is clean, has
+   * nothing unpushed and no stash, and no project, thread, agent session or
+   * process uses it (`specweave-studio clones sweep` shows the plan). On by
+   * default: such clones are recreatable and piled up to 27 in a week.
+   */
+  removeMergedClones: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Warn when the app's home folder passes this many gigabytes. Null turns the
    * warning off; the size is still measured and shown in Storage settings.
    */
@@ -89,6 +97,7 @@ export const StorageCleanupSettingsPatch = Schema.Struct({
   browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
   logsAfterDays: Schema.optionalKey(StorageRetentionDays),
   scratchAfterDays: Schema.optionalKey(ScratchRetentionDays),
+  removeMergedClones: Schema.optionalKey(Schema.Boolean),
   homeSizeWarningGb: Schema.optionalKey(HomeSizeWarningGb),
   deletedThreadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
   archivedThreadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),

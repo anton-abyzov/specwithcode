@@ -339,20 +339,13 @@ export const make = Effect.gen(function* () {
     const projectShells = yield* projectStore.listShells();
     const projects = new Map(projectShells.map((project) => [project.id, project]));
 
-    const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
-      function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
-        // The sweep's settings. Only a thread about to settle reads them again
-        // (below), after the provider lookup.
-        const currentSettings = resolveProjectSettings(settings, thread.projectId).settings;
-        const decisionNow = yield* DateTime.now;
-        const settledAt = resolveAutoSettlementAt({
-          thread,
-          pullRequest,
-          nowMs: DateTime.toEpochMillis(decisionNow),
-          autoSettleAfterDays: currentSettings.sidebarAutoSettleAfterDays,
-          autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
-        });
-        if (settledAt === null) return thread;
+    const settleDueThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
+      function* (
+        thread: (typeof candidates)[number],
+        pullRequest: SettlementPullRequest | null,
+        decisionNow: DateTime.Utc,
+        settledAt: NonNullable<ReturnType<typeof resolveAutoSettlementAt>>,
+      ) {
         // The candidate query omits queued runs, including held queues older than
         // the optimistic start grace. Read durable runs before declaring completion.
         const records = yield* projections.getThreadRecords(
@@ -460,6 +453,27 @@ export const make = Effect.gen(function* () {
           ),
         ),
     );
+    // Most candidates have nothing to settle yet. They are answered here,
+    // without a span for each thread.
+    const settleThread = (
+      thread: (typeof candidates)[number],
+      pullRequest: SettlementPullRequest | null,
+    ) =>
+      Effect.flatMap(DateTime.now, (decisionNow) => {
+        // The sweep's settings. Only a thread about to settle reads them again
+        // (in settleDueThread), after the provider lookup.
+        const currentSettings = resolveProjectSettings(settings, thread.projectId).settings;
+        const settledAt = resolveAutoSettlementAt({
+          thread,
+          pullRequest,
+          nowMs: DateTime.toEpochMillis(decisionNow),
+          autoSettleAfterDays: currentSettings.sidebarAutoSettleAfterDays,
+          autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
+        });
+        return settledAt === null
+          ? Effect.succeed(thread)
+          : settleDueThread(thread, pullRequest, decisionNow, settledAt);
+      });
 
     // Linked snapshots already carry provider readiness. Threads without links
     // need a provider lookup; age must never bypass that evidence.

@@ -54,6 +54,7 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   resolveEnvironmentMachineKind,
+  type AuthSessionId,
 } from "@specweave-studio/contracts";
 import {
   RelayConnectionRegistration,
@@ -94,6 +95,7 @@ import {
   resolveTailscaleHttpsRowState,
   selectQrEndpointOption,
   togglePairingScopeSelection,
+  type UnusedClientCandidate,
 } from "./ConnectionsSettings.logic";
 import {
   SettingsDisclosure,
@@ -165,6 +167,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { RevokeUnusedClientsButton } from "./RevokeUnusedClientsButton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -195,6 +198,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { RemoveStudioConnectEnvironmentDialog } from "../clerk/RemoveStudioConnectEnvironmentDialog";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { useRememberConnectChoice } from "~/cloud/useRememberConnectChoice";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
 import {
@@ -1068,6 +1072,23 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   );
 });
 
+/** What Revoke unused reads of an authorized client. */
+function toUnusedClientCandidate(
+  session: ServerClientSessionRecord,
+): UnusedClientCandidate<AuthSessionId> {
+  return {
+    sessionId: session.sessionId,
+    subject: session.subject,
+    label: session.client.label,
+    deviceType: session.client.deviceType,
+    principalKind: session.principal?.kind,
+    issuedAt: session.issuedAt,
+    lastConnectedAt: session.lastConnectedAt,
+    connected: session.connected,
+    current: session.current,
+  };
+}
+
 type AuthorizedClientsHeaderActionProps = {
   onPairingLinkCreated: (result: AuthPairingCredentialResult) => void;
   clientSessions: ReadonlyArray<ServerClientSessionRecord> | null;
@@ -1132,7 +1153,11 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
   }, []);
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <RevokeUnusedClientsButton
+        clientSessions={clientSessions?.map(toUnusedClientCandidate) ?? null}
+        disabled={isRevokingOtherClients}
+      />
       <Button
         size="xs"
         variant="destructive-outline"
@@ -1879,6 +1904,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     reconcileCloudState,
   } = useCloudLinkController();
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
+  const rememberConnectChoice = useRememberConnectChoice();
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -1898,6 +1924,8 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     setIsUpdating(true);
     const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
     if (ok) {
+      // Off here is the owner's choice: a later sign-in does not turn it back on.
+      rememberConnectChoice(enabled);
       // Turning the tunnel off while publishing stays on downgrades the link
       // rather than removing it — say so instead of claiming an unlink.
       toastManager.add({

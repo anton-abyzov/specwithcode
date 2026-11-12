@@ -168,7 +168,9 @@ export type ProjectionRecoveryKind =
   // A service update cancelled queued messages that the restart queues again.
   | "update-requeue"
   // Open provider-native subagent state: rows, items, or a child's runless root turn.
-  | "stranded-subagents";
+  | "stranded-subagents"
+  // A roster of background work, or a settled latest run that lost some (see LostBackgroundWorkWake).
+  | "lost-background-work";
 
 /** Persisted state needed for limit recovery, without transcript or fork history. */
 /** A pending request with the detail that tells whether it holds the thread. */
@@ -570,6 +572,10 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2Run>, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
+    options?: {
+      /** `lost-background-work`: the oldest run end still considered. Default: a day ago. */
+      readonly since?: DateTime.Utc | undefined;
+    },
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getUnreadableThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
@@ -703,6 +709,26 @@ function needsRecovery(
               ["pending", "running", "waiting"].includes(node.status),
           ))
       );
+    case "lost-background-work": {
+      const latest = projection.runs.reduce<(typeof projection.runs)[number] | undefined>(
+        (found, run) =>
+          run.status !== "rolled_back" && (found === undefined || run.ordinal > found.ordinal)
+            ? run
+            : found,
+        undefined,
+      );
+      return (
+        projection.providerThreads.some(
+          (thread) =>
+            thread.ownerNodeId === null && (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ) ||
+        (latest !== undefined &&
+          (((latest.status === "completed" || latest.status === "cancelled") &&
+            (latest.restartCancelledBackgroundWork?.length ?? 0) > 0) ||
+            (latest.status === "failed" &&
+              latest.userMessageId.startsWith("message:restart-continuation:"))))
+      );
+    }
     case "runtime":
       return (
         projection.runs.some(
@@ -1117,6 +1143,9 @@ type WindowPayloadRow = {
 type PayloadRow = {
   readonly payload_json: string;
 };
+
+/** Threads read by one shell list statement; see `selectShellThreadRowPages`. */
+const SHELL_THREAD_ROWS_PAGE_SIZE = 200;
 
 type ShellThreadRow = {
   readonly running_model_json: string | null;
@@ -4147,7 +4176,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     const getRecoveryThreadIds = Effect.fn("ProjectionStore.getRecoveryThreadIds")(
-      function* (kind: ProjectionRecoveryKind) {
+      function* (
+        kind: ProjectionRecoveryKind,
+        options?: { readonly since?: DateTime.Utc | undefined },
+      ) {
         const candidates = (() => {
           switch (kind) {
             case "deferred-resolutions":
@@ -4294,6 +4326,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND node.status IN ('pending', 'running', 'waiting')
                   )
               `;
+            case "lost-background-work":
+              return sql`
+                SELECT latest.thread_id FROM orchestration_v2_projection_runs AS latest
+                WHERE latest.status IN ('completed', 'cancelled', 'failed')
+                  -- Older losses wait for a person, like turns an update cut off.
+                  AND latest.completed_at >= ${
+                    options?.since === undefined
+                      ? sql`strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')`
+                      : DateTime.formatIso(options.since)
+                  }
+                  -- Lost work on a settled run, or the automatic turn for it that failed to start.
+                  -- The text test keeps the JSON parse to the few rows that can match.
+                  AND CASE
+                    WHEN latest.status = 'failed'
+                      THEN instr(latest.payload_json, '"userMessageId":"message:restart-continuation:') > 0
+                    WHEN instr(latest.payload_json, '"restartCancelledBackgroundWork"') > 0
+                      AND json_valid(latest.payload_json)
+                      THEN json_array_length(latest.payload_json, '$.restartCancelledBackgroundWork') > 0
+                    ELSE 0 END
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS later
+                    WHERE later.thread_id = latest.thread_id
+                      AND later.ordinal > latest.ordinal
+                      -- A rolled-back run left no turn behind.
+                      AND later.status <> 'rolled_back'
+                  )
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_provider_threads
+                WHERE owner_node_id IS NULL
+                  AND instr(payload_json, '"pendingBackgroundTasks":[]') = 0
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                    ELSE 0 END
+              `;
             case "runtime":
               return sql`
                 WITH pending_provider_threads AS MATERIALIZED (
@@ -4361,7 +4427,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT thread_id FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL
             AND thread_id IN (${candidates})
-            ${kind === "queued-runs" || kind === "update-interrupted" || kind === "update-requeue" ? sql`AND archived_at IS NULL` : sql``}
+            ${kind === "queued-runs" || kind === "update-interrupted" || kind === "update-requeue" || kind === "lost-background-work" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
         `;
         return rows.map((row) => ThreadId.make(row.thread_id));
@@ -5787,10 +5853,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    const shellThreadLocationFilter = (
+      location: "active" | "archive" | undefined,
+      unsettledOnly: boolean,
+    ) =>
+      sql`${
+        location === "active"
+          ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
+          : location === "archive"
+            ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL`
+            : sql``
+      }${
+        unsettledOnly
+          ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
+          : sql``
+      }`;
+
+    // The run subqueries below are pinned to the partial indexes of migration
+    // 074, which hold only live runs. Unpinned, the planner walks every run of
+    // the thread on (thread_id, ordinal) to find that none is live.
     const selectShellThreadRows = (
       threadId?: ThreadId,
       location?: "active" | "archive",
       unsettledOnly = false,
+      pageThreadIds?: ReadonlyArray<string>,
     ) =>
       sql<ShellThreadRow>`
             SELECT
@@ -5876,6 +5962,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (
                 SELECT r.run_id
                 FROM orchestration_v2_projection_runs r
+                  INDEXED BY orchestration_v2_projection_runs_active_latest_idx
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running')
                 ORDER BY r.ordinal DESC, r.run_id DESC
@@ -5896,6 +5983,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                 )
                 FROM orchestration_v2_projection_runs r
+                  INDEXED BY orchestration_v2_projection_runs_active_latest_idx
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running')
                 ORDER BY r.ordinal DESC, r.run_id DESC
@@ -5905,6 +5993,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 (
                   SELECT r.status
                   FROM orchestration_v2_projection_runs r
+                    INDEXED BY orchestration_v2_projection_runs_working_latest_idx
                   WHERE r.thread_id = t.thread_id
                     AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                   ORDER BY r.ordinal DESC, r.run_id DESC
@@ -5937,6 +6026,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     r.requested_at
                   )
                   FROM orchestration_v2_projection_runs r
+                    INDEXED BY orchestration_v2_projection_runs_working_latest_idx
                   WHERE r.thread_id = t.thread_id
                     AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                   ORDER BY r.ordinal DESC, r.run_id DESC
@@ -6028,6 +6118,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT secret.payload_json
                 -- Keep runs outermost so completed history is never scanned for a pending secret.
                 FROM orchestration_v2_projection_runs r
+                  INDEXED BY orchestration_v2_projection_runs_working_latest_idx
                 CROSS JOIN orchestration_v2_projection_turn_items secret
                   INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
                 WHERE r.thread_id = t.thread_id
@@ -6146,18 +6237,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               LIMIT 1
             ) AND blocked.status = 'failed'
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
-              location === "active"
-                ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
-                : location === "archive"
-                  ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL`
-                  : sql``
-            }${
-              unsettledOnly
-                ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
-                : sql``
-            }
+              pageThreadIds === undefined
+                ? sql``
+                : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(pageThreadIds)}))`
+            }${shellThreadLocationFilter(location, unsettledOnly)}
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
+
+    // The shell list in pages. One statement for every thread held the event
+    // loop for its whole duration (about 300 ms at 2,300 threads); a page is a
+    // few milliseconds and other work runs between pages. The ids are read in
+    // the list's order and each page is a contiguous slice of it, so the pages
+    // joined are the rows of the single statement. Call inside a transaction.
+    const selectShellThreadRowPages = (location?: "active" | "archive", unsettledOnly = false) =>
+      Effect.gen(function* () {
+        const ordered = yield* sql<{ readonly thread_id: string }>`
+            SELECT t.thread_id
+            FROM orchestration_v2_projection_threads t
+            WHERE t.deleted_at IS NULL${shellThreadLocationFilter(location, unsettledOnly)}
+            ORDER BY t.updated_at ASC, t.thread_id ASC
+          `;
+        const rows: Array<ShellThreadRow> = [];
+        for (let start = 0; start < ordered.length; start += SHELL_THREAD_ROWS_PAGE_SIZE) {
+          if (start > 0) yield* Effect.yieldNow;
+          const page = yield* selectShellThreadRows(
+            undefined,
+            undefined,
+            false,
+            ordered.slice(start, start + SHELL_THREAD_ROWS_PAGE_SIZE).map((row) => row.thread_id),
+          );
+          for (const row of page) rows.push(row);
+        }
+        return rows;
+      });
 
     const selectShellRunRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
@@ -6664,8 +6776,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const targetThreadRows = yield* selectShellThreadRows(
-              undefined,
+            const targetThreadRows = yield* selectShellThreadRowPages(
               options?.location,
               options?.unsettledOnly ?? false,
             );
