@@ -291,8 +291,9 @@ describe("when the runner gives up or the app starts again", () => {
     expect(state.toasts).toEqual([
       expect.objectContaining({
         type: "warning",
+        title: "App was not added to Mini",
         description:
-          "App was cloned on Mini but is not linked: the project never appeared there. Add it to that machine again from Run on.",
+          "App was not added to Mini: the project never appeared there. Add it to that machine again from Run on.",
       }),
     ]);
   });

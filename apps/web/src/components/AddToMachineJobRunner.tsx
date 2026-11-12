@@ -199,6 +199,7 @@ function DestinationJobs({
             job,
             latest.current,
             "the project never appeared there. Add it to that machine again from Run on.",
+            "never-added",
           );
         } else if (!clone) later(CLONE_DONE_RETENTION_MS - age + 1000);
         continue;
@@ -237,16 +238,26 @@ const machineLabel = (context: Labels, environmentId: EnvironmentId) =>
   );
 
 /** Says why a job was dropped, so a clone the runner gave up on is not left silently unlinked. */
-function reportGivenUp(job: AddToMachineJob, context: Labels, reason: string): void {
+function reportGivenUp(
+  job: AddToMachineJob,
+  context: Labels,
+  reason: string,
+  stage: "never-added" | "added" = "added",
+): void {
   const source = readProject(scopeProjectRef(job.source.environmentId, job.source.projectId));
   const folder = job.destination.workspaceRoot.split(/[\\/]/).findLast(Boolean);
   const title = source ? logicalProjectTitle(source) : (folder ?? "The project");
   const destName = machineLabel(context, job.destination.environmentId);
+  // A job is saved when the add starts, so a project that never appeared was not cloned.
+  const headline =
+    stage === "never-added"
+      ? `${title} was not added to ${destName}`
+      : `${title} was cloned on ${destName} but is not linked`;
   toastManager.add(
     stackedThreadToast({
       type: "warning",
-      title: `${title} was cloned on ${destName} but is not linked`,
-      description: `${title} was cloned on ${destName} but is not linked: ${reason}`,
+      title: headline,
+      description: `${headline}: ${reason}`,
     }),
   );
 }
