@@ -55,7 +55,7 @@ export const ja: Messages = {
 
   "wizard.agents.title": "エージェントを接続",
   "wizard.agents.description":
-    "コードを書くのはエージェントなので、最初のチャットの前に少なくとも 1 つにサインインしておく必要があります。Cursor、OpenCode、Grok などはセットアップ後に 設定 > プロバイダー で追加できます。",
+    "コードを書くのはエージェントなので、最初のチャットの前に少なくとも 1 つにサインインしておく必要があります。お使いのコンピューターで見つかったエージェントがここに表示されます。ほかのエージェントは後から 設定 > プロバイダー で追加できます。",
   "wizard.agents.noTerminal": "この接続ではターミナルを操作できません。",
   "wizard.agents.anotherChatGpt": "別の ChatGPT アカウントを接続",
   "wizard.agents.readyToCode": "コーディングの準備ができました。",

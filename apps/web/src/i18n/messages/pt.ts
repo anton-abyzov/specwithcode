@@ -61,7 +61,7 @@ export const pt: Messages = {
 
   "wizard.agents.title": "Conecte seus agentes",
   "wizard.agents.description":
-    "Um agente escreve o código, então pelo menos um precisa estar conectado antes da sua primeira conversa. Cursor, OpenCode, Grok e outros podem ser adicionados depois em Configurações > Provedores.",
+    "Um agente escreve o código, então pelo menos um precisa estar conectado antes da sua primeira conversa. Os agentes encontrados nos seus computadores aparecem aqui. Outros podem ser adicionados depois em Configurações > Provedores.",
   "wizard.agents.noTerminal": "Esta conexão não pode controlar terminais.",
   "wizard.agents.anotherChatGpt": "Conectar outra conta do ChatGPT",
   "wizard.agents.readyToCode": "Pronto para programar.",

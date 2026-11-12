@@ -7,24 +7,38 @@ import type {
 } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
+  AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
   AuthTerminalOperateScope,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
-import { CheckIcon, TerminalIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { EllipsisIcon } from "lucide-react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
-  getOnboardingProviderState,
+  canInstallOnboardingAgent,
+  listOnboardingAgents,
+  onboardingAgentUses,
+  resolveAgentSignInCommand,
   resolveOnboardingProviderInstallCommand,
-  resolveOnboardingProviderLoginCommand,
-  selectOnboardingProvidersByDriver,
+  type OnboardingAgentRow,
 } from "../../onboarding/providerReadiness.logic";
 import { randomUUID } from "../../lib/utils";
+import { acpAgentIdForInstanceConfig } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
 import { useAgentReadiness } from "../../onboarding/useAgentReadiness";
 import { agentReadinessMessage } from "../../onboarding/agentReadiness.logic";
@@ -32,38 +46,79 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { getProviderSummary } from "../settings/providerStatus";
-import { getDriverOption } from "../settings/providerDriverMeta";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
+import {
+  agentName,
+  defaultAgentInstance,
+  foundAgentsView,
+  useAgentSearch,
+} from "../settings/FoundAgents";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
+import { OpenAI } from "../Icons";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { cn } from "../../lib/utils";
 import { useT, useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
+import { AgentCommand, AgentRow, AgentRowStatus } from "./AgentRow";
+import { FoundAgentRow, ProviderAgentRow } from "./AgentRows";
 import { StepShell, useHeldFor, WizardStepFooter } from "./WizardFrame";
+
+const AddProviderInstanceDialog = lazy(() =>
+  import("../settings/AddProviderInstanceDialog").then((module) => ({
+    default: module.AddProviderInstanceDialog,
+  })),
+);
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 // Some providers report "not checked yet" for good, so checking cannot last forever.
 const AGENT_CHECK_TIMEOUT_MS = 15_000;
+/** While an agent's sign-in runs in the panel, its machine is asked this often. */
+const SIGN_IN_POLL_MS = 3_000;
 
-const PRIMARY_AGENT_DRIVERS = ["codex", "claudeAgent"] as const;
-type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
-
-/** Setup values stay fixed while provider probes refresh the surrounding cards. */
+/** Setup values stay fixed while provider probes refresh the surrounding rows. */
 interface AgentTerminalSession {
   readonly environmentId: EnvironmentId;
-  readonly driver: OnboardingAgentDriver;
+  readonly agent: string;
+  readonly agentName: string;
   readonly providerInstanceId: ServerProvider["instanceId"];
   readonly cwd: string;
   readonly command: string;
+  /**
+   * A sign-in runs at once and the panel closes when it ends. An install is
+   * typed and waits for Enter, so the person reads what will run.
+   */
+  readonly purpose: "signIn" | "install";
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-/** Codex uses managed setup; existing CLI installs retain the terminal path. */
+/** Claude Code is the product name of the agent the driver list calls Claude. */
+/** Whether a read's own answer says that agent is signed in. */
+function readAsSignedIn(
+  result:
+    | {
+        readonly _tag: string;
+        readonly value?: { readonly providers?: ReadonlyArray<ServerProvider> } | undefined;
+      }
+    | undefined,
+  instanceId: ProviderInstanceId,
+): boolean {
+  if (result?._tag !== "Success") return false;
+  return (
+    result.value?.providers?.some(
+      (provider) => provider.instanceId === instanceId && provider.auth.status === "authenticated",
+    ) === true
+  );
+}
+
+function rowName(agent: string, provider?: ServerProvider): string {
+  return provider?.displayName || (agent === "claudeAgent" ? "Claude Code" : agentName(agent));
+}
+
+/** Every agent found on each machine, one row each: its state and at most one button. */
 export function AgentsStep({
   environmentIds,
   onBack,
@@ -143,16 +198,29 @@ function ConnectedAgentsStep({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "Agent setup settings");
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
   const [addingAccount, setAddingAccount] = useState(false);
+  const [addingAgent, setAddingAgent] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<{
     instanceId: ProviderInstanceId;
     displayName: string;
     autoStart: boolean;
   } | null>(null);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const canSearch = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  const { search, find } = useAgentSearch(environmentId, canSearch);
   const [rechecking, setRechecking] = useState(false);
+  // "Sign in" on an agent that was still off: its sign-in starts once it is on.
+  const [signInAfterTurnOn, setSignInAfterTurnOn] = useState<string | null>(null);
+  // The agent whose sign-in the app started and whose result is being read.
+  const [checkingInstance, setCheckingInstance] = useState<ProviderInstanceId | null>(null);
+  // The agent whose sign-in in the panel ended last, for a line on its row if it is still signed out.
+  const [endedInstance, setEndedInstance] = useState<ProviderInstanceId | null>(null);
+  const polling = useRef(false);
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
   // refresh; harmless when nothing changed (single-flighted per environment).
@@ -160,29 +228,164 @@ function ConnectedAgentsStep({
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  const byDriver = useMemo(() => selectOnboardingProvidersByDriver(providers), [providers]);
+  const settings = serverConfig?.settings;
+  const os = serverConfig?.environment.platform.os;
+  const list = useMemo(() => {
+    const view = search !== null && settings ? foundAgentsView(search, settings) : null;
+    return listOnboardingAgents({
+      providers,
+      found: view?.rows ?? [],
+      notFound: (search?.agents ?? [])
+        .filter(({ state }) => state === "not-installed")
+        .map(({ agent }) => agent),
+    });
+  }, [providers, search, settings]);
 
-  const primaryAgents = PRIMARY_AGENT_DRIVERS.flatMap((driver) => {
-    const instances =
-      driver === "codex" ? providers?.filter((provider) => provider.driver === driver) : undefined;
-    return instances?.length
-      ? instances.map((provider) => ({ driver, provider, instanceId: provider.instanceId }))
-      : [{ driver, provider: byDriver.get(driver), instanceId: byDriver.get(driver)?.instanceId }];
-  });
+  const rows: OnboardingAgentRow[] = [...list.rows];
   // Keep the newly created row mounted while settings and provider snapshots catch up.
   if (createdAccount) {
-    const index = primaryAgents.findIndex(
-      (agent) => agent.instanceId === createdAccount.instanceId,
-    );
-    const [existing] = index >= 0 ? primaryAgents.splice(index, 1) : [];
-    primaryAgents.unshift(
+    const index = rows.findIndex((row) => row.key === createdAccount.instanceId);
+    const [existing] = index >= 0 ? rows.splice(index, 1) : [];
+    rows.unshift(
       existing ?? {
-        driver: "codex",
+        kind: "agent",
+        key: createdAccount.instanceId,
+        agent: "codex",
         provider: undefined,
-        instanceId: createdAccount.instanceId,
+        state: "checking",
       },
     );
   }
+
+  // Coming back from a browser or a terminal is the moment to look again.
+  const waiting = rows.some((row) => row.kind === "found" || row.state !== "ready");
+  useEffect(() => {
+    if (!waiting || typeof window === "undefined") return;
+    const onFocus = () => void refreshProviders({ environmentId, input: {} });
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [waiting, environmentId, refreshProviders]);
+
+  // A sign-in in the panel is done when the machine reads the agent as signed in.
+  const signInInstanceId =
+    terminalSession?.purpose === "signIn" ? terminalSession.providerInstanceId : null;
+  const panelSignedIn =
+    signInInstanceId !== null &&
+    providers?.find((provider) => provider.instanceId === signInInstanceId)?.auth.status ===
+      "authenticated";
+  if (panelSignedIn) setTerminalSession(null);
+  // The line about a sign-in that ended is about that sign-in only.
+  if (
+    endedInstance !== null &&
+    providers?.find((provider) => provider.instanceId === endedInstance)?.auth.status ===
+      "authenticated"
+  )
+    setEndedInstance(null);
+  useEffect(() => {
+    if (signInInstanceId === null) return;
+    const timer = setInterval(() => {
+      if (polling.current) return;
+      polling.current = true;
+      void Promise.resolve(
+        refreshProviders({ environmentId, input: { instanceId: signInInstanceId } }),
+      ).finally(() => {
+        polling.current = false;
+      });
+    }, SIGN_IN_POLL_MS);
+    return () => clearInterval(timer);
+  }, [signInInstanceId, environmentId, refreshProviders]);
+
+  const openPanel = (
+    session: Pick<
+      AgentTerminalSession,
+      "agent" | "agentName" | "providerInstanceId" | "command" | "purpose"
+    >,
+  ) => {
+    if (serverConfig === null || !readEnvironmentScope(environmentId, AuthTerminalOperateScope))
+      return;
+    setEndedInstance(null);
+    setTerminalSession({
+      ...session,
+      environmentId,
+      cwd: serverConfig.cwd,
+      keybindings: serverConfig.keybindings,
+    });
+  };
+
+  const closePanel = () => {
+    const closed = terminalSession;
+    setTerminalSession(null);
+    if (closed === null) return;
+    if (closed.purpose === "install") {
+      void refreshProviders({ environmentId, input: {} });
+      find();
+      return;
+    }
+    // The sign-in command has ended: read that agent now, and say so on its row.
+    const instanceId = closed.providerInstanceId;
+    const checked = () =>
+      setCheckingInstance((current) => (current === instanceId ? null : current));
+    setCheckingInstance(instanceId);
+    setEndedInstance(instanceId);
+    // A read already under way may have begun before the sign-in saved the account.
+    // So this one is asked for by itself, and a signed-out answer is read once more.
+    const read = (fresh: boolean) =>
+      Promise.resolve(
+        refreshProviders({
+          environmentId,
+          input: fresh ? { instanceId, fresh } : { instanceId },
+        }),
+      );
+    void read(true)
+      .then((result) => (readAsSignedIn(result, instanceId) ? undefined : read(false)))
+      .finally(checked);
+    // A check that never answers must not hold the row on "Checking…".
+    if (checkTimer.current !== null) clearTimeout(checkTimer.current);
+    checkTimer.current = setTimeout(checked, AGENT_CHECK_TIMEOUT_MS);
+  };
+
+  const turnOn = (agent: string) => {
+    if (!settings) return;
+    const driver = ProviderDriverKind.make(agent);
+    const instanceId = defaultInstanceIdForDriver(driver);
+    void Promise.resolve(
+      updateSettings({
+        environmentId,
+        input: {
+          patch: buildProviderInstanceUpdatePatch({
+            settings,
+            instanceId,
+            driver,
+            isDefault: true,
+            instance: { ...defaultAgentInstance(settings, driver), enabled: true },
+          }),
+        },
+      }),
+    ).then((result) => {
+      // An agent that could not be turned on has no sign-in to start later.
+      if (result?._tag === "Failure") {
+        setSignInAfterTurnOn((current) => (current === agent ? null : current));
+      }
+    });
+  };
+
+  const autoSignInDone = useCallback(() => setSignInAfterTurnOn(null), []);
+  const installable = list.notInstalled.filter(canInstallOnboardingAgent);
+  const codexMenu = (
+    <Menu>
+      <MenuTrigger
+        render={<Button size="icon-xs" variant="ghost-muted" aria-label={tx("More for Codex")} />}
+      >
+        <EllipsisIcon aria-hidden />
+      </MenuTrigger>
+      <MenuPopup align="end">
+        <MenuItem onClick={() => setAddingAccount(true)}>
+          {tx("Add another ChatGPT account")}
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+
   return (
     <section>
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -194,6 +397,8 @@ function ConnectedAgentsStep({
           disabled={rechecking}
           onClick={() => {
             setRechecking(true);
+            setCheckingInstance(null);
+            find();
             void Promise.resolve(refreshProviders({ environmentId, input: {} })).finally(() =>
               setRechecking(false),
             );
@@ -206,87 +411,148 @@ function ConnectedAgentsStep({
         <p className="mb-2 text-sm text-muted-foreground">{t("wizard.agents.noTerminal")}</p>
       ) : null}
       <div className="space-y-1.5">
-        {primaryAgents.map(({ driver, provider, instanceId }) =>
-          driver === "codex" && serverConfig !== null ? (
-            <OnboardingCodexSetup
-              key={instanceId ?? driver}
+        {rows.map((row) => {
+          if (row.kind === "found") {
+            return (
+              <FoundAgentRow
+                key={row.key}
+                found={{
+                  agent: row.agent,
+                  kind: row.registry ? "registry" : "builtIn",
+                  state: row.state,
+                }}
+                name={rowName(row.agent)}
+                readOnly={!canManage}
+                onTurnOn={() => turnOn(row.agent)}
+                onSignIn={() => {
+                  setSignInAfterTurnOn(row.agent);
+                  turnOn(row.agent);
+                }}
+                onAdd={() => setAddingAgent(true)}
+              />
+            );
+          }
+          if (row.agent === "codex") {
+            const command =
+              row.provider && settings && os
+                ? resolveAgentSignInCommand(row.provider, settings, os)
+                : null;
+            return serverConfig !== null ? (
+              <OnboardingCodexSetup
+                key={row.key}
+                environmentId={environmentId}
+                provider={row.provider}
+                serverConfig={serverConfig}
+                createdAccount={row.key === createdAccount?.instanceId ? createdAccount : null}
+                onAutoStartConsumed={() =>
+                  setCreatedAccount((account) =>
+                    account ? { ...account, autoStart: false } : null,
+                  )
+                }
+                menu={codexMenu}
+                signedOutFooter={command ? <AgentCommand command={command} flush /> : null}
+              />
+            ) : (
+              <AgentRow
+                key={row.key}
+                agent="codex"
+                state="checking"
+                icon={<OpenAI className="size-5 shrink-0 fill-foreground" />}
+                name={rowName("codex", row.provider)}
+                uses={tx(onboardingAgentUses("codex"))}
+                status={<AgentRowStatus tone="checking">{tx("Checking…")}</AgentRowStatus>}
+              />
+            );
+          }
+          const provider = row.provider;
+          if (provider === undefined) return null;
+          const command = settings && os ? resolveAgentSignInCommand(provider, settings, os) : null;
+          const name = rowName(row.agent, provider);
+          return (
+            <ProviderAgentRow
+              key={row.key}
               environmentId={environmentId}
+              machineLabel={machineLabel}
               provider={provider}
-              serverConfig={serverConfig}
-              createdAccount={instanceId === createdAccount?.instanceId ? createdAccount : null}
-              onAutoStartConsumed={() =>
-                setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
+              name={name}
+              os={os}
+              command={command}
+              registryAgentId={
+                provider.driver === "acpRegistry"
+                  ? acpAgentIdForInstanceConfig(
+                      settings?.providerInstances[provider.instanceId]?.config,
+                    )
+                  : undefined
               }
-              terminalOpen={terminalSession?.driver === driver}
-              onOpenTerminal={() => {
-                if (
-                  provider === undefined ||
-                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-                )
-                  return;
-                setTerminalSession({
-                  environmentId,
-                  driver,
+              panelOpen={terminalSession !== null}
+              panelAvailable={serverConfig !== null && canOperateTerminal}
+              onOpenPanel={() => {
+                if (command === null) return;
+                openPanel({
+                  agent: row.agent,
+                  agentName: name,
                   providerInstanceId: provider.instanceId,
-                  cwd: serverConfig.cwd,
-                  command: provider.installed
-                    ? resolveOnboardingProviderLoginCommand(
-                        provider,
-                        serverConfig.settings,
-                        serverConfig.environment.platform.os,
-                      )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
-                  keybindings: serverConfig.keybindings,
+                  command,
+                  purpose: "signIn",
                 });
               }}
+              checking={checkingInstance === provider.instanceId}
+              signInEnded={endedInstance === provider.instanceId}
+              autoSignIn={signInAfterTurnOn === row.agent}
+              onAutoSignInDone={autoSignInDone}
             />
-          ) : (
-            <AgentCard
-              key={driver}
-              driver={driver}
-              provider={provider}
-              terminalOpen={terminalSession?.driver === driver}
-              terminalAvailable={serverConfig !== null && canOperateTerminal}
-              onOpenTerminal={() => {
-                if (
-                  provider === undefined ||
-                  serverConfig === null ||
-                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-                )
-                  return;
-                setTerminalSession({
-                  environmentId,
-                  driver,
-                  providerInstanceId: provider.instanceId,
-                  cwd: serverConfig.cwd,
-                  command: provider.installed
-                    ? resolveOnboardingProviderLoginCommand(
-                        provider,
-                        serverConfig.settings,
-                        serverConfig.environment.platform.os,
-                      )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
-                  keybindings: serverConfig.keybindings,
-                });
-              }}
-            />
-          ),
-        )}
+          );
+        })}
       </div>
-      {providers?.some(
-        (provider) =>
-          provider.driver === "codex" && getOnboardingProviderState(provider) === "ready",
-      ) ? (
-        <div className="mt-3">
-          <Button size="xs" variant="ghost-muted" onClick={() => setAddingAccount(true)}>
-            {t("wizard.agents.anotherChatGpt")}
-          </Button>
+      {list.notInstalled.length > 0 ? (
+        <div
+          className="mt-2 flex items-center gap-2 px-1 text-xs text-muted-foreground"
+          data-agents-not-installed
+        >
+          <p className="min-w-0 flex-1">
+            {tx("Not installed: {agents}.", {
+              agents: list.notInstalled.map((agent) => rowName(agent)).join(", "),
+            })}
+          </p>
+          {installable.length > 0 ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={
+                      terminalSession !== null || serverConfig === null || !canOperateTerminal
+                    }
+                  />
+                }
+              >
+                {tx("Install one")}
+              </MenuTrigger>
+              <MenuPopup align="end">
+                {installable.map((agent) => (
+                  <MenuItem
+                    key={agent}
+                    onClick={() => {
+                      if (!os) return;
+                      const driver = ProviderDriverKind.make(agent);
+                      openPanel({
+                        agent,
+                        agentName: rowName(agent),
+                        providerInstanceId:
+                          providers?.find((provider) => provider.driver === agent)?.instanceId ??
+                          defaultInstanceIdForDriver(driver),
+                        command: resolveOnboardingProviderInstallCommand(agent, os),
+                        purpose: "install",
+                      });
+                    }}
+                  >
+                    {rowName(agent)}
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
+          ) : null}
         </div>
       ) : null}
       {addingAccount ? (
@@ -298,14 +564,25 @@ function ConnectedAgentsStep({
           }
         />
       ) : null}
+      {addingAgent ? (
+        <Suspense fallback={null}>
+          <AddProviderInstanceDialog
+            open
+            environmentId={environmentId}
+            environmentLabel={machineLabel}
+            onOpenChange={(open) => {
+              if (open) return;
+              setAddingAgent(false);
+              void refreshProviders({ environmentId, input: {} });
+            }}
+          />
+        </Suspense>
+      ) : null}
       {terminalSession !== null ? (
-        <AgentInstallTerminal
-          key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
+        <AgentSetupPanel
+          key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.purpose}`}
           session={terminalSession}
-          onClose={() => {
-            setTerminalSession(null);
-            void refreshProviders({ environmentId, input: {} });
-          }}
+          onClose={closePanel}
         />
       ) : null}
     </section>
@@ -318,22 +595,21 @@ function OnboardingCodexSetup({
   environmentId,
   provider,
   serverConfig,
-  terminalOpen,
-  onOpenTerminal,
+  menu,
+  signedOutFooter,
 }: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider | undefined;
   readonly serverConfig: ServerConfig;
-  readonly terminalOpen: boolean;
-  readonly onOpenTerminal: () => void;
   readonly createdAccount: {
     instanceId: ProviderInstanceId;
     displayName: string;
     autoStart: boolean;
   } | null;
   readonly onAutoStartConsumed: () => void;
+  readonly menu: ReactNode;
+  readonly signedOutFooter: ReactNode;
 }) {
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
   const instanceId =
     createdAccount?.instanceId ??
@@ -345,13 +621,6 @@ function OnboardingCodexSetup({
     enabled: settings.providers.codex.enabled,
     config: createdAccount ? { enabled: true, setupMode: "managed" } : settings.providers.codex,
   };
-  const mode = readCodexSetupMode(instance.config);
-  const existingChosen =
-    mode === "existing" &&
-    instance.config !== null &&
-    typeof instance.config === "object" &&
-    "setupMode" in instance.config &&
-    instance.config.setupMode === "existing";
   const changeMode = (setupMode: "managed" | "existing") => {
     void update({
       environmentId,
@@ -376,15 +645,7 @@ function OnboardingCodexSetup({
       },
     });
   };
-  return existingChosen ? (
-    <AgentCard
-      driver="codex"
-      provider={provider}
-      terminalOpen={terminalOpen}
-      terminalAvailable={canOperateTerminal}
-      onOpenTerminal={onOpenTerminal}
-    />
-  ) : (
+  return (
     <CodexSetupSection
       presentation="onboarding"
       autoStart={createdAccount?.autoStart === true}
@@ -393,85 +654,23 @@ function OnboardingCodexSetup({
       environmentId={environmentId}
       instanceId={instanceId}
       provider={provider}
-      mode={mode}
+      mode={readCodexSetupMode(instance.config)}
       enabled={provider?.enabled ?? true}
       onModeChange={changeMode}
+      onboardingMenu={menu}
+      onboardingSignedOutFooter={signedOutFooter}
     />
   );
 }
 
-function AgentCard({
-  driver,
-  provider,
-  terminalOpen,
-  terminalAvailable,
-  onOpenTerminal,
-}: {
-  readonly driver: OnboardingAgentDriver;
-  readonly provider: ServerProvider | undefined;
-  readonly terminalOpen: boolean;
-  readonly terminalAvailable: boolean;
-  readonly onOpenTerminal: () => void;
-}) {
-  const t = useT();
-  const tx = useTx();
-  const meta = getDriverOption(ProviderDriverKind.make(driver));
-  const displayName =
-    provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
-  const summary = getProviderSummary(provider, tx);
-  const providerState = getOnboardingProviderState(provider);
-
-  return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
-      <ProviderInstanceIcon
-        driverKind={ProviderDriverKind.make(driver)}
-        displayName={displayName}
-        iconClassName="size-5"
-      />
-      <div className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-foreground">{displayName}</span>
-        <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState === "ready" ? t("wizard.agents.readyToCode") : summary.headline}
-          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
-        </p>
-      </div>
-      <div className="shrink-0">
-        {providerState === "ready" ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
-            <CheckIcon className="size-3.5" />
-            {t("wizard.agents.ready")}
-          </span>
-        ) : providerState === "checking" ? (
-          <span className="text-xs text-muted-foreground">{t("wizard.agents.checking")}</span>
-        ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">{t("wizard.agents.disabled")}</span>
-        ) : providerState === "attention" && provider?.auth.status === "authenticated" ? null : (
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={onOpenTerminal}
-            disabled={terminalOpen || !terminalAvailable}
-          >
-            <TerminalIcon className="size-3.5" />
-            {providerState === "signIn"
-              ? t("wizard.agents.signIn")
-              : providerState === "attention"
-                ? tx("Open terminal")
-                : t("wizard.agents.install")}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /**
- * Inline install terminal. Opens a PTY on the connected environment under a
+ * The panel under the list. Opens a PTY on the connected environment under a
  * synthetic onboarding thread id (terminals are keyed by free-form thread id;
- * the server validates only the cwd) and pre-types the install or login
- * command without submitting, so the user reviews and presses Enter.
+ * the server validates only the cwd). An agent's sign-in is the session's
+ * command: it runs at once and the session ends with it. An install command is
+ * typed without submitting, so the person reviews it and presses Enter.
  */
-function AgentInstallTerminal({
+function AgentSetupPanel({
   session,
   onClose,
 }: {
@@ -479,7 +678,10 @@ function AgentInstallTerminal({
   readonly onClose: () => void;
 }) {
   const t = useT();
-  const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
+  const tx = useTx();
+  const { agent, agentName, command, cwd, environmentId, keybindings, providerInstanceId } =
+    session;
+  const signIn = session.purpose === "signIn";
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   // Same terminal typography preference the thread drawer honors.
   const [advancedTypography] = useLocalStorage(
@@ -493,7 +695,7 @@ function AgentInstallTerminal({
   const setupQueueRef = useRef(Promise.resolve());
   const setupGenerationRef = useRef(0);
   const activeSetupGenerationRef = useRef<number | null>(null);
-  const [terminalId] = useState(() => `onboarding-${driver}-${randomUUID()}`);
+  const [terminalId] = useState(() => `onboarding-${agent}-${randomUUID()}`);
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID),
     [environmentId],
@@ -526,6 +728,7 @@ function AgentInstallTerminal({
           terminalId,
           cwd,
           providerInstanceId,
+          ...(signIn ? { command } : {}),
         },
       });
       if (opened._tag !== "Success") {
@@ -534,6 +737,10 @@ function AgentInstallTerminal({
       }
 
       if (activeSetupGenerationRef.current !== generation) return;
+      if (signIn) {
+        setSetupState("ready");
+        return;
+      }
       if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
         setSetupState("writeFailed");
         return;
@@ -569,6 +776,7 @@ function AgentInstallTerminal({
     openTerminal,
     providerInstanceId,
     setupAttempt,
+    signIn,
     terminalId,
     writeTerminal,
   ]);
@@ -576,6 +784,7 @@ function AgentInstallTerminal({
   return (
     <div
       data-thread-terminal-drawer
+      data-agent-panel={session.purpose}
       className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
     >
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
@@ -587,7 +796,11 @@ function AgentInstallTerminal({
                   command: <code className="rounded bg-muted px-1 font-mono">{command}</code>,
                 })
               : setupState === "ready"
-                ? t("wizard.terminal.review")
+                ? signIn
+                  ? tx("{agent}'s sign-in is running here. Its row updates when it is done.", {
+                      agent: agentName,
+                    })
+                  : t("wizard.terminal.review")
                 : setupState === "openFailed"
                   ? t("wizard.terminal.openFailed")
                   : t("wizard.terminal.preparing")}
@@ -619,7 +832,11 @@ function AgentInstallTerminal({
             threadRef={threadRef}
             threadId={AGENT_ONBOARDING_THREAD_ID}
             terminalId={terminalId}
-            terminalLabel={t("wizard.terminal.label", { driver })}
+            terminalLabel={
+              signIn
+                ? tx("Sign in to {agent}", { agent: agentName })
+                : t("wizard.terminal.label", { driver: agentName })
+            }
             cwd={cwd}
             providerInstanceId={providerInstanceId}
             advancedTypography={advancedTypography}

@@ -1227,7 +1227,6 @@ export const ja: PhraseCatalog = {
     "このマシンのプロバイダーの MCP 設定にこのエントリを追加してから、新しいスレッドを開始してください。同じ拡張機能と同じ Chrome プロファイルを使います。",
   "Set up Claude in Chrome": "Claude in Chrome を設定",
   "Signed in as {redactedSensitiveText}.": "{redactedSensitiveText} としてサインイン中。",
-  "Connected with your Codex CLI.": "Codex CLI で接続済み。",
   "Checking your Codex CLI...": "Codex CLI を確認しています...",
   "Code with your ChatGPT subscription.": "ChatGPT のサブスクリプションでコーディングします。",
   Ready: "準備完了",
@@ -4497,4 +4496,28 @@ export const ja: PhraseCatalog = {
   "Show command": "コマンドを表示",
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "ターミナルでサインインした後は、このウィンドウに戻ったときにアプリが再確認します。",
+  "Add another ChatGPT account": "別の ChatGPT アカウントを追加",
+  "Install one": "インストールする",
+  "More for Codex": "Codex のその他の操作",
+  "Not installed: {agents}.": "未インストール: {agents}。",
+  "Pi signs in from inside. Type /login once it has opened.":
+    "Pi は中からサインインします。開いたら /login と入力してください。",
+  "Sign in to {agent}": "{agent} にサインイン",
+  "Sign in with ChatGPT": "ChatGPT でサインイン",
+  "The existing Codex sign-in is used.": "既存の Codex のサインインを使います。",
+  "Use another account": "別のアカウントを使う",
+  "Uses its own sign-in": "独自のサインインを使います",
+  "Uses the accounts set up in OpenCode": "OpenCode で設定したアカウントを使います",
+  "Uses the accounts set up in Pi": "Pi で設定したアカウントを使います",
+  "Uses your ChatGPT plan": "ChatGPT のプランを使います",
+  "Uses your Claude plan": "Claude のプランを使います",
+  "Uses your Cursor plan": "Cursor のプランを使います",
+  "Uses your GitHub Copilot plan": "GitHub Copilot のプランを使います",
+  "Uses your Google account": "Google アカウントを使います",
+  "Uses your Grok account": "Grok アカウントを使います",
+  "Uses your Meta account": "Meta アカウントを使います",
+  "{agent}'s sign-in is running here. Its row updates when it is done.":
+    "{agent} のサインインをここで実行しています。終わるとその行が更新されます。",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "{agent} にサインインする前にサインインが終了しました。もう一度お試しください。",
 };

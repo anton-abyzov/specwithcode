@@ -66,7 +66,7 @@ export const en = {
 
   "wizard.agents.title": "Connect your agents",
   "wizard.agents.description":
-    "An agent writes the code, so at least one has to be signed in before your first chat. Cursor, OpenCode, Grok and others can be added after setup in Settings > Providers.",
+    "An agent writes the code, so at least one has to be signed in before your first chat. Agents found on your computers are listed here. More can be added later in Settings > Providers.",
   "wizard.agents.noTerminal": "This connection cannot control terminals.",
   "wizard.agents.anotherChatGpt": "Connect another ChatGPT account",
   "wizard.agents.readyToCode": "Ready to code.",

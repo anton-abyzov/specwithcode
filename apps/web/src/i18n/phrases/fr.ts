@@ -1233,7 +1233,6 @@ export const fr: PhraseCatalog = {
     "Ajoutez cette entrée aux paramètres MCP du fournisseur sur cette machine, puis démarrez un nouveau fil. Elle utilise la même extension et le même profil Chrome.",
   "Set up Claude in Chrome": "Configurer Claude in Chrome",
   "Signed in as {redactedSensitiveText}.": "Connecté en tant que {redactedSensitiveText}.",
-  "Connected with your Codex CLI.": "Connecté avec votre Codex CLI.",
   "Checking your Codex CLI...": "Vérification de votre Codex CLI...",
   "Code with your ChatGPT subscription.": "Codez avec votre abonnement ChatGPT.",
   Ready: "Prêt",
@@ -4536,4 +4535,28 @@ export const fr: PhraseCatalog = {
   "Show command": "Afficher la commande",
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "Après une connexion dans un terminal, l'application vérifie de nouveau quand vous revenez à cette fenêtre.",
+  "Add another ChatGPT account": "Ajouter un autre compte ChatGPT",
+  "Install one": "En installer un",
+  "More for Codex": "Plus pour Codex",
+  "Not installed: {agents}.": "Non installés : {agents}.",
+  "Pi signs in from inside. Type /login once it has opened.":
+    "Pi se connecte de l'intérieur. Saisissez /login une fois qu'il est ouvert.",
+  "Sign in to {agent}": "Se connecter à {agent}",
+  "Sign in with ChatGPT": "Se connecter avec ChatGPT",
+  "The existing Codex sign-in is used.": "La connexion Codex existante est utilisée.",
+  "Use another account": "Utiliser un autre compte",
+  "Uses its own sign-in": "Utilise sa propre connexion",
+  "Uses the accounts set up in OpenCode": "Utilise les comptes configurés dans OpenCode",
+  "Uses the accounts set up in Pi": "Utilise les comptes configurés dans Pi",
+  "Uses your ChatGPT plan": "Utilise votre forfait ChatGPT",
+  "Uses your Claude plan": "Utilise votre forfait Claude",
+  "Uses your Cursor plan": "Utilise votre forfait Cursor",
+  "Uses your GitHub Copilot plan": "Utilise votre forfait GitHub Copilot",
+  "Uses your Google account": "Utilise votre compte Google",
+  "Uses your Grok account": "Utilise votre compte Grok",
+  "Uses your Meta account": "Utilise votre compte Meta",
+  "{agent}'s sign-in is running here. Its row updates when it is done.":
+    "La connexion de {agent} s'exécute ici. Sa ligne se met à jour une fois terminée.",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "La connexion s'est terminée avant que {agent} soit connecté. Réessayez.",
 };

@@ -1238,7 +1238,6 @@ export const es: PhraseCatalog = {
     "Añade esta entrada a la configuración MCP del proveedor en este equipo y empieza un hilo nuevo. Usa la misma extensión y el mismo perfil de Chrome.",
   "Set up Claude in Chrome": "Configurar Claude in Chrome",
   "Signed in as {redactedSensitiveText}.": "Sesión iniciada como {redactedSensitiveText}.",
-  "Connected with your Codex CLI.": "Conectado con tu Codex CLI.",
   "Checking your Codex CLI...": "Comprobando tu Codex CLI...",
   "Code with your ChatGPT subscription.": "Programa con tu suscripción de ChatGPT.",
   Ready: "Listo",
@@ -4518,4 +4517,28 @@ export const es: PhraseCatalog = {
   "Show command": "Mostrar comando",
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "Tras iniciar sesión en una terminal, la app vuelve a comprobar cuando regresas a esta ventana.",
+  "Add another ChatGPT account": "Añadir otra cuenta de ChatGPT",
+  "Install one": "Instalar uno",
+  "More for Codex": "Más para Codex",
+  "Not installed: {agents}.": "No instalados: {agents}.",
+  "Pi signs in from inside. Type /login once it has opened.":
+    "Pi inicia sesión desde dentro. Escribe /login cuando se haya abierto.",
+  "Sign in to {agent}": "Iniciar sesión en {agent}",
+  "Sign in with ChatGPT": "Iniciar sesión con ChatGPT",
+  "The existing Codex sign-in is used.": "Se usa la sesión de Codex que ya existe.",
+  "Use another account": "Usar otra cuenta",
+  "Uses its own sign-in": "Usa su propio inicio de sesión",
+  "Uses the accounts set up in OpenCode": "Usa las cuentas configuradas en OpenCode",
+  "Uses the accounts set up in Pi": "Usa las cuentas configuradas en Pi",
+  "Uses your ChatGPT plan": "Usa tu plan de ChatGPT",
+  "Uses your Claude plan": "Usa tu plan de Claude",
+  "Uses your Cursor plan": "Usa tu plan de Cursor",
+  "Uses your GitHub Copilot plan": "Usa tu plan de GitHub Copilot",
+  "Uses your Google account": "Usa tu cuenta de Google",
+  "Uses your Grok account": "Usa tu cuenta de Grok",
+  "Uses your Meta account": "Usa tu cuenta de Meta",
+  "{agent}'s sign-in is running here. Its row updates when it is done.":
+    "El inicio de sesión de {agent} se está ejecutando aquí. Su fila se actualiza al terminar.",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "El inicio de sesión terminó antes de que {agent} iniciara sesión. Inténtalo de nuevo.",
 };

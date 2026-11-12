@@ -62,7 +62,7 @@ export const de: Messages = {
 
   "wizard.agents.title": "Verbinde deine Agenten",
   "wizard.agents.description":
-    "Ein Agent schreibt den Code, deshalb muss vor deinem ersten Chat mindestens einer angemeldet sein. Cursor, OpenCode, Grok und weitere kannst du nach der Einrichtung unter Einstellungen > Anbieter hinzufügen.",
+    "Ein Agent schreibt den Code, deshalb muss vor deinem ersten Chat mindestens einer angemeldet sein. Hier stehen die Agenten, die auf deinen Computern gefunden wurden. Weitere kannst du später unter Einstellungen > Anbieter hinzufügen.",
   "wizard.agents.noTerminal": "Diese Verbindung kann keine Terminals steuern.",
   "wizard.agents.anotherChatGpt": "Weiteres ChatGPT-Konto verbinden",
   "wizard.agents.readyToCode": "Bereit zum Programmieren.",

@@ -296,13 +296,17 @@ An agent signs in on the machine that runs it, as the user that runs SpecWithCod
 sign-in on another computer, or on your phone, does not carry over.
 
 - **Claude.** SpecWithCode uses the Claude Code command line, not the Claude desktop app.
-  Being signed in to the Claude desktop app is a separate sign-in and is not enough. Run
-  `claude auth login` in a terminal on the machine, then refresh provider status. First-run
-  setup opens a terminal with that command typed in, and you press Enter. Anywhere else, run
-  it yourself.
-- **Codex.** **Continue with ChatGPT** opens the sign-in page in your browser and returns to
-  the app by itself in the desktop app. If you already use the Codex CLI and it is signed
-  in, choose **Use existing CLI** and nothing more is needed.
+  Being signed in to the Claude desktop app is a separate sign-in and is not enough. Choose
+  **Sign in with Claude** in first-run setup or in Settings > Providers: the app runs Claude
+  Code's own sign-in and opens its page in your browser, with no terminal. **Show command**
+  gives `claude auth login` for those who prefer a terminal.
+- **Codex.** If the Codex CLI on the machine is already signed in, SpecWithCode uses that
+  sign-in and asks for nothing. Otherwise **Sign in with ChatGPT** in first-run setup
+  (**Continue with ChatGPT** in Settings) opens the sign-in page in your browser and returns
+  to the app by itself in the desktop app.
+- **Other agents.** First-run setup lists every agent it finds on the machine. **Sign in**
+  starts that agent's own sign-in: a browser page, a code, or its command running in a panel
+  under the list. Agents that are not installed are named in one line.
 - **macOS.** Sign-ins are kept per user account. An agent installed with a version manager
   may not be on the app's `PATH`; set its **Binary path** in provider settings.
 - **Windows.** A sign-in inside WSL, or under another Windows user, does not count for an

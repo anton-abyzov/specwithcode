@@ -18,7 +18,7 @@ import { codexAuthHandoffUrl } from "@specweave-studio/shared/codexAuthHandoff";
 import { providerAuthReturnUrl } from "@specweave-studio/shared/providerAuthReturnUrl";
 import { isLoopbackHost } from "@specweave-studio/shared/preview";
 import { CheckIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
-import { Children, useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import {
@@ -34,10 +34,10 @@ import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
 import { ChatGptAccountPicker } from "./ChatGptAccountPicker";
 import { Input } from "../ui/input";
-import { OpenAI } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow } from "./settingsLayout";
 import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
+import { CodexWelcomeCard } from "./CodexWelcomeCard";
 import { getOnboardingProviderState } from "../../onboarding/providerReadiness.logic";
 import { getProviderSummary } from "./providerStatus";
 
@@ -56,6 +56,10 @@ interface CodexSetupSectionProps {
   readonly displayName?: string | undefined;
   readonly onAutoStartConsumed?: () => void;
   readonly onSignInCancelled?: (() => void) | undefined;
+  /** First-run row only: the row's menu, shown once the account is ready. */
+  readonly onboardingMenu?: ReactNode;
+  /** First-run row only: shown under a Codex CLI that is installed and not signed in. */
+  readonly onboardingSignedOutFooter?: ReactNode;
 }
 
 /** Welcome and provider settings run the same environment-owned setup flow. */
@@ -67,29 +71,35 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
   const existingAuthenticated = props.provider?.auth.status === "authenticated";
   const existingChecking = existingState === "checking";
   const existingSummary = getProviderSummary(props.provider, tx);
+  // The app's own ChatGPT sign-in takes over from the Codex CLI's.
+  const signInWithChatGpt = () => {
+    setRequested(true);
+    props.onModeChange("managed");
+  };
   const content =
     props.mode === "existing" && props.presentation === "onboarding" ? (
       <CodexWelcomeCard
         title={props.displayName || props.provider?.displayName || "Codex"}
         description={
           existingReady ? (
-            props.provider?.auth.email?.trim() ? (
-              <>
-                {renderRich(tx("Signed in as {redactedSensitiveText}."), {
-                  redactedSensitiveText: (
-                    <RedactedSensitiveText
-                      value={props.provider.auth.email.trim()}
-                      ariaLabel="Toggle account email visibility"
-                      revealTooltip="Click to reveal email"
-                      hideTooltip="Click to hide email"
-                      className="break-all"
-                    />
-                  ),
-                })}
-              </>
-            ) : (
-              tx("Connected with your Codex CLI.")
-            )
+            <>
+              {props.provider?.auth.email?.trim() ? (
+                <>
+                  {renderRich(tx("Signed in as {redactedSensitiveText}."), {
+                    redactedSensitiveText: (
+                      <RedactedSensitiveText
+                        value={props.provider.auth.email.trim()}
+                        ariaLabel="Toggle account email visibility"
+                        revealTooltip="Click to reveal email"
+                        hideTooltip="Click to hide email"
+                        className="break-all"
+                      />
+                    ),
+                  })}{" "}
+                </>
+              ) : null}
+              {tx("The existing Codex sign-in is used.")}
+            </>
           ) : existingChecking ? (
             tx("Checking your Codex CLI...")
           ) : props.provider?.installed ? (
@@ -105,30 +115,37 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
               {tx("Ready")}
             </span>
           ) : existingChecking ? (
-            <span className="text-xs text-muted-foreground">Checking...</span>
+            <span className="text-xs text-muted-foreground">{tx("Checking…")}</span>
           ) : existingAuthenticated ? (
             <span className="text-xs text-muted-foreground">{existingSummary.headline}</span>
           ) : (
             <ChatGptConnectionButton
               size="sm"
               disabled={props.readOnly}
-              onClick={() => {
-                setRequested(true);
-                props.onModeChange("managed");
-              }}
+              onClick={signInWithChatGpt}
             >
-              {tx("Continue with ChatGPT")}
+              {tx("Sign in with ChatGPT")}
             </ChatGptConnectionButton>
           )
         }
         secondaryControl={
-          !existingAuthenticated && !existingReady && !existingChecking ? (
-            <Button size="sm" variant="ghost-muted" onClick={() => props.onModeChange("existing")}>
-              {tx("Use existing CLI")}
+          existingReady ? (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={props.readOnly}
+              onClick={signInWithChatGpt}
+            >
+              {tx("Use another account")}
             </Button>
           ) : null
         }
-      />
+        menu={existingReady ? props.onboardingMenu : undefined}
+      >
+        {!existingReady && !existingChecking && !existingAuthenticated && props.provider?.installed
+          ? props.onboardingSignedOutFooter
+          : null}
+      </CodexWelcomeCard>
     ) : props.mode === "existing" ? null : props.provider?.setup === undefined ? (
       props.presentation === "onboarding" ? (
         <CodexWelcomeCard
@@ -213,6 +230,7 @@ function ManagedCodexSetup({
   presentation,
   displayName,
   onSignInCancelled,
+  onboardingMenu,
 }: CodexSetupSectionProps & {
   readonly autoStart: boolean;
   readonly onAutoStartConsumed: () => void;
@@ -846,12 +864,22 @@ function ManagedCodexSetup({
                   ? tx("Setting up...")
                   : hasSavedAccount
                     ? tx("Reconnect account")
-                    : tx("Continue with ChatGPT")}
+                    : tx("Sign in with ChatGPT")}
               </ChatGptConnectionButton>
             )
           }
+          menu={authenticated && !busy ? onboardingMenu : undefined}
           secondaryControl={
-            (authActive && !finishingSignIn) || installActive ? (
+            authenticated && !busy ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                disabled={unavailable}
+                onClick={() => setAccountPickerOpen(true)}
+              >
+                {tx("Use another account")}
+              </Button>
+            ) : (authActive && !finishingSignIn) || installActive ? (
               <Button
                 size="sm"
                 variant="ghost-muted"
@@ -1125,42 +1153,5 @@ function CodexSignInDescription({
       {label}
       <ChevronRightIcon aria-hidden className={`size-3 shrink-0 ${expanded ? "rotate-90" : ""}`} />
     </button>
-  );
-}
-
-/** A single, calm setup row for the first-run welcome screen. */
-function CodexWelcomeCard({
-  title,
-  description,
-  control,
-  secondaryControl,
-  children,
-}: {
-  readonly title: string;
-  readonly description: ReactNode;
-  readonly control?: ReactNode;
-  readonly secondaryControl?: ReactNode;
-  readonly children?: ReactNode;
-}) {
-  const footer = Children.toArray(children);
-  return (
-    <div className="rounded-lg border border-border bg-background px-4 py-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <OpenAI className="size-5 shrink-0 fill-foreground" />
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-medium">{title}</h3>
-          <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</div>
-        </div>
-        {control || secondaryControl ? (
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 has-[button]:w-full has-[button]:flex-col-reverse has-[button]:items-end sm:has-[button]:w-auto sm:has-[button]:flex-row sm:has-[button]:items-center">
-            {secondaryControl}
-            {control}
-          </div>
-        ) : null}
-      </div>
-      {footer.length > 0 ? (
-        <div className="ml-8 mt-2 flex flex-wrap items-center gap-2">{footer}</div>
-      ) : null}
-    </div>
   );
 }
