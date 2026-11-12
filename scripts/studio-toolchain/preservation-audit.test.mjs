@@ -59,6 +59,8 @@ const postcssValueParserIntegrity =
   "sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==";
 const pptxgenjsIntegrity =
   "sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==";
+const axeCoreIntegrity =
+  "sha512-9WTZxEjsZ7b13TH8JPmbV2z8CHbl80/2hm3XPEG4JgNdQLK81IBRXmSxHfMAOkSqQeRxT/0dwNDz2GOm3zzpcQ==";
 const patchedBuilder =
   "app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)";
 
@@ -90,6 +92,7 @@ test("accepts the actual lock: identity map, exact SDK promotion and reviewed ch
     `integrity: ${museIntegrity}}`,
     `integrity: ${postcssValueParserIntegrity}}`,
     `integrity: ${pptxgenjsIntegrity}}`,
+    `integrity: ${axeCoreIntegrity}}`,
   ]);
   assert.deepEqual(
     integrities(current).filter((line) => !added.includes(line)),
