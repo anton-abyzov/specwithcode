@@ -9,6 +9,7 @@ export const MAC_SERVICE_UPDATER_FILES = [
   "update_agent_run.py",
   "update_agent_pause.py",
   "service_hold.py",
+  "update_policy.py",
   "service_handles.py",
   "live_database.py",
   "installation_descriptor.py",

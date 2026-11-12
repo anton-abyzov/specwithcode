@@ -78,6 +78,9 @@ skips the step entirely. M4's app is release.sh's desktop stage's.
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --no-desktop-apps
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --ssh-fallback
 
+A host whose "Pause running work for updates" is off (update_policy) is never forced, keeps its deadline,
+and ends `deferred` only when it is still busy with running work after 30 min and nothing started: a
+worker so fails nothing, M4 still ends the run with exit 1 (only held when idle).
 Every host ends with a row: installed, already-installed, or not-updated with a reason. M4, M1
 and M3 are required (REQUIRED_HOSTS; --optional HOST relaxes one): a required host that is
 unreachable, skipped or fails ends the run as `partial` with exit 1 and a per-host report. Any other
@@ -127,6 +130,8 @@ import folder_work
 import rollout_record
 import service_hold
 import studio_paths
+import update_policy
+from update_policy import describe_blockers  # noqa: F401 - moved there; roll_host and tests use it here.
 import update_request
 from service_hold import (CLI_PARSE_ERRORS, HOLD_TIMEOUT, PREPARE_UPDATE_SINCE, RELEASE_TIMEOUT,  # noqa: F401
                           HoldUnavailable, HoldUnsupported)
@@ -183,6 +188,15 @@ class RolloutPartial(RolloutError):
     def __init__(self, message, results):
         RolloutError.__init__(self, message)
         self.results = results
+
+
+class RolloutDeferred(RolloutError):
+    """Its owner's "Pause running work for updates" is off and it stayed busy: left for later, not failed.
+    `app`: False for a Linux boot service, which has no desktop app to leave for later."""
+
+    def __init__(self, message, app=True):
+        RolloutError.__init__(self, message)
+        self.app = app
 
 
 class RolloutLocked(Exception):
@@ -725,25 +739,6 @@ def _plural(count, word):
     return '%d %s%s' % (count, word, '' if count == 1 else 's')
 
 
-def describe_blockers(reply):
-    """What keeps the service busy, as its prepare answer names it: each blocker by kind and thread,
-    marked when it only waits on a person, then terminals and folder copies."""
-    parts = []
-    for blocker in reply.get('blockers') or []:
-        if not isinstance(blocker, dict):
-            continue
-        parts.append('%s %s%s%s' % (
-            blocker.get('count'), blocker.get('kind'),
-            ' (%s)' % blocker['threadTitle'] if blocker.get('threadTitle') else '',
-            ' waiting on a person' if blocker.get('waitsOnPerson') is True else ''))
-    for key, one, many in (('openTerminals', 'open terminal', 'open terminals'),
-                           ('folderCopies', 'folder copy', 'folder copies')):
-        count = reply.get(key)
-        if type(count) is int and count > 0:
-            parts.append('%d %s' % (count, one if count == 1 else many))
-    return ', '.join(parts) or 'nothing it names'
-
-
 def describe_hold(reply):
     """One line for what the drain stopped and what is left."""
     left = ', '.join('%s %s%s' % (blocker.get('count'), blocker.get('kind'),
@@ -853,6 +848,10 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     if channel_since is not None and (_tuple(current) or (0, 0, 0)) < channel_since:
         raise RolloutError('%s runs %s, whose update agent reads GitHub only (the candidate channel needs %s); '
                            'ship a stable release through GitHub first' % (identity, current, '.'.join(map(str, channel_since))))
+    # M4's setting comes from its service's look (main); a worker's from its status over Connect.
+    allowed = getattr(hold, 'pause_work', None) if hold is not None else update_policy.pauses_work(status)
+    force = force and (allowed is not False or hold is not None)  # Off: M4's hold is idle-only, a worker's plain.
+    started = [False]  # Its install began (a hold taken, installing seen): no deferral from then on.
     window = hold_minutes * 60 if force else REQUEST_WINDOW
     holder = [hold if force else None]
     took = [False]  # This rollout holds (or held) the service.
@@ -1120,6 +1119,10 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 return done
             if status.get('status') == 'manual-required':
                 raise RolloutError('%s needs a manual upgrade: %s' % (identity, status.get('message') or ''))
+            # Busy past the deferral point, or a Linux service's own wait ended: before any failure below.
+            if (why := update_policy.deferral(identity, version, status, allowed, clock() - begin, deadline,
+                                              started, took[0], refused[0])):
+                raise RolloutDeferred(why, app=status.get('method') != 'boot-service')
             if status.get('method') == 'boot-service' and status.get('phase') == 'failed':
                 # A Linux self-update keeps no lastInstall; its worker names the failure, set after
                 # this rollout's request moved it to downloading. Asking again would fail the same way.
@@ -1198,12 +1201,14 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
             results[LOCAL] = roll_host(LOCAL, hosts[LOCAL], version, True, hold_minutes, local_deadline, poll,
                                        clock, sleep, say, hold=hold, channel_since=channel_since,
                                        ignore_copies=ignore_folder_copies or getattr(hold, 'ignore_folder_copies', False))
-        except RolloutError as error:
-            results[LOCAL] = not_updated(LOCAL, str(error))
+        except RolloutError as error:  # A deferred M4 still fails the run: the later stages need it on the version.
+            later = isinstance(error, RolloutDeferred)
+            results[LOCAL] = update_policy.deferred_row(LOCAL, str(error)) if later else not_updated(LOCAL, str(error))
             if only == 'all':
                 for identity in hosts:
                     if identity != LOCAL:
-                        results[identity] = not_updated(identity, 'not asked: M4 did not finalize %s' % version)
+                        results[identity] = not_updated(identity, update_policy.M4_LATER if later
+                                                        else 'not asked: M4 did not finalize %s' % version)
             raise RolloutPartial(str(error), results) from None
     if only in ('all', 'workers'):
         if only == 'workers':
@@ -1257,6 +1262,12 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
                     result['route'] = route
                 with lock:
                     results[identity] = result
+            except RolloutDeferred as error:  # Its owner's setting, never a failure, required or not.
+                say('%s: deferred: %s' % (identity, error))
+                with lock:
+                    results[identity] = update_policy.deferred_row(identity, str(error), getattr(host, 'route', None),
+                                                                   app=error.app and (desktop is not None or desktop_skip))
+                return
             except RolloutError as error:
                 with lock:
                     results[identity] = not_updated(identity, str(error), route=getattr(host, 'route', None))
@@ -1430,7 +1441,10 @@ def main(argv=None):
         print('fleet_rollout: %s' % error, file=sys.stderr)
         print(json.dumps({'version': args.version, 'result': 'locked', 'holder': error.holder}))
         return 0 if args.reconcile else 1
-    try:
+    try:  # M4's own "Pause running work for updates": off or unread, it is held only when idle; off, deferrable.
+        if hold is not None and not args.wait_for_idle and not update_policy.allows_pause(policy := update_policy.service_policy(hold)):
+            hold.wait_for_idle, hold.pause_work = True, False if policy == update_policy.OFF else None
+            Printer()(update_policy.m4_idle_only(policy, args.m4_deadline_minutes))
         if since is not None and args.only in ('all', LOCAL):
             candidate_hold(args.version)
         results = rollout(args.version, hosts, args.only, args.hold_minutes, args.m4_deadline_minutes * 60,
@@ -1446,7 +1460,8 @@ def main(argv=None):
         print('fleet_rollout: %s' % error, file=sys.stderr)
         for line in lines:
             print('fleet_rollout: not updated: %s' % line, file=sys.stderr)
-        print(json.dumps({'version': args.version, 'result': 'partial', 'error': str(error), 'hosts': error.results,
+        print(json.dumps({'version': args.version, 'result': update_policy.summary_result(error.results, 'partial'),
+                          'error': str(error), 'hosts': error.results,
                           'notUpdated': lines}))
         return 1
     except DesktopAppsFailed as error:
@@ -1462,7 +1477,8 @@ def main(argv=None):
     lines = report(args.version, results, required)
     for line in lines:  # Optional hosts only: a required one raised.
         print('fleet_rollout: not updated: %s' % line, file=sys.stderr)
-    print(json.dumps({'version': args.version, 'result': 'installed', 'hosts': results, 'notUpdated': lines}))
+    print(json.dumps({'version': args.version, 'result': update_policy.summary_result(results, 'installed'),
+                      'hosts': results, 'notUpdated': lines}))
     return 0
 
 
