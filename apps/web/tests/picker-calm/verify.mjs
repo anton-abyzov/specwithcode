@@ -326,6 +326,21 @@ try {
         };
       });
       assert.notEqual(colors.coordinator, colors.thread, "both machines draw the same edge");
+      // The window's own machine tints its edge, always, without taking clicks.
+      const tint = await page.evaluate(() => {
+        const node = document.querySelector("[data-machine-window-tint]");
+        const style = getComputedStyle(node);
+        return {
+          color: node.getAttribute("data-machine-color"),
+          clicks: style.pointerEvents,
+          shadow: style.boxShadow,
+          hidden: node.getAttribute("aria-hidden"),
+        };
+      });
+      assert.equal(tint.color, "violet");
+      assert.equal(tint.clicks, "none");
+      assert.equal(tint.hidden, "true");
+      assert.match(tint.shadow, /inset/, "the window tint draws nothing");
       assert.equal(colors.chip, "teal");
       assert.equal(
         await page.locator("[data-send-target]").getAttribute("aria-label"),

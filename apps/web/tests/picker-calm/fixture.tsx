@@ -16,6 +16,7 @@ import { ProviderModelPicker } from "../../src/components/chat/ProviderModelPick
 import { ThreadMachineComposerChip } from "../../src/components/chat/ThreadMachineComposerChip";
 import { TraitsPicker } from "../../src/components/chat/TraitsPicker";
 import { MachineChip } from "../../src/components/MachineChip";
+import { MachineWindowTint } from "../../src/components/MachineWindowTint";
 import { ProjectModelsPopover } from "../../src/components/studio/shell/ProjectModelsPopover";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { deriveProviderInstanceEntries } from "../../src/providerInstances";
@@ -290,6 +291,7 @@ function ComposerScene() {
   const m1 = identityOf("env-m1");
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-5 p-4">
+      <MachineWindowTint />
       <h1 className="text-sm text-muted-foreground">Machine colors (fictional machines).</h1>
       <section
         aria-label="Coordinator on M4"

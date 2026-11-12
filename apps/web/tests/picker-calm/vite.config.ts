@@ -15,6 +15,7 @@ const stubs = new Set(
     "hooks/useSettings",
     "state/server",
     "state/presentation",
+    "state/environments",
     "components/chat/ChatGptSharingControl",
   ].map((path) => resolve(appSource, path)),
 );

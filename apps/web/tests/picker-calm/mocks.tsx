@@ -65,3 +65,5 @@ export const environmentServerConfigsAtom = Atom.make(
     ["env-m1", machine("env-m1", "Fixture mini", "mac-mini", nicknames)],
   ]),
 );
+// The window in the fixture belongs to M4.
+export const usePrimaryEnvironment = () => ({ environmentId: "env-m4", label: "Fixture MacBook" });
