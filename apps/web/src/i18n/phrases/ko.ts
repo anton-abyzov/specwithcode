@@ -4499,4 +4499,13 @@ export const ko: PhraseCatalog = {
   "Older releases were not counted.": "이전 릴리스는 포함되지 않았습니다.",
   "Installs from npm could not be read.": "npm 설치 수를 읽지 못했습니다.",
   "Installs from npm": "npm 설치",
+  "View this project on": "이 프로젝트를 볼 컴퓨터",
+  "Move to {machine}…": "{machine}(으)로 이동…",
+  "Start a coordinator on {machine}": "{machine}에서 코디네이터 시작",
+  "Machine access settings": "컴퓨터 접근 설정",
+  "{machine} offline": "{machine} 오프라인",
+  "workers only": "워커 전용",
+  "move pending": "이동 대기 중",
+  "separate project": "별도 프로젝트",
+  "not synced here": "여기서 동기화되지 않음",
 };

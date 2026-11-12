@@ -7,14 +7,13 @@ import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { useNavigate } from "@tanstack/react-router";
 import {
-  ArrowRightLeftIcon,
   ChevronDownIcon,
-  KeyRoundIcon,
-  LaptopIcon,
-  LogOutIcon,
+  CopyPlusIcon,
+  DoorOpenIcon,
+  MessageSquareShareIcon,
+  MoveRightIcon,
   PlayIcon,
-  PlusIcon,
-  SendIcon,
+  Settings2Icon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -49,8 +48,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
   coordinator: "",
   workers: "workers only",
-  pending: "handoff pending",
-  independent: "independent",
+  pending: "move pending",
+  independent: "separate project",
 };
 
 /** Runs the pending action once the popup holding this has left the DOM. */
@@ -67,9 +66,10 @@ function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }
 }
 
 /**
- * Which machine's orchestrator this page shows, and the separate actions on
- * the others. Viewing reads that machine's server and moves nothing; moving
- * the coordinator and migrating threads are their own confirmed actions.
+ * Which machine's copy of the project this page shows, then what can be done
+ * with the project (add, move, start a coordinator) and with the viewed machine
+ * (move its running threads, leave). Viewing reads that machine's server and
+ * moves nothing; every move is its own confirmed action.
  */
 export function OrchestratorSwitcher({
   label,
@@ -162,8 +162,11 @@ export function OrchestratorSwitcher({
   const nameOf = (copy: OrchestratorCopy) =>
     ambiguous(copy.machine) ? `${copy.machine} · ${copy.folder}` : copy.machine;
   const others = listed.filter((copy) => copy.key !== current);
-  const startable = others.filter((copy) => copy.canStart);
+  const starts = onStart ? others.filter((copy) => copy.canStart) : [];
   const movable = onMove ? others.filter((copy) => copy.role !== "pending") : [];
+  // Add, the moves and Start act on this project; threads and Leave on the viewed machine.
+  const projectActions =
+    onAdd !== null || onMoveElsewhere !== null || movable.length > 0 || starts.length > 0;
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
@@ -180,7 +183,7 @@ export function OrchestratorSwitcher({
                     data-coordinator-machine=""
                     aria-label={
                       viewable
-                        ? `Viewing ${label}'s orchestrator. Choose a machine to view`
+                        ? `Viewing ${label}. Choose a machine to view`
                         : `${label}: this project's machines`
                     }
                   />
@@ -193,7 +196,7 @@ export function OrchestratorSwitcher({
           </TooltipTrigger>
           <TooltipPopup side="top">
             {viewable
-              ? `Viewing ${label}'s orchestrator. Work stays on ${label}. Adding or moving the project is a separate, confirmed action.`
+              ? `Viewing ${label}. Work stays on ${label}. Adding or moving the project asks first.`
               : `Runs on ${label}. Add it to another machine, or move it there.`}
           </TooltipPopup>
         </Tooltip>
@@ -202,55 +205,50 @@ export function OrchestratorSwitcher({
         <AfterUnmount pending={pendingView} />
         {viewable && onView ? (
           <MenuGroup>
-            <MenuGroupLabel>View this project on</MenuGroupLabel>
+            <MenuGroupLabel>{tx("View this project on")}</MenuGroupLabel>
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {
                 pendingView.current = () => onView(value as string);
               }}
             >
-              {listed.map((copy) => (
+              {[
+                ...listed.map((copy) => ({
+                  key: copy.key,
+                  name: nameOf(copy),
+                  note: ROLE_NOTE[copy.role],
+                })),
+                ...unknown.map((ref) => ({
+                  key: ref.key,
+                  name: ref.machine,
+                  note: "not synced here",
+                })),
+              ].map((row) => (
                 <MenuRadioItem
-                  key={copy.key}
-                  value={copy.key}
-                  data-orchestrator-view={copy.key}
+                  key={row.key}
+                  value={row.key}
+                  data-orchestrator-view={row.key}
                   closeOnClick
                 >
-                  <span className="flex w-full items-center justify-between gap-6">
-                    <span>
-                      View {nameOf(copy)}'s orchestrator
-                      {ROLE_NOTE[copy.role] ? (
-                        <span className="text-muted-foreground"> · {ROLE_NOTE[copy.role]}</span>
-                      ) : null}
+                  <span className="flex w-full items-center gap-2">
+                    <span className="min-w-0 truncate" title={row.name}>
+                      {row.name}
                     </span>
-                    <MenuRadioItemIndicator />
-                  </span>
-                </MenuRadioItem>
-              ))}
-              {unknown.map((ref) => (
-                <MenuRadioItem
-                  key={ref.key}
-                  value={ref.key}
-                  data-orchestrator-view={ref.key}
-                  closeOnClick
-                >
-                  <span className="flex w-full items-center justify-between gap-6">
-                    <span>
-                      View {ref.machine}'s orchestrator
-                      <span className="text-muted-foreground"> · Unknown</span>
-                    </span>
-                    <MenuRadioItemIndicator />
+                    {row.note ? (
+                      <span className="shrink-0 text-muted-foreground text-xs">{tx(row.note)}</span>
+                    ) : null}
+                    <MenuRadioItemIndicator className="ms-auto ps-4" />
                   </span>
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
           </MenuGroup>
         ) : null}
-        {machineActions ? (
+        {projectActions ? (
           <>
             {viewable ? <MenuSeparator /> : null}
             <MenuGroup>
-              <MenuGroupLabel>This project's machines</MenuGroupLabel>
+              <MenuGroupLabel>{tx("This project")}</MenuGroupLabel>
               {onAdd ? (
                 <MenuItem
                   data-machine-action="add"
@@ -258,10 +256,20 @@ export function OrchestratorSwitcher({
                     pendingView.current = onAdd;
                   }}
                 >
-                  <PlusIcon aria-hidden />
+                  <CopyPlusIcon aria-hidden />
                   {tx("Add to another machine…")}
                 </MenuItem>
               ) : null}
+              {movable.map((copy) => (
+                <MenuItem
+                  key={copy.key}
+                  data-orchestrator-move={copy.key}
+                  onClick={() => onMove?.(copy.key)}
+                >
+                  <MoveRightIcon aria-hidden />
+                  {tx("Move to {machine}…", { machine: nameOf(copy) })}
+                </MenuItem>
+              ))}
               {onMoveElsewhere ? (
                 <MenuItem
                   data-machine-action="move"
@@ -269,59 +277,61 @@ export function OrchestratorSwitcher({
                     pendingView.current = onMoveElsewhere;
                   }}
                 >
-                  <LaptopIcon aria-hidden />
+                  <MoveRightIcon aria-hidden />
                   {tx("Move to another machine…")}
                 </MenuItem>
               ) : null}
-              {onLeave ? (
+              {starts.map((copy) => (
                 <MenuItem
-                  data-machine-action="leave"
-                  onClick={() => {
-                    pendingView.current = onLeave;
-                  }}
+                  key={copy.key}
+                  data-orchestrator-start={copy.key}
+                  onClick={() => onStart?.(copy.key)}
                 >
-                  <LogOutIcon aria-hidden />
-                  {tx("Leave this machine…")}
+                  <PlayIcon aria-hidden />
+                  {tx("Start a coordinator on {machine}", { machine: nameOf(copy) })}
                 </MenuItem>
-              ) : null}
+              ))}
             </MenuGroup>
           </>
         ) : null}
-        {startable.length > 0 && onStart ? (
+        {viewable || projectActions ? <MenuSeparator /> : null}
+        <MenuGroup>
+          <MenuGroupLabel>{tx("On {machine}", { machine: label })}</MenuGroupLabel>
+          <MenuItem
+            disabled={!onMigrate}
+            data-orchestrator-migrate=""
+            onClick={() => {
+              if (onMigrate) pendingView.current = onMigrate;
+            }}
+          >
+            <MessageSquareShareIcon aria-hidden />
+            {tx("Move running threads…")}
+            {onMigrate ? null : (
+              <span className="ms-auto ps-4 text-muted-foreground text-xs">
+                {tx("{machine} offline", { machine: label })}
+              </span>
+            )}
+          </MenuItem>
+          {onLeave ? (
+            <MenuItem
+              data-machine-action="leave"
+              onClick={() => {
+                pendingView.current = onLeave;
+              }}
+            >
+              <DoorOpenIcon aria-hidden />
+              {tx("Leave this machine…")}
+            </MenuItem>
+          ) : null}
+        </MenuGroup>
+        {onAllowWorkers ? (
           <>
             <MenuSeparator />
-            {startable.map((copy) => (
-              <MenuItem key={copy.key} onClick={() => onStart(copy.key)}>
-                <PlayIcon aria-hidden />
-                Start a coordinator on {nameOf(copy)}
-              </MenuItem>
-            ))}
+            <MenuItem data-orchestrator-access="" onClick={onAllowWorkers}>
+              <Settings2Icon aria-hidden />
+              {tx("Machine access settings")}
+            </MenuItem>
           </>
-        ) : null}
-        <MenuSeparator />
-        {movable.map((copy) => (
-          <MenuItem key={copy.key} onClick={() => onMove?.(copy.key)}>
-            <SendIcon aria-hidden />
-            Move coordinator to {nameOf(copy)}…
-          </MenuItem>
-        ))}
-        <MenuItem
-          disabled={!onMigrate}
-          data-orchestrator-migrate=""
-          onClick={() => {
-            if (onMigrate) pendingView.current = onMigrate;
-          }}
-        >
-          <ArrowRightLeftIcon aria-hidden />
-          {onMigrate
-            ? `Move ${label}'s running threads…`
-            : `Move ${label}'s running threads… (${label} offline)`}
-        </MenuItem>
-        {onAllowWorkers ? (
-          <MenuItem onClick={onAllowWorkers}>
-            <KeyRoundIcon aria-hidden />
-            Allow workers both ways…
-          </MenuItem>
         ) : null}
       </MenuPopup>
     </Menu>
