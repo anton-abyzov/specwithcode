@@ -334,14 +334,14 @@ jobs:
             echo "- Dry run: $VERSION is already on npm, so there was nothing to rehearse." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # Its own job, outside the publish group: npm can take 20 minutes or more to serve a package
+  # Its own job, outside the publish group: npm can take an hour or more to serve a package
   # this size, and holding the group that long would let a third release cancel the one waiting.
   registry:
     name: Check npm serves the version
     needs: [package, publish]
     if: needs.package.outputs.dry_run != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 135
     permissions:
       contents: read
     env:
@@ -354,7 +354,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
-          seen="" latest="" errors="$RUNNER_TEMP/npm-view.log" attempts=120
+          seen="" latest="" errors="$RUNNER_TEMP/npm-view.log" attempts=240
           for attempt in $(seq 1 "$attempts"); do
             seen="$(npm view "$NPM_PACKAGE@$VERSION" version 2> "$errors" || true)"
             latest="$(npm view "$NPM_PACKAGE" dist-tags.latest 2>> "$errors" || true)"
@@ -369,7 +369,7 @@ jobs:
           done
           cat "$errors"
           if [ "$seen" != "$VERSION" ]; then
-            echo "::error::npm view $NPM_PACKAGE@$VERSION version answered '${seen:-nothing}' after 60 minutes."
+            echo "::error::npm view $NPM_PACKAGE@$VERSION version answered '${seen:-nothing}' after 2 hours."
           else
             echo "::error::$NPM_PACKAGE@$VERSION is on npm but latest is '${latest:-unknown}'. Move it by hand: npm dist-tag add $NPM_PACKAGE@$VERSION latest"
           fi

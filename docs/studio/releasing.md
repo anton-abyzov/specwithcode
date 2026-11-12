@@ -439,8 +439,8 @@ gh workflow run release-npm.yml -f version=1.0.233 -f dry_run=false  # publish
 
 A run waits up to an hour for the release to hold its runtime archive and a `SHA256SUMS` that lists
 it, checks the archive against that line, builds the tarball, installs it and runs both commands,
-publishes, and then, in a separate job outside the publish group, waits up to an hour for
-`npm view specwithcode@X.Y.Z version` to answer: npm takes 20 minutes or more to serve the package. A version already on
+publishes, and then, in a separate job outside the publish group, waits up to two hours for
+`npm view specwithcode@X.Y.Z version` to answer: npm can take an hour to serve the package. A version already on
 npm is skipped without failing. A version older than npm's `latest` is refused, since publishing it
 would move `latest` back. Pre-releases are not published.
 
