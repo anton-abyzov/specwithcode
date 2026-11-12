@@ -77,6 +77,30 @@ export const globalManagedTunnelCapConfig = optionalPositiveIntegerConfig(
   "RELAY_GLOBAL_MANAGED_TUNNEL_CAP",
 );
 
+const decodeAdminUserIds = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.String.pipe(Schema.check(Schema.isPattern(/^user_[A-Za-z0-9]+$/u)))),
+);
+
+/**
+ * Clerk user ids of the owners who may use the admin routes, comma separated
+ * in `RELAY_ADMIN_USER_IDS`. Unset or blank means nobody: the routes answer
+ * 404. A malformed id fails the deploy instead of silently admitting no one.
+ */
+export const adminUserIdsConfig = Config.String("RELAY_ADMIN_USER_IDS").pipe(
+  Config.withDefault(""),
+  Config.mapEffect((raw) =>
+    decodeAdminUserIds(
+      raw
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id !== ""),
+    ).pipe(
+      Effect.map((ids): ReadonlyArray<string> => [...new Set(ids)]),
+      Effect.mapError((error) => new Config.ConfigError(error)),
+    ),
+  ),
+);
+
 export interface ApnsCredentials {
   readonly teamId: string;
   readonly keyId: string;
@@ -112,6 +136,8 @@ export class RelayConfiguration extends Context.Service<
     readonly connectFreeTunnelLimit?: number;
     /** New managed machine allocations stop at this total. Unset means no cap. */
     readonly globalManagedTunnelCap?: number;
+    /** Owners who may use the admin routes. Unset or empty means nobody. */
+    readonly adminUserIds?: ReadonlyArray<string>;
   }
 >()("studio-relay/Config/RelayConfiguration") {}
 
