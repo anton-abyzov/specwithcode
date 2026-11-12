@@ -6,6 +6,7 @@ import { DEFAULT_SERVER_SETTINGS, type DesktopBridge } from "@specweave-studio/c
 
 const state = vi.hoisted(() => ({
   allowed: false,
+  language: "",
   voice: {} as typeof DEFAULT_SERVER_SETTINGS.voice,
   openMicrophone: vi.fn(),
   update: vi.fn(),
@@ -14,7 +15,8 @@ vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({}) }));
 vi.mock("../../state/server", () => ({ primaryServerConfigAtom: {} }));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../hooks/useSettings", () => ({
-  useClientSettings: () => state.allowed,
+  useClientSettings: (select: (settings: object) => unknown) =>
+    select({ voiceCallsAllowed: state.allowed, dictationLanguage: state.language }),
   usePrimarySettings: () => state.voice,
   useUpdateClientSettings: () => state.update,
 }));
@@ -54,6 +56,7 @@ async function mount() {
 }
 beforeEach(() => {
   state.allowed = false;
+  state.language = "";
   state.voice = DEFAULT_SERVER_SETTINGS.voice;
   state.update.mockReset();
   state.openMicrophone.mockReset().mockResolvedValue({ sampleRate: 16000, close: vi.fn() });
@@ -86,6 +89,37 @@ it("a fresh user can use free macOS speech with no ElevenLabs key, after consent
   expect(state.update).toHaveBeenCalledWith({ voiceCallsAllowed: true });
   expect(state.openMicrophone).toHaveBeenCalledOnce();
   expect(call.state.phase).toBe("listening");
+});
+
+/** One spoken phrase through the open microphone: a second of voice, then the silence that ends it. */
+async function sayPhrase() {
+  const onFrame = state.openMicrophone.mock.calls[0]![0] as (frame: Float32Array) => void;
+  await act(async () => {
+    for (let index = 0; index < 20; index += 1) onFrame(new Float32Array(1024).fill(0.5));
+    for (let index = 0; index < 20; index += 1) onFrame(new Float32Array(1024));
+  });
+}
+
+it("listens in the language chosen in Settings", async () => {
+  state.allowed = true;
+  state.language = "ru-RU";
+  vi.mocked(bridge.transcribeVoice!).mockResolvedValue("");
+  await mount();
+  await act(async () => call.start());
+  await sayPhrase();
+  expect(bridge.transcribeVoice).toHaveBeenCalledWith(
+    expect.objectContaining({ locale: "ru-RU", pinLanguage: true }),
+  );
+});
+
+it("leaves the language to the computer when none is chosen", async () => {
+  state.allowed = true;
+  vi.mocked(bridge.transcribeVoice!).mockResolvedValue("");
+  await mount();
+  await act(async () => call.start());
+  await sayPhrase();
+  expect(bridge.transcribeVoice).toHaveBeenCalledOnce();
+  expect(vi.mocked(bridge.transcribeVoice!).mock.calls[0]![0]).not.toHaveProperty("pinLanguage");
 });
 
 it.each(["win32"])("shows no call controls in the %s app", async (platform) => {

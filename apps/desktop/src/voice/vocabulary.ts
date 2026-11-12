@@ -3,10 +3,14 @@
  * It is local user data on this machine, never sent to a server, so the only
  * things that read it are the speech engine here and the Voice settings editor.
  */
+import { PRODUCT_VOCABULARY } from "./productVocabulary.ts";
+
 export type VocabularyTerm = {
   readonly phrase: string;
   /** Written instead of `phrase` when the transcript contains it. */
   readonly replacement?: string;
+  /** Offered to the recognizer but never rewritten. Built-in terms only; never stored. */
+  readonly hintOnly?: true;
 };
 
 export const VOCABULARY_MAX_TERMS = 2_000;
@@ -147,7 +151,14 @@ export function encodeStoredVocabulary(terms: readonly VocabularyTerm[]): string
 
 /** The words written in the transcript, earliest first: the list is in priority order. */
 function writtenForms(terms: readonly VocabularyTerm[]): string[] {
-  return [...new Set(terms.map((term) => term.replacement ?? term.phrase))];
+  const seen = new Set<string>();
+  return terms.flatMap((term) => {
+    const word = term.replacement ?? term.phrase;
+    const key = word.toLowerCase();
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [word];
+  });
 }
 
 /** Hint text for Whisper, cut to its token budget without splitting a term. */
@@ -179,6 +190,48 @@ function termPattern(phrase: string): string {
   return termParts(phrase).map(escapeRegExp).join("[\\s-]?");
 }
 
+/** "SpecWeave", "spec weave" and "spec-weave" are one term. */
+function termKey(phrase: string): string {
+  return termParts(phrase).join("").toLowerCase();
+}
+
+function isLowercase(text: string): boolean {
+  return text === text.toLowerCase();
+}
+
+/**
+ * The person's list with the product's own words ahead of it, which is the
+ * order the recognizer's hints are cut in. Their line wins over a built-in one
+ * for the same term when it says something: a replacement, or its own capitals.
+ * An all-lowercase copy (an imported "specweave") says nothing about casing, so
+ * the product's spelling stands.
+ */
+export function withProductVocabulary(
+  user: readonly VocabularyTerm[],
+  product: readonly VocabularyTerm[] = PRODUCT_VOCABULARY,
+): readonly VocabularyTerm[] {
+  const own = new Map(user.map((term) => [termKey(term.phrase), term]));
+  const settled = new Set<string>();
+  const lead = product.map((term) => {
+    const key = termKey(term.phrase);
+    const mine = own.get(key);
+    if (mine === undefined) return term;
+    settled.add(key);
+    if (mine.replacement === undefined && isLowercase(mine.phrase)) return term;
+    // Their spelling, on the built-in term's pattern, so its split forms still match.
+    const written = mine.replacement ?? mine.phrase;
+    return written === term.phrase
+      ? { phrase: term.phrase }
+      : { phrase: term.phrase, replacement: written };
+  });
+  return [...lead, ...user.filter((term) => !settled.has(termKey(term.phrase)))];
+}
+
+/** The built-in words as the editor shows them, read-only. */
+export function productWords(product: readonly VocabularyTerm[] = PRODUCT_VOCABULARY): string[] {
+  return writtenForms(product);
+}
+
 /**
  * Applies the vocabulary to a transcript. A two-letter term is too likely to be
  * an ordinary word to rewrite by case alone, so it needs an explicit replacement.
@@ -189,6 +242,7 @@ export function correctTranscript(text: string, terms: readonly VocabularyTerm[]
   const usable = terms
     .filter(
       (term) =>
+        term.hintOnly !== true &&
         (term.replacement !== undefined || term.phrase.length >= 3) &&
         lowered.includes(termParts(term.phrase)[0]?.toLowerCase() ?? ""),
     )
@@ -199,17 +253,62 @@ export function correctTranscript(text: string, terms: readonly VocabularyTerm[]
     `(?<![\\p{L}\\p{N}])(?:${usable.map((term) => `(${termPattern(term.phrase)})`).join("|")})(?![\\p{L}\\p{N}])`,
     "giu",
   );
-  return text.replace(pattern, (match, ...groups: unknown[]) => {
-    const term = usable[groups.findIndex((group) => typeof group === "string")];
-    return term ? (term.replacement ?? term.phrase) : match;
+  return text.replace(pattern, (match: string, ...rest: unknown[]) => {
+    const term =
+      usable[rest.findIndex((group, index) => index < usable.length && group !== undefined)];
+    if (!term) return match;
+    const written = term.replacement ?? term.phrase;
+    if (!isLowercase(written)) return written;
+    // A lowercase term has no capitals of its own, so an ordinary capital is the
+    // sentence's and stays: "Kubernetes" is kept, and "Work tree" opening a
+    // sentence becomes "Worktree". Other casing is still fixed: "NPM" becomes "npm".
+    const capital = match.charAt(0).toUpperCase() + match.slice(1).toLowerCase();
+    if (match !== capital || match === match.toLowerCase()) return written;
+    if (term.replacement === undefined && match.toLowerCase() === written) return match;
+    const before = text.slice(0, rest[usable.length] as number);
+    return /(?:^|[.!?]\s+)$/.test(before)
+      ? written.charAt(0).toUpperCase() + written.slice(1)
+      : written;
   });
 }
 
-/** What Whisper invents on silence; real speech is judged by the recording's level instead. */
-const SILENCE_INVENTIONS =
-  /^(?:\[[^\]]*\]|\([^)]*\)|\.+|you|thank you|thanks|thanks for watching|thank you for watching|bye|спасибо|продолжение следует)[.!]?$/iu;
 /** Below this peak (16-bit full scale is 1.0) a recording has no speech to transcribe. */
-const SPEECH_PEAK = 0.02;
+export const SPEECH_PEAK = 0.02;
+
+/**
+ * What Whisper writes when nobody spoke: sound tags, a lone "you", and the
+ * sign-offs of the videos it learned from. Nobody dictates these as a whole phrase.
+ */
+const INVENTIONS =
+  /^(?:\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|[\p{P}\p{S}\s]+|you|(?:thanks|thank you)(?: so much)? for watching|(?:(?:we|i)(?:'ll| will) )?see you (?:in the next (?:video|one)|next time)|subtitles by .*|(?:please |don't forget to )?(?:like and )?subscribe(?: to (?:my|the|our) channel)?|спасибо за просмотр|продолжение следует|субтитры .*)[.!…]*$/iu;
+
+/** Real words when spoken, and what a recognizer makes of a near-silent recording. */
+const QUIET_WORDS = /^(?:thank you|thanks|bye|спасибо)[.!]?$/iu;
+
+const LATIN_LANGUAGES = new Set(
+  (
+    "en de es fr pt tr pl ca nl sv it id fi vi ms cs ro da hu no hr lt la mi cy sk lv az sl et br eu " +
+    "is bs sq sw gl sn yo so af oc uz fo ht tk nn mt lb tl mg haw ln ha jw su"
+  ).split(" "),
+);
+const CYRILLIC_LANGUAGES = new Set("ru uk be bg sr mk kk mn tg ba tt".split(" "));
+
+/**
+ * Noise heard in a pinned language can still come back in another alphabet. Latin
+ * is allowed everywhere, because names and code words are written in it.
+ */
+function inForeignScript(text: string, language: string | undefined): boolean {
+  const code = language?.split(/[-_]/)[0]?.toLowerCase() ?? "";
+  const own = LATIN_LANGUAGES.has(code)
+    ? /\p{Script=Latin}/u
+    : CYRILLIC_LANGUAGES.has(code)
+      ? /[\p{Script=Latin}\p{Script=Cyrillic}]/u
+      : null;
+  if (own === null) return false;
+  const letters = text.match(/\p{L}/gu) ?? [];
+  const foreign = letters.filter((letter) => !own.test(letter)).length;
+  return foreign * 2 > letters.length;
+}
 
 export function wavPeak(wav: Uint8Array): number {
   const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
@@ -220,25 +319,65 @@ export function wavPeak(wav: Uint8Array): number {
   return peak / 0x8000;
 }
 
-/** Drops a transcript that only a silent recording or an echoed prompt could produce. */
-export function acceptTranscript(
+/** Length of the 16-bit PCM recording the renderer sends, from its own header. */
+export function wavSeconds(wav: Uint8Array): number {
+  if (wav.byteLength <= 44) return 0;
+  const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
+  const bytesPerSecond = view.getUint32(28, true);
+  return bytesPerSecond > 0 ? (wav.byteLength - 44) / bytesPerSecond : 0;
+}
+
+export type TranscriptVerdict = {
+  readonly text: string;
+  /** Why the engine's text was thrown away, for the log. */
+  readonly dropped: "quiet" | "invented" | "echo" | "script" | null;
+};
+
+/** Keeps what was said and drops what only silence, noise or an echoed hint could produce. */
+export function judgeTranscript(
   text: string,
-  prompt: string,
-  peak: number,
-  terms: readonly VocabularyTerm[] = [],
-): string {
+  recording: {
+    /** Whisper invents text on noise; Apple's recognizer does not. Whisper when not given. */
+    readonly engine?: "whisper" | "apple";
+    readonly prompt: string;
+    readonly peak: number;
+    readonly terms?: readonly VocabularyTerm[];
+    /** The language the engine was told to listen for; none when it detected one. */
+    readonly language?: string;
+  },
+): TranscriptVerdict {
+  const { prompt, peak, terms = [], language } = recording;
   const trimmed = text.trim();
-  if (!trimmed) return "";
-  if (peak < SPEECH_PEAK && SILENCE_INVENTIONS.test(trimmed)) return "";
+  if (!trimmed) return { text: "", dropped: null };
+  if (recording.engine === "apple") {
+    // A soft voice is still speech here; only a stock word from a near-silent recording goes.
+    const stock = peak < SPEECH_PEAK && (INVENTIONS.test(trimmed) || QUIET_WORDS.test(trimmed));
+    return stock ? { text: "", dropped: "quiet" } : { text: trimmed, dropped: null };
+  }
+  if (peak < SPEECH_PEAK) return { text: "", dropped: "quiet" };
+  if (INVENTIONS.test(trimmed)) return { text: "", dropped: "invented" };
+  if (inForeignScript(trimmed, language)) return { text: "", dropped: "script" };
   // Whisper can repeat its hint list on noise; ordinary speech is not a run of it.
   const unpunctuated = (value: string) => value.trim().replace(/[.!]+$/, "");
   const bare = unpunctuated(trimmed);
   if (
     prompt &&
-    !(peak >= SPEECH_PEAK && writtenForms(terms).some((word) => unpunctuated(word) === bare)) &&
-    (bare === unpunctuated(prompt) || (bare.length >= 20 && prompt.includes(bare)))
+    !writtenForms(terms).some((word) => unpunctuated(word) === bare) &&
+    (bare === unpunctuated(prompt) ||
+      // Two names said together are speech; a run of three or more is the hint list.
+      (bare.length >= 20 && bare.split(", ").length >= 3 && prompt.includes(bare)))
   ) {
-    return "";
+    return { text: "", dropped: "echo" };
   }
-  return trimmed;
+  return { text: trimmed, dropped: null };
+}
+
+export function acceptTranscript(
+  text: string,
+  prompt: string,
+  peak: number,
+  terms: readonly VocabularyTerm[] = [],
+  language?: string,
+): string {
+  return judgeTranscript(text, { prompt, peak, terms, ...(language ? { language } : {}) }).text;
 }

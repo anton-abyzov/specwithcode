@@ -411,9 +411,9 @@ export const ClientSettingsSchema = Schema.Struct({
    */
   voiceCallsAllowed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
-   * Desktop: the language dictation listens for, as a BCP 47 tag. Empty follows
-   * the system on macOS and detects the language from the speech on Linux.
-   * One value for the whole app, every project and thread.
+   * Desktop: the language dictation and calls listen for, as a BCP 47 tag. Empty
+   * follows the computer's language. `und` asks the Linux engine to detect the
+   * language from the speech. One value for the whole app, every project and thread.
    */
   dictationLanguage: DictationLanguage.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Toggle: the dictation shortcut starts and stops it. Hold: dictate while it is held. */

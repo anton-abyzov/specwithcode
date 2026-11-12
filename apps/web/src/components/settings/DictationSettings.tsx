@@ -11,18 +11,26 @@ import type { DictationMode } from "@specweave-studio/contracts";
 
 import { useTx } from "../../i18n";
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { isLinuxVoiceHost } from "../../studio/voiceCallSupport";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
-/** Languages both engines handle well; anything else can still be detected from the speech. */
+/**
+ * BCP 47's "undetermined": Whisper works out the language from each phrase. Only
+ * the Linux engine can, so the choice is offered there alone.
+ */
+export const DETECT_DICTATION_LANGUAGE = "und";
+
+/** Languages both engines handle well; on Linux anything else can still be detected from the speech. */
 export const DICTATION_LANGUAGES: ReadonlyArray<{
   readonly value: string;
   readonly label: string;
 }> = [
   { value: "", label: "System" },
+  { value: DETECT_DICTATION_LANGUAGE, label: "Detect from speech" },
   { value: "en-US", label: "English (US)" },
   { value: "en-GB", label: "English (UK)" },
   { value: "ru-RU", label: "Russian" },
@@ -59,12 +67,22 @@ export function DictationSettings() {
   const updateSettings = useUpdateClientSettings();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "composer.dictation.toggle");
+  // A value saved on Linux can reach a Mac in copied settings; there it means System.
+  const canDetect = isLinuxVoiceHost();
+  const languages = DICTATION_LANGUAGES.filter(
+    (option) => canDetect || option.value !== DETECT_DICTATION_LANGUAGE,
+  );
+  const shown = !canDetect && language === DETECT_DICTATION_LANGUAGE ? "" : language;
 
   return (
     <>
       <SettingsRow
         {...searchableSetting("dictation-language")}
-        description="The language dictation listens for, in every project and thread. System follows the Mac's language; on Linux it detects the language from your speech."
+        description={
+          canDetect
+            ? "The language dictation and calls listen for, in every project and thread. System follows this computer's language. Detect from speech works out the language of each phrase; it is slower and can turn background noise into words."
+            : "The language dictation and calls listen for, in every project and thread. System follows this computer's language."
+        }
         resetAction={
           language !== "" ? (
             <SettingResetButton
@@ -75,7 +93,7 @@ export function DictationSettings() {
         }
         control={
           <Select
-            value={language === "" ? SYSTEM : language}
+            value={shown === "" ? SYSTEM : shown}
             onValueChange={(value) => {
               if (typeof value !== "string") return;
               updateSettings({ dictationLanguage: value === SYSTEM ? "" : value });
@@ -86,10 +104,10 @@ export function DictationSettings() {
               className="w-full sm:w-48"
               aria-label={tx("Dictation language")}
             >
-              <SelectValue>{dictationLanguageLabel(language)}</SelectValue>
+              <SelectValue>{dictationLanguageLabel(shown)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {DICTATION_LANGUAGES.map((option) => (
+              {languages.map((option) => (
                 <SelectItem hideIndicator key={option.value} value={option.value || SYSTEM}>
                   {option.label}
                 </SelectItem>

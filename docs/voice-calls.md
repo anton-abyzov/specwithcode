@@ -4,13 +4,38 @@ Voice is in the coordinator composer of the Mac and Linux desktop apps. The phon
 
 ## Linux
 
-Speech to text is whisper.cpp, bundled in the app, with the Whisper `small` q5_1 model. Replies use Piper with the `en_US-lessac-medium` voice unless ElevenLabs is selected. The first call or dictation downloads about 267 MB, after consent, from pinned URLs checked by SHA-256, into `~/.specwithcode/voice`. After that no network call is made and audio never leaves the machine. Language is detected per phrase. Spoken replies are English only. Linux has no system microphone switch for the app to read, so the in-app consent and the per-window permission check are the gate.
+Speech to text is whisper.cpp, bundled in the app, with the Whisper `small` q5_1 model. Replies use Piper with the `en_US-lessac-medium` voice unless ElevenLabs is selected. The first call or dictation downloads about 268 MB, after consent, from pinned URLs checked by SHA-256, into `~/.specwithcode/voice`. After that no network call is made and audio never leaves the machine. Spoken replies are English only. Linux has no system microphone switch for the app to read, so the in-app consent and the per-window permission check are the gate.
+
+Dictation and calls listen in the language chosen in Settings › General › Dictation language. **System** is the computer's language. **Detect from speech** (Linux only) works out the language of each phrase; it runs the model twice, so a phrase takes about one and a half times as long, and background noise can come back as words in any language.
+
+Three things keep a phrase quick and clean:
+
+- A speech detector (Silero VAD, a 0.9 MB file among the speech files) hears each recording before Whisper does. Typing, a breath, a hum or a click has no speech in it, so nothing is written. Without it Whisper answers such sounds with a fluent sentence. An install set up before the detector existed is asked once to download it. If that download fails, voice works without it and the app asks again after its next start, not on every call.
+- Whisper's encoder window is sized to the recording instead of a fixed 30 seconds, which makes a short phrase two to three times faster with the same text.
+- A recording with no speech level at all is never sent to the recognizer.
 
 If no microphone is found, plug in a headset or USB microphone and check the input in Sound settings.
 
 ## Your vocabulary
 
-In Voice settings, **Your vocabulary** lists names and terms, one per line, or `heard => written`. Earlier lines count most. On Linux the first terms, about 500 characters, go to Whisper as a hint. On Mac the first 100 go to Apple's engine as contextual strings, whose effect is not guaranteed. On both, every term corrects casing and split forms ("spec weave" becomes "SpecWeave"), and `heard => written` lines replace text. The list stays in `vocabulary.json` in the voice folder, per machine, and is never sent to a server. Lines that look like passwords, keys, emails or phone numbers are refused. On Linux the hint terms are passed to `whisper-cli` as a command-line argument, which other users on a shared machine can see in the process list while a phrase is transcribed.
+Two lists feed speech recognition: the product's own words, and yours.
+
+The product's words (SpecWithCode, SpecWeave, worktree, increment, coordinator, Claude Code, Codex and the like) ship with the app in `apps/desktop/src/voice/productVocabulary.ts` and work on a new install with nothing typed. Voice settings shows them under the editor. A built-in `heard => written` pair is only ever a form that is not ordinary English ("work tree", "spec wave"); "cloud code" is real English, so correcting it to "Claude Code" is a line for your own list. To switch a built-in pair off, add a line that writes it as heard, such as `ultra code => ultra code`.
+
+In Voice settings, **Your vocabulary** lists your names and terms, one per line, or `heard => written`. Earlier lines count most. The list stays in `vocabulary.json` in the voice folder, per machine, and is never sent to a server. Lines that look like passwords, keys, emails or phone numbers are refused.
+
+Both lists are used twice:
+
+- As a hint before recognition. The product's words go first, then yours, about 500 characters in all on Linux (Whisper's limit) and 100 terms on Mac (Apple's contextual strings, whose effect is not guaranteed). The product's words take about 180 of those characters and 19 of those terms, so your first 30 or so lines are the ones a Linux hint carries. A hint raises the odds of a word; it does not guarantee the spelling.
+- As a correction after recognition, on every term of both lists. A term fixes casing and split forms ("spec weave" and "spec-weave" become "SpecWeave"), and a `heard => written` line replaces text ("work tree" becomes "worktree"). This is the part that always works, so a word the engine keeps mishearing belongs in a `heard => written` line.
+
+A line of your own for a product word wins when it says something: a replacement, or its own capitals. An all-lowercase line (`specweave`, as an imported list often has) says nothing about casing, so the product's spelling stands. A lowercase term never lowercases an ordinary capital: with `kubernetes` in the list, "Kubernetes" stays as heard.
+
+On Linux the hint terms are passed to `whisper-cli` as a command-line argument, which other users on a shared machine can see in the process list while a phrase is transcribed.
+
+## Diagnostics
+
+Each phrase and each spoken reply adds attributes to its own span in the desktop trace (`userdata/logs/desktop.trace.ndjson`, channel `desktop:voice-transcribe` or `desktop:voice-synthesize`): `voice.engine`, `voice.language`, `voice.audioMs`, `voice.peak`, `voice.engineMs`, `voice.outcome`, `voice.characters`, `voice.hintCharacters` and, on a failure, `voice.error` (`timeout`, `exit 3`, `ENOENT`). `voice.outcome` is `text`, `empty` (the detector or the engine heard no speech), `quiet`, `invented`, `script`, `echo` or `error`. The words themselves and the audio are never written.
 
 ## Spoken replies on Mac
 

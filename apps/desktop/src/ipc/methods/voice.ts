@@ -28,15 +28,19 @@ import {
   readLegacyVoicePreferences,
   removeLegacyVoicePreferences,
 } from "../../voice/legacyVoicePreferences.ts";
-import { LinuxSpeech, LinuxSpeechError } from "../../voice/linuxSpeech.ts";
+import { LinuxSpeech, LinuxSpeechError, whisperLanguage } from "../../voice/linuxSpeech.ts";
 import { prepareVoiceCall } from "../../voice/voiceReadiness.ts";
 import { VoiceVocabularyStore } from "../../voice/vocabularyStore.ts";
 import {
-  acceptTranscript,
   contextualStrings,
   correctTranscript,
+  judgeTranscript,
+  productWords,
+  SPEECH_PEAK,
   wavPeak,
+  wavSeconds,
   whisperPrompt,
+  withProductVocabulary,
 } from "../../voice/vocabulary.ts";
 import { VoiceHelper, VoiceHelperError } from "../../voice/VoiceHelper.ts";
 import { allowMediaPermission, MICROPHONE_SETTINGS_URL } from "../../voice/voicePermission.ts";
@@ -88,6 +92,23 @@ function microphoneAccess(): DesktopVoiceAccess {
 
 function defaultLocale(): string {
   return Electron.app.getSystemLocale() || Electron.app.getLocale();
+}
+
+/** `und` is the dictation language setting's "detect it from my speech". */
+function asksToDetect(locale: string | undefined): boolean {
+  return /^und(?:[-_]|$)/i.test(locale ?? "");
+}
+
+/**
+ * What one voice request did, written to the desktop trace on the request's own
+ * span: engine, language, timings and outcome. Never the words or the audio.
+ */
+type VoiceTrace = Record<string, string | number>;
+
+function failureDetail(error: unknown): string {
+  if (error instanceof LinuxSpeechError) return error.detail ?? "refused";
+  if (error instanceof VoiceHelperError) return error.code;
+  return "failed";
 }
 
 function messageOf(error: unknown, fallback: string): string {
@@ -242,7 +263,7 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       handler: ({ voiceId, rate }) =>
         Effect.promise(async () => {
           if (linux !== null) {
-            if ((await linux.missingBytes()) > 0) {
+            if (!(await linux.isSetUp())) {
               return {
                 ok: false as const,
                 error: "The free voice downloads with your first call or dictation.",
@@ -395,46 +416,108 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
     }),
   );
 
+  const transcribe = async (
+    input: typeof DesktopVoiceTranscribeInputSchema.Type,
+    senderId: number | undefined,
+  ): Promise<{ readonly result: typeof VoiceTextResult.Type; readonly trace: VoiceTrace }> => {
+    const { audio, locale, pinLanguage } = input;
+    const refused = (error: string, outcome: string) => ({
+      result: { ok: false as const, error },
+      trace: { "voice.outcome": outcome },
+    });
+    if (!isMac && linux === null) {
+      return refused((await status()).reason ?? "Unsupported.", "unsupported");
+    }
+    if (senderId === undefined || !activeCalls.has(senderId)) {
+      return refused("No voice call is active in this window.", "inactive");
+    }
+    if (audio.byteLength === 0 || audio.byteLength > DESKTOP_VOICE_MAX_AUDIO_BYTES) {
+      return refused("That recording was too long to transcribe.", "too-long");
+    }
+    // The language chosen in Settings, else this computer's. Whisper detects one only
+    // when asked to: detecting costs a second pass and lets noise return as any language.
+    const chosen = pinLanguage === true && locale ? locale : undefined;
+    const spoken = asksToDetect(chosen) ? undefined : (chosen ?? defaultLocale());
+    const language = linux !== null ? whisperLanguage(spoken) : (spoken ?? defaultLocale());
+    const peak = wavPeak(audio);
+    const seconds = wavSeconds(audio);
+    const trace: VoiceTrace = {
+      "voice.engine": linux !== null ? "whisper" : "apple",
+      "voice.language": language,
+      "voice.audioMs": Math.round(seconds * 1000),
+      "voice.peak": Math.round(peak * 1000) / 1000,
+    };
+    // Whisper answers a recording with no speech in it with an invented sentence,
+    // so it is never asked. Apple's recognizer hears a soft voice and stays silent otherwise.
+    if (linux !== null && peak < SPEECH_PEAK) {
+      return {
+        result: { ok: true as const, text: "" },
+        trace: { ...trace, "voice.outcome": "quiet" },
+      };
+    }
+    const started = performance.now();
+    const engineMs = () => Math.round(performance.now() - started);
+    try {
+      const terms = withProductVocabulary(await vocabulary.terms());
+      const prompt = linux === null ? "" : whisperPrompt(terms);
+      const heard = await withTempFile("wav", async (path) => {
+        await NodeFSP.writeFile(path, audio, { mode: 0o600 });
+        if (linux !== null) {
+          return linux.transcribe(path, prompt, {
+            seconds,
+            ...(language === "auto" ? {} : { language }),
+          });
+        }
+        const voice = await getHelper();
+        const reply = await voice.request({
+          op: "transcribe",
+          path,
+          locale: language,
+          contextualStrings: contextualStrings(terms),
+        });
+        return reply.text ?? "";
+      });
+      const verdict = judgeTranscript(heard, {
+        engine: linux !== null ? "whisper" : "apple",
+        prompt,
+        peak,
+        terms,
+        ...(language === "auto" ? {} : { language }),
+      });
+      const text = correctTranscript(verdict.text, terms);
+      return {
+        result: { ok: true as const, text },
+        trace: {
+          ...trace,
+          "voice.engineMs": engineMs(),
+          "voice.outcome": verdict.dropped ?? (text ? "text" : "empty"),
+          "voice.characters": text.length,
+          "voice.hintCharacters": prompt.length,
+        },
+      };
+    } catch (error) {
+      return {
+        result: { ok: false as const, error: messageOf(error, "Could not transcribe.") },
+        trace: {
+          ...trace,
+          "voice.engineMs": engineMs(),
+          "voice.outcome": "error",
+          "voice.error": failureDetail(error),
+        },
+      };
+    }
+  };
+
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
       channel: VOICE_TRANSCRIBE_CHANNEL,
       payload: DesktopVoiceTranscribeInputSchema,
       result: VoiceTextResult,
-      handler: ({ audio, locale, pinLanguage }, event) =>
-        Effect.promise(async () => {
-          if (!isMac && linux === null) {
-            return { ok: false as const, error: (await status()).reason ?? "Unsupported." };
-          }
-          if (event === undefined || !activeCalls.has(event.sender.id)) {
-            return { ok: false as const, error: "No voice call is active in this window." };
-          }
-          if (audio.byteLength === 0 || audio.byteLength > DESKTOP_VOICE_MAX_AUDIO_BYTES) {
-            return { ok: false as const, error: "That recording was too long to transcribe." };
-          }
-          try {
-            const terms = await vocabulary.terms();
-            const prompt = linux === null ? "" : whisperPrompt(terms);
-            const heard = await withTempFile("wav", async (path) => {
-              await NodeFSP.writeFile(path, audio, { mode: 0o600 });
-              if (linux !== null)
-                return linux.transcribe(path, prompt, undefined, pinLanguage ? locale : undefined);
-              const voice = await getHelper();
-              const reply = await voice.request({
-                op: "transcribe",
-                path,
-                locale: locale ?? defaultLocale(),
-                contextualStrings: contextualStrings(terms),
-              });
-              return reply.text ?? "";
-            });
-            const text = correctTranscript(
-              acceptTranscript(heard, prompt, wavPeak(audio), terms),
-              terms,
-            );
-            return { ok: true as const, text };
-          } catch (error) {
-            return { ok: false as const, error: messageOf(error, "Could not transcribe.") };
-          }
+      handler: (input, event) =>
+        Effect.gen(function* () {
+          const heard = yield* Effect.promise(() => transcribe(input, event?.sender.id));
+          yield* Effect.annotateCurrentSpan(heard.trace);
+          return heard.result;
         }),
     }),
   );
@@ -445,46 +528,59 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       payload: DesktopVoiceSynthesizeInputSchema,
       result: VoiceAudioResult,
       handler: ({ text, voiceId, rate }, event) =>
-        Effect.promise(async () => {
-          if (!isMac && linux === null) {
-            return { ok: false as const, error: (await status()).reason ?? "Unsupported." };
-          }
-          if (event === undefined || !activeCalls.has(event.sender.id)) {
-            return { ok: false as const, error: "No voice call is active in this window." };
-          }
-          const senderId = event.sender.id;
-          speechRequests.get(senderId)?.abort();
-          const request = new AbortController();
-          speechRequests.set(senderId, request);
-          try {
-            const voice = linux === null ? await getHelper() : null;
-            if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
-            const audio = await withTempFile("wav", async (path) => {
-              if (request.signal.aborted) throw new Error("Voice call ended.");
-              if (linux !== null) {
-                await linux.speak(text, path, rate, request.signal);
-              } else {
-                await voice?.request({
-                  op: "speak",
-                  text,
-                  path,
-                  voice: voiceId || undefined,
-                  rate,
-                });
-              }
-              return new Uint8Array(await NodeFSP.readFile(path));
-            });
-            return request.signal.aborted
-              ? { ok: false as const, error: "Voice call ended." }
-              : { ok: true as const, audio };
-          } catch (error) {
-            return {
-              ok: false as const,
-              error: messageOf(error, "Could not read the reply aloud."),
-            };
-          } finally {
-            if (speechRequests.get(senderId) === request) speechRequests.delete(senderId);
-          }
+        Effect.gen(function* () {
+          const started = performance.now();
+          const outcome: { failure: string | null } = { failure: null };
+          const result = yield* Effect.promise(async () => {
+            if (!isMac && linux === null) {
+              return { ok: false as const, error: (await status()).reason ?? "Unsupported." };
+            }
+            if (event === undefined || !activeCalls.has(event.sender.id)) {
+              return { ok: false as const, error: "No voice call is active in this window." };
+            }
+            const senderId = event.sender.id;
+            speechRequests.get(senderId)?.abort();
+            const request = new AbortController();
+            speechRequests.set(senderId, request);
+            try {
+              const voice = linux === null ? await getHelper() : null;
+              if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
+              const audio = await withTempFile("wav", async (path) => {
+                if (request.signal.aborted) throw new Error("Voice call ended.");
+                if (linux !== null) {
+                  await linux.speak(text, path, rate, request.signal);
+                } else {
+                  await voice?.request({
+                    op: "speak",
+                    text,
+                    path,
+                    voice: voiceId || undefined,
+                    rate,
+                  });
+                }
+                return new Uint8Array(await NodeFSP.readFile(path));
+              });
+              return request.signal.aborted
+                ? { ok: false as const, error: "Voice call ended." }
+                : { ok: true as const, audio };
+            } catch (error) {
+              outcome.failure = request.signal.aborted ? "cancelled" : failureDetail(error);
+              return {
+                ok: false as const,
+                error: messageOf(error, "Could not read the reply aloud."),
+              };
+            } finally {
+              if (speechRequests.get(senderId) === request) speechRequests.delete(senderId);
+            }
+          });
+          yield* Effect.annotateCurrentSpan({
+            "voice.engine": linux !== null ? "piper" : "apple",
+            "voice.characters": text.length,
+            "voice.engineMs": Math.round(performance.now() - started),
+            "voice.outcome": result.ok ? "audio" : outcome.failure === null ? "refused" : "error",
+            ...(outcome.failure === null ? {} : { "voice.error": outcome.failure }),
+          });
+          return result;
         }),
     }),
   );
@@ -508,7 +604,8 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       channel: VOICE_VOCABULARY_READ_CHANNEL,
       payload: Schema.Void,
       result: DesktopVoiceVocabularySchema,
-      handler: () => Effect.promise(() => vocabulary.read()),
+      handler: () =>
+        Effect.promise(async () => ({ ...(await vocabulary.read()), builtIn: productWords() })),
     }),
   );
   yield* ipc.handle(
@@ -516,7 +613,8 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       channel: VOICE_VOCABULARY_SAVE_CHANNEL,
       payload: DesktopVoiceVocabularySaveInputSchema,
       result: DesktopVoiceVocabularySchema,
-      handler: ({ text }) => Effect.promise(() => vocabulary.save(text)),
+      handler: ({ text }) =>
+        Effect.promise(async () => ({ ...(await vocabulary.save(text)), builtIn: productWords() })),
     }),
   );
 

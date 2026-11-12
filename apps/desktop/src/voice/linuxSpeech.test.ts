@@ -7,7 +7,15 @@ import * as NodeStream from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { LinuxSpeech, linuxSpeechAssets, type RunCommand, whisperLanguage } from "./linuxSpeech.ts";
+import {
+  helperFailure,
+  LinuxSpeech,
+  linuxSpeechAssets,
+  LinuxSpeechError,
+  type RunCommand,
+  whisperAudioContext,
+  whisperLanguage,
+} from "./linuxSpeech.ts";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFS>();
@@ -188,7 +196,7 @@ describe("support", () => {
 describe("running helpers", () => {
   beforeEach(placeAllAssets);
 
-  it("passes the vocabulary prompt and detects the language", async () => {
+  it("passes the vocabulary prompt and detects the language when given none", async () => {
     const run = vi.fn<RunCommand>(async () => " first line\n second line\n");
     const text = await engine({ run }).transcribe("/a.wav", "SpecWeave, Postiz.");
     expect(text).toBe("first line second line");
@@ -200,9 +208,46 @@ describe("running helpers", () => {
 
   it("uses the language chosen in Settings instead of detecting it", async () => {
     const run = vi.fn<RunCommand>(async () => "");
-    await engine({ run }).transcribe("/a.wav", "", undefined, "ru-RU");
+    await engine({ run }).transcribe("/a.wav", "", { language: "ru-RU" });
     const args = run.mock.calls[0]![1];
     expect(args[args.indexOf("-l") + 1]).toBe("ru");
+  });
+
+  it("lets the speech detector hear the recording first", async () => {
+    const run = vi.fn<RunCommand>(async () => "");
+    await engine({ run }).transcribe("/a.wav", "");
+    const args = run.mock.calls[0]![1];
+    expect(args.slice(args.indexOf("--vad"), args.indexOf("--vad") + 3)).toEqual([
+      "--vad",
+      "--vad-model",
+      NodePath.join(voiceDir(), "ggml-silero-v5.1.2.bin"),
+    ]);
+  });
+
+  it("still recognizes speech when the detector could not be downloaded", async () => {
+    await NodeFSP.rm(NodePath.join(voiceDir(), "ggml-silero-v5.1.2.bin"));
+    const run = vi.fn<RunCommand>(async () => "hello");
+    const speech = engine({ run, fetch: fetchFailingAll() as never });
+    expect(await speech.missingBytes()).toBe(885_098);
+    expect(await speech.isSetUp()).toBe(true);
+    await expect(speech.prepare()).resolves.toBeUndefined();
+    expect(await speech.transcribe("/a.wav", "")).toBe("hello");
+    expect(run.mock.calls[0]![1]).not.toContain("--vad");
+  });
+
+  it("asks for the detector once, not on every call after a failed download", async () => {
+    await NodeFSP.rm(NodePath.join(voiceDir(), "ggml-silero-v5.1.2.bin"));
+    const speech = engine({ fetch: fetchFailingAll() as never });
+    await speech.prepare();
+    expect(await speech.missingBytes()).toBe(0);
+    // The next start of the app offers it again.
+    expect(await engine().missingBytes()).toBe(885_098);
+  });
+
+  it("is not set up while a required file is missing", async () => {
+    const model = linuxSpeechAssets("x64")[0]!;
+    await NodeFSP.rm(NodePath.join(voiceDir(), model.file));
+    expect(await engine().isSetUp()).toBe(false);
   });
 
   it("omits an empty prompt", async () => {
@@ -253,11 +298,40 @@ describe("running helpers", () => {
     expect((failed as Error).message).toBe("Speech recognition failed. Try again.");
   });
 
+  it("keeps why a helper failed for the log, without its command line", async () => {
+    const run = vi.fn<RunCommand>(async () => {
+      throw Object.assign(new Error("Command failed: whisper-cli --prompt PrivateName"), {
+        code: 3,
+      });
+    });
+    const failed = await engine({ run })
+      .transcribe("/a.wav", "PrivateName.")
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(LinuxSpeechError);
+    expect((failed as LinuxSpeechError).detail).toBe("exit 3");
+  });
+
+  it("sizes the encoder window to a short phrase and leaves a long one alone", async () => {
+    const run = vi.fn<RunCommand>(async () => "");
+    const speech = engine({ run });
+    await speech.transcribe("/a.wav", "", { language: "en-US", seconds: 3.96 });
+    await speech.transcribe("/b.wav", "", { language: "en-US", seconds: 12 });
+    await speech.transcribe("/c.wav", "", { language: "en-US", seconds: 40 });
+    await speech.transcribe("/d.wav", "");
+    const context = (call: number) => {
+      const args = run.mock.calls[call]![1];
+      return args.includes("-ac") ? args[args.indexOf("-ac") + 1] : null;
+    };
+    expect([context(0), context(1), context(2), context(3)]).toEqual(["512", "728", null, null]);
+  });
+
   it("does not start a recognition already cancelled", async () => {
     const run = vi.fn<RunCommand>(async () => "");
     const abort = new AbortController();
     abort.abort();
-    await expect(engine({ run }).transcribe("/a.wav", "", abort.signal)).rejects.toBeDefined();
+    await expect(
+      engine({ run }).transcribe("/a.wav", "", { signal: abort.signal }),
+    ).rejects.toBeDefined();
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -279,5 +353,40 @@ describe("whisperLanguage", () => {
     expect(whisperLanguage("")).toBe("auto");
     expect(whisperLanguage(undefined)).toBe("auto");
     expect(whisperLanguage("not a tag")).toBe("auto");
+  });
+
+  it("detects for `und` and for a language the model does not know", () => {
+    expect(whisperLanguage("und")).toBe("auto");
+    expect(whisperLanguage("xx-XX")).toBe("auto");
+    expect(whisperLanguage("nb-NO")).toBe("no");
+    expect(whisperLanguage("haw")).toBe("haw");
+  });
+});
+
+describe("whisperAudioContext", () => {
+  it("never goes below the floor, keeps a margin, and stops at the full window", () => {
+    expect(whisperAudioContext(0.85)).toBe(512);
+    expect(whisperAudioContext(7.68)).toBe(512);
+    expect(whisperAudioContext(10)).toBe(628);
+    expect(whisperAudioContext(27.44)).toBe(null);
+    expect(whisperAudioContext(60)).toBe(null);
+    expect(whisperAudioContext(0)).toBe(null);
+    expect(whisperAudioContext(undefined)).toBe(null);
+  });
+});
+
+describe("helperFailure", () => {
+  it("names the failure without quoting the command", () => {
+    expect(helperFailure(Object.assign(new Error("x"), { killed: true, signal: "SIGTERM" }))).toBe(
+      "timeout",
+    );
+    expect(helperFailure(Object.assign(new Error("x"), { signal: "SIGKILL" }))).toBe(
+      "signal SIGKILL",
+    );
+    expect(helperFailure(Object.assign(new Error("x"), { code: "ENOENT" }))).toBe("ENOENT");
+    expect(helperFailure(Object.assign(new Error("x"), { name: "AbortError" }))).toBe("cancelled");
+    expect(helperFailure(new Error("Command failed: whisper-cli --prompt PrivateName"))).toBe(
+      "failed",
+    );
   });
 });

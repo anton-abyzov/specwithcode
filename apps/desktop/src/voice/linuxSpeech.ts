@@ -22,6 +22,8 @@ export type SpeechAsset = {
   readonly file: string;
   /** Unpacked into this folder of the voice directory, and the archive removed. */
   readonly extractTo?: string;
+  /** Speech works without it, so a failed download of it never blocks voice. */
+  readonly optional?: true;
 };
 
 const WHISPER_MODELS =
@@ -29,6 +31,8 @@ const WHISPER_MODELS =
 const PIPER_VOICES =
   "https://huggingface.co/rhasspy/piper-voices/resolve/e7229f7d33a10e145e109b886d661984201ac3c4";
 const PIPER_RELEASE = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2";
+const SPEECH_DETECTORS =
+  "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b";
 
 const PIPER_ARCHIVES: Record<string, { name: string; sha256: string; bytes: number }> = {
   x64: {
@@ -45,6 +49,13 @@ const PIPER_ARCHIVES: Record<string, { name: string; sha256: string; bytes: numb
 
 const MODEL_FILE = "ggml-small-q5_1.bin";
 const VOICE_FILE = "en_US-lessac-medium.onnx";
+/**
+ * Silero's voice activity model, which whisper.cpp runs before the recognizer.
+ * Whisper writes a fluent sentence for typing, a breath or a hum; this hears no
+ * speech in them and the phrase comes back empty, in a fraction of the time.
+ */
+const DETECTOR_FILE = "ggml-silero-v5.1.2.bin";
+const DETECTOR_ID = "speech-detector";
 const PIPER_FOLDER = "piper";
 
 export function linuxSpeechAssets(arch: string): readonly SpeechAsset[] {
@@ -77,6 +88,14 @@ export function linuxSpeechAssets(arch: string): readonly SpeechAsset[] {
       file: VOICE_FILE,
     },
     {
+      id: DETECTOR_ID,
+      url: `${SPEECH_DETECTORS}/${DETECTOR_FILE}`,
+      sha256: "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf",
+      bytes: 885_098,
+      file: DETECTOR_FILE,
+      optional: true,
+    },
+    {
       id: "voice-config",
       url: `${PIPER_VOICES}/en/en_US/lessac/medium/${VOICE_FILE}.json`,
       sha256: "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0",
@@ -93,14 +112,73 @@ const TRANSCRIBE_TIMEOUT_MS = 120_000;
 const SPEAK_TIMEOUT_MS = 60_000;
 const NATURAL_RATE = 0.47;
 
-/** Whisper takes the bare language code (`de` for `de-DE`); anything else detects it. */
+/** The languages the Whisper model knows, by the code its command line takes. */
+const WHISPER_LANGUAGES = new Set(
+  (
+    "en zh de es ru ko fr ja pt tr pl ca nl ar sv it id hi fi vi he uk el ms cs ro da hu ta no th ur hr " +
+    "bg lt la mi ml cy sk te fa lv bn sr az sl kn et mk br eu is hy ne mn bs kk sq sw gl mr pa si km sn " +
+    "yo so af oc ka be tg sd gu am yi lo uz fo ht ps tk nn mt sa lb my bo tl mg as tt haw ln ha ba jw su yue"
+  ).split(" "),
+);
+const WHISPER_LANGUAGE_ALIASES: Record<string, string> = {
+  nb: "no",
+  fil: "tl",
+  iw: "he",
+  in: "id",
+};
+
+/**
+ * Whisper takes the bare language code (`de` for `de-DE`). `und`, no language and
+ * a language the model does not know all mean: detect it from the speech.
+ */
 export function whisperLanguage(language: string | undefined): string {
   const code = language?.trim().split(/[-_]/)[0]?.toLowerCase() ?? "";
-  return /^[a-z]{2,3}$/.test(code) ? code : "auto";
+  const known = WHISPER_LANGUAGE_ALIASES[code] ?? code;
+  return WHISPER_LANGUAGES.has(known) ? known : "auto";
+}
+
+/** Whisper's encoder window is 1500 frames, 30 seconds; it reads 50 frames a second. */
+const WHISPER_FULL_CONTEXT = 1_500;
+const WHISPER_MIN_CONTEXT = 512;
+const WHISPER_CONTEXT_MARGIN = 128;
+
+/**
+ * The encoder takes about as long for one word as for 30 seconds, and it is most
+ * of the time a phrase costs. Sizing its window to the recording, with room to
+ * spare, makes a short phrase two to three times faster with the same text.
+ * Null keeps the full window, for a recording near or past 30 seconds.
+ */
+export function whisperAudioContext(seconds: number | undefined): number | null {
+  if (seconds === undefined || !(seconds > 0)) return null;
+  const frames = Math.ceil(seconds * 50) + WHISPER_CONTEXT_MARGIN;
+  return frames >= WHISPER_FULL_CONTEXT ? null : Math.max(WHISPER_MIN_CONTEXT, frames);
+}
+
+/** Why a helper process failed, in words safe to log: never its command line or output. */
+export function helperFailure(cause: unknown): string {
+  const error = cause as {
+    readonly name?: unknown;
+    readonly code?: unknown;
+    readonly killed?: unknown;
+    readonly signal?: unknown;
+  } | null;
+  if (error?.name === "AbortError" || error?.code === "ABORT_ERR") return "cancelled";
+  if (error?.killed === true) return "timeout";
+  if (typeof error?.signal === "string" && error.signal) return `signal ${error.signal}`;
+  if (typeof error?.code === "number") return `exit ${error.code}`;
+  if (typeof error?.code === "string" && /^E[A-Z]+$/.test(error.code)) return error.code;
+  return "failed";
 }
 
 export class LinuxSpeechError extends Error {
   override readonly name = "LinuxSpeechError";
+  /** What went wrong underneath, for the log. The message is what the person reads. */
+  readonly detail: string | null;
+
+  constructor(message: string, options?: ErrorOptions & { readonly detail?: string }) {
+    super(message, options);
+    this.detail = options?.detail ?? null;
+  }
 }
 
 export type RunOptions = {
@@ -174,6 +252,8 @@ export class LinuxSpeech {
   private cpuReason: Promise<string | null> | null = null;
   private downloaded = 0;
   private downloadTotal = 0;
+  /** Optional files whose download failed in this run; setup does not ask for them again. */
+  private readonly skipped = new Set<string>();
   /** One recognition at a time keeps memory flat and text in the order it was spoken. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -206,7 +286,14 @@ export class LinuxSpeech {
 
   /** What the first use still has to download, for the consent text. */
   async missingBytes(): Promise<number> {
-    return (await this.missingAssets()).reduce((sum, asset) => sum + asset.bytes, 0);
+    return (await this.missingAssets())
+      .filter((asset) => !this.skipped.has(asset.id))
+      .reduce((sum, asset) => sum + asset.bytes, 0);
+  }
+
+  /** Whether speech can run now. An optional file may still be on its way. */
+  async isSetUp(): Promise<boolean> {
+    return (await this.missingAssets()).every((asset) => asset.optional === true);
   }
 
   /** Download progress from 0 to 100 while preparing; null otherwise. */
@@ -264,7 +351,15 @@ export class LinuxSpeech {
       throw new LinuxSpeechError(`Voice needs ${needed} MB of free disk space to set up.`);
     }
     for (const asset of missing) {
-      await this.download(asset);
+      try {
+        await this.download(asset);
+      } catch (error) {
+        if (asset.optional !== true) throw error;
+        // Voice works without it, so setup stops asking until the app starts again.
+        this.skipped.add(asset.id);
+        continue;
+      }
+      this.skipped.delete(asset.id);
       if (asset.extractTo) await this.extract(asset);
     }
   }
@@ -348,7 +443,7 @@ export class LinuxSpeech {
 
   /** Downloads only ever follow the consent dialog, so a file gone mid-session just stops here. */
   private async requireAssets(): Promise<void> {
-    if ((await this.missingAssets()).length > 0) {
+    if (!(await this.isSetUp())) {
       throw new LinuxSpeechError("Speech files are missing. Start voice again to set them up.");
     }
   }
@@ -366,23 +461,32 @@ export class LinuxSpeech {
     try {
       return await this.run(command, args, options);
     } catch (cause) {
-      throw new LinuxSpeechError(message, { cause });
+      throw new LinuxSpeechError(message, { cause, detail: helperFailure(cause) });
     }
   }
 
   /**
-   * Transcribes a 16 kHz mono WAV. The language is detected from the speech
-   * unless one was chosen in Settings (a BCP 47 tag such as `de-DE`).
+   * Transcribes a 16 kHz mono WAV in `language`, a BCP 47 tag such as `de-DE`.
+   * Without one the language is detected from the speech, which runs the model
+   * twice and lets noise come back as text in any language.
    */
   transcribe(
     wavPath: string,
     prompt: string,
-    signal?: AbortSignal,
-    language?: string,
+    options: {
+      readonly signal?: AbortSignal;
+      readonly language?: string;
+      /** Length of the recording, so a short phrase is not encoded as 30 seconds. */
+      readonly seconds?: number;
+    } = {},
   ): Promise<string> {
+    const { signal } = options;
+    const audioContext = whisperAudioContext(options.seconds);
     const job = this.queue.then(async () => {
       signal?.throwIfAborted();
       await this.requireAssets();
+      const detector = this.assets.find((asset) => asset.id === DETECTOR_ID);
+      const detects = detector !== undefined && (await this.isPresent(detector));
       const stdout = await this.runHelper(
         "Speech recognition failed. Try again.",
         this.options.whisperPath,
@@ -394,10 +498,12 @@ export class LinuxSpeech {
           "-t",
           String(this.threads),
           "-l",
-          whisperLanguage(language),
+          whisperLanguage(options.language),
           "-nt",
           "-np",
           "-sns",
+          ...(audioContext === null ? [] : ["-ac", String(audioContext)]),
+          ...(detects ? ["--vad", "--vad-model", this.pathOf(DETECTOR_FILE)] : []),
           ...(prompt ? ["--prompt", prompt] : []),
         ],
         { timeoutMs: TRANSCRIBE_TIMEOUT_MS, ...(signal ? { signal } : {}) },
