@@ -67,7 +67,6 @@ function ConfiguredPhoneConnectSettings() {
     teamRulesReachLock(teamRules, "phones") ?? teamRulesReachLock(teamRules, "connect");
   const {
     isSignedIn,
-    userId: connectAccount,
     linkState,
     managedTunnelActive,
     publishAgentActivity,
@@ -75,7 +74,7 @@ function ConfiguredPhoneConnectSettings() {
     reconcileCloudState,
   } = useCloudLinkController();
   const { authPrompt, openAuthPrompt } = useStudioConnectAuthPrompt();
-  const rememberConnectChoice = useRememberConnectChoice(connectAccount);
+  const rememberConnectChoice = useRememberConnectChoice();
   const [busy, setBusy] = useState(false);
 
   const step = resolvePhoneConnectStep({

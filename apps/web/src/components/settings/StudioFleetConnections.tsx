@@ -57,11 +57,13 @@ import { connectPairing } from "../../connection/onboarding";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { unreachableMachines } from "../../cloud/connectRoutePlan";
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { ConnectDeregisterHint, fleetRemoveConnectNote } from "./ConnectDeregisterHint";
 import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
+import { OtherAccountJoinFold } from "./OtherAccountJoinFold";
 import { MachineTerminal, MachineTerminalButton, useCloseMachineTerminal } from "./MachineTerminal";
 import { ConnectionReason } from "./ConnectionReason";
 import { ProvisionMachineButton } from "./ProvisionMachineSheet";
@@ -570,6 +572,7 @@ export function StudioFleetConnections({
       onInvitationChange={setInvitation}
       onAddMachine={() => void addMachine()}
       onInvite={() => setInviteOpen(true)}
+      inviteOpen={inviteOpen}
       inviteDialog={
         <FleetInviteArea
           environmentId={environmentId}
@@ -753,6 +756,7 @@ export function StudioFleetRoster({
   onInvitationChange,
   onAddMachine,
   onInvite,
+  inviteOpen = false,
   inviteDialog = null,
   machineStatuses = NO_MACHINE_STATUSES,
   canCheckReadiness = false,
@@ -799,6 +803,8 @@ export function StudioFleetRoster({
   onAddMachine?: () => void;
   /** Opens the in-app `fleet invite` for this machine. */
   onInvite?: () => void;
+  /** The invitation dialog is open, so the fold around its button stays open. */
+  inviteOpen?: boolean;
   /** The invitation dialog `onInvite` opens. */
   inviteDialog?: ReactNode;
   /** This browser's own connection to each saved machine, keyed by environment id. */
@@ -1173,137 +1179,156 @@ export function StudioFleetRoster({
           </TeamRulesInert>
         </label>
       ) : null}
-      {onAddMachine && onInvitationChange ? (
-        <form
-          id={searchableSetting("private-machines-add").id}
-          className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-3 py-3 sm:px-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onAddMachine();
-          }}
+      {(onAddMachine && onInvitationChange) || onInvite ? (
+        <OtherAccountJoinFold
+          // A typed line, a running add and the open dialog all live inside; a build without
+          // SpecWithCode Connect has no other way to join machines.
+          openFor={
+            invitation.trim() !== "" ||
+            pending === "add-machine" ||
+            inviteOpen ||
+            !hasCloudPublicConfig()
+          }
+          targetIds={[
+            searchableSetting("private-machines-add").id,
+            searchableSetting("private-machines-invite").id,
+          ]}
         >
-          <div className="min-w-0">
-            <span className="block text-sm">{tx("Add a machine")}</span>
-            <span className="mt-0.5 block text-xs text-muted-foreground">
-              {tx("Let agents on this machine start work on another computer.")}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {renderRich(
-              tx(
-                "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:",
-              ),
-              {
-                link: (
-                  <Link to="/settings/machines" className="underline underline-offset-2">
-                    Settings &gt; Machines
-                  </Link>
-                ),
-              },
-            )}
-          </p>
-          <ol className="list-decimal space-y-2.5 ps-4 marker:text-xs marker:text-muted-foreground">
-            <AddMachineStep title={tx("Link SpecWithCode Connect on the other machine")}>
-              <p>
-                {tx(
-                  "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.",
+          {onAddMachine && onInvitationChange ? (
+            <form
+              id={searchableSetting("private-machines-add").id}
+              tabIndex={-1}
+              className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-3 py-3 sm:px-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onAddMachine();
+              }}
+            >
+              <div className="min-w-0">
+                <span className="block text-sm">{tx("Add a machine")}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  {tx("Let agents on this machine start work on another computer.")}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {renderRich(
+                  tx(
+                    "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:",
+                  ),
+                  {
+                    link: (
+                      <Link to="/settings/machines" className="underline underline-offset-2">
+                        Settings &gt; Machines
+                      </Link>
+                    ),
+                  },
                 )}
               </p>
-              <CopyableCode value="specwithcode connect link" label={tx("Connect command")} />
-            </AddMachineStep>
-            <AddMachineStep title={tx("Make a join line there")}>
-              <p>
-                {tx(
-                  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:",
-                )}
-              </p>
-              <CopyableCode value={environmentId} label={tx("this machine's ID")} />
-              <p>{tx("Without its window, run this command on that machine instead:")}</p>
-              <CopyableCode
-                value={fleetInviteCommand(environmentId)}
-                label={tx("join line command")}
-              />
-            </AddMachineStep>
-            <AddMachineStep title={tx("Paste the join line here")}>
-              <p>{tx("It works once, within an hour.")}</p>
-              <TeamRulesInert lock={linkLock}>
-                <div className="flex min-w-0 gap-2">
-                  <input
-                    aria-label={tx("Invitation from the other machine")}
-                    className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
-                    placeholder={tx("swc-machine-…")}
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={invitation}
-                    disabled={pending !== null || !canManageWorkers}
-                    onChange={(event) => onInvitationChange(event.target.value)}
+              <ol className="list-decimal space-y-2.5 ps-4 marker:text-xs marker:text-muted-foreground">
+                <AddMachineStep title={tx("Link SpecWithCode Connect on the other machine")}>
+                  <p>
+                    {tx(
+                      "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.",
+                    )}
+                  </p>
+                  <CopyableCode value="specwithcode connect link" label={tx("Connect command")} />
+                </AddMachineStep>
+                <AddMachineStep title={tx("Make a join line there")}>
+                  <p>
+                    {tx(
+                      "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:",
+                    )}
+                  </p>
+                  <CopyableCode value={environmentId} label={tx("this machine's ID")} />
+                  <p>{tx("Without its window, run this command on that machine instead:")}</p>
+                  <CopyableCode
+                    value={fleetInviteCommand(environmentId)}
+                    label={tx("join line command")}
                   />
-                  <Button
-                    type="submit"
-                    size="xs"
-                    disabled={pending !== null || !canManageWorkers || !invitation.trim()}
-                  >
-                    {pending === "add-machine"
-                      ? tx("Adding…")
-                      : canManageWorkers
-                        ? tx("Add machine")
-                        : tx("Manage access required")}
-                  </Button>
-                </div>
-              </TeamRulesInert>
-            </AddMachineStep>
-            <AddMachineStep title={tx("Allow workers")}>
-              <p>
-                {tx(
-                  "Choose Allow on its card above, on the line about agents here starting work on it.",
-                )}
+                </AddMachineStep>
+                <AddMachineStep title={tx("Paste the join line here")}>
+                  <p>{tx("It works once, within an hour.")}</p>
+                  <TeamRulesInert lock={linkLock}>
+                    <div className="flex min-w-0 gap-2">
+                      <input
+                        aria-label={tx("Invitation from the other machine")}
+                        className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
+                        placeholder={tx("swc-machine-…")}
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={invitation}
+                        disabled={pending !== null || !canManageWorkers}
+                        onChange={(event) => onInvitationChange(event.target.value)}
+                      />
+                      <Button
+                        type="submit"
+                        size="xs"
+                        disabled={pending !== null || !canManageWorkers || !invitation.trim()}
+                      >
+                        {pending === "add-machine"
+                          ? tx("Adding…")
+                          : canManageWorkers
+                            ? tx("Add machine")
+                            : tx("Manage access required")}
+                      </Button>
+                    </div>
+                  </TeamRulesInert>
+                </AddMachineStep>
+                <AddMachineStep title={tx("Allow workers")}>
+                  <p>
+                    {tx(
+                      "Choose Allow on its card above, on the line about agents here starting work on it.",
+                    )}
+                  </p>
+                </AddMachineStep>
+              </ol>
+              <p className="text-xs text-muted-foreground">
+                {renderRich(tx("Adding a Linux server you rent? Start with the {a}."), {
+                  a: (
+                    <a
+                      className="underline underline-offset-2"
+                      href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >
+                      {tx("Linux worker guide")}
+                    </a>
+                  ),
+                })}
               </p>
-            </AddMachineStep>
-          </ol>
-          <p className="text-xs text-muted-foreground">
-            {renderRich(tx("Adding a Linux server you rent? Start with the {a}."), {
-              a: (
-                <a
-                  className="underline underline-offset-2"
-                  href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
-                  {tx("Linux worker guide")}
-                </a>
-              ),
-            })}
-          </p>
-        </form>
-      ) : null}
-      {onInvite ? (
-        <div
-          id={searchableSetting("private-machines-invite").id}
-          className="flex min-w-0 flex-col gap-2 border-t border-border/60 px-3 py-2.5 sm:px-4"
-        >
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-            <span className="min-w-0">
-              <span className="block text-sm">{tx("Join a main machine")}</span>
-              <span className="block text-xs text-muted-foreground">
-                {tx(
-                  "Link SpecWithCode Connect here first, then make a line to paste on your main machine.",
-                )}
-              </span>
-            </span>
-            <TeamRulesInert lock={linkLock}>
-              <Button
-                className="shrink-0 self-start sm:self-auto"
-                size="xs"
-                variant="outline"
-                disabled={pending !== null || !canManageWorkers}
-                onClick={onInvite}
-              >
-                {canManageWorkers ? tx("Make a join line") : tx("Manage access required")}
-              </Button>
-            </TeamRulesInert>
-          </div>
-          {inviteDialog}
-        </div>
+            </form>
+          ) : null}
+          {onInvite ? (
+            <div
+              id={searchableSetting("private-machines-invite").id}
+              tabIndex={-1}
+              className="flex min-w-0 flex-col gap-2 border-t border-border/60 px-3 py-2.5 sm:px-4"
+            >
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <span className="min-w-0">
+                  <span className="block text-sm">{tx("Join a main machine")}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {tx(
+                      "Link SpecWithCode Connect here first, then make a line to paste on your main machine.",
+                    )}
+                  </span>
+                </span>
+                <TeamRulesInert lock={linkLock}>
+                  <Button
+                    className="shrink-0 self-start sm:self-auto"
+                    size="xs"
+                    variant="outline"
+                    disabled={pending !== null || !canManageWorkers}
+                    onClick={onInvite}
+                  >
+                    {canManageWorkers ? tx("Make a join line") : tx("Manage access required")}
+                  </Button>
+                </TeamRulesInert>
+              </div>
+              {inviteDialog}
+            </div>
+          ) : null}
+        </OtherAccountJoinFold>
       ) : null}
       {!canPair &&
       snapshot?.machines.some(

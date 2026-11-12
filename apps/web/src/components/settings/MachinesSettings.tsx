@@ -59,13 +59,19 @@ import {
   ACCOUNT_NOT_REPORTED,
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
+import { AccountJoinCard } from "./AccountJoinCard";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingHelp } from "./SettingHelp";
-import { SettingsPageContainer, SettingsSection, TeamRulesLabel } from "./settingsLayout";
+import {
+  scrollToSettingsTarget,
+  SettingsPageContainer,
+  SettingsSection,
+  TeamRulesLabel,
+} from "./settingsLayout";
 import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
@@ -214,6 +220,13 @@ export function MachinesSettingsPanel() {
   const workGrants = fleet.primaryEnvironmentId ? (
     <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
   ) : null;
+  // One card allows a machine of this SpecWithCode Connect account. It reads the grants itself.
+  const joinCard = fleet.primaryEnvironmentId ? (
+    <AccountJoinCard
+      environmentId={fleet.primaryEnvironmentId}
+      onShowConnectSwitch={() => scrollToSettingsTarget("connections-environment")}
+    />
+  ) : null;
   // The page container is the scroll area: without it Settings > Machines cannot scroll.
   return (
     <SettingsPageContainer width="wide">
@@ -227,7 +240,12 @@ export function MachinesSettingsPanel() {
           {error}
         </p>
       ) : null}
-      {allowFirst === true ? workGrants : null}
+      {allowFirst === true ? (
+        <>
+          {joinCard}
+          {workGrants}
+        </>
+      ) : null}
       <ConnectionsSettings
         additionalMachines={rows
           .filter(
@@ -253,7 +271,12 @@ export function MachinesSettingsPanel() {
         }}
       />
       <AwayAccessRequestsAll />
-      {allowFirst === true || grantsPlacementPending ? null : workGrants}
+      {allowFirst === true || grantsPlacementPending ? null : (
+        <>
+          {workGrants}
+          {joinCard}
+        </>
+      )}
       {fleet.primaryEnvironmentId ? (
         <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
       ) : null}

@@ -1717,10 +1717,6 @@ export const ko: PhraseCatalog = {
   Never: "안 함",
   "{input} days": "{input}일",
   "Archive after days": "보관까지 일수",
-  "Allow another machine to run work here": "다른 컴퓨터가 여기서 작업을 실행하도록 허용",
-  "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.":
-    "이 컴퓨터로 작업을 보낼 컴퓨터를 선택하세요. 비밀 값에 대한 자동 액세스는 부여되지 않으며, 비밀 값을 전송할 때마다 승인이 필요합니다.",
-  "Machine sending work{select}": "작업을 보내는 컴퓨터{select}",
   "Machine sending work": "작업을 보내는 컴퓨터",
   "Choose a machine": "컴퓨터 선택",
   "Most access for this work{select}": "이 작업의 최대 액세스{select}",

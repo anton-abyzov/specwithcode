@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
+import * as Option from "effect/Option";
 import type {
   StudioFleetMachine,
   StudioFleetSnapshot,
@@ -451,15 +452,29 @@ describe("Settings > Machines", () => {
     runtime.grants = { grants: [], projects: [], accounts: [] };
     const m5 = EnvironmentId.make("env-m5");
     runtime.discovered = new Map([
-      [m5, { environment: { environmentId: m5, label: "MacBook Pro (2)" } }],
+      [
+        m5,
+        {
+          environment: { environmentId: m5, label: "MacBook Pro (2)" },
+          availability: "online",
+          status: Option.none(),
+        },
+      ],
     ]);
     try {
       const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+      // The one card comes first, then who can run work here, then the machines.
+      const card = html.indexOf('id="machines-join-card"');
       const section = html.indexOf('aria-label="Who can run work here"');
-      expect(section).toBeGreaterThan(-1);
+      expect(card).toBeGreaterThan(-1);
+      expect(card).toBeLessThan(section);
       expect(section).toBeLessThan(html.indexOf("<ul>"));
+      expect(html.match(/id="machines-join-card"/g)).toHaveLength(1);
+      expect(html).toContain("Let another of your machines run work here");
       // A machine of the same Connect account this app never opened is offered by name.
-      expect(html).toMatch(/<option value="env-m5">MacBook Pro \(2\)<\/option>/);
+      expect(html).toMatch(/<input type="radio"[^>]* value="env-m5"/);
+      expect(html).toContain("MacBook Pro (2)");
+      expect(html).not.toContain("Allow another machine to run work here");
     } finally {
       runtime.discovered = new Map();
     }
@@ -489,9 +504,11 @@ describe("Settings > Machines", () => {
       accounts: [],
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    expect(html.indexOf('aria-label="Who can run work here"')).toBeGreaterThan(
-      html.indexOf("<ul>"),
-    );
+    const section = html.indexOf('aria-label="Who can run work here"');
+    expect(section).toBeGreaterThan(html.indexOf("<ul>"));
+    // Allowing one more machine then follows the list instead of leading the page.
+    expect(html.indexOf('id="machines-join-card"')).toBeGreaterThan(section);
+    expect(html.match(/id="machines-join-card"/g)).toHaveLength(1);
   });
 
   it("offers letting a connected machine without a grant here use this machine too", () => {

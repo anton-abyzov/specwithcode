@@ -1,5 +1,14 @@
 import * as Schema from "effect/Schema";
 
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+
+/**
+ * How every reader of the SpecWithCode Connect account asks Clerk for it. A
+ * pending session already has its account, so a choice made during one is
+ * saved for the same account the sign-in wizard later reads it for.
+ */
+export const CONNECT_ACCOUNT_AUTH = { treatPendingAsSignedOut: false } as const;
+
 /**
  * Accounts that opted out of the post-sign-in Studio Connect onboarding wizard
  * ("Don't show this again"). The wizard otherwise shows on every sign-in,
@@ -30,6 +39,41 @@ export const ConnectTurnedOffSchema = Schema.Struct({
 export type ConnectTurnedOffState = typeof ConnectTurnedOffSchema.Type;
 
 export const EMPTY_CONNECT_TURNED_OFF_STATE: ConnectTurnedOffState = { accounts: [] };
+
+/**
+ * Whether the saved off choices can be read on this device. A value that is
+ * there but does not decode says nothing about what the owner chose, so a
+ * sign-in must not take it for "nobody turned Connect off".
+ */
+export function connectTurnedOffReadable(): boolean {
+  try {
+    getLocalStorageItem(CONNECT_TURNED_OFF_STORAGE_KEY, ConnectTurnedOffSchema);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Called when the owner sets the switch themselves. Saved choices that cannot
+ * be read are then replaced by this one choice, so a damaged value does not
+ * hold every later sign-in back for good. A sign-in never calls this: it
+ * leaves the stored value as it is. Returns whether it wrote.
+ */
+export function replaceUnreadableConnectChoices(account: string, on: boolean): boolean {
+  if (connectTurnedOffReadable()) return false;
+  try {
+    setLocalStorageItem(
+      CONNECT_TURNED_OFF_STORAGE_KEY,
+      withConnectChoice(EMPTY_CONNECT_TURNED_OFF_STATE, account, on),
+      ConnectTurnedOffSchema,
+    );
+    return true;
+  } catch {
+    // Storage that cannot be written holds no choice either; the sign-in stays held back.
+    return false;
+  }
+}
 
 /** The owner's latest choice for an account: off is remembered, on forgets it. */
 export function withConnectChoice(
@@ -65,6 +109,8 @@ export interface ConnectAtSignInInput {
   readonly linkStateFailed: boolean;
   /** The owner turned Connect off here for these accounts. */
   readonly turnedOffAccounts: ReadonlyArray<string>;
+  /** The saved off choices are there but cannot be read (`connectTurnedOffReadable`). */
+  readonly turnedOffUnreadable: boolean;
   /** These accounts chose "Don't show this again" on the wizard. */
   readonly wizardOptOutAccounts: ReadonlyArray<string>;
   /** The phone card is about to turn Connect on itself. */
@@ -79,6 +125,8 @@ export interface ConnectAtSignInInput {
  */
 export function connectAtSignIn(input: ConnectAtSignInInput): ConnectAtSignIn {
   if (!input.desktopApp || input.phoneCardPending) return "skip";
+  // Fail closed: an unreadable choice may be an off choice, and turning Connect on is not undone by guessing.
+  if (input.turnedOffUnreadable) return "skip";
   if (
     input.turnedOffAccounts.includes(input.account) ||
     input.wizardOptOutAccounts.includes(input.account)

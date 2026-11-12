@@ -53,7 +53,7 @@ describe("fleet workers row", () => {
     for (const problem of ["pairing_unavailable", "pairing_code_rejected"] as const) {
       const view = fleetWorkersView({ ...base, renewable: false, problem }, true);
       expect(view.codeNeeded).toBe(true);
-      expect(view.problem).toContain("Allow another machine to run work here");
+      expect(view.problem).toContain("Let another of your machines run work here");
     }
     expect(
       fleetWorkersView(

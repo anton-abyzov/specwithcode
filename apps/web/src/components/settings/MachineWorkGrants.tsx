@@ -1,7 +1,6 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
-import { type ReactNode, useState } from "react";
-import { IncomingWorkerSetup } from "./IncomingWorkerSetup";
+import { useState } from "react";
 import { RefreshCwIcon } from "lucide-react";
 import {
   AuthAccessWriteScope,
@@ -384,7 +383,6 @@ export function MachineWorkGrantsList({
   notice,
   onRefresh,
   onChange,
-  setup,
 }: {
   snapshot: StudioWorkGrantsSnapshot | null;
   loading: boolean;
@@ -396,7 +394,6 @@ export function MachineWorkGrantsList({
   notice: string | null;
   onRefresh: () => void;
   onChange: (change: GrantChange) => void;
-  setup?: ReactNode;
 }) {
   const tx = useTx();
   return (
@@ -440,7 +437,6 @@ export function MachineWorkGrantsList({
               )}
         </p>
       )}
-      {setup}
       {snapshot?.grants.length ? (
         <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
           {renderRich(
@@ -542,15 +538,6 @@ export function MachineWorkGrants({
       notice={notice}
       onRefresh={refresh}
       onChange={(next) => void change(next)}
-      setup={
-        snapshot && !failed && !loading ? (
-          <IncomingWorkerSetup
-            environmentId={environmentId}
-            snapshot={snapshot}
-            onGranted={refresh}
-          />
-        ) : null
-      }
     />
   );
 }

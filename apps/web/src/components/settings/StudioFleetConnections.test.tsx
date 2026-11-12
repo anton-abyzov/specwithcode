@@ -19,6 +19,11 @@ const runtime = vi.hoisted(() => ({
   removeSupported: true,
   closeTerminal: vi.fn(),
   nicknames: {} as Record<string, string>,
+  cloud: true,
+}));
+vi.mock("../../cloud/publicConfig", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../cloud/publicConfig")>()),
+  hasCloudPublicConfig: () => runtime.cloud,
 }));
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (id: string, label?: string | null) =>
@@ -82,6 +87,7 @@ vi.mock("./settingsLayout", () => ({ SettingsRow: () => null, SettingsSection: (
 import { MachineTerminal, MachineTerminalButton } from "./MachineTerminal";
 import { SettingHelp } from "./SettingHelp";
 import { ConnectDeregisterHint, ConnectDeregisterHintView } from "./ConnectDeregisterHint";
+import { OtherAccountJoinFold } from "./OtherAccountJoinFold";
 import {
   type FleetMachineCardExtras,
   FleetWorkersRow,
@@ -1056,6 +1062,65 @@ describe("inviting this machine from its own roster", () => {
     expect(hint).not.toContain("<main-machine-environment-id>");
     expect(hint).not.toContain("Tailscale");
     expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Join a main machine"));
+  });
+  describe("folded under Another account, or no Connect", () => {
+    const fold = (tree: unknown) =>
+      visitElements(tree, (element) => element.type === OtherAccountJoinFold) as {
+        props: { openFor: boolean; targetIds: ReadonlyArray<string>; children: unknown };
+      } | null;
+    const both = {
+      onAddMachine: vi.fn(),
+      onInvitationChange: vi.fn(),
+      onInvite: vi.fn(),
+      canManageWorkers: true,
+    };
+    it("keeps the join line and the code steps, closed, inside one section", () => {
+      const section = fold(render(both))!;
+      expect(section.props.openFor).toBe(false);
+      // Nothing is removed: both are still there, only inside the fold.
+      const inside = label(section.props.children);
+      expect(inside).toContain("Add a machine");
+      expect(inside).toContain("It works once, within an hour.");
+      expect(inside).toContain("Join a main machine");
+      expect(inviteButton(section.props.children)).not.toBeNull();
+      // Settings search can still jump to either one, which opens the section.
+      expect(section.props.targetIds).toEqual(["private-machines-add", "private-machines-invite"]);
+      const outside = label(render(both)).replace(inside, "");
+      expect(outside).not.toContain("Make a join line");
+      expect(outside).not.toContain("It works once, within an hour.");
+    });
+    it("opens for a typed join line, a running add and the open join dialog", () => {
+      expect(fold(render({ ...both, invitation: "swc-machine-abc" }))!.props.openFor).toBe(true);
+      expect(fold(render({ ...both, invitation: "   " }))!.props.openFor).toBe(false);
+      expect(fold(render({ ...both, pending: "add-machine" }))!.props.openFor).toBe(true);
+      expect(fold(render({ ...both, pending: "m1" }))!.props.openFor).toBe(false);
+      expect(fold(render({ ...both, inviteOpen: true }))!.props.openFor).toBe(true);
+    });
+    it("stays open in a build without SpecWithCode Connect, where it is the only way to join", () => {
+      runtime.cloud = false;
+      try {
+        expect(fold(render(both))!.props.openFor).toBe(true);
+      } finally {
+        runtime.cloud = true;
+      }
+    });
+    it("is left out where neither path is offered", () => {
+      expect(fold(render())).toBeNull();
+      expect(fold(render({ onInvite: vi.fn() }))).not.toBeNull();
+    });
+    it("is told when Make a join line opened its dialog", () => {
+      hooks.reset();
+      runtime.snapshot = snapshot;
+      runtime.environments = [];
+      hooks.beginRender();
+      const tree = StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+      expect(tree.props.inviteOpen).toBe(false);
+      (tree.props.onInvite as () => void)();
+      hooks.beginRender();
+      expect(
+        StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] }).props.inviteOpen,
+      ).toBe(true);
+    });
   });
   it("hands the dialog to the roster with this machine's name and permission", () => {
     hooks.reset();
