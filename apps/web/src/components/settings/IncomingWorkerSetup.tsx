@@ -154,6 +154,7 @@ export function IncomingWorkerSetup({
     coordinatorLabel: string;
     access: StudioFleetWorkerAccess;
     expiresAt: string | null;
+    renewable: boolean;
   } | null>(null);
   const savedGrant = saved
     ? snapshot.grants.find((grant) => grant.coordinatorEnvironmentId === saved.coordinator)
@@ -252,6 +253,7 @@ export function IncomingWorkerSetup({
           coordinatorLabel={saved.coordinatorLabel}
           access={saved.access}
           expiresAt={saved.expiresAt ?? savedGrant?.expiresAt ?? null}
+          renewable={saved.renewable}
         />
       ) : null}
       {opening !== null && openingLabel ? (
@@ -301,10 +303,13 @@ export function IncomingWorkerSaved({
   coordinatorLabel,
   access,
   expiresAt,
+  renewable = false,
 }: {
   coordinatorLabel: string;
   access: StudioFleetWorkerAccess;
   expiresAt: string | null;
+  /** That machine renews the grant itself, so no end date is shown. */
+  renewable?: boolean;
 }) {
   const tx = useTx();
   const locale = useLocale();
@@ -320,16 +325,21 @@ export function IncomingWorkerSaved({
   return (
     <div role="status" className="space-y-1 text-xs">
       <p className="font-medium">
-        {date
-          ? tx("{coordinatorLabel} can run work here · {access} · until {date}", {
+        {renewable
+          ? tx("{coordinatorLabel} can run work here · {access} · renews by itself", {
               coordinatorLabel,
               access: accessLabel,
-              date,
             })
-          : tx("{coordinatorLabel} can run work here · {access}", {
-              coordinatorLabel,
-              access: accessLabel,
-            })}
+          : date
+            ? tx("{coordinatorLabel} can run work here · {access} · until {date}", {
+                coordinatorLabel,
+                access: accessLabel,
+                date,
+              })
+            : tx("{coordinatorLabel} can run work here · {access}", {
+                coordinatorLabel,
+                access: accessLabel,
+              })}
       </p>
       <p className="text-muted-foreground">
         {tx("On {coordinatorLabel}: done", { coordinatorLabel })}
@@ -369,7 +379,11 @@ export function IncomingWorkerAction({
   accountJoin?: boolean | undefined;
   /** The button's words where the card already names the direction; "Allow <machine>" otherwise. */
   actionLabel?: string;
-  onGranted: (grant: { access: StudioFleetWorkerAccess; expiresAt: string | null }) => void;
+  onGranted: (grant: {
+    access: StudioFleetWorkerAccess;
+    expiresAt: string | null;
+    renewable: boolean;
+  }) => void;
 }) {
   const tx = useTx();
   const manageHere = useEnvironmentScope(here, AuthAccessWriteScope);
@@ -430,7 +444,11 @@ export function IncomingWorkerAction({
         : fromHere && coordinatorFleetId !== undefined
           ? await allowIncomingFromHere(coordinatorFleetId)
           : await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
-      onGranted({ access, expiresAt: result.workers.expiresAt });
+      onGranted({
+        access,
+        expiresAt: result.workers.expiresAt,
+        renewable: result.workers.renewable,
+      });
     } catch (failure) {
       setError(
         failure instanceof Error

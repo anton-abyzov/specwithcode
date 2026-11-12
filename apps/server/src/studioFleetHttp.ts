@@ -321,7 +321,7 @@ export const layer = HttpApiBuilder.group(
         )
       : Effect.succeed(null);
     /** Adds the machine an invitation line names to this machine's fleet file. */
-    const addMachine = (invitation: string, label?: string) =>
+    const addMachine = (invitation: string, label?: string, renewWorkers?: boolean) =>
       Effect.gen(function* () {
         const localEnvironmentId = yield* serverEnvironment.getEnvironmentId;
         return yield* Effect.tryPromise({
@@ -332,6 +332,7 @@ export const layer = HttpApiBuilder.group(
               label,
               link: fleetLink,
               localEnvironmentId,
+              renewWorkers,
             }),
           catch: joinFailure,
         });
@@ -361,9 +362,13 @@ export const layer = HttpApiBuilder.group(
      * line for a management token there, so a machine this call added leaves
      * again, token revoked, when allowing fails.
      */
-    const addAndAllowWorkers = (invitation: string, access: StudioFleetWorkerAccess) =>
+    const addAndAllowWorkers = (
+      invitation: string,
+      access: StudioFleetWorkerAccess,
+      renewWorkers = false,
+    ) =>
       Effect.gen(function* () {
-        const added = yield* addMachine(invitation);
+        const added = yield* addMachine(invitation, undefined, renewWorkers);
         const workers = yield* grants.allow({ machineId: added.id, access }).pipe(
           Effect.mapError(grantFailure),
           Effect.tapError(() =>
@@ -780,9 +785,11 @@ export const layer = HttpApiBuilder.group(
               });
             yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
             yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "connect"));
+            // The owner's own machine: its grant renews by itself.
             const { added, workers } = yield* addAndAllowWorkers(
               payload.invitation,
               payload.access,
+              true,
             );
             yield* Effect.logInfo("A machine of this Connect account joined and was allowed.", {
               machine: added.id,
