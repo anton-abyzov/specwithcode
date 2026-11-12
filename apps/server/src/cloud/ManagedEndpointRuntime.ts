@@ -81,6 +81,14 @@ const TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY = 4;
 // Ask for recovery after this long, and again at this interval while it stays
 // unconnected; the relay hands back the same tunnel when it is still live.
 const CONNECTOR_REGISTRATION_TIMEOUT = Duration.minutes(3);
+// On SIGTERM cloudflared waits for open requests to finish before it exits,
+// 30 seconds unless told otherwise. A machine in use always has some: every
+// phone and other machine holds a WebSocket through the tunnel. Every stop here
+// replaces the connector or shuts the tunnel down, so those requests end either
+// way, and waiting only holds up the re-link or sign-out that asked for it.
+export const RELAY_CLIENT_GRACE_PERIOD = "1s";
+// A connector that ignores SIGTERM must not hold the link lock for good.
+export const RELAY_CLIENT_FORCE_KILL_AFTER = Duration.seconds(5);
 // An app update can pin a relay client version this machine never installed.
 // The runtime installs it on demand, but a failed install must not download
 // again on every startup retry: after a failure it reports "not-installed"
@@ -451,7 +459,9 @@ export const make = Effect.gen(function* () {
             env: {
               ...process.env,
               TUNNEL_TOKEN: config.connectorToken,
+              TUNNEL_GRACE_PERIOD: RELAY_CLIENT_GRACE_PERIOD,
             },
+            forceKillAfter: RELAY_CLIENT_FORCE_KILL_AFTER,
             shell: false,
             stderr: "pipe",
             stdout: "pipe",
