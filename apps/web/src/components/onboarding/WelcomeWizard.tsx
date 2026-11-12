@@ -46,6 +46,7 @@ import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import { FirstRunUpdateNotice } from "./FirstRunUpdateNotice";
 import { firstStepControl } from "./wizardFocus";
 import { JoinedMachineStep, JoinMachineStep, MachineRoleStep } from "./JoinMachineSteps";
+import { SignInFirstStep } from "./SignInFirstStep";
 import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
@@ -115,7 +116,10 @@ import { renderRich } from "../../i18n/rich";
  * Every step past the connection gate is skippable; the whole wizard is
  * re-runnable by clearing the flag.
  *
- * On a first run with a server here it first asks what this machine is for.
+ * On a first run in the desktop app with SpecWithCode Connect it starts at the
+ * sign-in (`SignInFirstStep`): that links this machine, lists the account's
+ * other machines and lets one start work here, with no role question.
+ * Elsewhere, on a first run with a server here it first asks what this machine is for.
  * "Connect to an existing one" makes the invitation line for a main machine
  * elsewhere and then opens to that status, skipping agents and projects; the
  * main-machine choice continues with the steps above, unchanged. "Decide later"
@@ -124,8 +128,13 @@ import { renderRich } from "../../i18n/rich";
  * completes onboarding, so it does not come back on the next launch.
  */
 
-type WizardStep = "role" | "join" | "joined" | "connection" | "agents" | "import";
-const FULL_SETUP_STEPS: ReadonlySet<WizardStep> = new Set(["connection", "agents", "import"]);
+type WizardStep = "start" | "role" | "join" | "joined" | "connection" | "agents" | "import";
+const FULL_SETUP_STEPS: ReadonlySet<WizardStep> = new Set([
+  "start",
+  "connection",
+  "agents",
+  "import",
+]);
 
 export interface WelcomeMachineRole {
   /** Offer the choice: a first run (not finished before) with a server here. */
@@ -158,13 +167,18 @@ export function WelcomeWizard({
   // Until the person moves, the step follows saved settings, which can
   // finish loading after the first render.
   const [chosenStep, setStep] = useState<WizardStep | null>(resumeEnvironmentId ? "agents" : null);
-  const step: WizardStep =
-    chosenStep ??
-    (machineRole?.role === "joined"
+  // The desktop app with SpecWithCode Connect asks no role question: it starts
+  // at the sign-in, which links this machine and lists the account's others.
+  const signInFirst = hasCloudPublicConfig() && window.desktopBridge !== undefined;
+  const entryStep: WizardStep =
+    machineRole?.role === "joined"
       ? "joined"
       : machineRole?.offer && machineRole.role === null
-        ? "role"
-        : "connection");
+        ? signInFirst
+          ? "start"
+          : "role"
+        : "connection";
+  const step: WizardStep = chosenStep ?? entryStep;
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const autoSelectedComputers = useRef(new Set<EnvironmentId>());
@@ -328,7 +342,7 @@ export function WelcomeWizard({
               isStepDisabled={(index) => isImporting || index >= stageIndex}
               onStepChange={(index) => {
                 if (isImporting || index > stageIndex) return;
-                setStep(index === 0 ? "connection" : "agents");
+                setStep(index === 0 ? (entryStep === "start" ? "start" : "connection") : "agents");
               }}
             />
           ) : null}
@@ -336,7 +350,17 @@ export function WelcomeWizard({
         </WizardHeader>
 
         <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "role" ? (
+          {step === "start" ? (
+            primaryEnvironmentId ? (
+              <SignInFirstStep
+                environmentId={primaryEnvironmentId}
+                machineNoun={machineNoun}
+                rulesKnown={primaryEnvironment?.serverConfig != null}
+                onContinue={() => startSetup([primaryEnvironmentId])}
+                onOtherComputers={() => setStep("connection")}
+              />
+            ) : null
+          ) : step === "role" ? (
             <MachineRoleStep
               machineNoun={machineNoun}
               onJoin={() => setStep("join")}
@@ -367,6 +391,8 @@ export function WelcomeWizard({
             />
           ) : step === "connection" ? (
             <ConnectionStep
+              // Reached from the sign-in step: that step is one press back.
+              onBack={entryStep === "start" ? () => setStep("start") : undefined}
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
               connectOptional={localAvailable}
               selectedIds={selectedIds}
@@ -423,7 +449,9 @@ function ConnectionStep({
   onToggleEnvironment,
   onContinue,
   onPaired,
+  onBack,
 }: {
+  readonly onBack?: (() => void) | undefined;
   readonly autoSelectedComputers: Set<EnvironmentId>;
   /** Off with no server here, where Connect or a pairing link is the way in. */
   readonly connectOptional: boolean;
@@ -556,16 +584,22 @@ function ConnectionStep({
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
           {t("wizard.connection.telemetry")}
         </p>
-        <Button
-          className="shrink-0 self-end"
-          ref={continueRef}
-          autoFocus={!expandPairingInitially}
-          disabled={!ready || isPairing}
-          onClick={onContinue}
-        >
-          {t("wizard.continue")}
-          <ArrowRightIcon className="size-3.5" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-2 self-end">
+          {onBack ? (
+            <Button variant="ghost" disabled={isPairing} onClick={onBack}>
+              {t("wizard.back")}
+            </Button>
+          ) : null}
+          <Button
+            ref={continueRef}
+            autoFocus={!expandPairingInitially}
+            disabled={!ready || isPairing}
+            onClick={onContinue}
+          >
+            {t("wizard.continue")}
+            <ArrowRightIcon className="size-3.5" />
+          </Button>
+        </div>
       </div>
     </>
   );

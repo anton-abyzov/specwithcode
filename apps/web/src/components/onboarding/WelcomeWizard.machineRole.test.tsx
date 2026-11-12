@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   tailscale: vi.fn(),
   signIn: vi.fn(),
   openExternal: vi.fn(),
+  linkHere: vi.fn(),
 }));
 vi.mock("../../studio/fleet", () => {
   class FleetInviteFailure extends Error {
@@ -104,6 +105,20 @@ vi.mock("../../onboarding/useProjectScans", () => ({
       },
     },
   ],
+}));
+const start = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
+vi.mock("./SignInFirstStep", () => ({
+  SignInFirstStep: (props: Record<string, unknown>) => {
+    start.props = props;
+    return <h1>Sign-in first</h1>;
+  },
+}));
+vi.mock("../../cloud/useCloudLinkController", () => ({
+  useCloudLinkController: () => ({
+    linked: false,
+    publishAgentActivity: false,
+    reconcileCloudState: mocks.linkHere,
+  }),
 }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: vi.fn() }));
 vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
@@ -512,9 +527,68 @@ it("asks for SpecWithCode Connect first and enables the line once Connect is lin
   }
 });
 
-it("tells a signed-in person to turn on Connect for this machine in Settings", async () => {
+it("starts the desktop app with Connect at the sign-in, with no role question", async () => {
+  cloud.configured = true;
+  vi.stubGlobal("desktopBridge", {});
+  try {
+    const machineRole = role();
+    await act(async () =>
+      root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={vi.fn()} />),
+    );
+    expect(heading()).toBe("Sign-in first");
+    expect(document.body.textContent).not.toContain("How will you use this");
+    expect(start.props).toMatchObject({ environmentId: "test-env", machineNoun: "machine" });
+    // The stage bar shows from the first step on.
+    expect(document.body.textContent).toContain("Agents");
+
+    // The step that pairs other computers is one press away, and Back leads back.
+    await act(async () => (start.props!.onOtherComputers as () => void)());
+    expect(heading()).toBe("Connect your computers");
+    await click("Back");
+    expect(heading()).toBe("Sign-in first");
+
+    // Continuing sets up the agents on this machine; no role is saved.
+    await act(async () => (start.props!.onContinue as () => void)());
+    expect(heading()).not.toBe("Sign-in first");
+    expect(document.body.textContent).not.toContain("Connect your computers");
+    expect(machineRole.onChange).not.toHaveBeenCalled();
+    expect(mocks.invite).not.toHaveBeenCalled();
+  } finally {
+    cloud.configured = false;
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  }
+});
+
+it("keeps the role question in a browser and in a build without Connect", async () => {
+  // A browser on a machine's own server: the desktop app is what links a machine at sign-in.
+  cloud.configured = true;
+  try {
+    await act(async () =>
+      root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
+    );
+    expect(heading()).toBe("How will you use this machine?");
+  } finally {
+    cloud.configured = false;
+  }
+  vi.stubGlobal("desktopBridge", {});
+  try {
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () =>
+      root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
+    );
+    expect(heading()).toBe("How will you use this machine?");
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  }
+});
+
+it("lets a signed-in person link this machine right there, with no trip to Settings", async () => {
   cloud.configured = true;
   cloud.signedIn = true;
+  mocks.linkHere.mockResolvedValue(true);
   try {
     mocks.tailscale.mockResolvedValue({
       state: "not_installed",
@@ -528,9 +602,9 @@ it("tells a signed-in person to turn on Connect for this machine in Settings", a
       root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
     );
     await choose("Connect to an existing one");
-    expect(document.body.textContent).toContain(
-      "Now link this machine under Settings > Machines > SpecWithCode Connect.",
-    );
+    expect(document.body.textContent).not.toContain("Now link this machine under Settings");
+    await click("Turn on SpecWithCode Connect");
+    expect(mocks.linkHere).toHaveBeenCalledExactlyOnceWith({ managedTunnel: true, publish: true });
   } finally {
     cloud.configured = false;
     cloud.signedIn = false;

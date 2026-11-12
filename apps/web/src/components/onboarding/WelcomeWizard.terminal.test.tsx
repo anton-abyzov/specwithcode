@@ -90,6 +90,7 @@ vi.mock("../../state/use-atom-command", () => ({
     command: "open" | "write" | "close" | "refresh" | "pair" | "createProject" | "importThreads",
   ) => state[command],
 }));
+vi.mock("./SignInFirstStep", () => ({ SignInFirstStep: () => null }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: "pair" }));
 vi.mock("../../state/agentSessions", () => ({
   agentSessionImport: "importThreads",

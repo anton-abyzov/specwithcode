@@ -4190,4 +4190,45 @@ export const pt: PhraseCatalog = {
   "Add a project to {name}": "Adicionar um projeto a {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "Próximo passo, em {coordinatorLabel}: esta máquina só pode executar um projeto do qual tem uma cópia. Abra lá Configurações > Máquinas e adicione um projeto a esta máquina. Depois escolha-a em “Executar em” num chat, ou inclua-a em “Machines for workers” nas configurações do projeto.",
+  "Signed in as {account}": "Conectado como {account}",
+  "Loading sign-in…": "Carregando o login…",
+  "One account for all your machines and your phone.":
+    "Uma conta para todas as suas máquinas e seu telefone.",
+  "Choose your main machine": "Escolha sua máquina principal",
+  "Your other machines are listed here once this {machine} is linked.":
+    "Suas outras máquinas aparecem aqui quando este {machine} estiver vinculado.",
+  "{label} can start work on this {machine}": "{label} pode iniciar trabalho neste {machine}",
+  "{count} of your machines can start work on this {machine}":
+    "{count} das suas máquinas podem iniciar trabalho neste {machine}",
+  "Pick it below and press Allow. Nothing to copy or paste.":
+    "Escolha abaixo e pressione Permitir. Nada para copiar ou colar.",
+  "If this is your first machine, there is nothing to choose: continue.":
+    "Se esta é sua primeira máquina, não há nada a escolher: continue.",
+  "Set up this {machine}": "Configurar este {machine}",
+  "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
+    "Entre uma vez. Este {machine} então se vincula à sua conta e mostra suas outras máquinas sozinho.",
+  "Turn on SpecWithCode Connect": "Ativar o SpecWithCode Connect",
+  "Set up other computers too": "Configurar outros computadores também",
+  "Continue without an account": "Continuar sem conta",
+  "Link this {machine}": "Vincular este {machine}",
+  "Happens by itself after you sign in.": "Acontece sozinho depois que você entra.",
+  "Checking this {machine}…": "Verificando este {machine}…",
+  "Linking this {machine}…": "Vinculando este {machine}…",
+  "This {machine} is linked": "Este {machine} está vinculado",
+  "Your other machines and your phone can reach it.":
+    "Suas outras máquinas e seu telefone podem alcançá-lo.",
+  "This {machine} could not be linked": "Não foi possível vincular este {machine}",
+  "SpecWithCode Connect could not be read on this {machine}. Check its internet connection.":
+    "Não foi possível ler o SpecWithCode Connect neste {machine}. Verifique a conexão com a internet.",
+  "SpecWithCode Connect is off on this {machine}":
+    "O SpecWithCode Connect está desativado neste {machine}",
+  "Turn it on and your other machines can reach this one.":
+    "Ative-o e suas outras máquinas poderão alcançar esta.",
+  "Team rules keep it off here, so your other machines cannot reach this one.":
+    "As regras da equipe o mantêm desativado aqui, então suas outras máquinas não podem alcançar esta.",
+  "This window is not allowed to turn it on.": "Esta janela não tem permissão para ativá-lo.",
+  "Done:": "Concluído:",
+  "Linking…": "Vinculando…",
+  "Signed in here. This links the machine without leaving this window.":
+    "Conectado aqui. Isso vincula a máquina sem sair desta janela.",
 };

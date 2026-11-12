@@ -83,6 +83,7 @@ vi.mock("../../onboarding/useProjectScans", () => ({
     },
   ],
 }));
+vi.mock("./SignInFirstStep", () => ({ SignInFirstStep: () => null }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: vi.fn() }));
 vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
 vi.mock("../clerk/useStudioConnectAuthPrompt", () => ({ useStudioConnectAuthPrompt: vi.fn() }));

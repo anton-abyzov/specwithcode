@@ -18,6 +18,7 @@ import {
   signInStudioFleetTailscale,
 } from "../../studio/fleet";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { useCloudLinkController } from "../../cloud/useCloudLinkController";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { ensureLocalApi } from "../../localApi";
@@ -241,7 +242,7 @@ function MainMachineIdField({
       />
       <span className="text-xs text-muted-foreground">
         The line works only for this machine, so nobody else can use it. Copy the ID from Settings
-        &gt; Connections &gt; Add a machine on that machine.
+        &gt; Machines &gt; Add a machine on that machine.
       </span>
     </label>
   );
@@ -881,24 +882,52 @@ export function ConnectLinkedNote({
   );
 }
 
-/** Linking needs a Connect account in this window; once signed in, link in Settings. */
+/** Linking needs a Connect account in this window; once signed in, one button links it here. */
 function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
   const tx = useTx();
   const { isLoaded, isSignedIn } = useAuth();
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
   if (!isLoaded) return null;
-  if (isSignedIn)
-    return (
-      <span className="mt-2 block">
-        Signed in here. Now link this machine under Settings &gt; Machines &gt; SpecWithCode
-        Connect.
-      </span>
-    );
+  if (isSignedIn) return <ConnectLinkHere canManage={canManage} />;
   return (
     <span className="mt-2 flex flex-wrap items-center gap-2">
       <Button size="xs" variant="outline" disabled={!canManage} onClick={openAuthPrompt}>
         {canManage ? tx("Sign in to SpecWithCode Connect") : tx("Manage access required")}
       </Button>
+    </span>
+  );
+}
+
+/** Signed in and not linked: one button links this machine here, with no trip to Settings. */
+function ConnectLinkHere({ canManage }: { readonly canManage: boolean }) {
+  const tx = useTx();
+  const controller = useCloudLinkController();
+  const [pending, setPending] = useState(false);
+  return (
+    <span className="mt-2 flex flex-wrap items-center gap-2">
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={!canManage || pending}
+        onClick={() => {
+          setPending(true);
+          void controller
+            .reconcileCloudState({
+              managedTunnel: true,
+              // A link the owner shaped keeps its activity choice; a new one publishes.
+              publish: controller.linked ? controller.publishAgentActivity : true,
+            })
+            .catch(() => false)
+            .then(() => setPending(false));
+        }}
+      >
+        {!canManage
+          ? tx("Manage access required")
+          : pending
+            ? tx("Linking…")
+            : tx("Turn on SpecWithCode Connect")}
+      </Button>
+      <span>{tx("Signed in here. This links the machine without leaving this window.")}</span>
     </span>
   );
 }

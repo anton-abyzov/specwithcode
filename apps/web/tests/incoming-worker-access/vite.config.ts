@@ -17,6 +17,9 @@ const stubs = new Set(
     "studio/fleet",
     "cloud/publicConfig",
     "cloud/primaryCloudLinkState",
+    "cloud/useCloudLinkController",
+    "teamRules/useTeamRules",
+    "teamRules/teamRulesView",
     "components/clerk/useStudioConnectAuthPrompt",
     "components/settings/settingsLayout",
     "env",
@@ -32,6 +35,9 @@ export default defineConfig({
       resolveId(source, importer) {
         if (source === "@clerk/react") return mocks;
         if (!importer) return;
+        // Only the setup step reads its atom through the mock; the rest keeps the library.
+        if (source === "@effect/atom-react" && importer.endsWith("SignInFirstStep.tsx"))
+          return mocks;
         const target = source.startsWith("~/")
           ? NodePath.resolve(appSource, source.slice(2))
           : source.startsWith(".")
