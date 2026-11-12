@@ -51,6 +51,8 @@ Before removing a folder the app also checks that no other thread shares it, no 
 
 Removing a worktree by hand from inside the app (deleting a thread and choosing to delete its worktree) refuses any folder that another thread still records, archived or not.
 
+Git can give up halfway through a removal, for example when a build is still writing into the folder: it forgets the worktree but leaves some files. The app then deletes what is left, so no folder stays behind that nothing points to.
+
 ## The scratch folder
 
 `<baseDir>/scratch` (for example `~/.specwithcode/m4/scratch`) is the Scratch project, shown as "No project". Each chat there has a folder of its own, named `YYYY-MM-DD-<words>-<id>`, holding whatever the chat made. Those folders cannot be recreated: nothing else has a copy. Agents also leave probes and run logs beside them. Never clear this folder by age or by script; on 2026-10-27 a script that removed every folder idle for a day took 147 of them, chats included.

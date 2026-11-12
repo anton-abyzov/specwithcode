@@ -4259,6 +4259,76 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("finishes a removal git gave up on halfway, leaving no folder behind", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Git unregisters the worktree, then reports failure because a file
+        // appeared in the folder while it was deleting, as a running build does.
+        const halfway = `
+          const { spawnSync } = require("node:child_process");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const args = process.argv.slice(1);
+          const target = args[args.length - 1];
+          const done = spawnSync("git", args, { stdio: "inherit" });
+          if (done.status !== 0) process.exit(done.status ?? 1);
+          fs.mkdirSync(path.join(target, "node_modules", "pkg"), { recursive: true });
+          fs.writeFileSync(path.join(target, "node_modules", "pkg", "index.js"), "left behind");
+          console.error("error: failed to delete '" + target + "': Directory not empty");
+          process.exit(1);
+        `;
+        const halfwaySpawner = ChildProcessSpawner.make((command) =>
+          delegate.spawn(
+            ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "worktree" &&
+              command.args[1] === "remove"
+              ? ChildProcess.make(
+                  process.execPath,
+                  ["-e", halfway, ...command.args],
+                  command.options,
+                )
+              : command,
+          ),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, halfwaySpawner),
+          Effect.provide(layerServerConfig),
+        );
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "halfway");
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/halfway",
+        });
+
+        yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
+
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "halfway");
+      }),
+    );
+
+    it.effect("still fails, and deletes nothing, when the path was never a worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const folder = yield* makeTmpDir("not-a-worktree-");
+        yield* fileSystem.writeFileString(pathService.join(folder, "keep.txt"), "keep");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.removeWorktree({ cwd, path: folder, force: true }).pipe(Effect.flip);
+
+        assert.equal(yield* fileSystem.exists(pathService.join(folder, "keep.txt")), true);
+      }),
+    );
+
     it.effect("removes the same worktree path twice without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

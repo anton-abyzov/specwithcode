@@ -3,9 +3,11 @@
  * The destination half of a handoff (0967). Another machine (or this one,
  * for a model change or "Continue here") replicates checkpoints here,
  * preflights threads, takes one over at a newer lease epoch, and heartbeats
- * the leases it holds. A takeover materializes the worktree (the base commit
- * plus the checkpoint tree), then starts the continuation thread: a fresh
- * provider session seeded from the checkpoint, never a migrated process.
+ * the leases it holds. A takeover puts the work where the project's Use
+ * worktrees switch says: a new worktree (the base commit plus the checkpoint
+ * tree) when it is on, the project folder when it is off and can take it
+ * safely. Then it starts the continuation thread: a fresh provider session
+ * seeded from the checkpoint, never a migrated process.
  *
  * Every request names its source; a remote request arrives with the source's
  * work grant, and a project joins only through an explicit link (0948).
@@ -40,10 +42,12 @@ import {
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
+import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -62,11 +66,14 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {
+  appliedRef,
   applyBundle,
+  applyCheckpointInPlace,
   applyCheckpointToWorktree,
   availableBranch,
   BundleError,
   copyRequiredFiles,
+  type InPlaceRefusal,
   incomingRef,
   knownCommits,
   missingFiles,
@@ -162,6 +169,13 @@ const fromBundleError = (label: string, cause: unknown) => {
 const noticeOf = (parts: ReadonlyArray<string | null>) => {
   const notice = parts.filter((part): part is string => part !== null).join(" ");
   return notice.length === 0 ? null : notice.slice(0, 500);
+};
+
+/** Why a project with Use worktrees off still got a worktree for arriving work. */
+const IN_PLACE_REFUSAL: Readonly<Record<InPlaceRefusal, string>> = {
+  dirty: "has uncommitted changes",
+  moved: "is at a different commit than the work started from",
+  blocked: "has files in the way",
 };
 
 const EXECUTION_REASON: Readonly<Record<TakeoverReason, ThreadExecutionReason>> = {
@@ -591,35 +605,70 @@ export const make = Effect.gen(function* () {
       if (held !== checkpoint.commit) {
         return yield* refuse(409, "invalid", at("no checkpoint for this thread"), "checkpoint");
       }
-      const placementSettings = resolveProjectSettings(
-        yield* serverSettings.getSettings.pipe(
-          Effect.mapError(() =>
-            refuse(500, "failed", at("could not read destination worktree settings")),
-          ),
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() =>
+          refuse(500, "failed", at("could not read destination worktree settings")),
         ),
-        project.id,
-      ).settings;
+      );
       const name = `${refComponent(project.title).slice(0, 32)}-handoff-${refComponent(
         request.sourceThreadId,
       ).slice(-16)}-e${request.epoch}`;
-      const placement = yield* resolveHandoffPlacement({
+      const placed = resolveHandoffPlacement({
         repository: root,
         name,
         defaultDirectory: config.worktreesDir,
-        settings: placementSettings,
+        settings: resolveProjectSettings(settings, project.id).settings,
       }).pipe(
         Effect.mapError((cause) => refuse(409, "invalid", at(describe(cause)), "checkpoint")),
       );
-      const { worktreePath, branch } = yield* materialize({
-        root,
-        placement,
-        sourceLabel: replica.sourceLabel,
-        sourceThreadId: request.sourceThreadId,
-        branch: checkpoint.branch,
-        baseCommit: checkpoint.baseCommit,
-        commit: checkpoint.commit,
-        requiredFiles: checkpoint.requiredSecretPaths ?? [],
-      });
+      // With Use worktrees off the work belongs in the project folder, as every
+      // other thread's does. A folder that cannot take it safely keeps the
+      // worktree, and the answer says why.
+      const usesWorktrees = projectUsesWorktrees(
+        resolveProjectSettings(settings, project.id, project),
+      );
+      const applied = appliedRef(caller.sourceEnvironmentId, request.sourceThreadId, request.epoch);
+      const placement = yield* Effect.exit(placed);
+      // A worktree already made for this takeover wins: a retry never moves the work.
+      const retriedInWorktree = Exit.isSuccess(placement) && placement.value.existing;
+      const inPlace =
+        usesWorktrees || retriedInWorktree
+          ? null
+          : yield* Effect.tryPromise({
+              try: () =>
+                applyCheckpointInPlace({
+                  root,
+                  baseCommit: checkpoint.baseCommit,
+                  checkpointCommit: checkpoint.commit,
+                  marker: applied,
+                }),
+              catch: (cause) => fromBundleError(label, cause),
+            });
+      const workspace =
+        inPlace?.applied === true
+          ? null
+          : yield* materialize({
+              root,
+              placement: yield* placement,
+              sourceLabel: replica.sourceLabel,
+              sourceThreadId: request.sourceThreadId,
+              branch: checkpoint.branch,
+              baseCommit: checkpoint.baseCommit,
+              commit: checkpoint.commit,
+              requiredFiles: checkpoint.requiredSecretPaths ?? [],
+            });
+      const workspaceNotice =
+        inPlace === null
+          ? null
+          : inPlace.applied
+            ? `Use worktrees is off for this project, so the work is in the project folder as uncommitted changes${
+                checkpoint.branch === null || inPlace.branch === checkpoint.branch
+                  ? "."
+                  : `, on ${inPlace.branch ?? "no branch"} (it was on ${checkpoint.branch}).`
+              }`
+            : `Use worktrees is off for this project, but the project folder ${
+                IN_PLACE_REFUSAL[inPlace.reason]
+              }, so the work is in its own worktree at ${workspace?.worktreePath}.`;
       const threadId = continuationThreadId(
         caller.sourceEnvironmentId,
         request.sourceThreadId,
@@ -638,7 +687,10 @@ export const make = Effect.gen(function* () {
       // lowers it on arrival and records that it did.
       const carried = teamRulesArrivingCarried(detail.carried, handoff.environmentId);
       const runtimeMode = teamRulesClampToCarried(
-        teamRulesClampMode(yield* teamRulesForFolder(worktreePath), grantedMode),
+        teamRulesClampMode(
+          yield* teamRulesForFolder(workspace?.worktreePath ?? project.workspaceRoot),
+          grantedMode,
+        ),
         carried,
       );
       const loweredFrom =
@@ -709,7 +761,14 @@ export const make = Effect.gen(function* () {
             modelSelection,
             runtimeMode,
             interactionMode: detail.interactionMode,
-            workspaceStrategy: { type: "existing_worktree", worktreePath, branch },
+            workspaceStrategy:
+              workspace === null
+                ? { type: "root" }
+                : {
+                    type: "existing_worktree",
+                    worktreePath: workspace.worktreePath,
+                    branch: workspace.branch,
+                  },
             ...(resume ? { initialMessage: { text: seed, attachments: [] } } : {}),
             createdBy: "system",
             creationSource: "server",
@@ -797,6 +856,7 @@ export const make = Effect.gen(function* () {
           loweredFrom === undefined
             ? null
             : `Runs at ${runtimeMode} here (lowered from ${loweredFrom}) under this machine's limits for ${replica.sourceLabel}.`,
+          workspaceNotice,
           checkpoint.skipped.length > 0
             ? `Not carried over: ${checkpoint.skipped
                 .slice(0, 5)
@@ -809,6 +869,12 @@ export const make = Effect.gen(function* () {
         const next = markContinued(current, request, response, now);
         return [next, next] as const;
       });
+      if (workspace === null) {
+        // The takeover is on record, so a repeat is answered from there.
+        yield* Effect.promise(() =>
+          runGit(root, ["update-ref", "-d", applied], { allowFailure: true }),
+        );
+      }
       return response;
     });
 
