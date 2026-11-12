@@ -249,8 +249,11 @@ export const ProjectCreateToolOptions = Schema.Struct({
     Schema.Union([
       Schema.Boolean,
       Schema.Struct({
-        account: TrimmedNonEmptyString.annotate({
-          description: "The GitHub account or organization to create the repository in.",
+        account: TrimmedNonEmptyString.check(
+          Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/),
+        ).annotate({
+          description:
+            "The GitHub account or organization login to create the repository in, such as octo-org.",
         }),
       }),
     ]).annotate({

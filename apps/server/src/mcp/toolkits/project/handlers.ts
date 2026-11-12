@@ -933,6 +933,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "outside_grant_scope",
             message: `Project scripts run on this machine and new folders are made on it, so only its user sets them; ${work.coordinatorLabel}'s work cannot. Register an existing folder with title and workspaceRoot, and ask the user here to set scripts in project settings.`,
           });
+        // A chosen folder gets a new repository with a commit, and publishing uses
+        // this machine's GitHub sign-in: neither is in the grant.
+        if (work !== undefined && (parentPath !== undefined || (github ?? false) !== false))
+          return yield* new OrchestratorMcpFailure({
+            code: "outside_grant_scope",
+            message:
+              "Only the user on this machine chooses where a project is made or publishes it to GitHub. Omit parentPath and github, or ask the user here.",
+          });
         if (work !== undefined && input.defaultModelSelection != null)
           yield* assertAccountInGrant(work, input.defaultModelSelection.instanceId);
         if (workspaceRoot === undefined) {

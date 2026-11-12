@@ -564,6 +564,24 @@ describe("work started here by another machine", () => {
     }).pipe(Effect.provide(world.layer));
   });
 
+  it.live("keeps a chosen parent folder and GitHub publishing off a project it makes", () => {
+    const world = setup({ prefix: "studio-work-grant-create-parent-github-", legacy: [M4] });
+    return Effect.gen(function* () {
+      for (const extra of [
+        { parentPath: "/fictional/parent" },
+        { github: true },
+        { github: { account: "fictional-org" } },
+      ]) {
+        const refused = yield* world.call("studio_project_create", world.clientScope(M4), {
+          title: "Widgets",
+          ...extra,
+        });
+        expect(refused, JSON.stringify(extra)).toMatchObject({ code: "outside_grant_scope" });
+        expect(String(refused.message)).toContain("Only the user on this machine");
+      }
+    }).pipe(Effect.provide(world.layer));
+  });
+
   it.live("tells the coordinator which projects its grant here covers", () => {
     const world = setup({ prefix: "studio-work-grant-capabilities-" });
     return Effect.gen(function* () {

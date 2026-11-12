@@ -379,6 +379,13 @@ describe("studio_project_create options and result", () => {
     expect(() => decodeOptions({ github: "yes" })).toThrow();
     expect(() => decodeOptions({ machine: "x".repeat(81) })).toThrow();
   });
+  it("takes only a GitHub login as the account", () => {
+    expect(decodeOptions({ github: { account: " octo-org " } })).toEqual({
+      github: { account: "octo-org" },
+    });
+    for (const account of ["octo/app", "octo org", "-octo", "x".repeat(40)])
+      expect(() => decodeOptions({ github: { account } }), account).toThrow();
+  });
   it("reports existing, published or the publish failure, and the machine", () => {
     expect(decodeResult({})).toEqual({});
     expect(
