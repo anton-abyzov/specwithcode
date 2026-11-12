@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { useRememberConnectChoice } from "~/cloud/useRememberConnectChoice";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentScope } from "~/state/session";
 import { isMacPlatform } from "~/lib/utils";
@@ -66,6 +67,7 @@ function ConfiguredPhoneConnectSettings() {
     teamRulesReachLock(teamRules, "phones") ?? teamRulesReachLock(teamRules, "connect");
   const {
     isSignedIn,
+    userId: connectAccount,
     linkState,
     managedTunnelActive,
     publishAgentActivity,
@@ -73,6 +75,7 @@ function ConfiguredPhoneConnectSettings() {
     reconcileCloudState,
   } = useCloudLinkController();
   const { authPrompt, openAuthPrompt } = useStudioConnectAuthPrompt();
+  const rememberConnectChoice = useRememberConnectChoice(connectAccount);
   const [busy, setBusy] = useState(false);
 
   const step = resolvePhoneConnectStep({
@@ -89,10 +92,12 @@ function ConfiguredPhoneConnectSettings() {
     setBusy(true);
     writePending(false);
     // Keep an existing agent-activity choice; a first link publishes so the phone gets alerts.
-    await reconcileCloudState({
+    const ok = await reconcileCloudState({
       managedTunnel: true,
       publish: publishAgentActivity || !managedTunnelActive,
     });
+    // Turned on from here: an earlier off no longer holds a sign-in back.
+    if (ok) rememberConnectChoice(true);
     setBusy(false);
   };
 

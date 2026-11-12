@@ -22,6 +22,9 @@ const runtime = vi.hoisted(() => ({
   nicknames: {} as Record<string, string>,
   connect: vi.fn(async () => {}),
   createCredential: vi.fn(),
+  // What the fleet roster hands a composed card: its controls and its own extras.
+  controls: null as ReactNode,
+  card: undefined as { actions: ReactNode; gone: ReactNode } | undefined,
 }));
 
 vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => [] }));
@@ -128,7 +131,8 @@ vi.mock("./ConnectionsSettings", () => ({
       <ul>
         {additionalMachines}
         {(runtime.fleet as { snapshot?: StudioFleetSnapshot })?.snapshot?.machines?.map(
-          (machine: any) => renderMachine(machine.environmentId, null),
+          (machine: any) =>
+            renderMachine(machine.environmentId, runtime.controls, null, runtime.card),
         )}
       </ul>
     </>
@@ -231,6 +235,8 @@ let rendered: ReactTestRenderer | null = null;
 afterEach(async () => {
   if (rendered) await act(async () => rendered!.unmount());
   rendered = null;
+  runtime.controls = null;
+  runtime.card = undefined;
   vi.clearAllMocks();
 });
 
@@ -325,6 +331,28 @@ describe("Settings > Machines", () => {
     expect(html).toContain('<span class="sr-only">also on M4MAX</span>');
     expect(html).toContain("Connect to see its accounts.");
     expect(html).toContain("Make pairing link");
+  });
+
+  it("puts a machine's actions and its no-longer-answers line on the card, not under Connection details", () => {
+    setUp();
+    runtime.controls = <li>route and readiness</li>;
+    runtime.card = {
+      actions: <button aria-label="More actions for MacBook Pro">…</button>,
+      gone: <p>No longer answers.</p>,
+    };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    // One machine's card, up to the end of its closed disclosure.
+    const start = html.indexOf('<li class="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"');
+    const card = html.slice(start, html.indexOf("</details>", start));
+    const details = card.indexOf("<details");
+    expect(details).toBeGreaterThan(-1);
+    // Both sit before the disclosure, so Remove needs no extra click to find.
+    expect(card.indexOf("More actions for MacBook Pro")).toBeGreaterThan(-1);
+    expect(card.indexOf("More actions for MacBook Pro")).toBeLessThan(details);
+    expect(card.indexOf("No longer answers.")).toBeGreaterThan(-1);
+    expect(card.indexOf("No longer answers.")).toBeLessThan(details);
+    expect(card.slice(details)).toContain("route and readiness");
+    expect(card.slice(details)).not.toContain("More actions for MacBook Pro");
   });
 
   it("names two other machines as chips, folds the rest into +N and reads them all aloud", () => {
