@@ -9,7 +9,7 @@ import { Button } from "../ui/button";
  * Said in the Remove confirmation, so it reads the same wherever Remove is.
  */
 export function fleetRemoveConnectNote(label: string): string {
-  return `If ${label} is on your SpecWithCode Connect account, it stays registered there until you deregister it: account menu > Manage account > SpecWithCode Connect > Deregister.`;
+  return `If ${label} is on your SpecWithCode Connect account, it stays registered there until you deregister it: account menu > Manage account > Machines > Deregister.`;
 }
 
 /** After a removal: where the machine is still registered, with the page one click away. */
@@ -37,7 +37,7 @@ export function ConnectDeregisterHintView({
   onOpen,
 }: {
   readonly label: string;
-  /** Opens Manage account on the SpecWithCode Connect page; null when signed out. */
+  /** Opens Manage account on its Machines page; null when signed out. */
   readonly onOpen: (() => void) | null;
 }) {
   const tx = useTx();
@@ -45,13 +45,13 @@ export function ConnectDeregisterHintView({
     <p role="status" className="flex min-w-0 flex-wrap items-center gap-2 text-muted-foreground">
       <span>
         {tx(
-          "If {label} is on your SpecWithCode Connect account, it is still registered there. Deregister it under account menu > Manage account > SpecWithCode Connect.",
+          "If {label} is on your SpecWithCode Connect account, it is still registered there. Deregister it under account menu > Manage account > Machines.",
           { label },
         )}
       </span>
       {onOpen ? (
         <Button size="xs" variant="outline" onClick={onOpen}>
-          {tx("Open SpecWithCode Connect settings")}
+          {tx("Open Manage account")}
         </Button>
       ) : null}
     </p>

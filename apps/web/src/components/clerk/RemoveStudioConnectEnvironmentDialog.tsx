@@ -15,7 +15,7 @@ import { useStudioConnectAccountPage } from "./StudioConnectAccountPages";
 /**
  * Confirms removing a Studio Connect environment from this device. Removal here
  * leaves the account registration (and its host space) in place, so the dialog
- * says so and links to the account page where it can be deregistered.
+ * says so and links to the account's Machines page where it can be deregistered.
  */
 export function RemoveStudioConnectEnvironmentDialog({
   environmentLabel,
@@ -49,7 +49,7 @@ export function RemoveStudioConnectEnvironmentDialog({
             </AlertDialogDescription>
             <AlertDialogDescription>
               It stays on your SpecWithCode Connect account and keeps its host space. Deregister it
-              in{" "}
+              under{" "}
               {openAccountPage ? (
                 <InlineButton
                   onClick={() => {
@@ -57,10 +57,10 @@ export function RemoveStudioConnectEnvironmentDialog({
                     openAccountPage();
                   }}
                 >
-                  SpecWithCode Connect settings
+                  Manage account &gt; Machines
                 </InlineButton>
               ) : (
-                "SpecWithCode Connect settings"
+                "Manage account > Machines"
               )}{" "}
               to free it.
             </AlertDialogDescription>
