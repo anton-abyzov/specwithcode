@@ -47,9 +47,9 @@ export const leftForLaterMessage = (version: string, minutes: number, waiting: s
   `${version} was not installed after ${minutes} minutes (${waiting}). ${updatePauseOffReason("This machine")}`;
 
 /**
- * What a normal install that stayed busy ends with when the setting is on but
- * nothing here is work a pause could stop: another update's hold, or a look
- * that failed.
+ * What a normal install that kept waiting ends with when nothing here is work
+ * a pause could stop: another update's hold, or a look that failed. With the
+ * setting off it goes out as `failed`, so no rollout reads it as the owner's choice.
  */
 export const nothingToPauseMessage = (version: string, minutes: number, waiting: string): string =>
   `${version} was not installed after ${minutes} minutes (${waiting}). No running work here is what kept it waiting, so nothing was paused. Ask again once that has ended.`;

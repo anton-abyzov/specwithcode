@@ -130,6 +130,52 @@ class Workers(unittest.TestCase):
             self.assertNotIn('--force', entry[3])
         self.assertIn('--force', fleet.asked['m3'])  # The other worker is forced as asked.
 
+    def test_worker_force_never_forces_a_worker_reached_over_ssh(self):
+        # update_request.py answers over SSH, not the service, so the setting cannot be read there.
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m1': 1, 'm3': 1})
+        hosts = fleet.hosts()
+
+        class OverSsh(object):
+            route = 'ssh'
+
+            def __init__(self, call):
+                self.call = call
+
+            def __call__(self, argv):
+                return self.call(argv)
+        hosts['m1'] = OverSsh(hosts['m1'])
+        said = []
+        fleet.version['m4'] = NEW
+        results = fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=said.append,
+                                        worker_force=True)
+        self.assertEqual(results['m1']['result'], 'installed')
+        self.assertNotIn('--force', fleet.asked['m1'])
+        self.assertIn('--force', fleet.asked['m3'])
+        self.assertTrue(any('m1: reached over pinned SSH' in line and 'asked without force' in line for line in said), said)
+
+    def test_a_linux_give_up_from_an_earlier_request_neither_defers_nor_fails_before_asking(self):
+        # m1 still shows last week's busy give-up while its request waits for M4's folder copy.
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m1': 1, 'm3': 1})
+        fleet.extra['m1'] = dict(OFF, method='boot-service', phase='failed', lastErrorReason='busy',
+                                 lastError='m1 stayed busy for 30 minutes last week')
+        begin = clock()
+        copies = lambda: 1 if clock() - begin < 600 else 0  # noqa: E731
+        hosts = fleet.hosts()
+        plain = hosts['m1']
+
+        def call(argv):
+            value = plain(argv)
+            if argv[0] == 'status' and fleet.calls('m1', 'request'):
+                value.update(phase='downloading')
+                value.pop('lastErrorReason', None)
+            return value
+        hosts['m1'] = call
+        results = self.roll(fleet, clock, hosts=hosts, local_copies=copies)
+        self.assertEqual(results['m1']['result'], 'installed')
+        self.assertGreaterEqual(clock() - begin, 600)  # It waited out the copy instead of ending at the first poll.
+
     def test_a_worker_with_the_setting_off_that_gets_quiet_installs(self):
         clock = Clock()
         fleet = Fleet(clock, polls={'m1': 3, 'm3': 1})
@@ -405,6 +451,22 @@ class M4(unittest.TestCase):
         self.assertEqual((code, summary['result']), (0, update_policy.DEFERRED))
         self.assertEqual(summary['hosts']['m1']['result'], update_policy.DEFERRED)
         self.assertEqual(self.commands, [])  # Workers only: M4's service is never looked at.
+
+
+    def test_require_all_exits_1_on_a_deferred_required_worker(self):
+        # release.sh's candidate channel: nothing is finalized while a required worker is left for later.
+        self.fleet.version['m4'] = NEW
+        off_and_busy(self.fleet)
+        self.fleet.ready = busy_worker('m1')
+        code, summary, printed, _seen = self.main('--only', 'workers', '--require-all')
+        self.assertEqual((code, summary['result']), (1, update_policy.DEFERRED))
+        self.assertEqual(summary['hosts']['m1']['result'], update_policy.DEFERRED)
+        self.assertIn('m1 left for later, and --require-all needs every required host on %s' % NEW, printed)
+
+    def test_require_all_exits_0_when_every_worker_installed(self):
+        self.fleet.version['m4'] = NEW
+        code, summary, _printed, _seen = self.main('--only', 'workers', '--require-all')
+        self.assertEqual((code, summary['result']), (0, 'installed'))
 
 
 class Policy(unittest.TestCase):

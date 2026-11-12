@@ -4,6 +4,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   RuntimeRequestId,
   type ServerSettings as ServerSettingsValue,
+  ServerSettingsError,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
@@ -87,7 +88,7 @@ interface Fixture {
   waitingAtFinalize?: number;
   readonly timings?: Preparation.ServiceUpdatePreparationTimings;
   /** This machine's settings; absent, as in tools that build the runtime alone. */
-  readonly settings?: Partial<ServerSettingsValue>;
+  readonly settings?: Partial<ServerSettingsValue> | "unreadable";
 }
 
 const run = <E>(
@@ -224,7 +225,15 @@ const run = <E>(
       fixture.settings === undefined
         ? Layer.empty
         : Layer.mock(ServerSettings.ServerSettingsService)({
-            getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, ...fixture.settings }),
+            getSettings:
+              fixture.settings === "unreadable"
+                ? Effect.fail(
+                    new ServerSettingsError({
+                      settingsPath: "settings.json",
+                      operation: "read-file",
+                    }),
+                  )
+                : Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, ...fixture.settings }),
           }),
       fixture.terminals === undefined
         ? Layer.empty
@@ -412,7 +421,7 @@ it.live("leaves a held queue in place: it is not work the update waits for", () 
 });
 
 describe("Pause running work for updates", () => {
-  const reported = (settings: Partial<ServerSettingsValue> | undefined) => {
+  const reported = (settings: Partial<ServerSettingsValue> | "unreadable" | undefined) => {
     const fixture = newFixture(true, settings === undefined ? {} : { settings });
     let answer: boolean | undefined;
     return run(
@@ -433,6 +442,8 @@ describe("Pause running work for updates", () => {
         yield* reported({ pauseWorkForUpdates: true, continueThreadsAfterServerUpdate: false }),
         false,
       );
+      // Settings that cannot be read are off, never "a release older than the setting".
+      assert.strictEqual(yield* reported("unreadable"), false);
       // No settings service: the answer leaves the key out, like a release older than it.
       assert.strictEqual(yield* reported(undefined), undefined);
     }),

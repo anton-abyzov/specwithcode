@@ -47,7 +47,9 @@ is closed after about 2 minutes and asked again after the restart.
 
 Turn the setting on per machine, on that machine's update card in **Settings → General**
 (this machine) or **Settings → Machines** (any machine you are connected to). Each machine
-keeps its own value. With it on:
+keeps its own value. A machine on a SpecWithCode version older than the setting shows the
+switch locked and asks you to update that machine first; until then its updates pause
+running work after their wait, as they did before. With it on:
 
 - A Mac waits the time set in **Pause running work after** (10, 30 or 60 minutes), then
   pauses the running turns, installs, and the turns continue where they left off. It pauses

@@ -850,6 +850,9 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                            'ship a stable release through GitHub first' % (identity, current, '.'.join(map(str, channel_since))))
     # M4's setting comes from its service's look (main); a worker's from its status over Connect.
     allowed = getattr(hold, 'pause_work', None) if hold is not None else update_policy.pauses_work(status)
+    if force and hold is None and update_policy.over_ssh(call):  # Its setting cannot be read there.
+        say(update_policy.SSH_PLAIN % identity)
+        force = False
     force = force and (allowed is not False or hold is not None)  # Off: M4's hold is idle-only, a worker's plain.
     started = [False]  # Its install began (a hold taken, installing seen): no deferral from then on.
     window = hold_minutes * 60 if force else REQUEST_WINDOW
@@ -1121,9 +1124,9 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 raise RolloutError('%s needs a manual upgrade: %s' % (identity, status.get('message') or ''))
             # Busy past the deferral point, or a Linux service's own wait ended: before any failure below.
             if (why := update_policy.deferral(identity, version, status, allowed, clock() - begin, deadline,
-                                              started, took[0], refused[0])):
+                                              started, took[0], refused[0], bool(sent[0]))):
                 raise RolloutDeferred(why, app=status.get('method') != 'boot-service')
-            if status.get('method') == 'boot-service' and status.get('phase') == 'failed':
+            if status.get('method') == 'boot-service' and status.get('phase') == 'failed' and (sent[0] or joined):
                 # A Linux self-update keeps no lastInstall; its worker names the failure, set after
                 # this rollout's request moved it to downloading. Asking again would fail the same way.
                 raise RolloutError('%s could not install %s, so it stays on %s: %s' % (
@@ -1336,6 +1339,8 @@ def main(argv=None):
     parser.add_argument('--m4-deadline-minutes', type=int, default=115)
     parser.add_argument('--worker-deadline-minutes', type=int, default=60)
     parser.add_argument('--worker-force', action='store_true', help='force the M1 and M3 requests too')
+    parser.add_argument('--require-all', action='store_true',
+                        help='exit 1 when a required host was left for later (release.sh, before it finalizes)')
     # 5 s: at 15 s the poll itself was the longest single wait before the install request
     # (offer noticed up to 15 s late, then "installed" seen up to 15 s late again).
     parser.add_argument('--poll-seconds', type=int, default=5)
@@ -1479,7 +1484,9 @@ def main(argv=None):
         print('fleet_rollout: not updated: %s' % line, file=sys.stderr)
     print(json.dumps({'version': args.version, 'result': update_policy.summary_result(results, 'installed'),
                       'hosts': results, 'notUpdated': lines}))
-    return 0
+    if (later := update_policy.left_for_later(results, required) if args.require_all else []):
+        print('fleet_rollout: %s' % update_policy.require_all(later, args.version), file=sys.stderr)
+    return 1 if later else 0
 
 
 if __name__ == '__main__':

@@ -59,8 +59,8 @@ for (const [width, theme] of [
   });
   await page.close();
 }
-// The pause setting on each machine's update card, off and on.
-for (const position of ["off", "on"]) {
+// The pause setting on each machine's update card: off, on, and a worker older than the setting.
+for (const position of ["off", "on", "old"]) {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
   await page.goto(`${url}?theme=light&scene=update-pause-${position}`, { timeout: 240_000 });
   const switches = page.getByRole("switch", { name: "Pause running work for updates" });
@@ -72,13 +72,24 @@ for (const position of ["off", "on"]) {
   if (states.length !== 2 || states.some((state) => state !== want))
     failures.push(`update-pause-${position}: switches read ${states.join(", ")}`);
   const text = await page.locator("main").innerText();
+  if (position === "old") {
+    // Only the worker without the setting is locked.
+    const locked = [await switches.nth(0).isDisabled(), await switches.nth(1).isDisabled()];
+    if (locked[0] || !locked[1])
+      failures.push(`update-pause-old: disabled reads ${locked.join(", ")}`);
+  }
   const expected =
     position === "on"
       ? ["After the wait set in “Pause running work after”", "After 30 minutes of waiting"]
-      : [
-          "An update waits until M4 has no running work, however long that takes",
-          "An update waits up to 30 minutes for Minisforum to have no running work",
-        ];
+      : position === "old"
+        ? [
+            "An update waits until M4 has no running work, however long that takes",
+            "Minisforum runs a SpecWithCode version without this setting. Update Minisforum first.",
+          ]
+        : [
+            "An update waits until M4 has no running work, however long that takes",
+            "An update waits up to 30 minutes for Minisforum to have no running work",
+          ];
   for (const line of expected)
     if (!text.includes(line)) failures.push(`update-pause-${position}: missing "${line}"`);
   await page.screenshot({

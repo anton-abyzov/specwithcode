@@ -260,9 +260,12 @@ answer from the service: M4 is also held only when idle, because nothing is paus
 not the owner's choice, so if M4 never installs, it ends as a normal failure.
 
 Workers: each worker reports the setting in its status over Connect. A worker with it off is never
-sent a forced request, also with `--worker-force`. A Linux boot service applies the setting itself:
-after its 30-minute wait for quiet it gives up as busy (off), or stops its work, installs and
-continues the turns (on).
+sent a forced request, also with `--worker-force`. Over pinned SSH the setting cannot be read
+(`update_request.py` answers there, not the service), so a worker reached that way is never forced
+either: it gets a plain request and the rollout says so. A Linux boot service applies the setting
+itself: after its 30-minute wait for quiet it gives up as busy (off, and running work kept it), or
+stops its work, installs and continues the turns (on). A wait that ended for any other reason, such
+as another update's hold or a failed check of what runs there, is a failure in both positions.
 
 Every host keeps its full deadline: 115 minutes for M4, 60 for a worker. A host with the setting off
 that is still busy with running work after 30 minutes, with nothing held or started, ends `deferred`
@@ -273,6 +276,13 @@ A deferred worker does not fail the run, required or not. When deferred hosts ar
 the summary prints `"result": "deferred"` and the run exits 0. The worker's row carries a skipped
 desktop app step. A deferred M4 exits 1, because the stages after it need M4 on the version; its row
 says `deferred`.
+
+`--require-all` makes a deferred required host exit 1 as well, with the same summary. `release.sh`
+passes it on the candidate channel, where nothing is finalized before M4, M1 and M3 are verified: a
+worker left for later stops the release before `publish-private`, with GitHub and `stable.json`
+untouched. Its request stays in place, so it installs once it is quiet, and `--resume` then finds it
+on the version and goes on. That wait is the owner's setting at work. Report it as a fact with the
+machine and its version, and resume later; do not ask anyone to force it.
 
 A deferred Mac installs by itself once it is quiet, because its update agent keeps trying. A deferred
 Linux machine installs with the next rollout or **Update now**. Report a deferred machine with its
@@ -361,7 +371,7 @@ checks as new work starts. When M4's installed release predates the command (it 
 1.0.45), the rollout and its dry run say so before contacting any host, and a service that does not
 answer, refuses or does not hold stops the rollout before the request. This applies to the drain
 and hold, which M4 gets when its **Pause running work for updates** setting is on or its service is
-older than the setting; with it off, or when the service does not report it, M4 is held only when
+older than the setting; with it off, or when the service does not answer, M4 is held only when
 idle (see below). Then choose **Update now** in
 the SpecWithCode app on M4, which drains and holds through the same `prepareServiceUpdate` call and
 writes the forced request, wait until `fleet_rollout.py --version <v> --only m4` reports M4

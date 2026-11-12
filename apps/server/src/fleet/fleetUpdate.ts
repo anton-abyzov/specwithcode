@@ -538,15 +538,13 @@ export const makeFleetUpdateWorker = (deps: FleetUpdateWorkerDeps) =>
           if (Option.isNone(gaveUp)) return;
           const { minutes, waiting, copies, work } = gaveUp.value;
           const allowed = yield* deps.pausesWork;
-          // Another update's hold, or a look that failed, is nothing a pause would end.
           if (allowed && work) return yield* pause(copies);
-          refusal = "busy";
+          // Another update's hold, or a look that failed, is nothing a pause would end and
+          // nothing this machine's owner chose: with the setting off it is a plain failure,
+          // never "left for later".
+          if (allowed || work) refusal = "busy";
           return yield* Effect.fail({
-            reason: (allowed ? nothingToPauseMessage : leftForLaterMessage)(
-              version,
-              minutes,
-              waiting,
-            ),
+            reason: (work ? leftForLaterMessage : nothingToPauseMessage)(version, minutes, waiting),
           });
         });
         const report = (stage: ServerSelfUpdateProgressStage) =>

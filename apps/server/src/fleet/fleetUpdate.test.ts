@@ -63,6 +63,8 @@ interface Fakes {
 interface Machine {
   folderCopies: number;
   runs: number;
+  /** Another update holds the service: nothing runs, and no hold is granted. */
+  otherHold?: boolean;
 }
 
 function worker(
@@ -135,8 +137,8 @@ function worker(
                       projectTitle: null,
                     },
                   ],
-            held: idle,
-            ...(idle ? { holdToken: "lease-1" } : {}),
+            held: idle && machine.otherHold !== true,
+            ...(idle && machine.otherHold !== true ? { holdToken: "lease-1" } : {}),
             openTerminals: 0,
             folderCopies: machine.folderCopies,
           };
@@ -429,6 +431,24 @@ describe("a normal update on a Linux boot service", () => {
     expect(failed).toMatchObject({ phase: "failed", lastErrorReason: "busy" });
     expect(failed.lastError).toContain("1 folder copy, 2 running tasks");
     expect(fakes.switched).toEqual([]);
+  });
+
+  it("fails, and is not left for later, when no running work kept it waiting", async () => {
+    // Setting off: only running work is the owner's reason to stay on a version.
+    const off = boot({ folderCopies: 0, runs: 0, otherHold: true }, 60);
+    await Effect.runPromise(off.service.request({ version: "1.0.125", mode: "normal" }));
+    const failed = await until(off.service, (status) => status.phase === "failed");
+    expect(failed).toMatchObject({ phase: "failed", lastErrorReason: "failed" });
+    expect(failed.lastError).toContain("No running work here is what kept it waiting");
+    expect(failed.lastError).not.toContain("Pause running work for updates");
+    expect(off.fakes.switched).toEqual([]);
+    // Setting on: nothing to pause either, reported as busy as before.
+    const on = boot({ folderCopies: 0, runs: 0, otherHold: true }, 60, true);
+    await Effect.runPromise(on.service.request({ version: "1.0.125", mode: "normal" }));
+    expect(await until(on.service, (status) => status.phase === "failed")).toMatchObject({
+      lastErrorReason: "busy",
+    });
+    expect(on.fakes.prepareCalls.every((call) => call.stopWork === false)).toBe(true);
   });
 
   it("is withdrawn by a cancel while it waits, and releases any hold it took", async () => {

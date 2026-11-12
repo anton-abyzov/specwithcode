@@ -946,7 +946,7 @@ export const makePartsWithTimings = (
           blockers,
           folderCopies: copiesNow,
           ...(processes > 0 ? { leftoverProcesses: processes } : {}),
-          ...(current === null ? {} : { pauseWorkForUpdates: updatesMayPauseWork(current) }),
+          ...(Option.isNone(settings) ? {} : { pauseWorkForUpdates: updatesMayPauseWork(current) }),
         };
       });
 

@@ -88,6 +88,7 @@ const row = (index: number): MachineRowModel => rows[index]!;
 // `?scene=update-pause-off` and `?scene=update-pause-on`: the update cards of a
 // Mac and of a Linux worker (no update agent) with "Pause running work for
 // updates" in that position. The switches flip locally; nothing is saved.
+// `?scene=update-pause-old`: the Linux worker's release predates the setting.
 const scene = params.get("scene");
 const updateStatus = {
   environmentId: m4,
@@ -136,6 +137,7 @@ function UpdateCard(props: {
           continuationOff={false}
           reachable
           readOnly={false}
+          unsupported={scene === "update-pause-old" && props.os === "linux"}
           writeAccess="granted"
           onCheckedChange={setChecked}
         />

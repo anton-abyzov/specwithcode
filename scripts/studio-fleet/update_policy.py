@@ -30,6 +30,8 @@ RUNNING_WORK = ('Waiting for running tasks, queued messages and open questions t
 
 ON, OFF, LEGACY, UNKNOWN = 'on', 'off', 'legacy', 'unknown'
 DEFERRED = 'deferred'  # A rollout row's result for a host its setting left on its version.
+SSH_PLAIN = ('%s: reached over pinned SSH, where "' + SETTING + '" cannot be read, so it is asked without '
+             'force and installs once it is quiet')
 M4_LATER = 'not asked: M4 was left for later'  # The workers' rows behind a deferred M4.
 
 
@@ -38,6 +40,27 @@ def pauses_work(answer):
     (a service older than the setting, a status read over pinned SSH, no answer at all)."""
     value = answer.get(KEY) if isinstance(answer, dict) else None
     return value if type(value) is bool else None
+
+
+def over_ssh(host):
+    """True for a host reached over pinned fleet SSH. update_request.py answers there, not the
+    service, so the setting is unknown and a worker is never forced on that route: nothing is
+    paused on a guess. A FallbackHost names its route once it answered; a plain Host by its command."""
+    route = getattr(host, 'route', None)
+    return route == 'ssh' if route else (getattr(host, 'command', None) or [None])[0] == '/usr/bin/ssh'
+
+
+def left_for_later(results, required):
+    """The required hosts of a finished rollout that ended deferred, for --require-all."""
+    return [name for name in required if isinstance(results.get(name), dict)
+            and results[name].get('result') == DEFERRED]
+
+
+def require_all(later, version):
+    """Why --require-all (release.sh before it finalizes a candidate) exits 1 on deferred hosts."""
+    return ('%s left for later, and --require-all needs every required host on %s: run it again once '
+            '%s quiet (the request stays in place). Its owner\'s setting, not a failure'
+            % (' and '.join(later), version, 'it is' if len(later) == 1 else 'they are'))
 
 
 def look(hold):
@@ -116,16 +139,17 @@ def busy(status, refused=None):
     return message if status.get('status') == 'waiting-for-quiet' and message.startswith(RUNNING_WORK) else None
 
 
-def deferral(identity, version, status, allowed, elapsed, deadline, started, took=False, refused=None):
+def deferral(identity, version, status, allowed, elapsed, deadline, started, took=False, refused=None, asked=True):
     """Why the rollout leaves a host for later now, or None. Only with the setting off (`allowed`
     False), only while nothing started (`started`, a one-item list kept across polls: a hold taken,
     an install seen) and only on busy evidence: a Linux boot service's own give-up at once, anything
     else from DEFER_SECONDS (or the host's deadline, if shorter). Everything else waits for the
-    host's full deadline and fails there as before."""
+    host's full deadline and fails there as before. `asked` False: this rollout has not asked the
+    host yet, so a Linux give-up it still shows is an earlier request's and no evidence."""
     linux = status.get('method') == 'boot-service'
     started[0] = started[0] or took or status.get('status') == 'installing' or (
         linux and status.get('phase') in ('draining', 'installing', 'handed-off'))
-    why = busy(status, refused) if allowed is False and not started[0] else None
+    why = busy(status, refused) if allowed is False and not started[0] and (asked or not linux) else None
     if why is None or (not linux and elapsed < min(deadline, DEFER_SECONDS)):
         return None
     return deferred_reason(identity, version, status.get('version'), why)

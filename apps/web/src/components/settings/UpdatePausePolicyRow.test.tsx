@@ -49,9 +49,12 @@ import { UpdatePausePolicyRow } from "./UpdatePausePolicyRow";
 const linux = EnvironmentId.make("env-minisforum");
 const mac = EnvironmentId.make("env-m4");
 
-function config(os: string, settings: Record<string, unknown> = {}) {
+function config(os: string, settings: Record<string, unknown> = {}, updatePauseSetting = true) {
   return {
-    environment: { platform: { os, arch: "x64" } },
+    environment: {
+      platform: { os, arch: "x64" },
+      capabilities: updatePauseSetting ? { updatePauseSetting: true } : {},
+    },
     settings: { pauseWorkForUpdates: false, continueThreadsAfterServerUpdate: true, ...settings },
   };
 }
@@ -101,7 +104,10 @@ afterEach(() => {
 describe("UpdatePausePolicyRow", () => {
   it("is off by default and says the update waits for quiet", async () => {
     mocks.configs.set(linux, {
-      environment: { platform: { os: "linux", arch: "x64" } },
+      environment: {
+        platform: { os: "linux", arch: "x64" },
+        capabilities: { updatePauseSetting: true },
+      },
       settings: { continueThreadsAfterServerUpdate: true },
     });
     await render();
@@ -248,6 +254,22 @@ describe("UpdatePausePolicyRow", () => {
           "Minisforum runs a SpecWithCode version without this setting. Update Minisforum first.",
       }),
     );
+  });
+
+  it("shows no value for a machine whose release predates the setting", async () => {
+    // Its settings decode with the client's default, which would read as a chosen "off".
+    mocks.configs.set(linux, config("linux", {}, false));
+    await render();
+    expect(toggle().props.disabled).toBe(true);
+    expect(toggle().props["aria-checked"]).toBe(false);
+    expect(text()).toContain(
+      "Minisforum runs a SpecWithCode version without this setting. Update Minisforum first.",
+    );
+    expect(text()).not.toContain("An update waits");
+    await act(async () => {
+      toggle().props.onClick();
+    });
+    expect(mocks.persist).not.toHaveBeenCalled();
   });
 
   it("is disabled on an unreachable machine and writes nothing", async () => {

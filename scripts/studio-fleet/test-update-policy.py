@@ -172,6 +172,34 @@ class Deferral(unittest.TestCase):
         self.assertIn('stayed busy', self.defer(gave_up, 2 * MINUTE))
         self.assertIsNone(self.defer(gave_up, 2 * MINUTE, allowed=None))
 
+    def test_a_linux_give_up_from_before_this_rollout_asked_is_no_evidence(self):
+        gave_up = {'method': 'boot-service', 'phase': 'failed', 'lastErrorReason': 'busy', 'lastError': 'stayed busy'}
+        self.assertIsNone(self.defer(gave_up, 2 * MINUTE, asked=False))
+        self.assertIsNone(self.defer(gave_up, 45 * MINUTE, asked=False))
+        # A Mac's wait is read now, whoever asked.
+        self.assertIsNotNone(self.defer({'status': 'waiting-for-quiet', 'message': WORKING}, 30 * MINUTE, asked=False))
+
+    def test_only_a_host_over_pinned_ssh_hides_its_setting(self):
+        class Routed(object):
+            def __init__(self, route, command):
+                self.route, self.command = route, command
+        ssh = ['/usr/bin/ssh', '-F', '/dev/null']
+        self.assertTrue(update_policy.over_ssh(Routed('ssh', ssh)))
+        self.assertFalse(update_policy.over_ssh(Routed('connect', ssh)))  # A fallback host that answered over Connect.
+        self.assertTrue(update_policy.over_ssh(Routed(None, ssh)))
+        self.assertFalse(update_policy.over_ssh(Routed(None, ['/usr/bin/python3', '-B', '-'])))  # M4 itself.
+        self.assertFalse(update_policy.over_ssh(lambda argv: {}))
+
+    def test_require_all_names_only_required_deferred_hosts(self):
+        results = {'m1': {'result': update_policy.DEFERRED}, 'm3': {'result': 'installed'},
+                   'mini': {'result': update_policy.DEFERRED}}
+        self.assertEqual(update_policy.left_for_later(results, ('m1', 'm3')), ['m1'])
+        self.assertEqual(update_policy.left_for_later({'m1': {'result': 'installed'}}, ('m1', 'm3')), [])
+        words = update_policy.require_all(['m1'], '1.0.243')
+        self.assertIn('m1 left for later', words)
+        self.assertIn('run it again once it is quiet', words)
+        self.assertIn('not a failure', words)
+
     def test_the_running_work_texts_are_the_agents_own(self):
         import update_agent_pause  # noqa: E402 - only here: it ships beside the agent, not this policy.
         self.assertEqual(update_policy.RUNNING_WORK,

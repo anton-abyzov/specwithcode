@@ -26,6 +26,11 @@ export interface UpdatePausePolicyViewProps {
   readonly reachable: boolean;
   /** Reachable but its settings have not arrived, or this connection may not change them. */
   readonly readOnly: boolean;
+  /**
+   * That machine's release predates the setting: it has no value to show, and
+   * its updates still pause running work after their wait, as before.
+   */
+  readonly unsupported: boolean;
   /** This connection's settings access there; only "granted" enables the switch. */
   readonly writeAccess: EnvironmentScopeAccess;
   readonly onCheckedChange: (checked: boolean) => void;
@@ -72,11 +77,16 @@ export function UpdatePausePolicyView(props: UpdatePausePolicyViewProps) {
       <div className="flex min-w-0 flex-col gap-1">
         <span className="font-medium">{tx("Pause running work for updates")}</span>
         <p className="text-muted-foreground">
-          {props.checked && effective
-            ? tx(onDescription(props.os))
-            : tx(offDescription(props.os), { machine: props.machineLabel })}
+          {props.unsupported
+            ? tx(
+                "{machine} runs a SpecWithCode version without this setting. Update {machine} first.",
+                { machine: props.machineLabel },
+              )
+            : props.checked && effective
+              ? tx(onDescription(props.os))
+              : tx(offDescription(props.os), { machine: props.machineLabel })}
         </p>
-        {props.continuationOff && (
+        {props.continuationOff && !props.unsupported && (
           <p role="note" className="border-l-2 border-border pl-2 text-muted-foreground">
             {tx(
               "Has no effect on {machine} while “Continue threads after restarts” is off there: paused turns would not continue, so updates wait for quiet. Turn that on in Settings > General.",
@@ -100,8 +110,10 @@ export function UpdatePausePolicyView(props: UpdatePausePolicyViewProps) {
       </div>
       <Switch
         size="sm"
-        checked={props.checked}
-        disabled={!props.reachable || props.readOnly || props.writeAccess !== "granted"}
+        checked={props.checked && !props.unsupported}
+        disabled={
+          !props.reachable || props.readOnly || props.unsupported || props.writeAccess !== "granted"
+        }
         onCheckedChange={(checked) => props.onCheckedChange(Boolean(checked))}
         aria-label={tx("Pause running work for updates")}
       />
@@ -133,6 +145,11 @@ export function UpdatePausePolicyRow({
   const writeAccess = useEnvironmentScopeAccess(environmentId, AuthSettingsWriteScope);
   const persist = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const settings = config?.settings ?? null;
+  // An older release drops the key, and the client's own default would show "off".
+  const unsupported =
+    config !== null &&
+    config !== undefined &&
+    config.environment.capabilities.updatePauseSetting !== true;
   const saved = settings?.pauseWorkForUpdates === true;
   // Shows the new position while the save is under way; cleared once the
   // machine reports it, or put back when the save fails.
@@ -143,7 +160,8 @@ export function UpdatePausePolicyRow({
   }, [saved, saving, shown]);
 
   const change = async (checked: boolean) => {
-    if (saving || !reachable || settings === null || writeAccess !== "granted") return;
+    if (saving || !reachable || settings === null || unsupported || writeAccess !== "granted")
+      return;
     setShown(checked);
     setSaving(true);
     let failed = false;
@@ -194,6 +212,7 @@ export function UpdatePausePolicyRow({
       continuationOff={settings?.continueThreadsAfterServerUpdate === false}
       reachable={reachable}
       readOnly={settings === null || saving}
+      unsupported={unsupported}
       writeAccess={writeAccess}
       onCheckedChange={(checked) => void change(checked)}
     />
