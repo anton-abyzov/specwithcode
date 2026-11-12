@@ -753,7 +753,11 @@ describe("the join card on its own", () => {
     vi.mocked(useUser).mockReturnValue({ user: null } as never);
     vi.mocked(usePrimaryCloudLinkState).mockReturnValue({ data: null } as never);
     const openAuthPrompt = vi.fn();
-    vi.mocked(useStudioConnectAuthPrompt).mockReturnValue({ authPrompt: null, openAuthPrompt });
+    vi.mocked(useStudioConnectAuthPrompt).mockReturnValue({
+      authPrompt: null,
+      openAuthPrompt,
+      openSetupAuthPrompt: vi.fn(),
+    });
     const signedOut = await mount(<AccountJoinCard environmentId={here} />);
     // A pending Clerk session is not "signed out": the card must not ask to sign in again.
     expect(useAuth).toHaveBeenCalledWith({ treatPendingAsSignedOut: false });

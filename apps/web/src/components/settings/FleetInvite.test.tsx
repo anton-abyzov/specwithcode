@@ -43,6 +43,13 @@ vi.mock("../../studio/machineNickname", () => ({
 }));
 const cloud = vi.hoisted(() => ({ configured: true }));
 vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => cloud.configured }));
+vi.mock("../../cloud/useCloudLinkController", () => ({
+  useCloudLinkController: () => ({
+    linked: false,
+    publishAgentActivity: false,
+    reconcileCloudState: vi.fn(async () => true),
+  }),
+}));
 vi.mock("../../localApi", () => ({
   ensureLocalApi: () => ({ shell: { openExternal: vi.fn(async () => undefined) } }),
 }));

@@ -22,6 +22,7 @@ import {
   replaceUnreadableConnectChoices,
   withConnectChoice,
 } from "~/cloud/connectOnboarding";
+import { signInDialogFollowsUp, takeConnectSignInStarted } from "~/cloud/connectSignInStarted";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useConnectOnAtSignIn } from "~/cloud/useConnectOnAtSignIn";
@@ -51,7 +52,9 @@ import { WizardSteps, WizardPopup, WizardHeader, WizardPanel, WizardFooter } fro
  * step shows what is on and lets the owner turn it off, when the current
  * session is authorized to manage the relay link. It then lists the account's
  * Studio Connect environments so every device can be connected right away. A
- * cold load with a restored session does not count as a sign-in.
+ * cold load with a restored session does not count as a sign-in; a load that
+ * completes a sign-in started in this window does. A sign-in started in the
+ * first-run setup is left to setup, which links this machine in its own step.
  */
 export function ConnectOnboardingDialog() {
   if (!hasCloudPublicConfig()) return null;
@@ -180,7 +183,8 @@ function ConfiguredConnectOnboardingDialog() {
   // Every sign-in or account switch that completes during this session
   // requests the wizard — account transitions clear the connected relay
   // environments, so each new session starts with no devices to reach. A cold
-  // load observes undefined → account and must not re-prompt.
+  // load observes undefined → account and must not re-prompt, unless a sign-in
+  // was started in this window just before it.
   useEffect(() => {
     if (!isLoaded) return;
     // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
@@ -190,14 +194,25 @@ function ConfiguredConnectOnboardingDialog() {
     const previousAccount = observedAccountRef.current;
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
-    if (previousAccount !== undefined && previousAccount !== nextAccount) {
-      if (nextAccount === null) {
+    if (previousAccount === nextAccount) return;
+    if (nextAccount === null) {
+      if (previousAccount !== undefined) {
         autoConnect.cancel();
         setTurnedOnForAccount(null);
-      } else {
-        setRequestedAccount(nextAccount);
-        autoConnect.request(nextAccount);
       }
+      return;
+    }
+    // Signing in through another site reloads the window, so that sign-in is
+    // first seen at load. The note left when it was started tells it from a
+    // restored session, and says when setup shows the link itself.
+    if (
+      signInDialogFollowsUp({
+        sawSignedOut: previousAccount !== undefined,
+        started: takeConnectSignInStarted(),
+      })
+    ) {
+      setRequestedAccount(nextAccount);
+      autoConnect.request(nextAccount);
     }
   }, [isLoaded, isSignedIn, userId]);
 
