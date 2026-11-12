@@ -1,6 +1,7 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { ConnectionsSettings } from "./ConnectionsSettings";
+import type { FleetMachineCardExtras } from "./StudioFleetConnections";
 import { MachineRemoteControl } from "./MachineRemoteControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -168,12 +169,19 @@ export function MachinesSettingsPanel() {
     }
   }
 
-  const renderRow = (row: MachineRowModel, details?: ReactNode, workersControl?: ReactNode) => (
+  const renderRow = (
+    row: MachineRowModel,
+    details?: ReactNode,
+    workersControl?: ReactNode,
+    card?: FleetMachineCardExtras,
+  ) => (
     <MachineRow
       key={row.environmentId}
       row={row}
       hereLabel={hereLabel}
       workersControl={workersControl}
+      actions={card?.actions}
+      gone={card?.gone}
       pending={pending}
       onConnect={(machine) => void connect(machine)}
       remoteControl={
@@ -229,7 +237,7 @@ export function MachinesSettingsPanel() {
               ),
           )
           .map((row) => renderRow(row))}
-        renderMachine={(environmentId, controls, workersControl) => {
+        renderMachine={(environmentId, controls, workersControl, card) => {
           const row = rows.find((item) => item.environmentId === environmentId);
           return row
             ? renderRow(
@@ -239,6 +247,7 @@ export function MachinesSettingsPanel() {
                   <ul>{controls}</ul>
                 </details>,
                 workersControl,
+                card,
               )
             : controls;
         }}
@@ -616,6 +625,8 @@ function ProjectList({
 export function MachineRow({
   remoteControl,
   workersControl,
+  actions,
+  gone,
   details,
   row,
   hereLabel,
@@ -628,6 +639,10 @@ export function MachineRow({
   remoteControl?: ReactNode;
   /** The Allow workers control for agents here; it sits on the first access line. */
   workersControl?: ReactNode;
+  /** Stop workers and Remove machine, shown in the header so they need no disclosure. */
+  actions?: ReactNode;
+  /** Shown under the header when the machine no longer answers: says so and offers Remove. */
+  gone?: ReactNode;
   details?: ReactNode;
   row: MachineRowModel;
   /** This machine's name, so each grant line names its direction. */
@@ -701,8 +716,10 @@ export function MachineRow({
             ) : null}
           </div>
         ) : null}
+        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </div>
 
+      {gone ? <div className="pl-7">{gone}</div> : null}
       {details}
       {row.connect && row.connectLock ? (
         <div className="pl-7">
