@@ -462,6 +462,23 @@ describe("allowing the chosen machine", () => {
     await view.unmount();
   });
 
+  it("allows from the first-run card without a second confirmation, and says what the key covers", async () => {
+    world({ saved: [savedMachine(m1, "M1")] });
+    vi.mocked(joinAccountMachineForWorkers).mockResolvedValue(allowed);
+    const onDone = vi.fn();
+    const view = await mount(body(signedIn, { variant: "first-run", onDone }));
+    await act(async () => view.radio("m1").props.onChange());
+    // The card states what the confirmation said, so the press is the decision.
+    expect(view.text()).toContain(
+      "It also gets a key to manage access, updates and skills on this machine, for a year.",
+    );
+    await act(async () => view.button("Allow M1")?.props.onClick());
+    expect(requestConfirmDialog).not.toHaveBeenCalled();
+    expect(joinAccountMachineForWorkers).toHaveBeenCalledOnce();
+    expect(onDone).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
   it("allows nothing when the owner declines the confirmation", async () => {
     world({ saved: [savedMachine(m1, "M1")] });
     vi.mocked(requestConfirmDialog).mockResolvedValue(false);
