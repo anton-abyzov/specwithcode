@@ -184,12 +184,20 @@ export function retainInteraction(
 const isPhoneLease = (lease: ClientActivityLease) => lease.clientKind === "mobile";
 
 /**
+ * Apps report every 25 s. One silent for longer has most likely gone to sleep,
+ * though its lease runs on to 45 s, so it is passed over: an alert in that gap
+ * goes to the next client in line (or, with nobody left, to every app) rather
+ * than to a machine that cannot show it.
+ */
+export const NOTIFICATION_TARGET_STALE_MS = 35_000;
+
+/**
  * Picks the one client that shows desktop notifications, in this order:
  * the desktop or web app in use now that was touched last; a phone in use now
  * (so no desktop pops up while the person is on the phone); the desktop or web
  * app touched last; the app on this server's own machine; otherwise nobody.
  * Only a client that is still connected can show a notification, so only a
- * live lease is elected; the retained map supplies its interaction time when
+ * live lease that reported within NOTIFICATION_TARGET_STALE_MS is elected; the retained map supplies its interaction time when
  * the lease itself has none (a reload, an older report). Ties go to the newer
  * report, then to the lower client id.
  */
@@ -199,7 +207,12 @@ export function electNotificationTarget(input: {
   readonly selfEnvironmentId: EnvironmentId | null;
   readonly now: DateTime.Utc;
 }): NotificationTarget | null {
-  const live = [...input.leases].filter((lease) => isLeaseActive(lease, input.now));
+  const nowMs = DateTime.toEpochMillis(input.now);
+  const live = [...input.leases].filter(
+    (lease) =>
+      isLeaseActive(lease, input.now) &&
+      nowMs - DateTime.toEpochMillis(lease.updatedAt) <= NOTIFICATION_TARGET_STALE_MS,
+  );
   const interactionMs = (lease: ClientActivityLease): number => {
     const own =
       lease.lastInteractionAt === undefined

@@ -53,7 +53,11 @@ import { useActiveNotificationThread } from "../hooks/useActiveNotificationThrea
 import { resolveThreadAlertStatus } from "./Sidebar.logic";
 import { notificationsConnected, useNotificationsConnected } from "../notificationConnection";
 import { deliverNotificationOnce } from "../notificationHistory";
-import { decideNotificationDelivery, readNotificationTarget } from "../notificationTarget";
+import {
+  decideNotificationDelivery,
+  ownerMachineReachable,
+  readNotificationTarget,
+} from "../notificationTarget";
 import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
@@ -435,49 +439,54 @@ function EnvironmentNotifications({
           await deliverNotificationOnce(eventKey, async () => {
             // Web Locks may wait behind a native delivery. Never send using stale preferences or requests.
             if (!mounted.current || !isNotificationOwner()) return false;
-            const {
-              threads: currentThreads,
-              mode,
-              inAppNotificationsEnabled,
-              inputNeededAlertsEnabled,
-            } = latest.current;
-            const currentRaw = currentThreads?.find((candidate) => candidate.id === rawThread.id);
-            if (
-              !currentRaw ||
-              currentRaw.archivedAt !== null ||
-              currentRaw.deletedAt != null ||
-              isStaleExecutionCopy(currentRaw, environmentId)
-            )
-              return false;
-            if (!allowedByLevel(kind)) return false;
-            const currentThread = presentThreadShell(environmentId, currentRaw);
-            let currentStatus = resolveThreadAlertStatus(currentThread);
-            if (currentStatus === "ready" && currentThread.latestRun?.status === "failed")
-              currentStatus = "failed";
-            if (
-              kind === "operational" &&
-              (currentStatus !== status ||
-                currentRaw.latestRunId !== rawThread.latestRunId ||
-                currentRaw.pendingRuntimeRequest?.id !== rawThread.pendingRuntimeRequest?.id)
-            )
-              return false;
-            if (
-              action &&
-              !projectActionIsCurrent(action, observeProjectThread(currentThread, "live"))
-            )
-              return false;
-            if (
-              kind === "completion" &&
-              (currentStatus !== "ready" ||
-                currentThread.latestRun?.completedAt !== thread.latestRun?.completedAt)
-            )
-              return false;
-            if (
-              kind === "stalled" &&
-              (currentRaw.latestRunId !== rawThread.latestRunId ||
-                threadRunHealth(currentThread, Date.now())?.state !== "stalled")
-            )
-              return false;
+            const { mode, inAppNotificationsEnabled, inputNeededAlertsEnabled } = latest.current;
+            // The thread as it is now, or null once the alert no longer applies.
+            // Checked again after the target read: the person may answer meanwhile.
+            const stillCurrent = () => {
+              const currentRaw = latest.current.threads?.find(
+                (candidate) => candidate.id === rawThread.id,
+              );
+              if (
+                !currentRaw ||
+                currentRaw.archivedAt !== null ||
+                currentRaw.deletedAt != null ||
+                isStaleExecutionCopy(currentRaw, environmentId)
+              )
+                return null;
+              if (!allowedByLevel(kind)) return null;
+              const currentThread = presentThreadShell(environmentId, currentRaw);
+              let currentStatus = resolveThreadAlertStatus(currentThread);
+              if (currentStatus === "ready" && currentThread.latestRun?.status === "failed")
+                currentStatus = "failed";
+              if (
+                kind === "operational" &&
+                (currentStatus !== status ||
+                  currentRaw.latestRunId !== rawThread.latestRunId ||
+                  currentRaw.pendingRuntimeRequest?.id !== rawThread.pendingRuntimeRequest?.id)
+              )
+                return null;
+              if (
+                action &&
+                !projectActionIsCurrent(action, observeProjectThread(currentThread, "live"))
+              )
+                return null;
+              if (
+                kind === "completion" &&
+                (currentStatus !== "ready" ||
+                  currentThread.latestRun?.completedAt !== thread.latestRun?.completedAt)
+              )
+                return null;
+              if (
+                kind === "stalled" &&
+                (currentRaw.latestRunId !== rawThread.latestRunId ||
+                  threadRunHealth(currentThread, Date.now())?.state !== "stalled")
+              )
+                return null;
+              return { currentRaw, currentThread };
+            };
+            const checked = stillCurrent();
+            if (checked === null) return false;
+            const { currentRaw, currentThread } = checked;
             const title =
               kind === "stalled"
                 ? "No activity in thread"
@@ -518,11 +527,14 @@ function EnvironmentNotifications({
                 ownEnvironmentId,
                 servingEnvironmentId: environmentId,
                 ownerMachineId,
-                ownerReachable:
-                  knownEnvironmentIds.includes(ownerMachineId as EnvironmentId) &&
-                  !unreachableEnvironmentIds.has(ownerMachineId),
+                ownerReachable: ownerMachineReachable(
+                  ownerMachineId,
+                  knownEnvironmentIds,
+                  unreachableEnvironmentIds,
+                ),
               });
-              if (!mounted.current || !isNotificationOwner()) return false;
+              if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
+                return false;
               if (delivery !== "post") {
                 if (
                   delivery === "badge" &&

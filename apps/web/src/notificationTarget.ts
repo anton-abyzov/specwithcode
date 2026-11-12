@@ -62,6 +62,22 @@ export function isNotificationTarget(
 }
 
 /**
+ * Whether this app can reach an item's owner machine, the one predicate for
+ * popups and counts alike. A machine this app does not know, or one the
+ * catalog judges unreachable (see isEnvironmentUnreachable), cannot raise the
+ * item itself, so this app does.
+ */
+export function ownerMachineReachable(
+  ownerMachineId: string,
+  knownEnvironmentIds: readonly string[],
+  unreachableEnvironmentIds: ReadonlySet<string>,
+): boolean {
+  return (
+    knownEnvironmentIds.includes(ownerMachineId) && !unreachableEnvironmentIds.has(ownerMachineId)
+  );
+}
+
+/**
  * Only the target pops up and plays a sound. The owner machine's app still
  * badges, and so does any app when the target is unknown. Without a target,
  * the app on the serving machine pops up, or every app does when that app is

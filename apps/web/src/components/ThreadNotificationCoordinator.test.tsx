@@ -646,6 +646,27 @@ describe("only the device in use pops up", () => {
     expect(state.sound).toHaveBeenCalledTimes(1);
   });
 
+  it("posts nothing when the question is answered while the target is being read", async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    state.targetRead = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    await askInBackground();
+    expect(state.targetReads).toEqual(["env-1"]);
+    state.input = false;
+    await render();
+    await act(async () => {
+      answer({
+        status: "known",
+        target: { clientId: "client-self", reason: "recent" },
+        ownerAppConnected: true,
+      });
+    });
+    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+  });
+
   it("counts any window of the elected app as elected", async () => {
     state.clientId = "client-self:project-window";
     state.targetRead = target("client-self");

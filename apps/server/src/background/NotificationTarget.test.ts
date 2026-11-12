@@ -143,6 +143,23 @@ describe("electNotificationTarget", () => {
     );
   });
 
+  it("passes over a client that stopped reporting though its lease runs on: it went to sleep", () => {
+    const silent = DateTime.makeUnsafe(NOW_MS - BackgroundPolicy.NOTIFICATION_TARGET_STALE_MS - 1);
+    const asleep = { updatedAt: silent, expiresAt: DateTime.makeUnsafe(NOW_MS + 5_000) };
+    assert.deepStrictEqual(
+      elect([
+        lease("desk-asleep", { ...foreground, interactedSecondsAgo: 5, ...asleep }),
+        lease("desk-b", { interactedSecondsAgo: 600 }),
+      ]),
+      { clientId: "desk-b", reason: "recent" },
+    );
+    // With nobody else left there is no target, so every app shows the alert.
+    assert.equal(
+      elect([lease("desk-self", { hostEnvironmentId: SELF, interactedSecondsAgo: 5, ...asleep })]),
+      null,
+    );
+  });
+
   it("falls back to the app on this server's own machine, then to nobody", () => {
     assert.deepStrictEqual(
       elect([
