@@ -192,11 +192,25 @@ export const layerFromProjectStore: Layer.Layer<
         // A thread in the project's own checkout may not add a worktree while
         // the project's Use worktrees switch is off; with it on (an umbrella
         // folder, a coordinator) the agent may still make one itself.
+        // A thread with its own folder outside the project folder gets a git
+        // that refuses commits and branch switches in the project's clones.
+        const threadFolderProject =
+          worktreePath === null
+            ? null
+            : yield* projects.get(input.thread.projectId).pipe(
+                Effect.map(Option.getOrNull),
+                Effect.orElseSucceed(() => null),
+              );
         const manualWorktreesBlocked =
-          localProject !== null &&
-          !projectUsesWorktrees(
-            resolveProjectSettings(settings, input.thread.projectId, localProject),
-          );
+          localProject !== null
+            ? !projectUsesWorktrees(
+                resolveProjectSettings(settings, input.thread.projectId, localProject),
+              )
+            : threadFolderProject !== null &&
+                worktreePath !== null &&
+                !isInsideFolder(threadFolderProject.workspaceRoot, worktreePath)
+              ? threadFolderProject.workspaceRoot
+              : false;
         return ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
@@ -216,6 +230,14 @@ export const layerFromProjectStore: Layer.Layer<
     });
   }),
 );
+
+/** Whether `candidate` is `folder` or below it, by path text on either separator. */
+function isInsideFolder(folder: string, candidate: string): boolean {
+  const base = folder.replace(/[\\/]+$/u, "");
+  return (
+    candidate === base || candidate.startsWith(`${base}/`) || candidate.startsWith(`${base}\\`)
+  );
+}
 
 export function layerWithOverride(
   override: RuntimePolicyV2Override,

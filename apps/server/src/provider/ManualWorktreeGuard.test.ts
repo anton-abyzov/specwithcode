@@ -10,6 +10,7 @@ import { codexThreadRuntimeParams } from "../orchestration-v2/Adapters/CodexAdap
 import {
   MANUAL_WORKTREE_REFUSAL,
   installManualWorktreeGuard,
+  isGitCommitOrSwitch,
   isGitWorktreeAdd,
   manualWorktreeGuardFiles,
   manualWorktreeGuardPath,
@@ -105,7 +106,12 @@ describe.skipIf(process.platform === "win32")("posix git shim", () => {
     const serverEnvironment = { PATH: `${guardDir}:${bin}` };
     const install = () =>
       installManualWorktreeGuard({ stateDir, serverEnvironment, platform: "linux" });
-    expect(install()).toEqual({ directory: guardDir, platform: "linux", serverEnvironment });
+    expect(install()).toEqual({
+      directory: guardDir,
+      platform: "linux",
+      serverEnvironment,
+      realGit: NodePath.join(bin, "git"),
+    });
     // A second start with the shim already first on PATH still wraps the real git.
     install();
     const shim = NodePath.join(guardDir, "git");
@@ -246,6 +252,112 @@ describe.skipIf(process.platform === "win32")("the guarded PATH in agent shells"
     },
   );
 });
+
+describe("isGitCommitOrSwitch", () => {
+  it.each([
+    [["commit", "-m", "x"], true],
+    [["-C", "/repo", "commit"], true],
+    [["switch", "-c", "feature"], true],
+    [["checkout", "main"], true],
+    [["checkout", "-b", "feature"], true],
+    [["checkout", "--", "file.txt"], false],
+    [["status"], false],
+    [["log", "commit"], false],
+    [["-c", "commit", "status"], false],
+  ] as const)("%j is %s", (args, refused) => {
+    expect(isGitCommitOrSwitch(args)).toBe(refused);
+  });
+});
+
+describe.skipIf(process.platform === "win32")(
+  "the clone guard of a thread with its own folder",
+  () => {
+    it("refuses commits and branch switches in a project clone, and nothing else", () => {
+      const stateDir = NodeFS.realpathSync(temporaryDirectory());
+      const project = NodePath.join(stateDir, "project");
+      const clone = NodePath.join(project, "repositories", "acme", "api");
+      const threadFolder = NodePath.join(stateDir, "worktrees", "thread");
+      const realGit = resolveRealGit(process.env.PATH, { platform: process.platform })!;
+      const gitEnv = {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "T",
+        GIT_AUTHOR_EMAIL: "t@example.invalid",
+        GIT_COMMITTER_NAME: "T",
+        GIT_COMMITTER_EMAIL: "t@example.invalid",
+      };
+      const real = (cwd: string, ...args: string[]) =>
+        NodeChildProcess.execFileSync(realGit, args, { cwd, env: gitEnv, stdio: "pipe" });
+      for (const repo of [project, clone]) {
+        NodeFS.mkdirSync(repo, { recursive: true });
+        real(repo, "init", "-q", "-b", "main");
+        NodeFS.writeFileSync(NodePath.join(repo, "a.txt"), "a\n");
+        real(repo, "add", "a.txt");
+        real(repo, "commit", "-q", "-m", "first");
+      }
+      real(clone, "worktree", "add", "-q", "-b", "thread", NodePath.join(threadFolder, "api"));
+      const guard = installManualWorktreeGuard({
+        stateDir,
+        serverEnvironment: { PATH: process.env.PATH },
+        platform: process.platform,
+      })!;
+      const environment = withManualWorktreeGuardFor(guard, gitEnv, project);
+      const git = (cwd: string, ...args: string[]) =>
+        NodeChildProcess.spawnSync("git", args, { cwd, env: environment, encoding: "utf8" });
+      const change = (repo: string) => NodeFS.appendFileSync(NodePath.join(repo, "a.txt"), "b\n");
+      // In the project folder's clone: refused, naming the tool to use instead.
+      change(clone);
+      for (const args of [
+        ["commit", "-am", "x"],
+        ["switch", "-c", "other"],
+        ["checkout", "-b", "other"],
+      ]) {
+        const refused = git(clone, ...args);
+        expect(refused.status).toBe(128);
+        expect(refused.stderr).toContain("studio_worktree_add_repository");
+      }
+      expect(git(stateDir, "-C", clone, "commit", "-am", "x").status).toBe(128);
+      // Reading, and restoring a file, still work there.
+      expect(git(clone, "status", "--porcelain").stdout).toContain("a.txt");
+      expect(git(clone, "checkout", "--", "a.txt").status).toBe(0);
+      // The project folder's own repository is exempt: SpecWeave planning is committed there.
+      change(project);
+      expect(git(project, "commit", "-am", "planning").status).toBe(0);
+      // The thread's own worktree of the same repository commits and switches freely.
+      const worktree = NodePath.join(threadFolder, "api");
+      change(worktree);
+      expect(git(worktree, "commit", "-am", "work").status).toBe(0);
+      expect(git(worktree, "switch", "-c", "thread-2").status).toBe(0);
+    });
+
+    it("puts the project's clone guard first on PATH, never both guards", () => {
+      const stateDir = NodeFS.realpathSync(temporaryDirectory());
+      const guard = installManualWorktreeGuard({
+        stateDir,
+        serverEnvironment: { PATH: process.env.PATH },
+        platform: process.platform,
+      })!;
+      const blocked = manualWorktreeGuardPath({ PATH: "/usr/bin" }, true, guard).PATH!;
+      const cloned = manualWorktreeGuardPath({ PATH: blocked }, stateDir, guard).PATH!;
+      const [first, ...rest] = cloned.split(":");
+      expect(first).toMatch(/agent-bin\/clones-[a-z0-9]+$/u);
+      expect(rest).toEqual(["/usr/bin"]);
+      expect(NodeFS.readFileSync(NodePath.join(first!, "git"), "utf8")).toContain(stateDir);
+      // A guard built without a git to run adds nothing.
+      expect(manualWorktreeGuardPath({ PATH: "/usr/bin" }, stateDir, linuxGuard)).toEqual({});
+    });
+  },
+);
+
+/** `environment` with `guard`'s clone shim for `project` first on PATH. */
+function withManualWorktreeGuardFor(
+  guard: NonNullable<ReturnType<typeof installManualWorktreeGuard>>,
+  environment: NodeJS.ProcessEnv,
+  project: string,
+): NodeJS.ProcessEnv {
+  return { ...environment, ...manualWorktreeGuardPath(environment, project, guard) };
+}
 
 const linuxGuard = {
   directory: "/g",

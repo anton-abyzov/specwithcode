@@ -22,14 +22,14 @@ import * as Path from "effect/Path";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import { addWorktreeSetMember } from "../git/worktreeSetGit.ts";
+import * as DiskSpaceMonitor from "../observability/DiskSpaceMonitor.ts";
 import { projectRepositoryCheckouts } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
-import { readWorktreeSet, worktreeSetMemberPath } from "../worktreeSet.ts";
+import { addRepositoryToThread } from "../project/ThreadRepositories.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 import { projectUsesWorktrees } from "./toolkits/project/launchWorkspace.ts";
 
@@ -77,6 +77,7 @@ const make = Effect.gen(function* () {
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
   const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+  const diskSpace = yield* Effect.serviceOption(DiskSpaceMonitor.DiskSpaceMonitor);
 
   // Serializes handoffs per thread: two concurrent calls could otherwise both
   // pass the worktreePath === null check and each create a worktree, leaving
@@ -523,70 +524,38 @@ const make = Effect.gen(function* () {
   ) {
     const projection = yield* loadThread(scope);
     const { worktreePath, branch } = projection.thread;
-    if (worktreePath === null || branch === null)
-      return yield* failure(
-        "not_in_worktree",
-        `Thread '${scope.thread.threadId}' works in the project folder, not its own worktree, so there is no thread folder to add a repository to. Use studio_worktree_handoff first.`,
-      );
     const project = yield* loadProject(scope, projection.thread.projectId);
     const settings = yield* serverSettings.getSettings.pipe(
       asOperationFailed("Unable to read server settings"),
     );
     const resolved = resolveProjectSettings(settings, project.id, project);
-    if (!projectUsesWorktrees(resolved))
-      return yield* failure(
-        "invalid_request",
-        "Use worktrees is off for this project, so a thread cannot add worktrees. The user can turn on Use worktrees in the project's settings (in SpecWithCode, with the one-click button the thread shows).",
-      );
     if (Option.isNone(fileSystem))
       return yield* failure("operation_failed", "This server cannot reach its file system.");
-    const withServices = <A, E>(
-      effect: Effect.Effect<
-        A,
-        E,
-        FileSystem.FileSystem | Path.Path | GitWorkflowService.GitWorkflowService
-      >,
-    ) =>
-      effect.pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem.value),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
-      );
-    const existing = yield* withServices(readWorktreeSet(worktreePath));
-    const members = yield* withServices(
-      addWorktreeSetMember({
-        folder: worktreePath,
-        existing: existing?.members ?? [],
-        entry: input.repository,
-        checkouts: projectRepositoryCheckouts(project),
-        projectRoot: project.workspaceRoot,
-        branch,
-        startFromOrigin: settings.newWorktreesStartFromOrigin,
-        submodules: resolved.settings.worktreeSubmodules,
-      }),
-    ).pipe(
-      // A cancel waits, so the manifest never lists a member that was not made.
-      Effect.uninterruptible,
-      Effect.mapError((message) =>
-        // "Could not ..." is git or the manifest failing, not a bad argument.
-        failure(message.startsWith("Could not") ? "operation_failed" : "invalid_request", message),
-      ),
-    );
-    const added = members.at(-1)!;
-    const repositoryPath = worktreeSetMemberPath(worktreePath, added, path);
-    yield* vcsStatusBroadcaster
-      .refreshStatus(repositoryPath)
-      .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
-    const result: WorktreeMcpAddRepositoryResult = {
+    const storage = Option.isNone(diskSpace)
+      ? null
+      : Option.getOrNull(yield* diskSpace.value.current);
+    const added = yield* addRepositoryToThread({
+      threadId: scope.thread.threadId,
       worktreePath,
-      repositoryPath,
       branch,
-      members: members.map((member) => ({
-        repository: member.repository,
-        path: worktreeSetMemberPath(worktreePath, member, path),
-      })),
-    };
-    return result;
+      usesWorktrees: projectUsesWorktrees(resolved),
+      projectRoot: project.workspaceRoot,
+      checkouts: projectRepositoryCheckouts(project),
+      repository: input.repository,
+      startFromOrigin: settings.newWorktreesStartFromOrigin,
+      submodules: resolved.settings.worktreeSubmodules,
+      storage,
+      addedBy: "agent",
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem.value),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+      Effect.mapError((refusal) => failure(refusal.code, refusal.message)),
+    );
+    yield* vcsStatusBroadcaster
+      .refreshStatus(added.repositoryPath)
+      .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+    return added satisfies WorktreeMcpAddRepositoryResult;
   });
 
   // Shares the handoff guard: both change what the thread's folder holds.
