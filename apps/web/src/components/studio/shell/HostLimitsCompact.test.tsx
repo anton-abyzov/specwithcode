@@ -103,7 +103,12 @@ describe("HostLimitsCompactView", () => {
     }));
     // Every provider shows what is left and its reset; an unknown account prints nothing.
     expect(rows).toEqual([
-      { value: "87%", aside: "2h", account: "a@example.com", shared: "m1" },
+      {
+        value: "87%",
+        aside: "2h",
+        account: "a@example.com",
+        shared: "m1: Same account on m1; they share one quota",
+      },
       { value: "0%", aside: "2h", account: null, shared: null },
       { value: "15%", aside: "2h", account: null, shared: null },
     ]);
@@ -204,8 +209,8 @@ describe("HostLimitsCompactView", () => {
       { rank: "other", text: "5-hour2d" },
       { rank: "binding", text: "Weekly0%2d" },
     ]);
-    expect(windows[1]?.name).toBe("Weekly: 12% left, resets in 4d 4h");
+    expect(windows[1]?.name).toBe("Weekly: 12% left, resets in 4d 4h, least left");
     expect(windows[2]?.name).toMatch(/^5-hour: blocked by weekly limit/);
-    expect(windows[3]?.name).toBe("Weekly: Limit reached, resets in 2d 2h");
+    expect(windows[3]?.name).toBe("Weekly: Limit reached, resets in 2d 2h, least left");
   });
 });

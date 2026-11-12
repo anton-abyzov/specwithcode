@@ -35,15 +35,21 @@ interface AccountHeaderProps {
   readonly size?: "sm" | "md";
 }
 
-/** Opens the provider's page in the system browser; a plain link where there is none. */
+/**
+ * Opens the provider's page in the system browser. Without a local API the link
+ * opens in a new tab on its own; when the desktop bridge refuses, a tab opens instead.
+ */
 function openOutside(event: MouseEvent<HTMLAnchorElement>, url: string) {
+  let api: ReturnType<typeof ensureLocalApi>;
   try {
-    const api = ensureLocalApi();
-    event.preventDefault();
-    void api.shell.openExternal(url);
+    api = ensureLocalApi();
   } catch {
-    // No desktop shell: the link opens in a new tab on its own.
+    return;
   }
+  event.preventDefault();
+  void api.shell.openExternal(url).catch(() => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
 }
 
 export function AccountHeader(props: AccountHeaderProps) {
@@ -94,6 +100,7 @@ export function AccountHeader(props: AccountHeaderProps) {
             <span className="sws-account-machine" tabIndex={0}>
               <MonitorIcon aria-hidden />
               {props.machine.name}
+              <span className="sr-only">: {props.machine.tip}</span>
             </span>
           </Tip>
         ) : null}

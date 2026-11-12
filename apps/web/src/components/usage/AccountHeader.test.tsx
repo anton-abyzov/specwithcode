@@ -55,7 +55,7 @@ describe("AccountHeader", () => {
     expect(node.querySelector(".sws-account-rank")?.getAttribute("aria-label")).toBe(
       "Fallback 2: Codex · GPT-6.1 Sol",
     );
-    expect(node.querySelector(".sws-account-machine")?.textContent).toBe("M4");
+    expect(node.querySelector(".sws-account-machine")?.textContent).toBe("M4: Read on M4 2m ago");
   });
 });
 

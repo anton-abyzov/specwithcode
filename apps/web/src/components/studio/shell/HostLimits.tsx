@@ -373,6 +373,7 @@ function CompactWindowRow({
   const tone = window.stale || window.blockedBy ? "stale" : usageToneOf(window.usedPercent);
   const label = windowDisplayLabel(window);
   const spent = !window.stale && !window.blockedBy && window.usedPercent >= 100;
+  const blockerReset = window.blockedBy?.resetsAt ?? null;
   const resetIn = window.resetsAt === null || window.resetsAt <= now ? null : window.resetsAt - now;
   const sentence = window.blockedBy
     ? `${label}: ${lowerFirstWord(blockedLabel(window.blockedBy, now))}`
@@ -382,14 +383,17 @@ function CompactWindowRow({
       ]
         .filter(Boolean)
         .join(", ");
+  // The window that stops the provider first says so, as the bright row shows.
+  const spoken = rank === "binding" ? `${sentence}, least left` : sentence;
   return (
     <Tip label={sentence} side="left">
       <div
         className="sws-hl-compact-window"
         data-tone={tone}
         data-rank={rank ?? undefined}
+        role="group"
         tabIndex={0}
-        aria-label={sentence}
+        aria-label={spoken}
       >
         <span className="sws-hl-compact-window-label" aria-hidden>
           {label}
@@ -412,10 +416,10 @@ function CompactWindowRow({
           )}
         </span>
         <span className="sws-hl-compact-aside" aria-hidden>
-          {(window.blockedBy?.resetsAt ?? null) !== null && window.blockedBy!.resetsAt! > now ? (
+          {blockerReset !== null && blockerReset > now ? (
             <>
               <ClockIcon />
-              {shortDuration(window.blockedBy!.resetsAt! - now)}
+              {shortDuration(blockerReset - now)}
             </>
           ) : resetIn !== null && !window.blockedBy ? (
             <>
@@ -466,6 +470,8 @@ function CompactProviderEntry({
           iconUrl={row.iconUrl}
           plan={row.plan}
           email={row.identity}
+          // Only a plan or reported windows mean a subscription with a usage page.
+          subscription={row.plan !== null || row.windows.length > 0}
           rank={rank}
           tag={tag === undefined ? (coordinator ? "Coordinator" : null) : tag}
           machine={
@@ -495,6 +501,7 @@ function CompactProviderEntry({
           <span className="sws-hl-compact-account sws-hl-compact-notice" tabIndex={0}>
             <CircleDashedIcon aria-hidden />
             {noticeShort(row.notice)}
+            <span className="sr-only">: {row.notice}</span>
           </span>
         </Tip>
       ) : null}

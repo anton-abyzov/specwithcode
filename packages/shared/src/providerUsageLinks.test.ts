@@ -22,6 +22,7 @@ describe("providerUsageLink", () => {
   it("gives no link when the page is unknown or the account is an API key", () => {
     expect(providerUsageLink({ driver: "grok" })).toBeNull();
     expect(providerUsageLink({ driver: "acpRegistry", label: "Devin" })).toBeNull();
+    expect(providerUsageLink({ driver: "opencode", label: "M365 Copilot" })).toBeNull();
     expect(providerUsageLink({ driver: "codex", subscription: false })).toBeNull();
     expect(providerUsageLink({ driver: null })).toBeNull();
   });

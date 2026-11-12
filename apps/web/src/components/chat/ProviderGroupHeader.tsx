@@ -8,6 +8,12 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { providerUsageLink } from "@specweave-studio/shared/providerUsageLinks";
 import { UsagePageLink } from "../usage/AccountHeader";
 
+/** A subscription sign-in, not an API key or a cloud backend billed elsewhere. */
+function isPlanAccount(auth: ProviderInstanceEntry["snapshot"]["auth"]): boolean {
+  if (auth.status !== "authenticated" || auth.apiKeyBilling === true) return false;
+  return !/^(apiKey|bedrock|amazonBedrock|vertex|foundry)$/i.test(auth.type ?? "");
+}
+
 /** The plan and account a provider signs in with, from its auth snapshot. */
 export function providerGroupAccount(entry: ProviderInstanceEntry): {
   readonly plan: string | null;
@@ -56,8 +62,7 @@ export const ProviderGroupHeader = memo(function ProviderGroupHeader(props: {
     driver: entry.driverKind,
     agentId: entry.acpRegistryAgentId,
     label: entry.displayName,
-    subscription:
-      entry.snapshot.auth.status === "authenticated" && entry.snapshot.auth.type !== "apiKey",
+    subscription: isPlanAccount(entry.snapshot.auth),
   });
   return (
     <div

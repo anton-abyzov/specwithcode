@@ -47,9 +47,13 @@ export function providerUsageLink(input: {
 }): ProviderUsageLink | null {
   if (input.subscription === false) return null;
   const driver = (input.driver ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  // Only an ACP registry agent can be GitHub Copilot; another driver named "Copilot" is not.
+  const acp = driver === "acpregistry";
   const kind =
     BY_DRIVER[driver] ??
-    (/copilot/i.test(`${input.agentId ?? ""} ${input.label ?? ""}`) ? "copilot" : undefined) ??
-    (/cursor/i.test(`${input.agentId ?? ""}`) ? "cursor" : undefined);
+    (acp && /github-copilot|^copilot\b/i.test(input.agentId ?? input.label ?? "")
+      ? "copilot"
+      : undefined) ??
+    (acp && /^cursor/i.test(input.agentId ?? "") ? "cursor" : undefined);
   return kind ? LINKS[kind] : null;
 }

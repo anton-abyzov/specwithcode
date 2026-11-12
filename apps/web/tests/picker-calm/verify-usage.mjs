@@ -48,6 +48,7 @@ const AXE_RULES = [
   "link-name",
   "label",
   "aria-command-name",
+  "aria-prohibited-attr",
   "role-img-alt",
   "image-alt",
   "svg-img-alt",

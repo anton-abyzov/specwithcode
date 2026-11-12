@@ -73,9 +73,15 @@ export function chipAccountTag(
   entries: ReadonlyArray<LabelEntry>,
   instanceId: ProviderInstanceId,
 ): string | null {
-  const entry = entries.find((candidate) => candidate.instanceId === instanceId);
+  const signedIn = entries.filter(
+    (candidate) => candidate.snapshot.auth.status === "authenticated",
+  );
+  const entry = signedIn.find((candidate) => candidate.instanceId === instanceId);
   if (!entry) return null;
   const brand = brandOf(entry);
-  if (entries.filter((candidate) => brandOf(candidate) === brand).length < 2) return null;
-  return providerShortLabels(entries).get(instanceId) ?? null;
+  const twins = signedIn.filter((candidate) => brandOf(candidate) === brand);
+  if (twins.length < 2) return null;
+  const tag = providerShortLabels(twins).get(instanceId) ?? null;
+  // Names that read alike fall back to the whole name: too long for a chip.
+  return tag === null || tag === entry.displayName ? null : tag;
 }
