@@ -4,6 +4,7 @@ import { ProviderInstanceId, type ModelSelection } from "@specweave-studio/contr
 
 import {
   compileClaudeModelSelection,
+  describeBackgroundWork,
   describeDeferredClaudeSelection,
 } from "./claudeModelOptions.ts";
 
@@ -87,6 +88,43 @@ describe("compileClaudeModelSelection", () => {
     expect(describeDeferredClaudeSelection(high, high)).toBe(
       "The new model options apply when background work finishes.",
     );
+    const xhigh = identity("claude-opus-5-5", [{ id: "effort", value: "xhigh" }]);
+    expect(
+      describeDeferredClaudeSelection(
+        high,
+        xhigh,
+        describeBackgroundWork([
+          { kind: "subagent", description: "Build redesigned Machines join card" },
+        ]),
+      ),
+    ).toBe('Effort xhigh applies when subagent "Build redesigned Machines join card" finishes.');
+    expect(
+      describeDeferredClaudeSelection(
+        high,
+        xhigh,
+        describeBackgroundWork([{ kind: "subagent", description: "Review" }, { kind: "command" }]),
+      ),
+    ).toBe('Effort xhigh applies when subagent "Review" and a command finish.');
+  });
+
+  it("names background work by kind, first line and count", () => {
+    expect(describeBackgroundWork([])).toBeNull();
+    expect(describeBackgroundWork([{ kind: "mystery", description: " " }])).toEqual({
+      label: "a background task",
+      count: 1,
+    });
+    expect(
+      describeBackgroundWork([
+        { kind: "command", description: 'echo "hi"\nsecond line' },
+        { kind: "monitor", description: "x".repeat(200) },
+        { kind: "workflow", description: "Ship" },
+        { kind: "subagent", description: "Fourth" },
+        { kind: "subagent", description: "Fifth" },
+      ]),
+    ).toEqual({
+      label: `command "echo 'hi'", monitor "${"x".repeat(79)}…", workflow "Ship" and 2 more`,
+      count: 5,
+    });
   });
 
   it("keeps an explicit toggle over a legacy Ultracode effort", () => {

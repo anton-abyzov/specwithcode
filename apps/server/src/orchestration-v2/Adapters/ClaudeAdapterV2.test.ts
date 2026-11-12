@@ -53,7 +53,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@specweave-studio/shared/claudeCompaction";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { SpawnExecutableResolution } from "@specweave-studio/shared/shell";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -3220,7 +3222,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const notice = yield* Queue.take(harness.systemNoticeReceipts);
           assert.equal(
             notice.turnItem.type === "system_notice" ? notice.turnItem.message : null,
-            "Fast mode on applies when background work finishes.",
+            'Fast mode on applies when command "Background sleep test" finishes.',
           );
           assert.strictEqual(harness.getOpenedOptions(), originalOptions);
           assert.lengthOf(harness.offeredMessages, 3);
@@ -3267,7 +3269,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // The turn starts on the running process; nothing fails.
         yield* harness.runtime.startTurn(turn(2, "xhigh"));
         yield* Queue.take(harness.systemNoticeReceipts);
-        assert.deepEqual(notices(), ["Effort xhigh applies when background work finishes."]);
+        assert.deepEqual(notices(), [
+          'Effort xhigh applies when command "Background sleep test" finishes.',
+        ]);
         assert.strictEqual(harness.getOpenedOptions(), originalOptions);
         assert.lengthOf(harness.offeredMessages, 2);
         yield* harness.offerAndWait(turnOneResult);
@@ -3290,6 +3294,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(originalOptions?.effort, "high");
         assert.equal(reopened?.effort, "xhigh");
         assert.lengthOf(notices(), 1);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps the opened effort keyword on a turn whose selection waits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, effort: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-keyword-waits:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              model: "claude-opus-5-5",
+              options: [{ id: "effort", value: effort }],
+            },
+          });
+        const prompt = (index: number) =>
+          JSON.stringify(harness.offeredMessages[index]?.message.content);
+        yield* harness.runtime.startTurn(turn(1, "low"));
+        const originalOptions = harness.getOpenedOptions();
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.notInclude(prompt(0), "Ultrathink:");
+
+        // The note says the choice waits, so its keyword waits with it.
+        yield* harness.runtime.startTurn(turn(2, "ultrathink"));
+        yield* Queue.take(harness.systemNoticeReceipts);
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.notInclude(prompt(1), "Ultrathink:");
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.runtime.startTurn(turn(3, "ultrathink"));
+        assert.notStrictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.include(prompt(2), "Ultrathink:");
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
@@ -3401,7 +3450,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           removed.cause,
           ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
         );
-        assert.include(removed.cause.message, "this folder or permission change would end them");
+        assert.include(
+          removed.cause.message,
+          'Claude is still running command "Background sleep test", and this folder or permission change would end that work.',
+        );
+        const refusal = makeProviderFailure({ cause: removed, class: "provider_error" });
+        assert.equal(refusal.code, BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE);
+        assert.equal(refusal.message, removed.cause.message);
 
         // A model change never carries a removed folder along with it.
         const modelAndFolders = yield* harness.runtime
@@ -3415,7 +3470,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.include(
           modelAndFolders.cause.message,
-          "this model, folder or permission change would end them",
+          "this model, folder or permission change would end that work",
         );
         assert.strictEqual(harness.getOpenedOptions(), originalOptions);
         assert.lengthOf(harness.offeredMessages, 2);
@@ -9968,7 +10023,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               (event) =>
                 event.type === "turn_item.updated" &&
                 event.turnItem.type === "system_notice" &&
-                /^Model claude-haiku-4-5\S*( and effort \S+ apply| applies) when background work finishes\.$/u.test(
+                /^Model claude-haiku-4-5\S*( and effort \S+ apply| applies) when subagent ".+" finishes\.$/u.test(
                   event.turnItem.message,
                 ),
             ),
