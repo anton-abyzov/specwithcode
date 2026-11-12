@@ -683,6 +683,8 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     startFromOrigin: Schema.optional(Schema.Boolean),
     repository: Schema.optional(OrchestrationV2ThreadLaunchRepository),
     repositories: Schema.optional(OrchestrationV2ThreadLaunchWorktreeSet),
+    /** With exactly one entry in `repositories`: the branch of that repository to start from. */
+    repositoryBaseRef: Schema.optional(TrimmedNonEmptyString),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =

@@ -128,7 +128,7 @@ describe("ProjectFolderChange", () => {
     });
     expect(container.textContent).toContain("Different repository");
     expect(container.textContent).toContain("14 threads move with the project");
-    expect(container.textContent).toContain("Import SpecWeave workspace");
+    expect(container.textContent).not.toMatch(/Import SpecWeave|workspace/u);
     expect(button("Change folder").disabled).toBe(true);
 
     await act(async () => {
@@ -333,37 +333,75 @@ describe("ProjectFolderChange", () => {
       '"Projects" (contains it, archived)',
     );
   });
-  it("says new worktrees come from the umbrella's own repository, not its nested ones", async () => {
+  it("says what the new folder holds and offers, unticked, to flip a switch that differs", async () => {
+    const onSwitch = vi.fn();
     state.folderCheck.mockResolvedValue({
       _tag: "Success",
-      value: check({ layout: umbrellaLayout }),
+      value: check({ sameRepository: true, layout: { ...umbrellaLayout, separateClones: true } }),
     });
-    render();
+    state.changeFolder.mockResolvedValue({ _tag: "Success", value: {} });
+    const mount = () =>
+      act(() =>
+        root.render(
+          <ProjectFolderChange
+            project={project}
+            disabled={false}
+            onChanged={onChanged}
+            useWorktrees={false}
+            onUseWorktreesChange={onSwitch}
+          />,
+        ),
+      );
+    mount();
     await typeFolder(parent);
     await click("Check");
-    expect(container.querySelector("[data-folder-worktree-source]")?.textContent).toBe(
-      "New worktree threads and routines are cut from this folder's own repository, so they do not contain the nested repositories' code unless a repository is chosen for them.",
+    expect(container.querySelector("[data-folder-repositories-found]")?.textContent).toBe(
+      "2 repositories found. Threads can use any of them.",
     );
+    expect(container.querySelector("[data-folder-switch-differs]")?.textContent).toBe(
+      "Use worktrees is off. Recommended for this folder: on. Each thread gets its own folder and a worktree of only the repositories it changes.",
+    );
+    const box = () =>
+      [...container.querySelectorAll("label")]
+        .find((label) => label.textContent === "Also turn Use worktrees on")!
+        .querySelector("input")!;
+    expect(box().checked).toBe(false);
+    // Without the box the folder changes and the switch stays.
+    await click("Change folder");
+    expect(state.changeFolder).toHaveBeenCalledOnce();
+    expect(onSwitch).not.toHaveBeenCalled();
+    // With it, the switch is applied with the folder change.
+    await typeFolder(parent);
+    await click("Check");
+    await act(async () => box().click());
+    await click("Change folder");
+    expect(onSwitch).toHaveBeenCalledExactlyOnceWith(true);
+    expect(container.textContent).toContain("Use worktrees is now on.");
   });
 
-  it("says nothing about worktree sources for the current repository or a single checkout", async () => {
-    state.folderCheck
-      .mockResolvedValueOnce({
-        _tag: "Success",
-        value: check({ sameRepository: true, layout: umbrellaLayout }),
-      })
-      .mockResolvedValueOnce({
-        _tag: "Success",
-        value: check({
-          layout: { ...umbrellaLayout, kind: "single", repositories: [], repositoryCount: 0 },
-        }),
-      });
-    render();
+  it("offers nothing when the switch already matches, or the host cannot flip it", async () => {
+    state.folderCheck.mockResolvedValue({
+      _tag: "Success",
+      value: check({ layout: { ...umbrellaLayout, separateClones: true } }),
+    });
+    act(() =>
+      root.render(
+        <ProjectFolderChange
+          project={project}
+          disabled={false}
+          onChanged={onChanged}
+          useWorktrees={true}
+          onUseWorktreesChange={() => {}}
+        />,
+      ),
+    );
     await typeFolder(parent);
     await click("Check");
-    expect(container.querySelector("[data-folder-worktree-source]")).toBeNull();
-    await click("Check");
-    expect(container.querySelector("[data-folder-worktree-source]")).toBeNull();
+    expect(container.querySelector("[data-folder-switch-differs]")).toBeNull();
+    expect(container.querySelector("[data-folder-workspace-recommendation]")?.textContent).toMatch(
+      /^Recommended for this folder: on\./u,
+    );
+    expect(container.textContent).not.toContain("Also turn Use worktrees");
   });
 
   it("shows the server's refusal", async () => {

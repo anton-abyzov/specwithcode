@@ -4055,8 +4055,6 @@ export const ja: PhraseCatalog = {
   "Usage limit reached": "利用上限に到達",
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "新しいスレッドはそれぞれ専用のブランチと worktree を持つため、並行するスレッドがチェックアウトを共有することはありません。オフ：スレッドはプロジェクトフォルダで作業します。",
-  "Recommended here: on": "ここでの推奨：オン",
-  "Recommended here: off": "ここでの推奨：オフ",
   "Adding a machine to this one?": "このマシンに別のマシンを追加しますか？",
   "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "{here} のエージェントは、すでに {machines} で作業を開始できます。ここで作成した行を使うと、選んだマシンが {here} で作業を開始できるようになります。新しいマシンを {here} に追加する場合は、新しいマシンで SpecWithCode を開き、そこで「メインマシンに参加」を選んで、その行をここの「マシンを追加」に貼り付けてください。",

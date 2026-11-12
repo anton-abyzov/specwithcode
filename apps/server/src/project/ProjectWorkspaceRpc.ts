@@ -6,6 +6,10 @@ import {
   WsProjectPlanningRpcGroup,
   WsProjectKnowledgeRpcGroup,
   ProjectThreadsDeleteError,
+  ProjectEnvironmentError,
+  type ProjectEnvironmentPrepareInput,
+  type ProjectEnvironmentReadInput,
+  type ProjectId,
   type ProjectThreadsDeleteInput,
   type ProjectMemoryWriteInput,
   type AssetAccessError,
@@ -30,7 +34,7 @@ import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 import * as ThreadReportService from "./ThreadReportService.ts";
 import * as ThreadIncrementProgressService from "./ThreadIncrementProgressService.ts";
 import * as ProjectService from "./ProjectService.ts";
-import { applyWorkspaceImport } from "./ProjectEnvironmentAdoption.ts";
+import * as ThreadRepositories from "./ThreadRepositories.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectWorktreeCleanup from "./ProjectWorktreeCleanup.ts";
 import * as ProjectRepositoryPresence from "./ProjectRepositoryPresence.ts";
@@ -40,8 +44,15 @@ import * as SourceControlRepositoryService from "../sourceControl/SourceControlR
 type ProjectMemoryDeleteInput = Parameters<
   ProjectWorkspaceService.ProjectWorkspaceService["Service"]["deleteMemory"]
 >[0];
+const importRemoved = (projectId: ProjectId) =>
+  new ProjectEnvironmentError({
+    projectId,
+    code: "import_blocked",
+    detail:
+      "Importing a repository list was removed: threads can use every Git repository in the project folder. Update SpecWithCode on this device.",
+  });
 export const handlers = Effect.gen(function* () {
-  const projects = yield* ProjectService.ProjectService;
+  const threadRepositories = yield* ThreadRepositories.makeRpc;
   const handoff = yield* MachineHandoff.MachineHandoff;
   const environment = yield* ProjectEnvironmentService.ProjectEnvironmentService;
   const usage = yield* ProjectUsageService.ProjectUsageService;
@@ -55,12 +66,36 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.machineHandoffReceive]: handoff.receive,
     ...(yield* ProjectPlanRpc.handlers),
     ...(yield* ProjectConnectionRpc.handlers),
-    [WS_METHODS.projectsEnvironmentRead]: environment.read,
-    [WS_METHODS.projectsEnvironmentPrepare]: environment.prepare,
-    [WS_METHODS.projectsEnvironmentImportPreview]: environment.previewImport,
-    [WS_METHODS.projectsEnvironmentImport]: (
-      input: import("@specweave-studio/contracts").ProjectEnvironmentImportInput,
-    ) => applyWorkspaceImport(environment, projects, input),
+    [WS_METHODS.projectsEnvironmentRead]: (input: ProjectEnvironmentReadInput) =>
+      environment
+        .read(input)
+        .pipe(
+          Effect.flatMap((result) =>
+            input.threadId === undefined
+              ? Effect.succeed(result)
+              : threadRepositories
+                  .read(input.projectId, input.threadId)
+                  .pipe(Effect.map((thread) => (thread === null ? result : { ...result, thread }))),
+          ),
+        ),
+    // The thread's "Add repository" runs the agent tool's own add, then reads the thread again.
+    [WS_METHODS.projectsEnvironmentPrepare]: (input: ProjectEnvironmentPrepareInput) =>
+      input.mode !== "thread_add"
+        ? environment.prepare(input)
+        : threadRepositories.add(input).pipe(
+            Effect.andThen(environment.read({ projectId: input.projectId, discover: true })),
+            Effect.flatMap((result) =>
+              threadRepositories
+                .read(input.projectId, input.threadId!)
+                .pipe(Effect.map((thread) => (thread === null ? result : { ...result, thread }))),
+            ),
+          ),
+    // Importing a SpecWeave repository list is gone: the folder's repositories are found on
+    // the read. An older client that still calls these is told so.
+    [WS_METHODS.projectsEnvironmentImportPreview]: (input: { readonly projectId: ProjectId }) =>
+      Effect.fail(importRemoved(input.projectId)),
+    [WS_METHODS.projectsEnvironmentImport]: (input: { readonly projectId: ProjectId }) =>
+      Effect.fail(importRemoved(input.projectId)),
     [WS_METHODS.projectsUsageRead]: usage.read,
     [WS_METHODS.projectsSkillsRead]: skills.read,
     [WS_METHODS.projectsWorkspaceRead]: workspace.readWorkspace,

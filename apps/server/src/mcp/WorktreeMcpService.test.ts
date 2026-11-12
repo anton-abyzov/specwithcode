@@ -1120,6 +1120,18 @@ describe("studio_worktree_add_repository", () => {
     });
   });
 
+  it.effect("names the fix when the thread works in the project folder", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runAddRepository(harness, "repositories/acme/api"));
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "not_in_worktree",
+        message: expect.stringContaining("studio_worktree_handoff"),
+      });
+    });
+  });
+
   it.effect("fails when the worktree capability is missing", () => {
     const harness = makeHarness({ capabilities: new Set(["preview"]) });
     return Effect.gen(function* () {

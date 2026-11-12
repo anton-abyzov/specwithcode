@@ -1,7 +1,7 @@
 /**
- * Once a project is added, says which workspace suits its folder: the current
- * checkout for an umbrella or several service clones, worktrees for one Git
- * repository. It reads the project's own folder check and changes no setting.
+ * Once a project is added, says which workspace suits its folder: worktrees
+ * for one Git repository or a folder of several, the folder itself when it
+ * holds none. It reads the project's own folder check and changes no setting.
  *
  * @module workspaceGuidanceToast
  */
@@ -25,7 +25,7 @@ export async function announceWorkspaceGuidance(
       title: guidance.title,
       description:
         guidance.recommended === "local"
-          ? `${guidance.detail} Keep Project settings > Use worktrees off.`
+          ? guidance.detail
           : `${guidance.detail} Turn on Project settings > Use worktrees to give every thread, including the coordinator's, its own worktree.`,
     }),
   );

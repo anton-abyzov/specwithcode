@@ -88,7 +88,7 @@ import {
   launchWorkspaceDefault,
   NO_BRANCH_WORKTREE_NOTICE,
   projectUsesWorktrees,
-  UMBRELLA_WORKTREE_NOTICE,
+  EMPTY_THREAD_FOLDER_NOTICE,
   incrementWorktreeSetRepositories,
   worktreeSetNotice,
   WORKTREE_OFF_NOTICE,
@@ -275,10 +275,18 @@ const projectLaunchWorkspace = Effect.fn("mcp.projectLaunchWorkspace")(function*
       }),
     };
   }
-  // An umbrella's own repository leaves its child checkouts out, so a worktree
-  // of it would hold none of their code.
+  // An umbrella's own repository leaves its child checkouts out, so the thread
+  // starts in its own empty folder and adds the repositories it changes.
   if (separateClones)
-    return { strategy: { type: "root" as const }, notice: UMBRELLA_WORKTREE_NOTICE };
+    return {
+      strategy: {
+        type: "worktree" as const,
+        baseRef: "HEAD",
+        startFromOrigin: resolved.settings.newWorktreesStartFromOrigin,
+        repositories: [] as ReadonlyArray<string>,
+      },
+      notice: EMPTY_THREAD_FOLDER_NOTICE,
+    };
   const status = yield* readStatus;
   const strategy = launchWorkspaceDefault({
     resolved,

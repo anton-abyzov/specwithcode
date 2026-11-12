@@ -20,7 +20,7 @@ beforeEach(() => {
 });
 
 describe("workspace guidance after adding a project", () => {
-  it("advises the current checkout for an umbrella of clones", async () => {
+  it("advises worktrees for an umbrella of clones", async () => {
     await announceWorkspaceGuidance(
       checked({
         ...base,
@@ -35,8 +35,8 @@ describe("workspace guidance after adding a project", () => {
     expect(toast.add).toHaveBeenCalledOnce();
     expect(toast.add.mock.lastCall?.[0]).toMatchObject({
       type: "info",
-      title: "Multi-repository folder: current checkout recommended",
-      description: expect.stringContaining("Keep Project settings > Use worktrees off."),
+      title: "Several repositories: worktrees recommended",
+      description: expect.stringContaining("a worktree of only the repositories it changes"),
     });
   });
 

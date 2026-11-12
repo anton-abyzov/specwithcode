@@ -3,6 +3,8 @@ import type {
   EnvironmentMachineKind,
   VcsRef,
   ProjectId,
+  ProjectFoundRepository,
+  ThreadRepositories,
   WorktreeSubmodules,
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
@@ -338,3 +340,173 @@ export function shouldIncludeBranchPickerItem(input: {
     lowerItemValue.includes(sanitizedQuery)
   );
 }
+
+/** One repository a thread holds, as the server's environment read reports it. */
+type HeldRepository = ThreadRepositories["repositories"][number];
+
+/** The chip on the thread: how many repositories it holds, or that it has none yet. */
+export function threadRepositoriesCountLabel(count: number): string {
+  return count === 0 ? "No repository yet" : count === 1 ? "1 repository" : `${count} repositories`;
+}
+
+/** The thread's header line: `fix/environment-list · 2 repositories`. */
+export function threadRepositoriesLabel(branch: string | null, count: number): string {
+  const label = threadRepositoriesCountLabel(count);
+  return branch === null || count === 0 ? label : `${branch} · ${label}`;
+}
+
+/** `worktree from origin/main · dependencies installed`. */
+export function threadRepositoryLine(repository: HeldRepository): string {
+  const from = repository.baseRef === null ? "worktree" : `worktree from ${repository.baseRef}`;
+  return `${from} · dependencies ${repository.dependencies === "installed" ? "installed" : "not installed"}`;
+}
+
+/** The repositories the thread does not hold yet, for "Add repository". */
+export function addableThreadRepositories(
+  found: ReadonlyArray<ProjectFoundRepository> | undefined,
+  thread: ThreadRepositories,
+): ReadonlyArray<ProjectFoundRepository> {
+  if (found === undefined || thread.repositories.length >= thread.limit) return [];
+  const held = new Set(thread.repositories.map((repository) => repository.repository));
+  return found.filter((row) => row.state === "available" && !held.has(row.path));
+}
+
+/** The pull request of a held repository: the thread's link whose repository is its origin. */
+export function threadRepositoryPullRequest<Link extends { readonly repository: string }>(
+  repository: HeldRepository,
+  found: ReadonlyArray<ProjectFoundRepository> | undefined,
+  pullRequests: ReadonlyArray<Link> | undefined,
+): Link | null {
+  const origin = found?.find((row) => row.path === repository.repository)?.origin?.toLowerCase();
+  if (origin === undefined || origin === null) return null;
+  return pullRequests?.find((link) => link.repository.toLowerCase() === origin) ?? null;
+}
+
+export type ThreadRepositoryEvent =
+  | { readonly kind: "started-empty"; readonly id: string; readonly at: null }
+  | {
+      readonly kind: "added";
+      readonly id: string;
+      readonly at: string | null;
+      readonly by: "agent" | "user";
+      readonly name: string;
+      readonly branch: string | null;
+      readonly baseRef: string | null;
+      readonly dependencies: HeldRepository["dependencies"];
+    };
+
+/**
+ * What the timeline says about the thread's repositories: that it started with
+ * none (every repository it holds was added later), and each one added since,
+ * oldest first. A thread whose repositories came with its launch says nothing.
+ */
+export function threadRepositoryEvents(
+  thread: ThreadRepositories | undefined,
+): ReadonlyArray<ThreadRepositoryEvent> {
+  if (thread === undefined) return [];
+  const added = thread.repositories.filter((repository) => repository.addedBy !== null);
+  if (added.length !== thread.repositories.length) return [];
+  return [
+    { kind: "started-empty", id: "thread-repositories:started", at: null },
+    ...added
+      .toSorted((left, right) => (left.addedAt ?? "").localeCompare(right.addedAt ?? ""))
+      .map((repository) => ({
+        kind: "added" as const,
+        id: `thread-repositories:${repository.relativePath}`,
+        at: repository.addedAt,
+        by: repository.addedBy!,
+        name: repository.name,
+        branch: thread.branch,
+        baseRef: repository.baseRef,
+        dependencies: repository.dependencies,
+      })),
+  ];
+}
+
+/** The two lines of a repository row in the timeline. */
+export function threadRepositoryEventText(event: ThreadRepositoryEvent): {
+  readonly title: string;
+  readonly name: string | null;
+  readonly detail: string;
+} {
+  if (event.kind === "started-empty")
+    return {
+      title: "Started in its own folder with no repository.",
+      name: null,
+      detail: "The agent reads the project folder and adds a repository before changing it.",
+    };
+  const on = event.branch === null ? "Worktree" : `Worktree on ${event.branch}`;
+  return {
+    title: event.by === "agent" ? "Agent added" : "You added",
+    name: event.name,
+    detail: `${on}${event.baseRef === null ? "" : ` from ${event.baseRef}`}. Dependencies ${event.dependencies === "installed" ? "installed" : "not installed"}.`,
+  };
+}
+
+/** The composer's repository pick for one draft: none picked means the agent decides. */
+export interface ComposerRepositoryPick {
+  /** Paths relative to the project folder. */
+  readonly repositories: ReadonlyArray<string>;
+  /** With exactly one repository: the branch of it to start from. */
+  readonly baseBranch: string | null;
+}
+
+export const AGENT_DECIDES: ComposerRepositoryPick = { repositories: [], baseBranch: null };
+
+/** Check or uncheck one repository. The base branch resets to the single pick's current branch. */
+export function toggleComposerRepository(
+  pick: ComposerRepositoryPick,
+  relativePath: string,
+  found: ReadonlyArray<ProjectFoundRepository>,
+): ComposerRepositoryPick {
+  const order = found.map((row) => row.relativePath);
+  const repositories = (
+    pick.repositories.includes(relativePath)
+      ? pick.repositories.filter((path) => path !== relativePath)
+      : [...pick.repositories, relativePath]
+  ).toSorted((left, right) => order.indexOf(left) - order.indexOf(right));
+  const only =
+    repositories.length === 1 ? found.find((row) => row.relativePath === repositories[0]) : null;
+  return { repositories, baseBranch: only?.branch ?? only?.defaultBranch ?? null };
+}
+
+/** `Repositories: Agent decides`, `Repositories: api`, `Repositories: 3 picked`. */
+export function composerRepositoriesLabel(
+  pick: ComposerRepositoryPick,
+  found: ReadonlyArray<ProjectFoundRepository>,
+): string {
+  if (pick.repositories.length === 0) return "Repositories: Agent decides";
+  if (pick.repositories.length === 1)
+    return `Repositories: ${found.find((row) => row.relativePath === pick.repositories[0])?.name ?? pick.repositories[0]}`;
+  return `Repositories: ${pick.repositories.length} picked`;
+}
+
+/** What the launch sends for a pick: nothing when the agent decides. */
+export function composerRepositoryLaunch(pick: ComposerRepositoryPick | null): {
+  readonly repositories?: ReadonlyArray<string>;
+  readonly repositoryBaseBranch?: string;
+} {
+  if (pick === null || pick.repositories.length === 0) return {};
+  return {
+    repositories: pick.repositories,
+    ...(pick.repositories.length === 1 && pick.baseBranch !== null
+      ? { repositoryBaseBranch: pick.baseBranch }
+      : {}),
+  };
+}
+
+// Picks live for the page's lifetime, keyed by the draft's thread: never saved, never remembered.
+const composerPicks = new Map<string, ComposerRepositoryPick>();
+const composerPickListeners = new Set<() => void>();
+export const composerRepositoryPicks = {
+  get: (threadId: string): ComposerRepositoryPick => composerPicks.get(threadId) ?? AGENT_DECIDES,
+  set(threadId: string, pick: ComposerRepositoryPick) {
+    if (pick.repositories.length === 0) composerPicks.delete(threadId);
+    else composerPicks.set(threadId, pick);
+    for (const listener of composerPickListeners) listener();
+  },
+  subscribe(listener: () => void) {
+    composerPickListeners.add(listener);
+    return () => void composerPickListeners.delete(listener);
+  },
+};

@@ -50,7 +50,10 @@ import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { projectWorktreesAgreement, projectWorktreesSummary } from "./newProjectWorktrees";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { worktreesSettingRecommendation } from "../../lib/folderLayoutGuidance";
+import {
+  worktreesCutFromLayout,
+  worktreesSettingRecommendation,
+} from "../../lib/folderLayoutGuidance";
 import { useProjectFolderCheck } from "../../studio/useProjectFolderHealth";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -954,7 +957,12 @@ export function NewProjectWorktreesSetting() {
  * The project's Use worktrees switch. Settings > Projects and the project's
  * own General tab both render this row, over the same project-scoped setting.
  */
-export function UseWorktreesSetting() {
+export function UseWorktreesSetting({
+  onOpenRepositories,
+}: {
+  /** Opens Environment > Repositories, where the project's repositories are listed. */
+  onOpenRepositories?: (() => void) | undefined;
+} = {}) {
   const tx = useTx();
   const { scope, target } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
@@ -988,11 +996,34 @@ export function UseWorktreesSetting() {
           {tx(
             "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.",
           )}
+          {folderLayout ? (
+            <span className="mt-1 block" data-worktrees-cut-from="">
+              {worktreesCutFromLayout(folderLayout)}{" "}
+              {onOpenRepositories ? (
+                <button type="button" className="underline" onClick={onOpenRepositories}>
+                  Repositories
+                </button>
+              ) : null}
+            </span>
+          ) : null}
           {worktreesRecommendation ? (
             <span className="mt-1 block text-foreground" data-workspace-recommendation="">
-              {worktreesRecommendation.on
-                ? tx("Recommended here: on")
-                : `${tx("Recommended here: off")}. ${worktreesRecommendation.detail ?? ""}`.trim()}
+              {worktreesRecommendation.text}{" "}
+              {/* The only prompt when the switch and the folder disagree: no toast, badge or banner. */}
+              {!mixedWorkspace && worktreesRecommendation.on !== projectUsesWorktrees ? (
+                <button
+                  type="button"
+                  className="underline"
+                  data-use-recommended=""
+                  onClick={() =>
+                    updateSettings({
+                      defaultThreadEnvMode: worktreesRecommendation.on ? "worktree" : "local",
+                    })
+                  }
+                >
+                  Use recommended
+                </button>
+              ) : null}
             </span>
           ) : null}
         </>
@@ -1017,4 +1048,34 @@ export function UseWorktreesSetting() {
       }
     />
   );
+}
+
+/**
+ * The project's Use worktrees switch for a host that offers to flip it (the
+ * folder Check) or names it (Environment). Must render under the project's
+ * settings scope. `on` is null while the selected checkouts disagree.
+ */
+export function useProjectWorktreesSwitch(): {
+  readonly on: boolean | null;
+  readonly set: (on: boolean) => void;
+} {
+  const { target } = useSettingsScope();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["defaultThreadEnvMode"]);
+  return {
+    on: mixed
+      ? null
+      : target?.sources.defaultThreadEnvMode === "project" &&
+        target.settings.defaultThreadEnvMode === "worktree",
+    set: (on) => updateSettings({ defaultThreadEnvMode: on ? "worktree" : "local" }),
+  };
+}
+
+/** Renders `children` with the project's switch; see `useProjectWorktreesSwitch`. */
+export function WithProjectWorktreesSwitch({
+  children,
+}: {
+  children: (state: ReturnType<typeof useProjectWorktreesSwitch>) => React.ReactNode;
+}) {
+  return children(useProjectWorktreesSwitch());
 }

@@ -321,6 +321,7 @@ import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { ThreadRepositoryEventRows, useThreadRepositoryEvents } from "./ThreadRepositories";
 import {
   ContextChipPopover as UserMessageContextPopover,
   ContextChipShell,
@@ -1131,6 +1132,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
   }, [latestRun, timelineDetail]);
 
+  const threadRepositoryEvents = useThreadRepositoryEvents(timelineShell);
   const rawRows = useTimelineRowsProjection(listIdentityKey, workspaceRoot, {
     timelineEntries,
     latestRun,
@@ -1144,6 +1146,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     turnDiffSummaries,
     supportsConversationRollback,
     worktreeSetup,
+    threadRepositoryEvents,
     timelineDetail,
   });
   const stableRows = useStableRows(rawRows, listIdentityKey);
@@ -2290,6 +2293,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.message.role === "assistant" &&
                   !row.showAssistantMeta) ||
                 row.kind === "worktree-setup" ||
+                row.kind === "thread-repositories" ||
                 row.kind === "event" ||
                 row.kind === "attempt-fold" ||
                 row.kind === "html-render"
@@ -2351,6 +2355,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
+      {row.kind === "thread-repositories" ? (
+        <ThreadRepositoryEventRows events={row.events} />
+      ) : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
     </div>
   );
@@ -5979,6 +5986,7 @@ type TimelineRowsInput = Required<
     | "turnDiffSummaries"
     | "supportsConversationRollback"
     | "worktreeSetup"
+    | "threadRepositoryEvents"
     | "timelineDetail"
   >
 >;
@@ -6008,6 +6016,7 @@ function useTimelineRowsProjection(
     turnDiffSummaries,
     supportsConversationRollback,
     worktreeSetup,
+    threadRepositoryEvents,
     timelineDetail,
   } = input;
   return useMemo(() => {
@@ -6026,6 +6035,7 @@ function useTimelineRowsProjection(
         turnDiffSummaries,
         supportsConversationRollback,
         worktreeSetup,
+        threadRepositoryEvents,
         timelineDetail,
       },
       previous?.threadKey === threadKey && previous.workspaceRoot === workspaceRoot
@@ -6050,6 +6060,7 @@ function useTimelineRowsProjection(
     turnDiffSummaries,
     supportsConversationRollback,
     worktreeSetup,
+    threadRepositoryEvents,
     timelineDetail,
   ]);
 }

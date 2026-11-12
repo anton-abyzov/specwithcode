@@ -1,4 +1,4 @@
-import { EnvironmentId, type VcsRef } from "@specweave-studio/contracts";
+import { EnvironmentId, type ThreadRepositories, type VcsRef } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
@@ -21,6 +21,17 @@ import {
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  addableThreadRepositories,
+  AGENT_DECIDES,
+  composerRepositoriesLabel,
+  composerRepositoryLaunch,
+  composerRepositoryPicks,
+  toggleComposerRepository,
+  threadRepositoriesLabel,
+  threadRepositoryEvents,
+  threadRepositoryEventText,
+  threadRepositoryLine,
+  threadRepositoryPullRequest,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -913,5 +924,155 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("thread repositories", () => {
+  const held = (overrides: Partial<ThreadRepositories["repositories"][number]> = {}) => ({
+    relativePath: "repositories/acme/api",
+    name: "api",
+    path: "/threads/t/repositories/acme/api",
+    repository: "/work/repositories/acme/api",
+    baseRef: "origin/main",
+    addedBy: "agent" as const,
+    addedAt: "2026-11-12T10:00:00.000Z",
+    dependencies: "not_installed" as const,
+    changed: false,
+    ...overrides,
+  });
+  const thread = (repositories: ThreadRepositories["repositories"]): ThreadRepositories => ({
+    folder: "/threads/t",
+    branch: "fix/environment-list",
+    repositories,
+    limit: 8,
+  });
+  const found = (name: string, state: "available" | "absent" = "available") =>
+    ({
+      relativePath: `repositories/acme/${name}`,
+      path: `/work/repositories/acme/${name}`,
+      name,
+      origin: `acme/${name}`,
+      state,
+    }) as never;
+
+  it("labels the thread by branch and count", () => {
+    expect(threadRepositoriesLabel("fix/environment-list", 2)).toBe(
+      "fix/environment-list · 2 repositories",
+    );
+    expect(threadRepositoriesLabel("fix/environment-list", 1)).toBe(
+      "fix/environment-list · 1 repository",
+    );
+    expect(threadRepositoriesLabel("fix/environment-list", 0)).toBe("No repository yet");
+    expect(threadRepositoryLine(held())).toBe(
+      "worktree from origin/main · dependencies not installed",
+    );
+    expect(threadRepositoryLine(held({ baseRef: null, dependencies: "installed" }))).toBe(
+      "worktree · dependencies installed",
+    );
+  });
+
+  it("offers only repositories the thread does not hold, up to its limit", () => {
+    const rows = [found("api"), found("web"), found("docs", "absent")];
+    expect(addableThreadRepositories(rows, thread([held()])).map((row) => row.name)).toEqual([
+      "web",
+    ]);
+    // An older server sends no list: nothing to add.
+    expect(addableThreadRepositories(undefined, thread([]))).toEqual([]);
+    expect(addableThreadRepositories(rows, { ...thread([held()]), limit: 1 })).toEqual([]);
+    expect(
+      threadRepositoryPullRequest(held(), rows, [
+        { repository: "Acme/API", number: 7, url: "u" },
+        { repository: "acme/web", number: 8, url: "v" },
+      ])?.number,
+    ).toBe(7);
+    expect(threadRepositoryPullRequest(held(), rows, [])).toBeNull();
+  });
+
+  it("tells the timeline how the thread got its repositories", () => {
+    expect(threadRepositoryEvents(undefined)).toEqual([]);
+    const empty = threadRepositoryEvents(thread([]));
+    expect(empty.map(threadRepositoryEventText)).toEqual([
+      {
+        title: "Started in its own folder with no repository.",
+        name: null,
+        detail: "The agent reads the project folder and adds a repository before changing it.",
+      },
+    ]);
+    const events = threadRepositoryEvents(
+      thread([
+        held({
+          name: "web",
+          relativePath: "repositories/acme/web",
+          addedBy: "user",
+          addedAt: "2026-11-12T11:00:00.000Z",
+          baseRef: "main",
+          dependencies: "installed",
+        }),
+        held(),
+      ]),
+    );
+    expect(events.map(threadRepositoryEventText).slice(1)).toEqual([
+      {
+        title: "Agent added",
+        name: "api",
+        detail: "Worktree on fix/environment-list from origin/main. Dependencies not installed.",
+      },
+      {
+        title: "You added",
+        name: "web",
+        detail: "Worktree on fix/environment-list from main. Dependencies installed.",
+      },
+    ]);
+    // Repositories that came with the launch are not "added".
+    expect(threadRepositoryEvents(thread([held({ addedBy: null, addedAt: null })]))).toEqual([]);
+  });
+});
+
+describe("composer repositories", () => {
+  const found = [
+    { relativePath: "repositories/a/api", name: "api", branch: "main", defaultBranch: "main" },
+    { relativePath: "repositories/a/web", name: "web", branch: null, defaultBranch: "trunk" },
+  ] as never[];
+
+  it("lets the agent decide until a repository is checked", () => {
+    expect(composerRepositoriesLabel(AGENT_DECIDES, found)).toBe("Repositories: Agent decides");
+    expect(composerRepositoryLaunch(AGENT_DECIDES)).toEqual({});
+    expect(composerRepositoryLaunch(null)).toEqual({});
+  });
+
+  it("sends the picked repositories, and a base branch only for exactly one", () => {
+    const web = toggleComposerRepository(AGENT_DECIDES, "repositories/a/web", found);
+    // No branch checked out: the base is its default branch.
+    expect(web).toEqual({ repositories: ["repositories/a/web"], baseBranch: "trunk" });
+    expect(composerRepositoriesLabel(web, found)).toBe("Repositories: web");
+    expect(composerRepositoryLaunch({ ...web, baseBranch: "release" })).toEqual({
+      repositories: ["repositories/a/web"],
+      repositoryBaseBranch: "release",
+    });
+    const both = toggleComposerRepository(
+      { ...web, baseBranch: "release" },
+      "repositories/a/api",
+      found,
+    );
+    expect(both).toEqual({
+      repositories: ["repositories/a/api", "repositories/a/web"],
+      baseBranch: null,
+    });
+    expect(composerRepositoriesLabel(both, found)).toBe("Repositories: 2 picked");
+    expect(composerRepositoryLaunch(both)).toEqual({ repositories: both.repositories });
+    // Back to one: the base resets to that repository's current branch.
+    expect(toggleComposerRepository(both, "repositories/a/web", found)).toEqual({
+      repositories: ["repositories/a/api"],
+      baseBranch: "main",
+    });
+  });
+
+  it("holds a pick per draft and forgets it when cleared", () => {
+    const pick = { repositories: ["repositories/a/api"], baseBranch: "main" };
+    composerRepositoryPicks.set("draft-1", pick);
+    expect(composerRepositoryPicks.get("draft-1")).toBe(pick);
+    expect(composerRepositoryPicks.get("draft-2")).toBe(AGENT_DECIDES);
+    composerRepositoryPicks.set("draft-1", AGENT_DECIDES);
+    expect(composerRepositoryPicks.get("draft-1")).toBe(AGENT_DECIDES);
   });
 });

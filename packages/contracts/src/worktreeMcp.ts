@@ -135,6 +135,23 @@ export const WorktreeMcpAddRepositoryResult = Schema.Struct({
       path: TrimmedNonEmptyString.annotate({ description: "Its worktree in this thread." }),
     }),
   ),
+  baseRef: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "The branch or ref the repository's worktree was cut from.",
+    }),
+  ),
+  dependencies: Schema.optional(
+    Schema.Literals(["installed", "not_installed"]).annotate({
+      description:
+        "Whether the worktree has its dependencies. Adding a repository never installs them.",
+    }),
+  ),
+  alreadyMember: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "True when the thread already had this repository and nothing was added.",
+    }),
+  ),
+  note: Schema.optional(Schema.String),
 });
 export type WorktreeMcpAddRepositoryResult = typeof WorktreeMcpAddRepositoryResult.Type;
 

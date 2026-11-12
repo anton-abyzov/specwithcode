@@ -692,6 +692,65 @@ it.effect("creates a worktree set: one folder, each repository at its path, one 
   }).pipe(Effect.scoped),
 );
 
+it.effect("starts a thread that names no repository in its own empty folder", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-empty-root-")),
+    );
+    NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(root, "repositories/acme/api/.git"), { recursive: true });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const harness = makeHarness({
+      withFileSystem: true,
+      project: { ...project, workspaceRoot: root } as never,
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      // What the composer, a routine or an older client sends: a worktree, no repository.
+      const { threadId } = yield* launches.launch(
+        launchInput({
+          command: "command:launch:empty",
+          thread: "thread:launch:empty",
+          message: "What does the api do?",
+          workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((projection) => projection.thread.branch === "generated-branch")),
+      );
+      const projection = yield* threads.getThreadProjection(threadId);
+      const folder = projection.thread.worktreePath!;
+      assert.notEqual(folder, root);
+      assert.deepEqual(NodeFS.readdirSync(folder), []);
+      assert.deepEqual(
+        JSON.parse(
+          NodeFS.readFileSync(
+            NodePath.join(
+              NodePath.dirname(folder),
+              `.${NodePath.basename(folder)}.worktree-set.json`,
+            ),
+            "utf8",
+          ),
+        ).members,
+        [],
+      );
+      // Nothing is checked out, renamed or set up.
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+      const text = projection.messages[0]?.text ?? "";
+      assert.include(text, "What does the api do?");
+      assert.include(text, "studio_worktree_add_repository");
+      assert.include(text, "- api: repositories/acme/api");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.scoped),
+);
+
 it.effect("enqueues provider work only after setup has been initiated", () =>
   Effect.gen(function* () {
     const setupEntered = yield* Deferred.make<void>();
@@ -1753,6 +1812,79 @@ it.effect("rejects an unknown repository before creating the thread", () =>
       assert.equal(harness.createWorktree.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect("creates the worktree in a clone named by its path in the project folder", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-found-root-")),
+    );
+    const api = NodePath.join(root, "repositories", "acme", "api");
+    NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(api, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(api, "src"), { recursive: true });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    // Nothing is saved in Environment: the clone is found in the folder.
+    const harness = makeHarness({ project: { ...project, workspaceRoot: root } as never });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const worktree = (repository: string) => ({
+        type: "worktree" as const,
+        baseRef: "origin/main",
+        branch: `fix/${repository.replaceAll(/[^a-z]/gu, "") || "root"}`,
+        startFromOrigin: false,
+        repository,
+      });
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:found-repository",
+          thread: "thread:launch:found-repository",
+          message: "Fix the api",
+          workspace: worktree("repositories/acme/api"),
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(launched.threadId)
+          .pipe(Effect.map((current) => current.thread.worktreePath !== null)),
+      );
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0].cwd, api);
+      // "." is the project folder's own repository.
+      const own = yield* launches.launch(
+        launchInput({
+          command: "command:launch:own-repository",
+          thread: "thread:launch:own-repository",
+          message: "Fix the root",
+          workspace: worktree("."),
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(own.threadId)
+          .pipe(Effect.map((current) => current.thread.worktreePath !== null)),
+      );
+      assert.equal(harness.createWorktree.mock.calls[1]?.[0].cwd, root);
+      // A folder inside a clone is not a repository: refused with the names that are.
+      const error = yield* launches
+        .launch(
+          launchInput({
+            command: "command:launch:inside-repository",
+            thread: "thread:launch:inside-repository",
+            workspace: worktree("repositories/acme/api/src"),
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.equal(error.operation, "resolve-repository");
+      assert.include(
+        String(error.cause),
+        "Repositories in the project folder, by path: ., repositories/acme/api.",
+      );
+      assert.equal(harness.createWorktree.mock.calls.length, 2);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.scoped),
 );
 
 it.effect("rejects a repository on a project without environment repositories", () =>
