@@ -186,6 +186,7 @@ import { CoordinatorBlockedNotice } from "./CoordinatorBlockedNotice";
 import { type OrchestratorCopy, workersOnlyProblem } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
+import { useClaimWindowMachine } from "../../studio/windowMachine";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
@@ -282,6 +283,8 @@ export function ProjectWorkspaceSurface({
   const environment = useEnvironment(project.environmentId);
   const machineName = useMachineNickname(project.environmentId, environment?.label);
   const machineIdentity = useMachineIdentity(project.environmentId, environment?.label);
+  // The window's top edge follows the machine this coordinator runs on.
+  useClaimWindowMachine(project.environmentId, "project");
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canOperate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
   // "Read-only" only once the host has answered; before that the grant is still loading.

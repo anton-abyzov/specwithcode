@@ -50,9 +50,22 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
 }
 
 /**
- * Cards worth showing, most recently active first as the server sends them: a
- * worker whose coordinator thread is gone is not this page's. Under the Threads
- * pane's machine filter (a machine's environment id) only that machine's workers show.
+ * Whether a worker still asks for a place above the Threads pane groups: it is starting,
+ * running (or its machine stopped answering mid-run), waiting on the person, or its start
+ * was never confirmed. A finished one is history: its thread is listed on its own machine,
+ * and the coordinator conversation keeps its card under the reply that started it.
+ */
+export function remoteWorkerNeedsPlace(worker: StudioFleetRemoteWorker): boolean {
+  if (worker.state === "launch_unknown") return true;
+  const { tone } = remoteWorkerCardStatus(worker);
+  return tone === "working" || tone === "waiting" || tone === "unknown";
+}
+
+/**
+ * Cards worth showing in the Threads pane, most recently active first as the server sends
+ * them: only workers that still need a place ({@link remoteWorkerNeedsPlace}), and not one
+ * whose thread the list already shows. Under the pane's machine filter (a machine's
+ * environment id) only that machine's workers show.
  */
 export function visibleRemoteWorkers(
   workers: ReadonlyArray<StudioFleetRemoteWorker>,
@@ -61,7 +74,7 @@ export function visibleRemoteWorkers(
 ): ReadonlyArray<StudioFleetRemoteWorker> {
   return workers.filter(
     (worker) =>
-      worker.state !== "disposed" &&
+      remoteWorkerNeedsPlace(worker) &&
       (machineFilter === null || worker.environmentId === machineFilter) &&
       (worker.state === "paused_auth" ||
         !representedThreads.some(
@@ -71,7 +84,6 @@ export function visibleRemoteWorkers(
   );
 }
 
-/** A conversation message as far as placing a worker card goes. */
 /**
  * Whether this browser can open the worker's thread: it reaches the worker's machine,
  * which shows as that machine's threads having loaded here. The live list leaves out
@@ -87,6 +99,7 @@ export function remoteWorkerReachableHere(
   );
 }
 
+/** A conversation message as far as placing a worker card goes. */
 export interface RemoteWorkerAnchorMessage {
   readonly id: string;
   readonly role: string;

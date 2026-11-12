@@ -39,15 +39,18 @@ export function RemoteWorkerCards({
     intervalMs: REMOTE_WORKERS_REFRESH_MS,
   });
   const visible = visibleRemoteWorkers(workers, representedThreads, machineFilter);
-  return <RemoteWorkerCardList workers={visible} />;
+  return <RemoteWorkerCardList workers={visible} placement="pane" />;
 }
 
 /** These workers' cards, each opening its thread when this browser reaches that machine. */
 export function RemoteWorkerCardList({
   workers,
   onOpenThread,
+  placement = "conversation",
 }: {
   workers: ReadonlyArray<StudioFleetRemoteWorker>;
+  /** In the Threads pane every card spans the list as one row; in a conversation it fits its words. */
+  placement?: "pane" | "conversation";
   /** Opens the thread beside the coordinator; without one it opens full page. */
   onOpenThread?: (threadId: ThreadId, environmentId: EnvironmentId) => void;
 }) {
@@ -62,7 +65,11 @@ export function RemoteWorkerCardList({
   });
   if (named.length === 0) return null;
   return (
-    <ul className="sws-thread-cards" aria-label="Workers on other machines">
+    <ul
+      className="sws-thread-cards"
+      data-placement={placement}
+      aria-label="Workers on other machines"
+    >
       {named.map((worker) => {
         const reachableHere = remoteWorkerReachableHere(worker, threads);
         return (
@@ -115,11 +122,7 @@ export function RemoteWorkerCard({
         <Tip label={title} side="top">
           <span className="sws-thread-card-title">{title}</span>
         </Tip>
-        <span
-          className="sws-machine-chip"
-          data-machine={worker.machineId}
-          title={worker.machineLabel}
-        >
+        <span className="sws-machine-chip" data-machine={worker.machineId}>
           <LaptopIcon aria-hidden />
           <span className="min-w-0 truncate">{worker.machineLabel}</span>
         </span>
