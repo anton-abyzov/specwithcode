@@ -118,6 +118,20 @@ describe("splitSharedServerPatch", () => {
       defaultThreadEnvMode: "worktree",
     });
   });
+
+  it("keeps the update pause choice on the machine it was set on", () => {
+    // Each machine's owner decides whether updates may pause work there.
+    expect(splitSharedServerPatch({ pauseWorkForUpdates: true })).toEqual({
+      sharedPatch: {},
+      localPatch: { pauseWorkForUpdates: true },
+    });
+    expect(
+      pickSharedServerSettings(
+        { ...DEFAULT_SERVER_SETTINGS, pauseWorkForUpdates: true },
+        restartCapabilities,
+      ),
+    ).not.toHaveProperty("pauseWorkForUpdates");
+  });
 });
 
 describe("pickSharedServerSettings", () => {
