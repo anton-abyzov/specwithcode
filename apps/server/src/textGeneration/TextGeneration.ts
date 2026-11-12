@@ -242,7 +242,14 @@ export const make = Effect.gen(function* () {
     input: { modelSelection: ModelSelection; cwd: string },
   ) =>
     refuseByTeamRules(operation, input).pipe(
-      Effect.andThen(capacity.assertNativeStart(input.modelSelection.instanceId, input.cwd)),
+      Effect.andThen(
+        capacity.assertNativeStart(
+          input.modelSelection.instanceId,
+          input.cwd,
+          undefined,
+          input.modelSelection.model,
+        ),
+      ),
       Effect.mapError((error) => new TextGenerationError({ operation, detail: error.detail })),
       Effect.flatMap(() => resolveInstance(registry, operation, input.modelSelection.instanceId)),
     );

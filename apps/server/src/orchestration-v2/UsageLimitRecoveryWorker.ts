@@ -373,7 +373,12 @@ export const makeSweep = Effect.gen(function* () {
       const stopMs = limitStopMs(thread);
       const own = (providers: ReadonlyArray<ServerProvider>) =>
         providers.find((provider) => provider.instanceId === thread.providerInstanceId);
-      const cached = limitReadShowsRoom(own(yield* registry.value.getProviders), stopMs, nowMs);
+      const cached = limitReadShowsRoom(
+        own(yield* registry.value.getProviders),
+        stopMs,
+        nowMs,
+        thread.model,
+      );
       if (cached !== "check") return cached === "room";
       const last = (yield* Ref.get(refreshedAt)).get(thread.id);
       if (last !== undefined && nowMs - last >= 0 && nowMs - last < LIMIT_CHECK_INTERVAL_MS)
@@ -392,7 +397,12 @@ export const makeSweep = Effect.gen(function* () {
       );
       return (
         Option.isSome(refreshed) &&
-        limitReadShowsRoom(own(refreshed.value), stopMs, yield* Clock.currentTimeMillis) === "room"
+        limitReadShowsRoom(
+          own(refreshed.value),
+          stopMs,
+          yield* Clock.currentTimeMillis,
+          thread.model,
+        ) === "room"
       );
     });
   // When each instance was last read for a subscription change.
@@ -413,7 +423,8 @@ export const makeSweep = Effect.gen(function* () {
         providers.find((provider) => provider.instanceId === thread.providerInstanceId);
       const withRoom = (provider: ServerProvider | undefined, atMs: number) => {
         const changedMs = Date.parse(provider?.usageLimits?.accountChangedAt ?? "");
-        return Number.isFinite(changedMs) && accountChangeShowsRoom(provider, stopMs, atMs)
+        return Number.isFinite(changedMs) &&
+          accountChangeShowsRoom(provider, stopMs, atMs, thread.model)
           ? changedMs
           : null;
       };

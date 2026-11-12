@@ -193,7 +193,11 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
-> & { readonly pendingRuntimeRequest: PendingLimitRecoveryRequest | null };
+> & {
+  readonly pendingRuntimeRequest: PendingLimitRecoveryRequest | null;
+  /** The model the stopped thread runs on, so a model weekly counts only for it. */
+  readonly model?: string | undefined;
+};
 
 /** The thread fields pull request sync reads, for a thread with at least one link. */
 export type ProjectionThreadPullRequests = Pick<
@@ -4156,6 +4160,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           candidates.push({
             id: thread.id,
             providerInstanceId: thread.providerInstanceId,
+            model: thread.modelSelection.model,
             status: "failed",
             lastErrorClass: summary.lastErrorClass,
             usageLimitResetAt: summary.usageLimitResetAt,

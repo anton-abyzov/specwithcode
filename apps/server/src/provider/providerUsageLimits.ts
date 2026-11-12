@@ -250,6 +250,30 @@ export function nativeDenialResetPassed(
 }
 
 /**
+ * A Claude denial recorded for a rejected model weekly (Fable) and nothing
+ * else: it lapses exactly when a spent model weekly it carries resets, and no
+ * account-wide window it carries is spent. Rejections of a model weekly were
+ * recorded as account-wide denials before the weekly's row refused its model
+ * by itself; this recognizes those records.
+ */
+export function scopedDenial(
+  limits: Pick<ServerProviderUsageLimits, "nativeDenialResetsAt" | "windows">,
+  now: number,
+): boolean {
+  const at = Date.parse(limits.nativeDenialResetsAt ?? "");
+  return (
+    Number.isFinite(at) &&
+    spentAccountWideWindows(limits.windows, now).length === 0 &&
+    limits.windows.some(
+      (window) =>
+        windowModelScope(window) !== null &&
+        window.usedPercent >= 100 &&
+        Date.parse(window.resetsAt ?? "") === at,
+    )
+  );
+}
+
+/**
  * A valid read that keeps the denial but shows an account-wide window still
  * spent moves the lapse to that window's reset; one without a reset means
  * the denial no longer lapses on its own.
@@ -404,19 +428,16 @@ export function resolveUsageLimitsAfterProbe(input: {
       published.nativeCreditDenialObservedAt === undefined &&
       nativeDenialResetPassed(published, probeAt) &&
       spentAccountWideWindows(probed.windows, probeAt).length === 0;
-    // A model weekly spent in both readings is what a scoped rejection fenced,
-    // so a read that still shows it spent cannot clear that rejection.
-    const stillSpent =
-      probed?.windows.some(
-        (window) =>
-          window.usedPercent >= 100 &&
-          isLiveWindow(window, probeAt) &&
-          published.windows.some(
-            (prior) =>
-              prior.id === window.id && prior.usedPercent >= 100 && isLiveWindow(prior, probeAt),
-          ),
-      ) ?? false;
-    if (!laterValidRead || !(fullRead || resetPassed) || stillSpent) {
+    // A denial that only fenced a model weekly (see scopedDenial) is replaced
+    // by any later valid read with room in every account-wide window: the
+    // weekly's own row refuses that model, and the other models run again.
+    const scopedOnly =
+      laterValidRead &&
+      published.nativeCreditDenialObservedAt === undefined &&
+      published.spendControlReached !== true &&
+      scopedDenial(published, probeAt) &&
+      spentAccountWideWindows(probed.windows, probeAt).length === 0;
+    if (!laterValidRead || !(fullRead || resetPassed || scopedOnly)) {
       const kept = laterValidRead ? carryDenialReset(published, probed, probeAt) : published;
       // An explicit denied route remains a fence even on an older probe.
       if (probed?.nativeRouteVerified === false)

@@ -169,17 +169,19 @@ export function derivedLimitResumeAt(thread: ProjectionLimitRecoveryCandidate): 
  * spent window and no native denial. `wait` is a reset the provider reports
  * still ahead, so nothing is read before it. `check` is anything else: a read
  * from before the stop, or one that shows no room yet, which a later read may
- * settle.
+ * settle. `model` is the stopped thread's: a model weekly (Claude's Fable)
+ * counts only for a thread on that model.
  */
 export function limitReadShowsRoom(
   provider: ServerProvider | undefined,
   stopMs: number,
   nowMs: number,
+  model?: string | null,
 ): "room" | "check" | "wait" {
   if (!provider) return "check";
   const limits = provider.usageLimits;
   const denialResetMs = Date.parse(limits?.nativeDenialResetsAt ?? "");
-  const windowResetMs = usageResetAt(provider, 100, nowMs);
+  const windowResetMs = usageResetAt(provider, 100, nowMs, model);
   if (
     (Number.isFinite(denialResetMs) && denialResetMs > nowMs) ||
     (windowResetMs !== null && windowResetMs > nowMs)
@@ -192,8 +194,8 @@ export function limitReadShowsRoom(
     readAt > stopMs &&
     readAt <= nowMs + 60_000 &&
     canTakeTurn(provider) &&
-    !nativeQuotaDenied(limits, nowMs) &&
-    (providerUsedPercent(provider, nowMs) ?? 0) < 100
+    !nativeQuotaDenied(limits, nowMs, model) &&
+    (providerUsedPercent(provider, nowMs, model) ?? 0) < 100
     ? "room"
     : "check";
 }
@@ -210,6 +212,7 @@ export function accountChangeShowsRoom(
   provider: ServerProvider | undefined,
   stopMs: number,
   nowMs: number,
+  model?: string | null,
 ): boolean {
   const limits = provider?.usageLimits;
   const changedMs = Date.parse(limits?.accountChangedAt ?? "");
@@ -224,7 +227,7 @@ export function accountChangeShowsRoom(
     fullReadMs >= changedMs &&
     Number.isFinite(readMs) &&
     nowMs - readMs <= LIMIT_CHECK_INTERVAL_MS &&
-    limitReadShowsRoom(provider, stopMs, nowMs) === "room"
+    limitReadShowsRoom(provider, stopMs, nowMs, model) === "room"
   );
 }
 

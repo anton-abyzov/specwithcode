@@ -122,8 +122,24 @@ export const layer: Layer.Layer<
           // Negotiated capabilities describe the provider, not the dead
           // process; the newest record still reports what the instance
           // supports after its session stops.
-          const negotiatedCapabilities =
+          const recordedCapabilities =
             currentSession?.capabilities ?? currentSessions[0]?.capabilities;
+          // A session record never takes away a model switch the driver itself
+          // declares: Muse sets the model at turn start whatever the agent listed,
+          // and records saved before that was known still say it cannot.
+          const negotiatedCapabilities =
+            recordedCapabilities !== undefined &&
+            !recordedCapabilities.sessions.supportsModelSwitchInSession &&
+            Option.isSome(currentInstance) &&
+            currentInstance.value.capabilities.sessions.supportsModelSwitchInSession
+              ? {
+                  ...recordedCapabilities,
+                  sessions: {
+                    ...recordedCapabilities.sessions,
+                    supportsModelSwitchInSession: true,
+                  },
+                }
+              : recordedCapabilities;
           // Detaching a process removes its session binding, not its native history.
           const currentProviderThread = projection.providerThreads.find(
             (thread) =>

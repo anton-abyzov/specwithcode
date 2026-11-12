@@ -99,6 +99,8 @@ const start = (input: {
   readonly now: number;
   readonly model?: string;
   readonly refresh?: "same" | "timeout";
+  /** What the status read taken for this start returns, when not the same snapshot. */
+  readonly refreshed?: ServerProvider;
   readonly companion?: "ready" | "unavailable";
   readonly refreshes?: { count: number };
 }) =>
@@ -132,7 +134,9 @@ const start = (input: {
               getProviders: Effect.succeed([input.native]),
               refreshInstance: () => {
                 if (input.refreshes) input.refreshes.count += 1;
-                return input.refresh === "timeout" ? Effect.never : Effect.succeed([input.native]);
+                return input.refresh === "timeout"
+                  ? Effect.never
+                  : Effect.succeed([input.refreshed ?? input.native]);
               },
             }),
             Layer.succeed(HostProcessEnvironment, {}),
@@ -306,33 +310,82 @@ describe("a model-scoped Claude rejection", () => {
     rateLimitType: "seven_day_overage_included",
     resetsAt: 1_793_000_000,
   });
+  // What builds before this one recorded for the same event: the account denied.
+  const legacy = applyUsageLimitsUpdate({
+    previous: probe(probedAt, 99),
+    update: {
+      windows: denied.windows.filter((window) => window.id === "seven_day_fable"),
+      ordinaryUsageAllowed: false,
+      nativeDenialRequiresFullRead: true,
+      rateLimitReachedType: "rate_limit_reached",
+      nativeDenialResetsAt: WEEKLY_RESET,
+    },
+    checkedAt: iso(deniedAt),
+  })!;
 
-  // Start gates do not pass the model yet, so a rejected model weekly still
-  // fences the account, now only until its own reset.
-  it.effect("fences every start until its window resets, naming the model weekly", () =>
+  it.effect("refuses starts on that model only, naming the model weekly", () =>
     Effect.gen(function* () {
-      expect(denied).toMatchObject({
-        ordinaryUsageAllowed: false,
-        nativeDenialRequiresFullRead: true,
-        nativeDenialResetsAt: WEEKLY_RESET,
+      expect(denied.ordinaryUsageAllowed).toBeUndefined();
+      expect(denied.nativeDenialRequiresFullRead).toBeUndefined();
+      expect(denied.windows.find((window) => window.id === "seven_day_fable")).toMatchObject({
+        usedPercent: 100,
+        resetsAt: WEEKLY_RESET,
       });
-      expect(denied.windows.find((window) => window.id === "seven_day_fable")?.usedPercent).toBe(
-        100,
-      );
       const native = claude(beforeReset, denied);
-      for (const model of [undefined, "claude-opus-5.5", "claude-fable-5"]) {
-        expect(nativeQuotaDenied(denied, beforeReset, model)).toBe(true);
-        expect(
-          yield* Effect.flip(start({ native, now: beforeReset, ...(model ? { model } : {}) })),
-        ).toMatchObject({
-          detail: `Claude's weekly Fable limit is used up; it resets at ${WEEKLY_RESET}.`,
-          usageLimit: { resetAt: WEEKLY_RESET },
-        });
+      for (const model of [undefined, "claude-opus-5.5"]) {
+        expect(nativeQuotaDenied(denied, beforeReset, model)).toBe(false);
+        yield* start({ native, now: beforeReset, ...(model ? { model } : {}) });
       }
+      expect(nativeQuotaDenied(denied, beforeReset, "claude-fable-5")).toBe(true);
+      expect(
+        yield* Effect.flip(start({ native, now: beforeReset, model: "claude-fable-5" })),
+      ).toMatchObject({
+        detail: `Claude's weekly Fable limit is used up; it resets at ${WEEKLY_RESET}.`,
+        usageLimit: { resetAt: WEEKLY_RESET },
+      });
     }),
   );
 
-  it("marks the account exhausted", () => {
+  // The plan has no 5-hour limit, so no read is ever a complete allowance.
+  it.effect("admits that model on the first start after its weekly was reset", () =>
+    Effect.gen(function* () {
+      const weeklyOnly = (fable: number) =>
+        claudeUsageResponseToLimits({
+          checkedAt: iso(beforeReset),
+          response: {
+            rate_limits_available: true,
+            rate_limits: {
+              seven_day: { utilization: 20, resets_at: WEEKLY_RESET },
+              ...({
+                model_scoped: [
+                  { display_name: "Fable", utilization: fable, resets_at: WEEKLY_RESET },
+                ],
+              } as object),
+            },
+          },
+        }).limits;
+      const native = claude(beforeReset, denied);
+      const model = "claude-fable-5";
+      yield* start({
+        native,
+        now: beforeReset,
+        model,
+        refreshed: claude(beforeReset, weeklyOnly(3)),
+      });
+      expect(
+        yield* Effect.flip(
+          start({
+            native,
+            now: beforeReset,
+            model,
+            refreshed: claude(beforeReset, weeklyOnly(100)),
+          }),
+        ),
+      ).toMatchObject({ usageLimit: { resetAt: WEEKLY_RESET } });
+    }),
+  );
+
+  it("leaves the account ready", () => {
     expect(
       capacitySnapshot({
         raw: readyCompanion(beforeReset),
@@ -341,21 +394,63 @@ describe("a model-scoped Claude rejection", () => {
         baseEnv: {},
         now: beforeReset,
       }).accounts[0]?.status,
-    ).toBe("exhausted");
+    ).toBe("ready");
   });
 
-  it("is not cleared by a complete read that still shows the model weekly spent", () => {
+  it("replaces an account denial an older build recorded for it on the next valid read", () => {
     const resolve = (probed: ServerProviderUsageLimits) =>
-      resolveUsageLimitsAfterProbe({ driver: claudeDriver, published: denied, probed });
-    const spent = probe(beforeReset, 10, { fable: 100 });
-    expect(spent.nativeAllowanceObservedAt).toBe(iso(beforeReset));
-    expect(resolve(spent)).toMatchObject({ ordinaryUsageAllowed: false });
-    const room = probe(beforeReset, 10);
-    expect(resolve(room)).toBe(room);
+      resolveUsageLimitsAfterProbe({ driver: claudeDriver, published: legacy, probed });
+    expect(legacy).toMatchObject({
+      ordinaryUsageAllowed: false,
+      nativeDenialResetsAt: WEEKLY_RESET,
+    });
+    expect(nativeQuotaDenied(legacy, beforeReset, "claude-opus-5.5")).toBe(true);
+    // A plan without a 5-hour limit never gives a complete read; a valid one is enough.
+    const spent = claudeUsageResponseToLimits({
+      checkedAt: iso(beforeReset),
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          seven_day: { utilization: 20, resets_at: WEEKLY_RESET },
+          ...({
+            model_scoped: [{ display_name: "Fable", utilization: 100, resets_at: WEEKLY_RESET }],
+          } as object),
+        },
+      },
+    }).limits;
+    expect(spent.nativeAllowanceObservedAt).toBeUndefined();
+    const healed = resolve(spent);
+    expect(healed).toBe(spent);
+    expect(nativeQuotaDenied(healed, beforeReset, "claude-opus-5.5")).toBe(false);
+    expect(nativeQuotaDenied(healed, beforeReset, "claude-fable-5")).toBe(true);
+    // A spent account-wide window, a failed read or an older read keeps it.
+    expect(resolve(probe(beforeReset, 10, { sevenDay: 100, fable: 100 }))).toMatchObject({
+      ordinaryUsageAllowed: false,
+    });
+    expect(
+      resolve({ checkedAt: iso(beforeReset), windows: [], unavailable: { reason: "probeFailed" } }),
+    ).toBe(legacy);
+    expect(resolve(probe(deniedAt - 1, 10))).toBe(legacy);
+  });
+
+  it("keeps an account denial that did not come from a model weekly", () => {
+    const fiveHour = deny(incident);
+    const read = claudeUsageResponseToLimits({
+      checkedAt: iso(beforeReset),
+      response: {
+        rate_limits_available: true,
+        rate_limits: { seven_day: { utilization: 20, resets_at: WEEKLY_RESET } },
+      },
+    }).limits;
+    expect(
+      resolveUsageLimitsAfterProbe({ driver: claudeDriver, published: fiveHour, probed: read }),
+    ).toMatchObject({ ordinaryUsageAllowed: false });
   });
 
   it("expires with the window's own reset", () => {
-    for (const model of [undefined, "claude-opus-5.5", "claude-fable-5"])
+    for (const model of [undefined, "claude-opus-5.5", "claude-fable-5"]) {
       expect(nativeQuotaDenied(denied, at(WEEKLY_RESET) + 1, model)).toBe(false);
+      expect(nativeQuotaDenied(legacy, at(WEEKLY_RESET) + 1, model)).toBe(false);
+    }
   });
 });
