@@ -236,7 +236,14 @@ const scenario = (
                 },
               }
             : target === destination && options.linked !== false
-              ? { logicalProject: { members: [{ environmentId: m4, projectId: sourceProject }] } }
+              ? {
+                  logicalProject: {
+                    members: [
+                      { environmentId: m4, projectId: sourceProject },
+                      { environmentId: minis, projectId: destinationProject },
+                    ],
+                  },
+                }
               : undefined,
     });
 
@@ -919,7 +926,7 @@ describe("handoff between two machines", () => {
     }),
   );
 
-  it.effect("keeps an interrupted turn resumable when the final checkpoint cannot be sent", () =>
+  it.effect("resumes an interrupted turn here when the final checkpoint cannot be sent", () =>
     Effect.gen(function* () {
       const { source, destination, moves, fixture, network, destinationRoot } = yield* scenario();
       NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
@@ -940,7 +947,14 @@ describe("handoff between two machines", () => {
       const record = source.document.threads[threadId];
       expect(record?.lease?.state).toBe("active");
       expect(record?.fencedBy).toBe("handoff");
-      expect(record?.lastError).toContain("Hand it off again to resume that turn");
+      expect(record?.lastError).toContain("The turn continues here");
+      // The stopped turn starts again here instead of staying stopped.
+      expect(source.dispatched.at(-1)).toMatchObject({
+        type: "message.dispatch",
+        threadId,
+        manualContinuationOfRunId: "run-1",
+        dispatchMode: { type: "start_immediately" },
+      });
       // Handing it off again once the network is back resumes the stopped turn.
       network.down = false;
       const result = yield* handOff(moves);
@@ -1607,6 +1621,35 @@ describe("handoff between two machines", () => {
           (replica) => replica.environmentId === minis,
         ),
       ).toMatchObject({ state: "current", sequence: 1 });
+    }),
+  );
+
+  it.effect("refuses an unsettled child before it stops the running turn", () =>
+    Effect.gen(function* () {
+      const children = [
+        {
+          taskId: "child-1",
+          parentThreadId: threadId,
+          childThreadId: ThreadId.make("child-thread"),
+          sourceEnvironmentId: m4,
+          ownerEpoch: 4,
+          origin: "app_owned" as const,
+          providerThreadId: null,
+          status: "running",
+          disposition: "unknown" as const,
+          context: "Original brief: audit mail receipts.",
+        },
+      ];
+      const { moves, source, destination, fixture, destinationRoot } = yield* scenario({
+        children,
+      });
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      fixture.activeRunId = "run-1";
+      const failure = yield* handOff(moves).pipe(Effect.flip);
+      expect(failure.message).toContain("owning process or machine");
+      expect(source.dispatched).toEqual([]);
+      expect(source.document.threads[threadId]?.lease?.state ?? "active").toBe("active");
+      expect(destination.launches).toHaveLength(0);
     }),
   );
 
