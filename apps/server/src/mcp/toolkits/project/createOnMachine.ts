@@ -1,9 +1,9 @@
 /**
  * studio_project_create with `machine`: the project is made on that fleet
- * machine by its own studio_project_create, with its own folders, Git and
- * GitHub sign-in, and lives there only. That machine applies its grant
- * checks; this side checks who may ask and that the machine is new enough to
- * honour parentPath and github, which an older one would silently drop.
+ * machine by its own studio_project_create, with its own folders and Git, and
+ * lives there only. That machine applies its grant checks; this side checks who may ask and that the machine is new enough to
+ * honour parentPath, which an older one would silently drop. Publishing to
+ * GitHub stays with that machine's user.
  *
  * @module createOnMachine
  */
@@ -34,6 +34,10 @@ const SupportsCreateOptions = Schema.Struct({
 const decodeSupport = Schema.decodeUnknownOption(SupportsCreateOptions);
 
 /** The words for a machine whose SpecWithCode predates these options. */
+/** Publishing uses that machine's own GitHub sign-in, which a work grant does not cover. */
+export const GRANT_GITHUB_MESSAGE =
+  "Publishing to GitHub uses this machine's own GitHub sign-in, so only its user does it. Create the project without github, then ask the user on this machine to publish it.";
+
 export const olderMachineMessage = (label: string) =>
   `${label} runs an older SpecWithCode that cannot create a project with a machine, parent folder or GitHub. Update SpecWithCode on ${label}, then try again.`;
 
@@ -64,8 +68,15 @@ export const createProjectOnMachine = Effect.fn("mcp.createProjectOnMachine")(fu
       message:
         "Work another machine started here cannot create projects on other machines. Ask the user on the machine the work came from.",
     });
+  // The other machine refuses github for work it did not start; say so before asking it.
+  const github = input.arguments.github;
+  if (github !== undefined && github !== false)
+    return yield* new OrchestratorMcpFailure({
+      code: "outside_grant_scope",
+      message: `${machine.label}: ${GRANT_GITHUB_MESSAGE}`,
+    });
   const remote = yield* RemoteWorkers.RemoteWorkers;
-  // An older machine ignores parentPath and github and would put the project in
+  // An older machine ignores parentPath and would put the project in
   // its own storage, so it must say it supports them first.
   const capabilities = yield* remote.proxy({
     machine,

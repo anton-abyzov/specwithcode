@@ -77,7 +77,11 @@ import {
 } from "../../workGrantAccess.ts";
 import { receiveAgentCopy } from "../../../fleet/folderTransfer/agentCopy.ts";
 import { addProjectToMachine } from "./addToMachine.ts";
-import { createProjectOnMachine, resolveCreateMachine } from "./createOnMachine.ts";
+import {
+  createProjectOnMachine,
+  GRANT_GITHUB_MESSAGE,
+  resolveCreateMachine,
+} from "./createOnMachine.ts";
 import {
   absoluteParentPath,
   conflictingProject,
@@ -933,13 +937,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "outside_grant_scope",
             message: `Project scripts run on this machine and new folders are made on it, so only its user sets them; ${work.coordinatorLabel}'s work cannot. Register an existing folder with title and workspaceRoot, and ask the user here to set scripts in project settings.`,
           });
-        // A chosen folder gets a new repository with a commit, and publishing uses
-        // this machine's GitHub sign-in: neither is in the grant.
-        if (work !== undefined && (parentPath !== undefined || (github ?? false) !== false))
+        // A grant covering every project may choose the parent folder (the
+        // denied-folder checks still apply), but publishing uses this machine's
+        // GitHub sign-in, which the grant does not cover.
+        if (work !== undefined && (github ?? false) !== false)
           return yield* new OrchestratorMcpFailure({
             code: "outside_grant_scope",
-            message:
-              "Only the user on this machine chooses where a project is made or publishes it to GitHub. Omit parentPath and github, or ask the user here.",
+            message: GRANT_GITHUB_MESSAGE,
           });
         if (work !== undefined && input.defaultModelSelection != null)
           yield* assertAccountInGrant(work, input.defaultModelSelection.instanceId);
@@ -1015,7 +1019,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             Effect.catch((error) =>
               conflictingProject(projects, error).pipe(
                 Effect.flatMap((existing) =>
-                  existing === undefined
+                  existing === undefined ||
+                  // Never hand the assistant's private project, or one the grant
+                  // does not cover, to another machine's work.
+                  (work !== undefined &&
+                    (isPersonalAssistantProject(existing) ||
+                      !projectInGrant(
+                        work.grant.projects,
+                        work.grant.coordinatorEnvironmentId,
+                        existing,
+                      )))
                     ? Effect.fail(projectFailure(error))
                     : Effect.succeed({ ...existing, existing: true }),
                 ),

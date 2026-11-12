@@ -156,14 +156,13 @@ const setup = (
 };
 
 describe("studio_project_create on another machine", () => {
-  it.effect("creates it there with the folder and GitHub, and says how to launch there", () => {
+  it.effect("creates it there in the chosen folder, and says how to launch there", () => {
     const { create, calls, localCreates } = setup();
     return Effect.gen(function* () {
       const result = yield* create({
         title: "Pinball Stats",
         machine: "M1",
         parentPath: "~/Projects",
-        github: true,
       });
       expect(calls.map((call) => call.tool)).toEqual([
         "orchestrator_capabilities",
@@ -173,12 +172,10 @@ describe("studio_project_create on another machine", () => {
       expect(calls[1]!.arguments).toEqual({
         title: "Pinball Stats",
         parentPath: "~/Projects",
-        github: true,
       });
       expect(result).toMatchObject({
         id: remoteProjectId,
         workspaceRoot: "/home/example/Projects/pinball-stats",
-        published: "published",
         machine: M1,
       });
       // The launch call needs no add or link step.
@@ -186,6 +183,16 @@ describe("studio_project_create on another machine", () => {
         `studio_thread_launch {machine:"M1", machineProjectId:"${remoteProjectId}"}`,
       );
       expect(localCreates).toEqual([]);
+    });
+  });
+
+  it.effect("leaves GitHub publishing to the user on that machine, before asking it", () => {
+    const { create, calls } = setup();
+    return Effect.gen(function* () {
+      const result = yield* create({ title: "Pinball Stats", machine: "M1", github: true });
+      expect(result).toMatchObject({ code: "outside_grant_scope" });
+      expect(String(result.message)).toContain("M1: Publishing to GitHub uses this machine's own");
+      expect(calls).toEqual([]);
     });
   });
 

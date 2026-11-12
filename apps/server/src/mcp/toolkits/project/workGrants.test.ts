@@ -564,21 +564,26 @@ describe("work started here by another machine", () => {
     }).pipe(Effect.provide(world.layer));
   });
 
-  it.live("keeps a chosen parent folder and GitHub publishing off a project it makes", () => {
+  it.live("lets a full grant choose the parent folder but keeps GitHub publishing off", () => {
     const world = setup({ prefix: "studio-work-grant-create-parent-github-", legacy: [M4] });
     return Effect.gen(function* () {
-      for (const extra of [
-        { parentPath: "/fictional/parent" },
-        { github: true },
-        { github: { account: "fictional-org" } },
-      ]) {
+      for (const extra of [{ github: true }, { github: { account: "fictional-org" } }]) {
         const refused = yield* world.call("studio_project_create", world.clientScope(M4), {
           title: "Widgets",
           ...extra,
         });
         expect(refused, JSON.stringify(extra)).toMatchObject({ code: "outside_grant_scope" });
-        expect(String(refused.message)).toContain("Only the user on this machine");
+        expect(String(refused.message)).toContain("only its user does it");
       }
+      // The parent folder passes the grant check and reaches the folder service
+      // (not provided in this world), which applies its own folder checks.
+      const reached = yield* Effect.exit(
+        world.call("studio_project_create", world.clientScope(M4), {
+          title: "Widgets",
+          parentPath: "/fictional/parent",
+        }),
+      );
+      expect(String(reached)).toContain("createNamedProject");
     }).pipe(Effect.provide(world.layer));
   });
 
