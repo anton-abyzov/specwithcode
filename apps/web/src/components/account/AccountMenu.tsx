@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthAccessWriteScope } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ActivityIcon,
@@ -12,16 +11,16 @@ import {
   SettingsIcon,
   UserRoundCogIcon,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 
 import { isElectron } from "../../env";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { usePrimaryEnvironment, usePullRequestsSupported } from "../../state/environments";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import { useEnvironmentAcceptsBrowserSignIn, useEnvironmentScope } from "../../state/session";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
+import { ADD_DEVICE_OR_MACHINE_ANCHOR } from "../settings/AddDeviceWithCodeRow";
 import {
   Menu,
   MenuGroup,
@@ -36,7 +35,6 @@ import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { accountMenuPresentation, type ConnectAccount } from "./accountMenuModel";
 import { accountInitial } from "./signInAddress";
-import { SignInAnotherDeviceDialog } from "./SignInAnotherDeviceDialog";
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -68,8 +66,8 @@ export function AccountMenuView({
   readonly pullRequestsSupported: boolean;
   readonly onNavigate: (to: AccountMenuDestination) => void;
   readonly onOpenPullRequests: () => void;
-  /** Null when this window may not approve devices. */
-  readonly onAddDevice: (() => void) | null;
+  /** Opens Settings > Machines, where every way to add a device or a machine lives. */
+  readonly onAddDevice: () => void;
 }) {
   const { name, header, signIn } = accountMenuPresentation(
     connect?.account ?? { status: "unavailable" },
@@ -151,12 +149,10 @@ export function AccountMenuView({
           </MenuGroup>
           <MenuSeparator />
           <MenuGroup>
-            {onAddDevice ? (
-              <MenuItem onClick={onAddDevice}>
-                <MonitorSmartphoneIcon />
-                Add a device with a code
-              </MenuItem>
-            ) : null}
+            <MenuItem onClick={onAddDevice}>
+              <MonitorSmartphoneIcon />
+              Add a device or machine
+            </MenuItem>
             <MenuItem onClick={() => onNavigate("/settings/connections")}>
               <NetworkIcon />
               Machines and connections
@@ -187,9 +183,10 @@ export function AccountMenuView({
 
 /**
  * One account button in place of the footer's row of icons, like Claude's:
- * Settings, Usage and Pull Requests live in its menu, along with adding a
- * device. On Settings, Usage or Pull Requests it shrinks to its avatar beside
- * the Back button. `connect` is null in builds without SpecWithCode Connect.
+ * Settings, Usage and Pull Requests live in its menu, along with the way to
+ * Settings > Machines for adding a device or a machine. On Settings, Usage or
+ * Pull Requests it shrinks to its avatar beside the Back button. `connect` is
+ * null in builds without SpecWithCode Connect.
  */
 export function AccountMenu({
   compact,
@@ -202,13 +199,7 @@ export function AccountMenu({
   const { isMobile, setOpenMobile } = useSidebar();
   const pullRequestsSupported = usePullRequestsSupported();
   const primary = usePrimaryEnvironment();
-  const canApproveDevices = useEnvironmentScope(
-    primary?.environmentId ?? null,
-    AuthAccessWriteScope,
-  );
-  const acceptsBrowsers = useEnvironmentAcceptsBrowserSignIn(primary?.environmentId ?? null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
 
   const go = useCallback(
     (to: AccountMenuDestination) => {
@@ -222,25 +213,23 @@ export function AccountMenu({
     void navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
   }, [isMobile, navigate, setOpenMobile]);
 
+  // The join card: one click for a machine on the same account, with the join
+  // line and the code path folded below it.
+  const addDeviceOrMachine = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+    void navigate({ to: "/settings/machines", hash: ADD_DEVICE_OR_MACHINE_ANCHOR });
+  }, [isMobile, navigate, setOpenMobile]);
+
   return (
-    <>
-      <AccountMenuView
-        compact={compact}
-        machine={primary?.label ?? "This machine"}
-        connect={connect}
-        usageShortcut={shortcutLabelForCommand(keybindings, "usage.open")}
-        pullRequestsSupported={pullRequestsSupported}
-        onNavigate={go}
-        onOpenPullRequests={openPullRequests}
-        onAddDevice={canApproveDevices ? () => setDeviceDialogOpen(true) : null}
-      />
-      {canApproveDevices ? (
-        <SignInAnotherDeviceDialog
-          acceptsBrowsers={acceptsBrowsers}
-          open={deviceDialogOpen}
-          onOpenChange={setDeviceDialogOpen}
-        />
-      ) : null}
-    </>
+    <AccountMenuView
+      compact={compact}
+      machine={primary?.label ?? "This machine"}
+      connect={connect}
+      usageShortcut={shortcutLabelForCommand(keybindings, "usage.open")}
+      pullRequestsSupported={pullRequestsSupported}
+      onNavigate={go}
+      onOpenPullRequests={openPullRequests}
+      onAddDevice={addDeviceOrMachine}
+    />
   );
 }

@@ -8,6 +8,10 @@ export const ja: PhraseCatalog = {
   "Account name": "アカウント名",
   "Accounts & integrations": "アカウントと連携",
   Actions: "アクション",
+  "Add a device with a code": "コードでデバイスを追加",
+  "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
+    "スマートフォンや別のコンピューターのブラウザーからこのマシンを使います。SpecWithCode Connect がオフのとき、または接続できないときにも使えます。同じ Connect アカウントでサインインした SpecWithCode アプリにコードは不要です。",
+  "Add a device": "デバイスを追加",
   "Add a machine": "マシンを追加",
   "Add project starts in": "プロジェクト追加時の開始フォルダー",
   Advanced: "詳細",
