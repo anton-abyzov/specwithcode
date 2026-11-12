@@ -1317,6 +1317,13 @@ export const ru: PhraseCatalog = {
     "Для этого адреса нет QR-кода. Другое устройство, отсканировав loopback-ссылку, подключилось бы само к себе; лучше скопируйте URL для использования на этой машине.",
   "Client scopes": "Права клиента",
   "Revoke others": "Отозвать остальные",
+  "Revoke {count} unused": "Отозвать неиспользуемые: {count}",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Входы с компьютеров, связанные по ссылке или коду, без подключения 24 часа",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "Отозвать входы с компьютеров без подключения за последние 24 часа ({count})? Среди них есть и компьютер, который просто был выключен сутки: ему понадобится новая ссылка или код связывания. Это приложение, подключённые клиенты, телефоны, другие ваши машины и их ключи остаются.",
+  "Revoked {count} unused sign-ins": "Отозвано неиспользуемых входов: {count}",
+  "Could not revoke {count} sign-ins": "Не удалось отозвать входов: {count}",
   "Create link": "Создать ссылку",
   "Create pairing link": "Создать ссылку связывания",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":

@@ -1323,6 +1323,13 @@ export const pt: PhraseCatalog = {
     "Não há QR para este endereço. Outro dispositivo que escaneasse um link de loopback chamaria a si mesmo; copie a URL para usar nesta máquina.",
   "Client scopes": "Permissões do cliente",
   "Revoke others": "Revogar os outros",
+  "Revoke {count} unused": "Revogar {count} sem uso",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Sessões de computadores pareadas por link ou código sem conexão há 24 horas",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "Revogar {count} sessões de computadores sem conexão há 24 horas? Um computador que só ficou desligado por um dia está entre elas e precisará de um novo link ou código de pareamento. Este app, os clientes conectados, os telefones, suas outras máquinas e as chaves delas são mantidos.",
+  "Revoked {count} unused sign-ins": "{count} sessões sem uso revogadas",
+  "Could not revoke {count} sign-ins": "Não foi possível revogar {count} sessões",
   "Create link": "Criar link",
   "Create pairing link": "Criar link de pareamento",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
