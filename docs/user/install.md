@@ -248,17 +248,30 @@ Pass a path, such as `specwithcode app ../my-project`, to open another directory
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
-## Mobile app
+## Phone app
 
-There is no published SpecWithCode mobile app yet. It is not in the App Store or on Google
-Play, and there is no TestFlight or Google Play beta. To use SpecWithCode from a phone, open
-the web app in the phone's browser and follow [remote access](./remote-access.md).
+SpecWithCode has a phone app for iPhone and Android. Open
+[specwithcode.com/get](https://specwithcode.com/get) on the phone: it opens the App Store on
+an iPhone and Google Play on an Android phone. You can also search the store for
+"SpecWithCode".
 
-The mobile app's source is in `apps/mobile`. A build you make from it connects to a server on
-another machine through SpecWithCode Connect or a pairing URL. If that build crashes during launch,
-open Settings → Diagnostics on the next launch that succeeds. It lists startup crashes from the
-last 7 days with the error and component stack. Copy the report and paste it into a GitHub
-issue. Error messages can quote values from the app, so read it over before sharing.
+To reach a computer from the phone:
+
+1. On the computer, sign in to SpecWithCode Connect. First-run setup in the desktop app offers this on
+   its first screen, and **Settings → Machines → Your phone** shows it later. Signing in links that
+   computer to your account.
+2. Get the app on the phone. **Your phone** on the Machines page shows a code to scan that
+   leads to the right store.
+3. Sign in on the phone with the same account. The computer shows up there by itself, and the
+   phone shows up on the Machines page. There is nothing to scan or type.
+
+If you cannot use SpecWithCode Connect, pair over your own network instead: see
+[remote access](./remote-access.md). The phone's browser also works, through the same page.
+
+If the app crashes during launch, open Settings → Diagnostics on the next launch that
+succeeds. It lists startup crashes from the last 7 days with the error and component stack.
+Copy the report and paste it into a GitHub issue. Error messages can quote values from the
+app, so read it over before sharing.
 
 ## Providers
 
@@ -276,6 +289,25 @@ computer.
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
 | Antigravity | Install and sign in with Google from SpecWithCode's provider settings.                                                                                    |
 | Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.                                                                    |
+
+### Signing in to an agent on macOS, Windows and Linux
+
+An agent signs in on the machine that runs it, as the user that runs SpecWithCode there. A
+sign-in on another computer, or on your phone, does not carry over.
+
+- **Claude.** SpecWithCode uses the Claude Code command line, not the Claude desktop app.
+  Being signed in to the Claude desktop app is a separate sign-in and is not enough. Run
+  `claude auth login` in a terminal on the machine, then refresh provider status. First-run
+  setup opens a terminal with that command typed in, and you press Enter. Anywhere else, run
+  it yourself.
+- **Codex.** **Continue with ChatGPT** opens the sign-in page in your browser and returns to
+  the app by itself in the desktop app. If you already use the Codex CLI and it is signed
+  in, choose **Use existing CLI** and nothing more is needed.
+- **macOS.** Sign-ins are kept per user account. An agent installed with a version manager
+  may not be on the app's `PATH`; set its **Binary path** in provider settings.
+- **Windows.** A sign-in inside WSL, or under another Windows user, does not count for an
+  app that runs on Windows itself. Sign in from a Windows terminal as the same user.
+- **Linux.** Sign in as the user that runs SpecWithCode on that machine.
 
 Provider CLIs must be on the server's `PATH`. If SpecWithCode cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
