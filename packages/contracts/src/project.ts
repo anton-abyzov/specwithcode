@@ -839,6 +839,36 @@ export const ProjectCreateNewInput = Schema.Struct({
 });
 export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
 
+/**
+ * Why `projects.createNew` failed, carried on its dispatch error so a client
+ * can say it in its own words and name the machine. Absent from older servers,
+ * whose message stays the fallback.
+ */
+export const ProjectCreateFailureReason = Schema.Literals([
+  /** The chosen parent folder does not exist. */
+  "parent_missing",
+  /** The server's account may not write in the parent folder. */
+  "permission_denied",
+  /** Git is not installed (or not on PATH) on the machine. */
+  "git_missing",
+  /** `git init` ran and failed; `detail` holds git's own message. */
+  "git_init_failed",
+  /** Every numbered folder name for the project was taken. */
+  "name_exhausted",
+  /** The parent is one of the folders SpecWithCode never makes folders in. */
+  "refused",
+]);
+export type ProjectCreateFailureReason = typeof ProjectCreateFailureReason.Type;
+
+export const ProjectCreateFailure = Schema.Struct({
+  reason: ProjectCreateFailureReason,
+  /** The folder the failure is about: the parent, or the project folder. */
+  folder: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The tool's own words, such as git's error line. */
+  detail: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProjectCreateFailure = typeof ProjectCreateFailure.Type;
+
 export const ProjectCreateNewResult = Schema.Struct({
   projectId: ProjectId,
   workspaceRoot: TrimmedNonEmptyString,

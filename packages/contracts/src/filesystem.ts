@@ -6,6 +6,11 @@ const FILESYSTEM_PATH_MAX_LENGTH = 512;
 export const FilesystemBrowseInput = Schema.Struct({
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
+  /**
+   * A new project's name: the result then says what creating it in the browsed
+   * folder does (`outcome`). Older servers ignore it and answer without one.
+   */
+  projectName: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
 });
 export type FilesystemBrowseInput = typeof FilesystemBrowseInput.Type;
 
@@ -14,16 +19,48 @@ export const FilesystemBrowseEntry = Schema.Struct({
   fullPath: TrimmedNonEmptyString,
   /** "git" when the folder holds a repository. Absent from older servers and past the marking limit. */
   kind: Schema.optionalKey(Schema.Literals(["folder", "git"])),
+  /** A symbolic link to a folder. Absent from older servers, which leave links out. */
+  link: Schema.optionalKey(Schema.Boolean),
 });
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
+
+/**
+ * What creating a project named `projectName` in the browsed folder does, as
+ * the server decides it: `creates` a new folder at `path`, or `uses` the
+ * existing folder at `path` as the project. `because` says why.
+ */
+export const FilesystemProjectOutcome = Schema.Struct({
+  kind: Schema.Literals(["creates", "uses"]),
+  path: TrimmedNonEmptyString,
+  because: Schema.optionalKey(
+    Schema.Literals([
+      /** It holds `.git` (a folder, or a file for a worktree or submodule). */
+      "repository",
+      /** It holds `.specweave`. */
+      "specweave",
+      /** Its name matches the project's and it holds files. */
+      "named_like_project",
+      /** Its name matches the project's and it is empty: the project is set up in it. */
+      "empty_named_like_project",
+      /** A folder of the project's name is already there, so the new one is numbered. */
+      "name_taken",
+    ]),
+  ),
+});
+export type FilesystemProjectOutcome = typeof FilesystemProjectOutcome.Type;
 
 export const FilesystemBrowseResult = Schema.Struct({
   parentPath: TrimmedNonEmptyString,
   entries: Schema.Array(FilesystemBrowseEntry),
   /** The home folder of the account the server runs as, for showing paths under it. */
   homePath: Schema.optionalKey(TrimmedNonEmptyString),
-  /** The folder exists but the server's account may not list it. Absent from older servers. */
+  /**
+   * The folder exists but the server's account may not list it (a permission
+   * error, not an empty folder). Absent from older servers.
+   */
   unreadable: Schema.optionalKey(Schema.Boolean),
+  /** Asked for with `projectName`; absent from older servers and for an unreadable folder. */
+  outcome: Schema.optionalKey(FilesystemProjectOutcome),
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
 
@@ -47,6 +84,8 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     failure: Schema.optional(FilesystemBrowseFailure),
     parentPath: Schema.optional(TrimmedNonEmptyString),
     platform: Schema.optional(TrimmedNonEmptyString),
+    /** The folder does not exist. Absent from older servers, whose message says so. */
+    missing: Schema.optional(Schema.Boolean),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -60,6 +99,7 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     readonly failure: FilesystemBrowseFailure;
     readonly parentPath?: string;
     readonly platform?: string;
+    readonly missing?: boolean;
     /** What went wrong in words; older servers leave it out and get the generic message. */
     readonly message?: string;
     readonly cause?: unknown;

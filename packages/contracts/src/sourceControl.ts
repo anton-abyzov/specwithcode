@@ -246,12 +246,25 @@ export class SourceControlProviderError extends Schema.TaggedError<SourceControl
   }
 }
 
+/** Why publishing a repository failed. Absent from older servers. */
+export const SourceControlPublishFailureReason = Schema.Literals([
+  "name_taken",
+  "not_signed_in",
+  "no_permission",
+  "network",
+  "rate_limited",
+  "push_failed",
+]);
+export type SourceControlPublishFailureReason = typeof SourceControlPublishFailureReason.Type;
+
 export class SourceControlRepositoryError extends Schema.TaggedError<SourceControlRepositoryError>()(
   "SourceControlRepositoryError",
   {
     provider: SourceControlProviderKind,
     operation: Schema.String,
     detail: Schema.String,
+    /** Set by publishRepository when the provider said why; `detail` then says it in words. */
+    publishFailure: Schema.optional(SourceControlPublishFailureReason),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
