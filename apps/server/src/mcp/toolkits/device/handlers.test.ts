@@ -61,25 +61,41 @@ describe("device tool helpers", () => {
 });
 
 describe("iosOnlyElsewhere", () => {
-  const host = (kind: "local" | "ssh", ios: boolean) => ({
+  const host = (kind: "local" | "ssh") => ({
     id: kind === "local" ? "local" : "lab",
     kind,
     label: kind,
     platforms: [
-      { platform: "ios" as const, available: ios },
+      { platform: "ios" as const, available: true },
       { platform: "android" as const, available: true },
     ],
     hubInstalled: true,
     agentDeviceInstalled: true,
   });
+  const here = { hosts: [host("local")], devices: [] } as never;
 
   it("points to a Mac only when this machine cannot run iOS and no device host is set up", () => {
-    expect(iosOnlyElsewhere([host("local", false)] as never, {})).toBe(true);
-    expect(iosOnlyElsewhere([host("local", false)] as never, { platform: "ios" })).toBe(true);
-    expect(iosOnlyElsewhere([host("local", false)] as never, { platform: "android" })).toBe(false);
-    expect(iosOnlyElsewhere([host("local", true)] as never, {})).toBe(false);
+    expect(iosOnlyElsewhere(here, {}, "no")).toBe(true);
+    expect(iosOnlyElsewhere(here, { platform: "ios" }, "no")).toBe(true);
+    expect(iosOnlyElsewhere(here, { platform: "android" }, "no")).toBe(false);
     expect(
-      iosOnlyElsewhere([host("local", false), host("ssh", true)] as never, { platform: "ios" }),
+      iosOnlyElsewhere({ hosts: [host("local"), host("ssh")], devices: [] } as never, {}, "no"),
+    ).toBe(false);
+  });
+
+  it("follows the simulator check, not the host's xcrun report", () => {
+    expect(iosOnlyElsewhere(here, { platform: "ios" }, "yes")).toBe(false);
+    expect(iosOnlyElsewhere(here, { platform: "ios" }, "unknown")).toBe(false);
+  });
+
+  it("leaves a device id lookup and listed iOS devices alone", () => {
+    expect(iosOnlyElsewhere(here, { deviceId: "TYPO" as never }, "no")).toBe(false);
+    expect(
+      iosOnlyElsewhere(
+        { hosts: [host("local")], devices: [{ ...device, hostId: "local" }] } as never,
+        { platform: "ios" },
+        "no",
+      ),
     ).toBe(false);
   });
 });

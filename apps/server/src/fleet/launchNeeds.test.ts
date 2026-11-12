@@ -99,6 +99,33 @@ describe("chooseForNeeds", () => {
   });
 });
 
+describe("chooseForNeeds with the usual machines first", () => {
+  it("uses other connected machines only when no usual one reports the need", () => {
+    const kept = chooseForNeeds({
+      needs: ["ios_simulator"],
+      preferred: [machine("listed", mac)],
+      fallback: [machine("other", mac)],
+    });
+    expect(kept.ok && kept.chosen.map((choice) => choice.candidate.key)).toEqual(["listed"]);
+
+    const outside = chooseForNeeds({
+      needs: ["ios_simulator"],
+      preferred: [machine("listed", linux), machine("old")],
+      fallback: [machine("other", mac), machine("listed", linux)],
+    });
+    expect(outside.ok).toBe(true);
+    if (!outside.ok) return;
+    expect(outside.chosen.map((choice) => [choice.candidate.key, choice.fit])).toEqual([
+      ["other", "yes"],
+      ["old", "unknown"],
+    ]);
+    expect(outside.chosen[0]!.note).toContain("Chosen outside the usual machines (listed and old)");
+    expect(outside.skipped).toEqual([
+      { machine: "listed", reason: expect.stringContaining("Linux") },
+    ]);
+  });
+});
+
 describe("machine platform reports", () => {
   it("reads another machine's report leniently", () => {
     expect(readMachinePlatform({})).toBeUndefined();

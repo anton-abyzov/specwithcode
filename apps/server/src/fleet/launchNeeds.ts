@@ -121,24 +121,33 @@ const listing = (labels: ReadonlyArray<string>) =>
 /**
  * Where work with `needs` may run. A named machine runs it unless it is known
  * not to qualify; one that has not said is allowed. Without one, `preferred`
- * (connected machines in the app's usual order, the default first) is tried:
- * machines that qualify first, then ones that have not said, and never one
- * known not to. When none is left the launch is refused with what is missing.
+ * (the machines this launch would use anyway, in the usual order) is tried
+ * first. `fallback` (other connected machines this one may start work on) is
+ * used only when no preferred machine reports the need, and its choices say
+ * so. Machines that qualify come before ones that have not said, and one known
+ * not to is never chosen. When none is left the launch is refused with what is
+ * missing.
  */
 export const chooseForNeeds = <T>(input: {
   readonly needs: ReadonlyArray<OrchestratorMcpLaunchNeed>;
   readonly explicit?: NeedsCandidate<T> | undefined;
   readonly preferred: ReadonlyArray<NeedsCandidate<T>>;
+  readonly fallback?: ReadonlyArray<NeedsCandidate<T>> | undefined;
 }): NeedsPlacement<T> => {
   const needs = input.needs;
   const wanted = needsText(needs);
   const seen = new Set<string>();
-  const pool = input.preferred.filter((candidate) => {
-    if (seen.has(candidate.key)) return false;
-    seen.add(candidate.key);
-    return true;
-  });
-  const qualifying = pool.filter((candidate) => needsFit(needs, candidate.platform) === "yes");
+  const unique = (candidates: ReadonlyArray<NeedsCandidate<T>>) =>
+    candidates.filter((candidate) => {
+      if (seen.has(candidate.key)) return false;
+      seen.add(candidate.key);
+      return true;
+    });
+  const primary = unique(input.preferred);
+  const extra = unique(input.fallback ?? []);
+  const fits = (candidate: NeedsCandidate<T>, fit: NeedFit) =>
+    needsFit(needs, candidate.platform) === fit;
+  const qualifying = [...primary, ...extra].filter((candidate) => fits(candidate, "yes"));
   const others =
     qualifying.length === 0
       ? ""
@@ -166,31 +175,47 @@ export const chooseForNeeds = <T>(input: {
       skipped: [],
     };
   }
-  const skipped: Array<{ readonly machine: string; readonly reason: string }> = [];
-  const unknown: Array<NeedsCandidate<T>> = [];
-  for (const candidate of pool) {
-    const fit = needsFit(needs, candidate.platform);
-    if (fit === "no")
-      skipped.push({
-        machine: candidate.label,
-        reason: `It is ${platformDescription(candidate.platform)}; this work needs ${wanted}.`,
-      });
-    else if (fit === "unknown") unknown.push(candidate);
-  }
+  // The usual machines keep the work whenever one of them reports the need.
+  const outside = primary.some((candidate) => fits(candidate, "yes")) ? [] : extra;
+  const usual = listing(primary.map((candidate) => candidate.label));
+  const outsideNote = (candidate: NeedsCandidate<T>, has: string) =>
+    `Chosen outside the usual machines (${usual || "none"}) because none of them reports ${wanted}; ${candidate.label} ${has}.`;
+  const skipped = [...primary, ...outside]
+    .filter((candidate) => fits(candidate, "no"))
+    .map((candidate) => ({
+      machine: candidate.label,
+      reason: `It is ${platformDescription(candidate.platform)}; this work needs ${wanted}.`,
+    }));
+  const unknownNote = (candidate: NeedsCandidate<T>) =>
+    `Tried because no machine that reports ${wanted} could take it, and ${candidate.label} has not said whether it has it (an older version).`;
   const chosen: Array<NeedsChoice<T>> = [
-    ...qualifying.map((candidate) => ({
-      candidate,
-      fit: "yes" as const,
-      note: `Chosen because this work needs ${wanted} and ${candidate.label} has it.`,
-    })),
-    ...unknown.map((candidate) => ({
-      candidate,
-      fit: "unknown" as const,
-      note: `Tried because no machine that reports ${wanted} could take it, and ${candidate.label} has not said whether it has it (an older version).`,
-    })),
+    ...primary
+      .filter((candidate) => fits(candidate, "yes"))
+      .map((candidate) => ({
+        candidate,
+        fit: "yes" as const,
+        note: `Chosen because this work needs ${wanted} and ${candidate.label} has it.`,
+      })),
+    ...outside
+      .filter((candidate) => fits(candidate, "yes"))
+      .map((candidate) => ({
+        candidate,
+        fit: "yes" as const,
+        note: outsideNote(candidate, "has it"),
+      })),
+    ...primary
+      .filter((candidate) => fits(candidate, "unknown"))
+      .map((candidate) => ({ candidate, fit: "unknown" as const, note: unknownNote(candidate) })),
+    ...outside
+      .filter((candidate) => fits(candidate, "unknown"))
+      .map((candidate) => ({
+        candidate,
+        fit: "unknown" as const,
+        note: outsideNote(candidate, "has not said whether it has it (an older version)"),
+      })),
   ];
   if (chosen.length > 0) return { ok: true, chosen, skipped };
-  const described = pool.map(
+  const described = [...primary, ...outside].map(
     (candidate) => `${candidate.label} is ${platformDescription(candidate.platform)}`,
   );
   return {

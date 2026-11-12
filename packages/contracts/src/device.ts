@@ -489,6 +489,11 @@ export const DeviceToolListResult = Schema.Struct({
   devices: Schema.Array(DeviceSummary),
   /** Devices already open in this thread's Device panel. */
   open: Schema.Array(Schema.Struct({ hostId: DeviceHostId, deviceId: DeviceId })),
+  /**
+   * Set when this machine cannot run iOS Simulators and has no device host:
+   * which connected Macs can, and how to move the work there.
+   */
+  hint: Schema.optional(Schema.String),
 });
 export type DeviceToolListResult = typeof DeviceToolListResult.Type;
 

@@ -187,10 +187,13 @@ const usualLaunchTarget = Effect.fn("mcp.usualLaunchTarget")(function* (
 
 /**
  * Keeps the usual order but only machines that can do the work: a named
- * machine known not to qualify is refused, and without one the usual
- * candidates come first, then the other connected machines, then this one.
- * Machines that report the need come before ones that have not said. Nothing
- * falls back to a machine known not to qualify, so the result is strict.
+ * machine known not to qualify is refused. Without one, the usual candidates
+ * (the project's worker machines, or this machine) keep the work when one of
+ * them reports the need; only when none does, the other connected machines
+ * this one may start work on are used, and the note says so. Machines that
+ * report the need come before ones that have not said. Nothing falls back to a
+ * machine known not to qualify, so the result is strict. The machine chosen
+ * still authorizes the launch itself.
  */
 const placeByNeeds = Effect.fn("mcp.placeByNeeds")(function* (
   needs: ReadonlyArray<OrchestratorMcpLaunchNeed>,
@@ -232,10 +235,8 @@ const placeByNeeds = Effect.fn("mcp.placeByNeeds")(function* (
   const choice = chooseForNeeds({
     needs,
     explicit: explicit === undefined ? undefined : candidate(explicit),
-    preferred:
-      explicit === undefined
-        ? [...usual.candidates.map(candidate), ...connected, here]
-        : [here, ...connected],
+    preferred: explicit === undefined ? usual.candidates.map(candidate) : [here],
+    fallback: [...connected, here],
   });
   if (!choice.ok) return yield* invalid(choice.message);
   return {

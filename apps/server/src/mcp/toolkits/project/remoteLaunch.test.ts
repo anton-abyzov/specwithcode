@@ -1136,3 +1136,46 @@ it.effect(
     });
   },
 );
+
+it.effect(
+  "keeps simulator work on the project's worker machines when one of them can run it",
+  () => {
+    const listed = setup({ workerMachines: ["m3"], platforms: { local: linux, m1: mac, m3: mac } });
+    return Effect.gen(function* () {
+      expect(
+        yield* listed.launch({ title: "Test", message: "go", needs: ["ios_simulator"] }),
+      ).toMatchObject({
+        machine: M3,
+        placement: { machine: "M3", reason: "project_worker_machine", skipped: [] },
+      });
+      expect(listed.remoteLaunches.map((launch) => launch.machine.id)).toEqual(["m3"]);
+    });
+  },
+);
+
+it.effect("goes outside the project's worker machines only when none can, and says so", () => {
+  const outside = setup({
+    workerMachines: ["m1"],
+    platforms: { local: linux, m1: { os: "windows", arch: "x64" }, m3: mac },
+  });
+  return Effect.gen(function* () {
+    const result = yield* outside.launch({
+      title: "Test",
+      message: "go",
+      needs: ["ios_simulator"],
+    });
+    expect(result).toMatchObject({
+      machine: M3,
+      placement: {
+        machine: "M3",
+        reason: "needs",
+        note: expect.stringContaining("Chosen outside the usual machines (M1)"),
+        skipped: expect.arrayContaining([
+          { machine: "M1", reason: expect.stringContaining("Windows") },
+        ]),
+      },
+    });
+    expect(outside.remoteLaunches.map((launch) => launch.machine.id)).toEqual(["m3"]);
+    expect(outside.localLaunches).toEqual([]);
+  });
+});
