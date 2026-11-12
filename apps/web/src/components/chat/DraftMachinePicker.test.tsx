@@ -45,6 +45,12 @@ vi.mock("./AddToMachineDialog", () => ({
     return <div data-add-dialog={props.destinationEnvironmentId} />;
   },
 }));
+vi.mock("./DraftFolderCopy", () => ({
+  DraftFolderCopy: (props: any) => {
+    runtime.dialogs.copy = props;
+    return <div data-copy-review={props.machine} />;
+  },
+}));
 vi.mock("../studio/ProjectLinkDialog", () => ({
   ProjectLinkDialog: (props: any) => {
     runtime.dialogs.link = props;
@@ -618,6 +624,11 @@ it("says Connection failed, never Can't reach, when this machine's connection st
 });
 
 it("lists only machines with the project and offers the rest under Add to another machine…", async () => {
+  // A Git remote to clone from; without one, Add copies the folder (next test).
+  runtime.projects[0].repositoryIdentity = {
+    canonicalKey: "github.com/acme/data",
+    locator: { kind: "remote" },
+  };
   runtime.projects.push({
     id: ProjectId.make("same-m1"),
     environmentId: m1,
@@ -653,6 +664,22 @@ it("lists only machines with the project and offers the rest under Add to anothe
   expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
     "Do not lose this draft",
   );
+});
+
+it("opens the folder copy review for a project with no Git remote, never a clone", async () => {
+  await render();
+  await open();
+  await click("Add to another machine…");
+  expect(button("M3").textContent).toContain("Copy its folder there");
+  expect(button("M3").textContent).not.toContain("Clone it there");
+  await click("M3Copy its folder there");
+  expect(document.querySelector("[data-copy-review]")?.getAttribute("data-copy-review")).toBe(m3);
+  expect(runtime.dialogs.copy.project.id).toBe(projectId);
+  expect(document.querySelector("[data-add-dialog]")).toBeNull();
+  // Closing the review leaves the draft where it was.
+  await act(async () => runtime.dialogs.copy.onClose());
+  expect(document.querySelector("[data-copy-review]")).toBeNull();
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
 });
 
 it("offers Link, never Clone, when the machine has an unlinked checkout of the same remote", async () => {

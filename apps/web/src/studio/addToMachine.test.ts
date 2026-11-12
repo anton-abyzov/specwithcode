@@ -9,7 +9,9 @@ import type {
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  ADD_ROUTE_TEXT,
   addToMachineJobKey,
+  addToMachineRoute,
   alternateFolder,
   clearAddToMachineJob,
   cloneUrlFor,
@@ -162,6 +164,16 @@ describe("destinationPlan", () => {
       }
     },
   );
+});
+
+describe("addToMachineRoute", () => {
+  it("clones a project with a Git remote and copies the folder of one without", () => {
+    const remote = identity("git@github.com:example/widgets.git", "github.com/example/widgets");
+    expect(addToMachineRoute({ repositoryIdentity: remote })).toBe("clone");
+    expect(addToMachineRoute({ repositoryIdentity: null })).toBe("copy");
+    expect(addToMachineRoute({})).toBe("copy");
+    expect(ADD_ROUTE_TEXT.copy).toBe("Copy its folder there");
+  });
 });
 
 describe("runOnMachineGroups", () => {

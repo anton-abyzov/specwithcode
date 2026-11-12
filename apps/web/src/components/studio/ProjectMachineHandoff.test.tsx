@@ -838,6 +838,28 @@ it("Copy files instead leaves sharing for the files-only copy", async () => {
   expect(props().method).toBe("copy");
 });
 
+it("opens straight on the folder copy review, on the machine Run on picked", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [source];
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={source as never}
+        coordinatorId={"coordinator" as never}
+        showTrigger={false}
+        openRequest={{ mode: "copy", seq: 1, machine: "m3" as never }}
+      />,
+    ),
+  );
+  expect(props().shareFlow).toBeUndefined();
+  expect(props().intent).toBe("copy");
+  expect(props().method).toBe("copy");
+  expect((props().copyFlow as { props: Record<string, unknown> }).props).toMatchObject({
+    preferredMachine: "m3",
+    defaultMode: "copy-only",
+  });
+});
+
 it("resumes an unfinished handoff instead of opening on sharing", async () => {
   localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
   await mount();

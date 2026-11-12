@@ -105,10 +105,15 @@ function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
 /** An interrupted request has nothing to tell a person beyond trying again. */
 const isInterruptedMessage = (message: string) => message.includes("fibers interrupted");
 
-/** Which way the machine menu opens the dialog; `seq` makes each pick a new request. */
+/**
+ * Which way the machine menu opens the dialog; `seq` makes each pick a new request.
+ * "copy" opens the folder copy review directly, on `machine` when given: Run on's
+ * Add to another machine… for a project with no Git remote, which has nothing to clone.
+ */
 export interface MachineHandoffOpenRequest {
-  readonly mode: "add" | "move";
+  readonly mode: "add" | "move" | "copy";
   readonly seq: number;
+  readonly machine?: EnvironmentId;
 }
 
 export function ProjectMachineHandoff({
@@ -755,7 +760,10 @@ export function ProjectMachineHandoff({
    * Opens the dialog. "add" starts on sharing the project with another
    * machine (this copy keeps running); "move" starts on handing it over.
    */
-  const openDialog = (mode: MachineHandoffOpenRequest["mode"]) => {
+  const openDialog = (
+    mode: MachineHandoffOpenRequest["mode"],
+    machine?: EnvironmentId | undefined,
+  ) => {
     if (!sourceReady) return;
     changeOpen(true);
     if (!snapshot) {
@@ -815,6 +823,15 @@ export function ProjectMachineHandoff({
       setShareView(false);
       setIntent("move");
     }
+    if (mode === "copy" && !snapshot) {
+      setShareView(false);
+      setIntent("copy");
+      setMethod("copy");
+      if (machine) {
+        setSelected("");
+        setPickerMachine(machine);
+      }
+    }
   };
   const latestOpenDialog = useRef(openDialog);
   latestOpenDialog.current = openDialog;
@@ -825,7 +842,7 @@ export function ProjectMachineHandoff({
     // The menu has no tooltip to explain a refusal, so it says why here.
     const reason = latestBlockedReason.current;
     if (reason) toastManager.add({ type: "warning", title: reason });
-    else latestOpenDialog.current(openRequest.mode);
+    else latestOpenDialog.current(openRequest.mode, openRequest.machine);
   }, [openRequest]);
 
   return (

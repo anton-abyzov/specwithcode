@@ -38,7 +38,12 @@ import {
   isOrdinaryProjectChoice,
   projectDestinationUnavailableReason,
 } from "~/studio/projectListVisibility";
-import { runOnMachineGroups, type RunOnMachineGroups } from "~/studio/addToMachine";
+import {
+  ADD_ROUTE_TEXT,
+  addToMachineRoute,
+  runOnMachineGroups,
+  type RunOnMachineGroups,
+} from "~/studio/addToMachine";
 import { useMachineNicknames } from "~/studio/machineNickname";
 import { useEnvironments, type EnvironmentPresentation } from "~/state/environments";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "~/state/session";
@@ -67,6 +72,7 @@ import { ProjectLinkDialog, type ProjectLinkTarget } from "../studio/ProjectLink
 import { cn } from "~/lib/utils";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { AddToMachineDialog } from "./AddToMachineDialog";
+import { DraftFolderCopy } from "./DraftFolderCopy";
 import { ComposerControl } from "./ComposerControl";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import {
@@ -111,6 +117,12 @@ export function DraftMachinePicker(props: Props) {
   const [addTarget, setAddTarget] = useState<{
     readonly source: EnvironmentProject;
     readonly environmentId: EnvironmentId;
+  } | null>(null);
+  // No Git remote: the folder copy review instead of a clone with nothing to clone from.
+  const [copyTarget, setCopyTarget] = useState<{
+    readonly source: EnvironmentProject;
+    readonly environmentId: EnvironmentId;
+    readonly seq: number;
   } | null>(null);
   const [linkTarget, setLinkTarget] = useState<{
     readonly project: EnvironmentProject;
@@ -562,7 +574,9 @@ export function DraftMachinePicker(props: Props) {
             machineRow(environment, {
               selectable: false,
               // AC-02: the path can be long, so "Link" sits apart and never truncates.
-              usableText: copy ? `Has a copy at ${copy.workspaceRoot}` : "Clone it there",
+              usableText: copy
+                ? `Has a copy at ${copy.workspaceRoot}`
+                : ADD_ROUTE_TEXT[addToMachineRoute(project)],
               usableAction: copy ? "Link" : undefined,
               onChoose: () =>
                 closeMenuFor(() =>
@@ -571,7 +585,13 @@ export function DraftMachinePicker(props: Props) {
                         project,
                         candidate: { environmentId, projectId: copy.id },
                       })
-                    : setAddTarget({ source: project, environmentId }),
+                    : addToMachineRoute(project) === "copy"
+                      ? setCopyTarget((previous) => ({
+                          source: project,
+                          environmentId,
+                          seq: (previous?.seq ?? 0) + 1,
+                        }))
+                      : setAddTarget({ source: project, environmentId }),
                 ),
             }),
           ];
@@ -808,6 +828,15 @@ export function DraftMachinePicker(props: Props) {
             setAddTarget(null);
             void select(target);
           }}
+        />
+      )}
+      {copyTarget && (
+        <DraftFolderCopy
+          key={`${copyTarget.source.environmentId}:${copyTarget.source.id}`}
+          project={copyTarget.source}
+          machine={copyTarget.environmentId}
+          seq={copyTarget.seq}
+          onClose={() => setCopyTarget(null)}
         />
       )}
       {linkTarget && (

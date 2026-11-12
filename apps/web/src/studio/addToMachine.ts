@@ -177,6 +177,23 @@ export function runOnMachineGroups(input: {
   return { withProject, addable };
 }
 
+/**
+ * How Add to another machine puts a project on a machine without a copy: a clone
+ * from its Git remote, or, with no remote to clone from, the folder copy review
+ * the project menu opens (Review files to transfer).
+ */
+export function addToMachineRoute(project: {
+  readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+}): "clone" | "copy" {
+  return project.repositoryIdentity ? "clone" : "copy";
+}
+
+/** The line next to a machine Add can put the project on, by route. */
+export const ADD_ROUTE_TEXT = {
+  clone: "Clone it there",
+  copy: "Copy its folder there",
+} as const;
+
 /** Folders git ignores whole stay behind; the note the dialog shows next to the tick. */
 export const IGNORED_FILES_NOTE =
   "Folders Git ignores whole, such as node_modules, are left out; reinstall them there.";

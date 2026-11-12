@@ -146,14 +146,14 @@ afterEach(async () => {
 
 const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
 
-async function render() {
+async function render(from: EnvironmentProject = source) {
   root = createRoot(container);
   await act(async () =>
     root!.render(
       <AddToMachineDialog
         open
         onOpenChange={onOpenChange}
-        source={source}
+        source={from}
         destinationEnvironmentId={"mini" as EnvironmentId}
         onAdded={onAdded}
       />,
@@ -236,6 +236,13 @@ it("asks an older destination to update", async () => {
   expect(text()).toContain("Mini needs a newer SpecWithCode to add projects.");
   expect(button("Clone to Mini")?.disabled).toBe(true);
   expect(calls("inspectDestination")).toEqual([]);
+});
+
+it("points a project with no Git remote to its folder copy, not to pushing it first", async () => {
+  await render({ ...source, repositoryIdentity: null } as EnvironmentProject);
+  expect(text()).toContain("has nothing to clone from");
+  expect(text()).toContain("Review files to transfer");
+  expect(text()).not.toContain("Push it to GitHub");
 });
 
 it("refuses a folder with other files and offers another one", async () => {
