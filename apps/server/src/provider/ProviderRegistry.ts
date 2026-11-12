@@ -32,6 +32,7 @@ import { annotateWorkflowSkills } from "../project/workflowCapabilities.ts";
 import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules, watchTeamRules } from "../teamRules/TeamRules.ts";
 import {
+  type AgentSearch as AgentSearchSnapshot,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -53,6 +54,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
+import { AgentSearch } from "./agentSearch.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
@@ -159,6 +161,15 @@ export class ProviderRegistry extends Context.Service<
      * change. The array contains the full current state.
      */
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * What the search for installed agents has found so far, with the current
+     * providers, as the refresh call answers it. Absent where no search runs.
+     */
+    readonly findAgents?: (options: { readonly fresh: boolean }) => Effect.Effect<{
+      readonly providers: ReadonlyArray<ServerProvider>;
+      readonly agentSearch: AgentSearchSnapshot;
+    }>;
   }
 >()("specweave-studio/provider/ProviderRegistry") {}
 
@@ -439,6 +450,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
+    const agentSearch = yield* Effect.serviceOption(AgentSearch);
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1266,6 +1278,15 @@ export const layer = Layer.effect(
         ),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
+      ...(Option.isSome(agentSearch)
+        ? {
+            findAgents: (options: { readonly fresh: boolean }) =>
+              Effect.all({
+                providers: ruledProviders,
+                agentSearch: agentSearch.value.search(options),
+              }),
+          }
+        : {}),
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub).pipe(
           Stream.mapEffect((providers) =>

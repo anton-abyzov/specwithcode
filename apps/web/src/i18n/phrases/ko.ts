@@ -4378,4 +4378,20 @@ export const ko: PhraseCatalog = {
   "Used the folder that holds the dropped file.": "놓은 파일이 들어 있는 폴더를 사용했습니다.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "이 컴퓨터의 폴더는 WSL 안에 있습니다. 경로를 입력하거나 붙여넣으세요.",
+  "Agents found on {machine}": "{machine}에서 찾은 에이전트",
+  "Looking for {agents}…": "{agents} 찾는 중…",
+  "{found} of {count} agents found on {machine}.":
+    "{machine}에서 에이전트 {count}개 중 {found}개를 찾았습니다.",
+  "Find agents": "에이전트 찾기",
+  "Installed, not added.": "설치됨, 추가되지 않음.",
+  "Signed in, not turned on.": "로그인됨, 꺼져 있음.",
+  "Installed, not signed in.": "설치됨, 로그인되지 않음.",
+  "Installed, not turned on.": "설치됨, 꺼져 있음.",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "Muse Code는 Contributor 모드가 켜져 있으면 코드를 Meta와 공유할 수 있습니다. 켜기 전에 해당 설정을 확인하세요.",
+  "Add agent": "에이전트 추가",
+  "Not found: {agents}.": "찾지 못함: {agents}.",
+  "No answer from: {agents}.": "응답 없음: {agents}.",
+  "Where it looked": "찾아본 위치",
+  "{names} and {count} more": "{names} 외 {count}개",
 };

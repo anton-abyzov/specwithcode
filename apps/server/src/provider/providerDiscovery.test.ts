@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -35,9 +36,11 @@ import {
   probeMuse,
   probeOpenCode,
   probePi,
+  layerSearch,
   runProviderDiscovery,
   searchedFolders,
 } from "./providerDiscovery.ts";
+import { AgentSearch } from "./agentSearch.ts";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 
 const fakeCliDirectory = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "discovery-"));
@@ -663,5 +666,82 @@ process.exit(2);
       assert.deepEqual(Object.keys(current.providerDiscovery.autoEnabled), ["pi"]);
       assert.deepEqual(current.providerInstances, {});
     }).pipe(Effect.provide(Layer.provideMerge(layerServerSettings(), NodeServices.layer))),
+  );
+});
+
+describe("finding agents on demand", () => {
+  /** A search service whose PATH holds a signed-in Pi and nothing else. */
+  const layerSearchWithPi = () => {
+    const pi = fakeCli("pi", ["--list-models"], PI_MODELS);
+    const path = [NodePath.dirname(pi), isolatedPath()].join(NodePath.delimiter);
+    return layerSearch.pipe(
+      Layer.provide(Layer.succeed(HostProcessEnvironment, { PATH: path })),
+      Layer.provideMerge(Layer.provideMerge(layerServerSettings(), NodeServices.layer)),
+    );
+  };
+
+  const startSettings = Effect.gen(function* () {
+    yield* writeSettingsFile("{}");
+    const settings = yield* ServerSettingsModule.ServerSettingsService;
+    yield* settings.start;
+    return settings;
+  });
+
+  const untilDone = (search: AgentSearch["Service"]["search"]) =>
+    search({ fresh: false }).pipe(
+      Effect.repeat({
+        until: (snapshot) => snapshot.pending.length === 0,
+        schedule: Schedule.spaced("50 millis"),
+      }),
+      Effect.timeout("30 seconds"),
+    );
+
+  it.live("answers at once, fills in as agents answer, and turns on the signed-in one", () =>
+    Effect.gen(function* () {
+      const settings = yield* startSettings;
+      const { search } = yield* AgentSearch;
+
+      const first = yield* search({ fresh: false });
+      assert.deepEqual(first.agents, []);
+      assert.deepEqual(
+        first.pending,
+        DISCOVERED_AGENTS.map(({ agent }) => agent),
+      );
+      assert.isUndefined(first.checkedAt);
+      assert.isAbove(first.searched.length, 0);
+
+      const done = yield* untilDone(search);
+      assert.deepEqual(
+        done.agents.map(({ agent }) => agent),
+        DISCOVERED_AGENTS.map(({ agent }) => agent),
+      );
+      assert.equal(done.agents.find(({ agent }) => agent === "pi")?.state, "ready");
+      assert.equal(done.agents.find(({ agent }) => agent === "codex")?.state, "not-installed");
+      assert.isString(done.checkedAt);
+      assert.isTrue((yield* settings.getSettings).providers.pi.enabled);
+    }).pipe(Effect.provide(layerSearchWithPi())),
+  );
+
+  it.live("keeps a recent search, and starts another only when asked", () =>
+    Effect.gen(function* () {
+      yield* startSettings;
+      const { search } = yield* AgentSearch;
+      yield* search({ fresh: false });
+      const done = yield* untilDone(search);
+
+      // Recent: answered from what is known, nothing is run again.
+      const again = yield* search({ fresh: false });
+      assert.deepEqual(again, done);
+
+      // Asked for: every agent is checked again, and the rows stay meanwhile.
+      const fresh = yield* search({ fresh: true });
+      assert.equal(fresh.pending.length, DISCOVERED_AGENTS.length);
+      assert.deepEqual(fresh.agents, done.agents);
+      // One search at a time: a second request joins the one that is running.
+      const joined = yield* search({ fresh: true });
+      assert.isAtMost(joined.pending.length, fresh.pending.length);
+      const finished = yield* untilDone(search);
+      assert.deepEqual(finished.agents, done.agents);
+    }).pipe(Effect.provide(layerSearchWithPi())),
   );
 });

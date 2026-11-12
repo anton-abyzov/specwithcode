@@ -2383,6 +2383,9 @@ const layerWsRpc = (
           ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           Effect.gen(function* () {
+            if (input.discover && providerRegistry.findAgents) {
+              return yield* providerRegistry.findAgents({ fresh: input.fresh === true });
+            }
             // Only explicit catalog refreshes bypass Studio's caches. Workspace
             // discovery and background status checks retain their timers.
             if (input.refreshModels) {

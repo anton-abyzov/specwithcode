@@ -4254,4 +4254,20 @@ export const zh: PhraseCatalog = {
   "Used the folder that holds the dropped file.": "已使用拖入文件所在的文件夹。",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "这台电脑的文件夹位于 WSL 中。请输入或粘贴路径。",
+  "Agents found on {machine}": "在 {machine} 上找到的智能体",
+  "Looking for {agents}…": "正在查找 {agents}…",
+  "{found} of {count} agents found on {machine}.":
+    "在 {machine} 上找到 {count} 个智能体中的 {found} 个。",
+  "Find agents": "查找智能体",
+  "Installed, not added.": "已安装，未添加。",
+  "Signed in, not turned on.": "已登录，未开启。",
+  "Installed, not signed in.": "已安装，未登录。",
+  "Installed, not turned on.": "已安装，未开启。",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "开启 Contributor 模式后，Muse Code 可能会与 Meta 共享你的代码。开启前请检查该设置。",
+  "Add agent": "添加智能体",
+  "Not found: {agents}.": "未找到：{agents}。",
+  "No answer from: {agents}.": "无响应：{agents}。",
+  "Where it looked": "查找位置",
+  "{names} and {count} more": "{names} 等另外 {count} 个",
 };

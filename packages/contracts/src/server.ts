@@ -1084,8 +1084,49 @@ export const ServerLifecycleStreamEvent = Schema.Union([
 ]);
 export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
 
+/**
+ * How far the search for one agent's command got. `installed` runs, but this
+ * search does not read its sign-in.
+ */
+export const AgentSearchState = Schema.Literals([
+  "ready",
+  "signed-out",
+  "installed",
+  "not-installed",
+  "unknown",
+]);
+export type AgentSearchState = typeof AgentSearchState.Type;
+
+export const FoundAgent = Schema.Struct({
+  /** A built-in driver kind, or the registry id of an agent that is only offered. */
+  agent: TrimmedNonEmptyString,
+  kind: Schema.Literals(["builtIn", "registry"]),
+  /** The command or path that was run. */
+  command: Schema.String,
+  state: AgentSearchState,
+});
+export type FoundAgent = typeof FoundAgent.Type;
+
+/** What the search for installed agents has found so far on a machine. */
+export const AgentSearch = Schema.Struct({
+  /** Every agent that has answered, from this search or the one before it. */
+  agents: Schema.Array(FoundAgent),
+  /** Agents still being checked. Empty once the search is done. */
+  pending: Schema.Array(TrimmedNonEmptyString),
+  /** The folders a command name was looked up in. */
+  searched: Schema.Array(Schema.String),
+  /** When the last finished search ended. Absent until one has. */
+  checkedAt: Schema.optionalKey(IsoDateTime),
+});
+export type AgentSearch = typeof AgentSearch.Type;
+
 export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
+  /**
+   * Sent when the request asked to find agents and this server can. A search
+   * in a shape this build does not know reads as absent, not as a failed call.
+   */
+  agentSearch: ForwardCompatibleOptional(AgentSearch),
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
 

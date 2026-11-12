@@ -60,7 +60,6 @@ import { useEnvironmentSessionState } from "../../state/session";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectPickerMembers } from "../../studio/projectListVisibility";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { getRelativeTimeState } from "../../timestampFormat";
 import {
   ConnectionStatusDot,
   connectionPhaseDotClassName,
@@ -96,7 +95,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
+import { defaultAgentInstance, FoundAgents } from "./FoundAgents";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { ProviderLastChecked } from "./ProviderLastChecked";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -119,7 +120,6 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
-  useRelativeTimeTick,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import {
@@ -161,34 +161,6 @@ const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
 function configuredBinaryPath(config: unknown): string {
   if (config === null || typeof config !== "object" || !("binaryPath" in config)) return "";
   return typeof config.binaryPath === "string" ? config.binaryPath.trim() : "";
-}
-
-function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
-  const tx = useTx();
-  useRelativeTimeTick();
-  const lastCheckedRelative = getRelativeTimeState(lastCheckedAt);
-
-  if (lastCheckedRelative.status === "missing") {
-    return null;
-  }
-
-  if (lastCheckedRelative.status === "invalid") {
-    return <span>{tx("Checked unavailable")}</span>;
-  }
-
-  return (
-    <span>
-      {lastCheckedRelative.suffix ? (
-        <>
-          {tx("Checked")}{" "}
-          <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
-          {lastCheckedRelative.suffix}
-        </>
-      ) : (
-        <>{renderRich(tx("Checked {value}"), { value: lastCheckedRelative.value })}</>
-      )}
-    </span>
-  );
 }
 
 function providerEnvironmentDetail(environment: EnvironmentPresentation): string {
@@ -978,6 +950,17 @@ export function EnvironmentProviderSettings({
     }
   };
 
+  /** Turns on a found agent's default entry, which has no row while it is off. */
+  const turnOnAgent = (driver: ProviderDriverKind) => {
+    const instanceId = defaultInstanceIdForDriver(driver);
+    const instance = defaultAgentInstance(settings, driver);
+    setSelectedInstanceId(instanceId);
+    void updateProviderInstance(
+      { instanceId, instance, driver, isDefault: true },
+      { ...instance, enabled: true },
+    );
+  };
+
   const deleteProviderInstance = async (row: InstanceRow) => {
     const updateResult = await persistProviderInstance({
       operation: "remove",
@@ -1370,6 +1353,15 @@ export function EnvironmentProviderSettings({
             { environmentLabel: environmentLabel },
           )}
         </p>
+        <FoundAgents
+          key={environmentId}
+          environmentId={environmentId}
+          machine={environmentLabel}
+          settings={settings}
+          readOnly={readOnly || !canWriteSettings}
+          onTurnOn={turnOnAgent}
+          onAdd={() => setIsAddInstanceDialogOpen(true)}
+        />
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
