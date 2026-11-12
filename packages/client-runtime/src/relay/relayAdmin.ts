@@ -9,7 +9,6 @@ import type {
   RelayAdminAccountsResponse,
   RelayAdminOverviewResponse,
 } from "@specweave-studio/contracts/relayAdmin";
-import { withRelayClientTracing } from "@specweave-studio/shared/relayTracing";
 import { normalizeSecureRelayUrl } from "@specweave-studio/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -185,10 +184,12 @@ export const make = Effect.fn("RelayAdminClient.make")(function* (options: {
   const call = <A, E>(name: string, clerkToken: string, request: Effect.Effect<A, E>) =>
     request.pipe(
       Effect.provideService(RelayAdminBearer, clerkToken),
+      // No HTTP client span and no relay tracing for these calls: the span would
+      // record the URL, and an account read has another person's id in its path.
+      Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
       Effect.mapError(relayAdminRequestError),
       withinTime,
       Effect.withSpan(`clientRuntime.relayAdmin.${name}`),
-      withRelayClientTracing,
     );
 
   return RelayAdminClient.of({

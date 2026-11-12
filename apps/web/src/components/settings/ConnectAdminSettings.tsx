@@ -263,7 +263,7 @@ function AccountRow({
   );
 }
 
-export interface ConnectAdminViewProps {
+interface ConnectAdminViewProps {
   readonly overview: Loadable<RelayAdminOverviewResponse>;
   readonly list: Loadable<ConnectAdminAccountList>;
   /** The search on screen; null while the newest-first list shows. */
@@ -272,6 +272,8 @@ export interface ConnectAdminViewProps {
   readonly more: "idle" | "loading" | ConnectAdminFailure;
   readonly selectedUserId: string | null;
   readonly detail: Loadable<RelayAdminAccountResponse>;
+  /** A refresh keeps what is on screen until the new answers arrive. */
+  readonly refreshing: boolean;
   readonly locale: string | undefined;
   readonly onDraftChange: (value: string) => void;
   readonly onSearch: () => void;
@@ -285,7 +287,7 @@ export interface ConnectAdminViewProps {
 }
 
 /** The page without its reads: totals, the account list and one open account. */
-export function ConnectAdminView(props: ConnectAdminViewProps) {
+function ConnectAdminView(props: ConnectAdminViewProps) {
   const tx = useTx();
   const { overview, list, more } = props;
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -315,7 +317,8 @@ export function ConnectAdminView(props: ConnectAdminViewProps) {
       <SettingsSection
         title="Accounts"
         headerAction={
-          <Button size="xs" variant="outline" onClick={props.onRefresh}>
+          <Button size="xs" variant="outline" disabled={props.refreshing} onClick={props.onRefresh}>
+            {props.refreshing ? <Spinner size="sm" /> : null}
             {tx("Refresh")}
           </Button>
         }
@@ -420,11 +423,13 @@ function ConnectAdminPage() {
   const overviewRequest = useRef(0);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
+  const refreshRequest = useRef(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   // The fetches set no state before they answer, so the first one can run from an effect.
   const fetchOverview = useCallback(() => {
     const request = ++overviewRequest.current;
-    void readConnectAdmin((client, clerkToken) => client.overview({ clerkToken })).then(
+    return readConnectAdmin((client, clerkToken) => client.overview({ clerkToken })).then(
       (result) => {
         if (overviewRequest.current !== request) return;
         setOverview(result.ok ? ready(result.value) : failed(result.failure));
@@ -434,7 +439,7 @@ function ConnectAdminPage() {
 
   const fetchList = useCallback((query: string | null) => {
     const request = ++listRequest.current;
-    void readConnectAdmin((client, clerkToken) =>
+    return readConnectAdmin((client, clerkToken) =>
       query === null
         ? client.listAccounts({ clerkToken })
         : client.searchAccounts({ clerkToken, query }),
@@ -444,21 +449,9 @@ function ConnectAdminPage() {
     });
   }, []);
 
-  const loadOverview = () => {
-    setOverview(LOADING);
-    fetchOverview();
-  };
-
-  const loadList = (query: string | null) => {
-    setList(LOADING);
-    setMore("idle");
-    fetchList(query);
-  };
-
-  const loadDetail = (userId: string) => {
+  const fetchDetail = (userId: string) => {
     const request = ++detailRequest.current;
-    setDetail(LOADING);
-    void readConnectAdmin((client, clerkToken) => client.account({ clerkToken, userId })).then(
+    return readConnectAdmin((client, clerkToken) => client.account({ clerkToken, userId })).then(
       (result) => {
         if (detailRequest.current !== request) return;
         setDetail(result.ok ? ready(result.value) : failed(result.failure));
@@ -466,12 +459,28 @@ function ConnectAdminPage() {
     );
   };
 
+  const loadOverview = () => {
+    setOverview(LOADING);
+    void fetchOverview();
+  };
+
+  const loadList = (query: string | null) => {
+    setList(LOADING);
+    setMore("idle");
+    void fetchList(query);
+  };
+
+  const loadDetail = (userId: string) => {
+    setDetail(LOADING);
+    void fetchDetail(userId);
+  };
+
   useEffect(() => {
     const overviewRequests = overviewRequest;
     const listRequests = listRequest;
     const detailRequests = detailRequest;
-    fetchOverview();
-    fetchList(null);
+    void fetchOverview();
+    void fetchList(null);
     return () => {
       overviewRequests.current += 1;
       listRequests.current += 1;
@@ -515,6 +524,7 @@ function ConnectAdminPage() {
       more={more}
       selectedUserId={selectedUserId}
       detail={detail}
+      refreshing={refreshing}
       locale={locale}
       onDraftChange={setDraft}
       onSearch={() => {
@@ -531,9 +541,19 @@ function ConnectAdminPage() {
         loadList(null);
       }}
       onRefresh={() => {
-        loadOverview();
-        loadList(search);
-        if (selectedUserId !== null) loadDetail(selectedUserId);
+        // Re-read in place: the list, an open account and the totals stay on
+        // screen until their new answers arrive. Pages loaded with "Load more"
+        // are read again from the first page.
+        const request = ++refreshRequest.current;
+        setRefreshing(true);
+        setMore("idle");
+        void Promise.all([
+          fetchOverview(),
+          fetchList(search),
+          selectedUserId === null ? undefined : fetchDetail(selectedUserId),
+        ]).then(() => {
+          if (refreshRequest.current === request) setRefreshing(false);
+        });
       }}
       onRetryOverview={loadOverview}
       onRetryList={() => loadList(search)}

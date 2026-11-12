@@ -179,6 +179,15 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
 ];
 
+/**
+ * Pages only the owners of SpecWithCode Connect may find. A search lists one
+ * only when its caller names it, as the sidebar does once the relay confirmed
+ * the account; the command palette never does.
+ */
+export const SETTINGS_OWNER_ONLY_PATHS: ReadonlySet<SettingsPath> = new Set([
+  "/settings/connect-admin",
+]);
+
 /** Anchor id of the first row bound to `command` on the Keybindings page. */
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
   return `keybinding-${command}` as const;
@@ -1556,7 +1565,9 @@ export type SettingsSearchResult = GroupedSettingsSearchResult<SettingsPath, Set
 export function searchSettingsBySection(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
-  sections: ReadonlyArray<SettingsPath> = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths),
+  sections: ReadonlyArray<SettingsPath> = SETTINGS_NAV_GROUPS.flatMap((group) =>
+    group.paths.filter((path) => !SETTINGS_OWNER_ONLY_PATHS.has(path)),
+  ),
   translate?: (english: string) => string,
 ): SettingsSearchResult[] {
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;

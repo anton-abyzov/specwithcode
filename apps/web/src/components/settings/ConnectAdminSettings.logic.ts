@@ -167,7 +167,7 @@ export function overviewTiles(
     { label: tx("Accounts"), value: String(overview.accounts) },
     { label: tx("Linked machines"), value: String(overview.linkedMachines) },
     {
-      label: tx("Tunnels ready, of allocated"),
+      label: tx("Tunnels ready / allocated"),
       value: `${overview.tunnelsReady} / ${overview.tunnelsAllocated}`,
     },
     { label: tx("Phones"), value: String(overview.phones) },
@@ -175,7 +175,7 @@ export function overviewTiles(
       label: tx("Founder seats taken"),
       value: `${overview.founderSeatsGranted} / ${overview.founderSeatCap}`,
     },
-    { label: tx("Machines on the free plan"), value: String(overview.freeMachineLimit) },
+    { label: tx("Machine limit on the free plan"), value: String(overview.freeMachineLimit) },
     {
       label: tx("Tunnel cap for all accounts"),
       value: overview.globalTunnelCap === null ? tx("No cap") : String(overview.globalTunnelCap),

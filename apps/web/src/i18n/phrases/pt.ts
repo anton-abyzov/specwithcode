@@ -4225,19 +4225,18 @@ export const pt: PhraseCatalog = {
     "Ninguém entrou no SpecWithCode Connect ainda.",
   "Checking this account…": "Verificando esta conta…",
   "Could not check whether this account is an owner.":
-    "Não foi possível verificar se esta conta é proprietária.",
+    "Não foi possível verificar se esta conta é de um dono.",
   "This page is only for the owners of SpecWithCode Connect.":
-    "Esta página é apenas para os proprietários do SpecWithCode Connect.",
-  "No machine limit, set by an owner": "Sem limite de máquinas, definido por um proprietário",
+    "Esta página é apenas para os donos do SpecWithCode Connect.",
+  "No machine limit, set by an owner": "Sem limite de máquinas, definido por um dono",
   "No machine limit": "Sem limite de máquinas",
-  "Machine limit: {count}, set by an owner":
-    "Limite de máquinas: {count}, definido por um proprietário",
+  "Machine limit: {count}, set by an owner": "Limite de máquinas: {count}, definido por um dono",
   "Machine limit: {count}, founder": "Limite de máquinas: {count}, fundador",
   "Machine limit: {count}, free plan": "Limite de máquinas: {count}, plano gratuito",
   "Linked machines": "Máquinas vinculadas",
-  "Tunnels ready, of allocated": "Túneis prontos, dos alocados",
+  "Tunnels ready / allocated": "Túneis prontos / alocados",
   "Founder seats taken": "Vagas de fundador ocupadas",
-  "Machines on the free plan": "Máquinas no plano gratuito",
+  "Machine limit on the free plan": "Limite de máquinas do plano gratuito",
   "Tunnel cap for all accounts": "Teto de túneis para todas as contas",
   "No cap": "Sem teto",
   "Linked without a Connect tunnel": "Vinculada sem túnel do Connect",
@@ -4249,9 +4248,9 @@ export const pt: PhraseCatalog = {
   "Tunnel ready, live status not read": "Túnel pronto, status ao vivo não lido",
   "This page needs a Connect session in this window.":
     "Esta página precisa de uma sessão do Connect nesta janela.",
-  "This account is not a Connect owner": "Esta conta não é proprietária do Connect",
+  "This account is not a Connect owner": "Esta conta não é de um dono do Connect",
   "SpecWithCode Connect does not list this account as an owner.":
-    "O SpecWithCode Connect não lista esta conta como proprietária.",
+    "O SpecWithCode Connect não lista esta conta entre os donos.",
   "No Connect account has that id": "Nenhuma conta do Connect tem esse ID",
   "It may have been deleted since the list was read.":
     "Ela pode ter sido excluída depois que a lista foi lida.",

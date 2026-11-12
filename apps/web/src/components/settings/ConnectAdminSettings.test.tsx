@@ -195,7 +195,7 @@ describe("ConnectAdminSettings", () => {
     expect(state.calls).toEqual([{ kind: "overview" }, { kind: "list" }]);
     const text = pageText();
     expect(text).toContain("Linked machines5");
-    expect(text).toContain("Tunnels ready, of allocated2 / 4");
+    expect(text).toContain("Tunnels ready / allocated2 / 4");
     expect(text).toContain("Founder seats taken7 / 300");
     expect(text).toContain("Tunnel cap for all accountsNo cap");
     expect(text).toContain("Person user_a");
@@ -320,16 +320,33 @@ describe("ConnectAdminSettings", () => {
     expect(pageText()).toContain("No phone is signed in to this account.");
   });
 
-  it("refreshes the totals, the list and the open account together", async () => {
+  it("refreshes the totals, the list and the open account in place", async () => {
     await mount();
     await press("Person user_a");
     state.calls = [];
+    // The new answers arrive later: what is on screen stays until then.
+    const pending: Array<() => void> = [];
+    const answer = state.answer;
+    state.answer = (call) =>
+      new Promise((resolve) => {
+        pending.push(() => resolve(answer(call)));
+      });
     await press("Refresh");
     expect(state.calls).toEqual([
       { kind: "overview" },
       { kind: "list" },
       { kind: "account", userId: "user_a" },
     ]);
+    expect(pageText()).toContain("Person user_a");
+    expect(pageText()).toContain("Studio Mac");
+    expect(pageText()).not.toContain("Loading accounts…");
+    expect(buttons("Refresh")[0]!.props.disabled).toBe(true);
+
+    await act(async () => {
+      for (const release of pending) release();
+    });
+    expect(buttons("Refresh")[0]!.props.disabled).toBe(false);
+    expect(pageText()).toContain("Studio Mac");
   });
 });
 

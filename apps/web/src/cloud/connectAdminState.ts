@@ -26,6 +26,7 @@ export type ConnectAdminRead<A> =
   | { readonly ok: false; readonly failure: ConnectAdminFailure };
 
 const SIGNED_OUT: ConnectAdminFailure = { kind: "signed_out", status: null, traceId: null };
+const TOKEN_UNREAD: ConnectAdminFailure = { kind: "failed", status: null, traceId: null };
 
 const failureOf = (error: RelayAdmin.RelayAdminRequestError): ConnectAdminFailure => ({
   kind: error.kind,
@@ -95,22 +96,26 @@ export function useIsConnectAdmin(): boolean {
 }
 
 /**
- * Runs one admin read with this window's Connect session. Never rejects: a
- * failure comes back as a value, so a page cannot mistake it for an empty answer.
+ * One admin read with this window's Connect session. It never fails: a failure
+ * comes back as a value, so a page cannot mistake it for an empty answer.
  */
-export function readConnectAdmin<A>(
+export const connectAdminRead = <A>(
   read: (
     client: RelayAdmin.RelayAdminClientShape,
     clerkToken: string,
   ) => Effect.Effect<A, RelayAdmin.RelayAdminRequestError>,
-): Promise<ConnectAdminRead<A>> {
-  const session = appAtomRegistry.get(managedRelaySessionAtom);
-  if (session === null) return Promise.resolve({ ok: false, failure: SIGNED_OUT });
-  const effect = Effect.gen(function* () {
-    const clerkToken = yield* session
-      .readClerkToken()
-      .pipe(Effect.orElseSucceed((): string | null => null));
-    if (!clerkToken) return { ok: false, failure: SIGNED_OUT } as const;
+): Effect.Effect<ConnectAdminRead<A>, never, RelayAdmin.RelayAdminClient> =>
+  Effect.gen(function* () {
+    const session = appAtomRegistry.get(managedRelaySessionAtom);
+    if (session === null) return { ok: false, failure: SIGNED_OUT };
+    // A token that could not be read is a failure worth retrying, not a sign-out.
+    const token = yield* session.readClerkToken().pipe(
+      Effect.map((value) => ({ read: true as const, value })),
+      Effect.orElseSucceed(() => ({ read: false as const, value: null })),
+    );
+    if (!token.read) return { ok: false, failure: TOKEN_UNREAD };
+    const clerkToken = token.value;
+    if (!clerkToken) return { ok: false, failure: SIGNED_OUT };
     const client = yield* RelayAdmin.RelayAdminClient;
     return yield* read(client, clerkToken).pipe(
       Effect.match({
@@ -119,8 +124,16 @@ export function readConnectAdmin<A>(
       }),
     );
   });
-  return runtime.runPromise(effect).catch((cause: unknown): ConnectAdminRead<A> => {
+
+/** `connectAdminRead` for the page: a promise that never rejects. */
+export function readConnectAdmin<A>(
+  read: (
+    client: RelayAdmin.RelayAdminClientShape,
+    clerkToken: string,
+  ) => Effect.Effect<A, RelayAdmin.RelayAdminRequestError>,
+): Promise<ConnectAdminRead<A>> {
+  return runtime.runPromise(connectAdminRead(read)).catch((cause: unknown): ConnectAdminRead<A> => {
     console.error("[studio-connect] Connect admin read failed", cause);
-    return { ok: false, failure: { kind: "failed", status: null, traceId: null } };
+    return { ok: false, failure: TOKEN_UNREAD };
   });
 }

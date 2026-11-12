@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupSettingsNavItems } from "./SettingsSidebarNav";
+import { groupSettingsNavItems, isSettingsNavItemShown } from "./SettingsSidebarNav";
 import { SETTINGS_SECTION_LABELS, type SettingsPath } from "./settingsSearch";
 
 describe("groupSettingsNavItems", () => {
@@ -19,5 +19,30 @@ describe("groupSettingsNavItems", () => {
       ["Project", ["/settings/skills"]],
       ["App", ["/settings/general"]],
     ]);
+  });
+});
+
+describe("isSettingsNavItemShown", () => {
+  const sections = Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[];
+  const shown = (state: { isConnectAdmin: boolean; overviewVisible: boolean }) =>
+    sections.filter((to) => isSettingsNavItemShown(to, state));
+
+  it("lists Connect admin only for an account the relay confirmed as an owner", () => {
+    expect(shown({ isConnectAdmin: false, overviewVisible: true })).not.toContain(
+      "/settings/connect-admin",
+    );
+    expect(shown({ isConnectAdmin: true, overviewVisible: false })).toContain(
+      "/settings/connect-admin",
+    );
+  });
+
+  it("keeps the other rules: no Connections entry, Project only with a project", () => {
+    const anyone = shown({ isConnectAdmin: false, overviewVisible: false });
+    expect(anyone).not.toContain("/settings/connections");
+    expect(anyone).not.toContain("/settings/projects");
+    expect(anyone).toContain("/settings/skills");
+    expect(shown({ isConnectAdmin: false, overviewVisible: true })).toContain("/settings/projects");
+    // Everything else is always listed.
+    expect(anyone).toHaveLength(sections.length - 3);
   });
 });

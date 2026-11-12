@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcHttp from "../rpc/http.ts";
 import * as RelayAdmin from "./relayAdmin.ts";
@@ -194,6 +198,53 @@ describe("RelayAdminClient", () => {
       );
       expect(error.kind).toBe("failed");
       expect(test.seen).toEqual([]);
+    });
+  });
+
+  it.effect("puts no URL and no account id into any tracing span", () => {
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const test = relayAdminTest(() =>
+      Response.json(
+        { _tag: "RelayAdminAccountNotFoundError", code: "account_not_found" },
+        { status: 404 },
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* run(test, (client) =>
+        client.account({ clerkToken: "clerk-token", userId: "user_someone_else" }),
+      ).pipe(Effect.flip, Effect.provideService(Tracer.Tracer, tracer));
+      expect(test.seen).toHaveLength(1);
+      expect(spans.map((span) => span.name)).toContain("clientRuntime.relayAdmin.account");
+      const recorded = spans
+        .flatMap((span) => [span.name, ...span.attributes.keys(), ...span.attributes.values()])
+        .map(String)
+        .join("\n");
+      expect(recorded).not.toContain("user_someone_else");
+      expect(recorded).not.toContain("/v1/admin");
+      expect(recorded).not.toContain("clerk-token");
+    });
+  });
+
+  it.effect("gives up after 20 seconds and says it timed out", () => {
+    const test = relayAdminTest(() => new Promise<Response>(() => undefined));
+    return Effect.gen(function* () {
+      const pending = yield* run(test, (client) => client.overview({ clerkToken: "t" })).pipe(
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(19));
+      expect(pending.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust(Duration.seconds(1));
+      const error = yield* Fiber.join(pending);
+      expect(error.kind).toBe("timeout");
+      expect(error.status).toBeNull();
     });
   });
 });
