@@ -1036,6 +1036,41 @@ it.effect("never relinks a copy this project still lists there, as after an unli
   });
 });
 
+it.effect("links an unlinked copy a machineProjectId names before launching in it", () => {
+  const out = setup({ sharedWithCopiesOnM1: [m1Copy("m1-widgets")] });
+  return Effect.gen(function* () {
+    const result = yield* out.launch({
+      title: "Fix",
+      message: "Fix",
+      machine: "M1",
+      machineProjectId: "m1-widgets",
+    });
+    expect(result).toMatchObject({ projectId: "m1-widgets", machine: M1 });
+    expect(out.linkSteps).toEqual(["prepare:m1-widgets", "commit:m1-widgets"]);
+  });
+});
+
+it.effect("never sends a launch for an unlinked copy back to add_to_machine", () => {
+  const out = setup({
+    sharedWithCopiesOnM1: [m1Copy("m1-widgets")],
+    m1CopyThreads: [{ threadId: "thread-on-m1" }],
+  });
+  return Effect.gen(function* () {
+    const refused = yield* out.launch({
+      title: "Fix",
+      message: "Fix",
+      machine: "M1",
+      machineProjectId: "m1-widgets",
+    });
+    expect(refused).toMatchObject({ code: "project_unavailable_on_machine" });
+    expect(String(refused.message)).toContain("m1-widgets");
+    expect(String(refused.message)).toContain("Link…");
+    expect(String(refused.message)).toContain("Do not call studio_project_add_to_machine");
+    expect(String(refused.message)).not.toContain("call studio_project_add_to_machine {machine");
+    expect(out.linkSteps).toEqual([]);
+  });
+});
+
 it.effect("keeps an explicit machineProjectId and never links for another machine's work", () => {
   const explicit = setup({ sharedWithCopiesOnM1: [m1Copy("m1-widgets")] });
   const relayed = setup({
@@ -1047,12 +1082,15 @@ it.effect("keeps an explicit machineProjectId and never links for another machin
     } as unknown as WorkOrigin,
   });
   return Effect.gen(function* () {
-    yield* explicit.launch({
+    // A machineProjectId naming another project there links nothing in its place.
+    const refused = yield* explicit.launch({
       title: "Fix",
       message: "Fix",
       machine: "M1",
-      machineProjectId: "m1-widgets",
+      machineProjectId: "m1-other",
     });
+    expect(refused).toMatchObject({ code: "project_unavailable_on_machine" });
+    expect(String(refused.message)).toContain("m1-other");
     expect(explicit.linkSteps).toEqual([]);
     yield* relayed.launch({ title: "Fix", message: "Fix", machine: "M1" });
     expect(relayed.linkSteps).toEqual([]);

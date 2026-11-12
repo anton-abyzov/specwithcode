@@ -456,11 +456,15 @@ const copyHasNoThreads = (machine: OrchestratorMcpMachineRef, copyId: ProjectId)
 export const linkExistingCopy = Effect.fn("mcp.addToMachine.linkExistingCopy")(function* (input: {
   readonly project: Project;
   readonly machine: OrchestratorMcpMachineRef;
+  /** Only this project there (a launch's machineProjectId) may be linked. */
+  readonly copyId?: ProjectId | undefined;
 }) {
   const shared = input.project.workspaceSettings?.logicalProject != null;
   if (!shared && !canMatchRemoteCopies(input.project))
     return { kind: "none" } as ExistingCopyOutcome;
-  const listed = yield* listProjectsOn(input.machine);
+  const listed = (yield* listProjectsOn(input.machine)).filter(
+    (candidate) => input.copyId === undefined || candidate.id === input.copyId,
+  );
   const halfLinked = halfLinkedRemoteCopies({
     local: input.project,
     environmentId: input.machine.environmentId,
