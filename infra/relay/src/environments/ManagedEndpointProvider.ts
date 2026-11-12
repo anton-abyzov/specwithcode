@@ -755,10 +755,12 @@ export const make = Effect.gen(function* () {
           // refuses to delete a tunnel while its connector is attached. That
           // is not a failed removal: the link is revoked and the DNS record is
           // gone, so the address is dead. Keep the allocation, which still
-          // names the tunnel: another unlink can finish the teardown, and the
-          // idle-tunnel sweep finds the tunnel through it once the connector
-          // has dropped. Forget the deleted DNS record, though, or the row
-          // would hold one of the global slots for as long as it exists.
+          // names the tunnel: another unlink can finish the teardown, and so
+          // can the tunnel cleanup sweep where its legacy mode is enabled (a
+          // revoked link makes the tunnel a legacy one there). Until then the
+          // tunnel stays in Cloudflare with no address. Forget the deleted
+          // DNS record, though, or the row would hold one of the global slots
+          // for as long as it exists.
           const tunnelDeleted = yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
             Effect.as(true),
             Effect.catchIf(isManagedEndpointTunnelInUse, () => Effect.succeed(false)),
