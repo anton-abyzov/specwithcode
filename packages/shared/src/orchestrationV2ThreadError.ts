@@ -245,6 +245,13 @@ export const PREVIOUS_TURN_ACTIVE_FAILURE_MESSAGE =
   "The previous turn is still running in the provider. Wait for it to finish or press Stop, then Continue.";
 
 /**
+ * The failure code of a start refused because the provider process still runs
+ * background work and a folder, permission or tool change needs a new process.
+ * Stopping that work, or its end, lets the run continue.
+ */
+export const BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE = "background_work_blocks_change";
+
+/**
  * Whether a person can continue a run that failed this way in the same native
  * session ("Continue where you left off."). A provider error, an unclassified
  * failure, a local storage failure or a start that found the previous turn
@@ -257,7 +264,8 @@ export function isContinuableProviderFailure(
   if (failure == null) return false;
   if (
     failure.code === LOCAL_STORAGE_FAILURE_CODE ||
-    failure.code === PREVIOUS_TURN_ACTIVE_FAILURE_CODE
+    failure.code === PREVIOUS_TURN_ACTIVE_FAILURE_CODE ||
+    failure.code === BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE
   ) {
     return true;
   }
@@ -417,6 +425,8 @@ export function providerFailureDisplayTitle(
   },
 ): string {
   if (isWorkspaceMissingFailureCode(failure.code)) return "Thread folder is missing";
+  if (failure.code === BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE)
+    return "Background work is still running";
   if (failure.class === "usage_limit") return "Usage limit reached";
   if (isContextLimitError(failure.message)) return "Context limit reached";
   return "Provider error";

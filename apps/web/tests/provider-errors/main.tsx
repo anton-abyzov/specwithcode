@@ -19,7 +19,10 @@ import {
   type OrchestrationV2TurnItem,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
-import { threadErrorIsLive } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import {
+  BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE,
+  threadErrorIsLive,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { ThreadErrorBanner } from "../../src/components/chat/ThreadErrorBanner";
 import { MessagesTimeline } from "../../src/components/chat/MessagesTimeline";
 import type { ContextLimitRecoveryActions } from "../../src/components/chat/ContextLimitRecovery";
@@ -39,6 +42,9 @@ const recovered = caseName === "recovered";
 const running = caseName === "running";
 // October 24, 2026: a Codex relogin failed the latest run; the user came back hours later.
 const codexAuth = caseName === "codex-auth";
+// November 11, 2026: a permission change met a running background subagent.
+const backgroundWork = caseName === "background-work";
+const backgroundWorkRunning = backgroundWork && params.get("work") !== "ended";
 const continuable = params.get("continue") !== "false";
 const occurredAt = new Date(
   now - (history ? 2 * 60 * 60_000 : codexAuth ? 5 * 60 * 60_000 : 10_000),
@@ -69,16 +75,24 @@ const geminiMessage = JSON.stringify({
 
 const failure: OrchestrationV2ProviderFailure = {
   class: caseName === "quota" ? "usage_limit" : "provider_error",
-  message: codexAuth
-    ? "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again."
-    : caseName === "plain"
-      ? "The provider could not connect. Try again."
-      : caseName === "quota"
-        ? "Your usage limit was reached. Try again after 2026-10-23T14:00:00.000Z."
-        : caseName === "nested"
-          ? JSON.stringify(JSON.stringify(geminiMessage))
-          : geminiMessage,
-  code: caseName === "quota" ? "quota_exhausted" : codexAuth ? "unauthorized" : "400",
+  message: backgroundWork
+    ? 'Claude is still running subagent "Build redesigned Machines join card", and this folder or permission change would end that work. Stop the background work to continue now, or wait until it finishes and press Continue.'
+    : codexAuth
+      ? "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again."
+      : caseName === "plain"
+        ? "The provider could not connect. Try again."
+        : caseName === "quota"
+          ? "Your usage limit was reached. Try again after 2026-10-23T14:00:00.000Z."
+          : caseName === "nested"
+            ? JSON.stringify(JSON.stringify(geminiMessage))
+            : geminiMessage,
+  code: backgroundWork
+    ? BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE
+    : caseName === "quota"
+      ? "quota_exhausted"
+      : codexAuth
+        ? "unauthorized"
+        : "400",
   retryable: false,
   ...(caseName === "quota" ? { resetAt: "2026-10-23T14:00:00.000Z" } : {}),
 };
@@ -94,7 +108,11 @@ const item: Extract<OrchestrationV2TurnItem, { type: "error" }> = {
   parentItemId: null,
   ordinal: 1,
   status: recovered ? "completed" : running ? "running" : "failed",
-  title: caseName === "quota" ? "Usage limit reached" : "Provider error",
+  title: backgroundWork
+    ? "Background work is still running"
+    : caseName === "quota"
+      ? "Usage limit reached"
+      : "Provider error",
   startedAt: DateTime.makeUnsafe(startedAt),
   completedAt: running ? null : at,
   updatedAt: at,
@@ -156,11 +174,17 @@ function Fixture() {
   const [dismissed, setDismissed] = useState(false);
   const [continueCount, setContinueCount] = useState(0);
   const [switchCount, setSwitchCount] = useState(0);
+  const [stopCount, setStopCount] = useState(0);
+  const backgroundWorkBlock = backgroundWorkRunning
+    ? { onStopAndContinue: () => setStopCount((count) => count + 1), busy: false }
+    : undefined;
   const failureRecovery: FailureRecoveryActions = {
     failureItemId: item.id,
     continueRunId: continuable ? runId : null,
     onContinue: () => setContinueCount((count) => count + 1),
     onSwitchModel: () => setSwitchCount((count) => count + 1),
+    failureCode: failure.code,
+    backgroundWorkBlock,
   };
   const recovery: ContextLimitRecoveryActions = {
     failureItemId: params.get("owner") === "other" ? "another-root-error" : item.id,
@@ -207,6 +231,13 @@ function Fixture() {
           error={liveFailure ? failure.message : null}
           errorClass={params.get("unclassified") === "true" ? null : failure.class}
           contextLimitRecovery={recovery}
+          {...(backgroundWork
+            ? {
+                errorCode: failure.code,
+                onContinue: failureRecovery.onContinue,
+                backgroundWorkBlockRecovery: backgroundWorkBlock,
+              }
+            : {})}
           onSwitchModel={failureRecovery.onSwitchModel}
           onDismiss={() => {
             setDismissed(true);
@@ -270,6 +301,9 @@ function Fixture() {
         </span>
         <span>
           Switch model: <output data-testid="switch-count">{switchCount}</output>
+        </span>
+        <span>
+          Stop and continue: <output data-testid="stop-count">{stopCount}</output>
         </span>
       </footer>
     </main>

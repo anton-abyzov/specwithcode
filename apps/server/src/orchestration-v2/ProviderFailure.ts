@@ -17,6 +17,7 @@ import {
   ProjectEnvironmentError,
 } from "@specweave-studio/contracts";
 import {
+  BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE,
   LOCAL_STORAGE_FAILURE_CODE,
   LOCAL_STORAGE_FAILURE_MESSAGE,
   PREVIOUS_TURN_ACTIVE_FAILURE_CODE,
@@ -197,10 +198,21 @@ function previousTurnActivePayload(cause: unknown): string | undefined {
 export const isPreviousTurnActiveFailure = (error: unknown): boolean =>
   previousActiveProviderTurn(error) !== undefined;
 
+function isBackgroundWorkBlocksChangeFailure(error: unknown): boolean {
+  let found = false;
+  walkCauses(error, (cause) => {
+    if (stringField(cause, "_tag") !== "ClaudeBackgroundWorkBlocksQueryReplacementError") return;
+    found = true;
+    return "stop";
+  });
+  return found;
+}
+
 /** The stable code of a failure SpecWithCode recognizes in the cause chain itself. */
 function classifiedFailureCode(error: unknown): string | undefined {
   if (isPreviousTurnActiveFailure(error)) return PREVIOUS_TURN_ACTIVE_FAILURE_CODE;
   if (isLocalStorageFailure(error)) return LOCAL_STORAGE_FAILURE_CODE;
+  if (isBackgroundWorkBlocksChangeFailure(error)) return BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE;
   return undefined;
 }
 
@@ -524,7 +536,12 @@ export function makeProviderFailureTurnItem(input: {
     parentItemId: null,
     ordinal: input.itemOrdinal,
     status: "failed",
-    title: input.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error",
+    title:
+      input.failure.class === "usage_limit"
+        ? "Usage limit reached"
+        : input.failure.code === BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE
+          ? "Background work is still running"
+          : "Provider error",
     startedAt: input.retryStartedAt ?? input.occurredAt,
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,

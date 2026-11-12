@@ -77,6 +77,7 @@ import {
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { ModelPickerAlternativesNote } from "./ModelPickerAlternativesNote";
+import { ModelPickerBackgroundWorkNote } from "./ModelPickerBackgroundWorkNote";
 import {
   ModelPickerAccountLine,
   ModelPickerRunningNote,
@@ -143,6 +144,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   activeInstanceId: ProviderInstanceId;
   model: string;
   stateHeader?: ModelStateHeader | null;
+  /** Background work the thread's process still runs; a pick waits for it. */
+  backgroundWork?: string | null;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   /**
@@ -1510,6 +1513,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 hideEmpty={alternativesFor !== null}
               />
               {runningNote}
+              {props.backgroundWork ? (
+                <ModelPickerBackgroundWorkNote work={props.backgroundWork} />
+              ) : null}
               {effort ? (
                 <ModelPickerEffortStrip
                   effort={effort}

@@ -15,6 +15,11 @@ import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import {
+  BackgroundWorkBlockRecovery,
+  isBackgroundWorkBlockFailureCode,
+  type BackgroundWorkBlockRecoveryActions,
+} from "./BackgroundWorkBlockRecovery";
 import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
 import {
   WorkspaceMissingRecovery,
@@ -61,6 +66,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   chatGptUsageLimit = false,
   contextLimitRecovery,
   workspaceMissingRecovery,
+  backgroundWorkBlockRecovery,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
@@ -82,6 +88,11 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
    * Continue and Switch model, which would fail the same way.
    */
   workspaceMissingRecovery?: WorkspaceMissingRecoveryActions | undefined;
+  /**
+   * Set when background work refused this start and still runs: stopping it
+   * and continuing replaces Continue and Switch model.
+   */
+  backgroundWorkBlockRecovery?: BackgroundWorkBlockRecoveryActions | undefined;
 }) {
   const tx = useTx();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
@@ -103,13 +114,15 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
     !chatGptUsageLimit &&
     errorClass !== "usage_limit" &&
     !contextLimit &&
-    !workspaceMissing;
+    !workspaceMissing &&
+    backgroundWorkBlockRecovery === undefined;
   // Limits have their own way home; every other failure can move to another model.
   const showSwitchModel =
     onSwitchModel !== undefined &&
     !chatGptUsageLimit &&
     errorClass !== "usage_limit" &&
-    !workspaceMissing;
+    !workspaceMissing &&
+    !isBackgroundWorkBlockFailureCode(failure.code);
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="lane" controlAlignment="first-line" data-variant={variant}>
@@ -154,9 +167,16 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </div>
           ) : null}
         </AlertDescription>
-        {(chatGptUsageLimit || showContinue || showSwitchModel || onDismiss) && (
+        {(chatGptUsageLimit ||
+          backgroundWorkBlockRecovery ||
+          showContinue ||
+          showSwitchModel ||
+          onDismiss) && (
           <AlertAction>
             {chatGptUsageLimit ? <ChatGptUsageButton variant="default" size="sm" /> : null}
+            {backgroundWorkBlockRecovery ? (
+              <BackgroundWorkBlockRecovery recovery={backgroundWorkBlockRecovery} />
+            ) : null}
             {showContinue ? (
               <Button variant="outline" size="xs" disabled={continueBusy} onClick={onContinue}>
                 {tx("Continue")}

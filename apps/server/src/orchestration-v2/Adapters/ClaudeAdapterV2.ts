@@ -116,6 +116,7 @@ import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispa
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import {
   compileClaudeModelSelection,
+  describeBackgroundWork,
   describeDeferredClaudeSelection,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
@@ -172,7 +173,11 @@ import {
 import { withManualWorktreeGuard } from "../../provider/ManualWorktreeGuard.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
-import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+  redactProviderFailureText,
+} from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
@@ -461,6 +466,8 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
     // What needs a new process: the thread's model selection, or its
     // folders, permissions or tools (a project folder removed, a mode change).
     change: Schema.optional(Schema.Literals(["model", "settings", "model_and_settings"])),
+    // The work that process still runs, named (see describeBackgroundWork).
+    blockedBy: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
@@ -470,7 +477,7 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
         : this.change === "model_and_settings"
           ? "model, folder or permission change"
           : "model change";
-    return `Claude is still running background agents or commands, and this ${change} would end them. Wait for them to finish, or press Stop, then send the message again.`;
+    return `Claude is still running ${this.blockedBy ?? "background agents or commands"}, and this ${change} would end that work. Stop the background work to continue now, or wait until it finishes and press Continue.`;
   }
 }
 
@@ -3359,6 +3366,9 @@ interface ClaudeLiveQueryContext {
   readonly queryCoreBaseKey: string;
   readonly projectAdditionalDirectories: ReadonlyArray<string>;
   readonly selectionKey: string;
+  // The effort keyword this process's prompts carry (see promptEffort). A
+  // selection that waits for the next process keeps this one until then.
+  readonly openedPromptEffort: string | undefined;
   // A model, effort or option change made while this process runs background
   // work waits for the next process: the selection it waits with, and the
   // note not yet shown for it.
@@ -7927,6 +7937,47 @@ export function makeClaudeAdapterV2(
           return false;
         });
 
+        // That same work, for the notes and refusals that name it.
+        const liveProcessBackgroundWork = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+        ) {
+          const work: Array<{
+            readonly kind: string;
+            readonly description?: string | null | undefined;
+          }> = Array.from(
+            rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              live.nativeThreadId,
+            ).values(),
+          );
+          const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
+          for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
+            if (
+              subagent.task.status === "running" &&
+              !live.subagentsFromEarlierProcesses.has(subagent) &&
+              !buffered.some(
+                (message) =>
+                  message.type === "system" &&
+                  message.subtype === "task_notification" &&
+                  message.task_id === taskId,
+              )
+            ) {
+              work.push({
+                kind: "subagent",
+                description: subagent.task.title ?? subagent.task.prompt,
+              });
+            }
+          }
+          // Provider-written names reach a note and an error message.
+          return describeBackgroundWork(
+            work.map(({ kind, description }) => ({
+              kind,
+              description:
+                description == null ? description : redactProviderFailureText(description),
+            })),
+          );
+        });
+
         // Subagents still running in the registry when a new process opens ran
         // in the process that is gone, which never reports their end. Each is
         // settled now, with its original run, so the run still ingesting for
@@ -8264,6 +8315,7 @@ export function makeClaudeAdapterV2(
                 existing.deferredSelectionNotice = describeDeferredClaudeSelection(
                   existing.selectionKey,
                   compiledSelection.queryIdentity,
+                  yield* liveProcessBackgroundWork(existing),
                 );
                 yield* Effect.logInfo("claude.query.selection-deferred", {
                   threadId: turnInput.threadId,
@@ -8284,8 +8336,10 @@ export function makeClaudeAdapterV2(
               yield* reconnectStudioMcp(existing);
               return existing;
             }
+            const blockedBy = (yield* liveProcessBackgroundWork(existing))?.label;
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError({
               change: modelChanged ? "model_and_settings" : "settings",
+              ...(blockedBy === undefined ? {} : { blockedBy }),
             });
           }
 
@@ -8421,6 +8475,7 @@ export function makeClaudeAdapterV2(
             queryCoreBaseKey,
             projectAdditionalDirectories,
             selectionKey: compiledSelection.queryIdentity,
+            openedPromptEffort: compiledSelection.promptEffort,
             deferredSelectionKey: null,
             deferredSelectionNotice: null,
             closed,
@@ -8617,25 +8672,37 @@ export function makeClaudeAdapterV2(
             // produced instead of prompting it again: drain the buffered wake
             // messages into this turn and let any still-streaming messages
             // follow live. The continuation prompt text never reaches the CLI.
-            const userMessage =
-              promptUuid === null
-                ? null
-                : yield* makeClaudeUserMessageWithAttachments({
-                    text: applyClaudePromptEffortPrefix(
-                      turnInput.message.text,
-                      compileClaudeModelSelection(
-                        turnInput.modelSelection,
-                        adapterOptions.modelCatalog?.(),
-                      ).promptEffort,
-                    ),
-                    attachments: turnInput.message.attachments,
-                    origin: claudeHumanMessageOrigin(turnInput.message),
-                    attachmentsDir,
-                    fileSystem,
-                    skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
-                    uuid: promptUuid,
-                  });
+            const selectedPromptEffort = compileClaudeModelSelection(
+              turnInput.modelSelection,
+              adapterOptions.modelCatalog?.(),
+            ).promptEffort;
+            const makeUserMessage = Effect.fnUntraced(function* (
+              uuid: NonNullable<typeof promptUuid>,
+              promptEffort: string | undefined,
+            ) {
+              return yield* makeClaudeUserMessageWithAttachments({
+                text: applyClaudePromptEffortPrefix(turnInput.message.text, promptEffort),
+                attachments: turnInput.message.attachments,
+                origin: claudeHumanMessageOrigin(turnInput.message),
+                attachmentsDir,
+                fileSystem,
+                skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
+                uuid,
+              });
+            });
+            // Built before the query opens, so a prompt that cannot be sent
+            // opens no process.
+            const selectedUserMessage =
+              promptUuid === null ? null : yield* makeUserMessage(promptUuid, selectedPromptEffort);
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            // A selection that waits for background work keeps the effort
+            // keyword its process opened with.
+            const userMessage =
+              promptUuid !== null &&
+              querySession.deferredSelectionKey !== null &&
+              querySession.openedPromptEffort !== selectedPromptEffort
+                ? yield* makeUserMessage(promptUuid, querySession.openedPromptEffort)
+                : selectedUserMessage;
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
               type: "provider_turn.updated",
@@ -8916,10 +8983,12 @@ export function makeClaudeAdapterV2(
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
-                compileClaudeModelSelection(
-                  currentTurn.input.modelSelection,
-                  adapterOptions.modelCatalog?.(),
-                ).promptEffort,
+                existing.deferredSelectionKey !== null
+                  ? existing.openedPromptEffort
+                  : compileClaudeModelSelection(
+                      currentTurn.input.modelSelection,
+                      adapterOptions.modelCatalog?.(),
+                    ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
               origin: claudeHumanMessageOrigin(turnInput.message),

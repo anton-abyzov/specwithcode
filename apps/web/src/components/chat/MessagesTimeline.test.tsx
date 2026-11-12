@@ -2589,6 +2589,40 @@ describe("MessagesTimeline", () => {
       expect(markup).toContain("Switch model");
     });
 
+    it("offers only stop-and-continue for a start background work refused", () => {
+      activityTestState.expanded = false;
+      const createdAt = fiveHoursAgo();
+      const refused = {
+        class: "provider_error",
+        code: "background_work_blocks_change",
+        retryable: null,
+      };
+      const render = (overrides: Record<string, unknown>) =>
+        renderToStaticMarkup(
+          <MessagesTimeline
+            {...buildProps()}
+            latestRun={failedRun(createdAt)}
+            failureRecovery={recovery({ failureCode: refused.code, ...overrides })}
+            timelineEntries={failureEntries(
+              createdAt,
+              'Claude is still running subagent "Review", and this folder or permission change would end that work.',
+              refused,
+            )}
+          />,
+        );
+      const running = render({
+        backgroundWorkBlock: { onStopAndContinue: () => {}, busy: false },
+      });
+      expect(running).toContain("Stop background work and continue");
+      expect(running).not.toContain(">Continue<");
+      expect(running).not.toContain("Switch model");
+      // The work ended by itself: Continue is enough, another model never was.
+      const ended = render({});
+      expect(ended).toContain(">Continue<");
+      expect(ended).not.toContain("Stop background work");
+      expect(ended).not.toContain("Switch model");
+    });
+
     it("offers Switch model without Continue when the run cannot continue", () => {
       activityTestState.expanded = false;
       const createdAt = fiveHoursAgo();
