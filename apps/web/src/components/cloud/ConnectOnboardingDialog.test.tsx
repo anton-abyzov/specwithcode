@@ -349,13 +349,13 @@ describe("SpecWithCode Connect after sign-in", () => {
   /** Session storage that holds the note a sign-in prompt left when it was opened. */
   const withSignInStarted = (origin: "app" | "setup") => {
     const removeItem = vi.fn();
+    // Written once, before the load that reads it: a time taken at each read
+    // can land a millisecond after the reader's own and count as the future.
+    const note = JSON.stringify({ origin, at: Date.now() });
     vi.stubGlobal("window", {
       desktopBridge: {},
       sessionStorage: {
-        getItem: (key: string) =>
-          key === "specwithcode.connect.sign-in-started"
-            ? JSON.stringify({ origin, at: Date.now() })
-            : null,
+        getItem: (key: string) => (key === "specwithcode.connect.sign-in-started" ? note : null),
         removeItem,
       },
     });
