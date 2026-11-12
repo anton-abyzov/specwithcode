@@ -128,7 +128,8 @@ vi.mock("../../../state/use-atom-command", () => ({
   useAtomCommand: () => state.updateProject,
 }));
 const NO_UNREACHABLE_ENVIRONMENTS: ReadonlySet<string> = new Set();
-let environmentIdsCache: { readonly key: string; readonly ids: ReadonlyArray<string> } | null = null;
+let environmentIdsCache: { readonly key: string; readonly ids: ReadonlyArray<string> } | null =
+  null;
 // One array per set of ids, as the real atom gives, so effects keyed on it do not re-run.
 function mockedEnvironmentIds(): ReadonlyArray<string> {
   const ids = state.environments.map((environment) => environment.environmentId);
