@@ -37,7 +37,8 @@ function isHttpUrl(value: string): boolean {
 }
 
 const ThreadMetadataTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
-  description: "New concise display title. Required only when action is rename.",
+  description:
+    "New display title, required only when action is rename: 3-6 words naming the lasting goal the thread owns now, with no deadlines, time windows, numbers of a PR, version or run, or status words.",
 });
 
 const ThreadMetadataClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256))

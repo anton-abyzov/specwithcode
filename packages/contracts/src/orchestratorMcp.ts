@@ -67,6 +67,15 @@ const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
   description: "Optional concise display title.",
 });
+/**
+ * How an agent names a thread. The title is how the user finds the thread for
+ * as long as it lives, so it names what the thread owns, not the first ask.
+ */
+export const THREAD_TITLE_RULE =
+  "3-6 words naming the lasting goal the thread owns, not the wording of the first ask: no deadlines, time windows, dates, version, PR or run numbers, review rounds, or status words such as done or finished.";
+const OrchestratorMcpThreadTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
+  description: `The thread's name: ${THREAD_TITLE_RULE} Omit it only when no short name fits; the thread is then named from its task.`,
+});
 const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(256),
 ).annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
@@ -337,7 +346,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   target: Schema.optional(OrchestratorMcpTarget),
   taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
   taskLane: Schema.optional(OrchestratorMcpTaskLaneHint),
-  title: Schema.optional(OrchestratorMcpTitle),
+  title: Schema.optional(OrchestratorMcpThreadTitle),
   role: Schema.optional(
     OrchestratorMcpTaskRole.annotate({
       description:
@@ -435,7 +444,7 @@ export type OrchestratorMcpTaskCancelResult = typeof OrchestratorMcpTaskCancelRe
 
 export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   prompt: Schema.optional(OrchestratorMcpPrompt),
-  title: Schema.optional(OrchestratorMcpTitle),
+  title: Schema.optional(OrchestratorMcpThreadTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
   taskLane: Schema.optional(OrchestratorMcpTaskLaneHint),

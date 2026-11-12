@@ -6,7 +6,12 @@ import {
   studioOrchestrationPromptForFirstRun,
   studioOrchestrationSystemPrompt,
 } from "./StudioOrchestrationInstructions.ts";
-import { DelegateTaskTool, ScheduleTaskTool } from "../mcp/toolkits/orchestrator/tools.ts";
+import {
+  CreateThreadsTool,
+  DelegateTaskTool,
+  ScheduleTaskTool,
+  ThreadUpdateTool,
+} from "../mcp/toolkits/orchestrator/tools.ts";
 
 describe("SpecWithCode orchestration provider instructions", () => {
   it("distinguishes delegated subagents from ordinary top-level threads", () => {
@@ -55,7 +60,19 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // The model line (about 30 tokens) stops agents delegating to change model.
     // The access sentence (about 40 tokens) asks before driving apps or devices.
     // The needs sentence (about 35 tokens) sends simulator and Xcode work to a Mac.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_900);
+    // The title line (about 35 tokens) keeps a thread's name about what it owns.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_050);
+  });
+
+  it("asks for thread titles that name the lasting goal and follow a scope change", () => {
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "the lasting goal it owns");
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "rename it with `studio_thread_update` when its scope changes",
+    );
+    assert.include(DelegateTaskTool.description, "not this round, its deadline or a PR number");
+    assert.include(CreateThreadsTool.description, "names the lasting goal it owns");
+    assert.include(ThreadUpdateTool.description, "Rename a thread when what it owns has changed");
   });
 
   it("tells coordinators to state that simulator and Xcode work needs a Mac", () => {

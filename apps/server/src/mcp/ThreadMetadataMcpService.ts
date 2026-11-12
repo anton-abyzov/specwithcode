@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { lastingThreadTitle } from "../orchestration-v2/LastingThreadTitle.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
@@ -78,7 +79,7 @@ function metadataCommand(input: {
         type: "thread.metadata.update",
         commandId: input.commandId,
         threadId: input.threadId,
-        title: input.update.title!,
+        title: lastingThreadTitle(input.update.title!),
       };
     case "regenerate_title":
       return {
