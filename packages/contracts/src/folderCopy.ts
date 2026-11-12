@@ -319,6 +319,12 @@ export const FolderCopyStartInput = Schema.Struct({
   selection: Schema.optional(Schema.Array(FolderCopyFileClass)),
   /** Copy-and-move: the project id the moving coordinator expects for this folder. */
   projectId: Schema.optional(ProjectId),
+  /**
+   * A diverged repository is never overwritten unless the person reviews the copy in
+   * the Copy files dialog ("review"). Missing or "add-to-machine" keeps it protected.
+   * Older destinations ignore it.
+   */
+  purpose: Schema.optional(Schema.Literals(["add-to-machine", "review"])),
 });
 export type FolderCopyStartInput = typeof FolderCopyStartInput.Type;
 

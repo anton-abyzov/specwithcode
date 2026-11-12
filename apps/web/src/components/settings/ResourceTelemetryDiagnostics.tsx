@@ -148,7 +148,7 @@ function categoryLabel(category: ResourceTelemetryProcessCategory): string {
 function categoryDotClass(category: ResourceTelemetryProcessCategory): string {
   if (category === "resource-monitor") return "bg-warning";
   if (category.startsWith("electron-")) return "bg-info";
-  if (category === "server") return "bg-violet-500";
+  if (category === "server") return "bg-update";
   return "bg-success";
 }
 
@@ -262,7 +262,7 @@ function IconStat({
       </div>
       <div
         className={cn(
-          "mt-2.5 truncate font-mono text-2xl font-semibold tracking-tighter tabular-nums text-foreground",
+          "mt-2.5 truncate text-2xl font-semibold tracking-tighter tabular-nums text-foreground",
           tone === "warning" && "text-warning-foreground",
           tone === "danger" && "text-destructive-foreground",
         )}

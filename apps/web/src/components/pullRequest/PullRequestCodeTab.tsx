@@ -823,11 +823,7 @@ function PullRequestCodeTab({
         if (withheld) ({ additions, deletions } = withheld);
       }
       const stat = (
-        <PullRequestDiffStat
-          additions={additions}
-          deletions={deletions}
-          className="font-mono text-2xs"
-        />
+        <PullRequestDiffStat additions={additions} deletions={deletions} className="text-2xs" />
       );
       const viewedFiles = filesViewedRef.current;
       if (!viewedFiles.enabled) return stat;

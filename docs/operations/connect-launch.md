@@ -145,6 +145,13 @@ name travels in the request body, never in the URL, so request logs and traces d
 the relay deploy on purpose, so fix the variable before the next push to `main`. Changing the list
 takes a relay deploy.
 
+`GET /v1/admin/usage` gives the page its Usage section: sign-ups and people active from Clerk, and
+new accounts, accounts seen and machines linked from the relay's own tables, each for the last 24
+hours, 7 days and 30 days, plus counts per week for 12 weeks. It returns counts only. When Clerk
+does not answer in 3 seconds the sign-up part is left out and the rest still answers. The download
+counts in that section are read by the page itself from the public GitHub and npm APIs, without a
+credential.
+
 The same owners can change three things from Settings > Connect admin: one account's machine limit,
 one machine's link and one phone (`POST /v1/admin/accounts/:userId/machine-limit`,
 `.../machines/:environmentId/unlink`, `.../phones/:deviceId/remove`). A limit change applies to the

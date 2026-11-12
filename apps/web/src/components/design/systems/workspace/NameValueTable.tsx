@@ -47,7 +47,7 @@ export function withUnit(draft: string, unit: string | null): string {
 }
 
 const FIELD =
-  "h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 font-mono text-[13px] text-foreground outline-none placeholder:text-placeholder transition-[border-color,box-shadow] duration-[120ms] hover:border-ring/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25 aria-invalid:border-destructive/60";
+  "h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 font-mono text-compact text-foreground outline-none placeholder:text-placeholder transition-[border-color,box-shadow] duration-[120ms] hover:border-ring/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25 aria-invalid:border-destructive/60";
 
 /**
  * A monospace value field: Enter or leaving it saves, Escape puts the old
@@ -100,7 +100,7 @@ export function ValueField({
       : VALUE_CHECKS[check](next);
   if (!canEdit)
     return (
-      <span className={cn("block truncate font-mono text-[13px] text-foreground", className)}>
+      <span className={cn("block truncate font-mono text-compact text-foreground", className)}>
         {value}
       </span>
     );

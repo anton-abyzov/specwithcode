@@ -321,7 +321,7 @@ export function TokenName({
 }) {
   if (renaming)
     return <RenameField name={name} existing={existing} onRename={onRename} onCancel={onCancel} />;
-  const label = <span className="truncate font-mono text-[13px] text-foreground">{name}</span>;
+  const label = <span className="truncate font-mono text-compact text-foreground">{name}</span>;
   if (!canEdit)
     return (
       <span className="flex min-w-0" title={name}>
@@ -383,7 +383,7 @@ function RenameField({
         aria-describedby={problem !== null ? errorId : warning !== null ? warningId : undefined}
         value={draft}
         spellCheck={false}
-        className="h-7 w-full min-w-0 rounded-md border border-input bg-background px-1.5 font-mono text-[13px] outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 aria-invalid:border-destructive/60"
+        className="h-7 w-full min-w-0 rounded-md border border-input bg-background px-1.5 font-mono text-compact outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 aria-invalid:border-destructive/60"
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={onKeyDown}
         onBlur={() => (problem === null ? commit() : onCancel())}

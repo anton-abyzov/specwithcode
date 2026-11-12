@@ -11,6 +11,8 @@ export const orchestratorFeatures = (limits: {
   incrementalThreadRead: true,
   readThreadWithoutAcknowledgement: true,
   scheduledTasks: true,
+  // studio_project_create takes machine, parentPath and github.
+  projectCreateOptions: true,
   maxBatchThreads: 20,
   maxLiveChildTasks: limits.maxLiveChildTasks,
   maxDelegationDepth: limits.maxDepth,

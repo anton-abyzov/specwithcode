@@ -71,7 +71,7 @@ export function OwnerBadge({
 }
 
 const CHIP =
-  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-[120ms] ease-out-quint hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-foreground/8 aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:ring-1 aria-pressed:ring-foreground/10 aria-pressed:ring-inset motion-reduce:transition-none";
+  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3 text-compact text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-[120ms] ease-out-quint hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-foreground/8 aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:ring-1 aria-pressed:ring-foreground/10 aria-pressed:ring-inset motion-reduce:transition-none";
 
 function Count({ value }: { value: number }) {
   return <span className="text-xs text-muted-foreground tabular-nums">{value}</span>;

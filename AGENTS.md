@@ -49,7 +49,7 @@ Keep side effects at adapter/service boundaries, orchestration pure and transpor
 
 Drain OrchestrationEffectWorkerV2 or await a specific persisted event/Deferred in tests; do not hide races with sleeps. Preserve same-origin routing for local, SSH and private HTTPS clients. Do not bake localhost VITE_HTTP_URL/VITE_WS_URL into remote bundles.
 
-Check chat, Settings, command palette, keybindings and reverse actions. Preserve native plans, approvals, queues, steering and checkpoints. Keep unknown quota/offline/errors explicit. Avoid continuously repainting animations and gratuitous state payloads. Use existing semantic UI variants; layout belongs to the parent.
+Check chat, Settings, command palette, keybindings and reverse actions. Preserve native plans, approvals, queues, steering and checkpoints. Keep unknown quota/offline/errors explicit. Avoid continuously repainting animations and gratuitous state payloads. Use existing semantic UI variants; layout belongs to the parent. Typefaces, sizes, corners and colors come from the design tokens in docs/studio/design-guidelines.md: interface text is sans (serif is for report documents only), sizes and corners are scale tokens, status colors are semantic tokens. `apps/web/src/designTokens.guard.test.ts` enforces it.
 
 Document changes to user tasks and durable architectural constraints, not copies of types. No publication, remote push or release service is implied by local implementation. Require manual acceptance only when the user or increment acceptance criteria explicitly request it. Record unverified installed/native behavior as a proof limit, not an automatic closure blocker for every UI/auth change.
 

@@ -42,6 +42,7 @@ import {
   type HandoffDocument as Document,
   heartbeatContinued,
   incomingKey,
+  ambiguousLinkMessage,
   linkedLocalProject,
   markContinued,
   markUnreachable,
@@ -335,13 +336,46 @@ describe("linked project", () => {
     },
   });
 
+  const linkedId = (found: ReturnType<typeof linkedLocalProject>) =>
+    found.kind === "linked" ? found.project.id : found.kind;
+
   it("joins only through an explicit link, never by name", () => {
     const sameName = project("p-same", "Fix the build", []);
-    const linked = project("p-linked", "Other title", [[m4, sourceProject]]);
-    expect(linkedLocalProject([sameName], m4, sourceProject)).toBeNull();
-    expect(linkedLocalProject([sameName, linked], m4, sourceProject)?.id).toBe("p-linked");
-    expect(linkedLocalProject([linked], minis, sourceProject)).toBeNull();
-    expect(linkedLocalProject([{ ...linked, deletedAt: now }], m4, sourceProject)).toBeNull();
+    const linked = project("p-linked", "Other title", [
+      [m4, sourceProject],
+      [minis, "p-linked"],
+    ]);
+    expect(linkedId(linkedLocalProject([sameName], minis, m4, sourceProject))).toBe("none");
+    expect(linkedId(linkedLocalProject([sameName, linked], minis, m4, sourceProject))).toBe(
+      "p-linked",
+    );
+    expect(linkedId(linkedLocalProject([linked], minis, minis, sourceProject))).toBe("none");
+    expect(
+      linkedId(linkedLocalProject([{ ...linked, deletedAt: now }], minis, m4, sourceProject)),
+    ).toBe("none");
+  });
+
+  it("needs the link both ways, as a launch does", () => {
+    // Lists the source but not itself here: a stale member list, not a link.
+    const oneWay = project("p-one-way", "App", [[m4, sourceProject]]);
+    expect(linkedId(linkedLocalProject([oneWay], minis, m4, sourceProject))).toBe("none");
+  });
+
+  it("refuses two projects here that both list the source, naming both", () => {
+    const first = project("p-first", "App", [
+      [m4, sourceProject],
+      [minis, "p-first"],
+    ]);
+    const stale = project("p-stale", "App (old)", [
+      [m4, sourceProject],
+      [minis, "p-stale"],
+    ]);
+    const found = linkedLocalProject([first, stale], minis, m4, sourceProject);
+    expect(found.kind).toBe("ambiguous");
+    const message = ambiguousLinkMessage(found.kind === "ambiguous" ? found.projects : []);
+    expect(message).toContain("more than one project here lists this source");
+    expect(message).toContain("p-first");
+    expect(message).toContain("p-stale");
   });
 });
 
@@ -414,7 +448,12 @@ const receiving = (
       workspaceRoot: options.repositoryBelowProject === true ? base : root,
       deletedAt: null,
       workspaceSettings: {
-        logicalProject: { members: [{ environmentId: m4, projectId: sourceProject }] },
+        logicalProject: {
+          members: [
+            { environmentId: m4, projectId: sourceProject },
+            { environmentId: minis, projectId: localProject },
+          ],
+        },
       },
     };
     const provider = (instanceId: string, slug: string) => ({

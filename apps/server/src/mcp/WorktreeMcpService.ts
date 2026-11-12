@@ -254,7 +254,19 @@ const make = Effect.gen(function* () {
       baseRef = localStatus.refName;
     }
 
-    const startFromOrigin = input.startFromOrigin ?? (yield* readDefaultStartFromOrigin);
+    // A repository with no origin (a new local project) branches from the local base
+    // unless the caller asked for origin; then it is told which remote is missing.
+    const hasOrigin = gitWorkflow
+      .remoteExists({ cwd: projectCwd, remoteName: "origin" })
+      .pipe(Effect.orElseSucceed(() => true));
+    const startFromOrigin =
+      input.startFromOrigin ?? ((yield* readDefaultStartFromOrigin) && (yield* hasOrigin));
+    if (input.startFromOrigin === true && !(yield* hasOrigin)) {
+      return yield* failure(
+        "invalid_request",
+        `Project workspace '${projectCwd}' has no remote named origin, so startFromOrigin:true has nothing to fetch. Drop startFromOrigin (or pass false) to branch from the local '${baseRef}'.`,
+      );
+    }
 
     let worktreeBaseRef = baseRef;
     if (startFromOrigin) {

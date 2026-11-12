@@ -92,6 +92,34 @@ describe("RelayAdminClient", () => {
     });
   });
 
+  it.effect("reads the usage counts, with sign-ups left out when Clerk was not read", () => {
+    const windows = { day: 1, week: 2, month: 3 };
+    const usage = {
+      generatedAt: "2026-11-11T12:00:00.000Z",
+      signUps: null,
+      connect: {
+        created: windows,
+        active: windows,
+        machinesLinked: windows,
+        weekly: [{ weekStart: "2026-11-09T00:00:00.000Z", count: 2 }],
+      },
+    };
+    const test = relayAdminTest(() => Response.json(usage));
+    return Effect.gen(function* () {
+      expect(yield* run(test, (client) => client.usage({ clerkToken: "clerk-token" }))).toEqual(
+        usage,
+      );
+      expect(test.seen).toEqual([
+        {
+          method: "GET",
+          url: "https://relay.example.test/v1/admin/usage",
+          authorization: "Bearer clerk-token",
+          body: null,
+        },
+      ]);
+    });
+  });
+
   it.effect("reads the relay's empty 404 as not an owner", () => {
     const test = relayAdminTest(() => new Response(null, { status: 404 }));
     return Effect.gen(function* () {

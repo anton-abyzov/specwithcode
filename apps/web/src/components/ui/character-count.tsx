@@ -31,7 +31,7 @@ export function CharacterCount({
       aria-hidden={id ? true : undefined}
       data-slot="character-count"
       className={cn(
-        "block text-end text-[11px] leading-4 font-normal text-muted-foreground tabular-nums",
+        "block text-end text-2xs leading-4 font-normal text-muted-foreground tabular-nums",
         count >= max * 0.9 && "text-warning-foreground",
         count > max && "text-destructive-foreground",
         className,

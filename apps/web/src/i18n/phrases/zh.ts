@@ -4342,4 +4342,34 @@ export const zh: PhraseCatalog = {
     "{agent} 的登录正在这里运行。完成后它所在的行会更新。",
   "The sign-in ended before {agent} was signed in. Try again.":
     "登录在 {agent} 登录成功之前就结束了。请重试。",
+  Usage: "使用情况",
+  "Loading usage…": "正在加载使用情况…",
+  "Signed up in total": "注册总数",
+  "Last 24 hours": "最近 24 小时",
+  "New sign-ups": "新注册",
+  "People active": "活跃人数",
+  "New accounts on Connect": "Connect 新账户",
+  "Accounts seen by Connect": "Connect 见到的账户",
+  "Machines linked": "已关联的机器",
+  "Sign-ups could not be read from Clerk. The numbers from SpecWithCode Connect are shown.":
+    "无法从 Clerk 读取注册数。此处显示 SpecWithCode Connect 的数据。",
+  "Clerk returned only part of the people in these periods. The sign-up numbers are at least this many.":
+    "Clerk 只返回了这些时段内的部分用户。注册数至少为此数。",
+  "Sign-ups per week": "每周注册数",
+  "New accounts on Connect per week": "每周 Connect 新账户",
+  "Week of {date}: {count}": "{date} 当周：{count}",
+  "These numbers count people signed in to SpecWithCode Connect. The app sends no usage data, so use without signing in is not counted.":
+    "这些数字统计的是已登录 SpecWithCode Connect 的用户。应用不发送使用数据，因此未登录的使用不计入。",
+  "As of {time}": "截至 {time}",
+  Downloads: "下载量",
+  "Loading downloads…": "正在加载下载量…",
+  "Installer downloads could not be read from GitHub.": "无法从 GitHub 读取安装程序下载量。",
+  "Mac installer": "Mac 安装程序",
+  "Windows installer": "Windows 安装程序",
+  "Linux packages": "Linux 安装包",
+  "Installer downloads added up over {count} releases on GitHub. Mac counts new installs. Windows and Linux also count updates.":
+    "GitHub 上 {count} 个版本的安装程序下载量合计。Mac 统计的是新安装。Windows 和 Linux 还包含更新。",
+  "Older releases were not counted.": "更早的版本未计入。",
+  "Installs from npm could not be read.": "无法读取 npm 安装量。",
+  "Installs from npm": "npm 安装量",
 };

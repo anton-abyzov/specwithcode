@@ -74,10 +74,10 @@ export function fallbackOptionAccessLabel(option: FallbackOption, tr: Translate 
 
 function statusDot(option: FallbackOption) {
   return isUsableFallbackOption(option)
-    ? "bg-emerald-500"
+    ? "bg-success"
     : option.status === "current"
       ? "bg-muted-foreground/40"
-      : "bg-amber-500";
+      : "bg-warning";
 }
 
 function OptionRow(props: {

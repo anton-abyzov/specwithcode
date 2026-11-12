@@ -140,7 +140,7 @@ export function ShareDialog({
         data-testid="share-dialog"
       >
         <DialogHeader className="gap-2">
-          <DialogTitle className="line-clamp-2 text-[15px] leading-snug font-semibold text-balance">
+          <DialogTitle className="line-clamp-2 text-base leading-snug font-semibold text-balance">
             Share {document.title || "design"}
           </DialogTitle>
           <DialogDescription render={<div />} className="flex flex-wrap items-center gap-2">

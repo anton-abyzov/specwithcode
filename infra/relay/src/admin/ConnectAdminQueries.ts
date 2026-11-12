@@ -4,19 +4,22 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type {
+  RelayAdminConnectUsage,
   RelayAdminMachineLimit,
   RelayAdminTunnelState,
+  RelayAdminUsageWindows,
 } from "@specweave-studio/contracts/relayAdmin";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
 import { FOUNDERS_PROMO_ID } from "../environments/ConnectAccounts.ts";
 import { DEFAULT_MANAGED_TUNNEL_LIMIT } from "../environments/ManagedTunnelLimits.ts";
+import { countByWeek, usageIso, usageWeekStarts, usageWindowStarts } from "./usageWindows.ts";
 
 export class ConnectAdminQueryError extends Schema.TaggedError<ConnectAdminQueryError>()(
   "ConnectAdminQueryError",
   {
-    operation: Schema.Literals(["overview", "list-accounts", "account"]),
+    operation: Schema.Literals(["overview", "usage", "list-accounts", "account"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -73,6 +76,13 @@ export class ConnectAdminQueries extends Context.Service<
   ConnectAdminQueries,
   {
     readonly overview: () => Effect.Effect<AdminOverview, ConnectAdminQueryError>;
+    /**
+     * New accounts, accounts seen and machines linked in the windows that end
+     * at `nowMs`. Counts only.
+     */
+    readonly usage: (
+      nowMs: number,
+    ) => Effect.Effect<RelayAdminConnectUsage, ConnectAdminQueryError>;
     /**
      * Accounts newest first. An account is any user id with a Connect account
      * row, a machine link, a phone or a client key. `userIds` narrows the list
@@ -329,6 +339,40 @@ export const make = Effect.gen(function* () {
         founderSeatCap: count(promos?.[0]?.seat_cap),
         freeMachineLimit: freeLimit,
         globalTunnelCap: config.globalManagedTunnelCap ?? null,
+      };
+    }),
+    usage: Effect.fn("relay.admin.queries.usage")(function* (nowMs) {
+      // Every time the relay stores is ISO text in UTC, so text compares as time.
+      const iso = usageIso;
+      const starts = usageWindowStarts(nowMs);
+      const now = iso(nowMs);
+      const since = (column: SQL, start: number) =>
+        sql`COALESCE(SUM(CASE WHEN ${column} >= ${iso(start)} AND ${column} <= ${now} THEN 1 ELSE 0 END), 0)`;
+      const windows = (column: SQL) =>
+        sql`${since(column, starts.day)} AS day, ${since(column, starts.week)} AS week,
+            ${since(column, starts.month)} AS month`;
+      const users = sql`SELECT user_id, MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen
+                        FROM (${seenUsers()}) GROUP BY user_id`;
+      const firstWeek = usageWeekStarts(nowMs)[0] ?? nowMs;
+      const [created, active, machines, recent = []] = yield* run("usage", [
+        sql`SELECT ${windows(sql`first_seen`)} FROM (${users})`,
+        sql`SELECT ${windows(sql`last_seen`)} FROM (${users})`,
+        sql`SELECT ${windows(sql`created_at`)} FROM relay_environment_links`,
+        sql`SELECT first_seen FROM (${users}) WHERE first_seen >= ${iso(firstWeek)}`,
+      ]);
+      const read = (rows: ReadonlyArray<Row> | undefined): RelayAdminUsageWindows => ({
+        day: count(rows?.[0]?.day),
+        week: count(rows?.[0]?.week),
+        month: count(rows?.[0]?.month),
+      });
+      return {
+        created: read(created),
+        active: read(active),
+        machinesLinked: read(machines),
+        weekly: countByWeek(
+          recent.map((row) => Date.parse(String(row.first_seen))),
+          nowMs,
+        ),
       };
     }),
     listAccounts,

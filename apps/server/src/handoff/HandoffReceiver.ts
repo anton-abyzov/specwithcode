@@ -96,6 +96,7 @@ import {
   findIncoming,
   heartbeatContinued,
   incomingKey,
+  ambiguousLinkMessage,
   linkedLocalProject,
   markContinued,
   takeoverVerdict,
@@ -279,11 +280,22 @@ export const make = Effect.gen(function* () {
   const localProject = (sourceEnvironmentId: string, sourceProjectId: ProjectId) =>
     projects.snapshot.pipe(
       Effect.mapError(() => refuse(500, "failed", at("could not read its projects"))),
-      Effect.map((snapshot): Project | null => {
-        if (sourceEnvironmentId === handoff.environmentId) {
-          return snapshot.projects.find((project) => project.id === sourceProjectId) ?? null;
-        }
-        return linkedLocalProject(snapshot.projects, sourceEnvironmentId, sourceProjectId);
+      Effect.flatMap((snapshot) => {
+        if (sourceEnvironmentId === handoff.environmentId)
+          return Effect.succeed(
+            snapshot.projects.find((project) => project.id === sourceProjectId) ?? null,
+          );
+        const found = linkedLocalProject(
+          snapshot.projects,
+          handoff.environmentId,
+          sourceEnvironmentId,
+          sourceProjectId,
+        );
+        return found.kind === "ambiguous"
+          ? Effect.fail(
+              refuse(409, "invalid", at(ambiguousLinkMessage(found.projects)), "project-link"),
+            )
+          : Effect.succeed(found.kind === "linked" ? found.project : null);
       }),
     );
 

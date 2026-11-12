@@ -4559,4 +4559,35 @@ export const fr: PhraseCatalog = {
     "La connexion de {agent} s'exécute ici. Sa ligne se met à jour une fois terminée.",
   "The sign-in ended before {agent} was signed in. Try again.":
     "La connexion s'est terminée avant que {agent} soit connecté. Réessayez.",
+  Usage: "Utilisation",
+  "Loading usage…": "Chargement de l’utilisation…",
+  "Signed up in total": "Inscriptions au total",
+  "Last 24 hours": "Dernières 24 heures",
+  "New sign-ups": "Nouvelles inscriptions",
+  "People active": "Personnes actives",
+  "New accounts on Connect": "Nouveaux comptes sur Connect",
+  "Accounts seen by Connect": "Comptes vus par Connect",
+  "Machines linked": "Machines associées",
+  "Sign-ups could not be read from Clerk. The numbers from SpecWithCode Connect are shown.":
+    "Les inscriptions n’ont pas pu être lues depuis Clerk. Les chiffres de SpecWithCode Connect sont affichés.",
+  "Clerk returned only part of the people in these periods. The sign-up numbers are at least this many.":
+    "Clerk n’a renvoyé qu’une partie des personnes sur ces périodes. Les chiffres d’inscription sont au moins ceux-ci.",
+  "Sign-ups per week": "Inscriptions par semaine",
+  "New accounts on Connect per week": "Nouveaux comptes sur Connect par semaine",
+  "Week of {date}: {count}": "Semaine du {date} : {count}",
+  "These numbers count people signed in to SpecWithCode Connect. The app sends no usage data, so use without signing in is not counted.":
+    "Ces chiffres comptent les personnes connectées à SpecWithCode Connect. L’application n’envoie aucune donnée d’utilisation : l’usage sans connexion n’est donc pas compté.",
+  "As of {time}": "Au {time}",
+  Downloads: "Téléchargements",
+  "Loading downloads…": "Chargement des téléchargements…",
+  "Installer downloads could not be read from GitHub.":
+    "Les téléchargements de l’installateur n’ont pas pu être lus depuis GitHub.",
+  "Mac installer": "Installateur Mac",
+  "Windows installer": "Installateur Windows",
+  "Linux packages": "Paquets Linux",
+  "Installer downloads added up over {count} releases on GitHub. Mac counts new installs. Windows and Linux also count updates.":
+    "Téléchargements de l’installateur additionnés sur {count} versions GitHub. Sur Mac, ce sont les nouvelles installations. Sur Windows et Linux, les mises à jour comptent aussi.",
+  "Older releases were not counted.": "Les versions plus anciennes n’ont pas été comptées.",
+  "Installs from npm could not be read.": "Les installations depuis npm n’ont pas pu être lues.",
+  "Installs from npm": "Installations depuis npm",
 };

@@ -5,9 +5,11 @@ import * as Hex from "effect/encoding/Hex";
 import { extendTailwindMerge } from "tailwind-merge";
 import { DraftId } from "../composerDraftStore";
 
-// The theme's extra font sizes (index.css). Unregistered, tailwind-merge reads
+// The theme's extra font sizes (styles/base.css). Unregistered, tailwind-merge reads
 // text-2xs as a colour and drops it next to text-muted-foreground.
-const twMerge = extendTailwindMerge({ extend: { theme: { text: ["2xs", "3xs", "4xs", "5xs"] } } });
+const twMerge = extendTailwindMerge({
+  extend: { theme: { text: ["compact", "2xs", "3xs", "4xs", "5xs"] } },
+});
 
 export function cn(...inputs: CxOptions) {
   return twMerge(cx(inputs));

@@ -477,26 +477,43 @@ export interface LinkableProject {
     | undefined;
 }
 
+export type LinkedLocalProject<P> =
+  | { readonly kind: "linked"; readonly project: P }
+  | { readonly kind: "none" }
+  | { readonly kind: "ambiguous"; readonly projects: ReadonlyArray<P> };
+
 /**
- * The local project explicitly linked (0948) to the source's project, or null.
- * Two projects that only share a name are never joined.
+ * The local project explicitly linked (0948) to the source's project. Two
+ * projects that only share a name are never joined. As for a launch's binding,
+ * the link must hold both ways: the project lists the source's project and its
+ * own place here among the same members. Two that do are refused, never guessed.
  */
 export function linkedLocalProject<P extends LinkableProject>(
   projects: ReadonlyArray<P>,
+  selfEnvironmentId: string,
   sourceEnvironmentId: string,
   sourceProjectId: string,
-): P | null {
-  return (
-    projects.find(
-      (project) =>
-        (project.deletedAt ?? null) === null &&
-        (project.workspaceSettings?.logicalProject?.members ?? []).some(
-          (member) =>
-            member.environmentId === sourceEnvironmentId && member.projectId === sourceProjectId,
-        ),
-    ) ?? null
+): LinkedLocalProject<P> {
+  const lists = (project: P, environmentId: string, projectId: string) =>
+    (project.workspaceSettings?.logicalProject?.members ?? []).some(
+      (member) => member.environmentId === environmentId && member.projectId === projectId,
+    );
+  const linked = projects.filter(
+    (project) =>
+      (project.deletedAt ?? null) === null &&
+      lists(project, sourceEnvironmentId, sourceProjectId) &&
+      lists(project, selfEnvironmentId, project.id),
   );
+  if (linked.length === 0) return { kind: "none" };
+  if (linked.length > 1) return { kind: "ambiguous", projects: linked };
+  return { kind: "linked", project: linked[0]! };
 }
+
+/** The refusal for two projects here that both list the same source project. */
+export const ambiguousLinkMessage = (projects: ReadonlyArray<LinkableProject>) =>
+  `more than one project here lists this source: ${projects
+    .map((project) => `${project.title} (${project.id}, ${project.workspaceRoot})`)
+    .join(", ")}. Archive or remove the stale one here, then hand it off again.`;
 
 export type IncomingVerdict =
   | { readonly kind: "stored"; readonly document: HandoffDocument }

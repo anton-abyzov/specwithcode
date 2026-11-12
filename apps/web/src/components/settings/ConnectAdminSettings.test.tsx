@@ -62,6 +62,12 @@ vi.mock("~/cloud/connectAdminState", () => ({
     return Promise.resolve(state.answer(call) as ConnectAdminRead<unknown>);
   },
 }));
+// The usage section reads on its own and has its own tests in ConnectAdminUsage.test.tsx.
+vi.mock("./ConnectAdminUsage", () => ({
+  ConnectAdminUsage: ({ refreshKey }: { refreshKey: number }) => (
+    <div data-testid="connect-admin-usage-slot" data-refresh={refreshKey} />
+  ),
+}));
 vi.mock("./settingsLayout", async (original) => ({
   ...(await original<typeof import("./settingsLayout")>()),
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -351,6 +357,15 @@ describe("ConnectAdminSettings", () => {
     });
     expect(buttons("Refresh")[0]!.props.disabled).toBe(false);
     expect(pageText()).toContain("Studio Mac");
+  });
+
+  it("shows the usage section under the totals and reads it again on Refresh", async () => {
+    await mount();
+    const slot = () =>
+      renderer!.root.find((node) => node.props["data-testid"] === "connect-admin-usage-slot");
+    expect(slot().props["data-refresh"]).toBe(0);
+    await press("Refresh");
+    expect(slot().props["data-refresh"]).toBe(1);
   });
 });
 

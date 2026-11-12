@@ -210,7 +210,7 @@ export function FontFilesList({ fonts }: { fonts: FontUploads }) {
                 INSET,
               )}
             >
-              <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={file.path}>
+              <span className="min-w-0 flex-1 truncate font-mono text-compact" title={file.path}>
                 {fileName(file.path)}
               </span>
               <span className="shrink-0 text-muted-foreground text-xs">

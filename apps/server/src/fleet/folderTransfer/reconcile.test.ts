@@ -153,6 +153,28 @@ describe("repository matrix", () => {
     }
   });
 
+  it("diverged when adding to a machine: take theirs is refused whatever was sent", () => {
+    const input = {
+      relation: "diverged" as const,
+      repositories: [sourceRepo(".", { head: B, branches: { main: B } })],
+      protectDiverged: true,
+    };
+    expect(row(plan(input))).toMatchObject({
+      status: "diverged",
+      needsDecision: true,
+      choices: ["keep-mine", "leave-both"],
+    });
+    const sent = plan({ ...input, decisions: { [repoRowId(".")]: "take-theirs" } });
+    expect(row(sent)).toMatchObject({ decision: null, needsDecision: true });
+    expect(planReady(sent)).toBe(false);
+    expect(step(sent).moveHead).toBe("none");
+    expect(step(sent).stashDestination).toBe(false);
+    expect(sent.warnings.join(" ")).toContain('"Take theirs" is not available');
+    const kept = plan({ ...input, decisions: { [repoRowId(".")]: "keep-mine" } });
+    expect(planReady(kept)).toBe(true);
+    expect(step(kept).moveHead).toBe("none");
+  });
+
   it("destination dirty and behind: leaves the worktree unless take theirs, which stashes first", () => {
     const input = {
       relation: "destination-behind" as const,

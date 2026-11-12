@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpFailure,
   OrchestratorMcpMachineListResult,
   OrchestratorMcpCreateThreadsInput,
@@ -298,4 +299,33 @@ it("thread detail keeps optional goal evidence backwards-compatible", () => {
   };
   expect(decodeGoal(JSON.parse(JSON.stringify(goal)))).toEqual(goal);
   expect(() => decodeGoal({ ...goal, obligations: [] })).toThrow();
+});
+
+describe("orchestrator capabilities", () => {
+  const decode = Schema.decodeUnknownSync(OrchestratorMcpCapabilitiesResult);
+  const base = {
+    parentThreadId: null,
+    inheritedProviderInstanceId: null,
+    inheritedModel: null,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    providers: [],
+    features: {
+      appOwnedSubagents: true,
+      asyncPolling: true,
+      cancellation: true,
+      batchThreadCreation: true,
+      threadManagement: true,
+      incrementalThreadRead: true,
+      scheduledTasks: true,
+      maxBatchThreads: 20,
+    },
+  };
+  it("reads projectCreateOptions, and an older machine without it", () => {
+    expect(decode(base).features.projectCreateOptions).toBeUndefined();
+    expect(
+      decode({ ...base, features: { ...base.features, projectCreateOptions: true } }).features
+        .projectCreateOptions,
+    ).toBe(true);
+  });
 });

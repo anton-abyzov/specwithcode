@@ -158,7 +158,7 @@ export function ProjectDesignsPane({
             <span className="flex-1" />
             <a
               href={galleryHref}
-              className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-compact font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
               onClick={(event) => inApp(event, openGallery)}
             >
               Open in Designs
@@ -204,7 +204,7 @@ export function ProjectDesignsPane({
             className="mx-1 flex flex-col items-start gap-3 rounded-lg border border-dashed border-border px-4 py-5"
             data-testid="project-designs-empty"
           >
-            <p className="text-[13px] text-pretty text-muted-foreground">
+            <p className="text-compact text-pretty text-muted-foreground">
               Designs you or an agent make for {projectTitle} live here.
             </p>
             {inGallery ? (
@@ -245,7 +245,7 @@ export function ProjectDesignsPane({
                     <div className="flex items-start gap-1 px-0.5">
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                         <Tip label={title} side="top">
-                          <h3 className="truncate text-[13px] leading-5 font-medium">{title}</h3>
+                          <h3 className="truncate text-compact leading-5 font-medium">{title}</h3>
                         </Tip>
                         <p className="text-xs text-muted-foreground tabular-nums">
                           {editedAgo(summary.updatedAt, Date.now())} · {pagesLabel(summary)}

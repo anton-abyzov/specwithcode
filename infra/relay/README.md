@@ -24,7 +24,8 @@ The relay currently owns:
 - Receiving published agent activity and delivering notifications or Live Activity updates.
 - Persisting relay state and logging to Cloudflare Workers Logs for diagnostics.
 - Owner-only admin routes (`/v1/admin/...`, in [`src/admin`](./src/admin)): every account's
-  machines, phones and machine limit, read-only. They answer 404 for everyone unless
+  machines, phones and machine limit, read-only, and usage counts over time (sign-ups, activity,
+  machines linked). They answer 404 for everyone unless
   `RELAY_ADMIN_USER_IDS` lists the caller's Clerk user id, and they never return a key, credential
   or session.
 

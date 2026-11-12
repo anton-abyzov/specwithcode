@@ -370,6 +370,80 @@ describe("folder copy between two isolated sides", () => {
     await copies.close();
   }, 180_000);
 
+  it("refuses take theirs on a diverged repository unless the copy is reviewed", async () => {
+    const folder = target("diverged-protected");
+    NodeFS.mkdirSync(NodePath.dirname(folder), { recursive: true });
+    git(
+      NodePath.dirname(folder),
+      "clone",
+      "-q",
+      NodePath.join(fixture.origins, "umbrella.git"),
+      folder,
+    );
+    NodeFS.mkdirSync(NodePath.join(folder, "repositories"), { recursive: true });
+    git(
+      NodePath.join(folder, "repositories"),
+      "clone",
+      "-q",
+      NodePath.join(fixture.origins, "svc-b.git"),
+      "svc-b",
+    );
+    const serviceB = NodePath.join(folder, "repositories/svc-b");
+    write(NodePath.join(serviceB, "src/protected-dest.ts"), "destination commit\n");
+    git(serviceB, "add", "-A");
+    git(serviceB, "commit", "-q", "-m", "destination-only commit");
+    const destinationHead = git(serviceB, "rev-parse", "HEAD");
+    git(
+      NodePath.join(fixture.root, "repositories/svc-b"),
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "another source-only commit",
+    );
+    const rowId = repoRowId("repositories/svc-b");
+
+    // No purpose at all, as an older or a hand-written client sends: still protected.
+    const copies = new DestinationCopies(destinationState("diverged-protected"), fast);
+    const operation = await offer();
+    await copies.start(startInput(operation.operationId, operation.token, folder));
+    await settle(copies, operation.operationId, ["previewed"]);
+    const first = (await copies.readPlan(operation.operationId))!;
+    expect(first.rows.find((row) => row.id === rowId)).toMatchObject({
+      status: "diverged",
+      choices: ["keep-mine", "leave-both"],
+    });
+    await copies.decide(operation.operationId, { decisions: { [rowId]: "take-theirs" } });
+    await settle(copies, operation.operationId, ["previewed"]);
+    const sent = (await copies.readPlan(operation.operationId))!;
+    expect(sent.rows.find((row) => row.id === rowId)).toMatchObject({
+      decision: null,
+      needsDecision: true,
+    });
+    expect(sent.warnings.join(" ")).toContain('"Take theirs" is not available');
+    await expect(copies.approve(operation.operationId)).rejects.toThrow(/decision/);
+    expect(git(serviceB, "rev-parse", "HEAD")).toBe(destinationHead);
+    await copies.cancel(operation.operationId, "Checked the refusal");
+    await copies.close();
+
+    // The Copy files review names itself and keeps take theirs on offer.
+    const reviewed = new DestinationCopies(destinationState("diverged-reviewed"), fast);
+    const again = await offer();
+    await reviewed.start({
+      ...startInput(again.operationId, again.token, folder),
+      purpose: "review",
+    });
+    await settle(reviewed, again.operationId, ["previewed"]);
+    const offered = (await reviewed.readPlan(again.operationId))!;
+    expect(offered.rows.find((row) => row.id === rowId)?.choices).toEqual([
+      "keep-mine",
+      "take-theirs",
+      "leave-both",
+    ]);
+    await reviewed.cancel(again.operationId, "Checked the offer");
+    await reviewed.close();
+  }, 180_000);
+
   it("leaves the target untouched and returns the source when the copy stops before Apply", async () => {
     const folder = target("cancelled");
     const copies = new DestinationCopies(destinationState("cancelled"), fast);

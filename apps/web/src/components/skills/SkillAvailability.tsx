@@ -153,7 +153,7 @@ function AvailabilityMachine({
         <span className="font-medium">{label}</span>
         <span className="break-words text-muted-foreground">{text}</span>
         {state.row?.lock?.lockScope && state.row.lock.skillId === controls.row.lock?.skillId ? (
-          <span className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          <span className="rounded border px-1.5 py-0.5 text-2xs text-muted-foreground">
             {scopeLabel(controls.userLevel ? "user" : state.row.lock.lockScope)}
             {state.row.lock.pinnedVersion ? ` · pinned ${state.row.lock.pinnedVersion}` : ""}
           </span>

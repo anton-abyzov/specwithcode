@@ -148,7 +148,7 @@ function PhoneStep({
       <span
         aria-hidden
         className={cn(
-          "mt-0.5 grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
+          "mt-0.5 grid size-5 shrink-0 place-items-center rounded-full text-2xs font-semibold",
           step.state === "done"
             ? "bg-success/15 text-success-foreground"
             : step.state === "current"
@@ -178,7 +178,7 @@ function PhoneStep({
               title={tx("Code that opens the App Store or Google Play")}
             />
           </div>
-          <span className="text-[11px] text-muted-foreground">{tx("App Store · Google Play")}</span>
+          <span className="text-2xs text-muted-foreground">{tx("App Store · Google Play")}</span>
         </div>
       ) : null}
       {children}

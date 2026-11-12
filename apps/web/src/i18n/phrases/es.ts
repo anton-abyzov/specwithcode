@@ -4541,4 +4541,35 @@ export const es: PhraseCatalog = {
     "El inicio de sesión de {agent} se está ejecutando aquí. Su fila se actualiza al terminar.",
   "The sign-in ended before {agent} was signed in. Try again.":
     "El inicio de sesión terminó antes de que {agent} iniciara sesión. Inténtalo de nuevo.",
+  Usage: "Uso",
+  "Loading usage…": "Cargando uso…",
+  "Signed up in total": "Registros en total",
+  "Last 24 hours": "Últimas 24 horas",
+  "New sign-ups": "Registros nuevos",
+  "People active": "Personas activas",
+  "New accounts on Connect": "Cuentas nuevas en Connect",
+  "Accounts seen by Connect": "Cuentas vistas por Connect",
+  "Machines linked": "Máquinas vinculadas",
+  "Sign-ups could not be read from Clerk. The numbers from SpecWithCode Connect are shown.":
+    "No se pudieron leer los registros de Clerk. Se muestran los números de SpecWithCode Connect.",
+  "Clerk returned only part of the people in these periods. The sign-up numbers are at least this many.":
+    "Clerk devolvió solo una parte de las personas de estos periodos. Los números de registros son como mínimo estos.",
+  "Sign-ups per week": "Registros por semana",
+  "New accounts on Connect per week": "Cuentas nuevas en Connect por semana",
+  "Week of {date}: {count}": "Semana del {date}: {count}",
+  "These numbers count people signed in to SpecWithCode Connect. The app sends no usage data, so use without signing in is not counted.":
+    "Estos números cuentan a las personas que iniciaron sesión en SpecWithCode Connect. La app no envía datos de uso, así que el uso sin iniciar sesión no se cuenta.",
+  "As of {time}": "Datos del {time}",
+  Downloads: "Descargas",
+  "Loading downloads…": "Cargando descargas…",
+  "Installer downloads could not be read from GitHub.":
+    "No se pudieron leer las descargas del instalador en GitHub.",
+  "Mac installer": "Instalador para Mac",
+  "Windows installer": "Instalador para Windows",
+  "Linux packages": "Paquetes para Linux",
+  "Installer downloads added up over {count} releases on GitHub. Mac counts new installs. Windows and Linux also count updates.":
+    "Descargas del instalador sumadas en {count} versiones de GitHub. En Mac cuentan las instalaciones nuevas. En Windows y Linux también cuentan las actualizaciones.",
+  "Older releases were not counted.": "Las versiones más antiguas no se contaron.",
+  "Installs from npm could not be read.": "No se pudieron leer las instalaciones desde npm.",
+  "Installs from npm": "Instalaciones desde npm",
 };
