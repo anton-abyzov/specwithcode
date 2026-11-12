@@ -360,6 +360,15 @@ class Attempt(unittest.TestCase):
         self.assertEqual(self.attempt()[0], 'fresh')
         self.assertIsNotNone(proc.wait(timeout=5))
 
+    def test_starting_over_waits_for_the_whole_group_not_only_its_leader(self):
+        # The leader goes at once on TERM; a runner in its group closes later.
+        proc = self.server('sh', '-c', f"(trap '' TERM; sleep 2) & exec -a 'release.sh --internal-server {VERSION}' sleep 60")
+        self.commit(self.origin, 'main moved')
+        began = time.monotonic()
+        self.assertEqual(self.attempt()[0], 'fresh')
+        self.assertGreater(time.monotonic() - began, 1.0)
+        self.assertIsNotNone(proc.wait(timeout=5))
+
     def test_a_pid_that_is_not_this_versions_server_suite_is_left_alone(self):
         proc = self.server('sleep', '60')
         self.commit(self.origin, 'main moved')
@@ -441,6 +450,7 @@ case "$1 $2" in
   "api repos/"*/commits/*) echo sha ;;
   "api repos/"*)
     version="${2#*compare/v}" version="${version%%...*}"
+    if [ "${version##*.}" = "${GH_BROKEN:-}" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ "${version##*.}" -ge "$GH_FIRST" ]; then echo behind; else echo ahead; fi ;;
   "workflow run") ;;
   "run list")
@@ -454,14 +464,14 @@ esac
 class RequestHelper(unittest.TestCase):
     """request-release.sh, with gh replaced by a stub on PATH."""
 
-    def run_helper(self, *args, first=7):
+    def run_helper(self, *args, first=7, broken=''):
         with tempfile.TemporaryDirectory() as tmp:
             stub, log = pathlib.Path(tmp, 'gh'), pathlib.Path(tmp, 'log')
             stub.write_text(GH_STUB)
             stub.chmod(0o755)
             log.touch()
             env = dict(os.environ, PATH=f"{tmp}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log),
-                       GH_FIRST=str(first), RELEASE_REPO='o/r')
+                       GH_FIRST=str(first), GH_BROKEN=broken, RELEASE_REPO='o/r')
             done = subprocess.run(['bash', str(HERE / 'request-release.sh'), *args],
                                   capture_output=True, text=True, env=env, check=False)
             return done.returncode, done.stdout + done.stderr, log.read_text().splitlines()
@@ -478,6 +488,13 @@ class RequestHelper(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('not in a release yet (newest: v1.0.20)', said)
         self.assertEqual(self.run_helper('--released', 'main')[0], 1)
+
+    def test_released_never_takes_a_failed_lookup_for_an_answer(self):
+        # v1.0.20 is the first tag asked about, v1.0.10 the first inside the search.
+        for broken in ('20', '10'):
+            code, said, _ = self.run_helper('--released', 'abc1234', broken=broken)
+            self.assertEqual(code, 1, said)
+            self.assertIn(f'cannot compare abc1234 with v1.0.{broken}', said)
 
     def test_a_request_dispatches_without_a_version_and_finds_its_run(self):
         code, said, calls = self.run_helper('--by', 'thread "x"; $(id) \\')

@@ -258,25 +258,33 @@ def attempt(version, resume, staging_root, trees, url, branch='main', run=git):
 def stop_server(stage, version, wait=30):
     """Stop the background server suite an earlier attempt left running (release.sh's
     stop_stale_server), before its staging folder is retired: it would go on testing in the shared
-    test tree and write its results into the new attempt's folder. True when none is left."""
+    test tree and write its results into the retired folder. True when none is left.
+
+    server.pid names the leader of the suite's process group. The leader goes at once on TERM,
+    while the test runner keeps the group until its shards have closed (15s at most), so the
+    wait is for the whole group."""
     try:
         pid = int((stage / 'server.pid').read_text().split()[0])
     except (OSError, ValueError, IndexError):
         return True
-
-    def alive():
-        command = subprocess.run(['ps', '-o', 'command=', '-p', str(pid)], capture_output=True,
-                                 text=True, check=False).stdout
-        return f'--internal-server {version}' in command
-
-    if not alive():
+    command = subprocess.run(['ps', '-o', 'command=', '-p', str(pid)], capture_output=True,
+                             text=True, check=False).stdout
+    if f'--internal-server {version}' not in command:
         return True
+
+    def group_alive():
+        # Not kill(-pid, 0): that also answers for a group of nothing but unreaped processes.
+        rows = subprocess.run(['ps', '-axo', 'pgid=,stat='], capture_output=True, text=True,
+                              check=False).stdout.splitlines()
+        return any(row.split()[0] == str(pid) and not row.split()[1].startswith('Z')
+                   for row in rows if len(row.split()) == 2)
+
     try:
         os.killpg(pid, signal.SIGTERM)
     except OSError:
         pass
     for _ in range(wait * 2):
-        if not alive():
+        if not group_alive():
             return True
         time.sleep(0.5)
     return False

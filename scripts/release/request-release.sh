@@ -50,14 +50,21 @@ if [ "$MODE" = released ]; then
       sed -n 's|^refs/tags/v\(1\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' | sort -t. -k1,1n -k2,2n -k3,3n
   )
   [ "${#tags[@]}" -gt 0 ] || die "cannot read the v1.x.y tags of $REPO"
+  gh api "repos/$REPO/commits/$COMMIT" --jq .sha > /dev/null 2>&1 || die "cannot read $COMMIT on $REPO"
+  # An answer GitHub did not give is never "not released": ask once more, then stop.
   holds() {
     local status
-    status="$(gh api "repos/$REPO/compare/v$1...$COMMIT" --jq .status 2> /dev/null)" || return 1
-    [ "$status" = behind ] || [ "$status" = identical ]
+    status="$(gh api "repos/$REPO/compare/v$1...$COMMIT" --jq .status 2> /dev/null)" ||
+      { sleep 2; status="$(gh api "repos/$REPO/compare/v$1...$COMMIT" --jq .status 2> /dev/null)"; } ||
+      die "cannot compare $COMMIT with v$1 on $REPO; try again"
+    case "$status" in
+      behind | identical) return 0 ;;
+      ahead | diverged) return 1 ;;
+      *) die "cannot compare $COMMIT with v$1 on $REPO: unexpected answer '$status'" ;;
+    esac
   }
   low=0 high=$((${#tags[@]} - 1))
   if ! holds "${tags[$high]}"; then
-    gh api "repos/$REPO/commits/$COMMIT" --jq .sha > /dev/null 2>&1 || die "cannot read $COMMIT on $REPO"
     echo "$COMMIT is not in a release yet (newest: v${tags[$high]})"
     exit 2
   fi
