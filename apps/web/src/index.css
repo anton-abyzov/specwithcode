@@ -342,7 +342,7 @@ html[data-theme-token-probe] *::after {
   overflow: hidden;
   padding: 0.2rem 0.45rem;
   border: 1px solid color-mix(in oklab, var(--ring) 48%, var(--contrast-border));
-  border-radius: 0.4rem;
+  border-radius: var(--radius-sm);
   background: var(--popover);
   box-shadow: 0 4px 16px rgb(0 0 0 / 24%);
   color: var(--contrast-popover-foreground);
@@ -792,7 +792,7 @@ code {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 0.875rem;
+  border-radius: var(--radius-dialog);
   background: var(--background);
   box-shadow: 0 32px 80px -24px rgb(0 0 0 / 55%);
   transition:
@@ -1920,7 +1920,7 @@ video.artifact-viewer-media {
   max-width: 100%;
   overflow-x: auto;
   border: 1px solid var(--contrast-border);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-xl);
   background: var(--muted);
   padding: 0.8rem 0.9rem;
   scrollbar-width: thin;

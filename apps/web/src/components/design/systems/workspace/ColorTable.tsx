@@ -56,7 +56,7 @@ export function Swatch({ color, label }: { color: string | null; label: string }
       title="Copy"
       aria-label={`Copy ${label}`}
       disabled={color === null}
-      className="relative size-5 shrink-0 overflow-hidden rounded-[5px] outline-none ring-1 ring-black/10 ring-inset focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default dark:ring-white/15"
+      className="relative size-5 shrink-0 overflow-hidden rounded-sm outline-none ring-1 ring-black/10 ring-inset focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default dark:ring-white/15"
       style={color === null ? undefined : CHECKER}
       onClick={() => void copyText(label)}
     >

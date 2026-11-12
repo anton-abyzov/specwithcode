@@ -893,7 +893,7 @@ button.studio-pill[aria-pressed="true"] {
 .studio-project-icon {
   width: 24px !important;
   height: 24px !important;
-  border-radius: var(--radius-sm);
+  border-radius: 25%;
 }
 .studio-row-counts {
   display: inline-flex;

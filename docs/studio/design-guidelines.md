@@ -37,7 +37,7 @@ Sizes are in rem, so Settings > Appearance > interface size scales all of them.
 - In CSS write `font-size: var(--text-compact)`. In components write `text-compact`. Never `12.5px`, `text-[13px]` or a rem literal.
 - `text-4xs` (8px) and `text-5xs` (7px) exist only for provider icon overlays.
 - Weights are 400, 500 and 600 (`font-normal`, `font-medium`, `font-semibold`). Titles and names are 600, controls and emphasis 500.
-- A `clamp()` is allowed for a masthead that grows with the window.
+- A `clamp()` is allowed for a masthead that grows with the window, listed in the guard's exceptions.
 
 Exceptions the guard knows about: the report document's own scale in `index.css`, and artifact thumbnails in `panes.css`, which draw a page at a fraction of its size.
 
@@ -74,7 +74,7 @@ Colors come from the semantic tokens in `index.css`, which every theme and both 
 - A wash is the token with alpha: `bg-success/12`, or `color-mix(in oklab, var(--primary) 8%, transparent)` in CSS.
 - Do not write a hex fallback in `var()`: `var(--success)`, not `var(--success, #3fa66b)`.
 - Literal colors are fine for brand marks and logos, file-type icons, theme preview swatches, chart series, the machine identity hues and scrims.
-- The shell's `--shell-waiting`, `--shell-working`, `--shell-done`, `--shell-failed` and `--shell-link`, and the overview's `--desk-*` names, are aliases of the tokens above. Use the tokens in new code.
+- The shell's `--shell-waiting`, `--shell-working`, `--shell-done`, `--shell-failed` and `--shell-link` alias the tokens above under a chosen theme. The default palette sets its own warm values for them in `shell.css`, the one place a stylesheet defines status colors. The overview's `--desk-*` names are aliases. Use the tokens in new code.
 
 ## Shadows
 

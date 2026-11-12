@@ -2003,7 +2003,7 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-attachment img {
   width: 100%;
   height: 100%;
-  border-radius: var(--radius-lg);
+  border-radius: calc(var(--radius-lg) - 1px);
   object-fit: cover;
 }
 .sws-attachment[data-state="failed"] {
@@ -2013,7 +2013,7 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   position: absolute;
   inset: auto 0 0 0;
   padding: 1px 0;
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px);
   background: color-mix(in srgb, var(--background) 82%, transparent);
   font-size: var(--text-2xs);
   font-weight: 500;
@@ -2064,7 +2064,7 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   height: 100%;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-lg);
+  border-radius: calc(var(--radius-lg) - 1px);
   background: none;
   color: var(--foreground);
   cursor: zoom-in;
@@ -2113,7 +2113,7 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-lg);
+  border-radius: calc(var(--radius-lg) - 1px);
 }
 .sws-attachment-count {
   align-self: flex-end;

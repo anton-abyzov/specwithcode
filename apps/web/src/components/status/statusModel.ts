@@ -15,7 +15,11 @@ export const STATUS_GROUPS: ReadonlyArray<{
   readonly name: string;
   readonly description: string;
 }> = [
-  { id: "app", name: "SpecWithCode", description: "This machine's service, coordinators and updates" },
+  {
+    id: "app",
+    name: "SpecWithCode",
+    description: "This machine's service, coordinators and updates",
+  },
   { id: "machines", name: "Machines", description: "Paired machines and the private network" },
   {
     id: "dependencies",
@@ -40,9 +44,10 @@ export const STATUS_LEVEL_STYLES: Record<
     chip: "bg-warning/12 text-warning-foreground dark:bg-warning/18",
   },
   partial_outage: {
-    bar: "bg-orange-500",
-    dot: "bg-orange-500",
-    chip: "bg-orange-500/12 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
+    // Between degraded (warning) and major outage (destructive), from the two tokens.
+    bar: "bg-[color-mix(in_oklab,var(--warning)_50%,var(--error))]",
+    dot: "bg-[color-mix(in_oklab,var(--warning)_50%,var(--error))]",
+    chip: "bg-[color-mix(in_oklab,var(--warning)_50%,var(--error))]/12 text-[color-mix(in_oklab,var(--warning-foreground)_50%,var(--error-foreground))] dark:bg-[color-mix(in_oklab,var(--warning)_50%,var(--error))]/18",
   },
   major_outage: {
     bar: "bg-destructive",

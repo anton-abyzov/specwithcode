@@ -49,7 +49,8 @@ const NARROW_DAYS = 30;
 const LEVEL_TEXT: Record<StatusLevel, string> = {
   operational: "text-success-foreground",
   degraded: "text-warning-foreground",
-  partial_outage: "text-warning-foreground",
+  partial_outage:
+    "text-[color-mix(in_oklab,var(--warning-foreground)_50%,var(--error-foreground))]",
   major_outage: "text-destructive-foreground",
   maintenance: "text-info-foreground",
   unknown: "text-muted-foreground",
@@ -385,7 +386,7 @@ function OpenIncidents({
             incident.level === "major_outage"
               ? "border-s-destructive"
               : incident.level === "partial_outage"
-                ? "border-s-orange-500"
+                ? "border-s-[color:color-mix(in_oklab,var(--warning)_50%,var(--error))]"
                 : incident.level === "maintenance"
                   ? "border-s-info"
                   : "border-s-warning",
