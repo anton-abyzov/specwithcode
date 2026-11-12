@@ -51,68 +51,112 @@ try {
       "manual",
       "running-manual",
       "running-manual-active",
+      "stop-pending",
+      "starting-pending",
     ]) {
       const page = await browser.newPage({ viewport: { width: 900, height: 520 } });
       await page.goto(`${origin}/?case=${scenario}&theme=${theme}`);
       await page.waitForSelector("body[data-fixture-ready]");
-      await page.waitForSelector("[data-chat-provider-model-picker-label]");
-      const chip = (
-        await page.locator("[data-chat-provider-model-picker-label]").innerText()
-      ).trim();
-      const tag = page.locator(
-        `form [data-model-state="${scenario === "fallback" || scenario === "stale" ? "fallback" : scenario === "manual" ? "next" : "preferred"}"]`,
-      );
-      const tagCount = await tag.count();
-      const read =
-        tagCount === 0
-          ? null
-          : {
-              kind: await tag.getAttribute("data-model-state"),
-              text: (await tag.innerText()).trim(),
-              tip: await tag.getAttribute("aria-label"),
-            };
-      if (scenario === "fallback" || scenario === "stale")
-        check(`${theme} fallback: chip names Gemini, tag says Fallback instead of Opus`, () => {
-          NodeAssert.match(chip, /Gemini.* · Default/);
-          NodeAssert.equal(read?.kind, "fallback");
-          NodeAssert.equal(read?.text, "Fallback for Opus 5.5");
-          NodeAssert.match(read?.tip ?? "", /instead of your pick, Claude Code · Opus 5\.5/);
+      await page.waitForSelector("form [data-picker-model]");
+      // The chip: its model part, its accessible name, and the state suffix beside it.
+      const readChip = async () => {
+        const trigger = page.locator("form [data-chat-provider-model-picker]");
+        const tag = page.locator("form .sws-model-state");
+        return {
+          model: (await page.locator("form [data-picker-model]").innerText()).trim(),
+          name: (await trigger.getAttribute("aria-label")) ?? "",
+          state: (await tag.count()) === 0 ? null : await tag.getAttribute("data-model-state"),
+          // The words of the suffix where the chip has room; a fallback is its glyph alone.
+          text: await page.evaluate(
+            () => document.querySelector("form .sws-model-state-full")?.textContent?.trim() ?? null,
+          ),
+        };
+      };
+      const chip = await readChip();
+      const list = page.locator("[data-list-model]");
+      const listName = (await list.locator(".sws-model").innerText()).replace(/\s+/g, " ").trim();
+      if (scenario === "fallback")
+        check(`${theme} fallback: chip names Gemini as a fallback for Opus`, () => {
+          NodeAssert.equal(chip.model, "Default");
+          NodeAssert.match(
+            chip.name,
+            /^Model: Gemini · Default, fallback for Claude Code · Opus 5\.5/,
+          );
+          NodeAssert.equal(chip.state, "fallback");
+          NodeAssert.match(listName, /Gemini/);
         });
-      if (scenario.startsWith("running"))
-        check(`${theme} running: chip names active execution, tag names the preference`, () => {
-          NodeAssert.match(chip, /Gemini.* · Default/);
-          NodeAssert.equal(read?.kind, "preferred");
-          NodeAssert.match(read?.text ?? "", /^Preferred: .*Opus 5\.5/);
+      if (scenario === "stale" || scenario === "manual") {
+        // Nothing runs, so the explicit pick is the chip's model: no "next:" beside the old one.
+        const pick = scenario === "stale" ? "Claude Code · Opus 5.5" : "Gemini · Default";
+        check(`${theme} ${scenario}: an idle thread's chip names the explicit pick`, () => {
+          NodeAssert.equal(chip.model, scenario === "stale" ? "Opus 5.5" : "Default");
+          NodeAssert.ok(chip.name.startsWith(`Model: ${pick},`), chip.name);
+          NodeAssert.doesNotMatch(chip.name, /next message|fallback for|saved model/);
+          NodeAssert.equal(chip.state, null);
+        });
+      }
+      if (scenario === "running" || scenario === "running-manual-active")
+        check(`${theme} ${scenario}: chip names the running model, then the saved one`, () => {
+          NodeAssert.equal(chip.model, "Default");
+          NodeAssert.equal(chip.state, "preferred");
+          NodeAssert.match(chip.text ?? "", /^then .*Opus 5\.5/);
         });
       if (scenario === "same")
-        check(`${theme} same: no tag when the chip is what runs`, () => {
-          NodeAssert.match(chip, /Opus 5\.5/);
-          NodeAssert.equal(read, null);
+        check(`${theme} same: no suffix when the chip is what runs`, () => {
+          NodeAssert.equal(chip.model, "Opus 5.5");
+          NodeAssert.equal(chip.state, null);
         });
-      if (scenario === "manual")
-        check(`${theme} manual choice remains visible as next`, () => {
-          NodeAssert.match(chip, /Opus 5\.5/);
-          NodeAssert.match(read?.text ?? "", /^Next: Gemini.*Default/);
-        });
-      if (scenario === "running-manual-active")
-        NodeAssert.equal(await page.locator("form [data-model-state=next]").count(), 0);
-      if (scenario === "running-manual") {
-        NodeAssert.equal(await page.locator("form [data-model-state=next]").count(), 1);
-        NodeAssert.match(
-          await page.locator("form [data-model-state=next]").innerText(),
-          /Opus 5\.5/,
+      // With no pick pending, the thread list and the composer name the same model.
+      if (["fallback", "running", "same", "running-manual-active"].includes(scenario))
+        check(`${theme} ${scenario}: list and composer name the same model`, () =>
+          NodeAssert.ok(listName.includes(chip.model), `${listName} / ${chip.model}`),
         );
+      const pendingScenario =
+        scenario === "running-manual" ||
+        scenario === "stop-pending" ||
+        scenario === "starting-pending";
+      if (pendingScenario) {
+        // A turn in flight (running, or still queued or starting) keeps its model.
+        check(`${theme} ${scenario}: a pick during a turn reads next beside its model`, () => {
+          NodeAssert.equal(chip.model, "Default");
+          NodeAssert.equal(chip.state, "next");
+          NodeAssert.equal(chip.text, "next: Opus 5.5");
+          NodeAssert.match(
+            chip.name,
+            /^Model: Gemini · Default, next message uses Claude Code · Opus 5\.5/,
+          );
+        });
       }
-      const list = page.locator("[data-list-model]");
-      const listModel = (await list.locator(".sws-model").innerText()).replace(/\s+/g, " ").trim();
-      check(`${theme} ${scenario}: list and composer agree`, () =>
-        NodeAssert.equal(chip.replace(/\s+/g, " "), listModel),
-      );
-      if (read && scenario !== "manual") {
-        const listState = (await list.locator("[data-model-state]").innerText()).trim();
-        check(`${theme} ${scenario}: list and composer preference agree`, () =>
-          NodeAssert.equal(read.text, listState),
+      if (scenario === "stop-pending" || scenario === "starting-pending") {
+        const before = NodePath.join(output, `composer-${scenario}-${theme}.png`);
+        await page.screenshot({ path: before, fullPage: true });
+        receipt.screenshots.push(before);
+        // Stop the turn. The thread stays on Gemini, so only the pending pick can
+        // put Opus on the chip: it names the pick at once.
+        await page.evaluate(() => window.stopFixtureTurn());
+        await page.waitForFunction(
+          () =>
+            document.querySelector("form [data-picker-model]")?.textContent?.trim() === "Opus 5.5",
         );
+        const stoppedChip = await readChip();
+        check(
+          `${theme} ${scenario} stopped: the chip names the pick, no next beside Gemini`,
+          () => {
+            NodeAssert.equal(stoppedChip.model, "Opus 5.5");
+            NodeAssert.ok(
+              stoppedChip.name.startsWith("Model: Claude Code · Opus 5.5,"),
+              stoppedChip.name,
+            );
+            NodeAssert.doesNotMatch(stoppedChip.name, /next message|Gemini/);
+            NodeAssert.equal(stoppedChip.state, null);
+            NodeAssert.match(listName, /Gemini/);
+          },
+        );
+        const after = NodePath.join(output, `composer-${scenario}-stopped-${theme}.png`);
+        await page.screenshot({ path: after, fullPage: true });
+        receipt.screenshots.push(after);
+        await page.close();
+        continue;
       }
       const file = NodePath.join(output, `composer-${scenario}-${theme}.png`);
       await page.screenshot({ path: file, fullPage: true });

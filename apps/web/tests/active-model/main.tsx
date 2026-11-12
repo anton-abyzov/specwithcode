@@ -11,8 +11,11 @@ import { useComposerDraftStore } from "../../src/composerDraftStore";
  * this turn runs on Gemini while the saved preference is Opus;
  * `?case=stale` retains an old explicit draft; manual scenarios preserve the next-send choice.
  * `?case=same` nothing to add. `?theme=dark` the theme.
+ * `?case=stop-pending` a turn on the thread's model with another picked, and
+ * `?case=starting-pending` the same while the turn is still queued or starting;
+ * `window.stopFixtureTurn()` ends the turn, as Stop does.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -89,8 +92,17 @@ const settings = {
 
 const scenarios: Record<
   string,
-  { thread: ModelSelection; running: ModelSelection | null; fallbackFrom: ModelSelection | null }
+  {
+    thread: ModelSelection;
+    running: ModelSelection | null;
+    fallbackFrom: ModelSelection | null;
+    /** The turn is queued or starting: in flight, with no running model reported yet. */
+    starting?: true;
+  }
 > = {
+  // A turn on the thread's own model with another model picked; Stop leaves the pick pending.
+  "stop-pending": { thread: geminiDefault, running: geminiDefault, fallbackFrom: null },
+  "starting-pending": { thread: geminiDefault, running: null, fallbackFrom: null, starting: true },
   "running-manual": { thread: opus, running: geminiDefault, fallbackFrom: null },
   "running-manual-active": { thread: opus, running: geminiDefault, fallbackFrom: null },
   manual: { thread: opus, running: null, fallbackFrom: null },
@@ -116,7 +128,7 @@ if (params.get("case") === "stale")
   useComposerDraftStore.getState().setModelSelection(threadRef, opus, { explicit: true });
 if (params.get("case") === "manual")
   useComposerDraftStore.getState().setModelSelection(threadRef, geminiDefault, { explicit: true });
-if (params.get("case") === "running-manual")
+if (["running-manual", "stop-pending", "starting-pending"].includes(params.get("case") ?? ""))
   useComposerDraftStore.getState().setModelSelection(threadRef, opus, { explicit: true });
 if (params.get("case") === "running-manual-active")
   useComposerDraftStore.getState().setModelSelection(threadRef, geminiDefault, { explicit: true });
@@ -126,7 +138,10 @@ function Harness() {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerRef = useRef<ChatComposerHandle | null>(null);
+  const [stopped, setStopped] = useState(false);
+  const running = stopped ? null : scenario.running;
   useEffect(() => {
+    (window as unknown as { stopFixtureTurn: () => void }).stopFixtureTurn = () => setStopped(true);
     document.body.dataset.fixtureReady = "true";
   }, []);
   return (
@@ -165,7 +180,7 @@ function Harness() {
         isLocalDraftThread={false}
         forceExpandedOnMobile={false}
         projectSelectionRequired={false}
-        phase={scenario.running ? "running" : "ready"}
+        phase={running ? "running" : scenario.starting && !stopped ? "connecting" : "ready"}
         canInterrupt={false}
         isConnecting={false}
         isSendBusy={false}
@@ -195,7 +210,7 @@ function Harness() {
         providerCatalogKnown
         activeProjectDefaultModelSelection={opus}
         activeThreadModelSelection={scenario.thread}
-        reportedModelSelection={scenario.running}
+        reportedModelSelection={running}
         limitFallbackFrom={scenario.fallbackFrom}
         activeContextWindow={null}
         compactThreadUnavailable
