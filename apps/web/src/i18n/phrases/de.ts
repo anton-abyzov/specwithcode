@@ -4471,6 +4471,9 @@ export const de: PhraseCatalog = {
     "Der Ordner mit der abgelegten Datei wurde verwendet.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "Dieser Rechner hält seine Ordner in WSL. Gib den Pfad ein oder füge ihn ein.",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "Wird auf dem Gerät angezeigt, das du gerade verwendest. Deine anderen Computer zeigen ein Abzeichen.",
+  "{count} more on {machine}, in use there": "{count} weitere auf {machine}, dort in Verwendung",
   "Agents found on {machine}": "Auf {machine} gefundene Agenten",
   "Looking for {agents}…": "Suche nach {agents}…",
   "{found} of {count} agents found on {machine}.":

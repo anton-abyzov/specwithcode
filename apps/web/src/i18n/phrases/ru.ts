@@ -4441,6 +4441,9 @@ export const ru: PhraseCatalog = {
     "Использована папка, в которой лежит перетащенный файл.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "Папки этого компьютера находятся внутри WSL. Введите или вставьте путь.",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "Показывается на устройстве, которым вы пользуетесь. На других компьютерах появляется значок.",
+  "{count} more on {machine}, in use there": "Ещё {count} на {machine}, там сейчас работают",
   "Agents found on {machine}": "Агенты, найденные на {machine}",
   "Looking for {agents}…": "Ищем {agents}…",
   "{found} of {count} agents found on {machine}.":

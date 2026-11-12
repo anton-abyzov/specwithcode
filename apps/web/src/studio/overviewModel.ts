@@ -83,6 +83,35 @@ export function groupAttention(sessions: readonly SessionView[]): AttentionGroup
     .map(([kind, list]) => ({ kind, sessions: list }));
 }
 
+/** Needs-you items another machine's app raises, counted per machine that serves them. */
+export type AttentionElsewhere = { readonly environmentId: string; readonly count: number };
+
+/**
+ * Splits needs-you sessions into those this app raises and the rest, which
+ * the app on another machine counts. A machine the person scoped to shows all
+ * of its items: the quiet "more on" line is how they get there.
+ */
+export function splitRaisedAttention(
+  sessions: readonly SessionView[],
+  raised: (session: SessionView) => boolean,
+  machineScope: string | null,
+): { readonly here: SessionView[]; readonly elsewhere: AttentionElsewhere[] } {
+  const here: SessionView[] = [];
+  const counts = new Map<string, number>();
+  for (const session of sessions) {
+    if (session.attention === null) continue;
+    if (session.thread.environmentId === machineScope || raised(session)) {
+      here.push(session);
+      continue;
+    }
+    counts.set(session.thread.environmentId, (counts.get(session.thread.environmentId) ?? 0) + 1);
+  }
+  return {
+    here,
+    elsewhere: [...counts].map(([environmentId, count]) => ({ environmentId, count })),
+  };
+}
+
 export type DayGroup = "today" | "yesterday" | "earlier";
 
 /** The local calendar day a time falls on, relative to now. */

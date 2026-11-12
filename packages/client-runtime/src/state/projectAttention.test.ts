@@ -745,3 +745,48 @@ it.each(["queued", "starting", "running"] as const)(
     ).toEqual(["coordinator"]);
   },
 );
+describe("the raise rule", () => {
+  it("counts only raised items, and keeps every row and its actions", () => {
+    const mine = thread("mine", { reportedBlocker: "Ship it or wait?" });
+    const theirs = thread("theirs", {
+      reportedBlocker: "Rotate the key?",
+      ownerMachineId: "desk",
+    } as Partial<EnvironmentThreadShell>);
+    const owners: string[] = [];
+    const result = aggregateProjectAttention({
+      members: [member],
+      roots: [mine, theirs],
+      threads: [mine, theirs],
+      raises: (_thread, owner) => {
+        owners.push(owner);
+        return owner === "host";
+      },
+    });
+    expect(owners.toSorted()).toEqual(["desk", "host"]);
+    expect(result).toMatchObject({ count: 1, elsewhere: 1, label: "1 needs you" });
+    expect(result.roots.map((root) => [root.thread.id, root.raised, root.actions.length])).toEqual([
+      ["mine", true, 1],
+      ["theirs", false, 1],
+    ]);
+  });
+
+  it("names a remote worker's coordinator machine as its owner", () => {
+    const coordinatorMember: AttentionMember = {
+      ...member,
+      remoteWorkers: [{ environmentId: "worker", remoteThreadId: "w1", state: "running" }],
+    };
+    const workerMember: AttentionMember = { ...member, environmentId: "worker" };
+    const worker = thread("w1", {
+      environmentId: "worker" as EnvironmentThreadShell["environmentId"],
+      reportedBlocker: "Which branch?",
+    });
+    const result = aggregateProjectAttention({
+      members: [coordinatorMember, workerMember],
+      roots: [worker],
+      threads: [worker],
+      raises: (_thread, owner) => owner === "host",
+    });
+    expect(result.roots[0]).toMatchObject({ ownerMachineId: "host", raised: true });
+    expect(result.count).toBe(1);
+  });
+});

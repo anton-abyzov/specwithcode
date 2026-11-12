@@ -1,12 +1,16 @@
 import { EnvironmentId, WS_METHODS } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ClientActivityClientId } from "@specweave-studio/contracts";
 import { vi } from "vite-plus/test";
 
 import {
+  appClientId,
   backgroundActivityClientId,
+  createActivityReport,
+  hostEnvironmentIdOf,
   observeBackgroundActivitySubscription,
   retainedBackgroundScopes,
   wasRecentlyInteracted,
@@ -170,5 +174,67 @@ describe("backgroundActivityClientId", () => {
     expect(clientId).toBe(`${"s".repeat(91)}:${sessionStorage.getItem(WINDOW_ID_KEY)}`);
     // Shortening is stable: the same window reports the same id every time.
     expect(backgroundActivityClientId()).toBe(clientId);
+  });
+});
+
+describe("activity report presence", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubPage() {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: () => "stored-client",
+        setItem: () => undefined,
+      },
+    });
+    vi.stubGlobal("document", { visibilityState: "hidden", hasFocus: () => false });
+  }
+
+  it("sends the last real interaction and this app's own machine", () => {
+    stubPage();
+    const environmentId = EnvironmentId.make("env-remote");
+    const host = EnvironmentId.make("env-host");
+    const report = createActivityReport(environmentId, 1_000, 5_000, {
+      lastUserInteractionAtMs: 4_000,
+      hostEnvironmentId: host,
+    });
+    expect(report.hostEnvironmentId).toBe(host);
+    expect(report.lastInteractionAt && DateTime.toEpochMillis(report.lastInteractionAt)).toBe(
+      4_000,
+    );
+  });
+
+  it("claims no interaction before the first one, and no host without a primary", () => {
+    stubPage();
+    const report = createActivityReport(EnvironmentId.make("env-remote"), 1_000, 5_000, {
+      lastUserInteractionAtMs: null,
+      hostEnvironmentId: null,
+    });
+    expect("lastInteractionAt" in report).toBe(false);
+    expect("hostEnvironmentId" in report).toBe(false);
+  });
+
+  it("names the primary entry as this app's machine", () => {
+    const primary = EnvironmentId.make("env-primary");
+    expect(
+      hostEnvironmentIdOf(
+        new Map([
+          [EnvironmentId.make("env-saved"), { target: { _tag: "SavedConnectionTarget" } }],
+          [primary, { target: { _tag: "PrimaryConnectionTarget" } }],
+        ]),
+      ),
+    ).toBe(primary);
+    expect(
+      hostEnvironmentIdOf(
+        new Map([[EnvironmentId.make("env-saved"), { target: { _tag: "SavedConnectionTarget" } }]]),
+      ),
+    ).toBeNull();
+  });
+
+  it("reads every window of one app as that app", () => {
+    expect(appClientId("stored-client")).toBe("stored-client");
+    expect(appClientId("stored-client:3f0c")).toBe("stored-client");
   });
 });

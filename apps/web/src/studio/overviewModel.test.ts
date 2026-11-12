@@ -22,6 +22,7 @@ import {
   resolveNativeModel,
   resolvePolicyDraft,
   sessionStateSince,
+  splitRaisedAttention,
   verifiedPoolId,
 } from "./overviewModel";
 
@@ -627,5 +628,37 @@ describe("day groups", () => {
     expect(dayGroup(new Date(2026, 10, 6, 23, 50).toISOString(), at)).toBe("yesterday");
     expect(dayGroup(new Date(2026, 10, 5, 12, 0).toISOString(), at)).toBe("earlier");
     expect(dayGroup(null, at)).toBe("earlier");
+  });
+});
+
+describe("splitRaisedAttention", () => {
+  const session = (id: string, environmentId: string, needs: boolean) =>
+    ({
+      thread: { id, environmentId } as EnvironmentThreadShell,
+      project: null,
+      state: needs ? "Answer needed" : "Ready",
+      attention: needs ? "input" : null,
+      attentionLabel: needs ? "Answer needed" : null,
+      working: false,
+      settled: false,
+    }) as SessionView;
+  const sessions = [
+    session("mine", "laptop", true),
+    session("theirs-1", "desk", true),
+    session("theirs-2", "desk", true),
+    session("idle", "desk", false),
+  ];
+  const raised = (s: SessionView) => s.thread.environmentId === "laptop";
+
+  it("lists what this app raises and counts the rest per machine", () => {
+    const { here, elsewhere } = splitRaisedAttention(sessions, raised, null);
+    expect(here.map((s) => s.thread.id)).toEqual(["mine"]);
+    expect(elsewhere).toEqual([{ environmentId: "desk", count: 2 }]);
+  });
+
+  it("shows every item of the machine the person scoped to", () => {
+    const { here, elsewhere } = splitRaisedAttention(sessions, raised, "desk");
+    expect(here.map((s) => s.thread.id)).toEqual(["mine", "theirs-1", "theirs-2"]);
+    expect(elsewhere).toEqual([]);
   });
 });

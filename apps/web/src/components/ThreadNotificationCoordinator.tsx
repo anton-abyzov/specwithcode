@@ -1,5 +1,8 @@
 import { observeNotificationEpisode } from "../notificationEpisodes";
-import { observeProjectThread } from "@specweave-studio/client-runtime/state/projectAttention";
+import {
+  attentionOwnerMachine,
+  observeProjectThread,
+} from "@specweave-studio/client-runtime/state/projectAttention";
 import {
   classifyProjectActions,
   projectActionIsCurrent,
@@ -25,7 +28,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
-import { useEnvironmentIds } from "../state/environments";
+import {
+  useEnvironmentIds,
+  usePrimaryEnvironmentId,
+  useUnreachableEnvironmentIds,
+} from "../state/environments";
 import { useProjects } from "../state/entities";
 import {
   isDelegatedThread,
@@ -46,6 +53,12 @@ import { useActiveNotificationThread } from "../hooks/useActiveNotificationThrea
 import { resolveThreadAlertStatus } from "./Sidebar.logic";
 import { notificationsConnected, useNotificationsConnected } from "../notificationConnection";
 import { deliverNotificationOnce } from "../notificationHistory";
+import {
+  decideNotificationDelivery,
+  ownerMachineReachable,
+  readNotificationTarget,
+} from "../notificationTarget";
+import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
 
@@ -57,6 +70,20 @@ interface ShownNotification {
   readonly environmentId: EnvironmentId;
   readonly close: () => void;
   readonly actionKey?: string | null;
+}
+
+/**
+ * A copy of a thread this machine no longer runs: handed off, so the machine
+ * that runs it now alerts for it.
+ */
+export function isStaleExecutionCopy(
+  thread: Pick<OrchestrationV2ThreadShell, "executionState" | "executionMachineId">,
+  environmentId: EnvironmentId,
+): boolean {
+  return (
+    thread.executionState === "fenced" ||
+    (thread.executionMachineId !== undefined && thread.executionMachineId !== environmentId)
+  );
 }
 
 /** Records a shown notification, or forgets it with `posted` false when the system declined it. */
@@ -184,6 +211,14 @@ function EnvironmentNotifications({
 }) {
   const connected = useNotificationsConnected();
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
+  // Who this app is, for the serving machine's choice of notification device.
+  const ownEnvironmentId = usePrimaryEnvironmentId();
+  const knownEnvironmentIds = useEnvironmentIds();
+  const unreachableEnvironmentIds = useUnreachableEnvironmentIds();
+  const presence = useRef({ ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds });
+  useLayoutEffect(() => {
+    presence.current = { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds };
+  }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds]);
   // The shell reducer keeps the thread list and unchanged thread objects
   // stable, so this only rescans when a thread actually changed.
   const threads =
@@ -255,6 +290,9 @@ function EnvironmentNotifications({
       // coordinator delegated is its own thread: its status and this alert
       // tell the user it finished, not the coordinator.
       if (isProviderNativeSubagentThread(rawThread)) continue;
+      // A handed-off copy raises nothing: the running copy alerts once. Left out
+      // of the next state, its earlier entries are withdrawn below.
+      if (isStaleExecutionCopy(rawThread, environmentId)) continue;
       const prior = previous.current.get(rawThread.id);
       const thread = presentThreadShell(environmentId, rawThread);
       let status = resolveThreadAlertStatus(thread);
@@ -401,44 +439,54 @@ function EnvironmentNotifications({
           await deliverNotificationOnce(eventKey, async () => {
             // Web Locks may wait behind a native delivery. Never send using stale preferences or requests.
             if (!mounted.current || !isNotificationOwner()) return false;
-            const {
-              threads: currentThreads,
-              mode,
-              inAppNotificationsEnabled,
-              inputNeededAlertsEnabled,
-            } = latest.current;
-            const currentRaw = currentThreads?.find((candidate) => candidate.id === rawThread.id);
-            if (!currentRaw || currentRaw.archivedAt !== null || currentRaw.deletedAt != null)
-              return false;
-            if (!allowedByLevel(kind)) return false;
-            const currentThread = presentThreadShell(environmentId, currentRaw);
-            let currentStatus = resolveThreadAlertStatus(currentThread);
-            if (currentStatus === "ready" && currentThread.latestRun?.status === "failed")
-              currentStatus = "failed";
-            if (
-              kind === "operational" &&
-              (currentStatus !== status ||
-                currentRaw.latestRunId !== rawThread.latestRunId ||
-                currentRaw.pendingRuntimeRequest?.id !== rawThread.pendingRuntimeRequest?.id)
-            )
-              return false;
-            if (
-              action &&
-              !projectActionIsCurrent(action, observeProjectThread(currentThread, "live"))
-            )
-              return false;
-            if (
-              kind === "completion" &&
-              (currentStatus !== "ready" ||
-                currentThread.latestRun?.completedAt !== thread.latestRun?.completedAt)
-            )
-              return false;
-            if (
-              kind === "stalled" &&
-              (currentRaw.latestRunId !== rawThread.latestRunId ||
-                threadRunHealth(currentThread, Date.now())?.state !== "stalled")
-            )
-              return false;
+            const { mode, inAppNotificationsEnabled, inputNeededAlertsEnabled } = latest.current;
+            // The thread as it is now, or null once the alert no longer applies.
+            // Checked again after the target read: the person may answer meanwhile.
+            const stillCurrent = () => {
+              const currentRaw = latest.current.threads?.find(
+                (candidate) => candidate.id === rawThread.id,
+              );
+              if (
+                !currentRaw ||
+                currentRaw.archivedAt !== null ||
+                currentRaw.deletedAt != null ||
+                isStaleExecutionCopy(currentRaw, environmentId)
+              )
+                return null;
+              if (!allowedByLevel(kind)) return null;
+              const currentThread = presentThreadShell(environmentId, currentRaw);
+              let currentStatus = resolveThreadAlertStatus(currentThread);
+              if (currentStatus === "ready" && currentThread.latestRun?.status === "failed")
+                currentStatus = "failed";
+              if (
+                kind === "operational" &&
+                (currentStatus !== status ||
+                  currentRaw.latestRunId !== rawThread.latestRunId ||
+                  currentRaw.pendingRuntimeRequest?.id !== rawThread.pendingRuntimeRequest?.id)
+              )
+                return null;
+              if (
+                action &&
+                !projectActionIsCurrent(action, observeProjectThread(currentThread, "live"))
+              )
+                return null;
+              if (
+                kind === "completion" &&
+                (currentStatus !== "ready" ||
+                  currentThread.latestRun?.completedAt !== thread.latestRun?.completedAt)
+              )
+                return null;
+              if (
+                kind === "stalled" &&
+                (currentRaw.latestRunId !== rawThread.latestRunId ||
+                  threadRunHealth(currentThread, Date.now())?.state !== "stalled")
+              )
+                return null;
+              return { currentRaw, currentThread };
+            };
+            const checked = stillCurrent();
+            if (checked === null) return false;
+            const { currentRaw, currentThread } = checked;
             const title =
               kind === "stalled"
                 ? "No activity in thread"
@@ -461,12 +509,52 @@ function EnvironmentNotifications({
                               : "Input needed";
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
+            const inApp = document.visibilityState === "visible" && document.hasFocus();
+            // A focused window is the device in use, so it toasts as before. Out of
+            // focus, the serving machine says which one app pops up and plays the
+            // sound; the owner machine's app badges, the rest stay quiet.
+            if (!inApp) {
+              const { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds } =
+                presence.current;
+              const ownerMachineId = attentionOwnerMachine({
+                environmentId,
+                id: currentRaw.id,
+                ownerMachineId: currentRaw.ownerMachineId,
+              });
+              const delivery = decideNotificationDelivery({
+                read: await readNotificationTarget(environmentId),
+                ownClientId: backgroundActivityClientId(),
+                ownEnvironmentId,
+                servingEnvironmentId: environmentId,
+                ownerMachineId,
+                ownerReachable: ownerMachineReachable(
+                  ownerMachineId,
+                  knownEnvironmentIds,
+                  unreachableEnvironmentIds,
+                ),
+              });
+              if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
+                return false;
+              if (delivery !== "post") {
+                if (
+                  delivery === "badge" &&
+                  notificationsConnected() &&
+                  (hasDesktopNotifications(latest.current.mode) || needsUser)
+                )
+                  onNotification(`${environmentId}:${thread.id}`, {
+                    environmentId,
+                    actionKey: action ? String(identity) : null,
+                    close: () => undefined,
+                  });
+                // Handled here: another app shows it, so it is never retried.
+                return true;
+              }
+            }
             if (hasNotificationSound(mode) && soundChanged) {
               void playNotificationSound(kind === "completion" ? "completion" : "input", () =>
                 hasNotificationSound(getClientSettings().notificationMode),
               );
             }
-            const inApp = document.visibilityState === "visible" && document.hasFocus();
             // A thread stopped on the person still gets a toast with in-app news off:
             // focused on another thread, nothing else would show it.
             if (

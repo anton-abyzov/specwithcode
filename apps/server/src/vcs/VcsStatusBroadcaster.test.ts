@@ -147,6 +147,7 @@ function layerBackgroundPolicy(shouldRunScopeWork: (scope: BackgroundScope) => b
     hasDemand: () => Effect.succeed(true),
     shouldRunScopeWork: (scope) => Effect.sync(() => shouldRunScopeWork(scope)),
     shouldRunOpportunisticWork: Effect.succeed(true),
+    notificationTarget: () => Effect.succeed(null),
   });
 }
 
