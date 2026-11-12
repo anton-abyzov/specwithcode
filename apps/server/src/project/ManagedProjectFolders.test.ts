@@ -1217,8 +1217,9 @@ it.effect("says the server may not write in the parent folder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      // Root may write anywhere, so there is no refusal to see.
-      if (process.getuid?.() === 0) return;
+      // Root may write anywhere, and Windows ignores a folder's mode bits, so
+      // there is no refusal to see on either.
+      if (process.getuid?.() === 0 || process.platform === "win32") return;
       const parentPath = path.join(baseDir, "locked");
       yield* fs.makeDirectory(parentPath);
       yield* fs.chmod(parentPath, 0o555);
