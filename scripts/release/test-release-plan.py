@@ -12,6 +12,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -342,35 +343,82 @@ class Attempt(unittest.TestCase):
         self.assertEqual(self.attempt()[0], 'resume')
         self.assertTrue(self.stage.is_dir())
 
-    def server(self, *command):
+    def server(self, *command, ready=None):
+        """A stand-in server suite in a process group of its own. ready: a file the stand-in
+        writes once it is set up, waited for so no signal reaches it half started."""
         proc = subprocess.Popen(command, start_new_session=True)
+        # Reaped as it exits, as launchd reaps the real suite: its group is then gone for good.
+        threading.Thread(target=proc.wait, daemon=True).start()
         self.addCleanup(proc.wait)
-        self.addCleanup(lambda: proc.poll() is None and os.killpg(proc.pid, 9))
+
+        def kill_group():
+            # Whatever the leader did: a runner of its group may have outlived it.
+            with contextlib.suppress(OSError):
+                os.killpg(proc.pid, 9)
+
+        self.addCleanup(kill_group)
         (self.stage / 'server.pid').write_text(f'{proc.pid}\n')
-        for _ in range(50):
-            if 'sleep' in subprocess.run(['ps', '-o', 'command=', '-p', str(proc.pid)],
-                                         capture_output=True, text=True).stdout:
+        for _ in range(300):
+            if ready is None or ready.exists():
                 break
             time.sleep(0.1)
+        else:
+            self.fail(f'the stand-in server suite never wrote {ready}')
         return proc
 
     def test_starting_over_stops_the_earlier_attempts_server_suite(self):
-        proc = self.server('sh', '-c', f'exec -a "release.sh --internal-server {VERSION}" sleep 60')
+        proc = self.server('bash', '-c', f'exec -a "release.sh --internal-server {VERSION}" sleep 60')
         self.commit(self.origin, 'main moved')
         self.assertEqual(self.attempt()[0], 'fresh')
         self.assertIsNotNone(proc.wait(timeout=5))
 
     def test_starting_over_waits_for_the_whole_group_not_only_its_leader(self):
-        # The leader goes at once on TERM; a runner in its group closes later.
-        proc = self.server('sh', '-c', f"(trap '' TERM; sleep 2) & exec -a 'release.sh --internal-server {VERSION}' sleep 60")
+        # The leader goes at once on TERM; a runner in its group ignores it and closes 2s later,
+        # leaving a file as it goes. No clock is read: the file is there only if the wait was
+        # for the runner too, and the runner is signalled only once it says it ignores TERM.
+        marks = pathlib.Path(self.tmp.name)
+        ready, closed = marks / 'runner-ready', marks / 'runner-closed'
+        proc = self.server('bash', '-c', (
+            f"(trap '' TERM; : > '{ready}'; sleep 2; : > '{closed}') & "
+            f"exec -a 'release.sh --internal-server {VERSION}' sleep 60"), ready=ready)
         self.commit(self.origin, 'main moved')
-        began = time.monotonic()
         self.assertEqual(self.attempt()[0], 'fresh')
-        self.assertGreater(time.monotonic() - began, 1.0)
+        self.assertTrue(closed.exists(), 'the staging folder was retired while the runner still ran')
         self.assertIsNotNone(proc.wait(timeout=5))
 
+    def test_a_group_that_outlives_the_wait_keeps_the_attempt(self):
+        marks = pathlib.Path(self.tmp.name)
+        ready = marks / 'runner-ready'
+        self.server('bash', '-c', (
+            f"(trap '' TERM; : > '{ready}'; sleep 30) & "
+            f"exec -a 'release.sh --internal-server {VERSION}' sleep 60"), ready=ready)
+        self.assertFalse(release_plan.stop_server(self.stage, VERSION, wait=1))
+
+    def runner_without_leader(self, trap):
+        """The suite's runner alone in the group: its leader died before the attempt is looked at."""
+        ready = pathlib.Path(self.tmp.name) / 'runner-ready'
+        proc = self.server('bash', '-c', (
+            f"({trap} : > '{ready}'; exec -a 'node scripts/release/test-sharded.mjs --shards 8' sleep 30) & "
+            f"exec -a 'release.sh --internal-server {VERSION}' sleep 60"), ready=ready)
+        os.kill(proc.pid, 9)
+        proc.wait(timeout=5)
+
+    def test_a_runner_left_by_a_dead_leader_is_stopped_too(self):
+        self.runner_without_leader('')
+        self.assertTrue(release_plan.stop_server(self.stage, VERSION, wait=5))
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(int((self.stage / 'server.pid').read_text()), 0)
+
+    def test_a_runner_left_by_a_dead_leader_that_will_not_stop_keeps_the_attempt(self):
+        self.runner_without_leader("trap '' TERM;")
+        self.assertFalse(release_plan.stop_server(self.stage, VERSION, wait=1))
+
     def test_a_pid_that_is_not_this_versions_server_suite_is_left_alone(self):
-        proc = self.server('sleep', '60')
+        for command in (('sleep', '60'),
+                        ('bash', '-c', f'exec -a "release.sh --internal-server {VERSION}0" sleep 60')):
+            proc = self.server(*command)
+            self.assertTrue(release_plan.stop_server(self.stage, VERSION, wait=1))
+            self.assertIsNone(proc.poll())
         self.commit(self.origin, 'main moved')
         self.assertEqual(self.attempt()[0], 'fresh')
         self.assertIsNone(proc.poll())
