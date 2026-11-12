@@ -143,7 +143,7 @@ export function StudioConnectEnvironmentRow(props: {
               {failure !== null ? (
                 <p
                   role="alert"
-                  className="mt-2 text-xs leading-4.5 font-medium wrap-anywhere text-destructive"
+                  className="mt-2 text-xs leading-4.5 font-medium wrap-anywhere text-destructive-foreground"
                 >
                   Deregistering did not finish: {failure}
                 </p>
