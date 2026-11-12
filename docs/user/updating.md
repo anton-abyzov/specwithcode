@@ -134,9 +134,8 @@ Provider update checks and restart continuation preferences are in
 **Settings → Maintenance**. If provider update checks are disabled, enable them
 there before refreshing to find newer versions.
 
-There is no published mobile app yet, so there are no App Store or Google Play
-releases to install. A build of the mobile app can
-download updates in the background and apply them when you next leave the app.
+The phone app updates through the App Store and Google Play. A build you make
+from `apps/mobile` can download updates in the background and apply them when you next leave the app.
 It saves drafts and queued messages before restarting. If you keep the app open
 for a long time, it may ask to install immediately; choosing **Later** leaves the
 update queued for the next suitable moment.

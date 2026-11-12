@@ -1,6 +1,6 @@
 # Mobile notifications
 
-There is no published mobile app. These steps apply to a build you make from `apps/mobile`; see [Install](./install.md#mobile-app).
+These steps apply to the SpecWithCode phone app; see [Install](./install.md#phone-app) for how to get it.
 
 Sign in to SpecWithCode Connect, link your environments, and enable **Device Notifications** in **Settings → Notifications** to receive alerts when an agent finishes, fails, needs approval, or asks for input. Tap a notification to open its thread. Your environment must have agent activity publishing enabled.
 

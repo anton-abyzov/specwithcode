@@ -4,7 +4,9 @@ Let coordinators on your main machine start work on your other computers: a
 second Mac, a Linux box or a VPS.
 
 To only open a machine from your other devices (the desktop app, a browser or
-your iPhone), you do not need this page or Tailscale. Turn on
+your phone), you do not need this page or Tailscale. For a phone, see
+[Phone app](./install.md#phone-app): sign in to SpecWithCode Connect on the
+computer, get the app, and sign in on the phone with the same account. Turn on
 [SpecWithCode Connect](./remote-access.md#specwithcode-connect) on that machine
 instead.
 
