@@ -101,7 +101,7 @@ describe("project environment", () => {
       ...base,
       found: [found],
       foundMore: 3,
-      skippedLinks: ["repositories/link"],
+      skippedLinks: [{ path: "repositories/link", target: "repositories/acme/api" }],
       redundantEntries: [{ repositoryId: "old", reason: "found_clone" }],
     });
     expect(result.found).toEqual([found]);

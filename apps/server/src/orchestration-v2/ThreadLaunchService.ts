@@ -55,6 +55,11 @@ import {
 import { worktreeSetFolder } from "../worktreePlacement.ts";
 import type { WorktreeSetMember } from "../worktreeSet.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import {
+  discoverProjectRepositories,
+  resolveFolderRepository,
+  validRepositoryNames,
+} from "../project/ProjectRepositoryDiscovery.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -335,8 +340,26 @@ const make = Effect.gen(function* () {
     const requested = strategy.type === "root" ? undefined : strategy.repository;
     if (requested === undefined) return { cwd: project.workspaceRoot, repository: null };
     const resolved = resolveLaunchRepository(project, requested);
-    if (!resolved.ok)
-      return yield* mapError(input, "resolve-repository", threadId)(resolved.message);
+    if (!resolved.ok) {
+      // A clone in the project folder is named by its path there, with nothing to register.
+      const inFolder = yield* Effect.promise(() =>
+        resolveFolderRepository(project.workspaceRoot, requested),
+      );
+      if (inFolder?.relativePath === ".") return { cwd: project.workspaceRoot, repository: null };
+      if (inFolder !== null)
+        return {
+          cwd: inFolder.path,
+          repository: { id: inFolder.relativePath, path: inFolder.path },
+        };
+      const names = yield* Effect.promise(() =>
+        discoverProjectRepositories({ projectId: input.projectId, ...project }),
+      );
+      return yield* mapError(
+        input,
+        "resolve-repository",
+        threadId,
+      )(resolved.message + validRepositoryNames(names));
+    }
     const { checkout } = resolved;
     const isRepository = yield* git
       .isRepository(checkout.path)

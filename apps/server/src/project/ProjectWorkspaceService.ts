@@ -71,6 +71,7 @@ import { fenceText } from "./promptFence.ts";
 import { isSpecweaveProject } from "./ThreadIncrementProgress.ts";
 import { INCREMENT_SIZING_RULE } from "./launchIncrement.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
+import { discoverProjectRepositories, foundRepositoryLines } from "./ProjectRepositoryDiscovery.ts";
 
 export class ProjectWorkspaceService extends Context.Service<
   ProjectWorkspaceService,
@@ -519,6 +520,19 @@ const make = Effect.gen(function* () {
         settings.coordinatorThreadId !== threadId
       )
         return [];
+      const foundLines = foundRepositoryLines(
+        yield* Effect.promise(() =>
+          discoverProjectRepositories({
+            projectId,
+            workspaceRoot: project.workspaceRoot,
+            saved: settings.environment.repositories,
+          }),
+        ),
+      );
+      const foundRepositories =
+        foundLines === ""
+          ? ""
+          : `\nRepositories found in the project folder, available to every thread with nothing to register (name: path relative to the project folder, origin, checked-out branch). Name one by its path in a launch's repository or repositories, or in studio_worktree_add_repository:\n${foundLines}`;
       const role = projectContextText({
         projectId,
         threadId,
@@ -550,7 +564,8 @@ const make = Effect.gen(function* () {
                 ? locations
                 : boundProjectContext(locations, 4096) +
                     "\n[Location list truncated. Read project settings for the full list.]";
-            })(),
+            })() +
+            foundRepositories,
         ],
         [
           "memory_inventory",

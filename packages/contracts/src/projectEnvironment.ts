@@ -206,8 +206,15 @@ export const ProjectEnvironmentReadResult = Schema.Struct({
   foundMore: Schema.optionalKey(NonNegativeInt),
   /** True when the folder walk stopped at its limits before reading every folder. */
   foundTruncated: Schema.optionalKey(Schema.Boolean),
-  /** Links to a clone already found or to a folder outside the project, relative to the project folder. */
-  skippedLinks: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** True when the project folder is itself a Git repository ("." in a launch). */
+  rootIsRepository: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Links left out of `found`, relative to the project folder: `target` is the listed
+   * repository the link leads to, or null when it leads outside the project folder.
+   */
+  skippedLinks: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.NullOr(Schema.String) })),
+  ),
   redundantEntries: Schema.optionalKey(Schema.Array(ProjectRedundantRepositoryEntry)),
 });
 export type ProjectEnvironmentReadResult = typeof ProjectEnvironmentReadResult.Type;

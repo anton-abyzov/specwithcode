@@ -41,13 +41,28 @@ const shared = {
 const EnvironmentReadTool = Tool.make("studio_environment_read", {
   ...shared,
   description:
-    "Read this server's identity and selected environment preferences. Provider/model availability is exposed by orchestrator_capabilities. Writing instructions are limited to 4,000 characters.",
+    "Read this server's identity and selected environment preferences, and from a thread the Git repositories found in its project folder (at most 50, then a count). Provider/model availability is exposed by orchestrator_capabilities. Writing instructions are limited to 4,000 characters.",
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
     label: Schema.String,
     serverVersion: Schema.String,
     platform: ExecutionEnvironmentDescriptor.fields.platform,
     preferences: Schema.Struct(PreferenceFields),
+    repositories: Schema.optionalKey(
+      Schema.Struct({
+        projectFolder: Schema.String,
+        found: Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            relativePath: Schema.String,
+            origin: Schema.NullOr(Schema.String),
+            branch: Schema.NullOr(Schema.String),
+          }),
+        ),
+        more: Schema.Number,
+        note: Schema.String,
+      }),
+    ),
   }),
 })
   .annotate(Tool.Readonly, true)

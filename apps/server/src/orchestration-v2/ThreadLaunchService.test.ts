@@ -1755,6 +1755,79 @@ it.effect("rejects an unknown repository before creating the thread", () =>
   }),
 );
 
+it.effect("creates the worktree in a clone named by its path in the project folder", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-found-root-")),
+    );
+    const api = NodePath.join(root, "repositories", "acme", "api");
+    NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(api, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(api, "src"), { recursive: true });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    // Nothing is saved in Environment: the clone is found in the folder.
+    const harness = makeHarness({ project: { ...project, workspaceRoot: root } as never });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const worktree = (repository: string) => ({
+        type: "worktree" as const,
+        baseRef: "origin/main",
+        branch: `fix/${repository.replaceAll(/[^a-z]/gu, "") || "root"}`,
+        startFromOrigin: false,
+        repository,
+      });
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:found-repository",
+          thread: "thread:launch:found-repository",
+          message: "Fix the api",
+          workspace: worktree("repositories/acme/api"),
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(launched.threadId)
+          .pipe(Effect.map((current) => current.thread.worktreePath !== null)),
+      );
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0].cwd, api);
+      // "." is the project folder's own repository.
+      const own = yield* launches.launch(
+        launchInput({
+          command: "command:launch:own-repository",
+          thread: "thread:launch:own-repository",
+          message: "Fix the root",
+          workspace: worktree("."),
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(own.threadId)
+          .pipe(Effect.map((current) => current.thread.worktreePath !== null)),
+      );
+      assert.equal(harness.createWorktree.mock.calls[1]?.[0].cwd, root);
+      // A folder inside a clone is not a repository: refused with the names that are.
+      const error = yield* launches
+        .launch(
+          launchInput({
+            command: "command:launch:inside-repository",
+            thread: "thread:launch:inside-repository",
+            workspace: worktree("repositories/acme/api/src"),
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.equal(error.operation, "resolve-repository");
+      assert.include(
+        String(error.cause),
+        "Repositories in the project folder, by path: ., repositories/acme/api.",
+      );
+      assert.equal(harness.createWorktree.mock.calls.length, 2);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.scoped),
+);
+
 it.effect("rejects a repository on a project without environment repositories", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
