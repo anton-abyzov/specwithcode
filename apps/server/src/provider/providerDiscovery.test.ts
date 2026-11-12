@@ -106,7 +106,7 @@ const isolatedPath = () => {
   return [directory, "/usr/bin", "/bin"].join(":");
 };
 
-/** `isolatedPath` without /usr/bin, where a real git and xcode-select live. */
+/** `isolatedPath` without /usr/bin or any folder holding a real git or xcode-select. */
 const withoutSystemTools = () => {
   // The fake CLI launcher is a shell script that calls `dirname`.
   const tools = fakeCliDirectory();
@@ -119,7 +119,8 @@ const withoutSystemTools = () => {
     tools,
     ...isolatedPath()
       .split(":")
-      .filter((folder) => folder !== "/usr/bin"),
+      // On Linux /bin is /usr/bin, so a real git can sit in either.
+      .filter((folder) => folder !== "/usr/bin" && !NodeFS.existsSync(`${folder}/git`)),
   ].join(":");
 };
 
