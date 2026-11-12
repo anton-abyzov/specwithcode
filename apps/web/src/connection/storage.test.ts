@@ -99,13 +99,13 @@ describe("ConnectionStorage.makeCatalogStore", () => {
     }),
   );
 
-  it.effect("serializes updates through the cross-renderer lock when there is one", () =>
+  it.live("serializes updates through the cross-renderer lock when there is one", () =>
     Effect.gen(function* () {
       const held: string[] = [];
       let tail = Promise.resolve();
       vi.stubGlobal("navigator", {
         locks: {
-          request: (name: string, callback: () => Promise<unknown>) => {
+          request: (name: string, _options: unknown, callback: () => Promise<unknown>) => {
             const run = tail.then(() => {
               held.push(name);
               return callback();
