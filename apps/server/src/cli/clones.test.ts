@@ -8,6 +8,7 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@specweave-studio/shared/Net";
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -151,8 +152,11 @@ const sweep = (fixture: Fixture, ...flags: ReadonlyArray<string>) =>
     ...flags,
   ]);
 
+// Windows cannot list process working folders, so the sweep keeps every clone there.
+const noProcessList = HostProcessPlatform.defaultValue() === "win32";
+
 describe("specweave-studio clones sweep", () => {
-  it.effect("prints the plan and removes nothing without --apply", () =>
+  it.effect.skipIf(noProcessList)("prints the plan and removes nothing without --apply", () =>
     withHome((fixture) =>
       Effect.gen(function* () {
         assert.strictEqual(yield* sweep(fixture), 0);
@@ -175,7 +179,7 @@ describe("specweave-studio clones sweep", () => {
     ),
   );
 
-  it.effect("removes only the merged, clean, unused clone with --apply", () =>
+  it.effect.skipIf(noProcessList)("removes only the merged, clean, unused clone with --apply", () =>
     withHome((fixture) =>
       Effect.gen(function* () {
         assert.strictEqual(yield* sweep(fixture, "--apply", "--json"), 0);
