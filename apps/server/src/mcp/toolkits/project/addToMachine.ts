@@ -28,6 +28,7 @@ import { SETUP_GIT_COMMAND } from "../../../provision/plan.ts";
 import { readCaller, unavailable } from "../../threadAccess.ts";
 import { workGrantOf } from "../../workGrantAccess.ts";
 import { fleetPrincipalOf } from "../orchestrator/remote.ts";
+import { AGENT_CLONE_TIMEOUT_MS } from "./agentClone.ts";
 
 export interface AddToMachineInput {
   readonly machine: string;
@@ -40,7 +41,8 @@ export interface AddToMachineInput {
 }
 
 // A clone of a large repository over a slow link takes minutes; registering it does not.
-const CLONE_TIMEOUT_MS = 10 * 60 * 1_000;
+// The answer is awaited a little past the clone's own deadline there, so that one reports.
+const CLONE_TIMEOUT_MS = AGENT_CLONE_TIMEOUT_MS + 30 * 1_000;
 const CREATE_TIMEOUT_MS = 60 * 1_000;
 // Accepting a link fingerprints the fresh clone there.
 const LINK_TIMEOUT_MS = 60 * 1_000;
@@ -184,6 +186,17 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
             ", ",
           )}. Ask the user which one to link (its sidebar menu > Link…), or pass destinationPath to clone one more copy.`,
       );
+    if (existing.kind === "unlinked") {
+      // A copy with history of its own is the person's to link; any other is tried once more.
+      if (!existing.linkTried)
+        return yield* unlinkedCopyFailure(machine, existing.copy, existing.problem);
+      yield* linkedOrFail({
+        sourceId: source.project.id,
+        machine,
+        copy: existing.copy,
+        first: { linked: false, problem: existing.problem },
+      });
+    }
     if (existing.kind === "linked" || existing.kind === "unlinked")
       return {
         machine,
@@ -191,9 +204,8 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
         title: existing.copy.title,
         workspaceRoot: existing.copy.workspaceRoot,
         ...(source.cloneUrl === null ? {} : { remoteUrl: source.cloneUrl }),
-        ...(existing.kind === "linked"
-          ? { linked: true, existingCopy: true }
-          : { linked: false, existingCopy: true, linkProblem: existing.problem }),
+        linked: true,
+        existingCopy: true,
         next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${existing.copy.id}"}.`,
       };
   }
@@ -208,38 +220,52 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
   const destinationPath =
     input.destinationPath ??
     (source ? destinationFor(source.project.workspaceRoot) : `~/${repositoryNameOf(cloneUrl)}`);
-  const cloned = yield* remote
-    .proxy({
+  const cloneThere = (resumeExisting: boolean) =>
+    remote.proxy({
       machine,
       tool: "studio_project_clone",
       arguments: {
         remoteUrl: cloneUrl,
         destinationPath,
         ...(input.protocol === undefined ? {} : { protocol: input.protocol }),
+        ...(resumeExisting ? { resumeExisting: true } : {}),
       },
       timeoutMs: CLONE_TIMEOUT_MS,
-    })
-    .pipe(
-      Effect.mapError((error) =>
-        error.code === "orchestration_error" && isCredentialFailure(error.message)
-          ? new OrchestratorMcpFailure({
-              code: error.code,
-              message: `${error.message} ${credentialHint(machine.label)}`,
-            })
-          : error,
-      ),
-      Effect.flatMap((answer) =>
-        Schema.decodeUnknownEffect(SourceControlCloneRepositoryResult)(answer).pipe(
-          Effect.mapError(
-            () =>
-              new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: `${machine.label} cloned the repository but sent an answer this machine could not read.`,
-              }),
+    });
+  const cloned = yield* cloneThere(false).pipe(
+    // An earlier call cloned there but could not register it: use that clone when it
+    // is a clean one of this repository. An older machine refuses as before.
+    Effect.catchIf(
+      (error) => DESTINATION_NOT_EMPTY.test(error.message),
+      (error) =>
+        cloneThere(true).pipe(
+          Effect.mapError((retry) =>
+            retry.message === error.message || DESTINATION_NOT_EMPTY.test(retry.message)
+              ? error
+              : retry,
           ),
         ),
+    ),
+    Effect.mapError((error) =>
+      error.code === "orchestration_error" && isCredentialFailure(error.message)
+        ? new OrchestratorMcpFailure({
+            code: error.code,
+            message: `${error.message} ${credentialHint(machine.label)}`,
+          })
+        : error,
+    ),
+    Effect.flatMap((answer) =>
+      Schema.decodeUnknownEffect(SourceControlCloneRepositoryResult)(answer).pipe(
+        Effect.mapError(
+          () =>
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: `${machine.label} cloned the repository but sent an answer this machine could not read.`,
+            }),
+        ),
       ),
-    );
+    ),
+  );
   const title = input.title ?? source?.project.title ?? repositoryNameOf(cloneUrl);
   const created = yield* remote
     .proxy({
@@ -275,10 +301,13 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
         ),
       ),
     );
-  const link =
-    source === undefined
-      ? undefined
-      : yield* linkCopy({ sourceId: source.project.id, machine, copyId: created.id });
+  if (source !== undefined)
+    yield* linkedOrFail({
+      sourceId: source.project.id,
+      machine,
+      copy: created,
+      first: yield* linkCopy({ sourceId: source.project.id, machine, copyId: created.id }),
+    });
   const strategy =
     input.branch === undefined
       ? ""
@@ -290,11 +319,7 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
     workspaceRoot: created.workspaceRoot,
     remoteUrl: cloned.remoteUrl,
     ...(input.branch === undefined ? {} : { branch: input.branch }),
-    ...(link === undefined
-      ? {}
-      : link.linked
-        ? { linked: true }
-        : { linked: false, linkProblem: link.problem }),
+    ...(source === undefined ? {} : { linked: true }),
     next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${created.id}"${strategy}}.`,
   };
 });
@@ -325,6 +350,13 @@ const copyProjectFolder = Effect.fn("mcp.addToMachine.copyProjectFolder")(functi
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       }),
   });
+  if (!copied.linked)
+    yield* linkedOrFail({
+      sourceId: input.project.id,
+      machine,
+      copy: { id: copied.projectId, workspaceRoot: copied.workspaceRoot },
+      first: { linked: false, problem: copied.linkProblem },
+    });
   const strategy =
     input.branch === undefined
       ? ""
@@ -337,7 +369,7 @@ const copyProjectFolder = Effect.fn("mcp.addToMachine.copyProjectFolder")(functi
     copied: true,
     leftOut: copied.leftOut,
     ...(input.branch === undefined ? {} : { branch: input.branch }),
-    ...(copied.linked ? { linked: true } : { linked: false, linkProblem: copied.linkProblem }),
+    linked: true,
     next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${copied.projectId}"${strategy}}.${secretsNext(machine.label, copied.workspaceRoot, copied.leftOut.secretFiles)}`,
   };
 });
@@ -381,7 +413,13 @@ export type ExistingCopyOutcome =
   | { readonly kind: "none" }
   | { readonly kind: "ambiguous"; readonly candidates: ReadonlyArray<Project> }
   | { readonly kind: "linked"; readonly copy: Project }
-  | { readonly kind: "unlinked"; readonly copy: Project; readonly problem: string };
+  | {
+      readonly kind: "unlinked";
+      readonly copy: Project;
+      readonly problem: string;
+      /** A link was tried and failed; false when the copy is left for the person to link. */
+      readonly linkTried: boolean;
+    };
 
 /**
  * True only when the project `copyId` on `machine` has never had a thread, archived
@@ -442,6 +480,7 @@ export const linkExistingCopy = Effect.fn("mcp.addToMachine.linkExistingCopy")(f
     return {
       kind: "unlinked",
       copy,
+      linkTried: false,
       problem: `It has threads of its own, so it was not linked automatically: linking makes this project's coordinator the one for both copies. Open its menu in the sidebar and choose Link… to compare both and choose what to keep.`,
     } as ExistingCopyOutcome;
   const outcome = yield* linkCopy({
@@ -450,11 +489,48 @@ export const linkExistingCopy = Effect.fn("mcp.addToMachine.linkExistingCopy")(f
     copyId: copy.id,
   });
   return (
-    outcome.linked ? { kind: "linked", copy } : { kind: "unlinked", copy, problem: outcome.problem }
+    outcome.linked
+      ? { kind: "linked", copy }
+      : { kind: "unlinked", copy, problem: outcome.problem, linkTried: true }
   ) as ExistingCopyOutcome;
 });
 
 type LinkOutcome = { readonly linked: true } | { readonly linked: false; readonly problem: string };
+
+/** Git's refusal of a clone into a folder that already holds something. */
+const DESTINATION_NOT_EMPTY = /already exists and is not empty/iu;
+
+/**
+ * A copy there that is not linked to the project here: a launch there would be
+ * refused, so this is a failure that names the copy and the one way to link it,
+ * never a launch instruction.
+ */
+const unlinkedCopyFailure = (
+  machine: OrchestratorMcpMachineRef,
+  copy: { readonly id: ProjectId; readonly workspaceRoot: string },
+  problem: string,
+) =>
+  new OrchestratorMcpFailure({
+    code: "project_unavailable_on_machine",
+    message: `${machine.label} has this project as ${copy.id} at ${copy.workspaceRoot}, but it is not linked to the project here, so work cannot start there yet. ${problem} Once the user has linked it, studio_machine_list shows it as this project's copy on ${machine.label}.`,
+  });
+
+/** Links the copy, trying once more after a first attempt that failed; fails when it still cannot. */
+const linkedOrFail = Effect.fn("mcp.addToMachine.linkedOrFail")(function* (input: {
+  readonly sourceId: ProjectId;
+  readonly machine: OrchestratorMcpMachineRef;
+  readonly copy: { readonly id: ProjectId; readonly workspaceRoot: string };
+  readonly first: LinkOutcome;
+}) {
+  if (input.first.linked) return;
+  const again = yield* linkCopy({
+    sourceId: input.sourceId,
+    machine: input.machine,
+    copyId: input.copy.id,
+  });
+  if (again.linked) return;
+  return yield* unlinkedCopyFailure(input.machine, input.copy, again.problem);
+});
 
 /**
  * Makes the copy on `machine` the same project as the one here, as the app's

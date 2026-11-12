@@ -60,7 +60,6 @@ import {
   routedSelection,
 } from "../../../project/TaskRouting.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
-import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
@@ -76,6 +75,7 @@ import {
   workGrantOf,
 } from "../../workGrantAccess.ts";
 import { receiveAgentCopy } from "../../../fleet/folderTransfer/agentCopy.ts";
+import { agentClone } from "./agentClone.ts";
 import { addProjectToMachine } from "./addToMachine.ts";
 import {
   launchRemote,
@@ -1067,16 +1067,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "outside_grant_scope",
           message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot clone repositories here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work here.`,
         });
-      const repositories = yield* Repositories.SourceControlRepositoryService;
-      return yield* repositories.cloneRepository(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: error.detail,
-            }),
-        ),
-      );
+      return yield* agentClone(input);
     }),
   ),
   studio_project_add_to_machine: McpToolAccess.writesEnvironment((input) =>
