@@ -83,6 +83,8 @@ FLEET_SSH=""  # --ssh-fallback with RELEASE_FLEET_SSH=1; expanded unquoted, so e
 
 PRIVATE_REPO="${RELEASE_PRIVATE_REPO:-anton-abyzov/specwithcode}"
 PUBLIC_REPO="${RELEASE_PUBLIC_REPO:-anton-abyzov/specwithcode}"
+# The repository whose deploy-docs.yml builds the download page (dispatch_site_deploy).
+SITE_REPO="${RELEASE_SITE_REPO:-anton-abyzov/specweave}"
 # One repository is developed and released in public: no public clone, mirror snapshot or second
 # release. Two repositories keep the mirror flow (scripts/public-mirror/publish.mjs).
 SINGLE_REPO=0
@@ -1100,6 +1102,7 @@ stage_publish_public() {
   if [ "$SINGLE_REPO" -eq 1 ]; then  # publish-private made the one release.
     prune_after_publish
     dispatch_windows_linux
+    dispatch_site_deploy
     return 0
   fi
   x public-notes -- python3 -B "$TOOLS" public-notes --in "$STAGE/notes.md" --out "$STAGE/notes-public.md" --rules "$PUBLIC_RULES"
@@ -1115,6 +1118,7 @@ stage_publish_public() {
   publish "$PUBLIC_REPO" "$STAGE/notes-public.md" public
   prune_after_publish
   dispatch_windows_linux
+  dispatch_site_deploy
 }
 
 # One Windows and Linux build per release, started as soon as the public release exists. The
@@ -1131,6 +1135,21 @@ dispatch_windows_linux() {
   x dispatch-windows-linux -- gh workflow run release-windows-linux.yml -R "$PRIVATE_REPO" \
     -f version="$VERSION" -f dry_run=false ||
     say "warning: could not dispatch release-windows-linux.yml for $VERSION; run: gh workflow run release-windows-linux.yml -R $PRIVATE_REPO -f version=$VERSION -f dry_run=false"
+}
+
+# The download page (specwithcode.com, built from docs-site in $SITE_REPO) links one release. Its
+# deploy workflow reads the newest published release at build time, so starting a deploy now puts
+# this release on the page a few minutes later. Best effort: the release token often may not
+# start a workflow in another repository, and that repository's own watch
+# (specwithcode-release-watch.yml, every 15 minutes) starts the same deploy when the page is
+# behind. RELEASE_SITE_DEPLOY_DISPATCH=0 turns it off.
+dispatch_site_deploy() {
+  if [ "${RELEASE_SITE_DEPLOY_DISPATCH:-1}" = 0 ]; then
+    say "site: deploy not dispatched (RELEASE_SITE_DEPLOY_DISPATCH=0)"
+    return 0
+  fi
+  x dispatch-site-deploy -- gh workflow run deploy-docs.yml -R "$SITE_REPO" --ref develop ||
+    say "warning: could not start the download page deploy for $VERSION; $SITE_REPO's release watch starts it within 15 minutes, or run: gh workflow run deploy-docs.yml -R $SITE_REPO --ref develop"
 }
 
 # The pid of the ShipIt that Squirrel.Mac runs from this app's own bundle, when one runs. Matched

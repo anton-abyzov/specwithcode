@@ -46,6 +46,13 @@ A release ships in three waves, so macOS is never held back by the slower platfo
    dispatched per release once it is published, and a daily catch-up run at 07:23 UTC builds them
    for the newest release if it still lacks them. Until they are attached, Windows and Linux
    desktop installs stay on their version (their update check finds no feed).
+4. **Download page** (specwithcode.com): `release.sh` starts `deploy-docs.yml` in
+   anton-abyzov/specweave once the release is public. That build reads the newest published release
+   (`docs-site/scripts/sync-specwithcode-release.mjs`), so the page links this release with no
+   commit. A token that may not start a workflow there only warns: that repository's
+   `specwithcode-release-watch.yml` compares the deployed page with the releases every 15 minutes
+   and starts the same deploy, also once the Windows and Linux apps are attached.
+   `RELEASE_SITE_DEPLOY_DISPATCH=0` turns the dispatch off.
 
 A Linux worker entry in `hosts.json` (kept outside the repository):
 

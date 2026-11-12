@@ -1403,7 +1403,8 @@ single_repo_ok() {
     stage_line publish-private notes-public | grep -qF 'notes-public.md' &&
     stage_line publish-private publish-public | grep -qF 'v1.6.2 -R anton-abyzov/specwithcode --draft=false' &&
     case "$(labels_of publish-public)" in *fetch-sums* | *publish-* | *notes*) false ;; esac &&
-    stage_line publish-public dispatch-windows-linux | grep -qF -- '-R anton-abyzov/specwithcode -f version=1.6.2'
+    stage_line publish-public dispatch-windows-linux | grep -qF -- '-R anton-abyzov/specwithcode -f version=1.6.2' &&
+    stage_line publish-public dispatch-site-deploy | grep -qF -- 'deploy-docs.yml -R anton-abyzov/specweave --ref develop'
 }
 check 'one repository: no public clone or mirror, one draft with the public notes and every asset, one publish' single_repo_ok
 
