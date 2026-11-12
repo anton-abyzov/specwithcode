@@ -1,8 +1,24 @@
 import type * as React from "react";
 
+import { currentPlatform, keyLabel, shortcutLabel, type KeyName } from "~/lib/platformConventions";
 import { cn } from "~/lib/utils";
 
-function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
+/**
+ * A key hint. `keyName` and `shortcut` print the key the way the system's own
+ * menus do (a symbol on macOS, a word elsewhere); children are for everything else.
+ */
+function Kbd({
+  className,
+  keyName,
+  shortcut,
+  children,
+  ...props
+}: React.ComponentProps<"kbd"> & {
+  /** A named key: "enter" is ↵ on macOS and Enter elsewhere. */
+  keyName?: KeyName;
+  /** A letter pressed with the main modifier: "k" is ⌘K on macOS and Ctrl+K elsewhere. */
+  shortcut?: string;
+}) {
   return (
     <kbd
       className={cn(
@@ -11,7 +27,13 @@ function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
       )}
       data-slot="kbd"
       {...props}
-    />
+    >
+      {keyName !== undefined
+        ? keyLabel(keyName, currentPlatform())
+        : shortcut !== undefined
+          ? shortcutLabel(shortcut, currentPlatform())
+          : children}
+    </kbd>
   );
 }
 

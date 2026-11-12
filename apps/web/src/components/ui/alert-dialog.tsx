@@ -2,6 +2,7 @@
 
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
+import { currentPlatform, defaultButtonPlacement } from "~/lib/platformConventions";
 import { cn } from "~/lib/utils";
 import { usePagePopup } from "./pagePopups";
 import {
@@ -80,12 +81,15 @@ function AlertDialogHeader({ className, ...props }: React.ComponentProps<"div">)
   );
 }
 
+/** Same button order rule as `DialogFooter`: write the safe button first, the action last. */
 function AlertDialogFooter({
   className,
   variant = "default",
+  buttonOrder = "platform",
   ...props
 }: React.ComponentProps<"div"> & {
   variant?: "default" | "bare";
+  buttonOrder?: "platform" | "source";
 }) {
   return (
     <div
@@ -96,6 +100,9 @@ function AlertDialogFooter({
         className,
       )}
       data-slot="alert-dialog-footer"
+      data-default-button={
+        buttonOrder === "platform" ? defaultButtonPlacement(currentPlatform()) : undefined
+      }
       {...props}
     />
   );

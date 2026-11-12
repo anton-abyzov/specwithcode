@@ -547,8 +547,8 @@ export function AddFolderAction({ folder }: { readonly folder: AddFolder }) {
         )}
       </Button>
       <p className="pt-2 text-xs text-muted-foreground">
-        <Kbd>{keyLabel("tab", platform)}</Kbd> opens the highlighted folder.{" "}
-        <Kbd>{keyLabel("enter", platform)}</Kbd> adds the folder shown in the bar.
+        <Kbd keyName="tab" /> opens the highlighted folder. <Kbd keyName="enter" /> adds the folder
+        shown in the bar.
       </p>
     </div>
   );

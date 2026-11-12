@@ -76,6 +76,15 @@ export function defaultButtonLast(platform: Platform): boolean {
   return platform !== "windows";
 }
 
+/**
+ * Where a dialog footer draws its default button. A footer carries this as
+ * `data-default-button`; the styles flip the drawing order only, so the source
+ * order (and with it the button a confirm opens on) is the same on every system.
+ */
+export function defaultButtonPlacement(platform: Platform): "first" | "last" {
+  return defaultButtonLast(platform) ? "last" : "first";
+}
+
 /** The word for the device in a sentence: "this Mac", "this PC", "this computer". */
 export function deviceWord(platform: Platform): string {
   return platform === "macos" ? "Mac" : platform === "windows" ? "PC" : "computer";

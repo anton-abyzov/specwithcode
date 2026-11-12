@@ -343,7 +343,7 @@ export function AddToMachineConsolidate(props: {
           )}
         </div>
       </DialogPanel>
-      <DialogFooter variant="bare">
+      <DialogFooter variant="bare" buttonOrder="source">
         {reviewing && (
           <>
             <Button variant="outline" disabled={busy} onClick={() => void stop()}>

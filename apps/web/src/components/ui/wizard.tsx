@@ -2,6 +2,7 @@ import { useTx } from "../../i18n";
 import { CheckIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
+import { currentPlatform, defaultButtonPlacement } from "../../lib/platformConventions";
 import { cn } from "../../lib/utils";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./dialog";
@@ -56,18 +57,37 @@ export function WizardHeader({
   );
 }
 
+/**
+ * The buttons follow the system's order (see `DialogFooter`). A step that holds
+ * Back passes `buttonOrder="source"`: Back comes before the default on every system.
+ */
 export function WizardFooter({
   children,
   leading,
+  buttonOrder = "platform",
 }: {
   readonly children: ReactNode;
   readonly leading?: ReactNode;
+  readonly buttonOrder?: "platform" | "source";
 }) {
+  const placement =
+    buttonOrder === "platform" ? defaultButtonPlacement(currentPlatform()) : undefined;
   return (
-    <DialogFooter variant="bare" className={cn("shrink-0", leading && "sm:justify-between")}>
+    <DialogFooter
+      variant="bare"
+      buttonOrder={leading ? "source" : buttonOrder}
+      className={cn("shrink-0", leading && "sm:justify-between")}
+    >
       {leading}
       {leading ? (
-        <div className="flex flex-col-reverse gap-2 sm:flex-row">{children}</div>
+        // The leading control keeps its side; only the buttons follow the system's order.
+        <div
+          className="flex flex-col-reverse gap-2 sm:flex-row"
+          data-slot="wizard-footer-actions"
+          data-default-button={placement}
+        >
+          {children}
+        </div>
       ) : (
         children
       )}

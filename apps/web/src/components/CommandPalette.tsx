@@ -4060,7 +4060,7 @@ function OpenCommandPaletteDialog(props: {
         >
           <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
           <KbdGroup className="pointer-events-none -me-0.5">
-            <Kbd>Enter</Kbd>
+            <Kbd keyName="enter" />
           </KbdGroup>
         </TooltipTrigger>
         <TooltipPopup side="top">{remoteProjectButtonLabel ?? "Continue"} (Enter)</TooltipPopup>

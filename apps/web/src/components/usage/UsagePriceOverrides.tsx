@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useRef, useState } from "react";
 
+import { currentPlatform, defaultButtonPlacement } from "../../lib/platformConventions";
 import { cn } from "../../lib/utils";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { environmentPresentations } from "../../state/presentation";
@@ -613,7 +614,10 @@ export function UsagePriceOverrides({
           <span className="text-xs text-muted-foreground">
             {hasChanges ? `Changes apply to ${destinationLabel}` : ""}
           </span>
-          <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto">
+          <div
+            className="flex w-full flex-wrap justify-end gap-2 sm:w-auto"
+            data-default-button={defaultButtonPlacement(currentPlatform())}
+          >
             {hasChanges ? (
               <Button variant="outline" disabled={pending} onClick={discard}>
                 {failedDestinations.length > 0 ? "Discard pending changes" : "Discard changes"}

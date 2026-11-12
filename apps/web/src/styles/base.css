@@ -1186,3 +1186,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
     transform: scaleY(0.6);
   }
 }
+
+/* Windows puts the default button first. Only the drawing order flips: the
+   source order stays, so a confirm opens on the same button on every system. A
+   child pushed to the start with an end auto margin (Back, Delete) stays at the
+   start, and a footer that spreads its children apart is left alone. Below the
+   `sm` width the buttons stack, with the default on top on every system. */
+@media (width >= 40rem) {
+  [data-default-button="first"]:not([class~="sm:justify-between"]) {
+    flex-direction: row-reverse;
+    justify-content: flex-start;
+  }
+
+  [data-default-button="first"]
+    > :is([class~="mr-auto"], [class~="me-auto"], [class~="sm:mr-auto"], [class~="sm:me-auto"]) {
+    order: 1;
+  }
+}

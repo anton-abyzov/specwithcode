@@ -4,6 +4,7 @@ import {
   applyPlatform,
   currentPlatform,
   defaultButtonLast,
+  defaultButtonPlacement,
   deviceWord,
   fileManagerName,
   hasMainModifier,
@@ -66,6 +67,9 @@ describe("conventions", () => {
     expect(defaultButtonLast("macos")).toBe(true);
     expect(defaultButtonLast("linux")).toBe(true);
     expect(defaultButtonLast("windows")).toBe(false);
+    expect(defaultButtonPlacement("macos")).toBe("last");
+    expect(defaultButtonPlacement("linux")).toBe("last");
+    expect(defaultButtonPlacement("windows")).toBe("first");
     expect(fileManagerName("macos")).toBe("Finder");
     expect(fileManagerName("windows")).toBe("File Explorer");
     expect(fileManagerName("linux")).toBe("Files");

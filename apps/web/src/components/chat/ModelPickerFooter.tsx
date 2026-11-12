@@ -237,7 +237,7 @@ export function ModelPickerKeyHints(props: { readonly effort: boolean }) {
     <>
       <Kbd>↑↓</Kbd>
       {props.effort ? <Kbd>←→</Kbd> : null}
-      <Kbd>↵</Kbd>
+      <Kbd keyName="enter" />
     </>
   );
 }

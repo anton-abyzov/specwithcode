@@ -1021,7 +1021,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
         </WizardPanel>
 
         {publishWizardStep === 2 ? null : (
-          <WizardFooter>
+          <WizardFooter buttonOrder="source">
             <Button
               variant="outline"
               disabled={publishRepositoryAction.isPending}
