@@ -30,6 +30,7 @@ vi.mock("../lib/runtime", async () => {
         return answer === "down" ? Effect.fail(down()) : Effect.succeed(answer);
       }),
     overview: () => Effect.fail(down()),
+    usage: () => Effect.fail(down()),
     listAccounts: () => Effect.fail(down()),
     searchAccounts: () => Effect.fail(down()),
     account: () => Effect.fail(down()),
@@ -202,6 +203,7 @@ describe("reading through the Connect admin client", () => {
       relayUrl: "https://relay.example.test",
       isOwner: () => Effect.succeed(true),
       overview: () => Effect.fail(unavailable()),
+      usage: () => Effect.fail(unavailable()),
       listAccounts: () => Effect.fail(unavailable()),
       searchAccounts: () => Effect.fail(unavailable()),
       account: () => Effect.fail(unavailable()),

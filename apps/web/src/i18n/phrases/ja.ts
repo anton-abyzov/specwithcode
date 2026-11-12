@@ -4520,4 +4520,35 @@ export const ja: PhraseCatalog = {
     "{agent} のサインインをここで実行しています。終わるとその行が更新されます。",
   "The sign-in ended before {agent} was signed in. Try again.":
     "{agent} にサインインする前にサインインが終了しました。もう一度お試しください。",
+  Usage: "利用状況",
+  "Loading usage…": "利用状況を読み込んでいます…",
+  "Signed up in total": "登録者の合計",
+  "Last 24 hours": "過去24時間",
+  "New sign-ups": "新規登録",
+  "People active": "アクティブな人数",
+  "New accounts on Connect": "Connect の新規アカウント",
+  "Accounts seen by Connect": "Connect が確認したアカウント",
+  "Machines linked": "リンクされたマシン",
+  "Sign-ups could not be read from Clerk. The numbers from SpecWithCode Connect are shown.":
+    "登録者数を Clerk から読み取れませんでした。SpecWithCode Connect の数値を表示しています。",
+  "Clerk returned only part of the people in these periods. The sign-up numbers are at least this many.":
+    "Clerk はこれらの期間の一部の人しか返しませんでした。登録者数は少なくともこの数です。",
+  "Sign-ups per week": "週ごとの登録数",
+  "New accounts on Connect per week": "週ごとの Connect 新規アカウント",
+  "Week of {date}: {count}": "{date} の週: {count}",
+  "These numbers count people signed in to SpecWithCode Connect. The app sends no usage data, so use without signing in is not counted.":
+    "これらの数値は SpecWithCode Connect にサインインした人を数えています。アプリは利用データを送信しないため、サインインなしの利用は含まれません。",
+  "As of {time}": "{time} 時点",
+  Downloads: "ダウンロード",
+  "Loading downloads…": "ダウンロード数を読み込んでいます…",
+  "Installer downloads could not be read from GitHub.":
+    "インストーラーのダウンロード数を GitHub から読み取れませんでした。",
+  "Mac installer": "Mac インストーラー",
+  "Windows installer": "Windows インストーラー",
+  "Linux packages": "Linux パッケージ",
+  "Installer downloads added up over {count} releases on GitHub. Mac counts new installs. Windows and Linux also count updates.":
+    "GitHub の {count} 件のリリースを合計したインストーラーのダウンロード数です。Mac は新規インストールの数です。Windows と Linux はアップデートも含みます。",
+  "Older releases were not counted.": "古いリリースは含まれていません。",
+  "Installs from npm could not be read.": "npm からのインストール数を読み取れませんでした。",
+  "Installs from npm": "npm からのインストール",
 };

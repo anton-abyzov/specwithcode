@@ -60,6 +60,12 @@ vi.mock("~/cloud/connectAdminState", () => ({
     return Promise.resolve(state.answer(read(client, "clerk-token")) as ConnectAdminRead<unknown>);
   },
 }));
+// The usage section reads on its own and has its own tests in ConnectAdminUsage.test.tsx.
+vi.mock("./ConnectAdminUsage", () => ({
+  ConnectAdminUsage: ({ refreshKey }: { refreshKey: number }) => (
+    <div data-testid="connect-admin-usage-slot" data-refresh={refreshKey} />
+  ),
+}));
 vi.mock("./settingsLayout", async (original) => ({
   ...(await original<typeof import("./settingsLayout")>()),
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,

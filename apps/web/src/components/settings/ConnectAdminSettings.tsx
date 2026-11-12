@@ -40,6 +40,7 @@ import {
   overviewTiles,
   withAccount,
 } from "./ConnectAdminSettings.logic";
+import { ConnectAdminUsage } from "./ConnectAdminUsage";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 const ROW = "px-3 py-3 sm:px-4";
@@ -348,6 +349,8 @@ interface ConnectAdminViewProps {
   readonly actions: Loadable<ReadonlyArray<RelayAdminAction>>;
   /** A refresh keeps what is on screen until the new answers arrive. */
   readonly refreshing: boolean;
+  /** The usage section, which reads on its own; it sits under the totals. */
+  readonly usage: ReactNode;
   readonly locale: string | undefined;
   readonly onDraftChange: (value: string) => void;
   readonly onSearch: () => void;
@@ -362,7 +365,7 @@ interface ConnectAdminViewProps {
   readonly onChange: (change: ConnectAdminChange) => void;
 }
 
-/** The page without its reads: totals, the account list, one open account, recent changes. */
+/** The page without its reads: totals, usage, the account list, one open account, recent changes. */
 function ConnectAdminView(props: ConnectAdminViewProps) {
   const tx = useTx();
   const { overview, list, more, actions } = props;
@@ -389,6 +392,8 @@ function ConnectAdminView(props: ConnectAdminViewProps) {
           </dl>
         )}
       </SettingsSection>
+
+      {props.usage}
 
       <SettingsSection
         title="Accounts"
@@ -517,6 +522,7 @@ function ConnectAdminPage() {
   const actionsRequest = useRef(0);
   const refreshRequest = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [usageRefresh, setUsageRefresh] = useState(0);
 
   // The fetches set no state before they answer, so the first one can run from an effect.
   const fetchOverview = useCallback(() => {
@@ -641,6 +647,7 @@ function ConnectAdminPage() {
         detail={detail}
         actions={actions}
         refreshing={refreshing}
+        usage={<ConnectAdminUsage refreshKey={usageRefresh} locale={locale} />}
         locale={locale}
         onDraftChange={setDraft}
         onSearch={() => {
@@ -663,6 +670,7 @@ function ConnectAdminPage() {
           const request = ++refreshRequest.current;
           setRefreshing(true);
           setMore("idle");
+          setUsageRefresh((value) => value + 1);
           void Promise.all([
             fetchOverview(),
             fetchList(search),

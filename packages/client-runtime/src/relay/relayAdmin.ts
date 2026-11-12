@@ -13,6 +13,7 @@ import type {
   RelayAdminRemovePhoneResponse,
   RelayAdminSetMachineLimitResponse,
   RelayAdminUnlinkMachineResponse,
+  RelayAdminUsageResponse,
 } from "@specweave-studio/contracts/relayAdmin";
 import { normalizeSecureRelayUrl } from "@specweave-studio/shared/relayUrl";
 import * as Context from "effect/Context";
@@ -78,6 +79,10 @@ export interface RelayAdminClientShape {
   readonly overview: (input: {
     readonly clerkToken: string;
   }) => Effect.Effect<RelayAdminOverviewResponse, RelayAdminRequestError>;
+  /** Sign-ups and activity over time, as counts; no person is named. */
+  readonly usage: (input: {
+    readonly clerkToken: string;
+  }) => Effect.Effect<RelayAdminUsageResponse, RelayAdminRequestError>;
   readonly listAccounts: (input: {
     readonly clerkToken: string;
     readonly cursor?: string;
@@ -207,6 +212,7 @@ function disabledRelayAdminClient(relayUrl: string): RelayAdminClientShape {
     relayUrl,
     isOwner: () => Effect.succeed(false),
     overview: () => notSetUp,
+    usage: () => notSetUp,
     listAccounts: () => notSetUp,
     searchAccounts: () => notSetUp,
     account: () => notSetUp,
@@ -254,6 +260,7 @@ export const make = Effect.fn("RelayAdminClient.make")(function* (options: {
         ),
       ),
     overview: (input) => call("overview", input.clerkToken, admin.overview()),
+    usage: (input) => call("usage", input.clerkToken, admin.usage()),
     listAccounts: (input) =>
       call(
         "listAccounts",
