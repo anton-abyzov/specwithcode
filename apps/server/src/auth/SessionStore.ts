@@ -620,6 +620,30 @@ export const make = Effect.gen(function* () {
   const authSessions = yield* AuthSessions.AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
+  // When each session's last socket closed, for this run of the service only.
+  // `last_connected_at` is written on connect alone: fleet updates prove a
+  // restart by the rows that column changes in, and a close is not a reconnect
+  // (scripts/studio-fleet/auth_heartbeat.py).
+  const lastSeenRef = yield* Ref.make(new Map<AuthSessionId, DateTime.Utc>());
+  const lastSeenAt = (
+    lastSeen: ReadonlyMap<AuthSessionId, DateTime.Utc>,
+    sessionId: AuthSessionId,
+    lastConnectedAt: DateTime.Utc | null,
+  ): DateTime.Utc | null => {
+    const closedAt = lastSeen.get(sessionId);
+    if (closedAt === undefined) return lastConnectedAt;
+    return lastConnectedAt !== null &&
+      lastConnectedAt.epochMilliseconds > closedAt.epochMilliseconds
+      ? lastConnectedAt
+      : closedAt;
+  };
+  const forgetLastSeen = (sessionIds: ReadonlyArray<AuthSessionId>) =>
+    Ref.update(lastSeenRef, (current) => {
+      if (!sessionIds.some((sessionId) => current.has(sessionId))) return current;
+      const next = new Map(current);
+      for (const sessionId of sessionIds) next.delete(sessionId);
+      return next;
+    });
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   const credentialChangesLock = yield* Semaphore.make(1);
   // Sessions issued with `inMemory`: they live and die with this process.
@@ -731,6 +755,7 @@ export const make = Effect.gen(function* () {
       if (!connected && row.value.expiresAt.epochMilliseconds <= now.epochMilliseconds) {
         return Option.none<AuthClientSession>();
       }
+      const lastSeen = yield* Ref.get(lastSeenRef);
       return Option.some(
         toAuthClientSession({
           sessionId: row.value.sessionId,
@@ -743,7 +768,7 @@ export const make = Effect.gen(function* () {
           client: toClientMetadata(row.value.client),
           issuedAt: row.value.issuedAt,
           expiresAt: row.value.expiresAt,
-          lastConnectedAt: row.value.lastConnectedAt,
+          lastConnectedAt: lastSeenAt(lastSeen, row.value.sessionId, row.value.lastConnectedAt),
           connected,
         }),
       );
@@ -807,7 +832,7 @@ export const make = Effect.gen(function* () {
           );
 
   const markDisconnected: SessionStore["Service"]["markDisconnected"] = (sessionId) =>
-    Ref.update(connectedSessionsRef, (current) => {
+    Ref.modify(connectedSessionsRef, (current) => {
       const next = new Map(current);
       const remaining = (next.get(sessionId) ?? 0) - 1;
       if (remaining > 0) {
@@ -815,8 +840,21 @@ export const make = Effect.gen(function* () {
       } else {
         next.delete(sessionId);
       }
-      return next;
+      return [current.has(sessionId) && remaining <= 0, next] as const;
     }).pipe(
+      // The last socket closing is the last time this client was seen. Without
+      // it `lastConnectedAt` stays at the start of the connection, and a client
+      // that was connected for days reads as unused the moment it drops. Kept
+      // in memory (see `lastSeenRef`), so nothing here can fail or touch a row.
+      Effect.flatMap((lastSocketClosed) =>
+        lastSocketClosed
+          ? DateTime.now.pipe(
+              Effect.flatMap((closedAt) =>
+                Ref.update(lastSeenRef, (current) => new Map(current).set(sessionId, closedAt)),
+              ),
+            )
+          : Effect.void,
+      ),
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
         Option.isSome(session) ? emitUpsert(session.value) : emitRemoved(sessionId),
@@ -934,6 +972,7 @@ export const make = Effect.gen(function* () {
           }
           return next;
         });
+        yield* forgetLastSeen(replacedSessionIds);
         yield* Effect.forEach(replacedSessionIds, emitRemoved, {
           concurrency: "unbounded",
           discard: true,
@@ -1305,6 +1344,7 @@ export const make = Effect.gen(function* () {
         now,
         connectedSessionIds: Array.from(connectedSessions.keys()),
       });
+      const lastSeen = yield* Ref.get(lastSeenRef);
 
       return rows.map((row) =>
         toAuthClientSession({
@@ -1318,7 +1358,7 @@ export const make = Effect.gen(function* () {
           client: toClientMetadata(row.client),
           issuedAt: row.issuedAt,
           expiresAt: row.expiresAt,
-          lastConnectedAt: row.lastConnectedAt,
+          lastConnectedAt: lastSeenAt(lastSeen, row.sessionId, row.lastConnectedAt),
           connected: connectedSessions.has(row.sessionId),
         }),
       );
@@ -1409,6 +1449,7 @@ export const make = Effect.gen(function* () {
           next.delete(sessionId);
           return next;
         });
+        yield* forgetLastSeen([sessionId]);
         yield* emitRemoved(sessionId);
       }
       return revoked;
@@ -1424,6 +1465,7 @@ export const make = Effect.gen(function* () {
           for (const revokedSessionId of revokedSessionIds) next.delete(revokedSessionId);
           return next;
         }).pipe(
+          Effect.andThen(forgetLastSeen(revokedSessionIds)),
           Effect.andThen(
             Effect.forEach(revokedSessionIds, emitRemoved, {
               concurrency: "unbounded",

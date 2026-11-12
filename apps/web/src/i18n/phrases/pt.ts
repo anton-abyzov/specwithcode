@@ -1323,6 +1323,13 @@ export const pt: PhraseCatalog = {
     "Não há QR para este endereço. Outro dispositivo que escaneasse um link de loopback chamaria a si mesmo; copie a URL para usar nesta máquina.",
   "Client scopes": "Permissões do cliente",
   "Revoke others": "Revogar os outros",
+  "Revoke {count} unused": "Revogar {count} sem uso",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Sessões de computadores pareadas por link ou código sem conexão há 24 horas",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "Revogar {count} sessões de computadores sem conexão há 24 horas? Um computador que só ficou desligado por um dia está entre elas e precisará de um novo link ou código de pareamento. Este app, os clientes conectados, os telefones, suas outras máquinas e as chaves delas são mantidos.",
+  "Revoked {count} unused sign-ins": "{count} sessões sem uso revogadas",
+  "Could not revoke {count} sign-ins": "Não foi possível revogar {count} sessões",
   "Create link": "Criar link",
   "Create pairing link": "Criar link de pareamento",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -4169,12 +4176,12 @@ export const pt: PhraseCatalog = {
     "Não foi possível confirmar a alteração em {machine}. O interruptor mostra o que {machine} informa.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} usa uma versão do SpecWithCode sem esta configuração. Atualize {machine} primeiro.",
-  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
-    "Os workers de um projeto ignoram uma máquina que não tem uma cópia dele. Abra primeiro um projeto nesta máquina e depois adicione-o a {name} aqui.",
-  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
-    "Os workers de um projeto ignoram uma máquina que não tem uma cópia dele. Adicione um para que {name} possa receber trabalho.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} só pode executar um projeto do qual tem uma cópia. Abra primeiro um projeto nesta máquina e depois adicione-o a {name} aqui.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} só pode executar um projeto do qual tem uma cópia. Adicione um e depois escolha {name} em “Executar em” num chat, ou inclua-a em “Machines for workers” nas configurações do projeto.",
   "Add {project} to {name}": "Adicionar {project} a {name}",
   "Add a project to {name}": "Adicionar um projeto a {name}",
-  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
-    "Próximo passo, em {coordinatorLabel}: os workers de um projeto ignoram uma máquina que não tem uma cópia dele. Abra lá Configurações > Máquinas e adicione um projeto a esta máquina, ou escolha “Adicionar a outra máquina…” em “Executar em” num chat.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "Próximo passo, em {coordinatorLabel}: esta máquina só pode executar um projeto do qual tem uma cópia. Abra lá Configurações > Máquinas e adicione um projeto a esta máquina. Depois escolha-a em “Executar em” num chat, ou inclua-a em “Machines for workers” nas configurações do projeto.",
 };

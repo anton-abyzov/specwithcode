@@ -1317,6 +1317,13 @@ export const ru: PhraseCatalog = {
     "Для этого адреса нет QR-кода. Другое устройство, отсканировав loopback-ссылку, подключилось бы само к себе; лучше скопируйте URL для использования на этой машине.",
   "Client scopes": "Права клиента",
   "Revoke others": "Отозвать остальные",
+  "Revoke {count} unused": "Отозвать неиспользуемые: {count}",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Входы с компьютеров, связанные по ссылке или коду, без подключения 24 часа",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "Отозвать входы с компьютеров без подключения за последние 24 часа ({count})? Среди них есть и компьютер, который просто был выключен сутки: ему понадобится новая ссылка или код связывания. Это приложение, подключённые клиенты, телефоны, другие ваши машины и их ключи остаются.",
+  "Revoked {count} unused sign-ins": "Отозвано неиспользуемых входов: {count}",
+  "Could not revoke {count} sign-ins": "Не удалось отозвать входов: {count}",
   "Create link": "Создать ссылку",
   "Create pairing link": "Создать ссылку связывания",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -4156,12 +4163,12 @@ export const ru: PhraseCatalog = {
     "Не удалось подтвердить изменение на {machine}. Переключатель показывает то, что сообщает {machine}.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "На {machine} версия SpecWithCode без этой настройки. Сначала обновите {machine}.",
-  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
-    "Воркеры проекта пропускают машину, на которой нет его копии. Сначала откройте проект на этой машине, затем добавьте его на {name} здесь.",
-  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
-    "Воркеры проекта пропускают машину, на которой нет его копии. Добавьте проект, чтобы {name} могла брать работу.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} может запускать только проект, копия которого на ней есть. Сначала откройте проект на этой машине, затем добавьте его на {name} здесь.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} может запускать только проект, копия которого на ней есть. Добавьте проект, затем выберите {name} в меню «Запустить на» в чате или внесите её в список «Machines for workers» в настройках проекта.",
   "Add {project} to {name}": "Добавить {project} на {name}",
   "Add a project to {name}": "Добавить проект на {name}",
-  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
-    "Дальше на {coordinatorLabel}: воркеры проекта пропускают машину, на которой нет его копии. Откройте там «Настройки > Машины» и добавьте проект на эту машину или выберите «Добавить на другую машину…» в меню «Запустить на» в чате.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "Дальше на {coordinatorLabel}: эта машина может запускать только проект, копия которого на ней есть. Откройте там «Настройки > Машины» и добавьте проект на эту машину. Затем выберите её в меню «Запустить на» в чате или внесите в список «Machines for workers» в настройках проекта.",
 };

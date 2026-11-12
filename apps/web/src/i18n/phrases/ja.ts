@@ -1316,6 +1316,13 @@ export const ja: PhraseCatalog = {
     "このアドレスには QR がありません。ループバックのリンクを別のデバイスでスキャンすると、そのデバイス自身に接続してしまいます。代わりに、このマシンで使う URL をコピーしてください。",
   "Client scopes": "クライアントの権限",
   "Revoke others": "他を取り消す",
+  "Revoke {count} unused": "未使用の {count} 件を取り消す",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "リンクまたはコードでペアリングされ、24 時間接続のないコンピューターのサインイン",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "24 時間接続のないコンピューターのサインイン {count} 件を取り消しますか？1 日電源を切っていただけのコンピューターも含まれ、新しいペアリングリンクまたはコードが必要になります。このアプリ、接続中のクライアント、スマートフォン、ほかのマシンとそのキーは残ります。",
+  "Revoked {count} unused sign-ins": "未使用のサインイン {count} 件を取り消しました",
+  "Could not revoke {count} sign-ins": "サインイン {count} 件を取り消せませんでした",
   "Create link": "リンクを作成",
   "Create pairing link": "ペアリングリンクを作成",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -4157,12 +4164,12 @@ export const ja: PhraseCatalog = {
     "{machine} で変更を確認できませんでした。スイッチは {machine} が報告する状態を表示しています。",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} の SpecWithCode にはこの設定がありません。先に {machine} を更新してください。",
-  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
-    "プロジェクトのワーカーは、そのコピーがないマシンをスキップします。まずこのマシンでプロジェクトを開いてから、ここで {name} に追加してください。",
-  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
-    "プロジェクトのワーカーは、そのコピーがないマシンをスキップします。{name} が作業を受けられるように、プロジェクトを追加してください。",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} が実行できるのは、コピーを持っているプロジェクトだけです。まずこのマシンでプロジェクトを開いてから、ここで {name} に追加してください。",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} が実行できるのは、コピーを持っているプロジェクトだけです。プロジェクトを追加してから、チャットの「実行先」で {name} を選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
   "Add {project} to {name}": "{project} を {name} に追加",
   "Add a project to {name}": "プロジェクトを {name} に追加",
-  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
-    "次は {coordinatorLabel} で: プロジェクトのワーカーは、そのコピーがないマシンをスキップします。そちらで「設定 > マシン」を開いてこのマシンにプロジェクトを追加するか、チャットの「実行先」で「別のマシンに追加…」を選んでください。",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "次は {coordinatorLabel} で: このマシンが実行できるのは、コピーを持っているプロジェクトだけです。そちらで 設定 > マシン を開き、このマシンにプロジェクトを追加してください。その後、チャットの「実行先」でこのマシンを選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
 };

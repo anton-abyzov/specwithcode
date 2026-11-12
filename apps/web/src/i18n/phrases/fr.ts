@@ -1323,6 +1323,13 @@ export const fr: PhraseCatalog = {
     "Pas de QR code pour cette adresse. Un autre appareil scannant un lien loopback s'appellerait lui-même ; copiez plutôt l'URL pour l'utiliser sur cette machine.",
   "Client scopes": "Autorisations du client",
   "Revoke others": "Révoquer les autres",
+  "Revoke {count} unused": "Révoquer {count} connexions inutilisées",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Connexions d'ordinateurs associées par lien ou par code, sans connexion depuis 24 heures",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "Révoquer {count} connexions d'ordinateurs restées sans connexion depuis 24 heures ? Un ordinateur simplement éteint pendant une journée en fait partie et aura besoin d'un nouveau lien ou code d'association. Cette app, les clients connectés, les téléphones, vos autres machines et leurs clés sont conservés.",
+  "Revoked {count} unused sign-ins": "{count} connexions inutilisées révoquées",
+  "Could not revoke {count} sign-ins": "Impossible de révoquer {count} connexions",
   "Create link": "Créer le lien",
   "Create pairing link": "Créer un lien d'association",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -4193,12 +4200,12 @@ export const fr: PhraseCatalog = {
     "Le changement n’a pas pu être confirmé sur {machine}. L’interrupteur indique ce que {machine} signale.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} utilise une version de SpecWithCode sans ce réglage. Mettez d’abord {machine} à jour.",
-  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
-    "Les workers d’un projet ignorent une machine qui n’en a pas de copie. Ouvrez d’abord un projet sur cette machine, puis ajoutez-le à {name} ici.",
-  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
-    "Les workers d’un projet ignorent une machine qui n’en a pas de copie. Ajoutez-en un pour que {name} puisse recevoir du travail.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ouvrez d’abord un projet sur cette machine, puis ajoutez-le à {name} ici.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ajoutez-en un, puis choisissez {name} sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
   "Add {project} to {name}": "Ajouter {project} à {name}",
   "Add a project to {name}": "Ajouter un projet à {name}",
-  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
-    "Étape suivante, sur {coordinatorLabel} : les workers d’un projet ignorent une machine qui n’en a pas de copie. Ouvrez-y Réglages > Machines et ajoutez un projet à cette machine, ou choisissez « Ajouter à une autre machine… » sous « Exécuter sur » dans une discussion.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "Étape suivante, sur {coordinatorLabel} : cette machine ne peut exécuter qu’un projet dont elle a une copie. Ouvrez-y Réglages > Machines et ajoutez un projet à cette machine. Choisissez-la ensuite sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
 };

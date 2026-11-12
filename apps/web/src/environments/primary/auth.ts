@@ -1,4 +1,5 @@
 import type {
+  AuthPrincipal,
   EnvironmentId,
   AuthBrowserSessionResult,
   AuthClientMetadata,
@@ -126,6 +127,8 @@ export interface ServerPairingLinkRecord {
 }
 
 export interface ServerClientSessionRecord {
+  /** Who the server established the client to be; absent on sign-ins from before principals. */
+  readonly principal?: AuthPrincipal;
   readonly sessionId: AuthSessionId;
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;

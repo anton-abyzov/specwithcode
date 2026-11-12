@@ -1328,6 +1328,13 @@ export const de: PhraseCatalog = {
     "Kein QR-Code für diese Adresse. Ein anderes Gerät, das einen Loopback-Link scannt, würde sich selbst anwählen; kopiere stattdessen die URL zur Nutzung auf diesem Rechner.",
   "Client scopes": "Client-Berechtigungen",
   "Revoke others": "Andere widerrufen",
+  "Revoke {count} unused": "{count} ungenutzte widerrufen",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Per Link oder Code gekoppelte Computer-Anmeldungen ohne Verbindung seit 24 Stunden",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "{count} Computer-Anmeldungen widerrufen, die seit 24 Stunden keine Verbindung hatten? Ein Computer, der nur einen Tag ausgeschaltet war, gehört dazu und braucht einen neuen Kopplungslink oder Code. Diese App, verbundene Clients, Telefone, Ihre anderen Maschinen und deren Schlüssel bleiben erhalten.",
+  "Revoked {count} unused sign-ins": "{count} ungenutzte Anmeldungen widerrufen",
+  "Could not revoke {count} sign-ins": "{count} Anmeldungen konnten nicht widerrufen werden",
   "Create link": "Link erstellen",
   "Create pairing link": "Kopplungslink erstellen",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -4179,12 +4186,12 @@ export const de: PhraseCatalog = {
     "Die Änderung auf {machine} konnte nicht bestätigt werden. Der Schalter zeigt, was {machine} meldet.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "Auf {machine} läuft eine SpecWithCode-Version ohne diese Einstellung. Aktualisiere zuerst {machine}.",
-  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
-    "Die Worker eines Projekts überspringen einen Rechner ohne Kopie des Projekts. Öffne zuerst ein Projekt auf diesem Rechner und füge es dann hier zu {name} hinzu.",
-  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
-    "Die Worker eines Projekts überspringen einen Rechner ohne Kopie des Projekts. Füge eines hinzu, damit {name} Arbeit übernehmen kann.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} kann nur ein Projekt ausführen, von dem es eine Kopie hat. Öffne zuerst ein Projekt auf diesem Rechner und füge es dann hier zu {name} hinzu.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} kann nur ein Projekt ausführen, von dem es eine Kopie hat. Füge eines hinzu und wähle dann {name} in einem Chat unter „Ausführen auf“ oder trage es in den Projekteinstellungen unter „Machines for workers“ ein.",
   "Add {project} to {name}": "{project} zu {name} hinzufügen",
   "Add a project to {name}": "Projekt zu {name} hinzufügen",
-  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
-    "Als Nächstes auf {coordinatorLabel}: Die Worker eines Projekts überspringen einen Rechner ohne Kopie des Projekts. Öffne dort Einstellungen > Rechner und füge diesem Rechner ein Projekt hinzu, oder wähle in einem Chat unter „Ausführen auf“ die Option „Auf anderem Rechner hinzufügen…“.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "Als Nächstes auf {coordinatorLabel}: Dieser Rechner kann nur ein Projekt ausführen, von dem er eine Kopie hat. Öffne dort Einstellungen > Rechner und füge diesem Rechner ein Projekt hinzu. Wähle ihn dann in einem Chat unter „Ausführen auf“ oder trage ihn in den Projekteinstellungen unter „Machines for workers“ ein.",
 };

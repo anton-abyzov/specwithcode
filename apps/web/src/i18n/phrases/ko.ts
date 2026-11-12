@@ -1307,6 +1307,13 @@ export const ko: PhraseCatalog = {
     "이 주소에는 QR이 없습니다. 다른 기기가 루프백 링크를 스캔하면 자기 자신에 연결하게 됩니다. 대신 이 컴퓨터에서 사용할 URL을 복사하세요.",
   "Client scopes": "클라이언트 권한",
   "Revoke others": "다른 항목 취소",
+  "Revoke {count} unused": "미사용 {count}개 취소",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "링크나 코드로 페어링되어 24시간 동안 연결이 없는 컴퓨터 로그인",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "24시간 동안 연결이 없는 컴퓨터 로그인 {count}개를 취소할까요? 하루 동안 꺼져 있었을 뿐인 컴퓨터도 포함되며 새 페어링 링크나 코드가 필요합니다. 이 앱, 연결된 클라이언트, 휴대폰, 다른 머신과 그 키는 유지됩니다.",
+  "Revoked {count} unused sign-ins": "미사용 로그인 {count}개를 취소했습니다",
+  "Could not revoke {count} sign-ins": "로그인 {count}개를 취소하지 못했습니다",
   "Create link": "링크 만들기",
   "Create pairing link": "페어링 링크 만들기",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -4116,12 +4123,12 @@ export const ko: PhraseCatalog = {
     "{machine}에서 변경을 확인하지 못했습니다. 스위치는 {machine}이 보고하는 상태를 보여 줍니다.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine}의 SpecWithCode 버전에는 이 설정이 없습니다. 먼저 {machine}을(를) 업데이트하세요.",
-  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
-    "프로젝트의 워커는 해당 프로젝트 사본이 없는 컴퓨터를 건너뜁니다. 먼저 이 컴퓨터에서 프로젝트를 연 다음 여기에서 {name}에 추가하세요.",
-  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
-    "프로젝트의 워커는 해당 프로젝트 사본이 없는 컴퓨터를 건너뜁니다. {name}이(가) 작업을 받을 수 있도록 프로젝트를 추가하세요.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name}은(는) 사본이 있는 프로젝트만 실행할 수 있습니다. 먼저 이 컴퓨터에서 프로젝트를 연 다음 여기에서 {name}에 추가하세요.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name}은(는) 사본이 있는 프로젝트만 실행할 수 있습니다. 프로젝트를 추가한 다음 채팅의 ‘실행 위치’에서 {name}을(를) 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
   "Add {project} to {name}": "{project}을(를) {name}에 추가",
   "Add a project to {name}": "{name}에 프로젝트 추가",
-  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
-    "다음 단계, {coordinatorLabel}에서: 프로젝트의 워커는 해당 프로젝트 사본이 없는 컴퓨터를 건너뜁니다. 그쪽에서 설정 > 머신을 열어 이 컴퓨터에 프로젝트를 추가하거나, 채팅의 ‘실행 위치’에서 ‘다른 컴퓨터에 추가…’를 선택하세요.",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "다음 단계, {coordinatorLabel}에서: 이 컴퓨터는 사본이 있는 프로젝트만 실행할 수 있습니다. 그쪽에서 설정 > 머신을 열어 이 컴퓨터에 프로젝트를 추가하세요. 그런 다음 채팅의 ‘실행 위치’에서 이 컴퓨터를 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
 };

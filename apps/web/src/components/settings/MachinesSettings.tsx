@@ -216,10 +216,11 @@ export function MachinesSettingsPanel() {
         ) : null
       }
       addProject={
-        row.seen.state === "connected" && row.projects.own.length === 0 ? (
+        row.seen.state === "connected" ? (
           <AddProjectToMachine
             environmentId={row.environmentId}
             name={machineName(row.environmentId, row.label)}
+            empty={row.projects.own.length === 0}
           />
         ) : null
       }
@@ -686,7 +687,7 @@ export function MachineRow({
   connectBothWays?: ReactNode;
   /** Shown where the grant would be until that machine may run work here. */
   allowBack?: ReactNode;
-  /** The next step for a connected machine with no project of its own: add one. */
+  /** Add a project, for a connected machine. It prompts only while the machine holds none. */
   addProject?: ReactNode;
 }) {
   const tx = useTx();
@@ -826,13 +827,11 @@ export function MachineRow({
         {row.projects.own.length > 0 ? (
           <ProjectList projects={row.projects.own} here={here} />
         ) : (
-          <>
-            <p className="text-xs text-muted-foreground">
-              {seen ? tx("No projects of your own here.") : tx("Connect to see its projects.")}
-            </p>
-            {addProject}
-          </>
+          <p className="text-xs text-muted-foreground">
+            {seen ? tx("No projects of your own here.") : tx("Connect to see its projects.")}
+          </p>
         )}
+        {addProject}
         <ArchivedDisclosure
           count={row.projects.automated.length}
           label={tx("automated")}

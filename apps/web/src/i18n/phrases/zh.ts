@@ -1270,6 +1270,13 @@ export const zh: PhraseCatalog = {
     "此地址没有二维码。另一台设备扫描回环链接会连接到它自己；请改为复制 URL 在此电脑上使用。",
   "Client scopes": "客户端权限",
   "Revoke others": "撤销其他",
+  "Revoke {count} unused": "撤销 {count} 个未使用的登录",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "通过链接或代码配对且 24 小时无连接的电脑登录",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "要撤销 {count} 个 24 小时无连接的电脑登录吗？只是关机一天的电脑也在其中，之后需要新的配对链接或代码。此应用、已连接的客户端、手机、你的其他机器及其密钥会保留。",
+  "Revoked {count} unused sign-ins": "已撤销 {count} 个未使用的登录",
+  "Could not revoke {count} sign-ins": "无法撤销 {count} 个登录",
   "Create link": "创建链接",
   "Create pairing link": "创建配对链接",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
@@ -4004,12 +4011,12 @@ export const zh: PhraseCatalog = {
     "无法确认 {machine} 上的更改。开关显示的是 {machine} 报告的状态。",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} 上的 SpecWithCode 版本没有此设置。请先更新 {machine}。",
-  "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.":
-    "项目的工作线程会跳过没有该项目副本的电脑。请先在这台电脑上打开一个项目，然后在这里把它添加到 {name}。",
-  "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.":
-    "项目的工作线程会跳过没有该项目副本的电脑。添加一个项目，{name} 才能接收工作。",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} 只能运行它有副本的项目。请先在这台电脑上打开一个项目，然后在这里把它添加到 {name}。",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} 只能运行它有副本的项目。添加一个项目，然后在聊天的“运行于”中选择 {name}，或在项目设置的“Machines for workers”中列出它。",
   "Add {project} to {name}": "将 {project} 添加到 {name}",
   "Add a project to {name}": "添加项目到 {name}",
-  "Next, on {coordinatorLabel}: a project's workers skip a machine that has no copy of it. Open Settings > Machines there and add a project to this machine, or choose Add to another machine… under Run on in a chat.":
-    "下一步，在 {coordinatorLabel} 上：项目的工作线程会跳过没有该项目副本的电脑。在那里打开“设置 > 机器”，为这台电脑添加一个项目，或在聊天的“运行于”中选择“添加到另一台电脑…”。",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "下一步，在 {coordinatorLabel} 上：这台电脑只能运行它有副本的项目。在那里打开 设置 > 机器，为这台电脑添加一个项目。然后在聊天的“运行于”中选择它，或在项目设置的“Machines for workers”中列出它。",
 };

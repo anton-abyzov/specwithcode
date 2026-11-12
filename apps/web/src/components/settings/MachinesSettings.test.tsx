@@ -122,7 +122,9 @@ vi.mock("../../studio/machineNickname", () => ({
 }));
 vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
 vi.mock("./AddProjectToMachine", () => ({
-  AddProjectToMachine: ({ name }: { name: string }) => <span data-add-project={name} />,
+  AddProjectToMachine: ({ name, empty }: { name: string; empty: boolean }) => (
+    <span data-add-project={name} data-empty={String(empty)} />
+  ),
 }));
 vi.mock("../../environments/primary", () => ({
   createServerPairingCredential: runtime.createCredential,
@@ -254,13 +256,18 @@ describe("Settings > Machines", () => {
     expect(html.match(/<main>/g)).toHaveLength(1);
   });
 
-  it("offers to add a project on a connected machine that holds none", () => {
+  it("mounts the add-project step on a connected machine and prompts only while it holds none", () => {
     setUp();
-    // MacBook Pro (m3) is connected and has a project; M1Max is not connected.
-    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("data-add-project");
+    const mounted = (html: string) => html.match(/data-add-project="[^"]*" data-empty="[^"]*"/g);
+    // MacBook Pro (m3) is connected and has a project; M1Max is not connected, M4MAX is here.
+    // It stays mounted with a project, so an open add dialog survives the project arriving.
+    expect(mounted(renderToStaticMarkup(<MachinesSettingsPanel />))).toEqual([
+      'data-add-project="MacBook Pro" data-empty="false"',
+    ]);
     runtime.projects = [];
-    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    expect(html.match(/data-add-project="[^"]*"/g)).toEqual(['data-add-project="MacBook Pro"']);
+    expect(mounted(renderToStaticMarkup(<MachinesSettingsPanel />))).toEqual([
+      'data-add-project="MacBook Pro" data-empty="true"',
+    ]);
   });
 
   it("adds no team rules line when no machine has rules", () => {

@@ -4,7 +4,7 @@ import { ChevronDownIcon, FolderPlusIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useTx } from "../../i18n";
-import { useProjects } from "../../state/entities";
+import { useEnvironmentShellLive, useProjects, useServerConfigs } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { AddToMachineDialog } from "../chat/AddToMachineDialog";
 import { Button } from "../ui/button";
@@ -13,26 +13,39 @@ import { projectsToAdd } from "./AddProjectToMachine.logic";
 
 /**
  * Settings > Machines, on a connected machine that holds no project yet: the
- * step after joining it. Workers of a project skip a machine with no copy of
- * that project, so a joined machine does nothing until one is added. Opens
- * the same Add to another machine dialog as the Run on menu.
+ * step after joining it. A machine can only run a project it has a copy of,
+ * so a joined machine does nothing until one is added. Opens the same Add to
+ * another machine dialog as the Run on menu.
+ *
+ * Mounted for every connected machine, not only an empty one: the dialog
+ * outlives the prompt, because the project it adds is what ends `empty`.
  */
 export function AddProjectToMachine(props: {
   readonly environmentId: EnvironmentId;
   /** The machine's name as this app shows it. */
   readonly name: string;
+  /** The machine holds no project of its own. */
+  readonly empty: boolean;
 }) {
   const hereEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
+  const configs = useServerConfigs();
+  // An unread list is not an empty one: say nothing until both lists are in.
+  const hereLive = useEnvironmentShellLive(hereEnvironmentId);
+  const thereLive = useEnvironmentShellLive(props.environmentId);
+  const scratchRoot =
+    hereEnvironmentId === null ? null : configs.get(hereEnvironmentId)?.scratchWorkspaceRoot;
   const choices = useMemo(
-    () => projectsToAdd(projects, hereEnvironmentId),
-    [projects, hereEnvironmentId],
+    () => projectsToAdd(projects, hereEnvironmentId, scratchRoot),
+    [projects, hereEnvironmentId, scratchRoot],
   );
   const [source, setSource] = useState<EnvironmentProject | null>(null);
   if (hereEnvironmentId === null || hereEnvironmentId === props.environmentId) return null;
   return (
     <>
-      <AddProjectToMachineView name={props.name} choices={choices} onChoose={setSource} />
+      {props.empty && hereLive && thereLive ? (
+        <AddProjectToMachineView name={props.name} choices={choices} onChoose={setSource} />
+      ) : null}
       {source ? (
         <AddToMachineDialog
           open
@@ -61,11 +74,11 @@ export function AddProjectToMachineView(props: {
       <p className="text-xs text-muted-foreground">
         {choices.length === 0
           ? tx(
-              "A project's workers skip a machine that has no copy of it. Open a project on this machine first, then add it to {name} here.",
+              "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.",
               { name },
             )
           : tx(
-              "A project's workers skip a machine that has no copy of it. Add one so {name} can take work.",
+              "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.",
               { name },
             )}
       </p>
