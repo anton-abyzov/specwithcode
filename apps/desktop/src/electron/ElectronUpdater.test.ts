@@ -1,4 +1,3 @@
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -286,7 +285,10 @@ describe("silentDebInstallReady", () => {
     }
     assert.isFalse(ElectronUpdater.silentDebInstallReady({}, answer("ready")));
     assert.isFalse(
-      ElectronUpdater.silentDebInstallReady({ downloadedUpdateHelper: { file: null } }, answer("ready")),
+      ElectronUpdater.silentDebInstallReady(
+        { downloadedUpdateHelper: { file: null } },
+        answer("ready"),
+      ),
     );
   });
 });
