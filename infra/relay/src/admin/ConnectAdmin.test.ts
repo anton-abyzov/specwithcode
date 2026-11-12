@@ -245,8 +245,7 @@ describe("who may use the Connect admin routes", () => {
     withAdmin({ owners: ["user_owner"] }, (call) =>
       Effect.gen(function* () {
         for (const route of ROUTES) yield* expectHidden(yield* call(route, "oat_owner_cli"));
-        // Clerk would accept that token as the owner. The relay never asks: a
-        // guess costs no Clerk call and takes no longer than an unknown path.
+        // Clerk would accept that token as the owner. The relay never asks Clerk about it.
         expect(createClerkClient).not.toHaveBeenCalled();
       }),
     ),

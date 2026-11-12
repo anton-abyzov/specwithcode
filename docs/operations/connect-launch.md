@@ -145,6 +145,22 @@ name travels in the request body, never in the URL, so request logs and traces d
 the relay deploy on purpose, so fix the variable before the next push to `main`. Changing the list
 takes a relay deploy.
 
+The same owners can change three things from Settings > Connect admin: one account's machine limit,
+one machine's link and one phone (`POST /v1/admin/accounts/:userId/machine-limit`,
+`.../machines/:environmentId/unlink`, `.../phones/:deviceId/remove`). A limit change applies to the
+account's next link and never unlinks a machine that is already linked. Unlink and remove do what
+the account's own "Unlink" and "Remove phone" do. Every change is recorded in the
+`relay_admin_actions` D1 table with the owner's id, the account, the target and the outcome
+(`started`, `done` or `failed`), and `GET /v1/admin/actions` returns the newest 100. The record is
+written first: when it cannot be written the change does not run and the relay answers 503. An
+unlink recorded as `failed` has revoked the link and left the tunnel up; send it again to take the
+tunnel down (the tunnel sweep removes it later otherwise). A phone removal recorded as `failed`
+has removed the phone; what may be left is its Clerk session, whose tokens last 60 seconds, and
+the notice to the account's machines. A request cut off part way is recorded as `failed` too. A
+record left at `started` means the relay could not record how the action ended; read the account
+on the page. When a person deletes their account, the records of changes made to that account are
+deleted with it.
+
 Leave `RELAY_DOMAIN` unset: the `prod` stage derives `relay.spec-weave.com` from the zone. Leave
 `RELAY_TUNNEL_BASE_DOMAIN` unset so tunnels sit directly under `spec-weave.com`. Leave
 `FCM_SERVICE_ACCOUNT` unset until there is an Android app. `APNS_ENVIRONMENT=production` serves

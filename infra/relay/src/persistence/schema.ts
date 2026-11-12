@@ -298,3 +298,33 @@ export const relayDpopProofs = sqliteTable(
     index("idx_relay_dpop_proofs_expires_at").on(table.expiresAt),
   ],
 );
+
+/**
+ * What an owner did from the Connect admin page: one row per action, written
+ * before the action runs. Rows are never updated except for `outcome`, and
+ * never deleted. `beforeJson` and `afterJson` hold no key, credential or token.
+ */
+export const relayAdminActions = sqliteTable(
+  "relay_admin_actions",
+  {
+    id: text("id").primaryKey(),
+    /** The owner who acted. */
+    ownerUserId: text("owner_user_id").notNull(),
+    /** "set_machine_limit", "unlink_machine" or "remove_phone". */
+    action: text("action").notNull(),
+    /** The account acted on. */
+    targetUserId: text("target_user_id").notNull(),
+    /** The machine's environment id or the phone's device id; null for a limit change. */
+    targetId: text("target_id"),
+    targetLabel: text("target_label"),
+    beforeJson: text("before_json"),
+    afterJson: text("after_json"),
+    /** "started", "done" or "failed". */
+    outcome: text("outcome").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_relay_admin_actions_created").on(table.createdAt),
+    index("idx_relay_admin_actions_target").on(table.targetUserId, table.createdAt),
+  ],
+);
