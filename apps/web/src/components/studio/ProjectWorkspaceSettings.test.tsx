@@ -44,6 +44,25 @@ const state = vi.hoisted(() => ({
         status: "missing",
       },
     ],
+    rootIsRepository: true,
+    foundMore: 0,
+    skippedLinks: [],
+    redundantEntries: [],
+    found: [
+      {
+        relativePath: "code",
+        path: "/scratch/atlas/code",
+        name: "code",
+        origin: "example/atlas",
+        branch: null,
+        defaultBranch: null,
+        inSpecweave: false,
+        state: "missing",
+        noRemote: false,
+        threadWorktrees: 0,
+        repositoryId: "repo-one",
+      },
+    ],
   },
   file: {
     name: "MEMORY.md",
@@ -903,15 +922,19 @@ describe("project settings and memory", () => {
     await render("environment");
     expect(container.textContent).toContain("Managed project storage");
     expect(container.textContent).toContain("/scratch/shared");
-    expect(container.textContent).toContain("https://github.com/example/atlas.git");
+    expect(container.textContent).toContain("code · example/atlas");
+    expect(container.textContent).toContain("Folder missing");
+    expect(container.textContent).not.toMatch(/workspace|Checkout status unknown/iu);
     await input('input[placeholder="Absolute path on this machine"]', "/scratch/research");
     await click("Add folder");
     await input(
       'input[placeholder="https://github.com/organization/repository.git"]',
       "git@github.com:example/research.git",
     );
-    await click("Add URL");
+    // The folder defaults to the repository's name inside the project folder.
+    await click("Clone");
     expect(state.prepare).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Save changes to clone it.");
     await click("Save changes");
     expect(state.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -924,7 +947,7 @@ describe("project settings and memory", () => {
                 expect.objectContaining({ id: "repo-one" }),
                 expect.objectContaining({
                   url: "git@github.com:example/research.git",
-                  localPath: null,
+                  localPath: "/scratch/atlas/research",
                 }),
               ],
             },
@@ -939,21 +962,17 @@ describe("project settings and memory", () => {
       error: new Error("Environment revision conflict"),
     });
     await render("environment");
-    await input(
-      'input[aria-label="Checkout path for https://github.com/example/atlas.git"]',
-      "/scratch/shared/existing",
-    );
-    await click("Match existing checkout");
+    await input('input[placeholder="Absolute path on this machine"]', "/scratch/existing");
+    await click("Add folder");
+    await click("Clone again");
     expect(state.prepare).not.toHaveBeenCalled();
     await click("Save changes");
     expect(container.textContent).toContain("Environment revision conflict");
     await click("General");
     await click("Environment");
     expect(
-      container.querySelector<HTMLInputElement>(
-        'input[aria-label="Checkout path for https://github.com/example/atlas.git"]',
-      )!.value,
-    ).toBe("/scratch/shared/existing");
+      container.querySelector('[aria-label="Remove folder /scratch/existing"]'),
+    ).not.toBeNull();
   });
   it("re-points a moved folder and the checkout inside it with Update path", async () => {
     const observed = state.environment;
@@ -979,7 +998,7 @@ describe("project settings and memory", () => {
           repositoryId: "repo-one",
         },
       ],
-    } as typeof observed;
+    } as unknown as typeof observed;
     try {
       await render("environment", true, {
         environment: {
@@ -1018,16 +1037,16 @@ describe("project settings and memory", () => {
     await click("Close dialog");
     expect(state.close).not.toHaveBeenCalled();
   });
-  it("matches an existing checkout only on explicit request with scoped revision and retry id", async () => {
+  it("clones only on explicit request with scoped revision and retry id", async () => {
     state.prepare.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Host unavailable") });
     await render("environment");
-    await click("Match existing checkout");
+    await click("Clone again");
     expect(state.prepare.mock.calls[0]![0]).toMatchObject({
       environmentId: "host",
-      input: { projectId: "project", repositoryId: "repo-one", expectedRevision: 7, mode: "match" },
+      input: { projectId: "project", repositoryId: "repo-one", expectedRevision: 7, mode: "clone" },
     });
     expect(container.textContent).toContain("Host unavailable");
-    await click("Match existing checkout");
+    await click("Clone again");
     expect(state.prepare.mock.calls[1]![0].input.commandId).toBe(
       state.prepare.mock.calls[0]![0].input.commandId,
     );
@@ -1041,8 +1060,8 @@ describe("project settings and memory", () => {
       }),
     );
     await render("environment");
-    await click("Prepare checkout");
-    await click("Prepare checkout");
+    await click("Clone again");
+    await click("Clone again");
     expect(state.prepare).toHaveBeenCalledOnce();
     expect(state.prepare.mock.calls[0]![0].input.mode).toBe("clone");
     await act(async () =>
@@ -1051,8 +1070,7 @@ describe("project settings and memory", () => {
   });
   it("does not mutate or prepare through a read-only connection", async () => {
     await render("environment", false);
-    await click("Prepare checkout");
-    await click("Match existing checkout");
+    await click("Clone again");
     expect(state.prepare).not.toHaveBeenCalled();
     expect(
       container.querySelector<HTMLInputElement>(
@@ -1159,7 +1177,7 @@ describe("project settings and memory", () => {
       'input[placeholder="https://github.com/organization/repository.git"]',
       "https://secret@example.com/team/repo.git",
     );
-    await click("Add URL");
+    await click("Clone");
     expect(container.textContent).toContain("Use a credential-free HTTPS or SSH repository URL");
     expect(container.textContent).not.toContain("https://secret@example.com");
     expect(state.update).not.toHaveBeenCalled();
@@ -1170,12 +1188,12 @@ describe("project settings and memory", () => {
       error: Object.assign(new Error("Outcome unknown"), { code: "outcome_unknown" }),
     });
     await render("environment");
-    await click("Prepare checkout");
+    await click("Clone again");
     const first = state.prepare.mock.calls[0]![0].input.commandId;
-    expect(container.textContent).toContain("The previous preparation may have changed files");
+    expect(container.textContent).toContain("The previous clone may have changed files");
     await click("I inspected the destination; allow a new request");
     expect(state.prepare).toHaveBeenCalledOnce();
-    await click("Prepare checkout");
+    await click("Clone again");
     expect(state.prepare.mock.calls[1]![0].input.commandId).not.toBe(first);
   });
   it("restores a revoked connection with no tool grants and requires a fresh explicit check", async () => {
@@ -1246,10 +1264,9 @@ describe("project settings and memory", () => {
         value: { ...configured, revision: 2, status: "revoked" },
       });
       await render("environment", true, { [flag]: true });
-      await click("Prepare checkout");
-      await click("Match existing checkout");
+      await click("Clone again");
       expect(state.prepare).not.toHaveBeenCalled();
-      expect(container.textContent).toContain("Resume or restore this project before preparing");
+      expect(container.textContent).toContain("Resume or restore this project before cloning");
       await setLabel("Connection name", "Documents");
       await setLabel("Executable command", "document-mcp");
       await click("Save connection");
@@ -1266,7 +1283,7 @@ describe("project settings and memory", () => {
       await render("environment");
       const manage = () =>
         [...container.querySelectorAll("a,button")].find(
-          (el) => el.textContent === "Manage project icon, checkouts and worktree defaults",
+          (el) => el.textContent === "Manage thread worktrees",
         )!;
       expect(manage().tagName).toBe("A");
       if (kind === "environment")
@@ -1291,14 +1308,14 @@ describe("project settings and memory", () => {
       }),
     );
     await render("environment");
-    await click("Prepare checkout");
+    await click("Clone again");
     const manage = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (el) => el.textContent === "Manage project icon, checkouts and worktree defaults",
+      (el) => el.textContent === "Manage thread worktrees",
     )!;
     expect(manage.disabled).toBe(true);
     expect(
       [...container.querySelectorAll("a")].some((el) =>
-        el.textContent?.includes("Manage project icon"),
+        el.textContent?.includes("Manage thread worktrees"),
       ),
     ).toBe(false);
     await act(async () =>
@@ -1306,7 +1323,7 @@ describe("project settings and memory", () => {
     );
     expect(
       [...container.querySelectorAll("a")].some((el) =>
-        el.textContent?.includes("Manage project icon"),
+        el.textContent?.includes("Manage thread worktrees"),
       ),
     ).toBe(true);
   });
@@ -1325,25 +1342,18 @@ it("keeps the header focused on identity and folder management in General", asyn
 it("keeps folder removal reversible and saves only the remaining environment draft", async () => {
   await render("environment", true, { kind: "code" });
   const removeEntries = async () => {
-    for (const label of [
-      "Remove folder /scratch/shared",
-      "Remove repository https://github.com/example/atlas.git",
-    ]) {
+    for (const label of ["Remove folder /scratch/shared", "Remove code from project"]) {
       await act(async () =>
         container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click(),
       );
     }
   };
   await removeEntries();
-  expect(container.textContent).toContain("No additional folders approved.");
+  expect(container.textContent).toContain("No other folder is allowed.");
   expect(state.update).not.toHaveBeenCalled();
   await click("Discard");
   expect(container.querySelector('[aria-label="Remove folder /scratch/shared"]')).not.toBeNull();
-  expect(
-    container.querySelector(
-      '[aria-label="Remove repository https://github.com/example/atlas.git"]',
-    ),
-  ).not.toBeNull();
+  expect(container.querySelector('[aria-label="Remove code from project"]')).not.toBeNull();
   await removeEntries();
   await click("Save changes");
   expect(state.update).toHaveBeenCalledWith(
@@ -1495,75 +1505,62 @@ describe("rename from a double click on the sidebar row", () => {
     expect(state.update).not.toHaveBeenCalled();
   });
   describe("repository entries", () => {
-    const atlas = "https://github.com/example/atlas.git";
-    const renamed = "https://github.com/example/atlas-renamed.git";
-    const pathField = `input[aria-label="Checkout path for ${atlas}"]`;
-    const savedRepositories = () =>
-      state.update.mock.calls.at(-1)![0].input.workspaceSettings.environment.repositories;
     const saveButton = () =>
       [...container.querySelectorAll("button")].find(
         (button) => button.textContent?.trim() === "Save changes",
       )!;
 
-    it("flags a URL typed as a checkout path and moves it to the entry's URL", async () => {
+    it("has no checkout fields or URL editing: a repository is listed or cloned", async () => {
       await render("environment");
-      await input(pathField, renamed);
-      expect(container.textContent).toContain("This is a folder path, not a URL.");
-      expect(saveButton().disabled).toBe(true);
-      expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
-        "Fix the highlighted Environment entry before saving.",
+      for (const gone of [
+        "Checkout path",
+        "Edit URL",
+        "Match existing checkout",
+        "Prepare checkout",
+      ])
+        expect(container.textContent).not.toContain(gone);
+      expect(container.querySelector('input[aria-label^="Checkout path"]')).toBeNull();
+      expect(container.textContent).toContain("Other folders agents can use");
+      expect(container.textContent).not.toContain("Import SpecWeave");
+    });
+
+    it("names the folder of a new clone and refuses one that cannot hold it", async () => {
+      await render("environment");
+      await input(
+        'input[placeholder="https://github.com/organization/repository.git"]',
+        "https://github.com/example/tool.git",
       );
-      await click("Use as repository URL");
-      expect(container.textContent).not.toContain("This is a folder path, not a URL.");
-      expect(container.textContent).toContain("URL changed, unsaved");
+      const folder = () =>
+        container.querySelector<HTMLInputElement>(
+          'input[placeholder="repositories/organization/repository"]',
+        )!;
+      expect(folder().value).toBe("tool");
+      await input('input[placeholder="repositories/organization/repository"]', "~/tool");
+      expect(container.textContent).toContain("~ is not expanded");
+      await input(
+        'input[placeholder="repositories/organization/repository"]',
+        "/scratch/shared/tool",
+      );
+      await click("It is already checked out there");
       await click("Save changes");
-      expect(savedRepositories()).toEqual([
-        { id: "repo-one", url: renamed, localPath: "/scratch/atlas/code" },
-      ]);
+      expect(
+        state.update.mock.calls.at(-1)![0].input.workspaceSettings.environment.repositories.at(-1),
+      ).toMatchObject({
+        url: "https://github.com/example/tool.git",
+        localPath: "/scratch/shared/tool",
+      });
     });
 
-    it("edits a URL in place and keeps the entry's checkout", async () => {
-      await render("environment");
-      await press(`Edit URL ${atlas}`);
-      await input(`input[aria-label="Repository URL for ${atlas}"]`, "not a url");
-      expect(container.textContent).toContain("credential-free");
-      await input(`input[aria-label="Repository URL for ${atlas}"]`, renamed);
-      await click("Done");
-      expect(container.textContent).toContain("URL changed, unsaved");
-      await click("Save changes");
-      expect(savedRepositories()).toEqual([
-        { id: "repo-one", url: renamed, localPath: "/scratch/atlas/code" },
-      ]);
+    it("marks an allowed folder that is inside the project folder", async () => {
+      await render("environment", true, {
+        environment: { additionalFolders: ["/scratch/atlas/code"], repositories: [] },
+      });
+      expect(container.querySelector("[data-inside-project]")?.textContent).toBe(
+        "Already inside the project folder, so this entry does nothing.",
+      );
     });
 
-    it("offers Update URL when the checkout's origin was renamed", async () => {
-      const observed = state.environment;
-      state.environment = {
-        ...observed,
-        repositories: [
-          {
-            id: "repo-one",
-            url: atlas,
-            localPath: "/scratch/atlas/code",
-            status: "mismatch",
-            origin: renamed,
-          } as (typeof observed.repositories)[number],
-        ],
-      };
-      try {
-        await render("environment");
-        expect(container.textContent).toContain(`This checkout's origin is ${renamed}`);
-        await click("Update URL to atlas-renamed.git");
-        await click("Save changes");
-        expect(savedRepositories()).toEqual([
-          { id: "repo-one", url: renamed, localPath: "/scratch/atlas/code" },
-        ]);
-      } finally {
-        state.environment = observed;
-      }
-    });
-
-    it("shows a rejected save beside the entry that caused it", async () => {
+    it("shows a rejected save beside the repository list", async () => {
       const message =
         "Repository checkout /scratch/elsewhere is outside the project folder and its approved folders.";
       state.update.mockResolvedValueOnce({
@@ -1573,31 +1570,30 @@ describe("rename from a double click on the sidebar row", () => {
         }),
       });
       await render("environment");
-      await input(pathField, "/scratch/elsewhere");
+      await press("Remove folder /scratch/shared");
       await click("Save changes");
       const entry = container.querySelector('[data-entry-key="repository:repo-one"]')!;
       expect(entry.textContent).toContain(message);
-      expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
-        "1 Environment entry needs attention",
-      );
       expect(container.querySelector(".project-settings-footer")?.textContent).not.toContain(
         message,
       );
-      await input(pathField, "/scratch/atlas/code");
-      expect(entry.textContent).not.toContain(message);
+      expect(saveButton()).toBeDefined();
     });
 
-    it("holds Save while a typed URL waits for Done", async () => {
-      await render("environment");
-      await input(pathField, "/scratch/atlas/other");
-      await press(`Edit URL ${atlas}`);
-      await input(`input[aria-label="Repository URL for ${atlas}"]`, renamed);
-      expect(saveButton().disabled).toBe(true);
-      expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
-        "Press Done on the repository URL",
-      );
-      await click("Done");
-      expect(saveButton().disabled).toBe(false);
+    it("tells an older server's user to update, and lists what is saved", async () => {
+      const observed = state.environment;
+      const { found: _found, ...older } = observed;
+      state.environment = older as typeof observed;
+      try {
+        await render("environment");
+        expect(container.querySelector("[data-older-server]")?.textContent).toContain(
+          "to find the repositories in this folder.",
+        );
+        expect(container.textContent).toContain("https://github.com/example/atlas.git");
+        expect(container.querySelector("[data-repository-list]")).toBeNull();
+      } finally {
+        state.environment = observed;
+      }
     });
   });
 });

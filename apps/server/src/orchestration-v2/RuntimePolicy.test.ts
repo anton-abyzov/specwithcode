@@ -326,7 +326,8 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         modelSelection,
       });
       assert.equal(resolved.cwd, "/project-worktree");
-      assert.isFalse(resolved.manualWorktreesBlocked);
+      // No worktree guard; its git refuses commits in the project folder's clones instead.
+      assert.equal(resolved.manualWorktreesBlocked, "/project-root");
       assert.match(resolved.agentInstructions ?? "", /Environment rule[\s\S]*Project rule/);
     }),
   );

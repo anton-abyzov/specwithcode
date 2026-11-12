@@ -715,6 +715,7 @@ export function ProjectWorkspaceSettings({
               </div>
               <div hidden={tab !== "environment"}>
                 <ProjectEnvironment
+                  onOpenGeneral={() => setTab("general")}
                   project={project}
                   projectKey={projectKey}
                   kind={snapshot.settings.kind ?? "code"}
