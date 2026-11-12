@@ -47,7 +47,18 @@ describe("claudeAccountPlan", () => {
     expect(
       isClaudeSignInCode("https://platform.claude.com/oauth/code/callback?code=abc&state=S1"),
     ).toBe(true);
-    for (const half of ["", "abc123", "abc123#", "#STATE1", "abc 123#STATE1", "https://x.test/"])
+    for (const half of [
+      "",
+      "abc123",
+      "abc123#",
+      "#STATE1",
+      "abc 123#STATE1",
+      "abc#123#STATE1",
+      "abc\u0007#STATE1",
+      "https://x.test/",
+      "https://x.test/?code=a%0Ab&state=S1",
+      "https://x.test/?code=a%23b&state=S1",
+    ])
       expect(isClaudeSignInCode(half), half).toBe(false);
   });
 });

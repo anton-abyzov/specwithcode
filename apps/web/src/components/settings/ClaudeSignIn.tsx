@@ -70,15 +70,21 @@ export function ClaudeSignIn({
   const [pending, setPending] = useState(false);
   const [checking, setChecking] = useState(false);
   const [copied, setCopied] = useState<"link" | "command" | null>(null);
+  const [sentFlow, setSentFlow] = useState<string | null>(null);
   const reservedTab = useRef<Window | null>(null);
   const openedFlow = useRef<string | null>(null);
   const leave = useRef(() => {});
+  const gone = useRef(false);
 
   const auth = query.data;
+  const phase = auth?.phase;
   const signedIn = provider?.auth.status === "authenticated";
-  const active =
-    auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
+  // The machine took the sign-in, and its account check gave no answer yet.
+  const done = signedIn || (phase === "succeeded" && provider?.auth.status !== "unauthenticated");
+  const active = phase === "starting" || phase === "waiting" || phase === "verifying";
   const flowId = active ? (auth?.flowId ?? null) : null;
+  // The code went to Claude Code, which says nothing until it is done with it.
+  const sent = flowId !== null && sentFlow === flowId;
   const link =
     auth?.phase === "waiting" && auth.interaction?.type === "browser" ? auth.interaction.url : null;
   // A machine whose SpecWithCode cannot run the sign-in still has the command.
@@ -86,6 +92,7 @@ export function ClaudeSignIn({
   // Another window started it: only that window can finish or cancel it.
   const elsewhere = active && flowId === null;
   const failed = !active && !signedIn && auth?.phase === "failed" ? auth.message : null;
+  const leftFlow = useRef(flowId);
 
   const dropReservedTab = () => {
     reservedTab.current?.close();
@@ -105,8 +112,16 @@ export function ClaudeSignIn({
         .catch(() => {});
   }, [link, flowId, here]);
 
+  // A sign-in that ended has no use for the tab taken for it. A new one keeps its own:
+  // "Try again" takes a tab while the last failure still shows.
   useEffect(() => {
-    if (auth?.phase === "failed" || auth?.phase === "cancelled") dropReservedTab();
+    if (phase !== "failed" && phase !== "cancelled" && phase !== "succeeded") return;
+    reservedTab.current?.close();
+    reservedTab.current = null;
+  }, [phase]);
+
+  useEffect(() => {
+    leftFlow.current = flowId;
     leave.current = () => {
       dropReservedTab();
       if (flowId !== null) void cancel({ environmentId, input: { instanceId, flowId } });
@@ -114,7 +129,13 @@ export function ClaudeSignIn({
   });
 
   // Leaving the sign-in stops Claude Code's sign-in process on the machine.
-  useEffect(() => () => leave.current(), []);
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+      leave.current();
+    };
+  }, []);
 
   // Coming back from the browser or a terminal is the moment to look again.
   useEffect(() => {
@@ -150,13 +171,19 @@ export function ClaudeSignIn({
       if (reservedTab.current) reservedTab.current.opener = null;
     }
     setCode("");
-    void run(() =>
-      start({
+    const flow: { id: typeof flowId } = { id: null };
+    void run(async () => {
+      const result = await start({
         environmentId,
         input: { instanceId, callbackMode: here ? "server" : "client" },
-      }),
-    ).then((started) => {
+      });
+      if (result._tag === "Success") flow.id = result.value.flowId;
+      return result;
+    }).then((started) => {
       if (!started) dropReservedTab();
+      // The person left before the machine answered: stop what that started.
+      else if (gone.current && flow.id !== null && flow.id !== leftFlow.current)
+        void cancel({ environmentId, input: { instanceId, flowId: flow.id } });
     });
   };
 
@@ -172,8 +199,10 @@ export function ClaudeSignIn({
     }
     void run(() =>
       complete({ environmentId, input: { instanceId, flowId, callbackUrl: code.trim() } }),
-    ).then((sent) => {
-      if (sent) setCode("");
+    ).then((taken) => {
+      if (!taken) return;
+      setCode("");
+      setSentFlow(flowId);
     });
   };
 
@@ -190,7 +219,7 @@ export function ClaudeSignIn({
     setChecking(false);
   };
 
-  const state = signedIn
+  const state = done
     ? "signed-in"
     : commandOnly
       ? "command"
@@ -200,7 +229,7 @@ export function ClaudeSignIn({
           ? "failed"
           : "idle";
   const account = provider?.auth.email?.trim() || provider?.auth.login?.trim();
-  const description = signedIn
+  const description = done
     ? [
         account ? tx("Signed in as {account}.", { account }) : tx("Signed in."),
         provider?.auth.label ? tx("Plan: {plan}.", { plan: provider.auth.label }) : null,
@@ -217,7 +246,7 @@ export function ClaudeSignIn({
         ? tx("A sign-in for this account is in progress in another window.")
         : auth?.phase === "starting"
           ? tx("Starting Claude Code's sign-in…")
-          : auth?.phase === "verifying"
+          : auth?.phase === "verifying" || sent
             ? tx("Checking…")
             : link !== null
               ? tx("Sign in on the page that opened. If it shows a code, paste it here.")
@@ -237,7 +266,7 @@ export function ClaudeSignIn({
           ) : undefined
         }
         control={
-          signedIn || commandOnly ? null : flowId !== null && auth?.phase !== "verifying" ? (
+          done || commandOnly ? null : flowId !== null && auth?.phase !== "verifying" ? (
             <Button
               size="sm"
               variant="ghost-muted"
@@ -276,10 +305,14 @@ export function ClaudeSignIn({
                 autoComplete="off"
                 spellCheck={false}
                 value={code}
-                disabled={pending}
+                disabled={pending || sent}
                 onChange={(event) => setCode(event.target.value)}
               />
-              <Button type="submit" size="sm" disabled={pending || code.trim().length === 0}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={pending || sent || code.trim().length === 0}
+              >
                 {tx("Continue")}
               </Button>
             </form>
@@ -303,7 +336,7 @@ export function ClaudeSignIn({
           </div>
         ) : null}
       </SettingsRow>
-      {signedIn ? null : (
+      {done ? null : (
         <>
           <p className="px-3 text-xs text-muted-foreground sm:px-4">
             {tx("The Claude desktop app has its own sign-in, and it does not count here.")}

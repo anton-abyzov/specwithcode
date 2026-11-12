@@ -60,14 +60,15 @@ export function claudeLoginCommand(homePath: string, os?: string): string {
  * again; this only saves a round trip for half a paste.
  */
 export function isClaudeSignInCode(pasted: string): boolean {
-  const text = pasted.trim();
+  let text = pasted.trim();
   if (/^https?:\/\//i.test(text)) {
     try {
       const url = new URL(text);
-      return Boolean(url.searchParams.get("code")?.trim() && url.searchParams.get("state")?.trim());
+      text = `${url.searchParams.get("code")?.trim() ?? ""}#${url.searchParams.get("state")?.trim() ?? ""}`;
     } catch {
       return false;
     }
   }
-  return /^[^\s#]+#[^\s#]+$/.test(text);
+  // Two parts of visible characters joined by one #, as the machine checks it.
+  return /^[!-"$-~]+#[!-"$-~]+$/.test(text);
 }

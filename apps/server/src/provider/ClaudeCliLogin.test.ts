@@ -48,6 +48,10 @@ describe("reading what the sign-in command prints", () => {
     assert.isUndefined(readClaudeLoginLink("See https://claude.com/docs for help"));
     // Half a link, as a chunk may end: no state yet.
     assert.isUndefined(readClaudeLoginLink(PRINTED.slice(0, PRINTED.indexOf("&scope"))));
+    // A chunk that ends inside the state is not the whole link either.
+    assert.isUndefined(readClaudeLoginLink(PRINTED.slice(0, PRINTED.indexOf("STATE1") + 3)));
+    assert.isUndefined(readClaudeLoginLink(PRINTED.slice(0, PRINTED.indexOf("STATE1") + 6)));
+    assert.equal(readClaudeLoginLink(PRINTED.slice(0, PRINTED.indexOf("STATE1") + 7)), LINK);
   });
 
   it("takes a pasted code, or the address of the page that shows it", () => {
@@ -61,6 +65,19 @@ describe("reading what the sign-in command prints", () => {
     assert.isUndefined(readClaudeLoginCode("abc123"));
     assert.isUndefined(readClaudeLoginCode("abc123#"));
     assert.isUndefined(readClaudeLoginCode("abc 123#STATE1"));
+    // Never more than one line, and never a control character, whatever was pasted.
+    assert.isUndefined(readClaudeLoginCode("abc\u0007123#STATE1"));
+    assert.isUndefined(readClaudeLoginCode("abc#123#STATE1"));
+    for (const hidden of ["a%0Ab", "a%0D%0Ab", "a%23b", "a%00b", "a+b"])
+      assert.isUndefined(
+        readClaudeLoginCode(
+          `https://platform.claude.com/oauth/code/callback?code=${hidden}&state=S`,
+        ),
+        hidden,
+      );
+    assert.isUndefined(
+      readClaudeLoginCode("https://platform.claude.com/oauth/code/callback?code=abc&state=S%0AT"),
+    );
     assert.isUndefined(readClaudeLoginCode("https://platform.claude.com/oauth/code/callback"));
     assert.isUndefined(readClaudeLoginCode(""));
   });
@@ -93,7 +110,9 @@ describe("reading what the sign-in command prints", () => {
  * A stand-in for `claude auth login` that behaves as the recorded command
  * does: it prints the link, then reads `code#state` lines from stdin.
  */
-const fakeClaude = (mode: "normal" | "silent" | "early-exit" | "no-sign-out" = "normal") => {
+const fakeClaude = (
+  mode: "normal" | "silent" | "early-exit" | "no-sign-out" | "link-last" = "normal",
+) => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-login-"));
   const record = NodePath.join(directory, "record.json");
   const command = writeFakeCli({
@@ -114,7 +133,7 @@ writeFileSync(process.env.FAKE_RECORD, JSON.stringify({ pid: process.pid, browse
 if (process.env.FAKE_MODE === "early-exit") { console.error("Login failed: no network"); process.exit(1); }
 if (process.env.FAKE_MODE === "silent") setInterval(() => {}, 1000);
 else {
-  process.stdout.write(${JSON.stringify(PRINTED)});
+  process.stdout.write(process.env.FAKE_MODE === "link-last" ? ${JSON.stringify(PRINTED.slice(0, PRINTED.indexOf(LINK) + LINK.length))} : ${JSON.stringify(PRINTED)});
   createInterface({ input: process.stdin }).on("line", (line) => {
     const [code, state] = line.trim().split("#");
     if (!code || !state) { console.error("Invalid code. Please make sure the full code was copied."); return; }
@@ -133,19 +152,23 @@ else {
 
 const instanceId = ProviderInstanceId.make("claude-work");
 
+/** This machine's environment without its own browser choice, so every run starts the same. */
+const environment: NodeJS.ProcessEnv = { ...process.env };
+delete environment.BROWSER;
+
 interface Shown {
   readonly link: string;
   readonly sendCode: (pasted: string) => Effect.Effect<void, ProviderSetupError>;
 }
 
 /** Starts the sign-in on its own fiber and waits for the link it shows. */
-const start = (command: string, openBrowserHere = true) =>
+const start = (command: string, openBrowserHere = true, browser?: string) =>
   Effect.gen(function* () {
     const shown = yield* Deferred.make<Shown>();
     const fiber = yield* runClaudeCliLogin({
       instanceId,
       binaryPath: command,
-      environment: process.env,
+      environment: browser === undefined ? environment : { ...environment, BROWSER: browser },
       openBrowserHere,
       onLink: (link, sendCode) => Deferred.succeed(shown, { link, sendCode }).pipe(Effect.asVoid),
     }).pipe(Effect.scoped, Effect.forkScoped);
@@ -207,6 +230,33 @@ describe("running the sign-in command", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("opens a browser here even when the machine's shell is set to open none", () =>
+    Effect.gen(function* () {
+      for (const [set, kept] of [
+        ["none", null],
+        [" TRUE ", null],
+        ["", null],
+        ["/usr/bin/firefox", "/usr/bin/firefox"],
+      ] as const) {
+        const claude = fakeClaude();
+        const login = yield* start(claude.command, true, set);
+        yield* login.shown;
+        assert.equal(claude.read().browser, kept, set);
+        yield* Fiber.interrupt(login.fiber);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("takes a link printed last, with nothing after it", () =>
+    Effect.gen(function* () {
+      const login = yield* start(fakeClaude("link-last").command);
+      const { link, sendCode } = yield* login.shown;
+      assert.equal(link, LINK);
+      yield* sendCode("good#STATE1");
+      assert.isTrue(Exit.isSuccess(yield* Fiber.await(login.fiber)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("stops the command when the sign-in is cancelled", () =>
     Effect.gen(function* () {
       const claude = fakeClaude();
@@ -228,7 +278,7 @@ describe("running the sign-in command", () => {
       const error = yield* runClaudeCliLogin({
         instanceId,
         binaryPath: fakeClaude("early-exit").command,
-        environment: process.env,
+        environment,
         openBrowserHere: true,
         onLink: () => Effect.void,
       }).pipe(Effect.scoped, Effect.flip);
@@ -242,7 +292,7 @@ describe("running the sign-in command", () => {
       const error = yield* runClaudeCliLogin({
         instanceId,
         binaryPath: claude.command,
-        environment: process.env,
+        environment,
         openBrowserHere: true,
         onLink: () => Effect.void,
         linkLimit: "1 second",
@@ -256,7 +306,7 @@ describe("running the sign-in command", () => {
       const error = yield* runClaudeCliLogin({
         instanceId,
         binaryPath: NodePath.join(NodeOS.tmpdir(), "no-such-claude-command"),
-        environment: process.env,
+        environment,
         openBrowserHere: true,
         onLink: () => Effect.void,
         linkLimit: "5 seconds",
@@ -279,7 +329,7 @@ describe("the sign-in the app offers for a Claude instance", () => {
       const controller = yield* makeClaudeCliAuth({
         instanceId,
         binaryPath: command,
-        environment: process.env,
+        environment,
         configDir: "/synthetic/.claude-work",
         checkAccount: Effect.sync(() => {
           checks += 1;
@@ -393,7 +443,7 @@ describe("the sign-in the app offers for a Claude instance", () => {
       const error = yield* runClaudeCliLogout({
         instanceId,
         binaryPath: fakeClaude("no-sign-out").command,
-        environment: process.env,
+        environment,
       }).pipe(Effect.flip);
       assert.equal(error.detail, "Claude Code could not sign out. Try again.");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

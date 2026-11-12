@@ -46,6 +46,10 @@ const SIGN_OUT_LIMIT: Duration.Input = "20 seconds";
 
 /** The command prints its link within a second; this covers a slow start. */
 const LINK_LIMIT: Duration.Input = "30 seconds";
+/** A link at the very end of the output is taken once nothing has followed it for this long. */
+const LINK_QUIET: Duration.Input = "750 millis";
+/** What people set `BROWSER` to so that nothing opens one. */
+const NO_BROWSER_VALUES = /^(?:|none|true|false|echo|:)$/iu;
 /** Output is kept to find the link and the last line, not as a log. */
 const OUTPUT_LIMIT = 32_768;
 
@@ -56,10 +60,14 @@ const TERMINAL_CODES =
 
 /**
  * The link the command prints for a browser on any device. It is found by its
- * shape, not by the sentence before it, which may be reworded.
+ * shape, not by the sentence before it, which may be reworded. Only a link
+ * with something after it counts: output arrives in pieces, and a piece that
+ * stops inside the link would read as a shorter link.
  */
 export function readClaudeLoginLink(output: string): string | undefined {
-  for (const match of output.replace(TERMINAL_CODES, "").matchAll(/https:\/\/[^\s"'<>]+/gu)) {
+  for (const match of output
+    .replace(TERMINAL_CODES, "")
+    .matchAll(/https:\/\/[^\s"'<>]+(?=[\s"'<>])/gu)) {
     try {
       const url = new URL(match[0]);
       if (url.pathname.includes("/oauth/authorize") && url.searchParams.has("state")) {
@@ -72,25 +80,27 @@ export function readClaudeLoginLink(output: string): string | undefined {
   return undefined;
 }
 
+/** Two parts of visible characters joined by one `#`: nothing that could start a second line. */
+const CODE_LINE = /^[!-"$-~]+#[!-"$-~]+$/u;
+
 /**
  * What the person pasted, as the line the command expects: `code#state`. They
  * may paste the code from the page, or the address of the page that shows it.
  * The command gives no second prompt after a line it cannot read, so a wrong
- * shape is refused here.
+ * shape is refused here. The result is always one line.
  */
 export function readClaudeLoginCode(pasted: string): string | undefined {
-  const text = pasted.trim();
+  let text = pasted.trim();
   if (/^https?:\/\//iu.test(text)) {
     try {
       const url = new URL(text);
-      const code = url.searchParams.get("code")?.trim();
-      const state = url.searchParams.get("state")?.trim();
-      return code && state ? `${code}#${state}` : undefined;
+      // An address may carry an encoded line break or `#`; the check below refuses those.
+      text = `${url.searchParams.get("code")?.trim() ?? ""}#${url.searchParams.get("state")?.trim() ?? ""}`;
     } catch {
       return undefined;
     }
   }
-  return /^[^\s#]+#[^\s#]+$/u.test(text) ? text : undefined;
+  return CODE_LINE.test(text) ? text : undefined;
 }
 
 const NOT_STARTED = "Could not start Claude Code's sign-in. Check that Claude Code is installed.";
@@ -197,8 +207,15 @@ export const runClaudeCliLogin = Effect.fn("ClaudeCliLogin.run")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcessPlatform;
   const browser = input.openBrowserHere ? undefined : yield* noBrowserProgram(platform);
-  const environment: NodeJS.ProcessEnv =
-    browser === undefined ? input.environment : { ...input.environment, BROWSER: browser };
+  const environment: NodeJS.ProcessEnv = { ...input.environment };
+  if (browser !== undefined) environment.BROWSER = browser;
+  // With the person here a browser must open, whatever the machine's shell says.
+  else if (
+    input.openBrowserHere &&
+    environment.BROWSER !== undefined &&
+    NO_BROWSER_VALUES.test(environment.BROWSER.trim())
+  )
+    delete environment.BROWSER;
   const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, CLAUDE_LOGIN_ARGS, {
     env: environment,
   });
@@ -215,12 +232,14 @@ export const runClaudeCliLogin = Effect.fn("ClaudeCliLogin.run")(function* (
   yield* Effect.addFinalizer(() => child.kill({ forceKillAfter: "2 seconds" }).pipe(Effect.ignore));
 
   let output = "";
+  let pieces = 0;
   const link = yield* Deferred.make<string>();
   const decoder = new TextDecoder();
   const read = (stream: typeof child.stdout) =>
     stream.pipe(
       Stream.runForEach((chunk) =>
         Effect.suspend(() => {
+          pieces += 1;
           output = (output + decoder.decode(chunk, { stream: true })).slice(-OUTPUT_LIMIT);
           const found = readClaudeLoginLink(output);
           return found === undefined ? Effect.void : Deferred.succeed(link, found);
@@ -231,6 +250,17 @@ export const runClaudeCliLogin = Effect.fn("ClaudeCliLogin.run")(function* (
   const readers = yield* Effect.all([read(child.stdout), read(child.stderr)], {
     concurrency: "unbounded",
     discard: true,
+  }).pipe(Effect.forkScoped);
+
+  // A later version may print the link last, with nothing after it.
+  yield* Effect.gen(function* () {
+    let seen = -1;
+    while (!(yield* Deferred.isDone(link))) {
+      yield* Effect.sleep(LINK_QUIET);
+      const found = seen === pieces ? readClaudeLoginLink(`${output}\n`) : undefined;
+      if (found !== undefined) yield* Deferred.succeed(link, found);
+      seen = pieces;
+    }
   }).pipe(Effect.forkScoped);
 
   // stdin stays open for the whole sign-in: the code may come minutes later.

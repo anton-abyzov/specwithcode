@@ -108,7 +108,7 @@ beforeEach(() => {
   state.primary = "m4";
   state.os = "darwin";
   for (const command of [state.update, state.refresh, state.start, state.complete, state.cancel])
-    command.mockReset().mockResolvedValue({ _tag: "Success" });
+    command.mockReset().mockResolvedValue({ _tag: "Success", value: { flowId: "flow-1" } });
   state.openExternal.mockReset().mockResolvedValue(undefined);
   state.copy.mockReset().mockResolvedValue(undefined);
   openTab.mockReset();
@@ -258,6 +258,9 @@ describe("AddClaudeAccountDialog", () => {
       input: { instanceId: "claudeAgent_work", flowId: "flow-1", callbackUrl: "abc123#STATE1" },
     });
     expect(code.value).toBe("");
+    // Claude Code says nothing until it is done with the code, so the app does.
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking…");
+    expect(code.disabled).toBe(true);
 
     await act(async () => button("Cancel")!.click());
     expect(state.cancel).toHaveBeenCalledWith({
@@ -300,6 +303,60 @@ describe("AddClaudeAccountDialog", () => {
       input: { instanceId: "claudeAgent_work", flowId: "flow-1" },
     });
     root = createRoot(container);
+  });
+
+  it("stops a sign-in the machine started after the dialog had closed", async () => {
+    let answer!: (result: unknown) => void;
+    state.start.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await onSignInStep();
+    await act(async () => button("Sign in with Claude")!.click());
+    await act(async () => root.unmount());
+    expect(state.cancel).not.toHaveBeenCalled();
+    await act(async () => answer({ _tag: "Success", value: { flowId: "flow-9" } }));
+    expect(state.cancel).toHaveBeenCalledWith({
+      environmentId: "m4",
+      input: { instanceId: "claudeAgent_work", flowId: "flow-9" },
+    });
+    root = createRoot(container);
+  });
+
+  it("keeps the tab taken for Try again while the last failure still shows", async () => {
+    const tab = { location: { href: "" }, opener: {} as unknown, close: vi.fn() };
+    openTab.mockReturnValue(tab);
+    await onSignInStep();
+    state.auth = { ...idle, phase: "failed", message: "Claude did not accept the sign-in." };
+    await render();
+    await act(async () => button("Try again")!.click());
+    await render();
+    expect(tab.close).not.toHaveBeenCalled();
+    state.auth = waiting;
+    await render();
+    expect(tab.location.href).toBe(LINK);
+  });
+
+  it("closes the tab it took when the sign-in ends with no page to show", async () => {
+    const tab = { location: { href: "" }, opener: {} as unknown, close: vi.fn() };
+    openTab.mockReturnValue(tab);
+    await onSignInStep();
+    await act(async () => button("Sign in with Claude")!.click());
+    expect(tab.close).not.toHaveBeenCalled();
+    // Claude Code was signed in already and ended without a link.
+    state.auth = { ...idle, phase: "succeeded" };
+    await render();
+    expect(tab.close).toHaveBeenCalled();
+  });
+
+  it("counts a sign-in the machine took, even before it can read the account", async () => {
+    await onSignInStep();
+    state.auth = { ...idle, phase: "succeeded" };
+    state.providers = [{ instanceId: "claudeAgent_work", auth: { status: "unknown" } }];
+    await render();
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("Signed in.");
+    expect(button("Sign in with Claude")).toBeUndefined();
+    // Signed out again later: the old result no longer counts.
+    state.providers = [signedOut("claudeAgent_work")];
+    await render();
+    expect(button("Sign in with Claude")).toBeDefined();
   });
 
   it("gives the reason and Try again when the sign-in fails", async () => {
