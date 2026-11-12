@@ -539,6 +539,8 @@ const main = async () => {
     const wizardButtons = [
       /^Use without an account$/u,
       /^Do not import projects$/u,
+      // The access step: keep what the machine has, so the checks after setup run as before.
+      /^Keep (Supervised|current access)$/u,
       /^Skip/u,
       /^Continue( without an agent)?$/u,
       /^(Finish|Done|Get started|Close)$/u,
