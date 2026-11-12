@@ -59,9 +59,12 @@ describe("release-macos.yml: one run cuts each version", () => {
 
   it("plans on a hosted runner before the release Mac is used", () => {
     expect(parsed.jobs.plan?.["runs-on"]).toBe("ubuntu-24.04");
-    expect(steps("plan").map((step) => step.run ?? "").join("\n")).toContain(
-      'python3 -B scripts/release/release_plan.py "${args[@]}"',
-    );
+    const planned = steps("plan")
+      .map((step) => step.run ?? "")
+      .join("\n");
+    expect(planned).toContain('python3 -B scripts/release/release_plan.py "${args[@]}"');
+    // release_plan.py takes its command first; without it every run would fail here.
+    expect(planned).toContain('args=(plan --repo "$GITHUB_REPOSITORY"');
     expect(parsed.jobs.release?.needs).toEqual(["plan"]);
     expect(parsed.jobs.release?.if).toBe("${{ needs.plan.outputs.action == 'release' }}");
   });

@@ -8,7 +8,8 @@
 #       released (.github/workflows/release-macos.yml, scripts/release/release_plan.py). Any number
 #       of these may be dispatched; one run cuts each version. NAME (a session or thread name) is
 #       shown in the run's title, so runs can be told apart. --wait stays until the run ends and
-#       exits with its result (a release takes about 25 minutes, longer behind others).
+#       exits with its result. A release takes about 25 minutes, longer behind others, so run
+#       --wait in the background.
 #   bash scripts/release/request-release.sh --dry-run
 #       Prints what a run dispatched now would decide. Dispatches nothing.
 #   bash scripts/release/request-release.sh --released COMMIT
@@ -33,7 +34,7 @@ while [ $# -gt 0 ]; do
     --released) [ $# -ge 2 ] || die "--released needs a commit"; MODE=released; COMMIT="$2"; shift ;;
     --wait) WAIT=1 ;;
     --dry-run) MODE=dry ;;
-    -h | --help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
@@ -41,23 +42,30 @@ done
 
 if [ "$MODE" = released ]; then
   [[ $COMMIT =~ ^[0-9a-f]{7,40}$ ]] || die "--released takes a commit sha"
-  # Newest first; the commit is in a release when that release's tag is not behind it.
-  tags="$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v1.?per_page=100" --jq '.[].ref' |
-    sed -n 's|^refs/tags/v\(1\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' | sort -t. -k1,1nr -k2,2nr -k3,3nr | head -12)"
-  found=""
-  for version in $tags; do
-    status="$(gh api "repos/$REPO/compare/v$version...$COMMIT" --jq .status 2> /dev/null)" ||
-      die "cannot compare $COMMIT with v$version on $REPO"
-    case "$status" in
-      behind | identical) found="$version" ;;
-      *) break ;;
-    esac
-  done
-  if [ -z "$found" ]; then
-    echo "$COMMIT is not in a release yet (newest: v$(printf '%s\n' "$tags" | head -1))"
+  # Oldest first. A release holds the commit when its tag is not behind it, and every release
+  # after the first one that does holds it too, so a binary search finds that first one.
+  tags=()
+  while IFS= read -r version; do tags+=("$version"); done < <(
+    gh api --paginate "repos/$REPO/git/matching-refs/tags/v1.?per_page=100" --jq '.[].ref' |
+      sed -n 's|^refs/tags/v\(1\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' | sort -t. -k1,1n -k2,2n -k3,3n
+  )
+  [ "${#tags[@]}" -gt 0 ] || die "cannot read the v1.x.y tags of $REPO"
+  holds() {
+    local status
+    status="$(gh api "repos/$REPO/compare/v$1...$COMMIT" --jq .status 2> /dev/null)" || return 1
+    [ "$status" = behind ] || [ "$status" = identical ]
+  }
+  low=0 high=$((${#tags[@]} - 1))
+  if ! holds "${tags[$high]}"; then
+    gh api "repos/$REPO/commits/$COMMIT" --jq .sha > /dev/null 2>&1 || die "cannot read $COMMIT on $REPO"
+    echo "$COMMIT is not in a release yet (newest: v${tags[$high]})"
     exit 2
   fi
-  echo "$COMMIT is released in v$found"
+  while [ "$low" -lt "$high" ]; do
+    middle=$(((low + high) / 2))
+    if holds "${tags[$middle]}"; then high=$middle; else low=$((middle + 1)); fi
+  done
+  echo "$COMMIT is released in v${tags[$low]}"
   exit 0
 fi
 
@@ -66,13 +74,16 @@ if [ "$MODE" = dry ]; then
 fi
 
 # A label unique to this dispatch, so its run can be found among others dispatched at the same time.
-label="${BY:-$(whoami)@$(hostname -s)} $(date -u +%H%M%S)-$RANDOM"
+# Plain characters only: the label goes into the run's title and into the filter that finds it.
+by="$(printf '%s' "${BY:-$(whoami)@$(hostname -s)}" | tr -cd 'A-Za-z0-9 ._@:/-' | cut -c1-60)"
+label="${by:-someone} $(date -u +%H%M%S)-$RANDOM"
 gh workflow run release-macos.yml -R "$REPO" --ref "$REF" -f requested_by="$label" > /dev/null
 run="" tries=0
 while [ -z "$run" ] && [ "$tries" -lt 10 ]; do
   sleep 2
   run="$(gh run list -R "$REPO" --workflow release-macos.yml --event workflow_dispatch --limit 30 \
-    --json databaseId,displayTitle --jq "[.[] | select(.displayTitle | endswith(\"$label\"))][0].databaseId // empty")"
+    --json databaseId,displayTitle --jq "[.[] | select(.displayTitle | endswith(\"$label\"))][0].databaseId // empty" \
+    2> /dev/null || true)"
   tries=$((tries + 1))
 done
 [ -n "$run" ] || die "dispatched, but the run did not show up in 20s; look for '$label' in: gh run list -R $REPO --workflow release-macos.yml"

@@ -106,7 +106,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          args=(--repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME" --version "$INPUT_VERSION")
+          args=(plan --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME" --version "$INPUT_VERSION")
           if [ "$INPUT_RESUME" = true ]; then args+=(--resume); fi
           python3 -B scripts/release/release_plan.py "${args[@]}"
 
@@ -307,10 +307,9 @@ jobs:
           if [ "$RESUMED" = true ]; then args+=(--resume); fi
           bash scripts/release/release.sh "${args[@]}"
           # Stopped on purpose: only a run that names this version with resume continues it.
-          if [ -n "$INPUT_STOP_AFTER" ]; then
-            python3 -B scripts/release/release_plan.py hold --version "$RELEASE_VERSION" \
-              --after "$INPUT_STOP_AFTER" --note "run $GITHUB_RUN_ID"
-          fi
+          # A run that went past the stop clears the mark.
+          python3 -B scripts/release/release_plan.py hold --version "$RELEASE_VERSION" \
+            --after "$INPUT_STOP_AFTER" --note "run $GITHUB_RUN_ID"
 
       - name: Upload logs and timings
         if: always()

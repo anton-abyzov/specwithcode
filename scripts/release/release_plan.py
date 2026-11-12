@@ -25,8 +25,10 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
+import time
 import uuid
 
 # The installer and updater accept only 1.x.y (release.sh POLICY_RE).
@@ -50,14 +52,14 @@ def plan(action, version='', resume=False, mode='', latest='', reason=''):
 
 def decide(requested, resume, tags, main_tree, latest_tree, latest_merged, conflict=0):
     """The run's plan. tags: released versions (1.x.y). latest_tree: the tree of the highest tag.
-    latest_merged: whether that release is on main (its tag is reachable from main, or its
-    release/<version> pull request merged). conflict: the number of its open pull request when
-    that one conflicts with main, else 0."""
+    latest_merged: False only when that release still owes main its merge (read_merged).
+    conflict: the number of its open pull request when that one conflicts with main, else 0."""
     released = sorted({tag for tag in tags if VERSION_RE.match(tag)}, key=key)
     latest = released[-1] if released else ''
     if requested:
         if not VERSION_RE.match(requested):
-            return plan('refuse', latest=latest, reason=f"version must look like 1.2.3, got '{requested}'")
+            return plan('refuse', latest=latest,
+                        reason=f'version must look like 1.2.3, got {requested[:40]!r}')
         if resume:
             return plan('release', requested, True, 'resume', latest,
                         f'continuing {requested} on the release Mac')
@@ -68,6 +70,10 @@ def decide(requested, resume, tags, main_tree, latest_tree, latest_merged, confl
         if latest and key(requested) < key(latest):
             return plan('refuse', latest=latest, reason=(
                 f'{requested} is below the newest release {latest}. Dispatch without a version.'))
+        if not latest_merged:
+            return plan('refuse', latest=latest, reason=(
+                f'v{latest} is published but not merged into main. Dispatch without a version '
+                f'to finish it first; {requested} would be cut from a main that lacks it.'))
         return plan('release', requested, False, 'version', latest, f'releasing {requested} as asked')
     if resume:
         return plan('refuse', latest=latest, reason='resume needs the version to continue')
@@ -109,22 +115,43 @@ def read_commit(repo, ref, run=gh):
 
 
 def read_merged(repo, branch, version, run=gh):
-    """Whether v<version> is on the branch: reachable from it, or its release pull request merged
-    (a squash merge leaves the tag unreachable)."""
+    """False only when v<version> still owes the branch its merge: the tag is not reachable from
+    the branch and its release/<version> pull request is open, or was never opened while the
+    release branch exists (publish made the tag, the merge stage did not run). A merged pull
+    request (a squash leaves the tag unreachable), one closed without merging (given up on
+    purpose) and a tag with no release branch (made by hand) owe nothing."""
     status = run('api', f'repos/{repo}/compare/{branch}...v{version}', '--jq', '.status').strip()
     if status in ('behind', 'identical'):
         return True
-    merged = run('pr', 'list', '-R', repo, '--head', f'release/{version}', '--state', 'merged',
-                 '--json', 'number', '--jq', 'length').strip()
-    return merged not in ('', '0')
+    states = run('pr', 'list', '-R', repo, '--head', f'release/{version}', '--state', 'all',
+                 '--json', 'state', '--jq', '[.[].state] | unique | join(" ")').split()
+    if 'MERGED' in states:
+        return True
+    if 'OPEN' in states:
+        return False
+    if 'CLOSED' in states:
+        return True
+    branches = run('api', f'repos/{repo}/git/matching-refs/heads/release/{version}',
+                   '--jq', '.[].ref').split()
+    return f'refs/heads/release/{version}' not in branches
 
 
-def read_conflict(repo, version, run=gh):
-    """The number of release/<version>'s open pull request when it conflicts with its base."""
-    number = run('pr', 'list', '-R', repo, '--head', f'release/{version}', '--state', 'open',
-                 '--json', 'number,mergeable', '--jq',
-                 '[.[] | select(.mergeable == "CONFLICTING")][0].number // 0').strip()
-    return int(number or 0)
+def read_conflict(repo, version, run=gh, pause=2.0, tries=5):
+    """The number of release/<version>'s open pull request when it conflicts with its base.
+    GitHub works mergeability out on demand and answers UNKNOWN meanwhile, so ask again a few
+    times; one that stays UNKNOWN is left to release.sh's merge stage."""
+    for attempt_number in range(tries):
+        found = run('pr', 'list', '-R', repo, '--head', f'release/{version}', '--state', 'open',
+                    '--json', 'number,mergeable', '--jq',
+                    '.[0] | if . == null then "" else "\\(.number) \\(.mergeable)" end').split()
+        if len(found) != 2:
+            return 0
+        if found[1] == 'CONFLICTING':
+            return int(found[0])
+        if found[1] != 'UNKNOWN' or attempt_number == tries - 1:
+            return 0
+        time.sleep(pause)
+    return 0
 
 
 def gather(repo, branch, requested, run=gh):
@@ -132,12 +159,14 @@ def gather(repo, branch, requested, run=gh):
     facts = {'tags': tags, 'main_sha': '', 'main_tree': '', 'latest_tree': '', 'latest_merged': True,
              'conflict': 0}
     released = sorted({tag for tag in tags if VERSION_RE.match(tag)}, key=key)
-    if requested or not released:
+    if not released or (requested and not VERSION_RE.match(requested)):
         return facts
     latest = released[-1]
+    facts['latest_merged'] = read_merged(repo, branch, latest, run)
+    if requested:
+        return facts
     facts['main_sha'], facts['main_tree'] = read_commit(repo, branch, run)
     facts['latest_tree'] = read_commit(repo, f'v{latest}', run)[1]
-    facts['latest_merged'] = read_merged(repo, branch, latest, run)
     if not facts['latest_merged']:
         facts['conflict'] = read_conflict(repo, latest, run)
     return facts
@@ -173,10 +202,15 @@ def attempt(version, resume, staging_root, trees, url, branch='main', run=git):
     person or session to decide, with resume."""
     stage = pathlib.Path(staging_root) / version
     held = stage / HELD
+    started = (stage / 'release.json').is_file()
+    if resume and not started:
+        return 'refuse', (
+            f'nothing of {version} is on this Mac to continue ({stage} has no release.json). If '
+            f'v{version} is published and only its merge is missing, merge release/{version} '
+            f'into {branch} by pull request, then dispatch again.')
     if resume:
-        held.unlink(missing_ok=True)
         return 'resume', f'continuing {version} as asked'
-    if not (stage / 'release.json').is_file():
+    if not started:
         return 'fresh', f'no earlier attempt of {version} on this Mac'
     if held.exists():
         return 'refuse', (f'{version} was stopped on purpose ({held.read_text().strip()}). '
@@ -188,7 +222,11 @@ def attempt(version, resume, staging_root, trees, url, branch='main', run=git):
     build = pathlib.Path(trees) / 'build'
     ref = f'refs/heads/release/{version}'
     try:
-        candidate = run(build, 'rev-parse', '--verify', '--quiet', f'{ref}^{{commit}}')
+        # release.sh takes the candidate from the build tree's HEAD; anywhere but on the
+        # release branch, it is not this code's to judge.
+        if run(build, 'symbolic-ref', '-q', 'HEAD') != ref:
+            return 'resume', f'the build tree is not on release/{version}; release.sh decides'
+        candidate = run(build, 'rev-parse', '--verify', '--quiet', 'HEAD^{commit}')
         run(build, 'fetch', '-q', url, branch)
         main = run(build, 'rev-parse', 'FETCH_HEAD')
         base = run(build, 'merge-base', main, candidate)
@@ -197,6 +235,9 @@ def attempt(version, resume, staging_root, trees, url, branch='main', run=git):
         return 'resume', f'could not compare {version} with {branch} ({error}); release.sh decides'
     fixed = [subject for subject in subjects if subject and subject != BUMP_SUBJECT.format(version=version)]
     if not fixed and main != base:
+        if not stop_server(stage, version):
+            return 'refuse', (f"the server suite of {version}'s earlier attempt is still running "
+                              f'and did not stop; stop it on the release Mac, then dispatch again')
         stage.rename(stage.with_name(f'.retired-{version}-{uuid.uuid4().hex}'))
         return 'fresh', (f'{branch} moved since the failed attempt of {version} was cut, and that '
                          f'attempt holds no fix of its own; starting {version} over from {branch}')
@@ -214,10 +255,40 @@ def attempt(version, resume, staging_root, trees, url, branch='main', run=git):
     return 'resume', f'continuing the earlier attempt of {version}: {why}'
 
 
+def stop_server(stage, version, wait=30):
+    """Stop the background server suite an earlier attempt left running (release.sh's
+    stop_stale_server), before its staging folder is retired: it would go on testing in the shared
+    test tree and write its results into the new attempt's folder. True when none is left."""
+    try:
+        pid = int((stage / 'server.pid').read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return True
+
+    def alive():
+        command = subprocess.run(['ps', '-o', 'command=', '-p', str(pid)], capture_output=True,
+                                 text=True, check=False).stdout
+        return f'--internal-server {version}' in command
+
+    if not alive():
+        return True
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    for _ in range(wait * 2):
+        if not alive():
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def hold(version, stage_name, staging_root, note=''):
-    """Mark a release stopped on purpose (stop_after), so only a run that names it continues it."""
+    """After a run that worked: mark a release stopped on purpose (stop_after), so only a run
+    that names it continues it, or clear the mark once a run went past the stop (no stage_name)."""
     stage = pathlib.Path(staging_root) / version
-    if (stage / 'release.json').is_file():
+    if not stage_name:
+        (stage / HELD).unlink(missing_ok=True)
+    elif (stage / 'release.json').is_file():
         (stage / HELD).write_text(f'after {stage_name}{", " + note if note else ""}\n', encoding='utf-8')
 
 
@@ -227,7 +298,8 @@ def write_output(pairs):
     output = os.environ.get('GITHUB_OUTPUT')
     if output:
         with open(output, 'a', encoding='utf-8') as handle:
-            handle.write(''.join(f'{name}={value}\n' for name, value in pairs))
+            # One line each: a value is text from a dispatch input at worst, never a second output.
+            handle.write(''.join(f"{name}={' '.join(str(value).split())}\n" for name, value in pairs))
 
 
 def announce(headline, refused):
@@ -269,7 +341,7 @@ def main(argv=None):
         command.add_argument('--resume', action='store_true')
     held = commands.add_parser('hold')
     held.add_argument('--version', required=True)
-    held.add_argument('--after', required=True)
+    held.add_argument('--after', default='')
     held.add_argument('--note', default='')
     args = parser.parse_args(argv)
     requested = args.version.strip()
@@ -280,7 +352,7 @@ def main(argv=None):
         emit(result, facts['main_sha'])
         return 1 if result['action'] == 'refuse' else 0
     if not VERSION_RE.match(requested):
-        print(f"::error::version must look like 1.2.3, got '{requested}'")
+        print(f'::error::version must look like 1.2.3, got {requested[:40]!r}')
         return 1
     if args.command == 'hold':
         hold(requested, args.after, default_staging(), args.note)
