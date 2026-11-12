@@ -822,6 +822,7 @@ import type { ThreadOrigin } from "./chat/ThreadMetaRow";
 import { ProjectedThreadMetaRow } from "./chat/ProjectedThreadMetaRow";
 import { useThreadMachine } from "./chat/threadMachine";
 import { MachineSendTargetContext, useMachineIdentity } from "../studio/machineIdentity";
+import { useClaimWindowMachine } from "../studio/windowMachine";
 import { isNestedSubagentThread } from "../studio/threadSubagents";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
 import {
@@ -5068,6 +5069,7 @@ function useChatViewState(props: ChatViewProps) {
     activeEnvironment?.environmentId ?? null,
     activeEnvironment?.label,
   );
+  useClaimWindowMachine(activeEnvironment?.environmentId ?? null);
   const composerSendTarget = useMemo(
     () =>
       // The machine this window belongs to, not "is it loopback": a phone's own machine

@@ -2,7 +2,7 @@
 // Then: node apps/web/tests/picker-calm/verify.mjs /absolute/report-dir
 // Always headless. Serves the fixture only; every other request is aborted. Fictional data.
 // Checks the calm picker (empty query, "carbon", "fast", a typo, signed-out Cursor), the
-// Models popover and a composer for two machines, in light and dark at 390px and desktop
+// Models popover, a composer for two machines and a window whose coordinator runs elsewhere, in light and dark at 390px and desktop
 // width; saves a screenshot of each and runs axe for contrast and accessible names.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
@@ -326,7 +326,7 @@ try {
         };
       });
       assert.notEqual(colors.coordinator, colors.thread, "both machines draw the same edge");
-      // The window's own machine tints its edge, always, without taking clicks.
+      // One bar along the top edge, in the color of the machine the view works on; no frame.
       const tint = await page.evaluate(() => {
         const node = document.querySelector("[data-machine-window-tint]");
         const style = getComputedStyle(node);
@@ -334,19 +334,33 @@ try {
           color: node.getAttribute("data-machine-color"),
           clicks: style.pointerEvents,
           shadow: style.boxShadow,
+          height: node.getBoundingClientRect().height,
+          top: node.getBoundingClientRect().top,
           hidden: node.getAttribute("aria-hidden"),
         };
       });
       assert.equal(tint.color, "violet");
       assert.equal(tint.clicks, "none");
       assert.equal(tint.hidden, "true");
-      assert.match(tint.shadow, /inset/, "the window tint draws nothing");
+      assert.equal(tint.shadow, "none", "the window edge draws a frame");
+      assert.equal(tint.height, 3);
+      assert.equal(tint.top, 0);
       assert.equal(colors.chip, "teal");
       assert.equal(
         await page.locator("[data-send-target]").getAttribute("aria-label"),
         "Send to M1",
       );
       await shot(`composer-machines-${tag}`);
+
+      // A window on M4 whose coordinator runs on M1: the top edge follows the coordinator.
+      await page.goto(`${origin}/?scene=window&theme=${theme}`);
+      await page.locator("[data-scene=window]").waitFor();
+      assert.equal(
+        await page.locator("[data-machine-window-tint]").getAttribute("data-machine-color"),
+        "teal",
+        "the window edge should show the coordinator's machine (M1), not the window's (M4)",
+      );
+      await shot(`window-edge-${tag}`);
     }
   }
   assert.deepEqual(errors, [], `page errors: ${errors.join("; ")}`);
