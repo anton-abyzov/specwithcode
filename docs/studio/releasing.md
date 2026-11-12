@@ -135,7 +135,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | quit-desktop    | quits `/Applications/SpecWithCode.app` (TERM to its own pid)                                                                                                                                                                                                                                                                                                       | until the desktop stage |
 | publish-private | checks the draft's `SHA256SUMS`, publishes the private release, checks the tag is the candidate                                                                                                                                                                                                                                                                    | once                    |
 | publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                                                                                                                                                                                                                                                               | once                    |
-| fleet-m4        | `fleet_rollout.py --only m4`: drains and holds M4 as Update now does, then a forced 15-minute request                                                                                                                                                                                                                                                              | once                    |
+| fleet-m4        | `fleet_rollout.py --only m4`: with M4's pause setting on, drains and holds M4 as Update now does, then a forced 15-minute request; off, holds M4 only when idle                                                                                                                                                                                                    | once                    |
 | desktop         | record grants, rollback copy, swap the app in `/Applications`, check its signature, grants and version, open it                                                                                                                                                                                                                                                    | once                    |
 | fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together over SpecWithCode Connect, polled the same way; their desktop apps only with `RELEASE_FLEET_SSH=1`                                                                                                                                                                                                           | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                                                                                                                                                                                                                                                                   | once                    |
@@ -235,8 +235,8 @@ A worker whose app could not be updated fails fleet-workers once every service i
 retried ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)). When publish-public's push failed after `publish.mjs`
 tagged, `--resume` drops the tag left in the public clone, since the remote has none.
 
-Every host ends `fleet_rollout.py` with a row: `installed`, `already-installed`, or `not-updated` with
-a reason. M4, M1 and M3 are required: when one of them is unreachable, skipped or failed, the run
+Every host ends `fleet_rollout.py` with a row: `installed`, `already-installed`, `deferred` (busy
+with its pause setting off, see below) or `not-updated` with a reason. M4, M1 and M3 are required: when one of them is unreachable, skipped or failed, the run
 prints `"result": "partial"`, one `fleet_rollout: not updated: <host> (required): ...` line per host,
 and exits 1, so fleet-workers fails instead of reporting success with M3 left behind. `--optional m3`
 relaxes one for a run. Other machines (ministorm, a Connect-only Mac) may end `not-updated` without
@@ -248,6 +248,35 @@ Update now or the hourly check installed it, it starts `fleet_rollout.py --versi
 from that release's helpers (log: `updates/reconcile/<v>/reconcile.log`), so M1 and M3 are asked
 even when nobody ran the workers stage. A reconcile gives up at once while another rollout covers
 the workers, and `STUDIO_FLEET_RECONCILE=0` turns it off.
+
+A machine decides for itself whether an update may pause its running work: **Pause running work for
+updates**, off by default (`pauseWorkForUpdates` in its server settings, `docs/user/updating.md`). The
+rollout obeys it and never overrides it from the command line.
+
+M4: the rollout asks M4's own service for the setting (`service prepare-update --json`, which stops
+nothing). On, or a service older than the setting (it does not report it): M4 is drained and held as
+described above. Off: M4 is held only when idle (`--hold --if-idle`), and nothing is interrupted. No
+answer from the service: M4 is also held only when idle, because nothing is paused on a guess. That is
+not the owner's choice, so if M4 never installs, it ends as a normal failure.
+
+Workers: each worker reports the setting in its status over Connect. A worker with it off is never
+sent a forced request, also with `--worker-force`. A Linux boot service applies the setting itself:
+after its 30-minute wait for quiet it gives up as busy (off), or stops its work, installs and
+continues the turns (on).
+
+Every host keeps its full deadline: 115 minutes for M4, 60 for a worker. A host with the setting off
+that is still busy with running work after 30 minutes, with nothing held or started, ends `deferred`
+with the reason. A host that fails for any other reason (its updater errored, it is unreachable, it
+never offered the version) still ends `not-updated` and fails the run.
+
+A deferred worker does not fail the run, required or not. When deferred hosts are all that is left,
+the summary prints `"result": "deferred"` and the run exits 0. The worker's row carries a skipped
+desktop app step. A deferred M4 exits 1, because the stages after it need M4 on the version; its row
+says `deferred`.
+
+A deferred Mac installs by itself once it is quiet, because its update agent keeps trying. A deferred
+Linux machine installs with the next rollout or **Update now**. Report a deferred machine with its
+version, never as a blocker or a question.
 
 ### Connect first, SSH on request
 
@@ -330,7 +359,10 @@ never asks M4 for a forced install it could not hold: an unheld request stops no
 leaves `update.py --reap` nothing it may stop, so a busy M4 waits for quiet and fails its guarded
 checks as new work starts. When M4's installed release predates the command (it first shipped in
 1.0.45), the rollout and its dry run say so before contacting any host, and a service that does not
-answer, refuses or does not hold stops the rollout before the request. Then choose **Update now** in
+answer, refuses or does not hold stops the rollout before the request. This applies to the drain
+and hold, which M4 gets when its **Pause running work for updates** setting is on or its service is
+older than the setting; with it off, or when the service does not report it, M4 is held only when
+idle (see below). Then choose **Update now** in
 the SpecWithCode app on M4, which drains and holds through the same `prepareServiceUpdate` call and
 writes the forced request, wait until `fleet_rollout.py --version <v> --only m4` reports M4
 installed (it joins an install of that version already under way, and one Update now asks for while it
@@ -779,7 +811,7 @@ After building, run `STUDIO_TEST_REQUIRE_BUILTIN_GOOGLE=1 node scripts/studio-go
 
 ## Idle-only fleet rollout
 
-For a rollout that must preserve running turns, use `STUDIO_FLEET_WAIT_FOR_IDLE=1 bash scripts/release/release.sh ship studio` from the umbrella, or pass `--wait-for-idle` to `fleet_rollout.py`. M4 then uses the installed service's `--hold --if-idle` admission fence. A busy reply waits; it never falls back to `--stop-work` or sends an unheld forced request. An old CLI without this capability refuses safely. The existing deadline still bounds the wait. Other machines keep their normal quiet-install policy; their configured automatic-pause policy is independent of this option.
+For a rollout that must preserve running turns, use `STUDIO_FLEET_WAIT_FOR_IDLE=1 bash scripts/release/release.sh ship studio` from the umbrella, or pass `--wait-for-idle` to `fleet_rollout.py`. M4 then uses the installed service's `--hold --if-idle` admission fence. A busy reply waits; it never falls back to `--stop-work` or sends an unheld forced request. An old CLI without this capability refuses safely. The existing deadline still bounds the wait. Other machines keep their normal quiet-install policy; their configured automatic-pause policy is independent of this option. A machine with **Pause running work for updates** off gets this idle-only hold without the flag.
 
 If an idle-only rollout fails, it cancels only its own install request. It does not use an unconditional hold release, which could release a different caller's replacement hold. The service settles the cancelled request or expires its two-minute idle lease when no request arrived. Explicit interactive Update now retains its existing interruption confirmation.
 

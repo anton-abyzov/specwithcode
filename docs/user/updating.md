@@ -28,6 +28,40 @@ interrupted, and threads without saved provider resume state need a new message.
 If you previously enabled continuation for updates, enable this setting once
 to allow recovery without a connected client.
 
+### When a machine is busy
+
+An update that installs by itself never interrupts running work unless you allow it.
+**Pause running work for updates** is off by default on every machine. With it off, an
+automatic update waits until that machine has no running task, queued message or open
+terminal:
+
+- A Mac keeps waiting however long that takes. Its update agent tries again every 10
+  minutes and installs once the machine is quiet.
+- A Linux machine waits up to 30 minutes. If it is still busy then, it stays on its version
+  until the next update request: the next release rollout, or **Update now**.
+
+Nothing asks you about it.
+
+An open question or approval does not hold an update back, with the setting on or off. It
+is closed after about 2 minutes and asked again after the restart.
+
+Turn the setting on per machine, on that machine's update card in **Settings → General**
+(this machine) or **Settings → Machines** (any machine you are connected to). Each machine
+keeps its own value. With it on:
+
+- A Mac waits the time set in **Pause running work after** (10, 30 or 60 minutes), then
+  pauses the running turns, installs, and the turns continue where they left off. It pauses
+  at most once per version per hour, and **Later** in the sidebar waits another hour.
+- A Linux machine waits 30 minutes, then does the same.
+- A folder copy to or from another machine is never interrupted; the update waits for it.
+
+The setting has no effect while **Continue threads after restarts** is off on that machine,
+because paused turns would not continue.
+
+**Update now**, **Restart now** and `specweave-studio update` are your own choice and work
+either way. A fleet update that asks a machine to stop its work for the update is refused
+by a machine that has the setting off, and that machine is reported as left for later.
+
 Updates from the previous orchestration system preserve conversation transcripts but cannot carry
 every kind of runtime history forward. Read [Threads from older SpecWithCode versions](./thread-migration.md)
 before continuing an important older thread.
