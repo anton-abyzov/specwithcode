@@ -75,6 +75,7 @@ import {
   refuseRevoked,
   workGrantOf,
 } from "../../workGrantAccess.ts";
+import { receiveAgentCopy } from "../../../fleet/folderTransfer/agentCopy.ts";
 import { addProjectToMachine } from "./addToMachine.ts";
 import {
   launchRemote,
@@ -1080,6 +1081,27 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   studio_project_add_to_machine: McpToolAccess.writesEnvironment((input) =>
     addProjectToMachine(input),
+  ),
+  studio_folder_copy_receive: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      // Only the machine copying its project folder here, under a grant covering
+      // every project here (as for a clone), drives this side; its agents may not.
+      const work = yield* workGrantOf(yield* readCaller());
+      if (work === undefined || work.origin !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Only another SpecWithCode machine copies a project folder here.",
+        });
+      yield* refuseRevoked(work);
+      if (work.grant.projects.kind !== "all")
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: `This machine lets ${work.coordinatorLabel}'s work use only some of its projects, so it cannot add projects here. Ask the user here, or widen what ${work.coordinatorLabel} may use in Settings > Machines > Who can run work here.`,
+        });
+      return yield* receiveAgentCopy(input, {
+        environmentId: work.grant.coordinatorEnvironmentId,
+      });
+    }),
   ),
   studio_project_link_accept: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {

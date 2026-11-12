@@ -17,7 +17,8 @@ import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 
 /**
  * The toolkit records every tool call's raw parameters on its span before the
- * call is decoded or allowed, and for this tool those are a file's bytes.
+ * call is decoded or allowed: for a file chunk those are a file's bytes, for a
+ * folder copy step a transfer token.
  */
 export const withoutFileBytes = (tracer: Tracer.Tracer): Tracer.Tracer =>
   Tracer.make({
@@ -28,9 +29,14 @@ export const withoutFileBytes = (tracer: Tracer.Tracer): Tracer.Tracer =>
       span.attribute = (key, value) =>
         attribute(
           key,
-          key === "parameters" && span.attributes.get("tool") === "studio_file_chunk"
-            ? "[file bytes]"
-            : value,
+          key !== "parameters"
+            ? value
+            : span.attributes.get("tool") === "studio_file_chunk"
+              ? "[file bytes]"
+              : // A folder copy step carries the source's transfer token.
+                span.attributes.get("tool") === "studio_folder_copy_receive"
+                ? "[folder copy step]"
+                : value,
         );
       return span;
     },

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - temporary folders stand in for both machines.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";

@@ -19,6 +19,7 @@ import {
   halfLinkedRemoteCopies,
   unlinkedRemoteCopies,
 } from "../../../fleet/remoteWorkerMatching.ts";
+import { runAgentCopy } from "../../../fleet/folderTransfer/agentCopy.ts";
 import { randomUuidV4 } from "../../../orchestration-v2/RandomUuid.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -91,7 +92,7 @@ export const addToMachineHint = (
   machine: Pick<OrchestratorMcpMachineRef, "label">,
   projectId: ProjectId,
 ) =>
-  `To put this project there, call studio_project_add_to_machine {machine:"${machine.label}", projectId:"${projectId}"}, then launch again with machine:"${machine.label}" and the machineProjectId it returns.`;
+  `To put this project there, call studio_project_add_to_machine {machine:"${machine.label}", projectId:"${projectId}"}: it clones the repository there, or copies the project folder when it has no Git remote. Then launch again with machine:"${machine.label}" and the machineProjectId it returns.`;
 
 const readCloneUrl = Effect.fn("mcp.addToMachine.readCloneUrl")(function* (projectId: ProjectId) {
   const projects = yield* ProjectService.ProjectService;
@@ -110,12 +111,19 @@ const readCloneUrl = Effect.fn("mcp.addToMachine.readCloneUrl")(function* (proje
         }),
       ),
     ));
-  if (identity == null)
-    return yield* invalid(
-      `Project "${project.title}" has no git remote another machine could clone. Push it to a remote first, or pass cloneUrl.`,
-    );
-  return { project, cloneUrl: cloneUrlOf(identity) };
+  // No remote another machine could clone (or no Git at all): the folder is copied instead.
+  return { project, cloneUrl: identity == null ? null : cloneUrlOf(identity) };
 });
+
+/** What the agent does about the secret files a folder copy left here. */
+const secretsNext = (
+  machineLabel: string,
+  workspaceRoot: string,
+  secrets: ReadonlyArray<string>,
+) =>
+  secrets.length === 0
+    ? ""
+    : ` Secret files stayed here: ${secrets.join(", ")}. Send each one the work there needs with studio_file_transfer {machine:"${machineLabel}", direction:"send", path, destinationPath} (under ${workspaceRoot} for a file in the project); the owner approves each one.`;
 
 /**
  * Clones a repository on another machine with that machine's own credentials
@@ -182,13 +190,20 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
         projectId: existing.copy.id,
         title: existing.copy.title,
         workspaceRoot: existing.copy.workspaceRoot,
-        remoteUrl: source.cloneUrl,
+        ...(source.cloneUrl === null ? {} : { remoteUrl: source.cloneUrl }),
         ...(existing.kind === "linked"
           ? { linked: true, existingCopy: true }
           : { linked: false, existingCopy: true, linkProblem: existing.problem }),
         next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${existing.copy.id}"}.`,
       };
   }
+  if (source !== undefined && source.cloneUrl === null)
+    return yield* copyProjectFolder({
+      project: source.project,
+      machine,
+      destinationPath: input.destinationPath ?? destinationFor(source.project.workspaceRoot),
+      branch: input.branch,
+    });
   const cloneUrl = source?.cloneUrl ?? input.cloneUrl!;
   const destinationPath =
     input.destinationPath ??
@@ -281,6 +296,49 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
         ? { linked: true }
         : { linked: false, linkProblem: link.problem }),
     next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${created.id}"${strategy}}.`,
+  };
+});
+
+/**
+ * A project with no Git remote (or no Git at all) goes there as a folder copy: the
+ * same engine as Handoff > Copy files, into a folder that does not exist yet there,
+ * without secrets or rebuildable folders, then linked as a member of this project.
+ */
+const copyProjectFolder = Effect.fn("mcp.addToMachine.copyProjectFolder")(function* (input: {
+  readonly project: Project;
+  readonly machine: OrchestratorMcpMachineRef;
+  readonly destinationPath: string;
+  readonly branch: string | undefined;
+}) {
+  const remote = yield* RemoteWorkers.RemoteWorkers;
+  const { machine } = input;
+  const copied = yield* runAgentCopy({
+    projectId: input.project.id,
+    workspaceRoot: input.project.workspaceRoot,
+    machine,
+    targetFolder: input.destinationPath,
+    receive: (args, timeoutMs) =>
+      remote.proxy({
+        machine,
+        tool: "studio_folder_copy_receive",
+        arguments: args as unknown as Record<string, unknown>,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      }),
+  });
+  const strategy =
+    input.branch === undefined
+      ? ""
+      : `, workspaceStrategy:{type:"worktree",baseRef:"${input.branch}",branch:"<new branch>",startFromOrigin:false}`;
+  return {
+    machine,
+    projectId: copied.projectId,
+    title: input.project.title,
+    workspaceRoot: copied.workspaceRoot,
+    copied: true,
+    leftOut: copied.leftOut,
+    ...(input.branch === undefined ? {} : { branch: input.branch }),
+    ...(copied.linked ? { linked: true } : { linked: false, linkProblem: copied.linkProblem }),
+    next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${copied.projectId}"${strategy}}.${secretsNext(machine.label, copied.workspaceRoot, copied.leftOut.secretFiles)}`,
   };
 });
 

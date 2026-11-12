@@ -35,8 +35,13 @@ import {
   OrchestratorMcpModelPreferenceInput,
   OrchestratorMcpModelPreferenceResult,
 } from "@specweave-studio/contracts";
+import {
+  AgentCopyReceiveInput,
+  AgentCopyReceiveResult,
+} from "../../../fleet/folderTransfer/agentCopy.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
@@ -169,7 +174,7 @@ const ProjectCloneTool = Tool.make("studio_project_clone", {
 const ProjectAddToMachineTool = Tool.make("studio_project_add_to_machine", {
   ...shared,
   description:
-    "Put a repository on another machine in the owner's fleet and register it there as a project, so studio_thread_launch can run work on that machine. Pass projectId to copy a project from here (its fork's clone URL is used), or cloneUrl for any repository. The other machine clones with its own git credentials and needs a worker grant that covers all of its projects; otherwise it refuses and the user widens the grant there. Returns the project's id on that machine: launch with machine and machineProjectId set to it. For a branch, launch with workspaceStrategy {type:\"worktree\",baseRef:branch,startFromOrigin:true}. Only the repository's tracked files arrive; ignored files such as .env stay here, so send any it needs first with studio_file_transfer.",
+    "Put a project on another machine in the owner's fleet and register it there, linked to the project here, so studio_thread_launch can run work on that machine. Pass projectId to put a project from here there, or cloneUrl for any repository. A project with a Git remote is cloned there (its fork's clone URL is used) with that machine's own git credentials; only the repository's tracked files arrive, so ignored files such as .env stay here. A project with no Git remote, or one that is not a Git repository, is copied there as a folder instead, into a folder that must not exist yet (or be empty): everything but secret files and rebuildable folders (dependencies, build output); the answer's leftOut lists them. Either way, send any secret file the work needs with studio_file_transfer, which asks the owner. That machine needs a worker grant that covers all of its projects; otherwise it refuses and the user widens the grant there. Returns the project's id on that machine: launch with machine and machineProjectId set to it. For a branch of a cloned project, launch with workspaceStrategy {type:\"worktree\",baseRef:branch,startFromOrigin:true}.",
   parameters: Schema.Struct({
     machine: OrchestratorMcpMachineTarget.annotate({
       description:
@@ -178,7 +183,7 @@ const ProjectAddToMachineTool = Tool.make("studio_project_add_to_machine", {
     projectId: Schema.optional(
       ProjectId.annotate({
         description:
-          "A project on this machine whose repository to clone there. Its origin remote (the fork, when it is one) is cloned. Not with cloneUrl.",
+          "A project on this machine to put there. Its origin remote (the fork, when it is one) is cloned; without a remote, its folder is copied. Not with cloneUrl.",
       }),
     ),
     cloneUrl: Schema.optional(
@@ -213,7 +218,29 @@ const ProjectAddToMachineTool = Tool.make("studio_project_add_to_machine", {
     }),
     title: Schema.String,
     workspaceRoot: Schema.String,
-    remoteUrl: Schema.String,
+    remoteUrl: Schema.optional(
+      Schema.String.annotate({ description: "The URL that machine cloned; absent for a copy." }),
+    ),
+    copied: Schema.optional(
+      Schema.Boolean.annotate({
+        description: "True when the project folder was copied there because it has no Git remote.",
+      }),
+    ),
+    leftOut: Schema.optional(
+      Schema.Struct({
+        files: Schema.Number.annotate({
+          description: "Files the copy left here: secrets plus counted rebuildable files.",
+        }),
+        secretFiles: Schema.Array(Schema.String).annotate({
+          description:
+            "Secret files that stayed here. Send each one the work needs with studio_file_transfer.",
+        }),
+        rebuildableFolders: Schema.Number.annotate({
+          description: "Dependency and build-output folders left out; set them up again there.",
+        }),
+        rebuildableFolderPaths: Schema.optional(Schema.Array(Schema.String)),
+      }),
+    ),
     branch: Schema.optional(Schema.String),
     linked: Schema.optional(
       Schema.Boolean.annotate({
@@ -242,6 +269,14 @@ const ProjectLinkAcceptTool = Tool.make("studio_project_link_accept", {
   parameters: ProjectLinkAcceptInput,
   success: ProjectLinkAcceptResult,
   dependencies: [...shared.dependencies, ProjectLink.ProjectLink],
+}).annotate(Tool.Destructive, true);
+const FolderCopyReceiveTool = Tool.make("studio_folder_copy_receive", {
+  ...shared,
+  description:
+    "Internal, between SpecWithCode machines. When studio_project_add_to_machine copies a project folder here, the machine it comes from runs this machine's side of the copy, one step per call, and links the copy to its project. Agents never call this.",
+  parameters: AgentCopyReceiveInput,
+  success: AgentCopyReceiveResult,
+  dependencies: [...shared.dependencies, ProjectLink.ProjectLink, FileSystem.FileSystem, Path.Path],
 }).annotate(Tool.Destructive, true);
 const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
@@ -518,6 +553,7 @@ export const ProjectToolkit = Toolkit.make(
   ProjectCloneTool,
   ProjectAddToMachineTool,
   ProjectLinkAcceptTool,
+  FolderCopyReceiveTool,
   RouteTargetsTool,
   ProjectRouteTool,
   ModelPreferenceTool,
