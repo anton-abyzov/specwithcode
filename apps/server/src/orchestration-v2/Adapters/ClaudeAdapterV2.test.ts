@@ -753,10 +753,13 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       type: "http",
       url: "http://127.0.0.1:43123/mcp",
       headers: {
-        Authorization: "Bearer secret-claude-token",
+        Authorization: "${SPECWITHCODE_STUDIO_MCP_AUTHORIZATION}",
       },
       timeout: ClaudeAdapterV2.CLAUDE_STUDIO_MCP_TOOL_TIMEOUT_MS,
     },
+  } as const;
+  const STUDIO_MCP_ENVIRONMENT = {
+    SPECWITHCODE_STUDIO_MCP_AUTHORIZATION: "Bearer secret-claude-token",
   } as const;
 
   const withMcpSession = (threadId: ThreadId, run: () => void) => {
@@ -806,6 +809,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       assert.deepEqual(overrides, {
         allowedTools: [ClaudeAdapterV2.CLAUDE_STUDIO_MCP_TOOL_WILDCARD],
         mcpServers: STUDIO_MCP_SERVERS,
+        mcpEnvironment: STUDIO_MCP_ENVIRONMENT,
       });
     });
   });
@@ -822,6 +826,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       assert.deepEqual(overrides, {
         allowedTools: ["Read", "mcp__studio-code__*"],
         mcpServers: STUDIO_MCP_SERVERS,
+        mcpEnvironment: STUDIO_MCP_ENVIRONMENT,
       });
     });
   });
@@ -841,6 +846,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
           ...ClaudeAdapterV2.CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS,
         ],
         mcpServers: STUDIO_MCP_SERVERS,
+        mcpEnvironment: STUDIO_MCP_ENVIRONMENT,
       });
       assert.isFalse(
         overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_STUDIO_MCP_TOOL_WILDCARD),
@@ -924,6 +930,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
         ClaudeAdapterV2.claudeMcpQueryOverrides({ threadId, readOnlySandbox: false }),
       );
       assert.notEqual(rotatedKey, initialKey);
+      assert.notInclude(rotatedKey, "rotated-claude-token");
+      assert.notInclude(initialKey, "secret-claude-token");
     });
   });
 
@@ -981,10 +989,13 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
             type: "http",
             url: "http://127.0.0.1:43123/mcp",
             headers: {
-              Authorization: "Bearer secret-claude-token",
+              Authorization: "${SPECWITHCODE_STUDIO_MCP_AUTHORIZATION}",
             },
             timeout: ClaudeAdapterV2.CLAUDE_STUDIO_MCP_TOOL_TIMEOUT_MS,
           },
+        },
+        mcpEnvironment: {
+          SPECWITHCODE_STUDIO_MCP_AUTHORIZATION: "Bearer secret-claude-token",
         },
       });
 
@@ -1010,6 +1021,13 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
       assert.equal(logged.hasMcpServers, true);
       assert.notInclude(JSON.stringify(logged), "secret-claude-token");
+      // The SDK turns mcpServers into a --mcp-config argument that ps shows;
+      // the credential travels only in Claude Code's environment.
+      assert.notInclude(JSON.stringify(options.mcpServers), "secret-claude-token");
+      assert.equal(
+        options.env?.SPECWITHCODE_STUDIO_MCP_AUTHORIZATION,
+        "Bearer secret-claude-token",
+      );
     } finally {
       McpProviderSession.clearMcpProviderSession(threadId);
     }
@@ -1028,13 +1046,11 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       browserToolsAvailable: true,
     });
     const authorization = (providerInstanceId: ProviderInstanceId) =>
-      (
-        ClaudeAdapterV2.claudeMcpQueryOverrides({
-          threadId,
-          providerInstanceId,
-          readOnlySandbox: false,
-        }).mcpServers?.["studio-code"] as { readonly headers?: Record<string, string> } | undefined
-      )?.headers?.Authorization;
+      ClaudeAdapterV2.claudeMcpQueryOverrides({
+        threadId,
+        providerInstanceId,
+        readOnlySandbox: false,
+      }).mcpEnvironment?.SPECWITHCODE_STUDIO_MCP_AUTHORIZATION;
     try {
       McpProviderSession.setMcpProviderSession(config(claude, "claude-token"));
       // A routine or a limit switch ran the thread on Copilot meanwhile.

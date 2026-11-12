@@ -62,6 +62,93 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       expect(yield* Effect.flip(store.read)).toBe(failure);
     }),
   );
+
+  // Two renderers of one desktop app share one stored catalog. A store that
+  // writes back the copy it loaded earlier erases what the other one saved,
+  // such as its Connect token, and that renderer signs in again.
+  it.effect("keeps another store's saves when two stores share one catalog", () =>
+    Effect.gen(function* () {
+      let stored: string | null = null;
+      const backend: ConnectionStorage.CatalogBackend = {
+        read: Effect.sync(() => stored),
+        write: (raw) =>
+          Effect.sync(() => {
+            stored = raw;
+          }),
+      };
+      const first = yield* ConnectionStorage.makeCatalogStore(backend);
+      const second = yield* ConnectionStorage.makeCatalogStore(backend);
+      // Both stores load before either one writes.
+      yield* first.read;
+      yield* second.read;
+
+      yield* first.update((document) => ({
+        ...document,
+        disabledEnvironmentIds: [EnvironmentId.make("env-first")],
+      }));
+      yield* second.update((document) => ({
+        ...document,
+        disabledEnvironmentIds: [
+          ...document.disabledEnvironmentIds,
+          EnvironmentId.make("env-second"),
+        ],
+      }));
+
+      expect(decodeCatalog(stored!).disabledEnvironmentIds).toEqual(["env-first", "env-second"]);
+      expect((yield* first.read).disabledEnvironmentIds).toEqual(["env-first", "env-second"]);
+    }),
+  );
+
+  it.live("serializes updates through the cross-renderer lock when there is one", () =>
+    Effect.gen(function* () {
+      const held: string[] = [];
+      let tail = Promise.resolve();
+      vi.stubGlobal("navigator", {
+        locks: {
+          request: (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+            const run = tail.then(() => {
+              held.push(name);
+              return callback();
+            });
+            tail = run.then(
+              () => undefined,
+              () => undefined,
+            );
+            return run;
+          },
+        },
+      });
+      let stored: string | null = null;
+      const backend: ConnectionStorage.CatalogBackend = {
+        read: Effect.sync(() => stored),
+        // A slow write: without the shared lock both updates read the empty catalog.
+        write: (raw) =>
+          Effect.sleep("5 millis").pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                stored = raw;
+              }),
+            ),
+          ),
+      };
+      const first = yield* ConnectionStorage.makeCatalogStore(backend);
+      const second = yield* ConnectionStorage.makeCatalogStore(backend);
+      const add = (id: string) => (document: typeof emptyCatalog | ConnectionCatalogDocument) => ({
+        ...document,
+        disabledEnvironmentIds: [...document.disabledEnvironmentIds, EnvironmentId.make(id)],
+      });
+
+      yield* Effect.all([first.update(add("env-a")), second.update(add("env-b"))], {
+        concurrency: "unbounded",
+      });
+
+      expect([...decodeCatalog(stored!).disabledEnvironmentIds].toSorted()).toEqual([
+        "env-a",
+        "env-b",
+      ]);
+      expect(held).toContain("studio:connection-catalog");
+    }),
+  );
 });
 
 const fixedHandle = (database: IDBDatabase) => ({

@@ -5,6 +5,7 @@ import {
 } from "../../project/workflowCapabilities.ts";
 import { nativeChildTerminalReceipt } from "../NativeChildTerminalReceipt.ts";
 import { stringifyJson } from "../../json.ts";
+import { sha256 } from "../../nodeCrypto.ts";
 import { makeProjectContextHooks } from "../../project/ProjectContextHooks.ts";
 import { makeSubagentLaunchHooks } from "./ClaudeSubagentLaunchHook.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -1001,6 +1002,8 @@ export function makeClaudeQueryOptions(input: {
   readonly claudeInChromeRefused?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** Secrets the MCP config names as `${VAR}`; they reach Claude only through its environment. */
+  readonly mcpEnvironment?: Readonly<Record<string, string>>;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1127,11 +1130,14 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    env: withHeadlessBrowserEnvironment(
-      withMainThreadPromptCache(
-        withInheritedSubagentModel(workflowPolicy.environment, compiledSelection.apiModelId),
+    env: {
+      ...withHeadlessBrowserEnvironment(
+        withMainThreadPromptCache(
+          withInheritedSubagentModel(workflowPolicy.environment, compiledSelection.apiModelId),
+        ),
       ),
-    ),
+      ...input.mcpEnvironment,
+    },
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
@@ -1178,6 +1184,13 @@ export const CLAUDE_INTERRUPT_ACK_TIMEOUT = "10 seconds";
 
 /** The name SpecWithCode's MCP server is attached under in every Claude query. */
 const STUDIO_MCP_SERVER_NAME = "studio-code";
+/**
+ * The SDK passes `mcpServers` to Claude Code as a `--mcp-config` argument,
+ * which `ps` and `systemctl status` show to anyone on the machine. The header
+ * names this variable instead, and Claude Code expands it from its own
+ * environment, which only the same user can read.
+ */
+export const CLAUDE_STUDIO_MCP_AUTHORIZATION_ENV = "SPECWITHCODE_STUDIO_MCP_AUTHORIZATION";
 
 export const CLAUDE_STUDIO_MCP_TOOL_WILDCARD = "mcp__studio-code__*";
 
@@ -1209,6 +1222,7 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly mcpEnvironment?: Readonly<Record<string, string>>;
 } {
   const session = McpProviderSession.readMcpProviderSession(
     input.threadId,
@@ -1227,11 +1241,12 @@ export function claudeMcpQueryOverrides(input: {
         type: "http",
         url: session.endpoint,
         headers: {
-          Authorization: session.authorizationHeader,
+          Authorization: `\${${CLAUDE_STUDIO_MCP_AUTHORIZATION_ENV}}`,
         },
         timeout: CLAUDE_STUDIO_MCP_TOOL_TIMEOUT_MS,
       },
     },
+    mcpEnvironment: { [CLAUDE_STUDIO_MCP_AUTHORIZATION_ENV]: session.authorizationHeader },
   };
 }
 
@@ -1879,6 +1894,7 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+    readonly mcpEnvironment?: Readonly<Record<string, string>>;
   },
   context?: {
     readonly agentInstructions?: string | undefined;
@@ -1902,6 +1918,12 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    // A new credential needs a new process, since the old one carries the
+    // old value in its environment; the key holds only a digest of it.
+    mcpCredential:
+      mcpOverrides.mcpEnvironment === undefined
+        ? undefined
+        : sha256([stringifyJson(mcpOverrides.mcpEnvironment)], "hex"),
   });
 }
 

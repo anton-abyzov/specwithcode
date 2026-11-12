@@ -26,12 +26,17 @@ import {
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
 } from "@specweave-studio/client-runtime/connection";
-import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ServerConfig,
+  ThreadId,
+  VcsListRefsResult,
+} from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -437,17 +442,55 @@ interface CatalogStore {
   ) => Effect.Effect<void, ConnectionTransientError>;
 }
 
+const CATALOG_LOCK_NAME = "studio:connection-catalog";
+
+interface CrossContextLocks {
+  readonly request: (
+    name: string,
+    options: { readonly signal: AbortSignal },
+    callback: () => Promise<unknown>,
+  ) => Promise<unknown>;
+}
+
+function crossContextLocks(): CrossContextLocks | undefined {
+  const locks = (globalThis.navigator as { locks?: CrossContextLocks } | undefined)?.locks;
+  return typeof locks?.request === "function" ? locks : undefined;
+}
+
+/**
+ * Holds the Web Lock every renderer and tab of this origin shares, when the
+ * runtime has one, around `effect`.
+ */
+function withCrossContextLock<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> {
+  return Effect.suspend(() => {
+    const locks = crossContextLocks();
+    if (locks === undefined) return effect;
+    // The catalog effects need no services, so they can run inside the lock's callback.
+    return Effect.flatten(
+      Effect.promise(
+        (signal) =>
+          locks.request(CATALOG_LOCK_NAME, { signal }, () =>
+            Effect.runPromiseExit(effect),
+          ) as Promise<Exit.Exit<A, E>>,
+      ),
+    );
+  });
+}
+
+/**
+ * Every renderer and tab shares one stored catalog, so nothing is cached:
+ * each read and each read-modify-write loads the stored document inside the
+ * lock. A cached copy written back whole would erase what another renderer
+ * saved, such as its Connect token, and that renderer would sign in again.
+ */
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
 ) {
-  const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
-  const lock = yield* Semaphore.make(1);
+  const localLock = yield* Semaphore.make(1);
+  const locked = <A, E>(effect: Effect.Effect<A, E>) =>
+    localLock.withPermits(1)(withCrossContextLock(effect));
 
   const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
-    const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
-      return cached.value;
-    }
     const raw = yield* backend.read;
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
     if (raw !== null && raw.trim() !== "") {
@@ -479,18 +522,16 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
         ),
       );
     }
-    yield* Ref.set(state, Option.some(catalog));
     return catalog;
   });
 
-  const read = lock.withPermits(1)(loadUnlocked());
+  const read = locked(loadUnlocked());
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
-      yield* lock.withPermits(1)(
+      yield* locked(
         Effect.gen(function* () {
           const next = transform(yield* loadUnlocked());
           yield* backend.write(yield* encodeCatalog(next));
-          yield* Ref.set(state, Option.some(next));
         }),
       );
     },
