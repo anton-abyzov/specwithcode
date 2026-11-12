@@ -61,6 +61,7 @@ import {
 import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
+import { useRemoteWorkerLaunchers } from "../studio/useRemoteWorkerLaunchers";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -101,6 +102,9 @@ export function ThreadNotificationCoordinator() {
   );
   // A project workspace's thread opens in that project's right panel.
   const openChat = useOpenChat();
+  // Read once for every machine: a remote worker's alert belongs to the
+  // coordinator machine that launched it, as in the sidebar and Overview.
+  const launchers = useRemoteWorkerLaunchers();
   const pending = useRef(new Map<string, ShownNotification>());
   const onNotification = useCallback<OnNotification>((tag, shown, posted = true) => {
     const previous = pending.current.get(tag);
@@ -187,6 +191,7 @@ export function ThreadNotificationCoordinator() {
       environmentId={environmentId}
       onNotification={onNotification}
       onWithdraw={onWithdraw}
+      launchers={launchers}
     />
   ));
 }
@@ -204,10 +209,12 @@ function EnvironmentNotifications({
   environmentId,
   onNotification,
   onWithdraw,
+  launchers,
 }: {
   environmentId: EnvironmentId;
   onNotification: OnNotification;
   onWithdraw: (tag: string, actionKey?: string | null) => void;
+  launchers: ReadonlyMap<string, string>;
 }) {
   const connected = useNotificationsConnected();
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
@@ -215,10 +222,22 @@ function EnvironmentNotifications({
   const ownEnvironmentId = usePrimaryEnvironmentId();
   const knownEnvironmentIds = useEnvironmentIds();
   const unreachableEnvironmentIds = useUnreachableEnvironmentIds();
-  const presence = useRef({ ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds });
+  // Read at delivery time, so a new remote worker reading never re-runs the
+  // per-thread scan below.
+  const presence = useRef({
+    ownEnvironmentId,
+    knownEnvironmentIds,
+    unreachableEnvironmentIds,
+    launchers,
+  });
   useLayoutEffect(() => {
-    presence.current = { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds };
-  }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds]);
+    presence.current = {
+      ownEnvironmentId,
+      knownEnvironmentIds,
+      unreachableEnvironmentIds,
+      launchers,
+    };
+  }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds, launchers]);
   // The shell reducer keeps the thread list and unchanged thread objects
   // stable, so this only rescans when a thread actually changed.
   const threads =
@@ -514,13 +533,16 @@ function EnvironmentNotifications({
             // focus, the serving machine says which one app pops up and plays the
             // sound; the owner machine's app badges, the rest stay quiet.
             if (!inApp) {
-              const { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds } =
-                presence.current;
-              const ownerMachineId = attentionOwnerMachine({
-                environmentId,
-                id: currentRaw.id,
-                ownerMachineId: currentRaw.ownerMachineId,
-              });
+              const {
+                ownEnvironmentId,
+                knownEnvironmentIds,
+                unreachableEnvironmentIds,
+                launchers,
+              } = presence.current;
+              const ownerMachineId = attentionOwnerMachine(
+                { environmentId, id: currentRaw.id, ownerMachineId: currentRaw.ownerMachineId },
+                launchers,
+              );
               const delivery = decideNotificationDelivery({
                 read: await readNotificationTarget(environmentId),
                 ownClientId: backgroundActivityClientId(),

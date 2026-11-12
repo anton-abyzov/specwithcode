@@ -317,6 +317,8 @@ describe("install timings", () => {
             "1.0.202",
             "1.0.201",
           ]);
+          yield* service.awaitBackgroundScan;
+          yield* restarted.awaitBackgroundScan;
           const kept = yield* fs.readFileString(files.historyFile);
           expect(kept).toContain('"schemaVersion":1');
           expect(kept).not.toContain("owned-updates");
@@ -331,6 +333,7 @@ describe("install timings", () => {
         const fs = yield* FileSystem.FileSystem;
         const service = yield* ReleaseRuns.makeWithDirectory(files.runs, files);
         assert.deepStrictEqual((yield* service.list()).installs, []);
+        yield* service.awaitBackgroundScan;
         assert.isFalse(yield* fs.exists(files.historyFile));
         const many = Array.from({ length: ReleaseRuns.INSTALL_HISTORY_LIMIT + 5 }, (_, index) => ({
           version: `1.0.${index}`,

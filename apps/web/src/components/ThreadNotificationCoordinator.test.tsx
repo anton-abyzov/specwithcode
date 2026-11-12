@@ -62,6 +62,9 @@ const state = vi.hoisted(() => ({
   executionState: undefined as "running" | "fenced" | undefined,
   executionMachineId: undefined as string | undefined,
   ownerMachineId: undefined as string | undefined,
+  // The machines that serve thread-1; null serves it from every machine.
+  threadEnvironments: null as string[] | null,
+  launchers: new Map<string, string>(),
 }));
 
 const SHELL_NOW = DateTime.makeUnsafe("2026-09-13T09:00:00.000Z");
@@ -141,10 +144,20 @@ function mockThreadShell() {
 }
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({
+  // The shell atom is the environment id (see the shell mock below).
+  useAtomValue: (atom: unknown) => ({
     status: state.live ? "live" : "disconnected",
-    snapshot: Option.some({ threads: state.present ? [mockThreadShell()] : [] }),
+    snapshot: Option.some({
+      threads:
+        state.present &&
+        (state.threadEnvironments === null || state.threadEnvironments.includes(atom as string))
+          ? [mockThreadShell()]
+          : [],
+    }),
   }),
+}));
+vi.mock("../studio/useRemoteWorkerLaunchers", () => ({
+  useRemoteWorkerLaunchers: () => state.launchers,
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
@@ -205,7 +218,7 @@ vi.mock("../lib/backgroundActivityReporter", () => ({
   appClientId: (clientId: string) => clientId.split(":")[0],
 }));
 vi.mock("../state/shell", () => ({
-  environmentShell: { stateValueAtom: vi.fn() },
+  environmentShell: { stateValueAtom: (environmentId: string) => environmentId },
 }));
 vi.mock("../threadNotifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../threadNotifications")>()),
@@ -284,6 +297,8 @@ beforeEach(() => {
     executionState: undefined,
     executionMachineId: undefined,
     ownerMachineId: undefined,
+    threadEnvironments: null,
+    launchers: new Map(),
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -690,6 +705,58 @@ describe("only the device in use pops up", () => {
     expect(state.notification).not.toHaveBeenCalled();
     expect(state.sound).not.toHaveBeenCalled();
     expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
+  });
+
+  describe("a remote worker thread belongs to the coordinator machine that launched it", () => {
+    const launchedBy = (coordinator: string) =>
+      new Map([[JSON.stringify(["env-2", "thread-1"]), coordinator]]);
+
+    beforeEach(() => {
+      state.environmentIds = ["env-1", "env-2"];
+      state.targetRead = target("client-other");
+    });
+
+    it("badges on the launching coordinator's app when another app is elected", async () => {
+      state.threadEnvironments = ["env-2"];
+      state.launchers = launchedBy("env-1");
+      state.primary = "env-1";
+      await askInBackground();
+      expect(state.targetReads).toEqual(["env-2"]);
+      expect(state.notification).not.toHaveBeenCalled();
+      expect(state.sound).not.toHaveBeenCalled();
+      expect(vi.mocked(setNotificationBadge)).toHaveBeenLastCalledWith(1);
+    });
+
+    it("stays quiet on the worker machine's app, neither owner nor elected", async () => {
+      state.threadEnvironments = ["env-2"];
+      state.launchers = launchedBy("env-1");
+      state.primary = "env-2";
+      await askInBackground();
+      expect(state.targetReads).toEqual(["env-2"]);
+      expect(state.notification).not.toHaveBeenCalled();
+      expect(state.sound).not.toHaveBeenCalled();
+      expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
+    });
+
+    it("leaves a thread on its own machine owned by that machine", async () => {
+      state.threadEnvironments = ["env-1"];
+      state.launchers = launchedBy("env-2");
+      state.primary = "env-1";
+      await askInBackground();
+      expect(state.targetReads).toEqual(["env-1"]);
+      expect(vi.mocked(setNotificationBadge)).toHaveBeenLastCalledWith(1);
+
+      await act(() => renderer?.unmount());
+      renderer = undefined;
+      vi.clearAllMocks();
+      __resetNotificationHistoryForTests();
+      state.input = false;
+      state.requestId = "request-2";
+      state.primary = "env-2";
+      await askInBackground();
+      expect(state.notification).not.toHaveBeenCalled();
+      expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
+    });
   });
 
   it("on an older server or a timeout, pops up only on the thread's own machine", async () => {

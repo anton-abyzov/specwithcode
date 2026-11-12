@@ -30,6 +30,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -198,6 +199,8 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
     /** False once the file on disk is a newer service's history: it is read, never replaced. */
     let historyWritable = true;
     let scanning = false;
+    /** The receipt read `list` started last, so a caller can wait for it to finish. */
+    let scanFiber: Fiber.Fiber<void> | undefined;
 
     const readReceipt = (directory: string, name: string) =>
       Effect.gen(function* () {
@@ -309,7 +312,7 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
         const current = history ?? (yield* loadHistory(files.historyFile));
         if (!scanning) {
           scanning = true;
-          yield* scanInstalls(files).pipe(
+          scanFiber = yield* scanInstalls(files).pipe(
             Effect.ignore,
             Effect.ensuring(
               Effect.sync(() => {
@@ -359,6 +362,17 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
       refreshInstalls: installFiles
         ? scanInstalls(installFiles)
         : Effect.succeed<ReadonlyArray<ReleaseInstallTiming>>([]),
+      /**
+       * Waits until no receipt read started by `list` is running, so whoever owns the
+       * directories can remove them without a read still writing the history.
+       */
+      awaitBackgroundScan: Effect.gen(function* () {
+        while (scanning && scanFiber) {
+          yield* Fiber.await(scanFiber);
+          // A read just being started may not have its fiber stored yet: let it run.
+          yield* Effect.yieldNow;
+        }
+      }),
     };
   });
 
