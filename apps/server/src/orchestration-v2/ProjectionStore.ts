@@ -1144,6 +1144,9 @@ type PayloadRow = {
   readonly payload_json: string;
 };
 
+/** Threads read by one shell list statement; see `selectShellThreadRowPages`. */
+const SHELL_THREAD_ROWS_PAGE_SIZE = 200;
+
 type ShellThreadRow = {
   readonly running_model_json: string | null;
   readonly fallback_pairing_json: string | null;
@@ -5850,10 +5853,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    const shellThreadLocationFilter = (
+      location: "active" | "archive" | undefined,
+      unsettledOnly: boolean,
+    ) =>
+      sql`${
+        location === "active"
+          ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
+          : location === "archive"
+            ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL`
+            : sql``
+      }${
+        unsettledOnly
+          ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
+          : sql``
+      }`;
+
+    // The run subqueries below are pinned to the partial indexes of migration
+    // 074, which hold only live runs. Unpinned, the planner walks every run of
+    // the thread on (thread_id, ordinal) to find that none is live.
     const selectShellThreadRows = (
       threadId?: ThreadId,
       location?: "active" | "archive",
       unsettledOnly = false,
+      pageThreadIds?: ReadonlyArray<string>,
     ) =>
       sql<ShellThreadRow>`
             SELECT
@@ -5939,6 +5962,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (
                 SELECT r.run_id
                 FROM orchestration_v2_projection_runs r
+                  INDEXED BY orchestration_v2_projection_runs_active_latest_idx
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running')
                 ORDER BY r.ordinal DESC, r.run_id DESC
@@ -5959,6 +5983,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                 )
                 FROM orchestration_v2_projection_runs r
+                  INDEXED BY orchestration_v2_projection_runs_active_latest_idx
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running')
                 ORDER BY r.ordinal DESC, r.run_id DESC
@@ -5968,6 +5993,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 (
                   SELECT r.status
                   FROM orchestration_v2_projection_runs r
+                    INDEXED BY orchestration_v2_projection_runs_working_latest_idx
                   WHERE r.thread_id = t.thread_id
                     AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                   ORDER BY r.ordinal DESC, r.run_id DESC
@@ -6000,6 +6026,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     r.requested_at
                   )
                   FROM orchestration_v2_projection_runs r
+                    INDEXED BY orchestration_v2_projection_runs_working_latest_idx
                   WHERE r.thread_id = t.thread_id
                     AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                   ORDER BY r.ordinal DESC, r.run_id DESC
@@ -6091,6 +6118,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT secret.payload_json
                 -- Keep runs outermost so completed history is never scanned for a pending secret.
                 FROM orchestration_v2_projection_runs r
+                  INDEXED BY orchestration_v2_projection_runs_working_latest_idx
                 CROSS JOIN orchestration_v2_projection_turn_items secret
                   INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
                 WHERE r.thread_id = t.thread_id
@@ -6209,18 +6237,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               LIMIT 1
             ) AND blocked.status = 'failed'
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
-              location === "active"
-                ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
-                : location === "archive"
-                  ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL`
-                  : sql``
-            }${
-              unsettledOnly
-                ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
-                : sql``
-            }
+              pageThreadIds === undefined
+                ? sql``
+                : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(pageThreadIds)}))`
+            }${shellThreadLocationFilter(location, unsettledOnly)}
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
+
+    // The shell list in pages. One statement for every thread held the event
+    // loop for its whole duration (about 300 ms at 2,300 threads); a page is a
+    // few milliseconds and other work runs between pages. The ids are read in
+    // the list's order and each page is a contiguous slice of it, so the pages
+    // joined are the rows of the single statement. Call inside a transaction.
+    const selectShellThreadRowPages = (location?: "active" | "archive", unsettledOnly = false) =>
+      Effect.gen(function* () {
+        const ordered = yield* sql<{ readonly thread_id: string }>`
+            SELECT t.thread_id
+            FROM orchestration_v2_projection_threads t
+            WHERE t.deleted_at IS NULL${shellThreadLocationFilter(location, unsettledOnly)}
+            ORDER BY t.updated_at ASC, t.thread_id ASC
+          `;
+        const rows: Array<ShellThreadRow> = [];
+        for (let start = 0; start < ordered.length; start += SHELL_THREAD_ROWS_PAGE_SIZE) {
+          if (start > 0) yield* Effect.yieldNow;
+          const page = yield* selectShellThreadRows(
+            undefined,
+            undefined,
+            false,
+            ordered.slice(start, start + SHELL_THREAD_ROWS_PAGE_SIZE).map((row) => row.thread_id),
+          );
+          for (const row of page) rows.push(row);
+        }
+        return rows;
+      });
 
     const selectShellRunRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
@@ -6727,8 +6776,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const targetThreadRows = yield* selectShellThreadRows(
-              undefined,
+            const targetThreadRows = yield* selectShellThreadRowPages(
               options?.location,
               options?.unsettledOnly ?? false,
             );
