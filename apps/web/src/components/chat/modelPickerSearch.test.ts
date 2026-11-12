@@ -120,6 +120,10 @@ describe("scoreModelPickerSearch", () => {
     expect(scoreModelPickerSearch(local("llama3.2:latest"), "llama 3.2")).not.toBeNull();
     expect(scoreModelPickerSearch(local("DeepSeek-V3.1"), "seek")).not.toBeNull();
     expect(scoreModelPickerSearch(local("Claude Opus 5.5"), "pus")).toBeNull();
+    // Never inside a word: "mini" is not in Gemini, "nnet" is not a word of Sonnet.
+    expect(scoreModelPickerSearch(local("Gemini 4 Carbon"), "mini")).toBeNull();
+    expect(scoreModelPickerSearch(local("Claude Sonnet 5.5"), "nnet")).toBeNull();
+    expect(scoreModelPickerSearch(local("GPT-5 mini"), "mini")).not.toBeNull();
   });
 
   it("matches without the separators", () => {

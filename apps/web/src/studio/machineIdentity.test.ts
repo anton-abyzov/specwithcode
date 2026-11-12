@@ -13,7 +13,7 @@ import {
 
 const NOW = Date.parse("2026-11-10T21:00:00.000Z");
 const labels = new Map([
-  ["env-m4", "Anton's MacBook M4MAX"],
+  ["env-m4", "Sam's MacBook M4MAX"],
   ["env-m1", "Mac mini M1"],
   ["env-m3", "Mac Studio M3"],
 ]);

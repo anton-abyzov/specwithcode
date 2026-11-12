@@ -42,7 +42,6 @@ const NAME_PREFIX = 1;
 const NAME_WORD_START = 2;
 const NAME_COMPACT = 3;
 const NAME_VENDOR = 4;
-const NAME_INSIDE = 5;
 const PROVIDER_EXACT = 10;
 const PROVIDER_PREFIX = 11;
 const PROVIDER_WORD_START = 12;
@@ -74,8 +73,6 @@ function scoreNameField(field: string, token: string): number | null {
   // "gpt5" finds "GPT-5": the same letters with the separators left out.
   const tight = compact(token);
   if (tight.length >= 3 && compact(field).startsWith(tight)) return NAME_COMPACT;
-  // A whole word inside a run-together name ("seek" in "DeepSeek"); ranked last among names.
-  if (token.length >= 4 && field.includes(token)) return NAME_INSIDE;
   return null;
 }
 
@@ -87,9 +84,13 @@ function scoreProviderField(field: string, token: string): number | null {
 }
 
 function nameFields(model: ModelPickerSearchableModel): string[] {
-  const names = [model.name, model.shortName, ...(model.aliases ?? [])]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .map((value) => normalizeSearchQuery(value));
+  const raw = [model.name, model.shortName, ...(model.aliases ?? [])].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  // A capital inside a run-together name starts a word: "DeepSeek" also reads "deep seek".
+  // Only the name's own capitals count, so "mini" never matches inside "Gemini".
+  const humped = raw.map((value) => value.replace(/([a-z])([A-Z])/gu, "$1 $2"));
+  const names = [...raw, ...humped].map((value) => normalizeSearchQuery(value));
   // "Claude Opus 5.5" and "Opus 5.5" are one model: a vendor word in front never costs rank.
   const bare = names.map((value) => value.replace(LEADING_VENDOR, "")).filter(Boolean);
   return [...new Set([...names, ...bare])];
