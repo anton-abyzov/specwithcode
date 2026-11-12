@@ -320,35 +320,6 @@ jobs:
             npm publish "$RUNNER_TEMP/npm/$NPM_PACKAGE-$VERSION.tgz" --access public
           fi
 
-      # npm can accept an upload while the registry still answers 404 for it. `latest` must not
-      # be older than this version either, or `npm i -g specwithcode` would not install it.
-      - name: Check the version on npm
-        if: env.DRY_RUN != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP"
-          seen="" latest="" errors="$RUNNER_TEMP/npm-view.log"
-          for attempt in $(seq 1 40); do
-            seen="$(npm view "$NPM_PACKAGE@$VERSION" version 2> "$errors" || true)"
-            latest="$(npm view "$NPM_PACKAGE" dist-tags.latest 2>> "$errors" || true)"
-            if [ "$seen" = "$VERSION" ] && [ -n "$latest" ] &&
-              [ "$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -n 1)" = "$latest" ]; then
-              echo "$NPM_PACKAGE@$VERSION is on npm; latest is $latest."
-              echo "- npm: [$NPM_PACKAGE@$VERSION](https://www.npmjs.com/package/$NPM_PACKAGE/v/$VERSION), latest is $latest" >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "npm answers '${seen:-nothing}' for $NPM_PACKAGE@$VERSION and '${latest:-nothing}' for latest (attempt $attempt of 40)."
-            sleep 15
-          done
-          cat "$errors"
-          if [ "$seen" != "$VERSION" ]; then
-            echo "::error::npm view $NPM_PACKAGE@$VERSION version answered '${seen:-nothing}' after 10 minutes."
-          else
-            echo "::error::$NPM_PACKAGE@$VERSION is on npm but latest is '${latest:-unknown}'. Move it by hand: npm dist-tag add $NPM_PACKAGE@$VERSION latest"
-          fi
-          exit 1
-
       - name: Summarize a dry run
         if: env.DRY_RUN == 'true'
         shell: bash
@@ -362,3 +333,44 @@ jobs:
           else
             echo "- Dry run: $VERSION is already on npm, so there was nothing to rehearse." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # Its own job, outside the publish group: npm can take 20 minutes or more to serve a package
+  # this size, and holding the group that long would let a third release cancel the one waiting.
+  registry:
+    name: Check npm serves the version
+    needs: [package, publish]
+    if: needs.package.outputs.dry_run != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.package.outputs.version }}
+    steps:
+      # npm can accept an upload while the registry still answers 404 for it. `latest` must not
+      # be older than this version either, or `npm i -g specwithcode` would not install it.
+      - name: Check the version on npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          seen="" latest="" errors="$RUNNER_TEMP/npm-view.log" attempts=120
+          for attempt in $(seq 1 "$attempts"); do
+            seen="$(npm view "$NPM_PACKAGE@$VERSION" version 2> "$errors" || true)"
+            latest="$(npm view "$NPM_PACKAGE" dist-tags.latest 2>> "$errors" || true)"
+            if [ "$seen" = "$VERSION" ] && [ -n "$latest" ] &&
+              [ "$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -n 1)" = "$latest" ]; then
+              echo "$NPM_PACKAGE@$VERSION is on npm; latest is $latest."
+              echo "- npm: [$NPM_PACKAGE@$VERSION](https://www.npmjs.com/package/$NPM_PACKAGE/v/$VERSION), latest is $latest" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "npm answers '${seen:-nothing}' for $NPM_PACKAGE@$VERSION and '${latest:-nothing}' for latest (attempt $attempt of $attempts)."
+            sleep 30
+          done
+          cat "$errors"
+          if [ "$seen" != "$VERSION" ]; then
+            echo "::error::npm view $NPM_PACKAGE@$VERSION version answered '${seen:-nothing}' after 60 minutes."
+          else
+            echo "::error::$NPM_PACKAGE@$VERSION is on npm but latest is '${latest:-unknown}'. Move it by hand: npm dist-tag add $NPM_PACKAGE@$VERSION latest"
+          fi
+          exit 1
