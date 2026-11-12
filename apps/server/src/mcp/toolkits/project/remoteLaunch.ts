@@ -3,6 +3,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestratorMcpFailure,
+  type OrchestratorMcpLaunchNeed,
   type Project,
   type ProjectId,
   projectWorkerMachineOrder,
@@ -14,6 +15,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import { chooseForNeeds, type NeedsCandidate } from "../../../fleet/launchNeeds.ts";
+import { thisMachinePlatform } from "../../../fleet/thisMachinePlatform.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
 import {
@@ -42,13 +45,15 @@ export interface LaunchTargetInput {
   readonly message?: string | undefined;
   readonly attachments?: ReadonlyArray<unknown> | undefined;
   readonly increment?: string | undefined;
+  /** What the work needs from its machine, such as an iOS Simulator. */
+  readonly needs?: ReadonlyArray<OrchestratorMcpLaunchNeed> | undefined;
 }
 
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
 
 /** Why a launch runs where it does, reported to the agent as `placement`. */
-export type PlacementReason = "explicit" | "project_worker_machine" | "this_machine";
+export type PlacementReason = "explicit" | "project_worker_machine" | "this_machine" | "needs";
 
 export interface SkippedMachine {
   readonly machine: string;
@@ -58,6 +63,8 @@ export interface SkippedMachine {
 export interface LaunchCandidate {
   readonly target: RemoteWorkers.MachineTarget;
   readonly reason: PlacementReason;
+  /** Why this machine when the work states needs, for the launch result. */
+  readonly note?: string | undefined;
 }
 
 /**
@@ -104,6 +111,16 @@ export const placementSkippable = (error: unknown): error is OrchestratorMcpFail
  * does not stop the project.
  */
 export const launchTarget = Effect.fn("mcp.launchTarget")(function* (
+  context: Caller,
+  input: LaunchTargetInput,
+  project: Project | undefined,
+) {
+  const placement = yield* usualLaunchTarget(context, input, project);
+  const needs = input.needs ?? [];
+  return needs.length === 0 ? placement : yield* placeByNeeds(needs, placement, project);
+});
+
+const usualLaunchTarget = Effect.fn("mcp.usualLaunchTarget")(function* (
   context: Caller,
   input: LaunchTargetInput,
   project: Project | undefined,
@@ -168,16 +185,80 @@ export const launchTarget = Effect.fn("mcp.launchTarget")(function* (
   } satisfies LaunchPlacement;
 });
 
-/** The refusal when no machine in the project's list could take a launch. */
-export const noWorkerMachineFailure = (skipped: ReadonlyArray<SkippedMachine>) =>
-  new OrchestratorMcpFailure({
-    code: "machine_unreachable",
-    message: `None of this project's worker machines could take the thread${
-      skipped.length > 0
-        ? `: ${skipped.map((entry) => `${entry.machine}: ${entry.reason}`).join("; ")}`
-        : "."
-    } The project's list leaves this machine out, so nothing started here. Tell the user in one line, and offer to run it here with machine:"local".`,
+/**
+ * Keeps the usual order but only machines that can do the work: a named
+ * machine known not to qualify is refused. Without one, the usual candidates
+ * (the project's worker machines, or this machine) keep the work when one of
+ * them reports the need; only when none does, the other connected machines
+ * this one may start work on are used, and the note says so. Machines that
+ * report the need come before ones that have not said. Nothing falls back to a
+ * machine known not to qualify, so the result is strict. The machine chosen
+ * still authorizes the launch itself.
+ */
+const placeByNeeds = Effect.fn("mcp.placeByNeeds")(function* (
+  needs: ReadonlyArray<OrchestratorMcpLaunchNeed>,
+  usual: LaunchPlacement,
+  project: Project | undefined,
+) {
+  const remote = yield* RemoteWorkers.RemoteWorkers;
+  const local = yield* thisMachinePlatform;
+  const listed = yield* remote.listMachines({ projectId: project?.id, probe: true });
+  const candidate = (launch: LaunchCandidate): NeedsCandidate<LaunchCandidate> => {
+    if (launch.target.kind === "local")
+      return { key: "local", label: "this machine", platform: local, value: launch };
+    const id = launch.target.machine.id;
+    return {
+      key: id,
+      label: launch.target.machine.label,
+      platform: listed.machines.find((row) => row.id === id)?.platform,
+      value: launch,
+    };
+  };
+  const connected = listed.machines
+    .filter(
+      (row) =>
+        (row.status === "ready" || row.status === "grant_expiring") &&
+        row.reachable !== false &&
+        row.teamRulesRefused === undefined,
+    )
+    .map((row) =>
+      candidate({
+        target: {
+          kind: "remote",
+          machine: { id: row.id, label: row.label, environmentId: row.environmentId },
+        },
+        reason: "needs",
+      }),
+    );
+  const here = candidate({ target: { kind: "local" }, reason: "needs" });
+  const explicit = usual.candidates.find((launch) => launch.reason === "explicit");
+  const choice = chooseForNeeds({
+    needs,
+    explicit: explicit === undefined ? undefined : candidate(explicit),
+    preferred: explicit === undefined ? usual.candidates.map(candidate) : [here],
+    fallback: [...connected, here],
   });
+  if (!choice.ok) return yield* invalid(choice.message);
+  return {
+    candidates: choice.chosen.map((chosen) => ({ ...chosen.candidate.value, note: chosen.note })),
+    skipped: [...usual.skipped, ...choice.skipped],
+    strict: true,
+  } satisfies LaunchPlacement;
+});
+
+/** The refusal when no machine in the project's list could take a launch. */
+export const noWorkerMachineFailure = (skipped: ReadonlyArray<SkippedMachine>, byNeeds = false) => {
+  const reasons =
+    skipped.length > 0
+      ? `: ${skipped.map((entry) => `${entry.machine}: ${entry.reason}`).join("; ")}`
+      : ".";
+  return new OrchestratorMcpFailure({
+    code: "machine_unreachable",
+    message: byNeeds
+      ? `No machine that can do this work could take the thread${reasons} Nothing was started. Tell the user in one line; studio_machine_list shows which machines are connected.`
+      : `None of this project's worker machines could take the thread${reasons} The project's list leaves this machine out, so nothing started here. Tell the user in one line, and offer to run it here with machine:"local".`,
+  });
+};
 
 /**
  * Starts the thread on another machine. A thread caller's worker is followed

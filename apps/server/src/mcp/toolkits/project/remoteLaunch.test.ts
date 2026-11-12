@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   OrchestratorMcpFailure,
+  type OrchestratorMcpMachinePlatform,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -18,6 +19,8 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import { IosSimulatorSupport } from "../../../device/iosSimulatorSupport.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { unscopedGrant, type WorkOrigin } from "../../../fleet/workGrantPolicy.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -87,6 +90,8 @@ const setup = (
     readonly m1CopyThreads?: ReadonlyArray<Record<string, unknown>>;
     /** The shared project still lists an M1 member that M1 no longer has (unlinked there). */
     readonly staleM1Member?: boolean;
+    /** What each machine reports about itself; a machine left out has not said. */
+    readonly platforms?: Partial<Record<"local" | "m1" | "m3", OrchestratorMcpMachinePlatform>>;
   } = {},
 ) => {
   const caller = {
@@ -164,6 +169,22 @@ const setup = (
   const remote: RemoteWorkers.RemoteWorkersShape = {
     ...RemoteWorkers.RemoteWorkers.defaultValue(),
     enabled: true,
+    listMachines: () =>
+      Effect.succeed({
+        local: { id: "local", label: "M4", environmentId: EnvironmentId.make("env-m4") },
+        machines: [M1, M3].map((machine) => {
+          const platform = options.platforms?.[machine.id as "m1" | "m3"];
+          return {
+            ...machine,
+            status: "ready" as const,
+            access: "full-access" as const,
+            grantExpiresAt: null,
+            reachable: true,
+            ...(platform === undefined ? {} : { platform }),
+          };
+        }),
+        projectWorkerMachine: null,
+      }),
     resolveMachine: (target) =>
       target === undefined || target === "local"
         ? Effect.succeed({ kind: "local" })
@@ -369,6 +390,20 @@ const setup = (
     }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+    options.platforms?.local === undefined
+      ? Layer.empty
+      : Layer.mergeAll(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getDescriptor: Effect.succeed({
+              environmentId: EnvironmentId.make("env-m4"),
+              label: "M4",
+              platform: { os: options.platforms.local.os, arch: options.platforms.local.arch },
+            } as never),
+          }),
+          Layer.succeed(IosSimulatorSupport, {
+            current: () => options.platforms?.local?.iosSimulators,
+          }),
+        ),
     NodeServices.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "studio-remote-launch-" }).pipe(
       Layer.provide(NodeServices.layer),
@@ -1016,5 +1051,131 @@ it.effect("keeps an explicit machineProjectId and never links for another machin
     expect(explicit.linkSteps).toEqual([]);
     yield* relayed.launch({ title: "Fix", message: "Fix", machine: "M1" });
     expect(relayed.linkSteps).toEqual([]);
+  });
+});
+
+const linux = { os: "linux", arch: "x64" } as const;
+const mac = { os: "darwin", arch: "arm64", iosSimulators: true } as const;
+
+it.effect("sends iOS Simulator work to a connected Mac when this machine cannot run one", () => {
+  const routed = setup({
+    platforms: { local: linux, m1: { os: "windows", arch: "x64" }, m3: mac },
+  });
+  return Effect.gen(function* () {
+    const result = yield* routed.launch({
+      title: "Test the app",
+      message: "Run it in the simulator",
+      needs: ["ios_simulator"],
+    });
+    expect(result).toMatchObject({
+      machine: M3,
+      placement: {
+        machine: "M3",
+        reason: "needs",
+        note: expect.stringContaining("M3 has it"),
+        skipped: [
+          { machine: "this machine", reason: expect.stringContaining("Linux") },
+          { machine: "M1", reason: expect.stringContaining("Windows") },
+        ],
+      },
+    });
+    expect(routed.remoteLaunches.map((launch) => launch.machine.id)).toEqual(["m3"]);
+    expect(routed.localLaunches).toEqual([]);
+  });
+});
+
+it.effect("keeps iOS Simulator work here when this Mac can run it", () => {
+  const here = setup({ platforms: { local: mac, m3: mac } });
+  return Effect.gen(function* () {
+    expect(
+      yield* here.launch({ title: "Test", message: "go", needs: ["ios_simulator"] }),
+    ).toMatchObject({ placement: { machine: "this machine", reason: "this_machine" } });
+    expect(here.remoteLaunches).toEqual([]);
+    expect(here.localLaunches).toHaveLength(1);
+  });
+});
+
+it.effect("refuses simulator work no connected machine can run, saying what is missing", () => {
+  const none = setup({
+    platforms: { local: linux, m1: { os: "windows", arch: "x64" }, m3: linux },
+  });
+  return Effect.gen(function* () {
+    const refused = yield* none.launch({ title: "Test", message: "go", needs: ["ios_simulator"] });
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect(String(refused.message)).toContain("needs an iOS Simulator");
+    expect(String(refused.message)).toContain("M1 is Windows");
+    expect(String(refused.message)).toContain("Settings > Machines");
+    expect(none.remoteLaunches).toEqual([]);
+    expect(none.localLaunches).toEqual([]);
+  });
+});
+
+it.effect(
+  "refuses a named machine known not to run simulators, and allows one that has not said",
+  () => {
+    const named = setup({ platforms: { local: linux, m3: mac } });
+    return Effect.gen(function* () {
+      const refused = yield* named.launch({
+        title: "Test",
+        message: "go",
+        machine: "local",
+        needs: ["ios_simulator"],
+      });
+      expect(refused).toMatchObject({ code: "invalid_request" });
+      expect(String(refused.message)).toContain("Machines that can: M3");
+      // M1 reports nothing (an older version): it runs there as asked.
+      expect(
+        yield* named.launch({
+          title: "Test",
+          message: "go",
+          machine: "M1",
+          needs: ["ios_simulator"],
+        }),
+      ).toMatchObject({ machine: M1, placement: { reason: "explicit" } });
+      expect(named.localLaunches).toEqual([]);
+    });
+  },
+);
+
+it.effect(
+  "keeps simulator work on the project's worker machines when one of them can run it",
+  () => {
+    const listed = setup({ workerMachines: ["m3"], platforms: { local: linux, m1: mac, m3: mac } });
+    return Effect.gen(function* () {
+      expect(
+        yield* listed.launch({ title: "Test", message: "go", needs: ["ios_simulator"] }),
+      ).toMatchObject({
+        machine: M3,
+        placement: { machine: "M3", reason: "project_worker_machine", skipped: [] },
+      });
+      expect(listed.remoteLaunches.map((launch) => launch.machine.id)).toEqual(["m3"]);
+    });
+  },
+);
+
+it.effect("goes outside the project's worker machines only when none can, and says so", () => {
+  const outside = setup({
+    workerMachines: ["m1"],
+    platforms: { local: linux, m1: { os: "windows", arch: "x64" }, m3: mac },
+  });
+  return Effect.gen(function* () {
+    const result = yield* outside.launch({
+      title: "Test",
+      message: "go",
+      needs: ["ios_simulator"],
+    });
+    expect(result).toMatchObject({
+      machine: M3,
+      placement: {
+        machine: "M3",
+        reason: "needs",
+        note: expect.stringContaining("Chosen outside the usual machines (M1)"),
+        skipped: expect.arrayContaining([
+          { machine: "M1", reason: expect.stringContaining("Windows") },
+        ]),
+      },
+    });
+    expect(outside.remoteLaunches.map((launch) => launch.machine.id)).toEqual(["m3"]);
+    expect(outside.localLaunches).toEqual([]);
   });
 });

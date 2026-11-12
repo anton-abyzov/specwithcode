@@ -1,6 +1,7 @@
 import {
   type DeviceError,
   type DeviceHostId,
+  type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
   type DeviceSummary,
@@ -8,6 +9,7 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as ServerConfig from "../../../config.ts";
@@ -17,6 +19,9 @@ import { nodeRuntimeUnavailableMessage } from "@specweave-studio/shared/nodeRunt
 import * as AccessGate from "../../../access/accessGate.ts";
 import * as AccessRequests from "../../../access/AccessRequests.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
+import { iosSimulatorElsewhereHint, type NeedFit, needsFit } from "../../../fleet/launchNeeds.ts";
+import { thisMachinePlatform } from "../../../fleet/thisMachinePlatform.ts";
+import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
@@ -183,6 +188,67 @@ const pickDevice = (
 
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 
+/**
+ * Whether a device tool should point to a Mac: this machine cannot run iOS
+ * Simulators (the same check that places simulator work, `simulatorsHere`),
+ * no device host is set up, no iOS device is listed here, and the call did not
+ * ask for Android, another host or one device id (a mistyped id gets the
+ * plain error).
+ */
+export function iosOnlyElsewhere(
+  state: {
+    readonly hosts: ReadonlyArray<DeviceHostSummary>;
+    readonly devices: ReadonlyArray<DeviceSummary>;
+  },
+  input: {
+    readonly deviceId?: DeviceId | undefined;
+    readonly platform?: DevicePlatform | undefined;
+    readonly hostId?: DeviceHostId | undefined;
+  },
+  simulatorsHere: NeedFit,
+): boolean {
+  if (simulatorsHere !== "no") return false;
+  if (input.deviceId !== undefined || input.platform === "android") return false;
+  if (input.hostId !== undefined && input.hostId !== LOCAL_DEVICE_HOST_ID) return false;
+  if (state.hosts.some((host) => host.kind !== "local")) return false;
+  return !state.devices.some(
+    (device) => device.hostId === LOCAL_DEVICE_HOST_ID && device.platform === "ios",
+  );
+}
+
+/** The hint for that case, naming the connected Macs that can; undefined otherwise. */
+const iosElsewhere = (
+  state: {
+    readonly hosts: ReadonlyArray<DeviceHostSummary>;
+    readonly devices: ReadonlyArray<DeviceSummary>;
+  },
+  input: {
+    readonly deviceId?: DeviceId | undefined;
+    readonly platform?: DevicePlatform | undefined;
+    readonly hostId?: DeviceHostId | undefined;
+  },
+) =>
+  Effect.gen(function* () {
+    const here = needsFit(["ios_simulator"], yield* thisMachinePlatform);
+    if (!iosOnlyElsewhere(state, input, here)) return undefined;
+    const remote = yield* Effect.serviceOption(RemoteWorkers.RemoteWorkers);
+    if (Option.isNone(remote) || !remote.value.enabled) return iosSimulatorElsewhereHint([]);
+    const listed = yield* remote.value.listMachines({ projectId: undefined, probe: true }).pipe(
+      Effect.timeoutOption("5 seconds"),
+      Effect.map((result) => (Option.isSome(result) ? result.value.machines : [])),
+      Effect.orElseSucceed(() => []),
+    );
+    return iosSimulatorElsewhereHint(
+      listed
+        .filter(
+          (machine) =>
+            (machine.status === "ready" || machine.status === "grant_expiring") &&
+            needsFit(["ios_simulator"], machine.platform) === "yes",
+        )
+        .map((machine) => machine.label),
+    );
+  });
+
 const handlers = {
   device_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
@@ -196,6 +262,7 @@ const handlers = {
         });
       }
       const hostId = input?.hostId;
+      const hint = yield* iosElsewhere(state, { hostId: hostId as DeviceHostId | undefined });
       const open = state.sessions
         .filter((session) => session.threadId === scope.thread.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
@@ -208,6 +275,8 @@ const handlers = {
           ? state.devices.filter((device) => device.hostId === hostId)
           : state.devices,
         open,
+        // Older clients ignore it; a thread here learns at list time which Macs can.
+        ...(hint === undefined ? {} : { hint }),
       };
     }).pipe(Effect.mapError(toolError)),
   ),
@@ -221,7 +290,19 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const target = yield* pickDevice(state.devices, input);
+      const target = yield* pickDevice(state.devices, input).pipe(
+        Effect.catch((error) =>
+          iosElsewhere(state, input).pipe(
+            Effect.flatMap((hint) =>
+              Effect.fail(
+                hint === undefined
+                  ? error
+                  : new DeviceToolUnavailableError({ reason: `${error.reason} ${hint}` }),
+              ),
+            ),
+          ),
+        ),
+      );
       const { scope, consented } = yield* requireDeviceConsent(target);
       // Resolve consent and agent connectivity before booting or registering a session.
       const agentArgs = yield* devices.agentTarget({
