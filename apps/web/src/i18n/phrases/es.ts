@@ -4136,12 +4136,13 @@ export const es: PhraseCatalog = {
     "Elígelo abajo y pulsa Permitir. Nada que copiar ni pegar.",
   "If this is your first machine, there is nothing to choose: continue.":
     "Si este es tu primer equipo, no hay nada que elegir: continúa.",
-  "Set up this {machine}": "Configurar este {machine}",
+  "Your phone: get SpecWithCode at specwithcode.com/get and sign in as {account}. This {machine} shows up there by itself.":
+    "Tu teléfono: consigue SpecWithCode en specwithcode.com/get e inicia sesión como {account}. Este {machine} aparece allí por sí solo.",
   "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
     "Inicia sesión una vez. Este {machine} se vincula entonces a tu cuenta y muestra tus otros equipos por sí solo.",
   "Turn on SpecWithCode Connect": "Activar SpecWithCode Connect",
   "Set up other computers too": "Configurar también otros ordenadores",
-  "Continue without an account": "Continuar sin cuenta",
+  "Use without an account": "Usar sin cuenta",
   "Link this {machine}": "Vincular este {machine}",
   "Happens by itself after you sign in.": "Ocurre por sí solo después de iniciar sesión.",
   "Checking this {machine}…": "Comprobando este {machine}…",

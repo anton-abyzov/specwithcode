@@ -107,8 +107,8 @@ try {
         // imports deliberately; never seed settings or disable the product gate.
         await page.waitForURL(url => url.pathname === '/welcome', { timeout: 15000 });
         proof.initialPairedPath = new URL(page.url()).pathname; save('first-run-onboarding');
-        // This machine as the main one, Continue past the agents step, then no project import.
-        const wizardSteps = [/^Start as a main machine/, /^Continue( without an agent)?$/, /^Do not import projects$/];
+        // Continue past the computers and agents steps, then no project import.
+        const wizardSteps = [/^Continue( without an agent)?$/, /^Do not import projects$/];
         for (const deadline = Date.now() + 30000; new URL(page.url()).pathname === '/welcome' && Date.now() < deadline;) {
           let clicked = false;
           for (const name of wizardSteps) {

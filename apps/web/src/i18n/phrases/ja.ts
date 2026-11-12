@@ -4111,12 +4111,13 @@ export const ja: PhraseCatalog = {
     "下から選んで「許可」を押してください。コピーも貼り付けも不要です。",
   "If this is your first machine, there is nothing to choose: continue.":
     "これが最初のマシンなら、選ぶものはありません。続けてください。",
-  "Set up this {machine}": "この{machine}をセットアップ",
+  "Your phone: get SpecWithCode at specwithcode.com/get and sign in as {account}. This {machine} shows up there by itself.":
+    "スマートフォン: specwithcode.com/get で SpecWithCode を入手し、{account} でサインインします。この{machine}は自動的に表示されます。",
   "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
     "一度サインインしてください。この{machine}は自動でアカウントにリンクされ、ほかのマシンが表示されます。",
   "Turn on SpecWithCode Connect": "SpecWithCode Connect をオンにする",
   "Set up other computers too": "ほかのコンピューターもセットアップ",
-  "Continue without an account": "アカウントなしで続ける",
+  "Use without an account": "アカウントなしで使う",
   "Link this {machine}": "この{machine}をリンク",
   "Happens by itself after you sign in.": "サインイン後に自動で行われます。",
   "Checking this {machine}…": "この{machine}を確認中…",

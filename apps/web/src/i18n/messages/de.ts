@@ -23,7 +23,6 @@ export const de: Messages = {
   "wizard.back": "Zurück",
   "wizard.retry": "Erneut versuchen",
   "wizard.closeTerminal": "Schließen",
-  "wizard.toast.choiceNotSaved": "Deine Auswahl konnte nicht gespeichert werden",
   "wizard.toast.settingsNotSaved":
     "Deine Einstellungen konnten nicht gespeichert werden. Versuche es erneut.",
   "wizard.toast.historyNotImported": "Ein Teil des Verlaufs wurde nicht importiert",
@@ -111,31 +110,6 @@ export const de: Messages = {
   "wizard.import.otherFolders": "Andere Ordner",
   "wizard.import.folderCount": { one: "{count} Ordner", other: "{count} Ordner" },
   "wizard.import.now": "jetzt",
-
-  "wizard.role.title": "Wie willst du diesen {machine} nutzen?",
-  "wizard.role.changeLater": "Du kannst das später ändern.",
-  "wizard.role.main.title": "Als Hauptrechner starten",
-  "wizard.role.main.description":
-    "Richte auf diesem {machine} Agenten und Projekte ein. Weitere Rechner kannst du später hinzufügen.",
-  "wizard.role.join.title": "Mit einem bestehenden verbinden",
-  "wizard.role.join.description":
-    "Dieser {machine} arbeitet für deinen Hauptrechner an einem anderen Ort. Du verknüpfst hier SpecWithCode Connect und fügst dann eine Zeile auf dem Hauptrechner ein.",
-  "wizard.role.later": "Später entscheiden",
-  "wizard.role.laterHint":
-    "Sieh dich erst um oder aktualisiere. Um später beizutreten, wähle unter Einstellungen > Verbindungen „Einem Hauptrechner beitreten“.",
-  "wizard.join.title": "Diesen {machine} mit deinem Hauptrechner verbinden",
-  "wizard.join.step1": "Melde dich bei SpecWithCode Connect an und verknüpfe diesen {machine}.",
-  "wizard.join.step2":
-    "Füge die Umgebungs-ID deines Hauptrechners ein (dort unter Einstellungen > Verbindungen) und erstelle die Zeile.",
-  "wizard.join.step3":
-    "Füge die Zeile innerhalb einer Stunde auf dem Hauptrechner unter Einstellungen > Verbindungen > Rechner hinzufügen ein.",
-  "wizard.join.makeLine": "Zeile erstellen",
-  "wizard.join.pasted": "Ich habe sie eingefügt",
-  "wizard.joined.title": "Dieser {machine} ist bereit für deinen Hauptrechner",
-  "wizard.joined.description":
-    "Er ist bereit, sobald du die Zeile auf deinem Hauptrechner unter Einstellungen > Verbindungen > Rechner hinzufügen einfügst. Wähle dort auf seiner Karte „Worker erlauben“, damit Koordinatoren hier Arbeit starten können, und lass die App auf diesem {machine} laufen.",
-  "wizard.joined.newLine": "Neue Zeile erstellen",
-  "wizard.joined.fullSetup": "Diesen {machine} stattdessen als Hauptrechner einrichten",
 
   "update.downloadFailed": "Update konnte nicht heruntergeladen werden",
   "update.startFailed": "Update-Download konnte nicht gestartet werden",

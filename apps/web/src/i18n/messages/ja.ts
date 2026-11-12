@@ -20,7 +20,6 @@ export const ja: Messages = {
   "wizard.back": "戻る",
   "wizard.retry": "再試行",
   "wizard.closeTerminal": "閉じる",
-  "wizard.toast.choiceNotSaved": "選択を保存できませんでした",
   "wizard.toast.settingsNotSaved": "設定を保存できませんでした。もう一度お試しください。",
   "wizard.toast.historyNotImported": "一部の履歴をインポートできませんでした",
   "wizard.toast.imported": { other: "{count} 件のスレッドをインポートしました" },
@@ -93,31 +92,6 @@ export const ja: Messages = {
   "wizard.import.otherFolders": "その他のフォルダー",
   "wizard.import.folderCount": { other: "{count} 個のフォルダー" },
   "wizard.import.now": "今",
-
-  "wizard.role.title": "この{machine}をどのように使いますか？",
-  "wizard.role.changeLater": "あとから変更できます。",
-  "wizard.role.main.title": "メインマシンとして始める",
-  "wizard.role.main.description":
-    "この{machine}にエージェントとプロジェクトを設定します。ほかのマシンはあとから追加できます。",
-  "wizard.role.join.title": "既存のメインマシンに接続",
-  "wizard.role.join.description":
-    "この{machine}は別の場所にあるメインマシンの作業を受け持ちます。ここで SpecWithCode Connect をリンクし、メインマシンに 1 行を貼り付けます。",
-  "wizard.role.later": "あとで決める",
-  "wizard.role.laterHint":
-    "まずは見て回ったり更新したりできます。あとから参加するには、「設定 > 接続」で「メインマシンに参加」を選びます。",
-  "wizard.join.title": "この{machine}をメインマシンに接続",
-  "wizard.join.step1": "SpecWithCode Connect にサインインして、この{machine}をリンクします。",
-  "wizard.join.step2":
-    "メインマシンの環境 ID（メインマシンの「設定 > 接続」）を貼り付けて、1 行を作成します。",
-  "wizard.join.step3":
-    "1 時間以内に、その行をメインマシンの「設定 > 接続 > マシンを追加」に貼り付けます。",
-  "wizard.join.makeLine": "行を作成",
-  "wizard.join.pasted": "貼り付けました",
-  "wizard.joined.title": "この{machine}はメインマシンで使える状態です",
-  "wizard.joined.description":
-    "メインマシンの「設定 > 接続 > マシンを追加」に行を貼り付けると使えるようになります。コーディネーターがここで作業を始められるよう、そのカードで「ワーカーを許可」を選び、この{machine}でアプリを起動したままにしてください。",
-  "wizard.joined.newLine": "新しい行を作成",
-  "wizard.joined.fullSetup": "代わりにこの{machine}をメインマシンとしてセットアップ",
 
   "update.downloadFailed": "アップデートをダウンロードできませんでした",
   "update.startFailed": "アップデートのダウンロードを開始できませんでした",

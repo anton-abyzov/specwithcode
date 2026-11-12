@@ -55,8 +55,6 @@ for (const [label, width, height, mobile] of [
   const click = (name) => page.getByRole("button", { name }).first().click({ timeout: 10_000 });
   await page.goto(`${origin}/welcome`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(4_000);
-  await capture("1-role");
-  await click(/Start as a main machine/);
   await capture("2-computers");
   await click(/^Continue$/);
   await page.waitForTimeout(6_000);

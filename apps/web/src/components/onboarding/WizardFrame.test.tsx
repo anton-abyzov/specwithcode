@@ -254,6 +254,8 @@ it("leaves setup on Escape from the dialog, and keeps Escape for a terminal", as
   // And with nothing focused while such a window is open, the key is not setup's either.
   outside.setAttribute("role", "dialog");
   expect(escapeLeavesSetup(document.body)).toBe(false);
+  outside.setAttribute("role", "alertdialog");
+  expect(escapeLeavesSetup(document.body)).toBe(false);
   outside.remove();
   expect(escapeLeavesSetup(document.body)).toBe(true);
 });

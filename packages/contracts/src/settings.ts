@@ -88,7 +88,10 @@ export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 
-/** First-run choice: this machine is the main one, or it only serves a main machine elsewhere. */
+/**
+ * A choice older versions asked for on first run: this machine is the main one, or it only
+ * serves a main machine elsewhere. Setup no longer asks or saves it; saved values are still read.
+ */
 export const OnboardingMachineRole = Schema.Literals(["main", "joined"]);
 export type OnboardingMachineRole = typeof OnboardingMachineRole.Type;
 

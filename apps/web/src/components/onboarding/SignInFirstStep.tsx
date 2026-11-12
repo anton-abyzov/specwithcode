@@ -52,7 +52,8 @@ type RowState = "next" | "busy" | "done" | "later" | "problem";
  * Allow lets the chosen one start work here. Nothing is copied between
  * machines and nothing is set in Settings. Each row shows where it stands as
  * it happens, and the step holds one main button at a time: the next action.
- * Setup also works without an account.
+ * Setup also works without an account, by the small link under the rows. Once
+ * linked, one line says how the phone joins the same account.
  */
 export function SignInFirstStep({
   environmentId,
@@ -186,7 +187,7 @@ export function SignInFirstStep({
           }
         : {
             state: "next",
-            title: tx("Sign in to SpecWithCode Connect"),
+            title: tx("Sign in"),
             detail: tx("One account for all your machines and your phone."),
           };
   const linkRow = linkRowText(link, machine, tx);
@@ -231,7 +232,7 @@ export function SignInFirstStep({
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        {tx("Set up this {machine}", { machine })}
+        {tx("Sign in to SpecWithCode Connect")}
       </h1>
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
         {tx(
@@ -260,6 +261,18 @@ export function SignInFirstStep({
         </StepRow>
         <StepRow index={3} {...machinesRow} part="machines" />
       </ol>
+      {account === null ? (
+        // Small and beside the main path: Enter never presses it.
+        <Button
+          variant="link"
+          size="sm"
+          className="mt-3 px-0 font-normal text-muted-foreground underline"
+          data-testid="sign-in-first-no-account"
+          onClick={onContinue}
+        >
+          {tx("Use without an account")}
+        </Button>
+      ) : null}
       {linked ? (
         <div className="mt-3" data-testid="sign-in-first-machines">
           <AccountJoinCard
@@ -270,6 +283,14 @@ export function SignInFirstStep({
           />
         </div>
       ) : null}
+      {linked && email ? (
+        <p className="mt-3 text-sm text-muted-foreground" data-testid="sign-in-first-phone">
+          {tx(
+            "Your phone: get SpecWithCode at specwithcode.com/get and sign in as {account}. This {machine} shows up there by itself.",
+            { account: email, machine },
+          )}
+        </p>
+      ) : null}
       {/* One main button at a time: Sign in, Turn on or Try again in their rows, Allow in the
           card, then Continue here. Until then going on is a skip, which Enter never presses. */}
       <WizardStepFooter
@@ -279,11 +300,8 @@ export function SignInFirstStep({
           </Button>
         }
         skip={
-          !choosing && mainActionPending
-            ? {
-                label: account === null ? tx("Continue without an account") : tx("Continue"),
-                onClick: onContinue,
-              }
+          !choosing && mainActionPending && account !== null
+            ? { label: tx("Continue"), onClick: onContinue }
             : undefined
         }
         primary={

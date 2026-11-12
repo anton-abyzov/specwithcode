@@ -3962,12 +3962,13 @@ export const zh: PhraseCatalog = {
     "在下方选择它并按“允许”。无需复制或粘贴。",
   "If this is your first machine, there is nothing to choose: continue.":
     "如果这是你的第一台电脑，就没有可选的：请继续。",
-  "Set up this {machine}": "设置这台{machine}",
+  "Your phone: get SpecWithCode at specwithcode.com/get and sign in as {account}. This {machine} shows up there by itself.":
+    "手机：在 specwithcode.com/get 获取 SpecWithCode，并以 {account} 登录。这台{machine}会自动出现在那里。",
   "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
     "登录一次。这台{machine}随后会自动关联到你的账户，并列出你的其他电脑。",
   "Turn on SpecWithCode Connect": "开启 SpecWithCode Connect",
   "Set up other computers too": "也设置其他电脑",
-  "Continue without an account": "不使用账户继续",
+  "Use without an account": "不使用账户",
   "Link this {machine}": "关联这台{machine}",
   "Happens by itself after you sign in.": "登录后会自动完成。",
   "Checking this {machine}…": "正在检查这台{machine}…",

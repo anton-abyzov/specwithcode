@@ -4133,12 +4133,13 @@ export const de: PhraseCatalog = {
     "Wähle ihn unten aus und drücke Erlauben. Nichts zu kopieren oder einzufügen.",
   "If this is your first machine, there is nothing to choose: continue.":
     "Wenn dies dein erster Rechner ist, gibt es nichts auszuwählen: mach weiter.",
-  "Set up this {machine}": "Diesen {machine} einrichten",
+  "Your phone: get SpecWithCode at specwithcode.com/get and sign in as {account}. This {machine} shows up there by itself.":
+    "Dein Telefon: Hol dir SpecWithCode unter specwithcode.com/get und melde dich als {account} an. Dieser {machine} erscheint dort von selbst.",
   "Sign in once. This {machine} then links to your account and lists your other machines by itself.":
     "Melde dich einmal an. Dieser {machine} wird dann von selbst mit deinem Konto verknüpft und zeigt deine anderen Rechner an.",
   "Turn on SpecWithCode Connect": "SpecWithCode Connect einschalten",
   "Set up other computers too": "Auch andere Computer einrichten",
-  "Continue without an account": "Ohne Konto fortfahren",
+  "Use without an account": "Ohne Konto nutzen",
   "Link this {machine}": "Diesen {machine} verknüpfen",
   "Happens by itself after you sign in.": "Passiert von selbst, nachdem du dich angemeldet hast.",
   "Checking this {machine}…": "Dieser {machine} wird geprüft…",

@@ -533,11 +533,11 @@ const main = async () => {
     await page.goto(pairUrl, { waitUntil: "domcontentloaded", timeout: TIMEOUT_MS });
     const nav = page.getByRole("navigation", { name: "Projects and chats" });
     const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
-    // First-run wizard: choose this machine as the main one, then skip the
+    // First-run wizard: go on without an account, then skip the
     // agent and project-import steps. With no agent installed the agents step
     // offers "Continue without an agent".
     const wizardButtons = [
-      /^Start as a main machine|up as my main machine/u,
+      /^Use without an account$/u,
       /^Do not import projects$/u,
       /^Skip/u,
       /^Continue( without an agent)?$/u,

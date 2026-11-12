@@ -20,7 +20,6 @@ export const ko: Messages = {
   "wizard.back": "뒤로",
   "wizard.retry": "다시 시도",
   "wizard.closeTerminal": "닫기",
-  "wizard.toast.choiceNotSaved": "선택을 저장하지 못했습니다",
   "wizard.toast.settingsNotSaved": "설정을 저장하지 못했습니다. 다시 시도하세요.",
   "wizard.toast.historyNotImported": "일부 기록을 가져오지 못했습니다",
   "wizard.toast.imported": { other: "스레드 {count}개를 가져왔습니다" },
@@ -92,31 +91,6 @@ export const ko: Messages = {
   "wizard.import.otherFolders": "기타 폴더",
   "wizard.import.folderCount": { other: "폴더 {count}개" },
   "wizard.import.now": "지금",
-
-  "wizard.role.title": "이 {machine}를 어떻게 사용하시겠어요?",
-  "wizard.role.changeLater": "나중에 변경할 수 있습니다.",
-  "wizard.role.main.title": "메인 컴퓨터로 시작",
-  "wizard.role.main.description":
-    "이 {machine}에 에이전트와 프로젝트를 설정합니다. 나중에 다른 컴퓨터를 추가할 수 있습니다.",
-  "wizard.role.join.title": "기존 메인 컴퓨터에 연결",
-  "wizard.role.join.description":
-    "이 {machine}는 다른 곳에 있는 메인 컴퓨터의 작업을 처리합니다. 여기에서 SpecWithCode Connect를 연결한 다음, 메인 컴퓨터에 한 줄을 붙여넣습니다.",
-  "wizard.role.later": "나중에 결정",
-  "wizard.role.laterHint":
-    "먼저 둘러보거나 업데이트하세요. 나중에 참여하려면 설정 > 연결에서 메인 컴퓨터에 참여를 선택하세요.",
-  "wizard.join.title": "이 {machine}를 메인 컴퓨터에 연결",
-  "wizard.join.step1": "SpecWithCode Connect에 로그인하고 이 {machine}를 연결합니다.",
-  "wizard.join.step2":
-    "메인 컴퓨터의 환경 ID(메인 컴퓨터의 설정 > 연결)를 붙여넣고 한 줄을 만듭니다.",
-  "wizard.join.step3":
-    "한 시간 안에 메인 컴퓨터의 설정 > 연결 > 컴퓨터 추가에 그 줄을 붙여넣습니다.",
-  "wizard.join.makeLine": "줄 만들기",
-  "wizard.join.pasted": "붙여넣었습니다",
-  "wizard.joined.title": "이 {machine}는 메인 컴퓨터에서 사용할 준비가 되었습니다",
-  "wizard.joined.description":
-    "메인 컴퓨터의 설정 > 연결 > 컴퓨터 추가에 줄을 붙여넣으면 준비가 끝납니다. 코디네이터가 여기서 작업을 시작할 수 있도록 그곳의 카드에서 워커 허용을 선택하고, 이 {machine}에서 앱을 계속 실행해 두세요.",
-  "wizard.joined.newLine": "새 줄 만들기",
-  "wizard.joined.fullSetup": "대신 이 {machine}를 메인 컴퓨터로 설정",
 
   "update.downloadFailed": "업데이트를 다운로드하지 못했습니다",
   "update.startFailed": "업데이트 다운로드를 시작하지 못했습니다",
