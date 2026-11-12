@@ -8,6 +8,7 @@ import {
   isWslSettingsRowVisible,
   resolveTailscaleHttpsRowState,
   revokeClientSessions,
+  revokeUnusedClients,
   selectQrEndpointOption,
   togglePairingScopeSelection,
   UNUSED_CLIENT_AFTER_MS,
@@ -308,6 +309,7 @@ describe("unusedClientSessions", () => {
     subject: "one-time-token",
     label: "1068 installed check headless",
     deviceType: "desktop",
+    principalKind: "device",
     issuedAt: old,
     lastConnectedAt: old,
     connected: false,
@@ -317,30 +319,52 @@ describe("unusedClientSessions", () => {
   const ids = (sessions: ReadonlyArray<UnusedClientCandidate>) =>
     unusedClientSessions(sessions, now).map((entry) => entry.sessionId);
 
-  it("offers a paired computer sign-in that has not connected for a day", () => {
+  it("offers a paired computer sign-in with no connection for a day", () => {
     expect(ids([session()])).toEqual(["session"]);
     expect(ids([session({ subject: "device-approval" })])).toEqual(["session"]);
+    expect(ids([session({ label: undefined, principalKind: undefined })])).toEqual(["session"]);
   });
 
-  it("counts a sign-in that never connected from when it was issued", () => {
-    expect(ids([session({ lastConnectedAt: null })])).toEqual(["session"]);
-    expect(ids([session({ lastConnectedAt: null, issuedAt: recent })])).toEqual([]);
+  it("starts at exactly a day", () => {
+    const at = (ago: number) => session({ lastConnectedAt: new Date(now - ago).toISOString() });
+    expect(ids([at(UNUSED_CLIENT_AFTER_MS)])).toEqual(["session"]);
+    expect(ids([at(UNUSED_CLIENT_AFTER_MS - 1)])).toEqual([]);
   });
 
-  it("keeps this app, a connected client and anything used within a day", () => {
+  it("keeps this app, a connected client and anything seen within a day", () => {
     expect(ids([session({ current: true })])).toEqual([]);
     expect(ids([session({ connected: true })])).toEqual([]);
     expect(ids([session({ lastConnectedAt: recent })])).toEqual([]);
   });
 
-  it("keeps phones, the fleet's machines, their keys, worker grants and Connect", () => {
+  it("keeps a sign-in that never connected, however old", () => {
+    // The server records connections, not requests: a script looks like this.
+    expect(ids([session({ lastConnectedAt: null })])).toEqual([]);
+  });
+
+  it("keeps everything that is not a person's computer", () => {
     expect(ids([session({ label: "iPhone", deviceType: "mobile" })])).toEqual([]);
     expect(ids([session({ label: "iPad", deviceType: "tablet" })])).toEqual([]);
+    expect(ids([session({ deviceType: "bot" })])).toEqual([]);
+    expect(ids([session({ deviceType: "unknown" })])).toEqual([]);
+  });
+
+  it("keeps the fleet's machines by principal and by label", () => {
+    expect(ids([session({ principalKind: "coordinator", label: "Another label" })])).toEqual([]);
     expect(ids([session({ label: "Private fleet browser" })])).toEqual([]);
-    expect(ids([session({ label: undefined })])).toEqual(["session"]);
-    expect(ids([session({ subject: "fleet-invitation", lastConnectedAt: null })])).toEqual([]);
-    expect(ids([session({ subject: "mcp-client", lastConnectedAt: null })])).toEqual([]);
-    expect(ids([session({ subject: "cloud-connect", lastConnectedAt: null })])).toEqual([]);
+  });
+
+  it("keeps every kind it does not know to be paired by a person", () => {
+    for (const subject of [
+      "fleet-invitation",
+      "mcp-client",
+      "cloud-connect",
+      "phone-link:abc",
+      "desktop-bootstrap",
+      "cli-issued-session",
+      "something-new",
+    ])
+      expect(ids([session({ subject })]), subject).toEqual([]);
   });
 
   it("does not take an unreadable time as proof of disuse", () => {
@@ -358,8 +382,8 @@ describe("revokeClientSessions", () => {
       await Promise.resolve();
       running -= 1;
     });
-    const result = await revokeClientSessions(["a", "b", "c", "d", "e"], revoke, 2);
-    expect(result).toEqual({ revoked: 5, failed: 0, error: null });
+    const result = await revokeClientSessions(["a", "b", "c", "d", "e"], revoke, () => true, 2);
+    expect(result).toEqual({ revoked: 5, failed: 0, skipped: 0, error: null });
     expect(revoke).toHaveBeenCalledTimes(5);
     expect(most).toBe(2);
   });
@@ -368,10 +392,99 @@ describe("revokeClientSessions", () => {
     const revoke = vi.fn(async (sessionId: string) => {
       if (sessionId !== "a") throw new Error(`refused ${sessionId}`);
     });
-    expect(await revokeClientSessions(["a", "b", "c"], revoke, 1)).toEqual({
+    expect(await revokeClientSessions(["a", "b", "c"], revoke, () => true, 1)).toEqual({
       revoked: 1,
       failed: 2,
+      skipped: 0,
       error: "refused b",
     });
+  });
+
+  it("asks again right before each request", async () => {
+    const revoke = vi.fn(async (_sessionId: string) => undefined);
+    const result = await revokeClientSessions(["a", "b", "c"], revoke, (id) => id !== "b", 2);
+    expect(result).toEqual({ revoked: 2, failed: 0, skipped: 1, error: null });
+    expect(revoke.mock.calls.map(([id]) => id)).toEqual(["a", "c"]);
+  });
+});
+
+describe("revokeUnusedClients", () => {
+  const now = Date.parse("2026-11-12T12:00:00.000Z");
+  const old = new Date(now - UNUSED_CLIENT_AFTER_MS - 60_000).toISOString();
+  const session = (
+    sessionId: string,
+    overrides: Partial<UnusedClientCandidate> = {},
+  ): UnusedClientCandidate => ({
+    sessionId,
+    subject: "one-time-token",
+    label: "check",
+    deviceType: "desktop",
+    principalKind: undefined,
+    issuedAt: old,
+    lastConnectedAt: old,
+    connected: false,
+    current: false,
+    ...overrides,
+  });
+  const run = (input: {
+    readonly lists: ReadonlyArray<ReadonlyArray<UnusedClientCandidate> | null>;
+    readonly confirm: boolean;
+  }) => {
+    let read = 0;
+    const revoke = vi.fn(async (_sessionId: string) => undefined);
+    const confirm = vi.fn(async (_count: number) => input.confirm);
+    const result = revokeUnusedClients({
+      // The first read is the question; later reads are after the answer.
+      sessions: () => input.lists[Math.min(read++, input.lists.length - 1)] ?? null,
+      now: () => now,
+      confirm,
+      revoke,
+    });
+    return { result, revoke, confirm };
+  };
+
+  it("asks with the number and revokes nothing when the owner says no", async () => {
+    const { result, revoke, confirm } = run({
+      lists: [[session("a"), session("b"), session("me", { current: true })]],
+      confirm: false,
+    });
+    expect(await result).toBeNull();
+    expect(confirm).toHaveBeenCalledWith(2);
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it("does not ask when nothing is unused or the list is unknown", async () => {
+    for (const lists of [[[session("me", { current: true })]], [null]]) {
+      const { result, confirm } = run({ lists, confirm: true });
+      expect(await result).toBeNull();
+      expect(confirm).not.toHaveBeenCalled();
+    }
+  });
+
+  it("leaves a client that connected while the question was open", async () => {
+    const { result, revoke } = run({
+      lists: [
+        [session("a"), session("b")],
+        [session("a"), session("b", { connected: true })],
+      ],
+      confirm: true,
+    });
+    expect(await result).toEqual({ revoked: 1, failed: 0, skipped: 1, error: null });
+    expect(revoke.mock.calls.map(([id]) => id)).toEqual(["a"]);
+  });
+
+  it("never revokes a sign-in that was not in the number confirmed", async () => {
+    const { result, revoke } = run({
+      lists: [[session("a")], [session("a"), session("late")]],
+      confirm: true,
+    });
+    expect(await result).toEqual({ revoked: 1, failed: 0, skipped: 0, error: null });
+    expect(revoke.mock.calls.map(([id]) => id)).toEqual(["a"]);
+  });
+
+  it("revokes nothing once the list is unknown", async () => {
+    const { result, revoke } = run({ lists: [[session("a")], null], confirm: true });
+    expect(await result).toEqual({ revoked: 0, failed: 0, skipped: 1, error: null });
+    expect(revoke).not.toHaveBeenCalled();
   });
 });

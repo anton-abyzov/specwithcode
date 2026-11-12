@@ -1271,10 +1271,10 @@ export const zh: PhraseCatalog = {
   "Client scopes": "客户端权限",
   "Revoke others": "撤销其他",
   "Revoke {count} unused": "撤销 {count} 个未使用的登录",
-  "Sign-ins paired by link or code that have not connected for 24 hours":
-    "通过链接或代码配对且 24 小时未连接的登录",
-  "Revoke {count} sign-ins that have not connected for 24 hours? This app, phones, your other machines and their keys are kept. A device among the revoked ones needs a new pairing link or code.":
-    "要撤销 {count} 个 24 小时未连接的登录吗？此应用、手机、你的其他机器及其密钥会保留。被撤销的设备需要新的配对链接或代码。",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "通过链接或代码配对且 24 小时无连接的电脑登录",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "要撤销 {count} 个 24 小时无连接的电脑登录吗？只是关机一天的电脑也在其中，之后需要新的配对链接或代码。此应用、已连接的客户端、手机、你的其他机器及其密钥会保留。",
   "Revoked {count} unused sign-ins": "已撤销 {count} 个未使用的登录",
   "Could not revoke {count} sign-ins": "无法撤销 {count} 个登录",
   "Create link": "创建链接",

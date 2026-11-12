@@ -807,7 +807,7 @@ export const make = Effect.gen(function* () {
           );
 
   const markDisconnected: SessionStore["Service"]["markDisconnected"] = (sessionId) =>
-    Ref.update(connectedSessionsRef, (current) => {
+    Ref.modify(connectedSessionsRef, (current) => {
       const next = new Map(current);
       const remaining = (next.get(sessionId) ?? 0) - 1;
       if (remaining > 0) {
@@ -815,8 +815,23 @@ export const make = Effect.gen(function* () {
       } else {
         next.delete(sessionId);
       }
-      return next;
+      return [current.has(sessionId) && remaining <= 0, next] as const;
     }).pipe(
+      // The last socket closing is the last time this client was seen. Without
+      // it `lastConnectedAt` stays at the start of the connection, and a client
+      // that was connected for days reads as unused the moment it drops.
+      Effect.flatMap((lastSocketClosed) =>
+        lastSocketClosed && !inMemorySessions.has(sessionId)
+          ? DateTime.now.pipe(
+              Effect.flatMap((lastConnectedAt) =>
+                authSessions.setLastConnectedAt({
+                  sessionId,
+                  lastConnectedAt,
+                }),
+              ),
+            )
+          : Effect.void,
+      ),
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
         Option.isSome(session) ? emitUpsert(session.value) : emitRemoved(sessionId),

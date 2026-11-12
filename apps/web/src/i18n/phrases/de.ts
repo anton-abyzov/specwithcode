@@ -1329,10 +1329,10 @@ export const de: PhraseCatalog = {
   "Client scopes": "Client-Berechtigungen",
   "Revoke others": "Andere widerrufen",
   "Revoke {count} unused": "{count} ungenutzte widerrufen",
-  "Sign-ins paired by link or code that have not connected for 24 hours":
-    "Per Link oder Code gekoppelte Anmeldungen, die sich seit 24 Stunden nicht verbunden haben",
-  "Revoke {count} sign-ins that have not connected for 24 hours? This app, phones, your other machines and their keys are kept. A device among the revoked ones needs a new pairing link or code.":
-    "{count} Anmeldungen widerrufen, die sich seit 24 Stunden nicht verbunden haben? Diese App, Telefone, Ihre anderen Maschinen und deren Schlüssel bleiben erhalten. Ein Gerät unter den widerrufenen braucht einen neuen Kopplungslink oder Code.",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Per Link oder Code gekoppelte Computer-Anmeldungen ohne Verbindung seit 24 Stunden",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "{count} Computer-Anmeldungen widerrufen, die seit 24 Stunden keine Verbindung hatten? Ein Computer, der nur einen Tag ausgeschaltet war, gehört dazu und braucht einen neuen Kopplungslink oder Code. Diese App, verbundene Clients, Telefone, Ihre anderen Maschinen und deren Schlüssel bleiben erhalten.",
   "Revoked {count} unused sign-ins": "{count} ungenutzte Anmeldungen widerrufen",
   "Could not revoke {count} sign-ins": "{count} Anmeldungen konnten nicht widerrufen werden",
   "Create link": "Link erstellen",

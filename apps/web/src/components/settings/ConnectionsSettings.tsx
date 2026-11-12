@@ -1081,6 +1081,7 @@ function toUnusedClientCandidate(
     subject: session.subject,
     label: session.client.label,
     deviceType: session.client.deviceType,
+    principalKind: session.principal?.kind,
     issuedAt: session.issuedAt,
     lastConnectedAt: session.lastConnectedAt,
     connected: session.connected,

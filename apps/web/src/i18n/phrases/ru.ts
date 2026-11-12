@@ -1318,10 +1318,10 @@ export const ru: PhraseCatalog = {
   "Client scopes": "Права клиента",
   "Revoke others": "Отозвать остальные",
   "Revoke {count} unused": "Отозвать неиспользуемые: {count}",
-  "Sign-ins paired by link or code that have not connected for 24 hours":
-    "Входы, связанные по ссылке или коду и не подключавшиеся 24 часа",
-  "Revoke {count} sign-ins that have not connected for 24 hours? This app, phones, your other machines and their keys are kept. A device among the revoked ones needs a new pairing link or code.":
-    "Отозвать входы, не подключавшиеся 24 часа ({count})? Это приложение, телефоны, другие ваши машины и их ключи остаются. Устройству из отозванных понадобится новая ссылка или код связывания.",
+  "Computer sign-ins paired by link or code with no connection for 24 hours":
+    "Входы с компьютеров, связанные по ссылке или коду, без подключения 24 часа",
+  "Revoke {count} computer sign-ins that have had no connection for 24 hours? A computer that was only switched off for a day is among them and will need a new pairing link or code. This app, connected clients, phones, your other machines and their keys are kept.":
+    "Отозвать входы с компьютеров без подключения за последние 24 часа ({count})? Среди них есть и компьютер, который просто был выключен сутки: ему понадобится новая ссылка или код связывания. Это приложение, подключённые клиенты, телефоны, другие ваши машины и их ключи остаются.",
   "Revoked {count} unused sign-ins": "Отозвано неиспользуемых входов: {count}",
   "Could not revoke {count} sign-ins": "Не удалось отозвать входов: {count}",
   "Create link": "Создать ссылку",

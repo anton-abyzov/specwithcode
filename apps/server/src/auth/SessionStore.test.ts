@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthStandardClientScopes, EnvironmentId } from "@specweave-studio/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -711,7 +712,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
   );
 
-  it.effect("persists lastConnectedAt on first connect and updates it after reconnect", () =>
+  it.effect("persists lastConnectedAt on first connect, the last disconnect and a reconnect", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({
@@ -736,12 +737,31 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect(stillConnected[0]?.lastConnectedAt?.toString()).toBe(firstConnectedAt?.toString());
 
+      // One of two sockets closing is not the client leaving.
+      yield* TestClock.adjust(Duration.days(3));
       yield* sessions.markDisconnected(issued.sessionId);
+      const oneSocketLeft = yield* sessions.listActive();
+
+      expect(oneSocketLeft[0]?.connected).toBe(true);
+      expect(oneSocketLeft[0]?.lastConnectedAt?.toString()).toBe(firstConnectedAt?.toString());
+
+      // The last one closing is the last time the client was seen: a client
+      // connected for three days must not read as unused for three days.
       yield* sessions.markDisconnected(issued.sessionId);
       const afterDisconnect = yield* sessions.listActive();
+      const lastSeenAt = afterDisconnect[0]?.lastConnectedAt;
 
       expect(afterDisconnect[0]?.connected).toBe(false);
-      expect(afterDisconnect[0]?.lastConnectedAt?.toString()).toBe(firstConnectedAt?.toString());
+      expect(lastSeenAt).not.toBeNull();
+      expect(DateTime.toEpochMillis(lastSeenAt!) - DateTime.toEpochMillis(firstConnectedAt!)).toBe(
+        Duration.toMillis(Duration.days(3)) + 1000,
+      );
+
+      // A stray second close changes nothing.
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* sessions.markDisconnected(issued.sessionId);
+      const afterStrayClose = yield* sessions.listActive();
+      expect(afterStrayClose[0]?.lastConnectedAt?.toString()).toBe(lastSeenAt?.toString());
 
       yield* TestClock.adjust(Duration.seconds(1));
       yield* sessions.markConnected(issued.sessionId);
@@ -749,7 +769,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect(afterReconnect[0]?.connected).toBe(true);
       expect(afterReconnect[0]?.lastConnectedAt).not.toBeNull();
-      expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(firstConnectedAt?.toString());
+      expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(lastSeenAt?.toString());
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 

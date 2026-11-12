@@ -22,6 +22,7 @@ const session = (sessionId: string, overrides: Partial<Candidate> = {}): Candida
   subject: "one-time-token",
   label: "installed check headless",
   deviceType: "desktop",
+  principalKind: undefined,
   issuedAt: new Date(Date.now() - 3 * DAY).toISOString(),
   lastConnectedAt: new Date(Date.now() - 2 * DAY).toISOString(),
   connected: false,
