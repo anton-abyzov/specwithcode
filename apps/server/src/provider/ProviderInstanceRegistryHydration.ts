@@ -46,6 +46,7 @@ import { currentTeamRules, watchTeamRules } from "../teamRules/TeamRules.ts";
 import {
   defaultInstanceIdForDriver,
   type ProviderInstanceConfig,
+  ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ServerSettings,
 } from "@specweave-studio/contracts";
@@ -64,6 +65,8 @@ import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMuta
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as AcpRegistrySupport from "./acp/AcpRegistrySupport.ts";
 import * as AcpRegistryCatalog from "./AcpRegistryCatalog.ts";
+
+const MUSE_DRIVER = ProviderDriverKind.make("muse");
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
@@ -107,6 +110,12 @@ export const deriveProviderInstanceConfigMap = (
     const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
     const legacyConfig = settings.providers[legacyKey];
     if (legacyConfig === undefined) {
+      // Muse Code has no legacy entry. It still gets a default slot, off
+      // until someone turns it on, so a found CLI has a row without Add
+      // provider. Registry agents need an agent id and get no slot.
+      if (driver.driverKind === MUSE_DRIVER) {
+        merged[instanceId] = { driver: driver.driverKind, config: {} };
+      }
       continue;
     }
 

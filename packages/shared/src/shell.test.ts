@@ -26,6 +26,7 @@ import {
   readPathFromLaunchctl,
   readPathFromLoginShell,
   resolveCommandPath,
+  resolveKnownPosixCliDirs,
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
@@ -357,6 +358,62 @@ describe("resolveKnownWindowsCliDirs", () => {
       "C:\\Users\\testuser\\.bun\\bin",
       "C:\\Users\\testuser\\scoop\\shims",
     ]);
+  });
+});
+
+describe("resolveKnownPosixCliDirs", () => {
+  const versions = () => ["v18.20.4", "v22.20.0", "v22.3.1", "system", ".DS_Store"];
+
+  it("lists the per-user installer folders on macOS, newest Node first", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "/Users/test" }, "darwin", versions)).toEqual([
+      "/Users/test/.local/bin",
+      "/Users/test/.npm-global/bin",
+      "/Users/test/.nvm/versions/node/v22.20.0/bin",
+      "/Users/test/.nvm/versions/node/v22.3.1/bin",
+      "/Users/test/.nvm/versions/node/v18.20.4/bin",
+      "/Users/test/.volta/bin",
+      "/Users/test/.bun/bin",
+      "/Users/test/Library/pnpm",
+      "/Users/test/.opencode/bin",
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+    ]);
+  });
+
+  it("uses the Linux pnpm and Homebrew folders and honours tool variables", () => {
+    expect(
+      resolveKnownPosixCliDirs(
+        {
+          HOME: "/home/test",
+          NVM_DIR: "/opt/nvm",
+          NPM_CONFIG_PREFIX: "/home/test/.npm-packages",
+          VOLTA_HOME: "/opt/volta",
+          BUN_INSTALL: "/opt/bun",
+          PNPM_HOME: "/opt/pnpm",
+        },
+        "linux",
+        (directory) => (directory === "/opt/nvm/versions/node" ? ["v20.1.0"] : []),
+      ),
+    ).toEqual([
+      "/home/test/.local/bin",
+      "/home/test/.npm-packages/bin",
+      "/home/test/.npm-global/bin",
+      "/opt/nvm/versions/node/v20.1.0/bin",
+      "/opt/volta/bin",
+      "/opt/bun/bin",
+      "/opt/pnpm",
+      "/home/test/.opencode/bin",
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/usr/local/bin",
+    ]);
+  });
+
+  it("returns only the system folders without a home, and nothing on Windows", () => {
+    expect(resolveKnownPosixCliDirs({}, "linux", () => [])).toEqual([
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/usr/local/bin",
+    ]);
+    expect(resolveKnownPosixCliDirs({ HOME: "/Users/test" }, "win32", versions)).toEqual([]);
   });
 });
 

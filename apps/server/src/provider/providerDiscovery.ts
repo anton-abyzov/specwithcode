@@ -8,6 +8,7 @@
  * the Keychain itself: it runs `--version` and one status command with stdin
  * closed and a hard timeout, and reads environment variables for presence only.
  */
+import { ProviderInstanceId, type ServerSettings } from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -17,11 +18,24 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { type DiscoverableProviderDriver, ServerSettingsService } from "../serverSettings.ts";
+import {
+  DISCOVERABLE_PROVIDER_DRIVERS,
+  type DiscoverableProviderDriver,
+  ServerSettingsService,
+} from "../serverSettings.ts";
 import { parseGrokModelsCliOutput } from "./GrokProvider.ts";
 import { type CommandResult, isCommandMissingCause, spawnAndCollect } from "./providerSnapshot.ts";
 
-export type ProviderDiscoveryState = "ready" | "signed-out" | "not-installed" | "unknown";
+/**
+ * `installed` is an agent that runs but whose sign-in this check does not
+ * read: it is shown as found, and never turned on by discovery.
+ */
+export type ProviderDiscoveryState =
+  | "ready"
+  | "signed-out"
+  | "installed"
+  | "not-installed"
+  | "unknown";
 
 const VERSION_TIMEOUT_MS = 3_000;
 // `opencode auth list` can take several seconds on its first run of the day.
@@ -129,7 +143,7 @@ const makeRun =
 /** Installed means `--version` exits 0; a missing binary is the only "not installed". */
 const probeInstalled = (run: Run) =>
   run(["--version"], VERSION_TIMEOUT_MS).pipe(
-    Effect.map((result): ProviderDiscoveryState | "installed" =>
+    Effect.map((result): "installed" | "not-installed" | "unknown" =>
       result === "missing"
         ? "not-installed"
         : Option.isSome(result) && result.value.code === 0
@@ -183,36 +197,178 @@ export const probeOpenCode = (binary: string, environment: NodeJS.ProcessEnv) =>
     return verdict(parseOpenCodeAuthList(`${stdout}\n${stderr}`));
   });
 
-/** Probes every candidate in parallel and turns on the ready ones. */
+/**
+ * Parses `pi --list-models`. With no provider key or login Pi prints
+ * "No models available. Set API keys in environment variables."; otherwise it
+ * prints a table with one row per model.
+ */
+export function parsePiListModels(output: string): boolean | null {
+  const text = output.replace(ANSI_PATTERN, "");
+  if (/No models available/i.test(text)) return false;
+  return text.split("\n").filter((line) => line.trim() !== "").length >= 2 ? true : null;
+}
+
+export const probePi = (binary: string, environment: NodeJS.ProcessEnv) =>
+  Effect.gen(function* () {
+    const run = makeRun(binary, environment);
+    const installed = yield* probeInstalled(run);
+    if (installed !== "installed") return installed;
+    const models = yield* run(["--list-models"], STATUS_TIMEOUT_MS);
+    if (models === "missing" || Option.isNone(models) || models.value.code !== 0) {
+      return "unknown" as const;
+    }
+    const { stdout, stderr } = models.value;
+    return verdict(parsePiListModels(`${stdout}\n${stderr}`));
+  });
+
+/**
+ * Cursor runs through its SDK, so a key in the environment is a sign-in with
+ * or without the CLI. Without a key the CLI only shows that Cursor is here:
+ * its browser login is kept per instance and is not read.
+ */
+export const probeCursor = (binary: string, environment: NodeJS.ProcessEnv) =>
+  environment.CURSOR_API_KEY?.trim()
+    ? Effect.succeed("ready" as const)
+    : probeInstalled(makeRun(binary, environment));
+
+/** `muse usage --json` exits 0 only for a signed-in account. */
+export const probeMuse = (binary: string, environment: NodeJS.ProcessEnv) =>
+  Effect.gen(function* () {
+    const run = makeRun(binary, environment);
+    const installed = yield* probeInstalled(run);
+    if (installed !== "installed") return installed;
+    const usage = yield* run(["usage", "--json"], STATUS_TIMEOUT_MS);
+    return usage !== "missing" && Option.isSome(usage) && usage.value.code === 0
+      ? ("ready" as const)
+      : ("installed" as const);
+  });
+
+/** For agents whose sign-in the app checks elsewhere, or only offers. */
+export const probeCommand = (binary: string, environment: NodeJS.ProcessEnv) =>
+  probeInstalled(makeRun(binary, environment));
+
+type Probe = (
+  binary: string,
+  environment: NodeJS.ProcessEnv,
+) => Effect.Effect<ProviderDiscoveryState, never, ChildProcessSpawner.ChildProcessSpawner>;
+
+/**
+ * Every agent discovery looks for. `builtIn` agents have a row in Settings
+ * whether or not they are found; `registry` agents are offered when found and
+ * never added by themselves.
+ */
+export const DISCOVERED_AGENTS = [
+  { agent: "codex", kind: "builtIn", command: "codex", probe: probeCommand },
+  { agent: "claudeAgent", kind: "builtIn", command: "claude", probe: probeCommand },
+  { agent: "cursor", kind: "builtIn", command: "cursor-agent", probe: probeCursor },
+  { agent: "grok", kind: "builtIn", command: "grok", probe: probeGrok },
+  { agent: "muse", kind: "builtIn", command: "muse", probe: probeMuse },
+  { agent: "opencode", kind: "builtIn", command: "opencode", probe: probeOpenCode },
+  { agent: "pi", kind: "builtIn", command: "pi", probe: probePi },
+  { agent: "antigravity", kind: "builtIn", command: "antigravity-acp", probe: probeCommand },
+  { agent: "gemini", kind: "registry", command: "gemini", probe: probeCommand },
+  { agent: "github-copilot-cli", kind: "registry", command: "copilot", probe: probeCommand },
+] as const satisfies ReadonlyArray<{
+  readonly agent: string;
+  readonly kind: "builtIn" | "registry";
+  readonly command: string;
+  readonly probe: Probe;
+}>;
+export type DiscoveredAgent = (typeof DISCOVERED_AGENTS)[number]["agent"];
+
+export interface AgentDiscoveryResult {
+  readonly agent: DiscoveredAgent;
+  readonly kind: "builtIn" | "registry";
+  /** The command or path that was run. */
+  readonly command: string;
+  readonly state: ProviderDiscoveryState;
+}
+
+export interface AgentDiscoveryReport {
+  readonly results: ReadonlyArray<AgentDiscoveryResult>;
+  /** The folders a command name was looked up in, for a "not found" row. */
+  readonly searched: ReadonlyArray<string>;
+}
+
+const configuredBinaryPath = (value: unknown): string | undefined => {
+  const path =
+    value !== null && typeof value === "object" && "binaryPath" in value
+      ? value.binaryPath
+      : undefined;
+  return typeof path === "string" && path.trim() !== "" ? path.trim() : undefined;
+};
+
+/** The path the user set for an agent, from its legacy entry or its default instance. */
+function commandFor(settings: ServerSettings, agent: string, fallback: string): string {
+  return (
+    configuredBinaryPath((settings.providers as Record<string, unknown>)[agent]) ??
+    configuredBinaryPath(settings.providerInstances[ProviderInstanceId.make(agent)]?.config) ??
+    fallback
+  );
+}
+
+export function searchedFolders(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): ReadonlyArray<string> {
+  const path = Object.entries(environment).find(([key]) => key.toUpperCase() === "PATH")?.[1] ?? "";
+  return [
+    ...new Set(
+      path
+        .split(platform === "win32" ? ";" : ":")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== ""),
+    ),
+  ];
+}
+
+// Most of these CLIs are Node programs; starting ten at once stalls a small machine.
+const PROBE_CONCURRENCY = 4;
+
+/** Looks for every known agent. Reads only; settings are not changed. */
+export const discoverAgents = Effect.fn("providerDiscovery.discoverAgents")(function* (
+  settings: ServerSettings,
+) {
+  const platform = yield* HostProcessPlatform;
+  const environment = discoveryEnvironment(yield* HostProcessEnvironment, platform);
+  const results = yield* Effect.forEach(
+    DISCOVERED_AGENTS,
+    ({ agent, kind, command: fallback, probe }) => {
+      const command = commandFor(settings, agent, fallback);
+      return probe(command, environment).pipe(
+        Effect.map((state): AgentDiscoveryResult => ({ agent, kind, command, state })),
+      );
+    },
+    { concurrency: PROBE_CONCURRENCY },
+  );
+  return {
+    results,
+    searched: searchedFolders(environment, platform),
+  } satisfies AgentDiscoveryReport;
+});
+
+const isDiscoverableDriver = (agent: string): agent is DiscoverableProviderDriver =>
+  (DISCOVERABLE_PROVIDER_DRIVERS as ReadonlyArray<string>).includes(agent);
+
+/**
+ * Looks for every agent, then turns on the signed-in ones nobody has switched
+ * on or off. Muse Code and registry agents are found and never turned on here.
+ */
 export const runProviderDiscovery = Effect.gen(function* () {
   const settingsService = yield* ServerSettingsService;
   const { providerDiscoveryCandidates, autoEnableDiscoveredProviders } = settingsService;
   if (!providerDiscoveryCandidates || !autoEnableDiscoveredProviders) return [];
   yield* settingsService.ready;
-  const candidates = yield* providerDiscoveryCandidates;
-  if (candidates.size === 0) return [];
-
-  const settings = yield* settingsService.getSettings;
-  const environment = discoveryEnvironment(
-    yield* HostProcessEnvironment,
-    yield* HostProcessPlatform,
-  );
-  const probes: Record<
-    DiscoverableProviderDriver,
-    Effect.Effect<ProviderDiscoveryState, never, ChildProcessSpawner.ChildProcessSpawner>
-  > = {
-    grok: probeGrok(settings.providers.grok.binaryPath || "grok", environment),
-    opencode: probeOpenCode(settings.providers.opencode.binaryPath || "opencode", environment),
-  };
-  const results = yield* Effect.forEach(
-    [...candidates],
-    (driver) => probes[driver].pipe(Effect.map((state) => ({ driver, state }))),
-    { concurrency: "unbounded" },
-  );
+  const { results } = yield* discoverAgents(yield* settingsService.getSettings);
   yield* Effect.logInfo("Provider discovery finished", {
-    results: Object.fromEntries(results.map(({ driver, state }) => [driver, state])),
+    results: Object.fromEntries(results.map(({ agent, state }) => [agent, state])),
   });
-  const ready = results.filter(({ state }) => state === "ready").map(({ driver }) => driver);
+  const candidates = yield* providerDiscoveryCandidates;
+  const ready = results
+    .filter(({ state }) => state === "ready")
+    .map(({ agent }) => agent)
+    .filter(isDiscoverableDriver)
+    .filter((driver) => candidates.has(driver));
   if (ready.length === 0) return [];
   const at = DateTime.formatIso(yield* DateTime.now);
   const enabled = yield* autoEnableDiscoveredProviders(ready, at);
