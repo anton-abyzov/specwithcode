@@ -5,6 +5,7 @@ import type { StudioFleetRemoteWorker } from "@specweave-studio/contracts/studio
 import {
   placeRemoteWorkers,
   remoteWorkerCardStatus,
+  remoteWorkerNeedsPlace,
   remoteWorkerReachableHere,
   visibleRemoteWorkers,
 } from "./remoteWorkerCards";
@@ -94,6 +95,28 @@ it("opens a finished worker's archived thread while its machine is connected", (
   expect(remoteWorkerReachableHere(worker, [{ environmentId: "env-other" }])).toBe(false);
   expect(remoteWorkerReachableHere(worker, [])).toBe(false);
   expect(remoteWorkerReachableHere({ ...worker, remoteThreadId: null }, m1Threads)).toBe(false);
+});
+
+it("keeps only live or waiting workers above the Threads pane groups", () => {
+  const done = { ...worker, id: "rwt:done", state: "idle" as const, lastStatus: "completed" };
+  const failed = { ...done, id: "rwt:failed", lastStatus: "failed" };
+  const finished = { ...done, id: "rwt:wake", state: "wake_pending" as const };
+  const stopped = { ...worker, id: "rwt:stopped", state: "stopped" as const };
+  const asking = { ...worker, id: "rwt:ask", lastStatus: "waiting_on_you" };
+  const lost = { ...worker, id: "rwt:lost", reachable: false };
+  const auth = { ...worker, id: "rwt:auth", state: "paused_auth" as const };
+  const unconfirmed = { ...worker, id: "rwt:start", state: "launch_unknown" as const };
+  const launching = { ...worker, id: "rwt:launch", state: "launching" as const };
+  for (const row of [done, failed, finished, stopped])
+    expect(remoteWorkerNeedsPlace(row), row.id).toBe(false);
+  for (const row of [worker, asking, lost, auth, unconfirmed, launching])
+    expect(remoteWorkerNeedsPlace(row), row.id).toBe(true);
+  // The screenshot: five Done m4 workers and nothing else leave no card at all.
+  expect(visibleRemoteWorkers([done, failed, finished, stopped])).toEqual([]);
+  expect(visibleRemoteWorkers([done, asking, worker]).map((row) => row.id)).toEqual([
+    "rwt:ask",
+    "rwt:1",
+  ]);
 });
 
 describe("remote worker card placement", () => {
