@@ -4394,4 +4394,6 @@ export const ko: PhraseCatalog = {
   "No answer from: {agents}.": "응답 없음: {agents}.",
   "Where it looked": "찾아본 위치",
   "{names} and {count} more": "{names} 외 {count}개",
+  "Turn on {agent}": "{agent} 켜기",
+  "Add {agent}": "{agent} 추가",
 };

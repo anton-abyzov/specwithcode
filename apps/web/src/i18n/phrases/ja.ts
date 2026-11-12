@@ -4445,4 +4445,6 @@ export const ja: PhraseCatalog = {
   "No answer from: {agents}.": "応答なし: {agents}。",
   "Where it looked": "探した場所",
   "{names} and {count} more": "{names} ほか {count} 件",
+  "Turn on {agent}": "{agent} をオンにする",
+  "Add {agent}": "{agent} を追加",
 };

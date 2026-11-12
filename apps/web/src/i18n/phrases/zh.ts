@@ -4270,4 +4270,6 @@ export const zh: PhraseCatalog = {
   "No answer from: {agents}.": "无响应：{agents}。",
   "Where it looked": "查找位置",
   "{names} and {count} more": "{names} 等另外 {count} 个",
+  "Turn on {agent}": "开启 {agent}",
+  "Add {agent}": "添加 {agent}",
 };

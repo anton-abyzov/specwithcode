@@ -4441,4 +4441,6 @@ export const ru: PhraseCatalog = {
   "No answer from: {agents}.": "Нет ответа от: {agents}.",
   "Where it looked": "Где искали",
   "{names} and {count} more": "{names} и ещё {count}",
+  "Turn on {agent}": "Включить {agent}",
+  "Add {agent}": "Добавить {agent}",
 };

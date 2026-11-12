@@ -1281,10 +1281,11 @@ export const layer = Layer.effect(
       ...(Option.isSome(agentSearch)
         ? {
             findAgents: (options: { readonly fresh: boolean }) =>
-              Effect.all({
-                providers: ruledProviders,
-                agentSearch: agentSearch.value.search(options),
-              }),
+              // Read every 700 ms while a search runs, so it carries no provider list.
+              Effect.map(agentSearch.value.search(options), (found) => ({
+                providers: [],
+                agentSearch: found,
+              })),
           }
         : {}),
       get streamChanges() {

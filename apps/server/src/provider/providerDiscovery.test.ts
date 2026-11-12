@@ -670,15 +670,26 @@ process.exit(2);
 });
 
 describe("finding agents on demand", () => {
-  /** A search service whose PATH holds a signed-in Pi and nothing else. */
-  const layerSearchWithPi = () => {
-    const pi = fakeCli("pi", ["--list-models"], PI_MODELS);
+  /** A search service whose PATH holds that Pi and nothing else. */
+  const layerSearchWith = (pi: string) => {
     const path = [NodePath.dirname(pi), isolatedPath()].join(NodePath.delimiter);
     return layerSearch.pipe(
       Layer.provide(Layer.succeed(HostProcessEnvironment, { PATH: path })),
       Layer.provideMerge(Layer.provideMerge(layerServerSettings(), NodeServices.layer)),
     );
   };
+  const layerSearchWithPi = () => layerSearchWith(fakeCli("pi", ["--list-models"], PI_MODELS));
+  /** A signed-in Pi that takes a while to list its models. */
+  const slowPi = () =>
+    writeFakeCli({
+      directory: fakeCliDirectory(),
+      name: "pi",
+      source: `
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("pi 1.0.0"); process.exit(0); }
+setTimeout(() => { process.stdout.write(${JSON.stringify(PI_MODELS)}); process.exit(0); }, 1500);
+`,
+    });
 
   const startSettings = Effect.gen(function* () {
     yield* writeSettingsFile("{}");
@@ -710,6 +721,7 @@ describe("finding agents on demand", () => {
       assert.isUndefined(first.checkedAt);
       assert.isAbove(first.searched.length, 0);
 
+      // Nothing pending means the search is finished: listed order, and a time.
       const done = yield* untilDone(search);
       assert.deepEqual(
         done.agents.map(({ agent }) => agent),
@@ -737,11 +749,68 @@ describe("finding agents on demand", () => {
       const fresh = yield* search({ fresh: true });
       assert.equal(fresh.pending.length, DISCOVERED_AGENTS.length);
       assert.deepEqual(fresh.agents, done.agents);
-      // One search at a time: a second request joins the one that is running.
-      const joined = yield* search({ fresh: true });
-      assert.isAtMost(joined.pending.length, fresh.pending.length);
       const finished = yield* untilDone(search);
       assert.deepEqual(finished.agents, done.agents);
     }).pipe(Effect.provide(layerSearchWithPi())),
   );
+
+  it.live("joins a search that is running instead of starting a second one", () =>
+    Effect.gen(function* () {
+      yield* startSettings;
+      const { search } = yield* AgentSearch;
+      // Codex is not installed, so it answers long before the slow Pi.
+      const partial = yield* search({ fresh: false }).pipe(
+        Effect.repeat({
+          until: (snapshot) => !snapshot.pending.includes("codex"),
+          schedule: Schedule.spaced("20 millis"),
+        }),
+        Effect.timeout("30 seconds"),
+      );
+      assert.include(partial.pending, "pi");
+
+      // A second search would list every agent as pending again.
+      const joined = yield* search({ fresh: true });
+      assert.notInclude(joined.pending, "codex");
+      assert.include(joined.pending, "pi");
+      const done = yield* untilDone(search);
+      assert.equal(done.agents.find(({ agent }) => agent === "pi")?.state, "ready");
+    }).pipe(Effect.provide(Layer.suspend(() => layerSearchWith(slowPi())))),
+  );
+
+  it.live("ends a search that died with no answer for the rest", () => {
+    let searches = 0;
+    const brokenSettings = Layer.succeed(ServerSettingsModule.ServerSettingsService, {
+      ready: Effect.suspend(() => {
+        searches += 1;
+        return Effect.die("settings are gone");
+      }),
+    } as unknown as ServerSettingsModule.ServerSettingsService["Service"]);
+    return Effect.gen(function* () {
+      const { search } = yield* AgentSearch;
+      yield* search({ fresh: false });
+      const died = yield* untilDone(search);
+      assert.deepEqual(
+        died.agents.map(({ agent, state }) => [agent, state]),
+        DISCOVERED_AGENTS.map(({ agent }) => [agent, "unknown"]),
+      );
+      assert.isString(died.checkedAt);
+      assert.equal(searches, 1);
+
+      // Kept like any other, so reading it again starts nothing. Asking does.
+      yield* search({ fresh: false });
+      assert.equal(searches, 1);
+      yield* search({ fresh: true });
+      const again = yield* untilDone(search);
+      assert.equal(searches, 2);
+      assert.lengthOf(again.agents, DISCOVERED_AGENTS.length);
+    }).pipe(
+      Effect.provide(
+        layerSearch.pipe(
+          Layer.provide(Layer.succeed(HostProcessEnvironment, { PATH: isolatedPath() })),
+          Layer.provide(brokenSettings),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+  });
 });

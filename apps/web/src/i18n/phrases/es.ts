@@ -4467,4 +4467,6 @@ export const es: PhraseCatalog = {
   "No answer from: {agents}.": "Sin respuesta de: {agents}.",
   "Where it looked": "Dónde se buscó",
   "{names} and {count} more": "{names} y {count} más",
+  "Turn on {agent}": "Activar {agent}",
+  "Add {agent}": "Añadir {agent}",
 };

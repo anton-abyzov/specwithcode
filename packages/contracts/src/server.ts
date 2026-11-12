@@ -1123,8 +1123,10 @@ export type AgentSearch = typeof AgentSearch.Type;
 export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
   /**
-   * Sent when the request asked to find agents and this server can. A search
-   * in a shape this build does not know reads as absent, not as a failed call.
+   * Sent when the request asked to find agents and this server can; `providers`
+   * is then empty, because the reply is read again while the search runs. A
+   * search in a shape this build does not know reads as absent, not as a
+   * failed call.
    */
   agentSearch: ForwardCompatibleOptional(AgentSearch),
 });

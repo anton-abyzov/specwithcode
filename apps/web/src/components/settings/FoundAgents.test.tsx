@@ -156,7 +156,7 @@ const list = (
     view={foundAgentsView(search, SETTINGS)}
     searched={search.searched}
     searching={false}
-    machine="Studio Mac"
+    machine="Mac mini"
     readOnly={false}
     onFind={() => {}}
     onTurnOn={() => {}}
@@ -171,7 +171,7 @@ it("shows each found agent with its state and one button", async () => {
   await act(async () => root.render(list({ onTurnOn, onAdd })));
 
   expect(container.querySelector('[role="status"]')?.textContent).toBe(
-    "6 of 8 agents found on Studio Mac.",
+    "6 of 8 agents found on Mac mini.",
   );
   expect(rowOf("Pi")?.textContent).toContain("Signed in, not turned on.");
   expect(rowOf("OpenCode")?.textContent).toContain("Installed, not signed in.");
@@ -181,6 +181,12 @@ it("shows each found agent with its state and one button", async () => {
   for (const row of container.querySelectorAll("li:not(details li)")) {
     expect(row.querySelectorAll("button")).toHaveLength(1);
   }
+
+  // Each button names its agent for a screen reader.
+  expect(rowOf("Pi")?.querySelector("button")?.getAttribute("aria-label")).toBe("Turn on Pi");
+  expect(rowOf("Gemini CLI")?.querySelector("button")?.getAttribute("aria-label")).toBe(
+    "Add Gemini CLI",
+  );
 
   await act(async () => rowOf("Pi")?.querySelector("button")?.click());
   expect(onTurnOn).toHaveBeenCalledWith("pi");
@@ -228,7 +234,7 @@ const mount = () =>
     root.render(
       <FoundAgents
         environmentId={environmentId}
-        machine="Studio Mac"
+        machine="Mac mini"
         settings={SETTINGS}
         readOnly={false}
         onTurnOn={() => {}}
@@ -255,12 +261,37 @@ it("searches when the page opens and reads progress until every agent answered",
   expect(text()).toContain("Looking for Grok…");
 
   await act(async () => vi.advanceTimersByTimeAsync(700));
-  expect(text()).toContain("6 of 8 agents found on Studio Mac.");
+  expect(text()).toContain("6 of 8 agents found on Mac mini.");
   expect(state.refresh).toHaveBeenCalledTimes(3);
 
   // Done: nothing is asked again until the person asks.
   await act(async () => vi.advanceTimersByTimeAsync(5_000));
   expect(state.refresh).toHaveBeenCalledTimes(3);
+});
+
+it("stops reading progress when the page closes", async () => {
+  vi.useFakeTimers();
+  state.refresh.mockResolvedValue(reply({ ...SEARCH, agents: [], pending: ["pi"] }));
+  await mount();
+  await act(async () => vi.advanceTimersByTimeAsync(700));
+  expect(state.refresh).toHaveBeenCalledTimes(2);
+
+  await act(async () => root.render(null));
+  await act(async () => vi.advanceTimersByTimeAsync(5_000));
+  expect(state.refresh).toHaveBeenCalledTimes(2);
+});
+
+it("gives up on a search that reports no end, and offers Find agents again", async () => {
+  vi.useFakeTimers();
+  state.refresh.mockResolvedValue(reply({ ...SEARCH, agents: [], pending: ["pi"] }));
+  await mount();
+  expect(button("Find agents")?.disabled).toBe(true);
+
+  await act(async () => vi.advanceTimersByTimeAsync(95_000));
+  const asked = state.refresh.mock.calls.length;
+  expect(button("Find agents")?.disabled).toBe(false);
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
+  expect(state.refresh).toHaveBeenCalledTimes(asked);
 });
 
 it("starts a fresh search from Find agents", async () => {

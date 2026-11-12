@@ -408,6 +408,18 @@ interface AgentSearchRun {
 
 const ALL_AGENTS: ReadonlyArray<string> = DISCOVERED_AGENTS.map(({ agent }) => agent);
 
+/** Every agent, with "no answer" for one a search that died never reached. */
+const withNoAnswer = (answered: AgentSearchSnapshot["agents"]): AgentSearchSnapshot["agents"] =>
+  DISCOVERED_AGENTS.map(
+    ({ agent, kind, command }) =>
+      answered.find((result) => result.agent === agent) ?? {
+        agent,
+        kind,
+        command,
+        state: "unknown" as const,
+      },
+  );
+
 /**
  * Keeps what the search has found, and runs one search at a time. A search
  * outlives the request that started it; later requests read its progress.
@@ -431,14 +443,21 @@ export const makeAgentSearch = Effect.gen(function* () {
   });
 
   const answered = (result: AgentDiscoveryResult) =>
-    Ref.update(run, (current) => ({
-      ...current,
-      snapshot: {
-        ...current.snapshot,
-        agents: [...current.snapshot.agents.filter(({ agent }) => agent !== result.agent), result],
-        pending: current.snapshot.pending.filter((agent) => agent !== result.agent),
-      },
-    }));
+    Ref.update(run, (current) => {
+      const pending = current.snapshot.pending.filter((agent) => agent !== result.agent);
+      return {
+        ...current,
+        snapshot: {
+          ...current.snapshot,
+          agents: [
+            ...current.snapshot.agents.filter(({ agent }) => agent !== result.agent),
+            result,
+          ],
+          // Nothing pending means finished, so the last agent stays until `finished` runs.
+          pending: pending.length === 0 ? current.snapshot.pending : pending,
+        },
+      };
+    });
 
   const finished = (report: AgentDiscoveryReport | undefined) =>
     Effect.gen(function* () {
@@ -448,7 +467,7 @@ export const makeAgentSearch = Effect.gen(function* () {
         finishedAt: DateTime.toEpochMillis(now),
         snapshot: {
           // In the order agents are listed, not the order they answered.
-          agents: report?.results ?? current.snapshot.agents,
+          agents: report?.results ?? withNoAnswer(current.snapshot.agents),
           pending: [],
           searched: report?.searched ?? current.snapshot.searched,
           checkedAt: DateTime.formatIso(now),

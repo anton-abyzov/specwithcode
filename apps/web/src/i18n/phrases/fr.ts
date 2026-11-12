@@ -4483,4 +4483,6 @@ export const fr: PhraseCatalog = {
   "No answer from: {agents}.": "Pas de réponse de : {agents}.",
   "Where it looked": "Où la recherche a eu lieu",
   "{names} and {count} more": "{names} et {count} de plus",
+  "Turn on {agent}": "Activer {agent}",
+  "Add {agent}": "Ajouter {agent}",
 };

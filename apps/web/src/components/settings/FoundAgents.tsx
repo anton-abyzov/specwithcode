@@ -21,6 +21,8 @@ import { getDriverOption } from "./providerDriverMeta";
 
 /** While a search runs, its progress is read this often. */
 const PROGRESS_INTERVAL_MS = 700;
+/** A search that reports no end is no longer read after this long. */
+const PROGRESS_LIMIT_MS = 90_000;
 
 /** Agents the registry offers. Built-in agents take their name from the driver list. */
 const REGISTRY_AGENT_NAMES: Readonly<Record<string, string>> = {
@@ -139,6 +141,7 @@ export function useAgentSearch(environmentId: EnvironmentId, enabled: boolean) {
     (fresh: boolean) => {
       stop();
       const mine = request.current;
+      const startedAt = Date.now();
       const read = async (startFresh: boolean) => {
         const result = await refresh({
           environmentId,
@@ -151,8 +154,9 @@ export function useAgentSearch(environmentId: EnvironmentId, enabled: boolean) {
           return;
         }
         setSearch(next);
-        setAsking(next.pending.length > 0);
-        if (next.pending.length === 0) return;
+        const reading = next.pending.length > 0 && Date.now() - startedAt < PROGRESS_LIMIT_MS;
+        setAsking(reading);
+        if (!reading) return;
         timer.current = setTimeout(() => void read(false), PROGRESS_INTERVAL_MS);
       };
       void read(fresh);
@@ -171,7 +175,7 @@ export function useAgentSearch(environmentId: EnvironmentId, enabled: boolean) {
     ask(true);
   }, [ask]);
 
-  return { search, searching: asking, find };
+  return { search, searching: asking && enabled, find };
 }
 
 const STATE_TEXT = {
@@ -252,13 +256,19 @@ export function FoundAgentsList({
                 ) : null}
               </div>
               {readOnly ? null : row.kind === "registry" ? (
-                <Button size="xs" variant="outline" onClick={onAdd}>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  aria-label={tx("Add {agent}", { agent: row.name })}
+                  onClick={onAdd}
+                >
                   {tx("Add agent")}
                 </Button>
               ) : (
                 <Button
                   size="xs"
                   variant="outline"
+                  aria-label={tx("Turn on {agent}", { agent: row.name })}
                   onClick={() => onTurnOn(ProviderDriverKind.make(row.agent))}
                 >
                   {tx("Turn on")}
