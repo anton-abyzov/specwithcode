@@ -1,4 +1,4 @@
-import { EnvironmentId, type VcsRef } from "@specweave-studio/contracts";
+import { EnvironmentId, type ThreadRepositories, type VcsRef } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
@@ -21,6 +21,12 @@ import {
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  addableThreadRepositories,
+  threadRepositoriesLabel,
+  threadRepositoryEvents,
+  threadRepositoryEventText,
+  threadRepositoryLine,
+  threadRepositoryPullRequest,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -913,5 +919,106 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("thread repositories", () => {
+  const held = (overrides: Partial<ThreadRepositories["repositories"][number]> = {}) => ({
+    relativePath: "repositories/acme/api",
+    name: "api",
+    path: "/threads/t/repositories/acme/api",
+    repository: "/work/repositories/acme/api",
+    baseRef: "origin/main",
+    addedBy: "agent" as const,
+    addedAt: "2026-11-12T10:00:00.000Z",
+    dependencies: "not_installed" as const,
+    changed: false,
+    ...overrides,
+  });
+  const thread = (repositories: ThreadRepositories["repositories"]): ThreadRepositories => ({
+    folder: "/threads/t",
+    branch: "fix/environment-list",
+    repositories,
+    limit: 8,
+  });
+  const found = (name: string, state: "available" | "absent" = "available") =>
+    ({
+      relativePath: `repositories/acme/${name}`,
+      path: `/work/repositories/acme/${name}`,
+      name,
+      origin: `acme/${name}`,
+      state,
+    }) as never;
+
+  it("labels the thread by branch and count", () => {
+    expect(threadRepositoriesLabel("fix/environment-list", 2)).toBe(
+      "fix/environment-list · 2 repositories",
+    );
+    expect(threadRepositoriesLabel("fix/environment-list", 1)).toBe(
+      "fix/environment-list · 1 repository",
+    );
+    expect(threadRepositoriesLabel("fix/environment-list", 0)).toBe("No repository yet");
+    expect(threadRepositoryLine(held())).toBe(
+      "worktree from origin/main · dependencies not installed",
+    );
+    expect(threadRepositoryLine(held({ baseRef: null, dependencies: "installed" }))).toBe(
+      "worktree · dependencies installed",
+    );
+  });
+
+  it("offers only repositories the thread does not hold, up to its limit", () => {
+    const rows = [found("api"), found("web"), found("docs", "absent")];
+    expect(addableThreadRepositories(rows, thread([held()])).map((row) => row.name)).toEqual([
+      "web",
+    ]);
+    // An older server sends no list: nothing to add.
+    expect(addableThreadRepositories(undefined, thread([]))).toEqual([]);
+    expect(addableThreadRepositories(rows, { ...thread([held()]), limit: 1 })).toEqual([]);
+    expect(
+      threadRepositoryPullRequest(held(), rows, [
+        { repository: "Acme/API", number: 7, url: "u" },
+        { repository: "acme/web", number: 8, url: "v" },
+      ])?.number,
+    ).toBe(7);
+    expect(threadRepositoryPullRequest(held(), rows, [])).toBeNull();
+  });
+
+  it("tells the timeline how the thread got its repositories", () => {
+    expect(threadRepositoryEvents(undefined)).toEqual([]);
+    const empty = threadRepositoryEvents(thread([]));
+    expect(empty.map(threadRepositoryEventText)).toEqual([
+      {
+        title: "Started in its own folder with no repository.",
+        name: null,
+        detail: "The agent reads the project folder and adds a repository before changing it.",
+      },
+    ]);
+    const events = threadRepositoryEvents(
+      thread([
+        held({
+          name: "web",
+          relativePath: "repositories/acme/web",
+          addedBy: "user",
+          addedAt: "2026-11-12T11:00:00.000Z",
+          baseRef: "main",
+          dependencies: "installed",
+        }),
+        held(),
+      ]),
+    );
+    expect(events.map(threadRepositoryEventText).slice(1)).toEqual([
+      {
+        title: "Agent added",
+        name: "api",
+        detail: "Worktree on fix/environment-list from origin/main. Dependencies not installed.",
+      },
+      {
+        title: "You added",
+        name: "web",
+        detail: "Worktree on fix/environment-list from main. Dependencies installed.",
+      },
+    ]);
+    // Repositories that came with the launch are not "added".
+    expect(threadRepositoryEvents(thread([held({ addedBy: null, addedAt: null })]))).toEqual([]);
   });
 });

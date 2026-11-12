@@ -5,6 +5,7 @@ import {
 } from "@specweave-studio/client-runtime/worktree-setup";
 import { thoughtLabel } from "@specweave-studio/shared/orchestrationTiming";
 export { worktreeSetupAgentStarted } from "@specweave-studio/client-runtime/worktree-setup";
+import type { ThreadRepositoryEvent } from "../BranchToolbar.logic";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 import { renderCodexDirectivesForCopy } from "@specweave-studio/client-runtime/codex-markdown-directives";
@@ -742,6 +743,13 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       snapshot: WorktreeSetupSnapshot;
       embedded: boolean;
+    }
+  | {
+      /** The thread started with no repository, and each one added since. */
+      kind: "thread-repositories";
+      id: string;
+      createdAt: string | null;
+      events: ReadonlyArray<ThreadRepositoryEvent>;
     }
   | {
       kind: "work";
@@ -1733,6 +1741,8 @@ export function deriveMessagesTimelineRows(input: {
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
+  /** From the thread's repositories (BranchToolbar.logic); the same array while nothing changed. */
+  threadRepositoryEvents?: ReadonlyArray<ThreadRepositoryEvent> | undefined;
   /** How much work to show; "normal" when omitted. */
   timelineDetail?: TimelineDetail;
 }): MessagesTimelineRow[] {
@@ -2378,6 +2388,21 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
+  if (input.threadRepositoryEvents !== undefined && input.threadRepositoryEvents.length > 0) {
+    // Under the first message (and its setup card), where the thread got its folder.
+    const firstUserRowIndex = nextRows.findIndex(
+      (row) => row.kind === "message" && row.message.role === "user",
+    );
+    let insertAt = firstUserRowIndex >= 0 ? firstUserRowIndex + 1 : nextRows.length;
+    if (nextRows[insertAt]?.kind === "worktree-setup") insertAt += 1;
+    nextRows.splice(insertAt, 0, {
+      kind: "thread-repositories",
+      id: "thread-repositories-row",
+      createdAt: null,
+      events: input.threadRepositoryEvents,
+    });
+  }
+
   // A setup that owns the working slot sits under it and shows no activity
   // row of its own; every other state gets the usual tail.
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
@@ -2913,6 +2938,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     }
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
+    case "thread-repositories":
+      return a.events === (b as typeof a).events;
 
     case "assistant-meta": {
       const bm = b as typeof a;
