@@ -52,6 +52,8 @@ export const NON_AGENT_PROVIDER_SPAWNS: Readonly<Record<string, string>> = {
   "provider/providerMaintenanceRunner.ts": "provider install and update commands",
   "provider/providerSnapshot.ts": "spawnAndCollect runner shared by the probes above",
   "cli/browser.ts": "browser setup: system package installs and lookups",
+  "cli/heavyCheckLock.ts": "ps start-time lookup for the heavy-check gate holder",
+  "cli/verificationCopy.ts": "git and the dependency install for the verification copy",
   "cli/uninstall.ts": "Windows runtime folder removal after the CLI exits",
 };
 

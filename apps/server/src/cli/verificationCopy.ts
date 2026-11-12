@@ -199,7 +199,9 @@ export function ensureVerificationCopy(options: VerificationCopyOptions): Verifi
   if (!(local && current === want)) git(copy, fetchArgs, env);
   const commit = local ? want : git(copy, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"], env);
 
-  const dirty = created ? "" : git(copy, ["status", "--porcelain"], env);
+  // A copy whose first checkout never happened holds only .git; git reports every file as deleted.
+  const neverCheckedOut = NodeFS.readdirSync(copy).every((name) => name === ".git");
+  const dirty = created || neverCheckedOut ? "" : git(copy, ["status", "--porcelain"], env);
   if (dirty.length > 0) {
     const lines = dirty.split("\n");
     throw new VerificationCopyError(

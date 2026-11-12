@@ -397,6 +397,12 @@ export async function decideClone(
   if (stash.code !== 0) return keep("cannot list stashes");
   if (stash.stdout.length > 0) return keep("has a stash");
 
+  // A linked worktree keeps its HEAD, index and commits inside this clone's .git.
+  const worktrees = await git(clone, "worktree", "list", "--porcelain");
+  if (worktrees.code !== 0) return keep("cannot list linked worktrees");
+  if (worktrees.stdout.split("\n").filter((line) => line.startsWith("worktree ")).length > 1)
+    return keep("has linked worktrees");
+
   if (context.processCwds === null) return keep("cannot list running processes");
   const cwd = context.processCwds.find((path) => pathInside(clone, path, context.foldCase));
   if (cwd !== undefined) return keep(`a process is working in ${cwd}`);

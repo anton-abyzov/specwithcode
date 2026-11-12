@@ -176,6 +176,18 @@ describe("merged clone sweep", () => {
     assert.strictEqual(decision.reason, "has a stash");
   });
 
+  it("keeps a clone whose linked worktree holds a commit that is on no remote", async () => {
+    const path = clone((repo) => {
+      const linked = `${repo}-linked`;
+      git(repo, "worktree", "add", "--quiet", "--detach", linked, "HEAD");
+      NodeFS.writeFileSync(NodePath.join(linked, "readme.md"), "only here\n");
+      git(linked, "commit", "--quiet", "-am", "work in a linked worktree");
+    });
+    const decision = await decide(path);
+    assert.strictEqual(decision.action, "keep");
+    assert.strictEqual(decision.reason, "has linked worktrees");
+  });
+
   it("keeps a clone a thread, project or agent session is bound to, or to a folder inside it", async () => {
     const path = clone();
     const livePaths = cloneSweepLivePaths(
