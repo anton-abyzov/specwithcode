@@ -88,6 +88,7 @@ export function AccountHeader(props: AccountHeaderProps) {
           <Tip label={`Fallback ${props.rank.position}: ${props.rank.label}`} side="top">
             <span
               className="sws-account-rank"
+              role="img"
               tabIndex={0}
               aria-label={`Fallback ${props.rank.position}: ${props.rank.label}`}
             >
