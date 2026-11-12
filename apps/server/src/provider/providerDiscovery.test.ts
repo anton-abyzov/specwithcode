@@ -32,6 +32,7 @@ import {
   parseOpenCodeAuthList,
   parsePiListModels,
   probeCursor,
+  probeGit,
   probeGrok,
   probeMuse,
   probeOpenCode,
@@ -103,6 +104,23 @@ const isolatedPath = () => {
   NodeFS.writeFileSync(node, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, "utf8");
   NodeFS.chmodSync(node, 0o755);
   return [directory, "/usr/bin", "/bin"].join(":");
+};
+
+/** `isolatedPath` without /usr/bin, where a real git and xcode-select live. */
+const withoutSystemTools = () => {
+  // The fake CLI launcher is a shell script that calls `dirname`.
+  const tools = fakeCliDirectory();
+  for (const folder of ["/usr/bin", "/bin"]) {
+    if (!NodeFS.existsSync(`${folder}/dirname`)) continue;
+    NodeFS.symlinkSync(`${folder}/dirname`, NodePath.join(tools, "dirname"));
+    break;
+  }
+  return [
+    tools,
+    ...isolatedPath()
+      .split(":")
+      .filter((folder) => folder !== "/usr/bin"),
+  ].join(":");
 };
 
 const PI_MODELS = [
@@ -574,6 +592,42 @@ describe("finding every agent", () => {
       const signedOut = fakeCli("muse", ["never"], "", "Muse Code 1.4.15");
       assert.equal(yield* probeMuse(signedIn, cleanEnvironment()), "ready");
       assert.equal(yield* probeMuse(signedOut, cleanEnvironment()), "installed");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("asks a Mac's developer tools for Git, and never the /usr/bin shim", () =>
+    Effect.gen(function* () {
+      if (HostProcessPlatform.defaultValue() === "win32") return;
+      const tool = (directory: string, name: string, exit: number) =>
+        writeFakeCli({ directory, name, source: `process.exit(${exit});` });
+      const withTools = fakeCliDirectory();
+      tool(withTools, "xcode-select", 0);
+      const withoutTools = fakeCliDirectory();
+      tool(withoutTools, "xcode-select", 2);
+      const brewGit = fakeCliDirectory();
+      tool(brewGit, "xcode-select", 2);
+      tool(brewGit, "git", 0);
+      const path = (directory: string) => [directory, withoutSystemTools()].join(":");
+      assert.equal(yield* probeGit({ PATH: path(withTools) }, "darwin"), "present");
+      assert.equal(yield* probeGit({ PATH: path(withoutTools) }, "darwin"), "missing");
+      // A Git that does not come from the developer tools counts.
+      assert.equal(yield* probeGit({ PATH: path(brewGit) }, "darwin"), "present");
+      // The shim's folder is never searched: running it opens macOS's install prompt.
+      if (HostProcessPlatform.defaultValue() === "darwin") {
+        const shimOnly = [withoutTools, withoutSystemTools(), "/usr/bin"].join(":");
+        assert.equal(yield* probeGit({ PATH: shimOnly }, "darwin"), "missing");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("looks for Git by running it on Linux", () =>
+    Effect.gen(function* () {
+      if (HostProcessPlatform.defaultValue() === "win32") return;
+      const directory = fakeCliDirectory();
+      writeFakeCli({ directory, name: "git", source: "process.exit(0);" });
+      const path = [directory, withoutSystemTools()].join(":");
+      assert.equal(yield* probeGit({ PATH: path }, "linux"), "present");
+      assert.equal(yield* probeGit({ PATH: withoutSystemTools() }, "linux"), "missing");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

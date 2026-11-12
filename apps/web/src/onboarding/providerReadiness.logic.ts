@@ -154,6 +154,12 @@ export function onboardingAgentUses(agent: string): string {
   return Object.hasOwn(AGENT_USES, agent) ? AGENT_USES[agent]! : "Uses its own sign-in";
 }
 
+/**
+ * What macOS runs to offer its developer tools, which carry Git. It only opens
+ * the system's own install window and ends at once.
+ */
+export const DEVELOPER_TOOLS_INSTALL_COMMAND = "xcode-select --install";
+
 export function canInstallOnboardingAgent(
   agent: string,
 ): agent is keyof typeof NATIVE_INSTALL_COMMANDS {
@@ -181,7 +187,9 @@ export type OnboardingAgentRow =
     }
   | ({ readonly kind: "found"; readonly key: string } & Omit<FoundOnboardingAgent, "kind"> & {
         readonly registry: boolean;
-      });
+      })
+  /** An agent that is not on the machine and gets its own row with an install button. */
+  | { readonly kind: "install"; readonly key: string; readonly agent: string };
 
 export interface OnboardingAgentList {
   readonly rows: ReadonlyArray<OnboardingAgentRow>;
@@ -189,12 +197,20 @@ export interface OnboardingAgentList {
   readonly notInstalled: ReadonlyArray<string>;
 }
 
-const ROW_ORDER: Readonly<Record<string, number>> = { codex: 0, claudeAgent: 1 };
+const ROW_ORDER: Readonly<Record<string, number>> = { claudeAgent: 0, codex: 1 };
+
+/**
+ * Agents offered first: when one is missing it keeps its place at the top with
+ * an install button, and is not folded into the "Not installed" line.
+ */
+const INSTALL_ROW_AGENTS: ReadonlyArray<string> = ["claudeAgent"];
 
 /**
  * Every agent the Agents step shows for one machine: each entry that is on and
  * installed, each found agent that is not on yet, and the names of the rest.
- * Codex always has a row, because its ChatGPT sign-in needs nothing installed.
+ * Claude Code comes first and Codex second. Codex always has a row, because its
+ * ChatGPT sign-in needs nothing installed; Claude Code has one whenever the
+ * machine says it is missing, with its install.
  */
 export function listOnboardingAgents(input: {
   readonly providers: ReadonlyArray<ServerProvider> | null | undefined;
@@ -243,6 +259,13 @@ export function listOnboardingAgents(input: {
       state: found.state,
     });
   }
+  const notInstalled = [...new Set([...missing, ...(input.notFound ?? [])])].filter(
+    (agent) => !listed.has(agent),
+  );
+  for (const agent of INSTALL_ROW_AGENTS) {
+    if (!notInstalled.includes(agent) || !canInstallOnboardingAgent(agent)) continue;
+    rows.push({ kind: "install", key: `install:${agent}`, agent });
+  }
   const order = (row: OnboardingAgentRow) =>
     Object.hasOwn(ROW_ORDER, row.agent) ? ROW_ORDER[row.agent]! : 2;
   return {
@@ -251,8 +274,8 @@ export function listOnboardingAgents(input: {
       .map((row, index) => ({ row, index }))
       .toSorted((a, b) => order(a.row) - order(b.row) || a.index - b.index)
       .map(({ row }) => row),
-    notInstalled: [...new Set([...missing, ...(input.notFound ?? [])])].filter(
-      (agent) => !listed.has(agent),
+    notInstalled: notInstalled.filter(
+      (agent) => !INSTALL_ROW_AGENTS.includes(agent) || !canInstallOnboardingAgent(agent),
     ),
   };
 }

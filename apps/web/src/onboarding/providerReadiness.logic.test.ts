@@ -350,13 +350,13 @@ describe("listOnboardingAgents", () => {
   const signedOut = { auth: { status: "unauthenticated" }, status: "error" } as const;
   const missing = { installed: false, status: "error", auth: { status: "unknown" } } as const;
 
-  it("lists every agent that is on and installed, Codex and Claude first", () => {
+  it("lists every agent that is on and installed, Claude Code first and Codex second", () => {
     const list = listOnboardingAgents({
       providers: [agent("grok", signedOut), agent("claudeAgent"), agent("cursor"), agent("codex")],
     });
-    expect(list.rows.map((row) => [row.agent, row.state])).toEqual([
-      ["codex", "ready"],
+    expect(list.rows.map((row) => [row.agent, row.kind === "agent" && row.state])).toEqual([
       ["claudeAgent", "ready"],
+      ["codex", "ready"],
       ["grok", "signIn"],
       ["cursor", "ready"],
     ]);
@@ -381,7 +381,9 @@ describe("listOnboardingAgents", () => {
       { kind: "agent", key: "codex", agent: "codex", provider: undefined, state: "checking" },
     ]);
     const list = listOnboardingAgents({ providers: [agent("codex", missing)] });
-    expect(list.rows.map((row) => [row.agent, row.state])).toEqual([["codex", "install"]]);
+    expect(list.rows.map((row) => [row.agent, row.kind === "agent" && row.state])).toEqual([
+      ["codex", "install"],
+    ]);
     expect(list.notInstalled).toEqual([]);
   });
 
@@ -394,8 +396,32 @@ describe("listOnboardingAgents", () => {
       ],
       notFound: ["claudeAgent", "cursor", "codex", "gemini"],
     });
-    expect(list.rows.map((row) => row.agent)).toEqual(["codex"]);
-    expect(list.notInstalled).toEqual(["claudeAgent", "cursor", "gemini"]);
+    // A missing Claude Code keeps the first row, with its install.
+    expect(list.rows).toEqual([
+      { kind: "install", key: "install:claudeAgent", agent: "claudeAgent" },
+      expect.objectContaining({ kind: "agent", agent: "codex" }),
+    ]);
+    expect(list.notInstalled).toEqual(["cursor", "gemini"]);
+  });
+
+  it("gives a missing Claude Code its install row from the search alone", () => {
+    const list = listOnboardingAgents({ providers: [], notFound: ["claudeAgent", "cursor"] });
+    expect(list.rows.map((row) => [row.kind, row.agent])).toEqual([
+      ["install", "claudeAgent"],
+      ["agent", "codex"],
+    ]);
+    expect(list.notInstalled).toEqual(["cursor"]);
+  });
+
+  it("has no install row for a Claude Code that is there, on or found", () => {
+    const found = listOnboardingAgents({
+      providers: [],
+      found: [{ agent: "claudeAgent", kind: "builtIn", state: "signed-out" }],
+      notFound: ["claudeAgent"],
+    });
+    expect(found.rows.map((row) => row.kind)).toEqual(["found", "agent"]);
+    const unknown = listOnboardingAgents({ providers: null });
+    expect(unknown.rows.some((row) => row.kind === "install")).toBe(false);
   });
 
   it("adds a row for each found agent that is not on yet", () => {

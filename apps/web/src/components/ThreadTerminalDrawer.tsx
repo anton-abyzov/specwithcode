@@ -341,7 +341,8 @@ interface TerminalViewportProps {
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   providerInstanceId?: ProviderInstanceId;
-  onSessionExited: () => void;
+  /** Called once the session has ended, with its exit code when the machine gave one. */
+  onSessionExited: (exitCode: number | null) => void;
   onAddTerminalContext?: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   autoFocus: boolean;
@@ -414,7 +415,7 @@ export function TerminalViewport({
   const keybindingsRef = useRef(keybindings);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
-    if (hasTerminalWriteAccess()) onSessionExited();
+    if (hasTerminalWriteAccess()) onSessionExited(terminalSession.exitCode);
   });
   const handleAddTerminalContext = useEffectEvent((selection: TerminalContextSelection) => {
     onAddTerminalContext?.(selection);
