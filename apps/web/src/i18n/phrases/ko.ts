@@ -434,8 +434,6 @@ export const ko: PhraseCatalog = {
     "누르고 있기 모드에서도 빠르게 두 번 누르면 종료됩니다.",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "세션이 작업하는 동안 유휴 잠자기를 막아 이 컴퓨터의 턴이 계속 실행되게 합니다. 덮개를 닫으면 여전히 잠자기 상태가 됩니다.",
-  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
-    "SpecWithCode 서비스 자동 업데이트가 실행 중인 작업을 기다리는 시간입니다. 그 후 실행 중인 턴이 일시 중지되고, 서비스가 업데이트된 다음 중단한 곳에서 이어집니다. 사이드바의 나중에는 한 시간을 더 기다립니다.",
   "Include text and controls when the app makes them available.":
     "앱이 제공하는 경우 텍스트와 컨트롤을 포함합니다.",
   "Install and manage Antigravity.": "Antigravity를 설치하고 관리합니다.",
@@ -580,8 +578,6 @@ export const ko: PhraseCatalog = {
     "나와 에이전트가 쓰는 탭 크기입니다. 맞춤은 패널에 맞추고, 다른 크기에서는 기기 도구 모음이 표시됩니다.",
   "Terminal output, independent from code blocks and diffs.":
     "코드 블록 및 diff와 별개인 터미널 출력입니다.",
-  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
-    "아래에서 켜 두면 앱은 유휴 상태일 때 업데이트되고, 그렇지 않으면 다음에 종료할 때 업데이트됩니다. 서비스는 작업 중인 세션이 없을 때 업데이트되며, 실행 중인 작업은 아래 대기 시간 후 일시 중지되었다가 업데이트 후 이어집니다. 끄면 여기에서 직접 설치합니다.",
   "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
     "작업 종류별로 사용할 수 있는 가장 저렴한 등급입니다. 코드, 리뷰, 디자인, 최종 애니메이션은 Standard 아래로 내려가지 않으며, 그 외 작업은 Frontier에 머뭅니다. 불분명한 작업은 평소 모델을 사용합니다.",
   "The color scheme pages are told to prefer. System follows your OS setting.":
@@ -4096,4 +4092,32 @@ export const ko: PhraseCatalog = {
   "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "이 컴퓨터의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 이 컴퓨터에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 이 컴퓨터에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘메인 컴퓨터에 참여’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
   "{count} more": "외 {count}대",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "아래에서 켜 두면 앱은 유휴 상태일 때 업데이트되고, 그렇지 않으면 다음에 종료할 때 업데이트됩니다. 서비스는 작업 중인 세션이 없을 때 업데이트됩니다. “업데이트를 위해 실행 중인 작업 일시 중지”를 켜 두면 실행 중인 작업은 아래 대기 시간 후 일시 중지되었다가 업데이트 후 이어집니다. 끄면 여기에서 직접 설치합니다.",
+  "Applies once “Pause running work for updates” is on: how long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "“업데이트를 위해 실행 중인 작업 일시 중지”가 켜져 있을 때 적용됩니다. SpecWithCode 서비스 자동 업데이트가 실행 중인 작업을 기다리는 시간입니다. 그 후 실행 중인 턴이 일시 중지되고, 서비스가 업데이트된 다음 중단한 곳에서 이어집니다. 사이드바의 나중에는 한 시간을 더 기다립니다.",
+  "Pause running work for updates": "업데이트를 위해 실행 중인 작업 일시 중지",
+  "After the wait set in “Pause running work after”, running turns pause, the update installs, and they continue where they left off.":
+    "“실행 중인 작업 일시 중지 시점”에서 정한 시간이 지나면 실행 중인 턴이 일시 중지되고, 업데이트가 설치된 다음 중단한 곳에서 이어집니다.",
+  "After 30 minutes of waiting, running turns pause, the update installs, and they continue where they left off.":
+    "30분을 기다린 후 실행 중인 턴이 일시 중지되고, 업데이트가 설치된 다음 중단한 곳에서 이어집니다.",
+  "After the wait, running turns pause, the update installs, and they continue where they left off. On a Mac the wait is “Pause running work after”; on Linux it is 30 minutes.":
+    "대기 시간이 지나면 실행 중인 턴이 일시 중지되고, 업데이트가 설치된 다음 중단한 곳에서 이어집니다. Mac에서는 “실행 중인 작업 일시 중지 시점”을 따르고, Linux에서는 30분입니다.",
+  "An update waits until {machine} has no running work, however long that takes. Update now still installs right away.":
+    "업데이트는 {machine}에 실행 중인 작업이 없을 때까지 얼마가 걸리든 기다립니다. 지금 업데이트는 여전히 바로 설치합니다.",
+  "An update waits up to 30 minutes for {machine} to have no running work. If it is still busy then, {machine} stays on its version until the next update. Update now still installs right away.":
+    "업데이트는 {machine}에 실행 중인 작업이 없어질 때까지 최대 30분 기다립니다. 그래도 작업 중이면 {machine}은 다음 업데이트까지 현재 버전에 머뭅니다. 지금 업데이트는 여전히 바로 설치합니다.",
+  "An update waits for {machine} to have no running work. A Mac keeps waiting as long as that takes; a Linux machine waits up to 30 minutes and, if still busy, stays on its version until the next update. Update now still installs right away.":
+    "업데이트는 {machine}에 실행 중인 작업이 없어질 때까지 기다립니다. Mac은 필요한 만큼 기다리고, Linux 컴퓨터는 최대 30분 기다린 뒤 그래도 작업 중이면 다음 업데이트까지 현재 버전에 머뭅니다. 지금 업데이트는 여전히 바로 설치합니다.",
+  "Has no effect on {machine} while “Continue threads after restarts” is off there: paused turns would not continue, so updates wait for quiet. Turn that on in Settings > General.":
+    "{machine}에서 “다시 시작한 후 스레드 계속”이 꺼져 있으면 효과가 없습니다. 일시 중지된 턴이 이어지지 않으므로 업데이트는 작업이 끝날 때까지 기다립니다. 설정 > 일반에서 켜세요.",
+  "{machine} is unreachable, so this setting cannot be changed now.":
+    "{machine}에 연결할 수 없어 지금은 이 설정을 바꿀 수 없습니다.",
+  "This connection cannot change settings on {machine}.":
+    "이 연결로는 {machine}의 설정을 바꿀 수 없습니다.",
+  "Could not save update settings": "업데이트 설정을 저장하지 못했습니다",
+  "The change could not be confirmed on {machine}. The switch shows what {machine} reports.":
+    "{machine}에서 변경을 확인하지 못했습니다. 스위치는 {machine}이 보고하는 상태를 보여 줍니다.",
+  "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
+    "{machine}의 SpecWithCode 버전에는 이 설정이 없습니다. 먼저 {machine}을(를) 업데이트하세요.",
 };

@@ -46,6 +46,7 @@ class Fleet(object):
         self.message = {name: 'Waiting for running tasks (2 running tasks)' for name in self.version}
         self.available = {}
         self.downloaded = {}
+        self.extra = {}  # More status keys per host, as a newer service reports them (pauseWorkForUpdates).
 
     def host(self, identity):
         def call(argv):
@@ -76,7 +77,7 @@ class Fleet(object):
                         'status': 'installed' if self.version[identity] == NEW else self.status[identity],
                         'message': None if self.version[identity] == NEW else self.message[identity],
                         'downloadedVersion': self.downloaded.get(identity, NEW),
-                        'availableVersion': self.available.get(identity, NEW)}
+                        'availableVersion': self.available.get(identity, NEW), **self.extra.get(identity, {})}
         return call
 
     def hosts(self):

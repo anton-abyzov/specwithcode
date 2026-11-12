@@ -1747,6 +1747,13 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   /**
+   * Whether an update may pause running work on this machine: the update
+   * agent's automatic pause, a forced fleet request and a rollout's drain. Off
+   * by default, so an update waits until the machine is quiet. A person's own
+   * Update now is never gated. Per machine, never copied to another.
+   */
+  pauseWorkForUpdates: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `studio-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
@@ -2345,6 +2352,7 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  pauseWorkForUpdates: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   agentBrowserProfileId: Schema.optionalKey(Schema.NullOr(BrowserProfileId)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(

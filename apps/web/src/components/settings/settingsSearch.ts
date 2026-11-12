@@ -723,6 +723,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "pause-work-for-updates",
+    title: "Pause running work for updates",
+    to: "/settings/general",
+    searchTerms: [
+      "force update busy machine interrupt running turns wait quiet service update install automatically pause work",
+    ],
+    desktopOnly: true,
+  },
+  {
     id: "about-version",
     title: "Version",
     to: "/settings/general",

@@ -7,7 +7,7 @@ update.py. The agent never stops or signals the Studio service; only that verifi
 helper restarts it. GitHub tokens stay in memory: they are never written, logged or
 placed in exception text. Helper output is discarded; only short status lines print.
 Stdlib only and Python 3.9 compatible (macOS /usr/bin/python3); copied with its siblings
-update_agent_reap.py, update_agent_cache.py, update_request.py, update_agent_pause.py, service_hold.py,
+update_agent_reap.py, update_agent_cache.py, update_request.py, update_agent_pause.py, service_hold.py, update_policy.py,
 service_handles.py and live_database.py into the updater LaunchAgent location (update_request.AGENT_FILES).
 """
 import argparse
@@ -1398,7 +1398,7 @@ def install_launch_agent(home, identity, out):
         files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
                  for name in (studio_paths.__file__, update_request.__file__, recovery.__file__, installation_descriptor.__file__,
                               runs.__file__, pause.service_hold.__file__, here / 'live_database.py', here / 'service_handles.py',
-                              pause.__file__, here / 'managed_updates.py',
+                              pause.update_policy.__file__, pause.__file__, here / 'managed_updates.py',
                               here / 'migrate_home.py', here / 'relay_ownership.py', __file__)]  # Modules first.
 
         def same(path, data):

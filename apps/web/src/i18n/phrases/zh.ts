@@ -423,8 +423,6 @@ export const zh: PhraseCatalog = {
   "Hold mode also quits on two quick presses.": "按住模式下，快速按两次也会退出。",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "会话运行时阻止空闲休眠，让这台电脑上的轮次继续运行。合上盖子仍会休眠。",
-  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
-    "SpecWithCode 服务自动更新时等待运行中工作的时长。之后运行中的轮次会暂停，服务更新，然后从中断处继续。侧边栏中的“稍后”会再等一小时。",
   "Include text and controls when the app makes them available.": "在应用提供时包含文本和控件。",
   "Install and manage Antigravity.": "安装并管理 Antigravity。",
   "Install or update the official registry agent on this environment. Your provider settings and sign-in are kept.":
@@ -563,8 +561,6 @@ export const zh: PhraseCatalog = {
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
     "你和智能体使用的标签页尺寸。“填充”适应面板；其他尺寸会显示设备工具栏。",
   "Terminal output, independent from code blocks and diffs.": "终端输出，独立于代码块和差异。",
-  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
-    "如果下方已启用，应用会在空闲时更新，否则在下次退出时更新。服务在没有会话运行时更新；运行中的工作会在下方的等待时间后为其暂停，并在更新后继续。“关闭”表示你从这里安装。",
   "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
     "每类任务可使用的最便宜档位。代码、审查、设计和最终动画绝不低于 Standard；其他工作保持在 Frontier。不明确的任务使用其常用模型。",
   "The color scheme pages are told to prefer. System follows your OS setting.":
@@ -3985,4 +3981,31 @@ export const zh: PhraseCatalog = {
   "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "这台电脑上的智能体已经可以在 {machines} 上开始工作。在这里生成的加入命令会让你选择的电脑在这台电脑上开始工作。如果是要把新电脑添加到这台电脑，请在新电脑上打开 SpecWithCode，在那里选择“加入主电脑”，然后把它的加入命令粘贴到这里的“添加电脑”中。",
   "{count} more": "另外 {count} 台",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "如果下方已启用，应用会在空闲时更新，否则在下次退出时更新。服务在没有会话运行时更新。开启“为更新暂停运行中的工作”后，运行中的工作会在下方的等待时间后为其暂停，并在更新后继续。“关闭”表示你从这里安装。",
+  "Applies once “Pause running work for updates” is on: how long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "在“为更新暂停运行中的工作”开启后生效：SpecWithCode 服务自动更新时等待运行中工作的时长。之后运行中的轮次会暂停，服务更新，然后从中断处继续。侧边栏中的“稍后”会再等一小时。",
+  "Pause running work for updates": "为更新暂停运行中的工作",
+  "After the wait set in “Pause running work after”, running turns pause, the update installs, and they continue where they left off.":
+    "等待“多久后暂停运行中的工作”设定的时间后，运行中的轮次会暂停，更新完成安装，然后从中断处继续。",
+  "After 30 minutes of waiting, running turns pause, the update installs, and they continue where they left off.":
+    "等待 30 分钟后，运行中的轮次会暂停，更新完成安装，然后从中断处继续。",
+  "After the wait, running turns pause, the update installs, and they continue where they left off. On a Mac the wait is “Pause running work after”; on Linux it is 30 minutes.":
+    "等待结束后，运行中的轮次会暂停，更新完成安装，然后从中断处继续。在 Mac 上等待时间是“多久后暂停运行中的工作”，在 Linux 上是 30 分钟。",
+  "An update waits until {machine} has no running work, however long that takes. Update now still installs right away.":
+    "更新会一直等到 {machine} 上没有运行中的工作，无论要等多久。“立即更新”仍会马上安装。",
+  "An update waits up to 30 minutes for {machine} to have no running work. If it is still busy then, {machine} stays on its version until the next update. Update now still installs right away.":
+    "更新最多等待 30 分钟，直到 {machine} 上没有运行中的工作。如果仍在忙，{machine} 会保持当前版本，直到下一次更新。“立即更新”仍会马上安装。",
+  "An update waits for {machine} to have no running work. A Mac keeps waiting as long as that takes; a Linux machine waits up to 30 minutes and, if still busy, stays on its version until the next update. Update now still installs right away.":
+    "更新会等到 {machine} 上没有运行中的工作。Mac 会一直等下去；Linux 机器最多等待 30 分钟，如果仍在忙，会保持当前版本，直到下一次更新。“立即更新”仍会马上安装。",
+  "Has no effect on {machine} while “Continue threads after restarts” is off there: paused turns would not continue, so updates wait for quiet. Turn that on in Settings > General.":
+    "{machine} 上关闭了“重启后继续会话”时此设置无效：暂停的轮次不会继续，所以更新会等到没有工作时再进行。请在 设置 > 通用 中开启。",
+  "{machine} is unreachable, so this setting cannot be changed now.":
+    "无法连接 {machine}，暂时不能更改此设置。",
+  "This connection cannot change settings on {machine}.": "此连接不能更改 {machine} 上的设置。",
+  "Could not save update settings": "无法保存更新设置",
+  "The change could not be confirmed on {machine}. The switch shows what {machine} reports.":
+    "无法确认 {machine} 上的更改。开关显示的是 {machine} 报告的状态。",
+  "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
+    "{machine} 上的 SpecWithCode 版本没有此设置。请先更新 {machine}。",
 };
