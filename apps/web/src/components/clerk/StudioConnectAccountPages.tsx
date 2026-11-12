@@ -15,7 +15,8 @@ export const STUDIO_CONNECT_ACCOUNT_PAGES = [
     content: <MobileClientsUserProfilePage />,
   },
   {
-    label: "SpecWithCode Connect",
+    // One word: the account menu wraps and centres a longer label.
+    label: "Machines",
     url: "studio-connect",
     icon: <ServerIcon className="size-4" />,
     content: <StudioConnectUserProfilePage />,
