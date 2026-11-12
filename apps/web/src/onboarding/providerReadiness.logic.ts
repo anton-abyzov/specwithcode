@@ -23,7 +23,9 @@ function quoteProviderBinary(
   ) {
     return binaryPath;
   }
-  if (platform === "windows") return `& '${binaryPath.replaceAll("'", "''")}'`;
+  // PowerShell also closes a quoted string at a curly quote, and takes any of them doubled.
+  if (platform === "windows")
+    return `& '${binaryPath.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
   if (platform === "darwin" || platform === "linux") {
     if (binaryPath.startsWith("~/") || binaryPath.startsWith("~\\")) {
       return `~/'${binaryPath.slice(2).replaceAll("'", `'"'"'`)}'`;

@@ -311,6 +311,22 @@ describe("resolveAgentSignInCommand", () => {
     expect(resolveAgentSignInCommand(grok, settings, "windows")).toBe("& '/opt/x ai/grok' login");
   });
 
+  it("doubles every quote PowerShell would close the path at, curly ones included", () => {
+    const grok = agent("grok");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [grok.instanceId]: {
+          driver: grok.driver,
+          config: { binaryPath: "C:\\it's\\a\u2019; calc; \u2018b\\grok.exe" },
+        },
+      },
+    };
+    expect(resolveAgentSignInCommand(grok, settings, "windows")).toBe(
+      "& 'C:\\it''s\\a\u2019\u2019; calc; \u2018\u2018b\\grok.exe' login",
+    );
+  });
+
   it("has no command for an agent that signs in through the app alone", () => {
     expect(
       resolveAgentSignInCommand(agent("antigravity"), DEFAULT_SERVER_SETTINGS, "darwin"),

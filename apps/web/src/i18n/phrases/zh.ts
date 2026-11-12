@@ -4340,4 +4340,6 @@ export const zh: PhraseCatalog = {
   "Uses your Meta account": "使用你的 Meta 账户",
   "{agent}'s sign-in is running here. Its row updates when it is done.":
     "{agent} 的登录正在这里运行。完成后它所在的行会更新。",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "登录在 {agent} 登录成功之前就结束了。请重试。",
 };

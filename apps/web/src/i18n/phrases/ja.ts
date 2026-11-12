@@ -4518,4 +4518,6 @@ export const ja: PhraseCatalog = {
   "Uses your Meta account": "Meta アカウントを使います",
   "{agent}'s sign-in is running here. Its row updates when it is done.":
     "{agent} のサインインをここで実行しています。終わるとその行が更新されます。",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "{agent} にサインインする前にサインインが終了しました。もう一度お試しください。",
 };

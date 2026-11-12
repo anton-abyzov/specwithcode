@@ -4514,4 +4514,6 @@ export const ru: PhraseCatalog = {
   "Uses your Meta account": "Использует ваш аккаунт Meta",
   "{agent}'s sign-in is running here. Its row updates when it is done.":
     "Вход в {agent} выполняется здесь. Строка обновится, когда он завершится.",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "Вход завершился до того, как {agent} вошёл в аккаунт. Попробуйте ещё раз.",
 };

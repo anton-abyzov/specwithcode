@@ -246,6 +246,28 @@ describe("an agent that is on", () => {
     expect(onOpenPanel).toHaveBeenCalledOnce();
   });
 
+  it("leaves out the machine's own words, which say to run a command", async () => {
+    const grok = agent("grok", {
+      displayName: "Grok",
+      ...signedOut,
+      message: "Grok CLI is installed but not logged in. Run `grok login`.",
+    });
+    await show(grok, { command: "grok login" });
+    expect(text()).toContain("Not authenticated");
+    expect(text()).not.toContain("Run `grok login`");
+    expect(text()).not.toContain("not logged in");
+  });
+
+  it("says a sign-in ended without signing in, once the machine has been read", async () => {
+    const grok = agent("grok", { displayName: "Grok", ...signedOut });
+    const ended = "The sign-in ended before Grok was signed in. Try again.";
+    await show(grok, { command: "grok login", signInEnded: true, checking: true });
+    expect(text()).not.toContain(ended);
+    await show(grok, { command: "grok login", signInEnded: true });
+    expect(text()).toContain(ended);
+    expect(button("Sign in")!.disabled).toBe(false);
+  });
+
   it("says how Pi signs in, since Pi has no sign-in command", async () => {
     await show(agent("pi", signedOut), { command: "pi" });
     expect(text()).toContain("Pi signs in from inside. Type /login once it has opened.");
@@ -313,13 +335,22 @@ describe("an agent that is on", () => {
     await show(cursor, { autoSignIn: true, onAutoSignInDone });
     expect(mocks.start).not.toHaveBeenCalled();
     expect(onAutoSignInDone).not.toHaveBeenCalled();
+    // The machine's answer arrives as a new render of the part that waits for it.
     mocks.auth = { data: { phase: "idle" }, error: null };
-    await show(cursor, { autoSignIn: true, onAutoSignInDone });
+    const done = vi.fn();
+    await show(cursor, { autoSignIn: true, onAutoSignInDone: done });
     expect(mocks.start).toHaveBeenCalledExactlyOnceWith({
       environmentId,
       input: { instanceId: cursor.instanceId },
     });
+    expect(done).toHaveBeenCalledOnce();
+    expect(onOpenPanel).not.toHaveBeenCalled();
+  });
+
+  it("has nothing more to start for Claude, whose sign-in has its own button", async () => {
+    await show(agent("claudeAgent", signedOut), { autoSignIn: true, onAutoSignInDone });
     expect(onAutoSignInDone).toHaveBeenCalledOnce();
+    expect(mocks.start).not.toHaveBeenCalled();
     expect(onOpenPanel).not.toHaveBeenCalled();
   });
 

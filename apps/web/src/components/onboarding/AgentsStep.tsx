@@ -199,6 +199,8 @@ function ConnectedAgentsStep({
   const [signInAfterTurnOn, setSignInAfterTurnOn] = useState<string | null>(null);
   // The agent whose sign-in the app started and whose result is being read.
   const [checkingInstance, setCheckingInstance] = useState<ProviderInstanceId | null>(null);
+  // The agent whose sign-in in the panel ended last, for a line on its row if it is still signed out.
+  const [endedInstance, setEndedInstance] = useState<ProviderInstanceId | null>(null);
   const polling = useRef(false);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
@@ -275,6 +277,7 @@ function ConnectedAgentsStep({
   ) => {
     if (serverConfig === null || !readEnvironmentScope(environmentId, AuthTerminalOperateScope))
       return;
+    setEndedInstance(null);
     setTerminalSession({
       ...session,
       environmentId,
@@ -294,27 +297,39 @@ function ConnectedAgentsStep({
     }
     // The sign-in command has ended: read that agent now, and say so on its row.
     const instanceId = closed.providerInstanceId;
+    const checked = () =>
+      setCheckingInstance((current) => (current === instanceId ? null : current));
     setCheckingInstance(instanceId);
-    void Promise.resolve(refreshProviders({ environmentId, input: { instanceId } })).finally(() =>
-      setCheckingInstance((current) => (current === instanceId ? null : current)),
+    setEndedInstance(instanceId);
+    void Promise.resolve(refreshProviders({ environmentId, input: { instanceId } })).finally(
+      checked,
     );
+    // A check that never answers must not hold the row on "Checking…".
+    setTimeout(checked, AGENT_CHECK_TIMEOUT_MS);
   };
 
   const turnOn = (agent: string) => {
     if (!settings) return;
     const driver = ProviderDriverKind.make(agent);
     const instanceId = defaultInstanceIdForDriver(driver);
-    void updateSettings({
-      environmentId,
-      input: {
-        patch: buildProviderInstanceUpdatePatch({
-          settings,
-          instanceId,
-          driver,
-          isDefault: true,
-          instance: { ...defaultAgentInstance(settings, driver), enabled: true },
-        }),
-      },
+    void Promise.resolve(
+      updateSettings({
+        environmentId,
+        input: {
+          patch: buildProviderInstanceUpdatePatch({
+            settings,
+            instanceId,
+            driver,
+            isDefault: true,
+            instance: { ...defaultAgentInstance(settings, driver), enabled: true },
+          }),
+        },
+      }),
+    ).then((result) => {
+      // An agent that could not be turned on has no sign-in to start later.
+      if (result?._tag === "Failure") {
+        setSignInAfterTurnOn((current) => (current === agent ? null : current));
+      }
     });
   };
 
@@ -346,6 +361,7 @@ function ConnectedAgentsStep({
           disabled={rechecking}
           onClick={() => {
             setRechecking(true);
+            setCheckingInstance(null);
             find();
             void Promise.resolve(refreshProviders({ environmentId, input: {} })).finally(() =>
               setRechecking(false),
@@ -445,6 +461,7 @@ function ConnectedAgentsStep({
                 });
               }}
               checking={checkingInstance === provider.instanceId}
+              signInEnded={endedInstance === provider.instanceId}
               autoSignIn={signInAfterTurnOn === row.agent}
               onAutoSignInDone={autoSignInDone}
             />

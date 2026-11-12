@@ -4543,4 +4543,6 @@ export const de: PhraseCatalog = {
   "Uses your Meta account": "Verwendet dein Meta-Konto",
   "{agent}'s sign-in is running here. Its row updates when it is done.":
     "Die Anmeldung von {agent} läuft hier. Die Zeile aktualisiert sich, sobald sie fertig ist.",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "Die Anmeldung wurde beendet, bevor {agent} angemeldet war. Versuch es noch einmal.",
 };

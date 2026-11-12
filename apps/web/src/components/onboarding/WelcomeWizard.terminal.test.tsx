@@ -623,6 +623,20 @@ describe("the agents step: sign-in", () => {
     expect(button("Sign in")).toBeUndefined();
   });
 
+  it("says so on the row when the sign-in ends and the agent is still signed out", async () => {
+    await enterRemoteAgents();
+    await click("Sign in");
+    await act(async () => state.viewport!.onSessionExited());
+    expect(hasViewport()).toBe(false);
+    expect(text(renderer!.root)).toContain(
+      "The sign-in ended before Grok was signed in. Try again.",
+    );
+    expect(button("Sign in").props.disabled).toBe(false);
+    // Starting it again takes the line away.
+    await click("Sign in");
+    expect(text(renderer!.root)).not.toContain("The sign-in ended before");
+  });
+
   it("closes the panel once the machine reads the agent as signed in", async () => {
     await enterRemoteAgents();
     await click("Sign in");

@@ -103,6 +103,7 @@ export function ProviderAgentRow({
   panelAvailable,
   onOpenPanel,
   checking = false,
+  signInEnded = false,
   autoSignIn = false,
   onAutoSignInDone,
 }: {
@@ -120,6 +121,8 @@ export function ProviderAgentRow({
   readonly onOpenPanel: () => void;
   /** A sign-in the app started has ended and the machine is reading the result. */
   readonly checking?: boolean;
+  /** The sign-in the app ran in the panel has ended, and the agent is still signed out. */
+  readonly signInEnded?: boolean;
   /** "Sign in" was pressed while the agent was still off. */
   readonly autoSignIn?: boolean;
   readonly onAutoSignInDone?: () => void;
@@ -131,6 +134,7 @@ export function ProviderAgentRow({
   const summary = getProviderSummary(provider, tx);
   const signedIn = provider.auth.status === "authenticated";
   const inApp = signsInThroughApp(provider);
+  const claude = provider.driver === "claudeAgent";
   const needsSignIn = state === "signIn" || (state === "attention" && !signedIn);
   // A sign-in in progress stays on screen while the machine reads the agent again.
   const [signingIn, setSigningIn] = useState(false);
@@ -146,15 +150,18 @@ export function ProviderAgentRow({
       onAutoSignInDone?.();
       return;
     }
-    // An agent the app signs in itself starts from its own block below.
-    if (!showSignIn || inApp) return;
-    if (command !== null && panelAvailable) onOpenPanel();
+    if (!showSignIn) return;
+    // An agent the app signs in itself starts from its own block below. Claude's
+    // block has its own button, so there is nothing more to start here.
+    if (inApp && !claude) return;
+    if (!inApp && command !== null && panelAvailable) onOpenPanel();
     onAutoSignInDone?.();
   }, [
     autoSignIn,
     state,
     showSignIn,
     inApp,
+    claude,
     command,
     panelAvailable,
     onOpenPanel,
@@ -186,7 +193,16 @@ export function ProviderAgentRow({
           {plan}
         </>
       ) : null
-    ) : state === "checking" || (inApp && state === "signIn") ? null : (
+    ) : state === "checking" || (inApp && state === "signIn") ? null : provider.auth.status ===
+      "unauthenticated" ? (
+      // The machine's own words here often say to run a command; the button does that.
+      <>
+        {summary.headline}
+        {signInEnded && !checking && !panelOpen ? (
+          <> {tx("The sign-in ended before {agent} was signed in. Try again.", { agent: name })}</>
+        ) : null}
+      </>
+    ) : (
       `${summary.headline}${summary.detail ? ` · ${summary.detail}` : ""}`
     );
 
@@ -215,7 +231,7 @@ export function ProviderAgentRow({
         ) : undefined
       }
     >
-      {!showSignIn ? null : provider.driver === "claudeAgent" ? (
+      {!showSignIn ? null : claude ? (
         <ClaudeSignIn
           environmentId={environmentId}
           environmentLabel={machineLabel}

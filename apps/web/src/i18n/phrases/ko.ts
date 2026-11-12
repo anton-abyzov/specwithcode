@@ -4466,4 +4466,6 @@ export const ko: PhraseCatalog = {
   "Uses your Meta account": "Meta 계정을 사용합니다",
   "{agent}'s sign-in is running here. Its row updates when it is done.":
     "{agent} 로그인이 여기에서 실행 중입니다. 끝나면 해당 행이 업데이트됩니다.",
+  "The sign-in ended before {agent} was signed in. Try again.":
+    "{agent}에 로그인되기 전에 로그인이 끝났습니다. 다시 시도하세요.",
 };
