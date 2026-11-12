@@ -26,7 +26,7 @@ import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import { hasExplicitProviderApiEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { CLAUDE_STATUS_CHECK_FAILED } from "../provider/providerSnapshot.ts";
-import { nativeDenialResetPassed } from "../provider/providerUsageLimits.ts";
+import { nativeDenialResetPassed, scopedDenial } from "../provider/providerUsageLimits.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import * as SwitchClient from "./SwitchClient.ts";
 import * as SwitchSeen from "./SwitchSeen.ts";
@@ -547,8 +547,14 @@ const make = Effect.gen(function* () {
       // background snapshot expires. Recheck this exact instance once, never
       // another account; a failed probe cannot clear its previous denial.
       const recheckDenied = nativeQuotaDenied(native?.usageLimits, now, model);
-      // Only a spent model weekly refused it: the account itself was not denied.
-      const recheckModelOnly = recheckDenied && !nativeQuotaDenied(native?.usageLimits, now);
+      // Only a spent model weekly refused it: the account itself was not denied,
+      // or an older build recorded that weekly's rejection as an account denial.
+      const recheckModelOnly =
+        recheckDenied &&
+        (!nativeQuotaDenied(native?.usageLimits, now) ||
+          (entry.driver === "claudeAgent" &&
+            native?.usageLimits !== undefined &&
+            scopedDenial(native.usageLimits, now)));
       // A Claude denial past its reported reset no longer refuses, but this
       // start still reads native status once; a read that fails admits it.
       const lapsedDenial =

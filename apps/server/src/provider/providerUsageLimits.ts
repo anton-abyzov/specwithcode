@@ -80,7 +80,8 @@ export function hasNativeUsageEvidence(limits: ServerProviderUsageLimits): boole
  * revokes main-bucket permission. Sparse updates never grant permission.
  *
  * An `unsupported` snapshot stays unsupported: an account that cannot have
- * subscription windows will not start reporting them mid-turn.
+ * subscription windows will not start reporting them mid-turn. A spent model
+ * weekly is the exception: its row is the only record of that refusal.
  */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
@@ -90,10 +91,14 @@ export function applyUsageLimitsUpdate(input: {
   const { previous, update } = input;
   const negative = update.ordinaryUsageAllowed === false || update.spendControlReached === true;
   const creditNegative = update.nativeCreditDenied === true;
+  const scopedSpent = update.windows.some(
+    (window) => windowModelScope(window) !== null && window.usedPercent >= 100,
+  );
   if (
     (!negative && !creditNegative && update.windows.length === 0) ||
     (previous?.unavailable?.reason === "unsupported" &&
-      !(negative && update.nativeDenialRequiresFullRead))
+      !(negative && update.nativeDenialRequiresFullRead) &&
+      !scopedSpent)
   ) {
     return previous;
   }
@@ -256,12 +261,11 @@ export function nativeDenialResetPassed(
  * recorded as account-wide denials before the weekly's row refused its model
  * by itself; this recognizes those records.
  */
-export function scopedDenial(
-  limits: Pick<ServerProviderUsageLimits, "nativeDenialResetsAt" | "windows">,
-  now: number,
-): boolean {
+export function scopedDenial(limits: ServerProviderUsageLimits, now: number): boolean {
   const at = Date.parse(limits.nativeDenialResetsAt ?? "");
   return (
+    limits.nativeCreditDenialObservedAt === undefined &&
+    limits.spendControlReached !== true &&
     Number.isFinite(at) &&
     spentAccountWideWindows(limits.windows, now).length === 0 &&
     limits.windows.some(
@@ -433,8 +437,6 @@ export function resolveUsageLimitsAfterProbe(input: {
     // weekly's own row refuses that model, and the other models run again.
     const scopedOnly =
       laterValidRead &&
-      published.nativeCreditDenialObservedAt === undefined &&
-      published.spendControlReached !== true &&
       scopedDenial(published, probeAt) &&
       spentAccountWideWindows(probed.windows, probeAt).length === 0;
     if (!laterValidRead || !(fullRead || resetPassed || scopedOnly)) {

@@ -433,6 +433,62 @@ describe("a model-scoped Claude rejection", () => {
     expect(resolve(probe(deniedAt - 1, 10))).toBe(legacy);
   });
 
+  // The person reset the model weekly early: Claude takes the model again
+  // while the record an older build kept still says the account is denied.
+  it.effect("admits every model on the first start after an early reset of that record", () =>
+    Effect.gen(function* () {
+      const reset = claudeUsageResponseToLimits({
+        checkedAt: iso(beforeReset),
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            seven_day: { utilization: 24, resets_at: WEEKLY_RESET },
+            ...({
+              model_scoped: [{ display_name: "Fable", utilization: 7, resets_at: WEEKLY_RESET }],
+            } as object),
+          },
+        },
+      }).limits;
+      const healed = resolveUsageLimitsAfterProbe({
+        driver: claudeDriver,
+        published: legacy,
+        probed: reset,
+      })!;
+      expect(healed).toBe(reset);
+      const native = claude(beforeReset, legacy);
+      for (const model of ["claude-opus-5.5", "claude-fable-5"]) {
+        expect(nativeQuotaDenied(legacy, beforeReset, model)).toBe(true);
+        expect(nativeQuotaDenied(healed, beforeReset, model)).toBe(false);
+        yield* start({ native, now: beforeReset, model, refreshed: claude(beforeReset, healed) });
+        // A read that could not replace the record admits nothing.
+        yield* Effect.flip(start({ native, now: beforeReset, model }));
+      }
+    }),
+  );
+
+  it("is recorded on an account whose last read had no usage data", () => {
+    const unsupported: ServerProviderUsageLimits = {
+      checkedAt: iso(probedAt),
+      windows: [],
+      unavailable: { reason: "unsupported" },
+    };
+    const recorded = deny(
+      { status: "rejected", rateLimitType: "seven_day_overage_included", resetsAt: 1_793_000_000 },
+      unsupported,
+    );
+    expect(nativeQuotaDenied(recorded, beforeReset, "claude-fable-5")).toBe(true);
+    expect(nativeQuotaDenied(recorded, beforeReset, "claude-opus-5.5")).toBe(false);
+    // A later read without usage data keeps the row and still refuses that model.
+    const again = resolveUsageLimitsAfterProbe({
+      driver: claudeDriver,
+      published: recorded,
+      probed: { ...unsupported, checkedAt: iso(beforeReset) },
+    })!;
+    expect(again.unavailable).toEqual({ reason: "unsupported" });
+    expect(nativeQuotaDenied(again, beforeReset, "claude-fable-5")).toBe(true);
+    expect(nativeQuotaDenied(again, beforeReset, "claude-opus-5.5")).toBe(false);
+  });
+
   it("keeps an account denial that did not come from a model weekly", () => {
     const fiveHour = deny(incident);
     const read = claudeUsageResponseToLimits({

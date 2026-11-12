@@ -67,6 +67,20 @@ it("shows the change only for a stop before it, with a complete read of the new 
     ),
   ).toBe(false);
   expect(accountChangedWithRoom(undefined, 0, HOUR)).toBe(false);
+  // A spent model weekly on the new account holds only threads on that model.
+  const fableSpent = claude({
+    windows: [
+      {
+        id: "seven_day_fable",
+        kind: "weekly",
+        label: "Weekly · Fable",
+        modelScope: "Fable",
+        usedPercent: 100,
+      },
+    ],
+  });
+  expect(accountChangedWithRoom(fableSpent, 0, HOUR, "claude-fable-5")).toBe(false);
+  expect(accountChangedWithRoom(fableSpent, 0, HOUR, "claude-opus-5.5")).toBe(true);
 });
 
 it("says the subscription changed in the same CLI, continues or asks to confirm, and claims nothing more", () => {
