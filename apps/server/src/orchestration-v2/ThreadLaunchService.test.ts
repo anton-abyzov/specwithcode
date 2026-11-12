@@ -692,6 +692,65 @@ it.effect("creates a worktree set: one folder, each repository at its path, one 
   }).pipe(Effect.scoped),
 );
 
+it.effect("starts a thread that names no repository in its own empty folder", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-empty-root-")),
+    );
+    NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(root, "repositories/acme/api/.git"), { recursive: true });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const harness = makeHarness({
+      withFileSystem: true,
+      project: { ...project, workspaceRoot: root } as never,
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      // What the composer, a routine or an older client sends: a worktree, no repository.
+      const { threadId } = yield* launches.launch(
+        launchInput({
+          command: "command:launch:empty",
+          thread: "thread:launch:empty",
+          message: "What does the api do?",
+          workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((projection) => projection.thread.branch === "generated-branch")),
+      );
+      const projection = yield* threads.getThreadProjection(threadId);
+      const folder = projection.thread.worktreePath!;
+      assert.notEqual(folder, root);
+      assert.deepEqual(NodeFS.readdirSync(folder), []);
+      assert.deepEqual(
+        JSON.parse(
+          NodeFS.readFileSync(
+            NodePath.join(
+              NodePath.dirname(folder),
+              `.${NodePath.basename(folder)}.worktree-set.json`,
+            ),
+            "utf8",
+          ),
+        ).members,
+        [],
+      );
+      // Nothing is checked out, renamed or set up.
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+      const text = projection.messages[0]?.text ?? "";
+      assert.include(text, "What does the api do?");
+      assert.include(text, "studio_worktree_add_repository");
+      assert.include(text, "- api: repositories/acme/api");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.scoped),
+);
+
 it.effect("enqueues provider work only after setup has been initiated", () =>
   Effect.gen(function* () {
     const setupEntered = yield* Deferred.make<void>();

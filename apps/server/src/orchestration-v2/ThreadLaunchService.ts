@@ -55,6 +55,7 @@ import {
 import { worktreeSetFolder } from "../worktreePlacement.ts";
 import type { WorktreeSetMember } from "../worktreeSet.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { emptyThreadFolderLaunch } from "../mcp/toolkits/project/launchWorkspace.ts";
 import {
   discoverProjectRepositories,
   resolveFolderRepository,
@@ -351,14 +352,12 @@ const make = Effect.gen(function* () {
           cwd: inFolder.path,
           repository: { id: inFolder.relativePath, path: inFolder.path },
         };
-      const names = yield* Effect.promise(() =>
-        discoverProjectRepositories({ projectId: input.projectId, ...project }),
+      const names = validRepositoryNames(
+        yield* Effect.promise(() =>
+          discoverProjectRepositories({ projectId: input.projectId, ...project }),
+        ),
       );
-      return yield* mapError(
-        input,
-        "resolve-repository",
-        threadId,
-      )(resolved.message + validRepositoryNames(names));
+      return yield* mapError(input, "resolve-repository", threadId)(resolved.message + names);
     }
     const { checkout } = resolved;
     const isRepository = yield* git
@@ -498,10 +497,12 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
+      // `launch` leaves an empty list only for a folder of separate clones: the
+      // thread then starts in its own folder with no worktree yet.
       const setRepositories =
         input.workspaceStrategy.type === "worktree" &&
-        (input.workspaceStrategy.repositories?.length ?? 0) > 0
-          ? input.workspaceStrategy.repositories!
+        input.workspaceStrategy.repository === undefined
+          ? (input.workspaceStrategy.repositories ?? null)
           : null;
       if (input.workspaceStrategy.type === "worktree" && setRepositories !== null) {
         // One thread folder with a worktree of each repository, on one branch.
@@ -787,51 +788,54 @@ const make = Effect.gen(function* () {
                   ? createdSet!.folder
                   : setPath.value.join(createdSet!.folder, member.relativePath),
               );
-        yield* generateBranchNameFor(renameCwds[0]!, initialMessage).pipe(
+        // A folder with no repository yet has no branch to rename: the thread takes the name.
+        const firstCwd = renameCwds[0];
+        yield* generateBranchNameFor(firstCwd ?? project.workspaceRoot, initialMessage).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
-            git
-              .renameBranch({
-                cwd: renameCwds[0]!,
-                oldBranch,
-                newBranch,
-                ...(exactName ? { exactName: true } : {}),
-              })
-              .pipe(
-                Effect.tap((renamed) => {
-                  // If a later member cannot take the name, put the renamed
-                  // ones back so the whole set stays on one branch.
-                  const done: Array<string> = [renameCwds[0]!];
-                  return Effect.forEach(
-                    renameCwds.slice(1),
-                    (cwd) =>
-                      git
-                        .renameBranch({
-                          cwd,
-                          oldBranch,
-                          newBranch: renamed.branch,
-                          exactName: true,
-                        })
-                        .pipe(Effect.tap(() => Effect.sync(() => void done.push(cwd)))),
-                    { discard: true },
-                  ).pipe(
-                    Effect.tapError(() =>
-                      Effect.forEach(
-                        done,
-                        (cwd) =>
-                          git
-                            .renameBranch({
-                              cwd,
-                              oldBranch: renamed.branch,
-                              newBranch: oldBranch,
-                              exactName: true,
-                            })
-                            .pipe(Effect.ignore),
-                        { discard: true },
-                      ),
+            (firstCwd === undefined
+              ? Effect.succeed({ branch: newBranch })
+              : git.renameBranch({
+                  cwd: firstCwd,
+                  oldBranch,
+                  newBranch,
+                  ...(exactName ? { exactName: true } : {}),
+                })
+            ).pipe(
+              Effect.tap((renamed) => {
+                // If a later member cannot take the name, put the renamed
+                // ones back so the whole set stays on one branch.
+                const done: Array<string> = renameCwds.slice(0, 1);
+                return Effect.forEach(
+                  renameCwds.slice(1),
+                  (cwd) =>
+                    git
+                      .renameBranch({
+                        cwd,
+                        oldBranch,
+                        newBranch: renamed.branch,
+                        exactName: true,
+                      })
+                      .pipe(Effect.tap(() => Effect.sync(() => void done.push(cwd)))),
+                  { discard: true },
+                ).pipe(
+                  Effect.tapError(() =>
+                    Effect.forEach(
+                      done,
+                      (cwd) =>
+                        git
+                          .renameBranch({
+                            cwd,
+                            oldBranch: renamed.branch,
+                            newBranch: oldBranch,
+                            exactName: true,
+                          })
+                          .pipe(Effect.ignore),
+                      { discard: true },
                     ),
-                  );
-                }),
-              ),
+                  ),
+                );
+              }),
+            ),
           ),
           Effect.flatMap((renamed) =>
             threads.dispatch({
@@ -867,27 +871,30 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
-      const setup = yield* setupScripts
-        .runForThread({
-          threadId,
-          projectId: input.projectId,
-          projectCwd: project.workspaceRoot,
-          worktreePath: cwd,
-          ...(tracked
-            ? {
-                observeCompletion: {
-                  onOutputLine: (line: string) =>
-                    setupTracker.appendTail(threadId, "setup-script", line),
-                },
-              }
-            : {}),
-          project: {
-            id: project.id,
-            workspaceRoot: project.workspaceRoot,
-            scripts: project.scripts,
-          },
-        })
-        .pipe(Effect.mapError(mapError(input, "run-setup-script", threadId)));
+      // A folder with no repository has nothing to set up; adding one installs nothing either.
+      const setup = yield* (
+        createdSet?.members.length === 0
+          ? Effect.succeed({ status: "no-script" as const })
+          : setupScripts.runForThread({
+              threadId,
+              projectId: input.projectId,
+              projectCwd: project.workspaceRoot,
+              worktreePath: cwd,
+              ...(tracked
+                ? {
+                    observeCompletion: {
+                      onOutputLine: (line: string) =>
+                        setupTracker.appendTail(threadId, "setup-script", line),
+                    },
+                  }
+                : {}),
+              project: {
+                id: project.id,
+                workspaceRoot: project.workspaceRoot,
+                scripts: project.scripts,
+              },
+            })
+      ).pipe(Effect.mapError(mapError(input, "run-setup-script", threadId)));
 
       let awaitAsyncSetup = Effect.void;
       if (setup.status === "started") {
@@ -1145,8 +1152,23 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** See `emptyThreadFolderLaunch`: the composer, routines, mobile and older clients arrive here. */
+  const withEmptyThreadFolder = Effect.fn(function* (input: ThreadLaunchInput) {
+    const project = Option.getOrUndefined(
+      yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+    );
+    const { workspaceStrategy, notice } = yield* Effect.promise(() =>
+      emptyThreadFolderLaunch(input.workspaceStrategy, project),
+    );
+    const message = input.initialMessage;
+    if (notice === null || message === undefined) return { ...input, workspaceStrategy };
+    const text = message.text.trim() === "" ? notice : `${message.text}\n\n${notice}`;
+    return { ...input, workspaceStrategy, initialMessage: { ...message, text } };
+  });
+
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
-    function* (input) {
+    function* (requested) {
+      const input = yield* withEmptyThreadFolder(requested);
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,

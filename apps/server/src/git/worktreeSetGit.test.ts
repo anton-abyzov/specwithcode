@@ -93,6 +93,27 @@ const fixture = Effect.gen(function* () {
 
 describe("worktree sets", () => {
   it.layer(testLayer)("as one unit", (it) => {
+    it.effect("creates a thread folder with no member, and removes it with its manifest", () =>
+      Effect.gen(function* () {
+        const { fs, path, base, project } = yield* fixture;
+        const folder = path.join(base, "worktrees", "project", "empty");
+        yield* createWorktreeSet({
+          folder,
+          members: [],
+          branch: "thread/empty",
+          projectRoot: project,
+          baseRef: "HEAD",
+          startFromOrigin: false,
+          submodules: null,
+        });
+        expect(yield* fs.readDirectory(folder)).toEqual([]);
+        // A manifest with no members marks the folder as the thread's own, not a plain worktree.
+        expect((yield* readWorktreeSet(folder))?.members).toEqual([]);
+        expect(yield* removeWorktreeSetMembers({ folder, members: [] })).toEqual([]);
+        expect(yield* fs.exists(folder)).toBe(false);
+        expect(yield* readWorktreeSet(folder)).toBeNull();
+      }),
+    );
     it.effect("creates one folder with a worktree of each repository on one branch", () =>
       Effect.gen(function* () {
         const { fs, path, run, base, project, api, web } = yield* fixture;

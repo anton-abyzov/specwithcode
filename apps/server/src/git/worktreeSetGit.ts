@@ -228,6 +228,11 @@ export const createWorktreeSet = Effect.fn("worktreeSet.create")(function* (inpu
   );
   const created: Array<WorktreeSetMember> = [];
   const exit = yield* Effect.gen(function* () {
+    // A thread that names no repository starts with the folder alone; members are added later.
+    if (input.members.length === 0)
+      yield* fs
+        .makeDirectory(input.folder, { recursive: true })
+        .pipe(Effect.mapError((cause) => `Could not create ${input.folder}: ${String(cause)}`));
     for (const member of input.members) {
       const base = yield* memberBase(member, input.projectRoot, input.baseRef);
       const start = yield* memberStart(member.repository, base, input.startFromOrigin);
@@ -428,7 +433,9 @@ export const removeWorktreeSetMembers = Effect.fn("worktreeSet.remove")(function
     const remaining = yield* fs
       .readDirectory(input.folder)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => ["?"]));
-    if (remaining.length === 0) yield* fs.remove(input.folder).pipe(Effect.ignore);
+    // Checked empty above; a folder is only removed with `recursive`.
+    if (remaining.length === 0)
+      yield* fs.remove(input.folder, { recursive: true }).pipe(Effect.ignore);
   }
   return kept;
 });
