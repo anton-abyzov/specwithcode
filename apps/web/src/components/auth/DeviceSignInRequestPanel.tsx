@@ -118,8 +118,8 @@ export function DeviceSignInRequestPanel({
       {waiting ? (
         <>
           <p className="text-muted-foreground text-sm">
-            On a computer or phone already signed in to this machine, open the account menu, choose
-            Add a device with a code, and type this code.
+            On a computer or phone already signed in to this machine, open Settings &gt; Machines,
+            open Another account, or no Connect, choose Add a device, and type this code.
           </p>
           <div
             aria-label="Sign-in code"

@@ -62,7 +62,7 @@ for (const theme of ["light", "dark"]) {
     await menu.waitFor();
     await page.waitForTimeout(250);
     const text = await menu.innerText();
-    for (const expected of ["Settings", "Add a device with a code", ...want.has]) {
+    for (const expected of ["Settings", "Add a device or machine", ...want.has]) {
       if (!text.includes(expected)) failures.push(`${state}/${theme}: missing "${expected}"`);
     }
     for (const unexpected of [...want.hasNot, "Sign in on another device", "gmail"]) {

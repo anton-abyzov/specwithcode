@@ -8,6 +8,10 @@ export const fr: PhraseCatalog = {
   "Account name": "Nom du compte",
   "Accounts & integrations": "Comptes et intégrations",
   Actions: "Actions",
+  "Add a device with a code": "Ajouter un appareil avec un code",
+  "Use this machine from a phone or another computer when SpecWithCode Connect is off or cannot be reached. With Connect, sign in on the other device with the same account instead; no code is needed.":
+    "Utilisez cette machine depuis un téléphone ou un autre ordinateur lorsque SpecWithCode Connect est désactivé ou injoignable. Avec Connect, connectez-vous plutôt sur l’autre appareil avec le même compte ; aucun code n’est nécessaire.",
+  "Add a device": "Ajouter un appareil",
   "Add a machine": "Ajouter une machine",
   "Add project starts in": "Dossier de départ pour ajouter un projet",
   Advanced: "Avancé",
