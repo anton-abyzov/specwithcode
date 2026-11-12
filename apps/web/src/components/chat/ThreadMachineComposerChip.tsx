@@ -1,3 +1,8 @@
+import type { ScopedThreadRef } from "@specweave-studio/contracts";
+import { ChevronDownIcon } from "lucide-react";
+import { requestHandOffThread } from "../handoff/HandOffThreadDialog";
+import { useHandoffDestinations } from "../handoff/useHandoffDestinations";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { machineShortCharsProps, useMachineNameFit } from "../machineNameFit";
@@ -14,19 +19,52 @@ import type { ThreadMachine } from "./threadMachine";
  * a draft's "Run on" picker sits there before the first message. It only
  * names the machine; moving a sent chat uses Move thread in its thread menu.
  * It wears the machine's color. Its name is the first thing in the toolbar to
- * give way: it shortens to an ellipsis, and once too little of it shows, the
- * icon and name give way to the machine's short label ("M4", "LM") in the same
- * tint, before any other control folds into the overflow menu. It never shrinks
- * to the icon alone; the tooltip and accessible name keep the full name.
+ * give way: it shortens to an ellipsis, and once too little of the machine's
+ * name shows, the icon and words give way to its short label ("M4", "LM") in
+ * the same tint, before any other control folds into the overflow menu. It
+ * never shrinks to the icon alone; the tooltip and accessible name stay full.
  */
+const RUNS_ON = "Runs on ";
+
+/** Fits "Runs on <name>" to the room it has, counting only the machine's name. */
+function useThreadMachineFit(machine: ThreadMachine) {
+  const fit = useMachineNameFit<HTMLSpanElement>(`${RUNS_ON}${machine.label}`, RUNS_ON.length);
+  const short = machine.short ?? machine.label;
+  return {
+    ref: fit.ref,
+    rootProps: {
+      ...(fit.compact ? { "data-machine-compact": "" } : {}),
+      ...machineShortCharsProps(short),
+    },
+    shortLabel: (
+      <span aria-hidden data-machine-short="" data-thread-machine-short="">
+        {short}
+      </span>
+    ),
+  };
+}
 export function ThreadMachineComposerChip({
   machine,
   size,
+  threadRef,
 }: {
+  readonly threadRef?: ScopedThreadRef | null;
   readonly machine: ThreadMachine;
   readonly size: ComposerControlSize;
 }) {
-  const fit = useMachineNameFit<HTMLSpanElement>(machine.label);
+  if (threadRef && machine.canMove)
+    return <ThreadMachineMenu machine={machine} size={size} threadRef={threadRef} />;
+  return <ThreadMachineLabel machine={machine} size={size} />;
+}
+
+function ThreadMachineLabel({
+  machine,
+  size,
+}: {
+  machine: ThreadMachine;
+  size: ComposerControlSize;
+}) {
+  const fit = useThreadMachineFit(machine);
   return (
     <>
       <Tooltip>
@@ -39,8 +77,7 @@ export function ThreadMachineComposerChip({
               aria-label={`${machine.tip}${machine.warning ? ` ${machine.warning}.` : ""}`}
               data-thread-machine-chip=""
               {...(machine.color ? { "data-machine-color": machine.color } : {})}
-              {...(fit.compact ? { "data-machine-compact": "" } : {})}
-              {...machineShortCharsProps(machine.short ?? machine.label)}
+              {...fit.rootProps}
               className={cn(
                 "max-w-48 shrink cursor-default overflow-hidden",
                 machine.color ? "machine-chip font-semibold" : "hover:bg-transparent",
@@ -65,11 +102,10 @@ export function ThreadMachineComposerChip({
             data-machine-full=""
             data-machine-name-slot=""
           >
+            {RUNS_ON}
             {machine.label}
           </span>
-          <span aria-hidden data-machine-short="" data-thread-machine-short="">
-            {machine.short ?? machine.label}
-          </span>
+          {fit.shortLabel}
           {machine.warning ? (
             <span className="shrink-0 text-xs text-warning-foreground">{machine.warning}</span>
           ) : null}
@@ -78,6 +114,76 @@ export function ThreadMachineComposerChip({
           {machine.tip}
         </TooltipPopup>
       </Tooltip>
+      <ComposerControlSeparator size={size} data-thread-machine-separator="" />
+    </>
+  );
+}
+
+function ThreadMachineMenu({
+  machine,
+  size,
+  threadRef,
+}: {
+  machine: ThreadMachine;
+  size: ComposerControlSize;
+  threadRef: ScopedThreadRef;
+}) {
+  const destinations = useHandoffDestinations(threadRef.environmentId, false);
+  const fit = useThreadMachineFit(machine);
+  return (
+    <>
+      <Menu>
+        <MenuTrigger
+          render={<ComposerControl size={size} />}
+          data-thread-machine-chip=""
+          data-machine-color={machine.color}
+          {...fit.rootProps}
+          className="machine-chip max-w-48 overflow-hidden"
+          aria-label={`Runs on ${machine.label}. Choose a machine`}
+        >
+          <EnvironmentMachineIcon
+            aria-hidden
+            data-machine-full=""
+            kind={machine.kind}
+            className="size-4 shrink-0"
+          />
+          <span
+            ref={fit.ref}
+            className="min-w-0 truncate"
+            data-thread-machine-name=""
+            data-machine-full=""
+            data-machine-name-slot=""
+          >
+            {RUNS_ON}
+            {machine.label}
+          </span>
+          {fit.shortLabel}
+          {machine.warning ? (
+            <span className="text-xs text-warning-foreground">{machine.warning}</span>
+          ) : null}
+          <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+        </MenuTrigger>
+        <MenuPopup align="start">
+          <MenuItem disabled>Runs on {machine.label}</MenuItem>
+          {destinations.map((destination) => (
+            <MenuItem
+              key={destination.environmentId}
+              disabled={destination.state === "offline"}
+              onClick={() =>
+                requestHandOffThread(threadRef, {
+                  destinationEnvironmentId: destination.environmentId,
+                })
+              }
+            >
+              Move to {destination.label}
+              {destination.reason ? ` · ${destination.reason}` : ""}
+            </MenuItem>
+          ))}
+          {!destinations.length ? (
+            <p className="px-2 py-1 text-sm text-muted-foreground">No other machines connected</p>
+          ) : null}
+        </MenuPopup>
+      </Menu>
       <ComposerControlSeparator size={size} data-thread-machine-separator="" />
     </>
   );

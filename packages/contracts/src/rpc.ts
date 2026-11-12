@@ -740,6 +740,11 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
     /** Explicit user request: bypass Studio-owned caches and rediscover models.
      * Background status refreshes must not open agent sessions. */
     refreshModels: Schema.optional(Schema.Boolean),
+    /** Find installed agents instead of refreshing: answers at once with what
+     * the search has so far, and starts one when the last is stale. With
+     * `fresh`, always starts one. A server that predates this refreshes as
+     * usual and sends no `agentSearch`. */
+    discover: Schema.optional(Schema.Boolean),
   }),
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),

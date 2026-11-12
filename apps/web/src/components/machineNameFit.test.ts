@@ -16,6 +16,13 @@ describe("machineNameTooNarrow", () => {
     expect(machineNameTooNarrow({ visible: 0, full: 80 }, 10)).toBe(true);
   });
 
+  it("counts only the name after a prefix such as Runs on", () => {
+    // "Runs on linux-mini": 18 characters, 8 of them the prefix.
+    expect(machineNameTooNarrow({ visible: 50, full: 72 }, 18, 8)).toBe(false);
+    expect(machineNameTooNarrow({ visible: 32, full: 72 }, 18, 8)).toBe(true);
+    expect(machineNameTooNarrow({ visible: 50, full: 60 }, 10, 8)).toBe(true);
+  });
+
   it("swaps a short name as soon as any of it is cut off", () => {
     expect(machineNameTooNarrow({ visible: 10, full: 18 }, 2)).toBe(true);
   });

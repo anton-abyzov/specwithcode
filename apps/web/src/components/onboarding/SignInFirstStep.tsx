@@ -8,7 +8,8 @@ import {
 } from "@specweave-studio/contracts";
 import type { AsyncResult } from "effect/reactivity";
 import { CheckIcon } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import type { RelayClientInstallProgressStage } from "@specweave-studio/contracts";
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   CONNECT_ACCOUNT_AUTH,
@@ -20,6 +21,10 @@ import {
   withConnectChoice,
 } from "../../cloud/connectOnboarding";
 import { forgetConnectSignInStarted } from "../../cloud/connectSignInStarted";
+import {
+  readRelayClientInstallDialogState,
+  subscribeRelayClientInstallDialog,
+} from "../../cloud/relayClientInstallDialog";
 import { useCloudLinkController } from "../../cloud/useCloudLinkController";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useTx } from "../../i18n";
@@ -42,6 +47,8 @@ import {
 } from "./signInFirst.logic";
 
 const SIGN_IN_TIMEOUT_MS = 10_000;
+/** A link that runs this long says so, and that going on is fine. */
+const LINK_SLOW_MS = 20_000;
 
 type RowState = "next" | "busy" | "done" | "later" | "problem";
 
@@ -129,6 +136,9 @@ export function SignInFirstStep({
         managedTunnel: true,
         // A link the owner shaped keeps its activity choice; a new one publishes, as any sign-in does.
         publish: linkedBefore ? controller.publishAgentActivity : true,
+        // Signing in on this step asked for the link, and row 2 shows the helper's
+        // install as it runs. Setup shows no dialog that could ask.
+        relayClientInstall: "agreed",
       })
       .catch(() => false);
     running.current = false;
@@ -190,7 +200,16 @@ export function SignInFirstStep({
             title: tx("Sign in"),
             detail: tx("One account for all your machines and your phone."),
           };
-  const linkRow = linkRowText(link, machine, tx);
+  const install = useSyncExternalStore(
+    subscribeRelayClientInstallDialog,
+    readRelayClientInstallDialogState,
+    readRelayClientInstallDialogState,
+  );
+  const linkSlow = useHeldFor(link.kind === "linking", LINK_SLOW_MS);
+  const linkRow = linkRowText(link, machine, tx, {
+    helperStage: install.status === "installing" ? install.stage : null,
+    slow: linkSlow,
+  });
   const machinesRow: { state: RowState; title: string; detail: string | null } = !linked
     ? {
         state: "later",
@@ -314,10 +333,39 @@ export function SignInFirstStep({
   );
 }
 
+/** What row 2 says while the Connect helper this machine needs is being installed. */
+function helperStageText(
+  stage: RelayClientInstallProgressStage,
+  tx: ReturnType<typeof useTx>,
+): string {
+  switch (stage) {
+    case "checking":
+      return tx("Getting the Connect helper: checking what is installed (step 1 of 7)");
+    case "waiting_for_lock":
+      return tx("Getting the Connect helper: waiting for another install to finish (step 2 of 7)");
+    case "downloading":
+      return tx("Getting the Connect helper: downloading (step 3 of 7)");
+    case "verifying":
+      return tx("Getting the Connect helper: checking the download (step 4 of 7)");
+    case "installing":
+      return tx("Getting the Connect helper: installing (step 5 of 7)");
+    case "validating":
+      return tx("Getting the Connect helper: testing it (step 6 of 7)");
+    case "activating":
+      return tx("Getting the Connect helper: turning it on (step 7 of 7)");
+  }
+}
+
 function linkRowText(
   link: SignInFirstLink,
   machine: string,
   tx: ReturnType<typeof useTx>,
+  progress: {
+    /** The install step of the Connect helper, while one runs. */
+    readonly helperStage: RelayClientInstallProgressStage | null;
+    /** The link has been running long enough to say so. */
+    readonly slow: boolean;
+  },
 ): { state: RowState; title: string; detail: string | null } {
   switch (link.kind) {
     case "waiting":
@@ -329,7 +377,18 @@ function linkRowText(
     case "checking":
       return { state: "busy", title: tx("Checking this {machine}…", { machine }), detail: null };
     case "linking":
-      return { state: "busy", title: tx("Linking this {machine}…", { machine }), detail: null };
+      return {
+        state: "busy",
+        title: tx("Linking this {machine}…", { machine }),
+        detail: progress.helperStage
+          ? helperStageText(progress.helperStage, tx)
+          : progress.slow
+            ? tx(
+                "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.",
+                { machine },
+              )
+            : null,
+      };
     case "linked":
       return {
         state: "done",

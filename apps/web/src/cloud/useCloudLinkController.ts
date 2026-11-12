@@ -21,6 +21,7 @@ import {
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
   updatePrimaryEnvironmentPreferences as updatePrimaryEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
+import type { RelayClientInstallConsent } from "./linkEnvironment";
 import { readCachedPrimaryCloudLinkState, usePrimaryCloudLinkState } from "./primaryCloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
@@ -29,6 +30,11 @@ export interface CloudLinkDesiredState {
   readonly publish: boolean;
   /** Omit to leave the webhook-hold setting as it is. */
   readonly holdWebhooksWhileOffline?: boolean;
+  /**
+   * "agreed" installs a missing relay client without the question. Only for a
+   * caller that shows the install's progress itself (first-run setup).
+   */
+  readonly relayClientInstall?: RelayClientInstallConsent;
 }
 
 /**
@@ -160,6 +166,7 @@ export function useCloudLinkController() {
           target,
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
+          ...(desired.relayClientInstall ? { relayClientInstall: desired.relayClientInstall } : {}),
         });
         if (linkResult._tag === "Failure") {
           if (!isAtomCommandInterrupted(linkResult)) {

@@ -22,6 +22,7 @@ import { MachineLimitsPanel } from "../../src/components/studio/shell/ProjectUsa
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { deriveProviderInstanceEntries } from "../../src/providerInstances";
 import { machineColorProps, useMachineIdentities } from "../../src/studio/machineIdentity";
+import { useClaimWindowMachine } from "../../src/studio/windowMachine";
 import { applyThemePalette } from "../../src/themePalette";
 import "../../src/components/studio/shell/usage.css";
 import "./fixture.css";
@@ -402,6 +403,68 @@ function ModelsScene() {
   );
 }
 
+/**
+ * A window on M4 whose coordinator runs on M1: the top edge, the header chip,
+ * the composer and Send all wear M1's color; pane separators stay neutral.
+ */
+function WindowScene() {
+  const identityOf = useMachineIdentities();
+  const m1 = identityOf("env-m1");
+  const m4 = identityOf("env-m4");
+  useClaimWindowMachine("env-m1", "project");
+  return (
+    <div className="flex min-h-screen text-sm" data-scene="window">
+      <MachineWindowTint />
+      <nav
+        aria-label="Projects"
+        className="hidden w-56 shrink-0 border-e border-border p-3 md:block"
+      >
+        <p className="font-semibold">Projects</p>
+        <p className="mt-2 flex items-center gap-2">
+          specweave <MachineChip identity={m1} label="Runs on M1" />
+        </p>
+        <p className="mt-2 flex items-center gap-2">
+          easychamp <MachineChip identity={m4} label="Runs on M4" />
+        </p>
+      </nav>
+      <main className="flex min-w-0 flex-1 flex-col gap-4 p-4">
+        <header className="flex items-center gap-2">
+          <h1 className="text-base font-semibold">specweave</h1>
+          <MachineChip identity={m1} label="Runs on M1" />
+        </header>
+        <p className="text-muted-foreground">Coordinator moved to M1 (fictional machines).</p>
+        <section
+          aria-label="Coordinator on M1"
+          className="project-composer sws-composer mt-auto"
+          data-scene="coordinator"
+        >
+          <div className="sws-composer-card machine-composer" {...machineColorProps(m1)}>
+            <label className="sr-only" htmlFor="window-prompt">
+              Message the project coordinator
+            </label>
+            <textarea id="window-prompt" rows={1} placeholder="Ask the coordinator…" />
+            <button
+              type="button"
+              className="sws-send sws-send-target machine-send"
+              aria-label="Send to M1"
+              data-send-label="Send to M1"
+              {...machineColorProps(m1)}
+            >
+              ↑
+            </button>
+          </div>
+        </section>
+      </main>
+      <aside
+        aria-label="Threads"
+        className="hidden w-64 shrink-0 border-s border-border p-3 md:block"
+      >
+        <p className="font-semibold">Threads</p>
+      </aside>
+    </div>
+  );
+}
+
 /** Two composers: the coordinator on M4 (this machine) and a thread assigned to M1. */
 function ComposerScene() {
   const identityOf = useMachineIdentities();
@@ -615,6 +678,8 @@ createRoot(document.getElementById("root")!).render(
       <TraitsScene />
     ) : scene === "models" ? (
       <ModelsScene />
+    ) : scene === "window" ? (
+      <WindowScene />
     ) : scene === "composer" ? (
       <ComposerScene />
     ) : scene === "machines" ? (

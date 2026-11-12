@@ -8,6 +8,7 @@ import {
   linkPrimaryEnvironmentToCloud,
   type CloudLinkMode,
   type CloudLinkTarget,
+  type RelayClientInstallConsent,
   unlinkPrimaryEnvironmentFromCloud,
   updatePrimaryCloudPreferences,
 } from "./linkEnvironment";
@@ -26,6 +27,7 @@ export const linkPrimaryEnvironment = createRuntimeCommand(connectionAtomRuntime
     readonly target: CloudLinkTarget;
     readonly clerkToken: string;
     readonly mode?: CloudLinkMode;
+    readonly relayClientInstall?: RelayClientInstallConsent;
   }) => linkPrimaryEnvironmentToCloud(input),
 });
 

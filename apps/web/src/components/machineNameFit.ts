@@ -12,10 +12,13 @@ const MIN_VISIBLE_CHARACTERS = 4;
 export function machineNameTooNarrow(
   widths: { readonly visible: number; readonly full: number },
   length: number,
+  /** Leading characters that are not the name ("Runs on "): they don't count as shown. */
+  prefix = 0,
 ): boolean {
   if (widths.full <= widths.visible + 1) return false;
-  if (length <= MIN_VISIBLE_CHARACTERS) return true;
-  return (widths.visible / widths.full) * length < MIN_VISIBLE_CHARACTERS;
+  const nameLength = length - prefix;
+  if (nameLength <= MIN_VISIBLE_CHARACTERS) return true;
+  return (widths.visible / widths.full) * length - prefix < MIN_VISIBLE_CHARACTERS;
 }
 
 /**
@@ -23,7 +26,7 @@ export function machineNameTooNarrow(
  * layout when the short label shows (only hidden), so the chip keeps the width
  * the row gave it and the choice cannot flip back and forth.
  */
-export function useMachineNameFit<Element extends HTMLElement>(name: string) {
+export function useMachineNameFit<Element extends HTMLElement>(name: string, prefix = 0) {
   const ref = useRef<Element>(null);
   const [compact, setCompact] = useState(false);
   useLayoutEffect(() => {
@@ -32,14 +35,14 @@ export function useMachineNameFit<Element extends HTMLElement>(name: string) {
     const length = graphemeLength(name);
     const check = () =>
       setCompact(
-        machineNameTooNarrow({ visible: node.clientWidth, full: node.scrollWidth }, length),
+        machineNameTooNarrow({ visible: node.clientWidth, full: node.scrollWidth }, length, prefix),
       );
     check();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(check);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [name]);
+  }, [name, prefix]);
   return { ref, compact } as const;
 }
 

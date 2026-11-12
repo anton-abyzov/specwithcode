@@ -1,3 +1,5 @@
+import { VoiceConsentDialog } from "../studio/VoiceCall";
+import { ComposerVoiceMenu } from "../studio/ComposerVoiceMenu";
 import { useTx } from "../../i18n";
 import { threadModelIdentity } from "@specweave-studio/shared/threadModelIdentity";
 import {
@@ -289,7 +291,6 @@ import { fallbackModelState } from "./ModelStateTag";
 import { modelLabel } from "../../studio/shellModel";
 import { MachineLimitsPanel } from "../studio/shell/ProjectUsageIndicator";
 import { useDictationShortcut } from "../studio/dictationShortcut";
-import { VoiceConsentDialog } from "../studio/VoiceCall";
 import { insertDictatedText, useVoiceDictation, VoiceDictationBar } from "../studio/VoiceDictation";
 import { resolveModelPickerSelectedModel } from "./modelPickerOptions";
 import {
@@ -1133,7 +1134,6 @@ import {
   FileIcon,
   BotIcon,
   CircleAlertIcon,
-  MicIcon,
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
@@ -4275,7 +4275,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     disabled: dictationBlocked || props.dictationSuspended === true,
   });
   const dictationShortcutLabel = shortcutLabelForCommand(keybindings, "composer.dictation.toggle");
-  const dictationTip = dictation.active ? tx("Stop dictating") : tx("Dictate into the message");
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -6048,6 +6047,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       {machine && !showProviderUnavailable ? (
         <ThreadMachineComposerChip
           machine={machine}
+          threadRef={canOperateThread && routeKind === "server" ? routeThreadRef : null}
           size={composerControlsCollapsed ? "xs" : "sm"}
         />
       ) : null}
@@ -8100,36 +8100,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {dictation.available && !isComposerResting ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant={dictation.active ? "secondary" : "ghost"}
-                            size="icon-sm"
-                            data-chat-composer-dictate="true"
-                            aria-label={dictationTip}
-                            aria-pressed={dictation.active}
-                            disabled={
-                              dictation.phase === "finishing" ||
-                              (dictationBlocked && !dictation.active)
-                            }
-                            onPointerDown={(event) => event.preventDefault()}
-                            onClick={() =>
-                              void (dictation.active ? dictation.stop() : dictation.start())
-                            }
-                          />
-                        }
-                      >
-                        <MicIcon />
-                      </TooltipTrigger>
-                      <TooltipPopup>
-                        {dictationShortcutLabel
-                          ? `${dictationTip} (${dictationShortcutLabel})`
-                          : dictationTip}
-                      </TooltipPopup>
-                    </Tooltip>
+                  {!isComposerResting ? (
+                    <ComposerVoiceMenu
+                      renderConsent={false}
+                      dictation={dictation}
+                      disabled={dictationBlocked}
+                      shortcut={dictationShortcutLabel}
+                    />
                   ) : null}
                   {showComposerAttachAction ? (
                     <>

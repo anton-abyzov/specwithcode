@@ -4144,6 +4144,22 @@ export const de: PhraseCatalog = {
   "Happens by itself after you sign in.": "Passiert von selbst, nachdem du dich angemeldet hast.",
   "Checking this {machine}…": "Dieser {machine} wird geprüft…",
   "Linking this {machine}…": "Dieser {machine} wird verknüpft…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Connect-Helfer wird geholt: Prüfen, was installiert ist (Schritt 1 von 7)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Connect-Helfer wird geholt: Warten auf eine andere Installation (Schritt 2 von 7)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Connect-Helfer wird geholt: Herunterladen (Schritt 3 von 7)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Connect-Helfer wird geholt: Download wird geprüft (Schritt 4 von 7)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Connect-Helfer wird geholt: Installieren (Schritt 5 von 7)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Connect-Helfer wird geholt: Testen (Schritt 6 von 7)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Connect-Helfer wird geholt: Einschalten (Schritt 7 von 7)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "Verknüpfung läuft noch. Auf einem neuen {machine} kann das eine Minute dauern. Du kannst fortfahren: Sie wird von selbst fertig.",
   "This {machine} is linked": "Dieser {machine} ist verknüpft",
   "Your other machines and your phone can reach it.":
     "Deine anderen Rechner und dein Telefon können ihn erreichen.",
@@ -4455,4 +4471,22 @@ export const de: PhraseCatalog = {
     "Der Ordner mit der abgelegten Datei wurde verwendet.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "Dieser Rechner hält seine Ordner in WSL. Gib den Pfad ein oder füge ihn ein.",
+  "Agents found on {machine}": "Auf {machine} gefundene Agenten",
+  "Looking for {agents}…": "Suche nach {agents}…",
+  "{found} of {count} agents found on {machine}.":
+    "{found} von {count} Agenten auf {machine} gefunden.",
+  "Find agents": "Agenten suchen",
+  "Installed, not added.": "Installiert, nicht hinzugefügt.",
+  "Signed in, not turned on.": "Angemeldet, nicht eingeschaltet.",
+  "Installed, not signed in.": "Installiert, nicht angemeldet.",
+  "Installed, not turned on.": "Installiert, nicht eingeschaltet.",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "Muse Code kann deinen Code mit Meta teilen, wenn der Contributor-Modus an ist. Prüfe diese Einstellung, bevor du es einschaltest.",
+  "Add agent": "Agent hinzufügen",
+  "Not found: {agents}.": "Nicht gefunden: {agents}.",
+  "No answer from: {agents}.": "Keine Antwort von: {agents}.",
+  "Where it looked": "Wo gesucht wurde",
+  "{names} and {count} more": "{names} und {count} weitere",
+  "Turn on {agent}": "{agent} einschalten",
+  "Add {agent}": "{agent} hinzufügen",
 };

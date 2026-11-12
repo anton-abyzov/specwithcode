@@ -26,7 +26,6 @@ import {
 import { Tip } from "./shell/Tip";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
-import { MachineChip } from "../MachineChip";
 
 type Attached = ReturnType<typeof useCoordinatorAttachments>;
 
@@ -339,16 +338,6 @@ function CoordinatorComposerForm(props: {
               <PlusIcon aria-hidden />
             </button>
           </Tip>
-          {machine ? (
-            <Tip label={`The coordinator runs on ${machine.name}`}>
-              <MachineChip
-                identity={machine}
-                label={`Runs on ${machine.name}`}
-                tabIndex={0}
-                data-coordinator-machine=""
-              />
-            </Tip>
-          ) : null}
           {props.meta}
         </span>
         {props.controls}

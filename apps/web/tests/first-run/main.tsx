@@ -1,12 +1,20 @@
-// Two steps of first-run setup in their real frame, over stand-ins (mocks.tsx):
-// `view=connection` and `view=projects` (`found=0` when nothing was found).
+// Steps of first-run setup in their real frame, over stand-ins (mocks.tsx):
+// `view=connection`, `view=projects` (`found=0` when nothing was found) and
+// `view=signin` (`link=helper&stage=downloading` while the Connect helper is
+// installed, `link=linked` once this machine is linked).
 // `platform=macos|windows|linux` draws keys and button order as that system
 // does, `theme=dark` the dark theme, and `lang=ru` (any app language) the words.
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { EnvironmentId } from "@specweave-studio/contracts";
+import type { RelayClientInstallProgressStage } from "@specweave-studio/contracts";
+import {
+  reportRelayClientInstallProgress,
+  startRelayClientInstallInline,
+} from "../../src/cloud/relayClientInstallDialog";
 import { ConnectionStep } from "../../src/components/onboarding/ConnectionStep";
 import { ImportStep } from "../../src/components/onboarding/ProjectsStep";
+import { SignInFirstStep } from "../../src/components/onboarding/SignInFirstStep";
 import { FirstRunFrame, shownStages } from "../../src/components/onboarding/WizardFrame";
 import { t } from "../../src/i18n";
 import { isLocale, setLocalePreference } from "../../src/i18n/locale";
@@ -19,8 +27,20 @@ const platform = params.get("platform");
 if (platform) document.documentElement.dataset.platform = platform;
 const lang = params.get("lang");
 setLocalePreference(isLocale(lang) ? lang : "en");
-const view = params.get("view") === "projects" ? "projects" : "connection";
+const requested = params.get("view");
+const view = requested === "projects" || requested === "signin" ? requested : "connection";
 const HERE = EnvironmentId.make("here");
+if (view === "signin" && params.get("link") === "helper") {
+  // What the link request does on a machine that has no helper yet.
+  startRelayClientInstallInline("2026.10.4");
+  const stage = params.get("stage");
+  if (stage) {
+    reportRelayClientInstallProgress({
+      type: "progress",
+      stage: stage as RelayClientInstallProgressStage,
+    });
+  }
+}
 
 function Setup() {
   const [selected, setSelected] = useState<ReadonlySet<EnvironmentId>>(new Set([HERE]));
@@ -40,7 +60,15 @@ function Setup() {
       canClose={!importing}
       onLeave={() => calls.push(["leave"])}
     >
-      {view === "connection" ? (
+      {view === "signin" ? (
+        <SignInFirstStep
+          environmentId={HERE}
+          machineNoun={platform === "macos" || !platform ? "Mac" : "machine"}
+          rulesKnown
+          onContinue={() => calls.push(["continue"])}
+          onOtherComputers={() => calls.push(["other-computers"])}
+        />
+      ) : view === "connection" ? (
         <ConnectionStep
           expandPairingInitially={false}
           connectOptional

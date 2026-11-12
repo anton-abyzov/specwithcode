@@ -21,6 +21,7 @@ import { useEnvironmentScope } from "~/state/session";
  * one label covers every turn, command, file and terminal in it.
  */
 export interface ThreadMachine {
+  readonly canMove?: boolean;
   readonly kind: EnvironmentMachineKind;
   /** The machine's name as the person knows it: their nickname, else its host label. */
   readonly label: string;
@@ -96,6 +97,7 @@ export function threadMachinePresentation(input: {
   // The menu greys out "Move thread…" for a viewer who cannot operate the machine.
   const handoff = input.handoff === "available" && !input.canOperate ? "none" : input.handoff;
   return {
+    canMove: handoff === "available",
     kind: input.kind,
     label: input.name,
     short: input.short ?? input.name,
