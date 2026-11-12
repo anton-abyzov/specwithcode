@@ -2615,7 +2615,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     pick: pickedModel,
     pickExplicit: composerDraft.modelSelectionExplicit === true,
-    turnRunning: runningModelSelection !== null,
+    // A queued or starting turn ("connecting") is in flight too, on the thread's model.
+    turnRunning: phase === "running" || phase === "connecting",
   });
   const displayedModel = chipModel.shown;
   // "next on <model>" belongs to the model the chip shows, never to another pick.

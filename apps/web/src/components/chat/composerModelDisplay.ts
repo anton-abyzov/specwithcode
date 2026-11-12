@@ -20,7 +20,8 @@ export function composerDisplayedThreadSelection(input: {
 /**
  * What the model chip of the composer names, and whether a pick waits beside it.
  * - `thread`: the thread's own model (or the running turn's); nothing is pending.
- * - `next`: a turn runs, so the chip keeps its model and the pick reads "next:".
+ * - `next`: a turn is in flight (running, queued or starting), so the chip keeps
+ *   its model and the pick reads "next:".
  * - `pick`: nothing runs, so the chip names the pick itself. It is the model the
  *   next message goes to, whether the turn was stopped, the pick is still being
  *   saved on the thread, or the thread could not take it before the next message.

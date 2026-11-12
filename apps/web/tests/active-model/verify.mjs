@@ -51,6 +51,8 @@ try {
       "manual",
       "running-manual",
       "running-manual-active",
+      "stop-pending",
+      "starting-pending",
     ]) {
       const page = await browser.newPage({ viewport: { width: 900, height: 520 } });
       await page.goto(`${origin}/?case=${scenario}&theme=${theme}`);
@@ -104,23 +106,33 @@ try {
           NodeAssert.equal(chip.model, "Opus 5.5");
           NodeAssert.equal(chip.state, null);
         });
-      if (scenario === "running-manual") {
-        check(
-          `${theme} running-manual: a pick during a turn reads next beside the running model`,
-          () => {
-            NodeAssert.equal(chip.model, "Default");
-            NodeAssert.equal(chip.state, "next");
-            NodeAssert.equal(chip.text, "next: Opus 5.5");
-            NodeAssert.match(
-              chip.name,
-              /^Model: Gemini · Default, next message uses Claude Code · Opus 5\.5/,
-            );
-          },
+      // With no pick pending, the thread list and the composer name the same model.
+      if (["fallback", "running", "same", "running-manual-active"].includes(scenario))
+        check(`${theme} ${scenario}: list and composer name the same model`, () =>
+          NodeAssert.ok(listName.includes(chip.model), `${listName} / ${chip.model}`),
         );
+      const pendingScenario =
+        scenario === "running-manual" ||
+        scenario === "stop-pending" ||
+        scenario === "starting-pending";
+      if (pendingScenario) {
+        // A turn in flight (running, or still queued or starting) keeps its model.
+        check(`${theme} ${scenario}: a pick during a turn reads next beside its model`, () => {
+          NodeAssert.equal(chip.model, "Default");
+          NodeAssert.equal(chip.state, "next");
+          NodeAssert.equal(chip.text, "next: Opus 5.5");
+          NodeAssert.match(
+            chip.name,
+            /^Model: Gemini · Default, next message uses Claude Code · Opus 5\.5/,
+          );
+        });
+      }
+      if (scenario === "stop-pending" || scenario === "starting-pending") {
         const before = NodePath.join(output, `composer-${scenario}-${theme}.png`);
         await page.screenshot({ path: before, fullPage: true });
         receipt.screenshots.push(before);
-        // Stop the turn: the chip names the pick at once.
+        // Stop the turn. The thread stays on Gemini, so only the pending pick can
+        // put Opus on the chip: it names the pick at once.
         await page.evaluate(() => window.stopFixtureTurn());
         await page.waitForFunction(
           () =>
@@ -128,7 +140,7 @@ try {
         );
         const stoppedChip = await readChip();
         check(
-          `${theme} stopped: the chip names the pick, with no next beside the old model`,
+          `${theme} ${scenario} stopped: the chip names the pick, no next beside Gemini`,
           () => {
             NodeAssert.equal(stoppedChip.model, "Opus 5.5");
             NodeAssert.ok(
@@ -137,9 +149,10 @@ try {
             );
             NodeAssert.doesNotMatch(stoppedChip.name, /next message|Gemini/);
             NodeAssert.equal(stoppedChip.state, null);
+            NodeAssert.match(listName, /Gemini/);
           },
         );
-        const after = NodePath.join(output, `composer-stopped-${theme}.png`);
+        const after = NodePath.join(output, `composer-${scenario}-stopped-${theme}.png`);
         await page.screenshot({ path: after, fullPage: true });
         receipt.screenshots.push(after);
         await page.close();
