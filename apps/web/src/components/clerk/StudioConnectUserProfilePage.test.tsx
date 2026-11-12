@@ -32,10 +32,12 @@ function renderRow({
   confirmationOpen = false,
   current = false,
   mutationPending = false,
+  failure = null,
 }: {
   readonly confirmationOpen?: boolean;
   readonly current?: boolean;
   readonly mutationPending?: boolean;
+  readonly failure?: string | null;
 } = {}) {
   return renderToStaticMarkup(
     <StudioConnectEnvironmentRow
@@ -43,6 +45,7 @@ function renderRow({
       current={current}
       confirmationOpen={confirmationOpen}
       mutationPending={mutationPending}
+      failure={failure}
       onConfirmationChange={vi.fn()}
       onDeregister={vi.fn()}
     />,
@@ -116,6 +119,44 @@ describe("Studio Connect machine row", () => {
 
     expect(markup).toContain("Deregistering…");
     expect(markup.match(/ disabled=""/g)).toHaveLength(3);
+  });
+});
+
+describe("Studio Connect machine row after a failed deregistration", () => {
+  it("says in the row that deregistering did not finish, with the reason", () => {
+    const html = renderRow({ confirmationOpen: true, failure: "The relay did not answer." });
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Deregistering did not finish: The relay did not answer.");
+    expect(html).toContain("Try again");
+    expect(html).not.toContain("Deregister machine");
+  });
+
+  it("shows no failure line until a deregistration has failed", () => {
+    const html = renderRow({ confirmationOpen: true });
+
+    expect(html).not.toContain('role="alert"');
+    expect(html).toContain("Deregister machine");
+  });
+
+  it("tells the person that this machine's own Connect is turned off too", () => {
+    expect(renderRow({ confirmationOpen: true, current: true })).toContain(
+      "SpecWithCode Connect is turned off on it too.",
+    );
+  });
+
+  it("puts the failure on the machine it belongs to, not on the others", () => {
+    const html = renderView({
+      environments: [machine("environment-1", "Studio Mac"), machine("environment-2", "Other Mac")],
+      confirmingEnvironmentId: "environment-2" as EnvironmentId,
+      deregisterFailure: {
+        environmentId: "environment-2" as EnvironmentId,
+        message: "The relay did not answer.",
+      },
+    });
+
+    expect(html.match(/role="alert"/g)).toHaveLength(1);
+    expect(html).toContain("Deregistering did not finish: The relay did not answer.");
   });
 });
 

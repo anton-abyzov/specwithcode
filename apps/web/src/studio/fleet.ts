@@ -236,6 +236,9 @@ export function fleetAddFailureMessage(cause: Cause.Cause<unknown>): string {
   );
 }
 
+const OLD_BUILD_ACCOUNT_JOIN_REFUSAL =
+  "Only a sign-in through this machine's own SpecWithCode Connect account";
+
 /**
  * What to say when a machine of the same account did not take this machine's
  * line: its own words, or, when it said nothing, that the join may still have
@@ -244,13 +247,21 @@ export function fleetAddFailureMessage(cause: Cause.Cause<unknown>): string {
 export function accountJoinFailureMessage(
   cause: Cause.Cause<unknown>,
   coordinatorLabel: string,
+  /** This app reaches that machine through its SpecWithCode Connect sign-in. */
+  overConnect = false,
 ): string {
+  const said = messageOfDeclared(cause, [
+    "EnvironmentHttpBadRequestError",
+    "EnvironmentHttpForbiddenError",
+    "EnvironmentHttpInternalServerError",
+  ]);
+  // Builds up to 1.0.265 refused every real Connect sign-in here with these
+  // words, which send the owner to a different setup. Through Connect that
+  // refusal can only be the old build, so say what fixes it.
+  if (overConnect && said?.startsWith(OLD_BUILD_ACCOUNT_JOIN_REFUSAL))
+    return `${coordinatorLabel} runs an older SpecWithCode that cannot do this yet. Update SpecWithCode on ${coordinatorLabel}, then choose Allow again.`;
   return (
-    messageOfDeclared(cause, [
-      "EnvironmentHttpBadRequestError",
-      "EnvironmentHttpForbiddenError",
-      "EnvironmentHttpInternalServerError",
-    ]) ??
+    said ??
     `${coordinatorLabel} did not answer in time. Check that it is online, then retry; a retry is safe if it added this machine anyway. Afterwards, under Settings > Machines > Authorized clients on this machine, revoke a setup session it no longer uses.`
   );
 }
@@ -388,7 +399,13 @@ export async function joinAccountMachineForWorkers(input: {
     // Unspent, the line would stay valid for an hour; spent, this is a no-op.
     await revokeStudioFleetInvitation(invitation).catch(() => undefined);
     // That machine words what to do, such as a team rule or an address it cannot reach.
-    throw new Error(accountJoinFailureMessage(result.cause, input.coordinatorLabel));
+    throw new Error(
+      accountJoinFailureMessage(
+        result.cause,
+        input.coordinatorLabel,
+        prepared.httpAuthorization?._tag === "Dpop",
+      ),
+    );
   }
   return result.value;
 }

@@ -302,14 +302,14 @@ async function api(
                 sessionId: AuthSessionId.make("synthetic-session"),
                 subject: options.subject ?? "fixture",
                 ...(options.deviceType ? { clientDeviceType: options.deviceType } : {}),
-                ...(coordinatorEnvironmentId
+                // As the session store does it: every session has a principal,
+                // a device unless a main machine's key made it.
+                principal: coordinatorEnvironmentId
                   ? {
-                      principal: {
-                        kind: "coordinator" as const,
-                        environmentId: coordinatorEnvironmentId,
-                      },
+                      kind: "coordinator" as const,
+                      environmentId: coordinatorEnvironmentId,
                     }
-                  : {}),
+                  : { kind: "device" as const, id: "synthetic-session" },
                 method: "bearer-access-token" as const,
                 scopes,
               })
