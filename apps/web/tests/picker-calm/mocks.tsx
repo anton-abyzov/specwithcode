@@ -40,6 +40,16 @@ export const useUpdateClientSettings = () => (patch: Partial<typeof settings>) =
 export const useEnvironmentIdentificationMode = () => "auto";
 export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE = "Settings are unavailable.";
 export const usePrimarySettingsAvailable = () => true;
+export const mergeEnvironmentSettings = <A extends object, B extends object>(
+  server: A,
+  client: B,
+) => ({
+  ...server,
+  ...client,
+});
+export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<never> = [];
+export const updateOutdatedServer = { label: "updateOutdatedServer" };
+export const usePrimaryEnvironmentId = () => "env-m4";
 export const primaryServerKeybindingsAtom = Atom.make({ bindings: [], warnings: [] });
 export const ChatGptSharingControl = () => null;
 export const serverEnvironment = { refreshProviders: { label: "refreshProviders" } };
