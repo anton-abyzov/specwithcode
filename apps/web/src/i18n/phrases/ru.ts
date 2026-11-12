@@ -525,8 +525,6 @@ export const ru: PhraseCatalog = {
     "Возобновлять остановки по лимиту в объявленное время сброса. Каждый тред может отменить своё запланированное продолжение.",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "Запускать выбранный дистрибутив WSL вместе с Windows. Проекты остаются в своей текущей файловой системе.",
-  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
-    "Выполните это один раз в терминале на той машине. Откроется claude.ai в браузере: войдите там с другим аккаунтом.",
   "Selected by SpecWithCode.": "Выбирается SpecWithCode.",
   "Set how fast panels open and close.": "Задайте скорость открытия и закрытия панелей.",
   "Set how wide messages and the composer can grow on large screens.":
@@ -4459,4 +4457,37 @@ export const ru: PhraseCatalog = {
   "{names} and {count} more": "{names} и ещё {count}",
   "Turn on {agent}": "Включить {agent}",
   "Add {agent}": "Добавить {agent}",
+  "Sign-in failed. Try again.": "Не удалось войти. Попробуйте ещё раз.",
+  "That is not the whole code. Copy it from the page again: it has two parts joined by #.":
+    "Это не весь код. Скопируйте его со страницы ещё раз: в нём две части, соединённые знаком #.",
+  "Could not copy. Select the text and copy it.":
+    "Не удалось скопировать. Выделите текст и скопируйте его.",
+  "Signed in as {account}.": "Вход выполнен: {account}.",
+  "Signed in.": "Вход выполнен.",
+  "Plan: {plan}.": "Тариф: {plan}.",
+  "Its limits now show under Usage > Limits.":
+    "Лимиты этого аккаунта теперь показаны в разделе «Использование > Лимиты».",
+  "Run the command below once in a terminal on {machine}. It opens Claude's page in the browser.":
+    "Выполните команду ниже один раз в терминале на {machine}. Она откроет страницу Claude в браузере.",
+  "A sign-in for this account is in progress in another window.":
+    "Вход для этого аккаунта уже идёт в другом окне.",
+  "Starting Claude Code's sign-in…": "Запускаем вход Claude Code…",
+  "Sign in on the page that opened. If it shows a code, paste it here.":
+    "Войдите на открывшейся странице. Если она покажет код, вставьте его сюда.",
+  "Claude's sign-in page opens in your browser. No terminal needed.":
+    "Страница входа Claude откроется в вашем браузере. Терминал не нужен.",
+  "Finish in your browser": "Завершите в браузере",
+  "Could not open the page. Copy the link.": "Не удалось открыть страницу. Скопируйте ссылку.",
+  "Open the page again": "Открыть страницу ещё раз",
+  "Link copied": "Ссылка скопирована",
+  "Copy the link": "Скопировать ссылку",
+  "Sign in with Claude": "Войти через Claude",
+  "Code from the page": "Код со страницы",
+  "The Claude desktop app has its own sign-in, and it does not count here.":
+    "У приложения Claude для компьютера свой вход, и здесь он не считается.",
+  "A sign-in inside WSL or under another Windows user does not count either.":
+    "Вход внутри WSL или под другим пользователем Windows тоже не считается.",
+  "Show command": "Показать команду",
+  "After a sign-in in a terminal, the app checks again when you come back to this window.":
+    "После входа в терминале приложение проверит ещё раз, когда вы вернётесь в это окно.",
 };

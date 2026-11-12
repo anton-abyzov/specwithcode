@@ -40,11 +40,34 @@ export function claudeAccountPlan(
 }
 
 /**
- * The one-time sign-in for that home, as typed in a terminal on its machine.
- * The CLI keeps a separate Keychain item per CLAUDE_CONFIG_DIR, so this never
+ * The same sign-in as typed in a terminal on that machine, for those who want
+ * it. The CLI keeps a separate sign-in per CLAUDE_CONFIG_DIR, so this never
  * replaces the default login. `command` skips a shell function or alias named
- * claude that would add flags `auth login` does not take.
+ * claude that would add flags `auth login` does not take. Windows gets the
+ * PowerShell form.
  */
-export function claudeLoginCommand(homePath: string): string {
+export function claudeLoginCommand(homePath: string, os?: string): string {
+  if (os === "windows") {
+    const folder = homePath.replace(/^~[\\/]/, "$HOME\\").replaceAll("/", "\\");
+    return `$env:CLAUDE_CONFIG_DIR = "${folder}"; claude auth login`;
+  }
   return `CLAUDE_CONFIG_DIR=${homePath} command claude auth login`;
+}
+
+/**
+ * Whether pasted text can be what Claude's page gives: a code in two parts
+ * joined by #, or the address of the page that shows it. The machine checks
+ * again; this only saves a round trip for half a paste.
+ */
+export function isClaudeSignInCode(pasted: string): boolean {
+  const text = pasted.trim();
+  if (/^https?:\/\//i.test(text)) {
+    try {
+      const url = new URL(text);
+      return Boolean(url.searchParams.get("code")?.trim() && url.searchParams.get("state")?.trim());
+    } catch {
+      return false;
+    }
+  }
+  return /^[^\s#]+#[^\s#]+$/.test(text);
 }

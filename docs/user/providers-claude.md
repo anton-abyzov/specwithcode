@@ -11,11 +11,19 @@ presets that need different Claude settings or a router connection.
 
 The quickest way: **Settings > Providers > Add provider**, choose Claude, then
 **Add Claude account**. Name the account (for example "Marketing"); the app adds a
-Claude instance with its own directory (`~/.claude-marketing`) and shows the one
-command to run in Terminal on that machine. Sign in with the other account in the
-browser it opens, then come back to the app: the dialog notices the sign-in, and
-the account's limits appear under **Usage > Limits**. Claude Code keeps a separate
-Keychain item for each config directory, so the existing login is not replaced.
+Claude instance with its own directory (`~/.claude-marketing`). Click
+**Sign in with Claude**: the machine runs Claude Code's own sign-in, with no terminal.
+In the desktop app on that machine, Claude's page opens in your browser and the dialog
+finishes by itself. From another device the page opens there and shows a code: paste it
+into the dialog. **Cancel** stops the sign-in. When it is done the dialog names the
+account and its plan, and the account's limits appear under **Usage > Limits**. Claude
+Code keeps a separate Keychain item for each config directory, so the existing login is
+not replaced.
+
+The Claude desktop app has its own sign-in, and it does not count for Claude Code. On
+Windows, neither does a sign-in inside WSL or under another Windows user. **Show
+command** gives the same sign-in as a terminal command, for a machine whose
+SpecWithCode is too old to run it.
 
 To set it up by hand instead, keep your existing account in the default directory.
 On the environment's machine, create the second login:

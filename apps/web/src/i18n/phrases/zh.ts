@@ -509,8 +509,6 @@ export const zh: PhraseCatalog = {
     "在报告的重置时间恢复因用量上限停止的会话。每个会话都可以取消其计划的继续。",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "与 Windows 一起运行所选的 WSL 发行版。项目保留在当前的文件系统中。",
-  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
-    "在那台电脑的终端中运行一次。它会在浏览器中打开 claude.ai：在那里用另一个账户登录。",
   "Selected by SpecWithCode.": "由 SpecWithCode 选择。",
   "Set how fast panels open and close.": "设置面板打开和关闭的速度。",
   "Set how wide messages and the composer can grow on large screens.":
@@ -4288,4 +4286,35 @@ export const zh: PhraseCatalog = {
   "{names} and {count} more": "{names} 等另外 {count} 个",
   "Turn on {agent}": "开启 {agent}",
   "Add {agent}": "添加 {agent}",
+  "Sign-in failed. Try again.": "登录失败。请重试。",
+  "That is not the whole code. Copy it from the page again: it has two parts joined by #.":
+    "代码不完整。请从页面重新复制：它由 # 连接的两部分组成。",
+  "Could not copy. Select the text and copy it.": "无法复制。请选中文本后复制。",
+  "Signed in as {account}.": "已登录为 {account}。",
+  "Signed in.": "已登录。",
+  "Plan: {plan}.": "套餐：{plan}。",
+  "Its limits now show under Usage > Limits.": "它的限额现在显示在“用量 > 限额”中。",
+  "Run the command below once in a terminal on {machine}. It opens Claude's page in the browser.":
+    "在 {machine} 的终端中运行一次下面的命令。它会在浏览器中打开 Claude 的页面。",
+  "A sign-in for this account is in progress in another window.":
+    "此账户的登录正在另一个窗口中进行。",
+  "Starting Claude Code's sign-in…": "正在启动 Claude Code 的登录…",
+  "Sign in on the page that opened. If it shows a code, paste it here.":
+    "在打开的页面上登录。如果页面显示代码，请粘贴到这里。",
+  "Claude's sign-in page opens in your browser. No terminal needed.":
+    "Claude 的登录页面会在你的浏览器中打开。无需终端。",
+  "Finish in your browser": "在浏览器中完成",
+  "Could not open the page. Copy the link.": "无法打开页面。请复制链接。",
+  "Open the page again": "再次打开页面",
+  "Link copied": "链接已复制",
+  "Copy the link": "复制链接",
+  "Sign in with Claude": "使用 Claude 登录",
+  "Code from the page": "页面上的代码",
+  "The Claude desktop app has its own sign-in, and it does not count here.":
+    "Claude 桌面应用有自己的登录，在这里不算数。",
+  "A sign-in inside WSL or under another Windows user does not count either.":
+    "在 WSL 内或以其他 Windows 用户进行的登录也不算数。",
+  "Show command": "显示命令",
+  "After a sign-in in a terminal, the app checks again when you come back to this window.":
+    "在终端中登录后，回到此窗口时应用会再次检查。",
 };
