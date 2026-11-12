@@ -131,6 +131,8 @@ const DRIVER_ONLY_ICON_SITES = new Set([
   "apps/web/src/components/settings/AddProviderInstanceDialog.tsx",
   "apps/web/src/components/studio/shell/ProjectUsageIndicator.tsx",
   "apps/web/src/components/usage/UsageLimitsPooled.tsx",
+  // The /usage-limits report names a driver, not an ACP agent.
+  "apps/web/src/components/chat/ComposerUsageLimits.tsx",
   "apps/web/src/components/usage/UsageProviderChart.tsx",
   "apps/web/src/components/usage/UsagePage.tsx",
   "apps/web/src/components/usage/UsageModelDialog.tsx",

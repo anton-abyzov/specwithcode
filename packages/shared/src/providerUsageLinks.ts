@@ -3,7 +3,7 @@
  * URLs only: no account id or email is ever put in a link. A provider without a
  * known page gets no link rather than a guess.
  */
-import { CHATGPT_USAGE_URL } from "./usageLimits";
+import { CHATGPT_USAGE_URL } from "./usageLimits.ts";
 
 type ProviderUsageLinkKind = "claude" | "chatgpt" | "copilot" | "cursor";
 

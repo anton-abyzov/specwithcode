@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { providerUsageLink } from "./providerUsageLinks";
+import { providerUsageLink } from "./providerUsageLinks.ts";
 
 describe("providerUsageLink", () => {
   it("links each subscription provider to its own usage page", () => {
