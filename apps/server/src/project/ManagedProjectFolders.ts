@@ -12,7 +12,10 @@
 import {
   CommandId,
   PERSONAL_ASSISTANT_PROJECT_ICON,
+  ProjectCreateFailureReason,
   ProjectId,
+  type FilesystemProjectOutcome,
+  type ProjectCreateFailure,
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { newProjectFolderName } from "@specweave-studio/shared/path";
@@ -40,6 +43,12 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
+import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
+import {
+  isGitSpawnFailure,
+  namedProjectFailureMessage,
+  platformFailureReason,
+} from "./namedProjectFailure.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
   "ScratchUnavailableError",
@@ -80,11 +89,23 @@ export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFold
   "NamedProjectFolderError",
   {
     folder: Schema.String,
+    /** Why, when it is known; the client says it in its own words and names the machine. */
+    reason: Schema.optional(ProjectCreateFailureReason),
+    /** A tool's own words (git's error line), or the slug whose names ran out. */
+    detail: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Failed to create the project folder.";
+    if (this.reason !== undefined) {
+      return namedProjectFailureMessage({
+        reason: this.reason,
+        folder: this.folder,
+        ...(this.detail === undefined ? {} : { detail: this.detail }),
+      });
+    }
+    // A refusal written here already says what is wrong with the parent.
+    return typeof this.cause === "string" ? this.cause : "Failed to create the project folder.";
   }
 }
 
@@ -114,6 +135,21 @@ export type NamedProjectError =
   | NamedProjectFolderError
   | NamedProjectCreateError
   | PersonalAssistantDisabledError;
+
+/** The typed reason a create failure carries to the client, when there is one. */
+export function projectCreateFailureOf(error: NamedProjectError): {
+  readonly projectCreateFailure?: ProjectCreateFailure;
+} {
+  if (error._tag !== "NamedProjectFolderError" || error.reason === undefined) return {};
+  const detail = error.detail?.trim();
+  return {
+    projectCreateFailure: {
+      reason: error.reason,
+      ...(error.folder.trim() ? { folder: error.folder } : {}),
+      ...(detail ? { detail } : {}),
+    },
+  };
+}
 
 const SCRATCH_FOLDER = "scratch";
 
@@ -186,6 +222,16 @@ export class ManagedProjectFolders extends Context.Service<
       },
       NamedProjectError
     >;
+    /**
+     * What `createNamedProject` for a code project would do with this parent,
+     * decided by the same rules, without touching anything: `uses` an existing
+     * folder as the project, or `creates` the named (or numbered) folder.
+     * None when the parent cannot be listed.
+     */
+    readonly previewNamedProject: (input: {
+      readonly name: string;
+      readonly parentPath: string;
+    }) => Effect.Effect<Option.Option<FilesystemProjectOutcome>>;
   }
 >()("specweave-studio/project/ManagedProjectFolders") {}
 
@@ -298,6 +344,11 @@ const make = Effect.gen(function* () {
   // Optional so hosts without a process runner still create projects; a
   // request for SpecWeave then says it could not run.
   const specweaveSetup = yield* Effect.serviceOption(SpecweaveSetup.SpecweaveSetup);
+  // The folders New folder refuses (`~/.ssh`, the app's own state, ...) are
+  // refused as a parent here too, by the path asked for and the real one.
+  const sensitivePaths = yield* WorkspaceSensitivePaths.sensitivePathGuard;
+  const refusedParent = (folder: string) =>
+    sensitivePaths.isInsideDeniedFolder(folder) || sensitivePaths.isDenied(folder, "write");
 
   /**
    * Claims the first free folder among `folderFor(1)`, `folderFor(2)`, ...,
@@ -502,13 +553,40 @@ const make = Effect.gen(function* () {
           cause: "Choose an absolute parent folder on this machine.",
         });
       }
-      const info = yield* fileSystem
-        .stat(root)
-        .pipe(Effect.mapError((cause) => new NamedProjectFolderError({ folder: root, cause })));
+      const resolvedParent = path.resolve(root);
+      const childOf = (parent: string) => path.join(parent, newProjectFolderName(name));
+      if (refusedParent(childOf(resolvedParent))) {
+        return yield* new NamedProjectFolderError({
+          folder: resolvedParent,
+          reason: "refused",
+          cause: "refused",
+        });
+      }
+      const info = yield* fileSystem.stat(root).pipe(
+        Effect.mapError(
+          (cause) =>
+            new NamedProjectFolderError({
+              folder: resolvedParent,
+              ...platformFailureReason(cause),
+              cause,
+            }),
+        ),
+      );
       if (info.type !== "Directory") {
         return yield* new NamedProjectFolderError({
           folder: root,
           cause: "The parent must be an existing directory.",
+        });
+      }
+      // A link into a refused folder must not be a way around the refusal.
+      const realParent = yield* fileSystem
+        .realPath(resolvedParent)
+        .pipe(Effect.orElseSucceed(() => resolvedParent));
+      if (refusedParent(childOf(realParent))) {
+        return yield* new NamedProjectFolderError({
+          folder: resolvedParent,
+          reason: "refused",
+          cause: "refused",
         });
       }
     } else
@@ -527,11 +605,21 @@ const make = Effect.gen(function* () {
             ? Option.none()
             : Option.some(path.join(root, attempt === 1 ? folderName : `${folderName}-${attempt}`)),
         ),
-      (folder, cause) => new NamedProjectFolderError({ folder, cause }),
+      (folder, cause) => {
+        const reason = platformFailureReason(cause);
+        // A permission or missing-parent failure is about the parent, not the new folder.
+        return new NamedProjectFolderError({
+          folder: reason.reason === undefined ? folder : root,
+          ...reason,
+          cause,
+        });
+      },
     );
     if (Option.isSome(claimed)) return claimed.value;
     return yield* new NamedProjectFolderError({
-      folder: path.join(root, folderName),
+      folder: root,
+      reason: "name_exhausted",
+      detail: folderName,
       cause: `Every folder name for "${folderName}" is taken.`,
     });
   });
@@ -555,12 +643,37 @@ const make = Effect.gen(function* () {
       (yield* git
         .readConfigValue(cwd, "init.defaultBranch")
         .pipe(Effect.orElseSucceed(() => null))) ?? "main";
-    yield* git.execute({
-      operation: "ManagedProjectFolders.init",
-      cwd,
-      args: ["init", `--initial-branch=${branch}`],
-      timeoutMs: 10_000,
-    });
+    // Git's own words come back when init fails, and a git that cannot start is
+    // said to be missing, so the person knows what to fix on that machine.
+    const init = yield* git
+      .execute({
+        operation: "ManagedProjectFolders.init",
+        cwd,
+        args: ["init", `--initial-branch=${branch}`],
+        allowNonZeroExit: true,
+        timeoutMs: 10_000,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          isGitSpawnFailure(cause)
+            ? new NamedProjectFolderError({ folder: cwd, reason: "git_missing", cause })
+            : cause,
+        ),
+      );
+    if (init.exitCode !== 0) {
+      const detail =
+        init.stderr
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .at(-1) ?? `exit code ${init.exitCode}`;
+      return yield* new NamedProjectFolderError({
+        folder: cwd,
+        reason: "git_init_failed",
+        detail,
+        cause: detail,
+      });
+    }
     yield* fileSystem.writeFileString(path.join(cwd, "README.md"), namedProjectReadme(name));
     yield* fileSystem.makeDirectory(path.join(cwd, "assets"));
     yield* fileSystem.writeFileString(
@@ -770,7 +883,11 @@ const make = Effect.gen(function* () {
         ? Effect.succeed({ commitError: undefined, specweaveError: undefined })
         : scaffoldRepository(workspaceRoot, input.name, input.specweave === true)
       ).pipe(
-        Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
+        Effect.mapError((cause) =>
+          Schema.is(NamedProjectFolderError)(cause)
+            ? cause
+            : new NamedProjectFolderError({ folder: workspaceRoot, cause }),
+        ),
       ),
       crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
@@ -836,6 +953,51 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const previewNamedProject: ManagedProjectFolders["Service"]["previewNamedProject"] = Effect.fn(
+    "ManagedProjectFolders.previewNamedProject",
+  )(function* (input) {
+    if (!path.isAbsolute(input.parentPath)) return Option.none();
+    const parent = path.resolve(input.parentPath);
+    const info = yield* fileSystem.stat(parent).pipe(Effect.option);
+    // The advertised projects folder is made on first use, so its absence is no refusal.
+    const managed = parent === namedProjectsRoot || parent === suggestedProjectsRoot;
+    if (
+      (Option.isNone(info) && !managed) ||
+      (Option.isSome(info) && info.value.type !== "Directory")
+    )
+      return Option.none();
+    // Sent as no parent by clients, so it never binds to an existing folder.
+    if (parent !== namedProjectsRoot) {
+      const existing = yield* existingProjectFolder(input.name, parent);
+      if (Option.isSome(existing)) {
+        const folder = existing.value;
+        const marker = (name: string) =>
+          fileSystem.exists(path.join(folder, name)).pipe(Effect.orElseSucceed(() => false));
+        const because: NonNullable<FilesystemProjectOutcome["because"]> = (yield* marker(".git"))
+          ? "repository"
+          : (yield* marker(".specweave"))
+            ? "specweave"
+            : (yield* isUnclaimedEmptyFolder(folder))
+              ? "empty_named_like_project"
+              : "named_like_project";
+        return Option.some({ kind: "uses" as const, path: folder, because });
+      }
+    }
+    const folderName = newProjectFolderName(input.name);
+    for (let attempt = 1; attempt <= MAX_NAMED_FOLDER_ATTEMPTS; attempt++) {
+      const candidate = path.join(parent, attempt === 1 ? folderName : `${folderName}-${attempt}`);
+      const taken = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => true));
+      if (!taken) {
+        return Option.some({
+          kind: "creates" as const,
+          path: candidate,
+          ...(attempt > 1 ? { because: "name_taken" as const } : {}),
+        });
+      }
+    }
+    return Option.none();
+  });
+
   const isScratch: ManagedProjectFolders["Service"]["isScratch"] = (projectId) =>
     scratchRoot.pipe(
       Effect.flatMap((root) =>
@@ -850,6 +1012,7 @@ const make = Effect.gen(function* () {
     folderForThread,
     namedProjectsRoot,
     suggestedProjectsRoot,
+    previewNamedProject,
     createNamedProject: (input) =>
       input.kind === "personal"
         ? assistantLock.withPermits(1)(createNamedProject(input))

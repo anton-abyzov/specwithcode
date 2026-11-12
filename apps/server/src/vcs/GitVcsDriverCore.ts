@@ -51,6 +51,9 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 
+/** Every failure to start git at all (not installed, not on PATH) carries this detail. */
+export const GIT_SPAWN_FAILURE_DETAIL = "Failed to spawn Git process.";
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
 // `git worktree add` checks out the full tree, so on large repositories it can
@@ -1074,7 +1077,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               (cause) =>
                 new GitCommandError({
                   ...gitCommandContext(commandInput),
-                  detail: "Failed to spawn Git process.",
+                  detail: GIT_SPAWN_FAILURE_DETAIL,
                   cause,
                 }),
             ),
