@@ -367,7 +367,8 @@ describe("a limit handoff whose preflight fails", () => {
           expect(outcome).toEqual({
             type: "refused",
             code: "invalid",
-            message: "Minis: no .env.local; Minis: Claude not signed in",
+            message:
+              "Minis: no .env.local. Send it with studio_file_transfer, or with Handoff > Copy local files; Minis: Claude not signed in",
             retryable: false,
           });
           // No lease, epoch, fence or error change on the source.
