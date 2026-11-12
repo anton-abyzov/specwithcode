@@ -521,6 +521,8 @@ function EnvironmentNotifications({
               // it, as the sidebar and Overview last published it. Before their
               // first reading, or when no such view is mounted, the map is empty
               // and the owner is the thread's own machine, as before.
+              // Read after the target, so a map published meanwhile counts.
+              const read = await readNotificationTarget(environmentId);
               const ownerMachineId = attentionOwnerMachine(
                 {
                   environmentId,
@@ -530,7 +532,7 @@ function EnvironmentNotifications({
                 currentRemoteWorkerLaunchers(),
               );
               const delivery = decideNotificationDelivery({
-                read: await readNotificationTarget(environmentId),
+                read,
                 ownClientId: backgroundActivityClientId(),
                 ownEnvironmentId,
                 servingEnvironmentId: environmentId,

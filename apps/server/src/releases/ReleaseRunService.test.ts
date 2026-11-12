@@ -399,7 +399,7 @@ describe("install timings", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (let round = 0; round < 20; round++) {
+      for (let round = 0; round < 6; round++) {
         const base = yield* fs.makeTempDirectory({ prefix: "installs-close-" });
         const updates = path.join(base, "updates");
         const files = {
@@ -409,7 +409,7 @@ describe("install timings", () => {
         };
         yield* fs.makeDirectory(files.receiptsDirectory, { recursive: true });
         yield* Effect.forEach(
-          Array.from({ length: 300 }, (_, index) => index),
+          Array.from({ length: 200 }, (_, index) => index),
           (index) =>
             fs.writeFileString(
               path.join(

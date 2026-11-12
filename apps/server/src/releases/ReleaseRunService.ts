@@ -304,8 +304,12 @@ export const makeWithDirectory = (runsDirectory: string, installFiles?: InstallT
             ) ||
             receipts.length !== known.size;
           const next: InstallHistory = { schemaVersion: 1, installs: merged, receipts };
-          history = next;
-          if (changed && historyWritable) yield* writeHistory(files.historyFile, next);
+          // Memory and the file change together: a closing scope cannot stop the
+          // read between the two.
+          yield* Effect.suspend(() => {
+            history = next;
+            return changed && historyWritable ? writeHistory(files.historyFile, next) : Effect.void;
+          }).pipe(Effect.uninterruptible);
           return merged;
         }),
       );
