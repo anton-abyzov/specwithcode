@@ -8,7 +8,6 @@ const state = vi.hoisted(() => ({
   toast: vi.fn(),
   waitForProject: vi.fn(),
   newThread: vi.fn(),
-  projects: [{ id: "ec" }] as Array<Record<string, unknown>>,
 }));
 vi.mock("~/components/ui/toast", () => ({
   toastManager: { add: state.toast },
@@ -20,7 +19,7 @@ vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => state.finger
 vi.mock("../state/projects", () => ({ projectEnvironment: { createNew: "create" } }));
 vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: {} }));
 vi.mock("../state/entities", () => ({
-  useProjects: () => state.projects,
+  useProjects: () => [{ id: "ec" }],
   waitForProject: state.waitForProject,
 }));
 vi.mock("../state/environments", () => ({
@@ -242,8 +241,6 @@ it("gives the reason nothing was pushed, and the provider's reason for a failed 
 });
 
 it("names the machine on success and the existing project's own title", async () => {
-  state.projects = [{ id: "ec" }, { id: "p9", environmentId: "m4", title: "Existing app" }];
-  await act(async () => root.render(<Harness />));
   state.waitForProject.mockResolvedValue({ id: "p9", environmentId: "m4", title: "Existing app" });
   state.fingerprint.mockResolvedValueOnce(created({}));
   await act(async () => {
@@ -257,7 +254,6 @@ it("names the machine on success and the existing project's own title", async ()
     await create({ environmentId: "m4" as never, name: "existing-app", github: null });
   });
   toastWith({ title: "Opened Existing app in its existing folder", description: "/home/me/ec" });
-  state.projects = [{ id: "ec" }];
 });
 
 it("says the project exists and how to open it when the app cannot open it", async () => {

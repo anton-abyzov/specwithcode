@@ -1,13 +1,15 @@
+import { getNewProjectGitHubRepository } from "@specweave-studio/client-runtime/operations/projects";
 import {
   DEFAULT_PERSONAL_ASSISTANT_NAME,
   PERSONAL_ASSISTANT_LABEL,
 } from "@specweave-studio/contracts";
 import { CheckIcon, ConciergeBellIcon, FolderGit2Icon, ListChecksIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { CommandPaletteView } from "../CommandPalette.logic";
 import { cn } from "../../lib/utils";
 import { GitHubIcon } from "../Icons";
 import { Checkbox } from "../ui/checkbox";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { newProjectNameNotice, type NewProjectKind } from "../../studio/projectCreation";
 
 /** What "Use SpecWeave" adds, said wherever the person can turn it on. */
@@ -55,6 +57,8 @@ export interface ProjectMachineOption {
   readonly label: string;
   readonly isPrimary: boolean;
   readonly isConnected: boolean;
+  /** Why it cannot be chosen (offline, read-only, too old); shown on hover and to assistive tech. */
+  readonly unavailableReason?: string | null;
   readonly icon: ReactNode;
 }
 
@@ -79,6 +83,7 @@ export function ProjectMachineChoice({
   busy: boolean;
   onSelect: (environmentId: string) => void;
 }) {
+  const reasonId = useId();
   return (
     <section aria-label="Machine" className="mx-4 mt-2">
       <p className="text-sm font-medium">Machine</p>
@@ -86,15 +91,19 @@ export function ProjectMachineChoice({
         Where the project&apos;s files live and its threads run
       </p>
       <div role="radiogroup" aria-label="Machine" className="mt-1.5 flex flex-wrap gap-1.5">
-        {machines.map((machine) => {
+        {machines.map((machine, index) => {
           const selected = machine.environmentId === selectedId;
-          return (
+          const unavailable =
+            machine.unavailableReason ?? (machine.isConnected ? null : "Not connected.");
+          const choice = (
             <button
               key={machine.environmentId}
               type="button"
               role="radio"
               aria-checked={selected}
-              disabled={busy || !machine.isConnected}
+              disabled={busy || unavailable !== null}
+              aria-describedby={unavailable === null ? undefined : `${reasonId}-${index}`}
+              data-unavailable={unavailable === null ? undefined : "true"}
               onClick={() => onSelect(machine.environmentId)}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
@@ -109,7 +118,21 @@ export function ProjectMachineChoice({
                 <span className="text-xs text-muted-foreground">· This device</span>
               ) : null}
               {selected ? <CheckIcon className="size-3.5" aria-hidden /> : null}
+              {unavailable === null ? null : (
+                <span id={`${reasonId}-${index}`} className="sr-only">
+                  {unavailable}
+                </span>
+              )}
             </button>
+          );
+          // A disabled button gets no pointer events, so the hover reason sits on a wrapper.
+          return unavailable === null ? (
+            choice
+          ) : (
+            <Tooltip key={machine.environmentId}>
+              <TooltipTrigger render={<span className="inline-flex" />}>{choice}</TooltipTrigger>
+              <TooltipPopup>{unavailable}</TooltipPopup>
+            </Tooltip>
           );
         })}
       </div>
@@ -186,10 +209,45 @@ export function ProjectCreationPreview({
   );
 }
 
+/**
+ * The GitHub row's input: shown off with `unavailable` when the machine cannot
+ * publish, so the option never just disappears. Null until there is a folder
+ * to name the repository after, when publishing could be offered.
+ */
+export function newProjectGitHubRow(input: {
+  readonly target: { readonly account: string | null } | null;
+  readonly pathPreview: string | null;
+  readonly name: string;
+  readonly unavailable: string | null;
+  readonly checked: boolean;
+  readonly toggle: () => void;
+}): Parameters<typeof projectCreationGroups>[0]["github"] {
+  if (input.target === null) {
+    return input.unavailable === null
+      ? null
+      : { description: "", checked: false, toggle: input.toggle, unavailable: input.unavailable };
+  }
+  if (input.pathPreview === null) return null;
+  return {
+    description: input.name
+      ? getNewProjectGitHubRepository(input.target, input.pathPreview)
+      : (input.target.account ?? "Your GitHub account"),
+    checked: input.checked,
+    toggle: input.toggle,
+    unavailable: input.unavailable,
+  };
+}
+
 export function projectCreationGroups(input: {
   kind: NewProjectKind;
   busy: boolean;
-  github: { description: string; checked: boolean; toggle: () => void } | null;
+  github: {
+    description: string;
+    checked: boolean;
+    toggle: () => void;
+    /** Why it cannot be offered, with the fix: the row is shown off, never hidden. */
+    unavailable?: string | null;
+  } | null;
   /** "Use SpecWeave": on by default; the person can untick it to add nothing to the repository. */
   specweave: { checked: boolean; toggle: () => void } | null;
 }): CommandPaletteView["groups"] {
@@ -208,16 +266,23 @@ export function projectCreationGroups(input: {
                     value: "new-project:github",
                     searchTerms: [],
                     title: "Create private repository on GitHub",
-                    description: github.description,
+                    description: github.unavailable ?? github.description,
                     icon: <GitHubIcon className="size-4" />,
-                    disabled: input.busy,
+                    disabled: input.busy || Boolean(github.unavailable),
                     titleTrailingContent: (
                       <span className="pointer-events-none ms-auto flex">
-                        <Checkbox checked={github.checked} tabIndex={-1} aria-hidden />
+                        <Checkbox
+                          checked={github.checked && !github.unavailable}
+                          disabled={Boolean(github.unavailable)}
+                          tabIndex={-1}
+                          aria-hidden
+                        />
                       </span>
                     ),
                     keepOpen: true,
-                    run: async () => github.toggle(),
+                    run: async () => {
+                      if (!github.unavailable) github.toggle();
+                    },
                   },
                 ]
               : []),

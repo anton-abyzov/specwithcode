@@ -1,7 +1,11 @@
 import { useCallback, useState } from "react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { FolderPlace } from "../components/studio/FolderBrowser";
-import { sameFolder, type KnownProject } from "../components/studio/folderBrowser.logic";
+import {
+  sameFolder,
+  type FolderOutcome,
+  type KnownProject,
+} from "../components/studio/folderBrowser.logic";
 import { NewProjectFolderPicker } from "../components/studio/NewProjectFolderPicker";
 import { withRecentFolder } from "../components/studio/pathField.logic";
 
@@ -142,8 +146,11 @@ export function useProjectFolderChoice(
     remember ? readRemembered() : {},
   );
   const [generation, setGeneration] = useState(0);
+  // What creating the project does in each machine's chosen folder.
+  const [outcomes, setOutcomes] = useState<Record<string, FolderOutcome | null>>({});
   const reset = useCallback(() => {
     setChoices({});
+    setOutcomes({});
     setGeneration((value) => value + 1);
     setLastShown(remember ? readRemembered() : {});
     setRemembered(remember ? readRemembered() : {});
@@ -162,6 +169,8 @@ export function useProjectFolderChoice(
   };
   return {
     path,
+    /** "Creates" or "Uses" for the chosen folder, null while unknown. */
+    outcome: environmentId === null || path === null ? null : (outcomes[environmentId] ?? null),
     reset,
     picker:
       environmentId === null ? null : (
@@ -178,6 +187,9 @@ export function useProjectFolderChoice(
           {...(options.projectName === undefined ? {} : { projectName: options.projectName })}
           disabled={busy}
           onSelect={(chosen) => select(environmentId, chosen)}
+          onOutcome={(outcome) =>
+            setOutcomes((previous) => ({ ...previous, [environmentId]: outcome }))
+          }
           {...(options.nativePicker ? { onPickNatively: options.nativePicker.pick } : {})}
         />
       ),

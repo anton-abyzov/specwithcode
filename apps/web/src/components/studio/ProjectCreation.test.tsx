@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { projectCreationGroups, SPECWEAVE_SETUP_SUMMARY } from "./ProjectCreation";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  newProjectGitHubRow,
+  ProjectMachineChoice,
+  projectCreationGroups,
+  SPECWEAVE_SETUP_SUMMARY,
+} from "./ProjectCreation";
+import {
+  EXISTING_FOLDER_PUBLISH_NOTE,
+  newProjectGitHubUnavailableReason,
+  projectMachineUnavailableReason,
+} from "../../studio/newProjectAvailability";
 
 const input = () => ({
   kind: "personal" as const,
@@ -47,5 +58,107 @@ describe("project creation choices", () => {
         groups.flatMap((group) => group.items).some((item) => item.value.includes(":kind:")),
       ).toBe(false);
     }
+  });
+});
+
+describe("the GitHub option when it cannot be offered", () => {
+  const github = (status: string, auth: string) =>
+    ({
+      sourceControlProviders: [{ kind: "github", status, auth: { status: auth } }],
+    }) as never;
+  it("names the machine and the fix instead of disappearing", () => {
+    expect(
+      newProjectGitHubUnavailableReason({
+        discovery: github("available", "unauthenticated"),
+        pending: false,
+        machine: "M1Max",
+      }),
+    ).toBe("Sign in to GitHub on M1Max: gh auth login");
+    expect(
+      newProjectGitHubUnavailableReason({
+        discovery: github("missing", "unknown"),
+        pending: false,
+        machine: "M1Max",
+      }),
+    ).toContain("The GitHub CLI is not installed on M1Max");
+    expect(
+      newProjectGitHubUnavailableReason({ discovery: null, pending: true, machine: "M1Max" }),
+    ).toBe("Checking GitHub on M1Max…");
+    expect(
+      newProjectGitHubUnavailableReason({
+        discovery: github("available", "authenticated"),
+        pending: false,
+        machine: "M1Max",
+      }),
+    ).toBeNull();
+  });
+  it("shows the row disabled with the reason, and never toggles it", () => {
+    const toggle = vi.fn();
+    for (const row of [
+      newProjectGitHubRow({
+        target: null,
+        pathPreview: null,
+        name: "ec",
+        unavailable: "Sign in to GitHub on M1Max: gh auth login",
+        checked: true,
+        toggle,
+      }),
+      // An existing folder: publishing is for new repositories only.
+      newProjectGitHubRow({
+        target: { account: "me" },
+        pathPreview: "/p/ec",
+        name: "ec",
+        unavailable: EXISTING_FOLDER_PUBLISH_NOTE,
+        checked: true,
+        toggle,
+      }),
+    ]) {
+      const option = projectCreationGroups({ ...input(), kind: "code", github: row })
+        .flatMap((g) => g.items)
+        .find((i) => i.value === "new-project:github");
+      expect(option?.disabled).toBe(true);
+      expect(option?.description).toBe(row?.unavailable);
+      if (option?.kind === "action") void option.run();
+    }
+    expect(toggle).not.toHaveBeenCalled();
+  });
+});
+
+describe("machines that cannot be chosen", () => {
+  it("says why: offline, read-only, or too old", () => {
+    const base = { online: true, status: "Connected", canOperate: true, supportsCreate: true };
+    expect(projectMachineUnavailableReason(base)).toBeNull();
+    expect(projectMachineUnavailableReason({ ...base, online: false, status: "Offline" })).toBe(
+      "Offline: it cannot be used right now.",
+    );
+    expect(projectMachineUnavailableReason({ ...base, canOperate: false })).toBe(
+      "Read-only access: this device may not create projects there.",
+    );
+    expect(projectMachineUnavailableReason({ ...base, supportsCreate: false })).toBe(
+      "Needs a newer SpecWithCode to create projects.",
+    );
+  });
+  it("disables the machine and puts the reason in its description", () => {
+    const html = renderToStaticMarkup(
+      <ProjectMachineChoice
+        machines={[
+          { environmentId: "m4", label: "M4", isPrimary: true, isConnected: true, icon: null },
+          {
+            environmentId: "m1",
+            label: "M1",
+            isPrimary: false,
+            isConnected: false,
+            unavailableReason: "Offline: it cannot be used right now.",
+            icon: null,
+          },
+        ]}
+        selectedId="m4"
+        busy={false}
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(html).toContain('data-unavailable="true"');
+    expect(html).toMatch(/aria-describedby="[^"]+-1"/);
+    expect(html).toContain('class="sr-only">Offline: it cannot be used right now.</span>');
   });
 });

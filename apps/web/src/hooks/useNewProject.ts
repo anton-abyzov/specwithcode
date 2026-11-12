@@ -61,7 +61,6 @@ export function useNewProject() {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
-  const projects = useProjects();
 
   const publishToGitHub = useCallback(
     async (input: {
@@ -166,24 +165,12 @@ export function useNewProject() {
       }
 
       const { projectId, workspaceRoot, commitError, existing, specweaveError } = result.value;
-      // An existing project keeps its own title, which may differ from the name typed.
-      const title =
-        existing === true
-          ? (projects.find(
-              (project) =>
-                project.id === projectId && project.environmentId === input.environmentId,
-            )?.title ?? input.name)
-          : input.name;
-      // Confirm the actual folder, including any collision suffix.
-      toastManager.add(
-        stackedThreadToast(
-          existing === true
-            ? {
-                type: "success",
-                title: `Opened ${title} in its existing folder`,
-                description: projectWhere(workspaceRoot, machine),
-              }
-            : commitError === undefined
+      // Confirm the actual folder, including any collision suffix. An existing
+      // project is confirmed once it is read, under its own title.
+      if (existing !== true)
+        toastManager.add(
+          stackedThreadToast(
+            commitError === undefined
               ? {
                   type: "success",
                   title:
@@ -197,8 +184,8 @@ export function useNewProject() {
                   title: `Created ${input.name} without a first commit`,
                   description: `${commitError} The project is in ${projectWhere(workspaceRoot, machine)}.`,
                 },
-        ),
-      );
+          ),
+        );
       if (input.specweave === true && input.kind !== "personal") {
         const { specweaveAdded } = result.value;
         if (specweaveError !== undefined) {
@@ -243,6 +230,17 @@ export function useNewProject() {
         );
         return null;
       });
+      // An existing project keeps its own title, which may differ from the name typed.
+      const title = existing === true ? (project?.title ?? input.name) : input.name;
+      if (existing === true) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: `Opened ${title} in its existing folder`,
+            description: projectWhere(workspaceRoot, machine),
+          }),
+        );
+      }
       if (project === null) return true;
       if (input.kind === "personal") {
         await navigate({
@@ -278,7 +276,7 @@ export function useNewProject() {
       );
       return true;
     },
-    [createNew, environments, projects, handleNewThread, publishToGitHub, navigate, clientSettings],
+    [createNew, environments, handleNewThread, publishToGitHub, navigate, clientSettings],
   );
 }
 
