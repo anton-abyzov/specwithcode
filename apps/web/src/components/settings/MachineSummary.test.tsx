@@ -26,6 +26,11 @@ vi.mock("../../studio/machineNickname", () => ({ useMachineNickname: vi.fn() }))
 vi.mock("../../teamRules/useTeamRules", () => ({ useTeamRules: vi.fn() }));
 vi.mock("../../teamRules/teamRulesView", () => ({ teamRulesReachLock: vi.fn() }));
 vi.mock("../../versionSkew", () => ({ resolveServerConfigVersionMismatch: vi.fn() }));
+vi.mock("./AddDeviceDialog", () => ({
+  showMachinesTarget: vi.fn(),
+  AddDeviceDialog: (props: { open: boolean; setup?: { step: { kind: string } } }) =>
+    props.open ? <div data-add-device-dialog={props.setup?.step.kind ?? "own"} /> : null,
+}));
 vi.mock("./RenameMachineDialog", () => ({
   RenameMachineDialog: (props: { open: boolean; hostLabel: string }) =>
     props.open ? <div data-rename-dialog>{props.hostLabel}</div> : null,
@@ -229,10 +234,20 @@ describe("MachineSummary", () => {
     expect(textOf(byAttr(view.root, "data-machine-about")[0]!)).toContain("Not set up");
   });
 
+  it("opens the add dialog with the page's setup, without a primary button", () => {
+    world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
+    const view = page();
+    expect(byAttr(view.root, "data-add-device-dialog")).toHaveLength(0);
+    view.press("Add a device or machine");
+    expect(byAttr(view.root, "data-add-device-dialog")[0]!.props["data-add-device-dialog"]).toBe(
+      "done",
+    );
+  });
+
   it("renames from the summary without a primary button", () => {
     world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
     const view = page();
-    expect(view.buttons()).toEqual(["Rename"]);
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename"]);
     expect(byAttr(view.root, "data-rename-dialog")).toHaveLength(0);
     view.press("Rename");
     expect(textOf(byAttr(view.root, "data-rename-dialog")[0]!)).toBe("sams-mbp.local");
@@ -245,7 +260,7 @@ describe("the one next step", () => {
     const view = page();
     expect(view.stepKind()).toBe("sign-in");
     expect(textOf(view.step()!)).toContain("Sign in to SpecWithCode Connect");
-    expect(view.buttons()).toEqual(["Rename", "Sign in"]);
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename", "Sign in"]);
     view.press("Sign in");
     expect(openAuthPrompt).toHaveBeenCalledTimes(1);
     expect(reconcileCloudState).not.toHaveBeenCalled();
@@ -255,7 +270,7 @@ describe("the one next step", () => {
     world({ signedIn: true });
     const view = page();
     expect(view.stepKind()).toBe("turn-on");
-    expect(view.buttons()).toEqual(["Rename", "Turn on"]);
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename", "Turn on"]);
     await act(async () => {
       view.press("Turn on");
     });
@@ -290,7 +305,7 @@ describe("the one next step", () => {
     expect(textOf(view.step()!)).toContain("Waiting for your phone…");
     expect(byAttr(view.root, "data-phone-steps")).toHaveLength(1);
     // Waiting is not a button: this step has no primary one.
-    expect(view.buttons()).toEqual(["Rename", "Not now"]);
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename", "Not now"]);
   });
 
   it("looks for the phone by itself while it waits, and stops once one is there", () => {
@@ -326,24 +341,26 @@ describe("the one next step", () => {
     });
   });
 
-  it("says You are set with a phone linked, or after Not now", () => {
+  it("draws no step once done, with a phone linked or after Not now: the facts say it", () => {
     world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
     let view = page();
-    expect(view.stepKind()).toBe("done");
-    expect(textOf(view.step()!)).toBe("You are set");
-    expect(view.buttons()).toEqual(["Rename"]);
+    expect(view.setup().step.kind).toBe("done");
+    expect(view.step()).toBeNull();
+    expect(textOf(view.root)).not.toContain("You are set");
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename"]);
 
     world({ signedIn: true, link: { linked: true, managedTunnelActive: true } });
     settings.value.machinePhoneStepDismissed = { m4: true };
     view = page();
-    expect(view.stepKind()).toBe("done");
+    expect(view.setup().step.kind).toBe("done");
+    expect(view.step()).toBeNull();
   });
 
   it("says where to do it in a window that cannot change this machine's link", () => {
     world({ desktop: false });
     const view = page();
     expect(view.stepKind()).toBe("sign-in");
-    expect(view.buttons()).toEqual(["Rename"]);
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename"]);
     expect(textOf(view.step()!)).toContain("Open SpecWithCode on Sam's MacBook Pro to do this.");
   });
 
@@ -351,13 +368,14 @@ describe("the one next step", () => {
     world({ signedIn: true, canManage: false });
     const view = page();
     expect(view.stepKind()).toBe("turn-on");
-    expect(view.buttons()).toEqual(["Rename"]);
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename"]);
   });
 
   it("offers no step Team rules forbid, and the fact says why", () => {
     world({ signedIn: true, lock: "connect" });
     const view = page();
-    expect(view.stepKind()).toBe("done");
+    expect(view.setup().step.kind).toBe("done");
+    expect(view.step()).toBeNull();
     expect(view.facts()[0]).toBe("Connect: off by your team's rules");
     expect(view.setup().lock).toEqual({ setBy: "Team rules", message: "Off" });
   });
@@ -397,7 +415,8 @@ describe("the one next step", () => {
   it("has no step and reads no account in a build without SpecWithCode Connect", () => {
     world({ configured: false });
     const view = page();
-    expect(view.stepKind()).toBe("done");
+    expect(view.setup().step.kind).toBe("done");
+    expect(view.step()).toBeNull();
     expect(view.facts()[0]).toBe("Connect: not in this build");
     expect(useAuth).not.toHaveBeenCalled();
     expect(useCloudLinkController).not.toHaveBeenCalled();

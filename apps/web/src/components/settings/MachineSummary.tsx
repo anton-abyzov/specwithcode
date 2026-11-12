@@ -4,7 +4,7 @@ import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, PlusIcon } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { useManagedRelayPhones } from "../../cloud/managedRelayState";
@@ -41,6 +41,7 @@ import {
   type MachineRoleRow,
 } from "./machineNextStep.logic";
 import { RenameMachineDialog } from "./RenameMachineDialog";
+import { AddDeviceDialog, showMachinesTarget } from "./AddDeviceDialog";
 
 /** This machine's setup, read once for the page: its link, its phones and the one next step. */
 export interface MachineSetup {
@@ -196,7 +197,8 @@ function ConfiguredMachineSetupState({
 
 /**
  * The top of Settings > Machines: this machine's name, kind, role and version,
- * then three facts. It holds no primary button; the next step does.
+ * then three facts, the only place the page states them. It holds no primary
+ * button; the next step does. "Add a device or machine" opens the add dialog.
  */
 export function MachineSummary({
   environmentId,
@@ -213,6 +215,7 @@ export function MachineSummary({
   const name = useMachineNickname(environmentId, environment?.label) || tx("This machine");
   const chosen = useClientSettings((settings) => settings.onboardingMachineRole);
   const [renaming, setRenaming] = useState(false);
+  const [adding, setAdding] = useState(false);
   const serverConfig = environment?.serverConfig ?? null;
   const kind = serverConfig ? resolveEnvironmentMachineKind(serverConfig) : "desktop";
   const role = machineRoleLabel(machineRole({ rows, chosen }));
@@ -273,9 +276,22 @@ export function MachineSummary({
           ))}
         </ul>
       </div>
-      <Button type="button" variant="ghost" size="xs" onClick={() => setRenaming(true)}>
-        {tx("Rename")}
-      </Button>
+      <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
+        <Button type="button" variant="outline" size="xs" onClick={() => setAdding(true)}>
+          <PlusIcon aria-hidden className="size-3.5" />
+          {tx("Add a device or machine")}
+        </Button>
+        <Button type="button" variant="ghost" size="xs" onClick={() => setRenaming(true)}>
+          {tx("Rename")}
+        </Button>
+      </div>
+      <AddDeviceDialog
+        environmentId={environmentId}
+        open={adding}
+        onOpenChange={setAdding}
+        setup={setup}
+        onShowFallback={showMachinesTarget}
+      />
       <RenameMachineDialog
         environmentId={environmentId}
         hostLabel={environment?.label ?? tx("This machine")}
@@ -348,8 +364,7 @@ export const NEXT_STEP_FRAME_CLASS =
 
 /**
  * The one next step as a card of its own. `children` is the body of the
- * step. It draws nothing while the state is read, and one quiet line once
- * every step is done.
+ * step. It draws nothing while the state is read or once every step is done.
  */
 export function MachineNextStepCard({
   setup,
@@ -362,19 +377,8 @@ export function MachineNextStepCard({
 }) {
   const tx = useTx();
   const { step } = setup;
-  if (step.kind === "loading") return null;
-  if (step.kind === "done") {
-    return (
-      <p
-        role="status"
-        data-machine-next-step="done"
-        className="flex items-center gap-1.5 text-sm text-muted-foreground"
-      >
-        <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success-foreground" />
-        {tx("You are set")}
-      </p>
-    );
-  }
+  // Once every step is done the summary's facts say so; a separate line would repeat them.
+  if (step.kind === "loading" || step.kind === "done") return null;
   return (
     <section data-machine-next-step={step.kind} className={NEXT_STEP_FRAME_CLASS}>
       <MachineNextStepHead setup={setup} machineName={machineName} />

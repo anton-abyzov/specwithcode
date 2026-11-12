@@ -1,11 +1,8 @@
 import { AuthStandardClientScopes, EnvironmentId } from "@specweave-studio/contracts";
 import type { ReactNode } from "react";
 
-import {
-  MachineNextStepCard,
-  MachineSummary,
-  type MachineSetup,
-} from "../../src/components/settings/MachineSummary";
+import { AddDeviceDialog } from "../../src/components/settings/AddDeviceDialog";
+import { MachineSummary, type MachineSetup } from "../../src/components/settings/MachineSummary";
 import { PairPhoneSettings } from "../../src/components/settings/PairPhoneSettings";
 import {
   isPhoneConnectShown,
@@ -27,7 +24,7 @@ const nothing = () => undefined;
  * `add-phone` (the default), `done` (a phone is linked) and `no-connect`
  * (a build without SpecWithCode Connect).
  */
-function setupFor(state: string): MachineSetup {
+export function setupFor(state: string): MachineSetup {
   const base = {
     connectLocked: false,
     lock: null,
@@ -127,9 +124,6 @@ export function MachinesPage({ hereCard, others }: { hereCard: ReactNode; others
           </summary>
           <ul>{hereCard}</ul>
         </details>
-        {setup.step.kind === "done" && setup.connect.kind !== "unavailable" ? (
-          <MachineNextStepCard machineName="M4" setup={setup} />
-        ) : null}
         {isPhoneConnectShown() ? <PhoneConnectSettings setup={setup} pairRow={pairRow} /> : pairRow}
         <SettingsSection title="Other machines">
           <ul className="divide-y divide-border/60">{others}</ul>
@@ -150,5 +144,22 @@ export function MachinesPage({ hereCard, others }: { hereCard: ReactNode; others
         </ThisMachineAdvanced>
       </>
     </div>
+  );
+}
+
+/**
+ * `?view=add-device&state=done&tab=computer`: the add dialog open over an
+ * empty page, as the account menu opens it, for each setup state.
+ */
+export function AddDevicePage({ tab }: { tab: "phone" | "computer" }) {
+  return (
+    <AddDeviceDialog
+      environmentId={here}
+      open
+      onOpenChange={nothing}
+      setup={setupFor(pageState)}
+      initialChoice={tab}
+      onShowFallback={nothing}
+    />
   );
 }

@@ -29,7 +29,6 @@ vi.mock("../account/SignInAnotherDeviceDialog", () => ({
 import type { EnvironmentId } from "@specweave-studio/contracts";
 
 import {
-  ADD_DEVICE_OR_MACHINE_ANCHOR,
   AddDeviceWithCodeRow,
   AddDeviceWithCodeRowView,
   useCanAddDeviceWithCode,
@@ -111,9 +110,5 @@ describe("Add a device with a code, in Settings > Machines", () => {
     state.scopeAskedFor = [];
     await check("env-other");
     expect(new Set(state.scopeAskedFor)).toEqual(new Set(["env-here"]));
-  });
-
-  it("lands the account menu on the join card", () => {
-    expect(ADD_DEVICE_OR_MACHINE_ANCHOR).toBe("machines-join-card");
   });
 });

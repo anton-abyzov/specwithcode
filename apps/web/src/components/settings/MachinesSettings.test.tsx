@@ -181,7 +181,6 @@ vi.mock("./MachineSummary", () => ({
   MachineSummary: ({ rows }: { rows: readonly unknown[] }) => (
     <header data-part="summary" data-rows={rows.length} />
   ),
-  MachineNextStepCard: () => <p data-part="you-are-set" />,
 }));
 vi.mock("./PhoneConnectSettings", () => ({
   isPhoneConnectShown: () => runtime.phoneCard,
@@ -592,7 +591,7 @@ describe("Settings > Machines", () => {
         /<details data-part="advanced"><div data-part="this-machine-rows"><\/div><div data-part="saved-connections">/,
       );
       // A pending step is the head of the phone card, so the page adds no second step.
-      expect(html).not.toContain('data-part="you-are-set"');
+      expect(html).not.toContain("You are set");
       expect(html).toContain('data-has-setup="yes"');
       expect(html).toContain("Let another of your machines run work here");
       // A machine of the same Connect account this app never opened is offered by name.
@@ -667,19 +666,14 @@ describe("Settings > Machines", () => {
     expect(others).toContain('aria-label="MacBook Pro"');
   });
 
-  it("says You are set once no step is left, and nothing in a build without Connect", () => {
+  it("adds no done line once no step is left: the summary's facts already say it", () => {
     setUp();
     runtime.step = "done";
-    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).toContain('data-part="you-are-set"');
-    // A link that could not be read is not a finished setup; the phone card says so.
-    runtime.connectKind = "unknown";
-    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain(
-      'data-part="you-are-set"',
-    );
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("You are set");
     runtime.connectKind = "unavailable";
     runtime.phoneCard = false;
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    expect(html).not.toContain('data-part="you-are-set"');
+    expect(html).not.toContain("You are set");
     // Without the phone card, pairing over the person's own network stands where the card would.
     expect(html).not.toContain('data-part="your-phone"');
     expect(html.indexOf('data-part="pair-phone"')).toBeLessThan(

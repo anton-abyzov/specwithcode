@@ -11,6 +11,8 @@ public nonisolated enum Route: Hashable, Codable, Sendable {
   case machines
   case machine(String)
   case pair
+  /// "Add a device or machine": a phone or a computer on the same account.
+  case addDevice
   /// "Pair again" for a known machine: a link to any other machine is refused.
   case repair(String)
 }

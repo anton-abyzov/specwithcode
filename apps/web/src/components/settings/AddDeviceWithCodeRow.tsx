@@ -6,10 +6,6 @@ import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentAcceptsBrowserSignIn, useEnvironmentScope } from "../../state/session";
 import { SignInAnotherDeviceDialog } from "../account/SignInAnotherDeviceDialog";
 import { Button } from "../ui/button";
-import { JOIN_CARD_ANCHOR } from "./AccountJoinCard.logic";
-
-/** Where the account menu's "Add a device or machine" lands in Settings > Machines. */
-export const ADD_DEVICE_OR_MACHINE_ANCHOR = JOIN_CARD_ANCHOR;
 
 /** The row's element id, so a link or a settings jump can open the fold around it. */
 export const ADD_DEVICE_WITH_CODE_ROW_ID = "private-machines-device-code";

@@ -162,7 +162,7 @@ export function PhoneDevicesSettings() {
       {rows ? (
         <div
           data-phone-list
-          className="border-t border-border/60 [&>*+*]:border-t [&>*+*]:border-border/50"
+          className="border-t border-border/60 first:border-t-0 [&>*+*]:border-t [&>*+*]:border-border/50"
         >
           {rows}
         </div>

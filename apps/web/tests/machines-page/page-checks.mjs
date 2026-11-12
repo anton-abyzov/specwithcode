@@ -65,6 +65,7 @@ function readPage() {
       heading("Advanced:"),
     ],
     phoneCard: document.querySelector("[data-phone-card]")?.getAttribute("data-phone-card") ?? null,
+    phoneSteps: document.querySelectorAll("[data-phone-step]").length,
     pairRowInCard: document.querySelector("[data-phone-card] [data-pair-phone-row]") !== null,
     text: document.querySelector("main").innerText,
   };
@@ -125,19 +126,23 @@ export async function checkMachinesPage({ browser, url, out }) {
             // A window that may make a pairing code names the row; one that may not says why.
             if (state !== "sign-in-browser" && !has(PAIR_ROW))
               fail(where, "the pairing row lost its words");
-            // The store code and the store names show once this machine is on SpecWithCode Connect.
-            if (
-              (state === "add-phone" || state === "done") &&
-              (!has("App Store") || !has("Google Play"))
-            )
+            // The store code and the store names show while a phone is still to add.
+            if (state === "add-phone" && (!has("App Store") || !has("Google Play")))
               fail(where, "the stores are not named");
           }
           if (state === "sign-in-browser" && !has("Open SpecWithCode on MacBook Air to do this."))
             fail(where, "does not say where to sign in");
           if (state === "add-phone" && (!has("Waiting for your phone…") || !has("Not now")))
             fail(where, "no waiting line or Not now");
-          if (state === "done" && (!has("You are set") || !has("iPhone 16")))
-            fail(where, "no You are set or no phone row");
+          // Done is a plain list: no checklist, no done line, the facts only once, in the summary.
+          if (state === "done") {
+            if (!has("iPhone 16")) fail(where, "no phone row");
+            if (has("You are set")) fail(where, "still draws a done line");
+            if (seen.phoneSteps > 0) fail(where, `${seen.phoneSteps} finished phone steps drawn`);
+            if (has("is on SpecWithCode Connect")) fail(where, "repeats the Connect fact");
+          }
+          if (state !== "no-connect" && !has("Add a device or machine"))
+            fail(where, "no way to add a device from the summary");
           if (/\b(environment|relay)\b/i.test(seen.text))
             fail(where, `says "${seen.text.match(/\b(environment|relay)\b/i)[0]}"`);
           // Every control reached by Tab shows its focus.
@@ -153,6 +158,7 @@ export async function checkMachinesPage({ browser, url, out }) {
             });
           await page.close();
         }
+  failures.push(...(await checkAddDevice({ browser, url, out })));
   // The quiet row opens the pairing dialog straight at its steps, and Advanced opens in place.
   const page = await browser.newPage({ viewport: VIEWS[0] });
   await page.goto(`${url}?view=page&state=add-phone&theme=light`, { timeout: 240_000 });
@@ -176,5 +182,70 @@ export async function checkMachinesPage({ browser, url, out }) {
     if (!advanced.includes(line)) fail("advanced", `missing "${line}"`);
   await page.screenshot({ path: NodePath.join(out, "page-advanced-open.png"), fullPage: true });
   await page.close();
+  return failures;
+}
+
+// `?view=add-device`: the add dialog for a phone and a computer, in each setup state.
+const ADD_DEVICE = {
+  done: { qr: true, ready: true, step: false },
+  "add-phone": { qr: true, ready: true, step: false },
+  "turn-on": { qr: false, ready: false, step: true },
+  "sign-in": { qr: false, ready: false, step: true },
+  "no-connect": { qr: false, ready: false, step: false },
+};
+
+async function checkAddDevice({ browser, url, out }) {
+  const failures = [];
+  for (const [state, want] of Object.entries(ADD_DEVICE))
+    for (const tab of ["phone", "computer"])
+      for (const view of VIEWS) {
+        const where = `add-device ${state} ${tab} ${view.name}`;
+        const page = await browser.newPage({ viewport: view });
+        const errors = [];
+        page.on("pageerror", (error) => errors.push(String(error)));
+        await page.goto(`${url}?view=add-device&state=${state}&tab=${tab}&theme=dark`, {
+          timeout: 240_000,
+        });
+        const dialog = page.getByRole("dialog");
+        await dialog.waitFor({ timeout: 60_000 });
+        await page.waitForTimeout(300);
+        const seen = await dialog.evaluate((node) => ({
+          text: node.innerText,
+          qr: node.querySelectorAll("svg title").length,
+          ready: node.querySelector("[data-add-device-ready]") !== null,
+          step: node.querySelector("[data-add-device-step]") !== null,
+          checked: [...node.querySelectorAll('[role="radio"]')].map((radio) =>
+            radio.getAttribute("aria-checked"),
+          ),
+          focused: document.activeElement?.getAttribute("aria-checked") ?? null,
+          overflow: node.scrollWidth - node.clientWidth,
+          width: node.getBoundingClientRect().width,
+        }));
+        const fail = (message) => failures.push(`${where}: ${message}`);
+        if (errors.length > 0) fail(`page errors: ${errors.join("; ")}`);
+        if (seen.overflow > 0) fail(`overflows sideways by ${seen.overflow}px`);
+        if (seen.width > view.width) fail(`is ${seen.width}px wide in a ${view.width}px window`);
+        if (seen.checked.join() !== (tab === "phone" ? "true,false" : "false,true"))
+          fail(`choices read ${seen.checked.join()}`);
+        if (seen.focused !== "true") fail("focus does not start on the chosen kind");
+        if (seen.qr > 0 !== want.qr) fail(`${seen.qr} codes`);
+        if (seen.ready !== want.ready) fail(`ready line ${seen.ready ? "shown" : "missing"}`);
+        if (seen.step !== want.step) fail(`Connect step ${seen.step ? "shown" : "missing"}`);
+        if (
+          want.qr &&
+          !seen.text.includes(
+            tab === "phone" ? "specwithcode.com/get" : "specwithcode.com/download",
+          )
+        )
+          fail("does not name the link the code opens");
+        if (
+          !seen.text.includes(tab === "phone" ? "Pair with a private QR code" : "Use a join line")
+        )
+          fail("no fallback");
+        await page.screenshot({
+          path: NodePath.join(out, `add-device-${state}-${tab}-${view.name}.png`),
+        });
+        await page.close();
+      }
   return failures;
 }

@@ -10,7 +10,7 @@ import {
 } from "../../src/components/settings/MachinesSettings";
 import { buildMachineRows } from "../../src/components/settings/machinesSettings.logic";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
-import { MachinesPage } from "./page";
+import { AddDevicePage, MachinesPage } from "./page";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -152,7 +152,9 @@ function UpdateCard(props: {
 createRoot(document.getElementById("root")!).render(
   <TooltipProvider>
     <main className="min-h-screen bg-background p-4 text-foreground sm:p-8">
-      {params.get("view") === "page" ? (
+      {params.get("view") === "add-device" ? (
+        <AddDevicePage tab={params.get("tab") === "computer" ? "computer" : "phone"} />
+      ) : params.get("view") === "page" ? (
         // `?view=page&state=add-phone`: the whole page in its order; page.tsx lists the states.
         <MachinesPage
           hereCard={

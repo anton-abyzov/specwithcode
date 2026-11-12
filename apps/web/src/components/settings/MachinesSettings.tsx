@@ -65,12 +65,7 @@ import {
   AddProjectToMachineDialog,
   type AddProjectTarget,
 } from "./AddProjectToMachine";
-import {
-  MachineNextStepCard,
-  MachineSetupState,
-  MachineSummary,
-  type MachineSetup,
-} from "./MachineSummary";
+import { MachineSetupState, MachineSummary, type MachineSetup } from "./MachineSummary";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
@@ -271,13 +266,6 @@ export function MachinesSettingsPanel() {
             {renderRow(hereRow, undefined, undefined, undefined, true)}
           </ul>
         </details>
-      ) : null}
-      {/* A pending step is drawn as the head of the phone card; this is the line once none is. */}
-      {setup &&
-      setup.step.kind === "done" &&
-      setup.connect.kind !== "unavailable" &&
-      setup.connect.kind !== "unknown" ? (
-        <MachineNextStepCard setup={setup} machineName={hereLabel} />
       ) : null}
       <ConnectionsSettings
         additionalMachines={rows
