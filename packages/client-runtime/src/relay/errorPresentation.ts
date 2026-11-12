@@ -70,6 +70,65 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
   }
 }
 
+/**
+ * Why deregistering a machine did not finish, in words for the person who
+ * pressed the button. Reads a failure by its shape, so the phone and the
+ * desktop say the same thing. The caller reads the list again either way: the
+ * account can lose the machine before a later step fails.
+ */
+export function deregisterFailureMessage(cause: unknown): string {
+  const failure =
+    typeof cause === "object" && cause !== null
+      ? (cause as {
+          readonly _tag?: unknown;
+          readonly transportFailed?: unknown;
+          readonly relayError?: RelayProtectedError | undefined;
+        })
+      : {};
+  const tag = typeof failure._tag === "string" ? failure._tag : "";
+  if (tag === "ManagedRelayRequestTimeoutError") {
+    return "SpecWithCode Connect did not answer in time. Check this device's connection and try again.";
+  }
+  if (tag === "ManagedRelayRequestFailedError") {
+    const relayError = failure.relayError;
+    if (relayError?._tag === "RelayInternalError") {
+      switch (relayError.reason) {
+        case "upstream_unavailable":
+          return "The machine was taken off your account, but SpecWithCode Connect could not finish cleaning up after it. Your other machines are not affected.";
+        case "database_unavailable":
+        case "persistence_failed":
+          return "SpecWithCode Connect could not save the change. Try again in a minute.";
+        case "internal_error":
+          return "SpecWithCode Connect ran into a problem. Try again in a minute.";
+      }
+    }
+    if (relayError?._tag === "RelayAuthInvalidError") {
+      switch (relayError.reason) {
+        case "missing_bearer":
+        case "invalid_bearer":
+          return "Your SpecWithCode Connect sign-in has run out. Sign out, sign in again, then try again.";
+        case "invalid_dpop":
+          return dpopFailureMessage(
+            "SpecWithCode Connect did not accept this device's proof of identity.",
+            relayError.dpopFailureReason,
+          );
+        case "not_authorized":
+          return "This account may not deregister that machine. Sign in with the account that linked it.";
+      }
+    }
+    if (failure.transportFailed === true) {
+      return "This device could not reach SpecWithCode Connect. Check the connection and try again.";
+    }
+    return "SpecWithCode Connect sent an answer this app did not expect. Try again in a minute.";
+  }
+  if (tag.startsWith("ManagedRelay")) {
+    return "This device could not sign the request. Sign out, sign in again, then try again.";
+  }
+  return cause instanceof Error && cause.message.trim() !== ""
+    ? cause.message
+    : "Deregistering failed, and the reason is not known.";
+}
+
 // A host with a current build gets a new tunnel on its own within minutes of
 // coming back, which clears this reason. While it is still reported, the host
 // is either still off or running a build too old to do that.

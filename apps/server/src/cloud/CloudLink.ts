@@ -88,6 +88,7 @@ import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_PUBLIC_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED_ELSEWHERE_AT,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   decodeConfirmedOrigin,
@@ -530,6 +531,15 @@ export class CloudLink extends Context.Service<
     /** Stops the tunnel and forgets the link, including the CLI's wish to keep it. */
     readonly unlink: () => Effect.Effect<EnvironmentCloudRelayConfigResult, CloudLinkInternalError>;
     /**
+     * The relay said this machine's link is gone: its owner deregistered it
+     * from another device. Does what {@link unlink} does and notes when, for
+     * Settings to say. Only while the refused credential is still the stored
+     * one, so a link made since stays. Resolves to whether the link was forgotten.
+     */
+    readonly unlinkRevokedElsewhere: (
+      refusedCredential: string,
+    ) => Effect.Effect<boolean, CloudLinkInternalError>;
+    /**
      * Saves this environment's Studio Connect preferences, all or nothing, and
      * returns the link state. The activity setting is saved first. Holding
      * webhooks while offline is decided by the relay, so the relay is told
@@ -888,6 +898,8 @@ const make = Effect.gen(function* () {
         stringToBytes(payload.relayIssuer ?? payload.relayUrl),
       );
       yield* secrets.set(CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId));
+      // Linked again: what an earlier deregistering left to say is over.
+      yield* secrets.remove(CLOUD_LINK_REVOKED_ELSEWHERE_AT);
       yield* secrets.set(
         RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
         stringToBytes(payload.environmentCredential),
@@ -1399,6 +1411,7 @@ const make = Effect.gen(function* () {
       endpointRuntimeConfig,
       publishAgentActivity,
       holdWebhooks,
+      revokedElsewhereAt,
     ] = yield* Effect.all(
       [
         secrets.get(CLOUD_LINKED_USER_ID),
@@ -1407,8 +1420,9 @@ const make = Effect.gen(function* () {
         secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
         secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
         secrets.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
+        secrets.get(CLOUD_LINK_REVOKED_ELSEWHERE_AT),
       ],
-      { concurrency: 6 },
+      { concurrency: 7 },
     );
     return {
       linked: Option.isSome(cloudUserId),
@@ -1423,6 +1437,9 @@ const make = Effect.gen(function* () {
         : false,
       holdWebhooksWhileOffline:
         Option.isSome(holdWebhooks) && bytesToString(holdWebhooks.value) === "true",
+      ...(Option.isNone(cloudUserId) && Option.isSome(revokedElsewhereAt)
+        ? { revokedElsewhereAt: bytesToString(revokedElsewhereAt.value) }
+        : {}),
     } satisfies EnvironmentCloudLinkStateResult;
   });
 
@@ -1433,30 +1450,56 @@ const make = Effect.gen(function* () {
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-relay-config")),
   );
 
+  /** Stops the tunnel and forgets the link. Run under the link state lock. */
+  const forgetLink = Effect.gen(function* () {
+    const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(null);
+    yield* Effect.all(
+      [
+        secrets.remove(CLOUD_LINKED_USER_ID),
+        secrets.remove(RELAY_URL_SECRET),
+        secrets.remove(RELAY_ISSUER_SECRET),
+        secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+        secrets.remove(CLOUD_MINT_PUBLIC_KEY),
+        secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+        secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
+        secrets.remove(CLOUD_ENDPOINT_PUBLIC_ORIGIN),
+        secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
+        secrets.remove(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
+      ],
+      { concurrency: 10 },
+    );
+    yield* setCliDesiredCloudLink(false).pipe(withSecrets);
+    return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
+  });
+
   const unlink = Effect.fn("environment.cloud.unlink")(
     function* () {
-      return yield* endpointRuntime.withLinkStateLock(
+      return yield* endpointRuntime.withLinkStateLock(forgetLink);
+    },
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("remove-relay-config")),
+  );
+
+  const unlinkRevokedElsewhere = Effect.fn("environment.cloud.unlinkRevokedElsewhere")(
+    function* (refusedCredential: string) {
+      const forgotten = yield* endpointRuntime.withLinkStateLock(
         Effect.gen(function* () {
-          const endpointRuntimeStatus = yield* endpointRuntime.applyConfig(null);
-          yield* Effect.all(
-            [
-              secrets.remove(CLOUD_LINKED_USER_ID),
-              secrets.remove(RELAY_URL_SECRET),
-              secrets.remove(RELAY_ISSUER_SECRET),
-              secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-              secrets.remove(CLOUD_MINT_PUBLIC_KEY),
-              secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
-              secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
-              secrets.remove(CLOUD_ENDPOINT_PUBLIC_ORIGIN),
-              secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
-              secrets.remove(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
-            ],
-            { concurrency: 10 },
+          // A link made since the refused request holds another credential.
+          const stored = yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
+          if (Option.isNone(stored) || bytesToString(stored.value) !== refusedCredential)
+            return false;
+          yield* forgetLink;
+          yield* secrets.set(
+            CLOUD_LINK_REVOKED_ELSEWHERE_AT,
+            stringToBytes(DateTime.formatIso(yield* DateTime.now)),
           );
-          yield* setCliDesiredCloudLink(false).pipe(withSecrets);
-          return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
+          return true;
         }),
       );
+      if (forgotten)
+        yield* Effect.logInfo(
+          "This machine was deregistered from another device; SpecWithCode Connect is off here",
+        );
+      return forgotten;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("remove-relay-config")),
   );
@@ -1783,6 +1826,7 @@ const make = Effect.gen(function* () {
     applyRelayConfig,
     linkState,
     unlink,
+    unlinkRevokedElsewhere,
     updatePreferences,
     answerHealthRequest,
     mintCredential,

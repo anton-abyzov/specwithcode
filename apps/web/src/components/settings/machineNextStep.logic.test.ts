@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isPhoneStepDismissed,
   machineConnect,
+  machineDeregisteredNote,
   machineFacts,
   machineNextStep,
   machineNextStepTitle,
@@ -87,6 +88,24 @@ describe("machineConnect", () => {
         link: { linked: true, managedTunnelActive: true },
       }),
     ).toEqual({ kind: "on", account: null });
+  });
+
+  it("says a machine was deregistered from another device, until it is linked again", () => {
+    const revoked = { linked: false, revokedElsewhereAt: "2026-11-12T23:00:00.000Z" };
+    expect(machineConnect({ ...read, link: revoked })).toEqual({ ...off, deregistered: true });
+    expect(machineConnect({ ...read, signedIn: false, link: revoked })).toEqual({
+      kind: "signed-out",
+      deregistered: true,
+    });
+    // A linked machine is on, whatever an older mark says.
+    expect(
+      machineConnect({ ...read, link: { ...revoked, linked: true, managedTunnelActive: true } }),
+    ).toEqual(on);
+    expect(machineDeregisteredNote({ ...off, deregistered: true })).toContain(
+      "deregistered from another device",
+    );
+    expect(machineDeregisteredNote(off)).toBeNull();
+    expect(machineDeregisteredNote(on)).toBeNull();
   });
 
   it("waits for the first read of the link, and says so when it cannot be read", () => {
@@ -306,6 +325,15 @@ describe("machineFacts", () => {
     expect(connectText(off)).toBe("Connect: off for this machine");
     expect(connectText(off, true)).toBe("Connect: off by your team's rules");
     expect(connectText(signedOut, true)).toBe("Connect: off by your team's rules");
+    expect(connectText({ ...off, deregistered: true })).toBe(
+      "Connect: deregistered from another device",
+    );
+    expect(connectText({ kind: "signed-out", deregistered: true })).toBe(
+      "Connect: deregistered from another device",
+    );
+    expect(connectText({ ...off, deregistered: true }, true)).toBe(
+      "Connect: off by your team's rules",
+    );
     expect(connectText({ kind: "on", account: null })).toBe("Connect: on");
     expect(connectText({ kind: "loading" })).toBe("Connect: checking…");
     expect(connectText({ kind: "unknown" })).toBe("Connect: could not check");

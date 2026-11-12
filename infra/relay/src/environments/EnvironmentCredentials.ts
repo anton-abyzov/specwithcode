@@ -74,6 +74,15 @@ export class EnvironmentCredentials extends Context.Service<
       Option.Option<EnvironmentCredentialPrincipal>,
       EnvironmentCredentialAuthenticatePersistenceError
     >;
+    /**
+     * Whether this is a credential the relay once issued whose environment has
+     * no link left: the owner deregistered the machine. False for a token the
+     * relay never issued, and for a replaced credential of a machine that is
+     * still linked, so the answer never tells a machine to unlink by mistake.
+     */
+    readonly linkRevoked: (
+      token: string,
+    ) => Effect.Effect<boolean, EnvironmentCredentialAuthenticatePersistenceError>;
     readonly revokeForEnvironmentPublicKey: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -236,6 +245,55 @@ const make = Effect.gen(function* () {
             environmentPublicKey: row.environmentPublicKey,
           })
         : Option.none();
+    }),
+
+    linkRevoked: Effect.fn("relay.environment_credentials.link_revoked")(function* (token) {
+      const credentialHash = yield* hashToken(token).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentCredentialAuthenticatePersistenceError({
+              stage: "hash-token",
+              cause,
+            }),
+        ),
+      );
+      const rows = yield* db
+        .select({ credentialId: relayEnvironmentCredentials.credentialId })
+        .from(relayEnvironmentCredentials)
+        .where(
+          and(
+            eq(relayEnvironmentCredentials.credentialHash, credentialHash),
+            notExists(
+              new QueryBuilder()
+                .select({ userId: relayEnvironmentLinks.userId })
+                .from(relayEnvironmentLinks)
+                .where(
+                  and(
+                    eq(
+                      relayEnvironmentLinks.environmentId,
+                      relayEnvironmentCredentials.environmentId,
+                    ),
+                    eq(
+                      relayEnvironmentLinks.environmentPublicKey,
+                      relayEnvironmentCredentials.environmentPublicKey,
+                    ),
+                    isNull(relayEnvironmentLinks.revokedAt),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentCredentialAuthenticatePersistenceError({
+                stage: "lookup-credential",
+                cause,
+              }),
+          ),
+        );
+      return rows.length > 0;
     }),
 
     revokeForEnvironmentPublicKey: Effect.fn(

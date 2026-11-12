@@ -485,6 +485,7 @@ describe("relay environment authentication", () => {
     const credentials: EnvironmentCredentials.EnvironmentCredentials["Service"] = {
       create: () => Effect.die("unused create"),
       authenticate: () => Effect.fail(failure),
+      linkRevoked: () => Effect.die("unused linkRevoked"),
       revokeForEnvironmentPublicKey: () => Effect.die("unused revoke"),
     };
 
@@ -520,6 +521,72 @@ describe("relay environment authentication", () => {
       Effect.scoped,
     );
   });
+
+  const refusal = (
+    linkRevoked: EnvironmentCredentials.EnvironmentCredentials["Service"]["linkRevoked"],
+  ) =>
+    Effect.gen(function* () {
+      const auth = yield* RelayEnvironmentAuth;
+      return yield* Effect.flip(
+        auth.environmentBearer(Effect.succeed(HttpServerResponse.empty()), {
+          credential: Redacted.make("environment-credential"),
+          endpoint: {} as never,
+          group: {} as never,
+        }),
+      );
+    }).pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(new Request("https://relay.test/v1/server/link")),
+      ),
+      Effect.provideService(HttpServerRequest.ParsedSearchParams, {}),
+      Effect.provideService(HttpRouter.RouteContext, {
+        params: {},
+        route: {} as never,
+      }),
+      Effect.provide(
+        RelayHttpApi.layerEnvironmentAuth.pipe(
+          Layer.provide(
+            Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
+              create: () => Effect.die("unused create"),
+              authenticate: () => Effect.succeedNone,
+              linkRevoked,
+              revokeForEnvironmentPublicKey: () => Effect.die("unused revoke"),
+            }),
+          ),
+        ),
+      ),
+      Effect.scoped,
+    );
+
+  it.effect("tells a deregistered machine that its link was revoked", () =>
+    Effect.gen(function* () {
+      const error = yield* refusal(() => Effect.succeed(true));
+      expect(error).toMatchObject({
+        _tag: "RelayAuthInvalidError",
+        reason: "not_authorized",
+        environmentLink: "revoked",
+      });
+    }),
+  );
+
+  it.effect("refuses an unknown credential, and a failed lookup, without that word", () =>
+    Effect.gen(function* () {
+      const unknown = yield* refusal(() => Effect.succeed(false));
+      expect(unknown).toMatchObject({ _tag: "RelayAuthInvalidError", reason: "not_authorized" });
+      expect(unknown).not.toHaveProperty("environmentLink");
+      const failed = yield* refusal(() =>
+        Effect.fail(
+          new EnvironmentCredentials.EnvironmentCredentialAuthenticatePersistenceError({
+            stage: "lookup-credential",
+            cause: "database unavailable",
+          }),
+        ),
+      );
+      expect(failed).toMatchObject({ _tag: "RelayAuthInvalidError", reason: "not_authorized" });
+      expect(failed).not.toHaveProperty("environmentLink");
+    }),
+  );
 });
 
 function layerRelayUnlinkTest(input?: {
@@ -553,6 +620,7 @@ function layerRelayUnlinkTest(input?: {
       EnvironmentCredentials.EnvironmentCredentials.of({
         create: () => Effect.die("unused create"),
         authenticate: () => Effect.die("unused authenticate"),
+        linkRevoked: () => Effect.die("unused linkRevoked"),
         revokeForEnvironmentPublicKey: () => Effect.die("unused revokeForEnvironmentPublicKey"),
       }),
     ),

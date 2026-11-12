@@ -425,7 +425,12 @@ export const layerEnvironmentAuth = Layer.effect(
           }),
         );
         if (principal._tag === "None") {
-          return yield* relayAuthInvalidError("not_authorized");
+          // Tell a deregistered machine so, and only that machine: it holds a
+          // credential issued here. A failed lookup stays a plain refusal.
+          const revoked = yield* credentials
+            .linkRevoked(token)
+            .pipe(Effect.catch(() => Effect.succeed(false)));
+          return yield* relayAuthInvalidError("not_authorized", revoked);
         }
         yield* Effect.annotateCurrentSpan({
           "relay.auth.mode": "environment_credential",
@@ -1476,12 +1481,21 @@ const requireDpopPrincipalScope = Effect.fn("relay.api.require_dpop_principal_sc
   return principal.proofKeyThumbprint;
 });
 
-const relayAuthInvalidError = Effect.fnUntraced(function* (reason: RelayAuthInvalidReason) {
+const relayAuthInvalidError = Effect.fnUntraced(function* (
+  reason: RelayAuthInvalidReason,
+  environmentLinkRevoked = false,
+) {
   const traceId = yield* currentTraceId;
   yield* Effect.annotateCurrentSpan({
     "relay.trace_id": traceId,
     "relay.error.outbound_tag": "RelayAuthInvalidError",
     "relay.error.outbound_reason": reason,
+    ...(environmentLinkRevoked ? { "relay.error.environment_link": "revoked" } : {}),
   });
-  return yield* new RelayAuthInvalidError({ code: "auth_invalid", reason, traceId });
+  return yield* new RelayAuthInvalidError({
+    code: "auth_invalid",
+    reason,
+    ...(environmentLinkRevoked ? { environmentLink: "revoked" as const } : {}),
+    traceId,
+  });
 });

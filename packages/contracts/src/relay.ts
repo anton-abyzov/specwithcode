@@ -491,6 +491,10 @@ export class RelayAuthInvalidError extends Schema.TaggedError<RelayAuthInvalidEr
     reason: RelayAuthInvalidReason,
     // Older relays do not send a DPoP failure category.
     dpopFailureReason: Schema.optionalKey(RelayDpopFailureReason),
+    // A machine's own credential, after its owner deregistered the machine:
+    // the link is gone for good, not a wrong token or a passing failure.
+    // Absent in every other case, and from older relays.
+    environmentLink: Schema.optionalKey(Schema.Literal("revoked")),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },

@@ -11,8 +11,8 @@ export type MachineConnect =
   | { readonly kind: "loading" }
   /** The link could not be read, so the page does not guess. */
   | { readonly kind: "unknown" }
-  | { readonly kind: "signed-out" }
-  | { readonly kind: "off"; readonly account: string | null }
+  | { readonly kind: "signed-out"; readonly deregistered?: true }
+  | { readonly kind: "off"; readonly account: string | null; readonly deregistered?: true }
   | { readonly kind: "on"; readonly account: string | null };
 
 export function machineConnect(input: {
@@ -26,6 +26,8 @@ export function machineConnect(input: {
   readonly link: {
     readonly linked: boolean;
     readonly managedTunnelActive?: boolean | undefined;
+    /** Set while the machine is unlinked because it was deregistered from another device. */
+    readonly revokedElsewhereAt?: string | undefined;
   } | null;
   /** The link state is being read for the first time. */
   readonly linkPending: boolean;
@@ -38,9 +40,21 @@ export function machineConnect(input: {
     return { kind: "on", account };
   }
   if (!input.authLoaded) return { kind: "loading" };
-  if (!input.signedIn) return { kind: "signed-out" };
+  // Only an unlinked machine carries the mark, and the next link clears it.
+  const deregistered =
+    input.link && !input.link.linked && input.link.revokedElsewhereAt !== undefined
+      ? ({ deregistered: true } as const)
+      : {};
+  if (!input.signedIn) return { kind: "signed-out", ...deregistered };
   if (input.link === null) return input.linkPending ? { kind: "loading" } : { kind: "unknown" };
-  return { kind: "off", account };
+  return { kind: "off", account, ...deregistered };
+}
+
+/** Why the machine is off Connect, when someone took it off from another device; null otherwise. */
+export function machineDeregisteredNote(connect: MachineConnect): string | null {
+  return (connect.kind === "off" || connect.kind === "signed-out") && connect.deregistered
+    ? "This machine was deregistered from another device, so it is off SpecWithCode Connect."
+    : null;
 }
 
 /**
@@ -247,11 +261,15 @@ function connectFact(connect: MachineConnect, locked: boolean): Omit<MachineFact
     case "signed-out":
       return locked
         ? { ok: false, text: "Connect: off by your team's rules" }
-        : { ok: false, text: "Connect: not signed in" };
+        : connect.deregistered
+          ? { ok: false, text: "Connect: deregistered from another device" }
+          : { ok: false, text: "Connect: not signed in" };
     case "off":
       return locked
         ? { ok: false, text: "Connect: off by your team's rules" }
-        : { ok: false, text: "Connect: off for this machine" };
+        : connect.deregistered
+          ? { ok: false, text: "Connect: deregistered from another device" }
+          : { ok: false, text: "Connect: off for this machine" };
   }
 }
 
