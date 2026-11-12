@@ -121,7 +121,9 @@ describe("product vocabulary", () => {
 
   it("puts the product's words ahead of an imported list in the hint", () => {
     const prompt = whisperPrompt(withProductVocabulary(imported));
-    expect(prompt.startsWith("SpecWithCode, SpecWeave, worktree, worktrees, increment,")).toBe(true);
+    expect(prompt.startsWith("SpecWithCode, SpecWeave, worktree, worktrees, increment,")).toBe(
+      true,
+    );
     expect(prompt.endsWith("stdio, EasyChamp, minisforum.")).toBe(true);
     expect(prompt).not.toMatch(/specwithcode|specweave|claude,|codex|mcp/);
   });
@@ -137,7 +139,10 @@ describe("product vocabulary", () => {
   it("writes product names the way the product does, whatever was heard", () => {
     const terms = withProductVocabulary(imported);
     expect(
-      correctTranscript("Open the spec with code coordinator and start a thread in a work tree.", terms),
+      correctTranscript(
+        "Open the spec with code coordinator and start a thread in a work tree.",
+        terms,
+      ),
     ).toBe("Open the SpecWithCode coordinator and start a thread in a worktree.");
     expect(correctTranscript("ask claude to run spec weave verify in cloud code", terms)).toBe(
       "ask Claude to run SpecWeave verify in Claude Code",
@@ -154,8 +159,12 @@ describe("product vocabulary", () => {
   });
 
   it("lets a line of the person's own win when it says something", () => {
-    const respelled = withProductVocabulary(parseVocabulary("Specweave\ncloud code => Cloud Code").terms);
-    expect(correctTranscript("spec weave in cloud code", respelled)).toBe("Specweave in Cloud Code");
+    const respelled = withProductVocabulary(
+      parseVocabulary("Specweave\ncloud code => Cloud Code").terms,
+    );
+    expect(correctTranscript("spec weave in cloud code", respelled)).toBe(
+      "Specweave in Cloud Code",
+    );
     expect(whisperPrompt(respelled).startsWith("SpecWithCode, Specweave,")).toBe(true);
     expect(respelled).toHaveLength(PRODUCT_VOCABULARY.length);
   });
@@ -196,14 +205,18 @@ describe("transcript correction", () => {
   });
 
   it("keeps the sentence's capital for a lowercase term and still fixes other casing", () => {
-    const lowercase = parseVocabulary("kubernetes\nnpm\nwork tree => worktree\nbtw => by the way").terms;
+    const lowercase = parseVocabulary(
+      "kubernetes\nnpm\nwork tree => worktree\nbtw => by the way",
+    ).terms;
     expect(correctTranscript("Kubernetes runs NPM and Npm", lowercase)).toBe(
       "Kubernetes runs npm and Npm",
     );
-    expect(correctTranscript("Work tree is ready. Work tree two, then a Work Tree.", lowercase)).toBe(
-      "Worktree is ready. Worktree two, then a worktree.",
+    expect(
+      correctTranscript("Work tree is ready. Work tree two, then a Work Tree.", lowercase),
+    ).toBe("Worktree is ready. Worktree two, then a worktree.");
+    expect(correctTranscript("Btw it works, BTW", lowercase)).toBe(
+      "By the way it works, by the way",
     );
-    expect(correctTranscript("Btw it works, BTW", lowercase)).toBe("By the way it works, by the way");
   });
 
   it("stays quick on a phrase with the largest vocabulary", () => {
@@ -261,7 +274,9 @@ describe("silence", () => {
   });
 
   it("drops anything a recording with no speech level produced", () => {
-    expect(judgeTranscript("I'm going to show you how to do it.", { prompt: "", peak: 0.01 })).toEqual({
+    expect(
+      judgeTranscript("I'm going to show you how to do it.", { prompt: "", peak: 0.01 }),
+    ).toEqual({
       text: "",
       dropped: "quiet",
     });
@@ -304,9 +319,9 @@ describe("silence", () => {
     expect(judgeTranscript("merge в main", { prompt: "", peak: 0.5, language: "ru-RU" }).text).toBe(
       "merge в main",
     );
-    expect(judgeTranscript("SpecWeave verify", { prompt: "", peak: 0.5, language: "ru" }).text).toBe(
-      "SpecWeave verify",
-    );
+    expect(
+      judgeTranscript("SpecWeave verify", { prompt: "", peak: 0.5, language: "ru" }).text,
+    ).toBe("SpecWeave verify");
     expect(judgeTranscript("こんにちは", { prompt: "", peak: 0.5, language: "ja" }).text).toBe(
       "こんにちは",
     );

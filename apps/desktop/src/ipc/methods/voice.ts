@@ -448,7 +448,10 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       "voice.peak": Math.round(peak * 1000) / 1000,
     };
     if (peak < SPEECH_PEAK) {
-      return { result: { ok: true as const, text: "" }, trace: { ...trace, "voice.outcome": "quiet" } };
+      return {
+        result: { ok: true as const, text: "" },
+        trace: { ...trace, "voice.outcome": "quiet" },
+      };
     }
     const started = performance.now();
     const engineMs = () => Math.round(performance.now() - started);

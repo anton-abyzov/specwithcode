@@ -120,7 +120,12 @@ const WHISPER_LANGUAGES = new Set(
     "yo so af oc ka be tg sd gu am yi lo uz fo ht ps tk nn mt sa lb my bo tl mg as tt haw ln ha ba jw su yue"
   ).split(" "),
 );
-const WHISPER_LANGUAGE_ALIASES: Record<string, string> = { nb: "no", fil: "tl", iw: "he", in: "id" };
+const WHISPER_LANGUAGE_ALIASES: Record<string, string> = {
+  nb: "no",
+  fil: "tl",
+  iw: "he",
+  in: "id",
+};
 
 /**
  * Whisper takes the bare language code (`de` for `de-DE`). `und`, no language and

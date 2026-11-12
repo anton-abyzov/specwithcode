@@ -220,7 +220,9 @@ export function withProductVocabulary(
     if (mine.replacement === undefined && isLowercase(mine.phrase)) return term;
     // Their spelling, on the built-in term's pattern, so its split forms still match.
     const written = mine.replacement ?? mine.phrase;
-    return written === term.phrase ? { phrase: term.phrase } : { phrase: term.phrase, replacement: written };
+    return written === term.phrase
+      ? { phrase: term.phrase }
+      : { phrase: term.phrase, replacement: written };
   });
   return [...lead, ...user.filter((term) => !settled.has(termKey(term.phrase)))];
 }
@@ -252,7 +254,8 @@ export function correctTranscript(text: string, terms: readonly VocabularyTerm[]
     "giu",
   );
   return text.replace(pattern, (match: string, ...rest: unknown[]) => {
-    const term = usable[rest.findIndex((group, index) => index < usable.length && group !== undefined)];
+    const term =
+      usable[rest.findIndex((group, index) => index < usable.length && group !== undefined)];
     if (!term) return match;
     const written = term.replacement ?? term.phrase;
     if (!isLowercase(written)) return written;
