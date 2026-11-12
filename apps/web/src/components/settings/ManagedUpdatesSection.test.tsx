@@ -26,6 +26,17 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (action: "enroll" | "revoke" | "check") => mock[action],
 }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: mock.confirm }));
+// The pause row reads that machine's own server settings; its behaviour is in
+// UpdatePausePolicyRow.test.tsx. Here it only marks where the card mounts it.
+vi.mock("./UpdatePausePolicyRow", () => ({
+  UpdatePausePolicyRow: (props: { environmentId: string; local: boolean; reachable: boolean }) => (
+    <span
+      data-pause-row={props.environmentId}
+      data-local={String(props.local)}
+      data-reachable={String(props.reachable)}
+    />
+  ),
+}));
 vi.mock("../ServerUpdateAction", () => ({ ServerUpdateProgress: () => null }));
 vi.mock("../ui/button", () => ({
   Button: ({ children, ...props }: ComponentProps<"button">) => (
@@ -317,4 +328,38 @@ it("check-only sends no enrollment, configuration or installation request", asyn
   expect(mock.enroll).not.toHaveBeenCalled();
   expect(mock.revoke).not.toHaveBeenCalled();
   expect(mock.native).not.toHaveBeenCalled();
+});
+it("mounts the pause setting on every machine's card, Linux and unreachable ones included", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const cases = [
+    { data: status, reachable: true, local: true },
+    // A Linux worker has no update agent: its card says managed updates are
+    // unavailable, and its boot service still obeys the setting.
+    { data: { ...status, support: "unsupported" as const }, reachable: true, local: false },
+    { data: { ...status, support: "unmanaged" as const }, reachable: true, local: false },
+    { data: null, reachable: false, local: false },
+  ];
+  for (const { data, reachable, local } of cases) {
+    mock.query.data = data;
+    mock.query.error = null;
+    await act(async () => {
+      rendered = create(
+        <ManagedUpdatesSection
+          environmentId={status.environmentId}
+          label="Minisforum"
+          reachable={reachable}
+          local={local}
+        />,
+      );
+    });
+    const rows = rendered!.root.findAll((node) => node.props["data-pause-row"] !== undefined);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.props).toMatchObject({
+      "data-pause-row": "dest",
+      "data-local": String(local),
+      "data-reachable": String(reachable),
+    });
+    await act(async () => rendered!.unmount());
+    rendered = undefined;
+  }
 });

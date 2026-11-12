@@ -59,6 +59,34 @@ for (const [width, theme] of [
   });
   await page.close();
 }
+// The pause setting on each machine's update card, off and on.
+for (const position of ["off", "on"]) {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  await page.goto(`${url}?theme=light&scene=update-pause-${position}`, { timeout: 240_000 });
+  const switches = page.getByRole("switch", { name: "Pause running work for updates" });
+  await switches.first().waitFor({ timeout: 60_000 });
+  const states = await switches.evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute("aria-checked")),
+  );
+  const want = position === "on" ? "true" : "false";
+  if (states.length !== 2 || states.some((state) => state !== want))
+    failures.push(`update-pause-${position}: switches read ${states.join(", ")}`);
+  const text = await page.locator("main").innerText();
+  const expected =
+    position === "on"
+      ? ["After the wait set in “Pause running work after”", "After 30 minutes of waiting"]
+      : [
+          "An update waits until M4 has no running work, however long that takes",
+          "An update waits up to 30 minutes for Minisforum to have no running work",
+        ];
+  for (const line of expected)
+    if (!text.includes(line)) failures.push(`update-pause-${position}: missing "${line}"`);
+  await page.screenshot({
+    path: NodePath.join(out, `pause-setting-${position}.png`),
+    fullPage: true,
+  });
+  await page.close();
+}
 await browser.close();
 await server.close();
 if (failures.length > 0) {
