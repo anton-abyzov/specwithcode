@@ -1307,6 +1307,13 @@ export const ko: PhraseCatalog = {
     "이 주소에는 QR이 없습니다. 다른 기기가 루프백 링크를 스캔하면 자기 자신에 연결하게 됩니다. 대신 이 컴퓨터에서 사용할 URL을 복사하세요.",
   "Client scopes": "클라이언트 권한",
   "Revoke others": "다른 항목 취소",
+  "Revoke {count} unused": "미사용 {count}개 취소",
+  "Sign-ins paired by link or code that have not connected for 24 hours":
+    "링크나 코드로 페어링되어 24시간 동안 연결되지 않은 로그인",
+  "Revoke {count} sign-ins that have not connected for 24 hours? This app, phones, your other machines and their keys are kept. A device among the revoked ones needs a new pairing link or code.":
+    "24시간 동안 연결되지 않은 로그인 {count}개를 취소할까요? 이 앱, 휴대폰, 다른 머신과 그 키는 유지됩니다. 취소된 기기는 새 페어링 링크나 코드가 필요합니다.",
+  "Revoked {count} unused sign-ins": "미사용 로그인 {count}개를 취소했습니다",
+  "Could not revoke {count} sign-ins": "로그인 {count}개를 취소하지 못했습니다",
   "Create link": "링크 만들기",
   "Create pairing link": "페어링 링크 만들기",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":

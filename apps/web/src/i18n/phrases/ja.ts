@@ -1316,6 +1316,13 @@ export const ja: PhraseCatalog = {
     "このアドレスには QR がありません。ループバックのリンクを別のデバイスでスキャンすると、そのデバイス自身に接続してしまいます。代わりに、このマシンで使う URL をコピーしてください。",
   "Client scopes": "クライアントの権限",
   "Revoke others": "他を取り消す",
+  "Revoke {count} unused": "未使用の {count} 件を取り消す",
+  "Sign-ins paired by link or code that have not connected for 24 hours":
+    "リンクまたはコードでペアリングされ、24 時間接続していないサインイン",
+  "Revoke {count} sign-ins that have not connected for 24 hours? This app, phones, your other machines and their keys are kept. A device among the revoked ones needs a new pairing link or code.":
+    "24 時間接続していないサインイン {count} 件を取り消しますか？このアプリ、スマートフォン、ほかのマシンとそのキーは残ります。取り消された中のデバイスには、新しいペアリングリンクまたはコードが必要です。",
+  "Revoked {count} unused sign-ins": "未使用のサインイン {count} 件を取り消しました",
+  "Could not revoke {count} sign-ins": "サインイン {count} 件を取り消せませんでした",
   "Create link": "リンクを作成",
   "Create pairing link": "ペアリングリンクを作成",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":

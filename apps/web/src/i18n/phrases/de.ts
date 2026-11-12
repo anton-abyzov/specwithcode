@@ -1328,6 +1328,13 @@ export const de: PhraseCatalog = {
     "Kein QR-Code für diese Adresse. Ein anderes Gerät, das einen Loopback-Link scannt, würde sich selbst anwählen; kopiere stattdessen die URL zur Nutzung auf diesem Rechner.",
   "Client scopes": "Client-Berechtigungen",
   "Revoke others": "Andere widerrufen",
+  "Revoke {count} unused": "{count} ungenutzte widerrufen",
+  "Sign-ins paired by link or code that have not connected for 24 hours":
+    "Per Link oder Code gekoppelte Anmeldungen, die sich seit 24 Stunden nicht verbunden haben",
+  "Revoke {count} sign-ins that have not connected for 24 hours? This app, phones, your other machines and their keys are kept. A device among the revoked ones needs a new pairing link or code.":
+    "{count} Anmeldungen widerrufen, die sich seit 24 Stunden nicht verbunden haben? Diese App, Telefone, Ihre anderen Maschinen und deren Schlüssel bleiben erhalten. Ein Gerät unter den widerrufenen braucht einen neuen Kopplungslink oder Code.",
+  "Revoked {count} unused sign-ins": "{count} ungenutzte Anmeldungen widerrufen",
+  "Could not revoke {count} sign-ins": "{count} Anmeldungen konnten nicht widerrufen werden",
   "Create link": "Link erstellen",
   "Create pairing link": "Kopplungslink erstellen",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":

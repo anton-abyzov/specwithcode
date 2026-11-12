@@ -7,8 +7,12 @@ import {
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   resolveTailscaleHttpsRowState,
+  revokeClientSessions,
   selectQrEndpointOption,
   togglePairingScopeSelection,
+  UNUSED_CLIENT_AFTER_MS,
+  unusedClientSessions,
+  type UnusedClientCandidate,
 } from "./ConnectionsSettings.logic";
 
 describe("togglePairingScopeSelection", () => {
@@ -292,5 +296,82 @@ describe("resolveTailscaleHttpsRowState", () => {
     expect(canDisableTailscaleHttpsEndpoint(endpoint())).toBe(true);
     expect(canDisableTailscaleHttpsEndpoint(endpoint({ managedOutsideStudio: true }))).toBe(false);
     expect(canDisableTailscaleHttpsEndpoint(endpoint({ status: "unavailable" }))).toBe(false);
+  });
+});
+
+describe("unusedClientSessions", () => {
+  const now = Date.parse("2026-11-12T12:00:00.000Z");
+  const old = new Date(now - UNUSED_CLIENT_AFTER_MS - 60_000).toISOString();
+  const recent = new Date(now - 60 * 60_000).toISOString();
+  const session = (overrides: Partial<UnusedClientCandidate> = {}): UnusedClientCandidate => ({
+    sessionId: "session",
+    subject: "one-time-token",
+    label: "1068 installed check headless",
+    deviceType: "desktop",
+    issuedAt: old,
+    lastConnectedAt: old,
+    connected: false,
+    current: false,
+    ...overrides,
+  });
+  const ids = (sessions: ReadonlyArray<UnusedClientCandidate>) =>
+    unusedClientSessions(sessions, now).map((entry) => entry.sessionId);
+
+  it("offers a paired computer sign-in that has not connected for a day", () => {
+    expect(ids([session()])).toEqual(["session"]);
+    expect(ids([session({ subject: "device-approval" })])).toEqual(["session"]);
+  });
+
+  it("counts a sign-in that never connected from when it was issued", () => {
+    expect(ids([session({ lastConnectedAt: null })])).toEqual(["session"]);
+    expect(ids([session({ lastConnectedAt: null, issuedAt: recent })])).toEqual([]);
+  });
+
+  it("keeps this app, a connected client and anything used within a day", () => {
+    expect(ids([session({ current: true })])).toEqual([]);
+    expect(ids([session({ connected: true })])).toEqual([]);
+    expect(ids([session({ lastConnectedAt: recent })])).toEqual([]);
+  });
+
+  it("keeps phones, the fleet's machines, their keys, worker grants and Connect", () => {
+    expect(ids([session({ label: "iPhone", deviceType: "mobile" })])).toEqual([]);
+    expect(ids([session({ label: "iPad", deviceType: "tablet" })])).toEqual([]);
+    expect(ids([session({ label: "Private fleet browser" })])).toEqual([]);
+    expect(ids([session({ label: undefined })])).toEqual(["session"]);
+    expect(ids([session({ subject: "fleet-invitation", lastConnectedAt: null })])).toEqual([]);
+    expect(ids([session({ subject: "mcp-client", lastConnectedAt: null })])).toEqual([]);
+    expect(ids([session({ subject: "cloud-connect", lastConnectedAt: null })])).toEqual([]);
+  });
+
+  it("does not take an unreadable time as proof of disuse", () => {
+    expect(ids([session({ lastConnectedAt: "not a time" })])).toEqual([]);
+  });
+});
+
+describe("revokeClientSessions", () => {
+  it("revokes every sign-in, a few at a time", async () => {
+    let running = 0;
+    let most = 0;
+    const revoke = vi.fn(async () => {
+      running += 1;
+      most = Math.max(most, running);
+      await Promise.resolve();
+      running -= 1;
+    });
+    const result = await revokeClientSessions(["a", "b", "c", "d", "e"], revoke, 2);
+    expect(result).toEqual({ revoked: 5, failed: 0, error: null });
+    expect(revoke).toHaveBeenCalledTimes(5);
+    expect(most).toBe(2);
+  });
+
+  it("goes on after a failure and reports the first message", async () => {
+    const revoke = vi.fn(async (sessionId: string) => {
+      if (sessionId !== "a") throw new Error(`refused ${sessionId}`);
+    });
+    expect(await revokeClientSessions(["a", "b", "c"], revoke, 1)).toEqual({
+      revoked: 1,
+      failed: 2,
+      error: "refused b",
+    });
   });
 });

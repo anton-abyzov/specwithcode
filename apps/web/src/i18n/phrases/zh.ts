@@ -1270,6 +1270,13 @@ export const zh: PhraseCatalog = {
     "此地址没有二维码。另一台设备扫描回环链接会连接到它自己；请改为复制 URL 在此电脑上使用。",
   "Client scopes": "客户端权限",
   "Revoke others": "撤销其他",
+  "Revoke {count} unused": "撤销 {count} 个未使用的登录",
+  "Sign-ins paired by link or code that have not connected for 24 hours":
+    "通过链接或代码配对且 24 小时未连接的登录",
+  "Revoke {count} sign-ins that have not connected for 24 hours? This app, phones, your other machines and their keys are kept. A device among the revoked ones needs a new pairing link or code.":
+    "要撤销 {count} 个 24 小时未连接的登录吗？此应用、手机、你的其他机器及其密钥会保留。被撤销的设备需要新的配对链接或代码。",
+  "Revoked {count} unused sign-ins": "已撤销 {count} 个未使用的登录",
+  "Could not revoke {count} sign-ins": "无法撤销 {count} 个登录",
   "Create link": "创建链接",
   "Create pairing link": "创建配对链接",
   "Generate a one-time link that another device can use to pair with this backend as an authorized client.":
