@@ -97,6 +97,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
    * tooltip, and toolbar controls cannot quietly drift apart.
    */
   --control-radius: 0.5rem;
+  /* Dialogs, sheets and the palette, through `rounded-dialog`. */
+  --dialog-radius: 0.875rem;
   --sidebar-content-inset: 0.5rem;
   --sidebar-control-gap: 0.5rem;
   --sidebar-icon-color: color-mix(
@@ -164,7 +166,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  /* One stack for three systems: San Francisco on macOS, Segoe UI Variable on
+     Windows 11 (Segoe UI before it), then the desktop's own interface font on
+     Linux with the common ones named in case `system-ui` resolves to nothing. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui,
+    "Adwaita Sans", Cantarell, Ubuntu, "Noto Sans", sans-serif;
   --font-mono:
     ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Cascadia Mono", "DejaVu Sans Mono",
     "Ubuntu Mono", "Noto Sans Mono", "Liberation Mono", monospace;
@@ -283,9 +290,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: min(calc(var(--radius) + 4px), var(--dialog-radius));
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
+  /* `rounded-dialog`: the one large corner that follows the system's dialogs.
+     Cards and the composer keep the scale above. */
+  --radius-dialog: var(--dialog-radius);
   @keyframes skeleton {
     /* The single loading-bar breath used by every skeleton: one opacity pulse
        per container, stepped so however many bars sit under it, the compositor
@@ -1184,5 +1194,117 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   from {
     opacity: 0;
     transform: scaleY(0.6);
+  }
+}
+
+/* What follows the system. The app keeps one design; corner radius, scrollbars
+   and button order are the details that read as foreign when they are wrong.
+   `data-platform` is set on <html> at startup (lib/platformConventions.ts), and
+   a document without it gets the macOS values above. */
+:root[data-platform="windows"] {
+  --radius: 0.375rem;
+  --control-radius: 0.25rem;
+  --dialog-radius: 0.5rem;
+}
+
+/* A touch screen keeps the values above: Android reports as Linux. */
+@media (pointer: fine) {
+  :root[data-platform="linux"] {
+    --radius: 0.5rem;
+    --control-radius: 0.375rem;
+    --dialog-radius: 0.75rem;
+  }
+}
+
+/* Windows and Linux draw scrollbars people aim at with a mouse: wide enough to
+   grab and dark enough to see whenever the content overflows. A touch screen
+   (Android reports as Linux) keeps the thin ones. */
+@media (pointer: fine) {
+  :root:is([data-platform="windows"], [data-platform="linux"]) {
+    --app-scrollbar-width: 10px;
+    --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 30%, transparent);
+    --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 46%, transparent);
+  }
+}
+
+/* Windows puts the default button first. Only the drawing order flips: the
+   source order stays, so a confirm opens on the same button on every system. A
+   child pushed to the start with an end auto margin (Back, Delete) stays at the
+   start, and a footer that spreads its children apart is left alone. Below the
+   `sm` width the buttons stack, with the default on top on every system. */
+@media (width >= 40rem) {
+  [data-default-button="first"]:not([class~="sm:justify-between"]) {
+    flex-direction: row-reverse;
+    justify-content: flex-start;
+  }
+
+  [data-default-button="first"]
+    > :is([class~="mr-auto"], [class~="me-auto"], [class~="sm:mr-auto"], [class~="sm:me-auto"]) {
+    order: 1;
+  }
+}
+
+/* Windows contrast themes drop backgrounds and shadows, and both the focus
+   ring and a chosen row are drawn with one of them. The chosen row is filled;
+   the row the keys are on gets an edge, so the two stay apart in a list that
+   has both (a select with a value, while the arrows move). */
+@media (forced-colors: active) {
+  :is(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    summary,
+    [tabindex="0"],
+    [role="button"],
+    [role="checkbox"],
+    [role="combobox"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
+    [role="option"],
+    [role="radio"],
+    [role="slider"],
+    [role="switch"],
+    [role="tab"]
+  ):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  :is(
+    input,
+    textarea,
+    [role="option"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
+    [role="tab"]
+  ):focus-visible {
+    outline-offset: -2px;
+  }
+
+  [role="option"][aria-selected="true"],
+  :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"])[data-highlighted] {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    color: HighlightText;
+  }
+
+  /* Chips and dots inside lose their fill here as they do everywhere else in
+     a contrast theme; their text takes the row's colour. */
+  :is(
+      [role="option"][aria-selected="true"],
+      :is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"])[data-highlighted]
+    )
+    * {
+    background-color: transparent;
+    color: inherit;
+  }
+
+  [role="option"][data-highlighted] {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
   }
 }

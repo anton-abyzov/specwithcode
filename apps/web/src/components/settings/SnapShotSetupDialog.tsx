@@ -384,7 +384,7 @@ export function SnapShotSetupDialog({
             ) : null}
           </div>
         </WizardPanel>
-        <WizardFooter>
+        <WizardFooter buttonOrder="source">
           {step !== "access" ? (
             <Button variant="outline" disabled={busy} onClick={() => changeStep("access")}>
               {tx("Back")}

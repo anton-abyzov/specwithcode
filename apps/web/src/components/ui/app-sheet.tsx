@@ -91,7 +91,7 @@ export function AppSheet({
             ref={popup}
             initialFocus={focusSheetFirst ? popup : undefined}
             finalFocus={false}
-            className="dialog-glass relative flex h-full max-h-[880px] w-full max-w-[1180px] min-h-0 min-w-0 flex-col overflow-hidden border bg-background text-foreground shadow-2xl outline-none transition-[scale,opacity] duration-200 ease-out data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0 sm:rounded-2xl md:flex-row [-webkit-app-region:no-drag]"
+            className="dialog-glass relative flex h-full max-h-[880px] w-full max-w-[1180px] min-h-0 min-w-0 flex-col overflow-hidden border bg-background text-foreground shadow-2xl outline-none transition-[scale,opacity] duration-200 ease-out data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0 sm:rounded-dialog md:flex-row [-webkit-app-region:no-drag]"
           >
             {/* On phones the nav stacks above the page, so the close button leads. */}
             <div className="flex h-12 shrink-0 items-center justify-between border-b ps-4 pe-2 md:hidden">
