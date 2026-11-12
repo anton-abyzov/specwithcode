@@ -176,7 +176,7 @@ export function ThreadRepositoriesList({
         <p className="text-muted-foreground">One pull request per repository with commits.</p>
       )}
       {error !== null && (
-        <p className="text-destructive" role="alert">
+        <p className="text-destructive-foreground" role="alert">
           {error}
         </p>
       )}
