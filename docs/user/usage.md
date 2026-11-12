@@ -215,8 +215,9 @@ its workers. A verified GitHub Copilot instance keeps its subscription fallback.
 out of every fallback, disable that provider instance in Settings; that holds even when an older
 fallback order or project default still names it.
 
-**Switch before the limit** (default 99%) is the share of the provider's fullest usage window at
-which the thread moves on. With **Switch automatically**, an idle thread moves to the fallback
+**Switch before the limit** (default 1% left, which is 99% used) is how much of the provider's
+fullest usage window is left when the thread moves on. Pick a preset, or **Custom…** and type the
+share left as a whole number from 0 to 50. With **Switch automatically**, an idle thread moves to the fallback
 before its next turn. It never switches mid-turn, moves a thread once per usage window, and only to
 a provider below the same share, so two full providers never trade a thread back and forth. If you
 switch back by hand, SpecWithCode keeps your choice until the window resets. With **Offer the fallback**,

@@ -333,8 +333,8 @@ export const ru: Messages = {
     "В режиме «Переключать автоматически» следующий ход начинается на резервной модели, когда в самом заполненном окне использования провайдера остаётся столько. В режиме «Предложить замену» тред в этот момент предлагает переключиться. Никогда посреди хода и только на провайдера, у которого осталось больше.",
   "limitSettings.switchAt.off": "Только при остановке",
   "limitSettings.switchAt.custom": "Свой вариант…",
-  "limitSettings.switchAt.customLabel": "Использование для переключения, в процентах",
-  "limitSettings.switchAt.customUnit": "% использовано",
+  "limitSettings.switchAt.customLabel": "Остаток в процентах, при котором переключаться",
+  "limitSettings.switchAt.customUnit": "% осталось",
   "limitSettings.switchAt.customError": "Введите целое число от {min} до {max}.",
   "limitSettings.waitUnder.title": "Ждать, если сброс скоро",
   "limitSettings.waitUnder.description":

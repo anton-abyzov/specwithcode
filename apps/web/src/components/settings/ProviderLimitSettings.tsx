@@ -90,18 +90,18 @@ const SWITCH_AT_OPTIONS = [
 const SWITCH_AT_CUSTOM = "custom";
 const isSwitchAtPreset = (value: string) =>
   (SWITCH_AT_OPTIONS as readonly string[]).includes(value);
-/** The stored threshold is a used share; the label names what is left at that point. */
+/** The stored threshold is a used share; everything a person reads or types is the share left. */
+const percentLeft = (used: number) => Math.round((100 - used) * 100) / 100;
+const SWITCH_AT_LEFT_MIN = percentLeft(PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX);
+const SWITCH_AT_LEFT_MAX = percentLeft(PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN);
 const switchAtLabel = (t: Translate, value: string) =>
-  t("limitSettings.switchAtOption", { percent: 100 - Number(value) });
-/** A typed threshold: a whole number of percent used, inside the setting's bounds. */
-function parseSwitchAtPercent(text: string): number | null {
+  t("limitSettings.switchAtOption", { percent: percentLeft(Number(value)) });
+/** A typed threshold: a whole number of percent left, returned as the stored percent used. */
+function parseSwitchAtPercentLeft(text: string): number | null {
   const trimmed = text.trim();
   if (!/^\d+$/.test(trimmed)) return null;
-  const value = Number(trimmed);
-  return value >= PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN &&
-    value <= PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX
-    ? value
-    : null;
+  const left = Number(trimmed);
+  return left >= SWITCH_AT_LEFT_MIN && left <= SWITCH_AT_LEFT_MAX ? 100 - left : null;
 }
 const WAIT_UNDER_OPTIONS = ["0", "15", "30", "60", "120"] as const;
 const waitUnderLabel = (t: Translate, value: string) =>
@@ -121,7 +121,7 @@ const waitUnderLabel = (t: Translate, value: string) =>
 export function ProviderLimitSettings() {
   const tx = useTx();
   const t = useT();
-  const { scope, target } = useSettingsScope();
+  const { scope, search, target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environments } = useEnvironments();
@@ -209,17 +209,25 @@ export function ProviderLimitSettings() {
   const [customSwitchAt, setCustomSwitchAt] = useState(false);
   const [switchAtDraft, setSwitchAtDraft] = useState<string | null>(null);
   const [switchAtInvalid, setSwitchAtInvalid] = useState(false);
+  // A draft belongs to one scope and one stored value: another scope, or a value saved
+  // anywhere (here, another window or a cleared override), starts the field over.
+  const switchAtStateKey = `${search.machine ?? ""}|${search.project ?? ""}|${search.checkout ?? ""}|${mixedSwitchAt ? "mixed" : String(switchAt)}`;
+  const [switchAtStateFor, setSwitchAtStateFor] = useState(switchAtStateKey);
+  if (switchAtStateFor !== switchAtStateKey) {
+    setSwitchAtStateFor(switchAtStateKey);
+    setCustomSwitchAt(false);
+    setSwitchAtDraft(null);
+    setSwitchAtInvalid(false);
+  }
   const switchAtErrorId = useId();
-  const switchAtMode = mixedSwitchAt
-    ? customSwitchAt
-      ? SWITCH_AT_CUSTOM
-      : null
-    : switchAt === null
-      ? customSwitchAt
-        ? SWITCH_AT_CUSTOM
-        : "off"
-      : customSwitchAt || !isSwitchAtPreset(String(switchAt))
-        ? SWITCH_AT_CUSTOM
+  const switchAtIsCustom =
+    customSwitchAt || (!mixedSwitchAt && switchAt !== null && !isSwitchAtPreset(String(switchAt)));
+  const switchAtMode = switchAtIsCustom
+    ? SWITCH_AT_CUSTOM
+    : mixedSwitchAt
+      ? null
+      : switchAt === null
+        ? "off"
         : String(switchAt);
   const leaveCustomSwitchAt = () => {
     setCustomSwitchAt(false);
@@ -228,7 +236,7 @@ export function ProviderLimitSettings() {
   };
   const commitSwitchAtDraft = () => {
     if (switchAtDraft === null) return;
-    const value = parseSwitchAtPercent(switchAtDraft);
+    const value = parseSwitchAtPercentLeft(switchAtDraft);
     if (value === null) {
       setSwitchAtInvalid(true);
       return;
@@ -427,7 +435,7 @@ export function ProviderLimitSettings() {
         title={t("limitSettings.switchAt.title")}
         description={t("limitSettings.switchAt.description")}
         resetAction={
-          switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
+          mixedSwitchAt || switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
             <SettingResetButton
               label={tx("switch threshold")}
               onClick={() => {
@@ -479,7 +487,7 @@ export function ProviderLimitSettings() {
                         ? t("limitSettings.switchAt.off")
                         : option === String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT)
                           ? t("limitSettings.switchAtOptionDefault", {
-                              percent: 100 - Number(option),
+                              percent: percentLeft(Number(option)),
                             })
                           : switchAtLabel(t, option)}
                     </SelectItem>
@@ -499,9 +507,10 @@ export function ProviderLimitSettings() {
                     aria-label={t("limitSettings.switchAt.customLabel")}
                     aria-invalid={switchAtInvalid || undefined}
                     aria-describedby={switchAtInvalid ? switchAtErrorId : undefined}
-                    placeholder={String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT)}
+                    placeholder={String(percentLeft(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT))}
                     value={
-                      switchAtDraft ?? (switchAt === null || mixedSwitchAt ? "" : String(switchAt))
+                      switchAtDraft ??
+                      (switchAt === null || mixedSwitchAt ? "" : String(percentLeft(switchAt)))
                     }
                     onChange={(event) => {
                       setSwitchAtDraft(event.currentTarget.value);
@@ -522,8 +531,8 @@ export function ProviderLimitSettings() {
             {switchAtInvalid ? (
               <p id={switchAtErrorId} role="alert" className="text-xs text-destructive-foreground">
                 {t("limitSettings.switchAt.customError", {
-                  min: PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN,
-                  max: PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX,
+                  min: SWITCH_AT_LEFT_MIN,
+                  max: SWITCH_AT_LEFT_MAX,
                 })}
               </p>
             ) : null}

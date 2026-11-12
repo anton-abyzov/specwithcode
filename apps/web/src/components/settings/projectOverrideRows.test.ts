@@ -126,8 +126,10 @@ describe("formatSettingValueFor", () => {
         { instanceId: "codex", model: "gpt-6.1-sol" },
       ]),
     ).toBe("claude-opus-5-5, gpt-6.1-sol");
-    expect(formatSettingValueFor("providerLimitSwitchAtPercent", 95)).toBe("95%");
-    expect(formatSettingValueFor("providerLimitSwitchAtPercent", 93)).toBe("93%");
+    // Stored as the share used, shown as the share left, like the Providers page.
+    expect(formatSettingValueFor("providerLimitSwitchAtPercent", 95)).toBe("At 5% left");
+    expect(formatSettingValueFor("providerLimitSwitchAtPercent", 93)).toBe("At 7% left");
+    expect(formatSettingValueFor("providerLimitSwitchAtPercent", 100)).toBe("At 0% left");
     // A null threshold never switches early; it is a choice, not a missing value.
     expect(formatSettingValueFor("providerLimitSwitchAtPercent", null)).toBe("Only when it stops");
   });

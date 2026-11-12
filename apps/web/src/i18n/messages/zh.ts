@@ -276,8 +276,8 @@ export const zh: Messages = {
     "选择“自动切换”时，当提供方用量最紧张的窗口只剩这么多时，下一回合会在备用模型上开始。选择“提示使用备用模型”时，会话会在此时建议切换。绝不会在回合中途切换，且只会切换到剩余更多的提供方。",
   "limitSettings.switchAt.off": "仅在停止时",
   "limitSettings.switchAt.custom": "自定义…",
-  "limitSettings.switchAt.customLabel": "切换时的用量（百分比）",
-  "limitSettings.switchAt.customUnit": "% 已用",
+  "limitSettings.switchAt.customLabel": "切换时的剩余百分比",
+  "limitSettings.switchAt.customUnit": "% 剩余",
   "limitSettings.switchAt.customError": "请输入 {min} 到 {max} 之间的整数。",
   "limitSettings.waitUnder.title": "重置临近时等待",
   "limitSettings.waitUnder.description":

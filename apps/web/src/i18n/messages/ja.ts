@@ -292,8 +292,8 @@ export const ja: Messages = {
     "「自動で切り替える」の場合、プロバイダーの最も少ない使用量ウィンドウの残りがこの値になると、次のターンはフォールバックで始まります。「フォールバックを提案」の場合は、この時点でスレッドが切り替えを提案します。ターンの途中では切り替えず、残りの多いプロバイダーにのみ切り替えます。",
   "limitSettings.switchAt.off": "止まったときのみ",
   "limitSettings.switchAt.custom": "カスタム…",
-  "limitSettings.switchAt.customLabel": "切り替える使用率（%）",
-  "limitSettings.switchAt.customUnit": "% 使用",
+  "limitSettings.switchAt.customLabel": "切り替える残りの割合（%）",
+  "limitSettings.switchAt.customUnit": "% 残り",
   "limitSettings.switchAt.customError": "{min} から {max} までの整数を入力してください。",
   "limitSettings.waitUnder.title": "リセットが近いときは待つ",
   "limitSettings.waitUnder.description":

@@ -87,7 +87,8 @@ export function formatSettingValueFor(
     return key === "sidebarAutoSettleAfterDays"
       ? `${value} ${value === 1 ? "day" : "days"}`
       : key === "providerLimitSwitchAtPercent"
-        ? `${value}%`
+        ? // Stored as the share used; read, like the setting's own choices, as the share left.
+          `At ${Math.round((100 - value) * 100) / 100}% left`
         : key === "providerLimitWaitUnderMinutes"
           ? `${value} min`
           : String(value);

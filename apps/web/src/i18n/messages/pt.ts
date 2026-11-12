@@ -312,8 +312,8 @@ export const pt: Messages = {
     "Com Trocar automaticamente, o próximo turno começa no fallback quando a janela de uso mais baixa do provedor tiver só isso restante. Com Oferecer o fallback, a thread sugere a troca nesse ponto. Nunca no meio do turno, e só para um provedor com mais restante.",
   "limitSettings.switchAt.off": "Só quando parar",
   "limitSettings.switchAt.custom": "Personalizado…",
-  "limitSettings.switchAt.customLabel": "Uso em que trocar, em porcentagem",
-  "limitSettings.switchAt.customUnit": "% usado",
+  "limitSettings.switchAt.customLabel": "Porcentagem restante em que trocar",
+  "limitSettings.switchAt.customUnit": "% restante",
   "limitSettings.switchAt.customError": "Digite um número inteiro de {min} a {max}.",
   "limitSettings.waitUnder.title": "Esperar quando o reinício estiver perto",
   "limitSettings.waitUnder.description":

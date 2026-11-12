@@ -313,8 +313,8 @@ export const fr: Messages = {
     "Avec « Basculer automatiquement », le tour suivant démarre sur le secours dès que la fenêtre d’utilisation la plus basse du fournisseur n’a plus que ce reste. Avec « Proposer le secours », le fil propose la bascule à ce moment-là. Jamais en plein tour, et seulement vers un fournisseur qui a plus de marge.",
   "limitSettings.switchAt.off": "Seulement à l’arrêt",
   "limitSettings.switchAt.custom": "Personnalisé…",
-  "limitSettings.switchAt.customLabel": "Utilisation à laquelle basculer, en pourcentage",
-  "limitSettings.switchAt.customUnit": "% utilisés",
+  "limitSettings.switchAt.customLabel": "Pourcentage restant auquel basculer",
+  "limitSettings.switchAt.customUnit": "% restants",
   "limitSettings.switchAt.customError": "Saisissez un nombre entier de {min} à {max}.",
   "limitSettings.waitUnder.title": "Attendre quand la réinitialisation est proche",
   "limitSettings.waitUnder.description":

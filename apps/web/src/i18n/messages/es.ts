@@ -308,8 +308,8 @@ export const es: Messages = {
     "Con Cambiar automáticamente, el siguiente turno empieza en el respaldo cuando a la ventana de uso más baja del proveedor solo le queda esto. Con Ofrecer el respaldo, el hilo sugiere el cambio en ese momento. Nunca a mitad de un turno, y solo a un proveedor con más margen.",
   "limitSettings.switchAt.off": "Solo cuando se detiene",
   "limitSettings.switchAt.custom": "Personalizado…",
-  "limitSettings.switchAt.customLabel": "Uso al que cambiar, en porcentaje",
-  "limitSettings.switchAt.customUnit": "% usado",
+  "limitSettings.switchAt.customLabel": "Porcentaje restante al que cambiar",
+  "limitSettings.switchAt.customUnit": "% restante",
   "limitSettings.switchAt.customError": "Escribe un número entero de {min} a {max}.",
   "limitSettings.waitUnder.title": "Esperar si el reinicio está cerca",
   "limitSettings.waitUnder.description":

@@ -312,8 +312,8 @@ export const en = {
     "With Switch automatically, the next turn starts on the fallback once the provider's lowest usage window has only this much left. With Offer the fallback, the thread suggests the switch at this point instead. Never mid-turn, and only to a provider with more left.",
   "limitSettings.switchAt.off": "Only when it stops",
   "limitSettings.switchAt.custom": "Custom…",
-  "limitSettings.switchAt.customLabel": "Usage to switch at, in percent",
-  "limitSettings.switchAt.customUnit": "% used",
+  "limitSettings.switchAt.customLabel": "Share left to switch at, in percent",
+  "limitSettings.switchAt.customUnit": "% left",
   "limitSettings.switchAt.customError": "Enter a whole number from {min} to {max}.",
   "limitSettings.waitUnder.title": "Wait when the reset is close",
   "limitSettings.waitUnder.description":
