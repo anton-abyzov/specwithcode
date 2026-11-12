@@ -3,10 +3,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 /** The part of the settings service that holds machine names. */
-export interface MachineNameSettings {
+export interface MachineNameSettings<E> {
   readonly getSettings: Effect.Effect<
     { readonly machineNicknames?: Readonly<Record<string, { readonly name: string }>> },
-    unknown
+    E
   >;
 }
 
@@ -15,7 +15,7 @@ export interface MachineNameSettings {
  * ask for these names, so every text that names a machine reads them here. Empty when the
  * settings cannot be read: the name a machine joined with is used then.
  */
-export const ownerMachineNames = (settings: Option.Option<MachineNameSettings>) =>
+export const ownerMachineNames = <E>(settings: Option.Option<MachineNameSettings<E>>) =>
   Effect.gen(function* () {
     const names = new Map<string, string>();
     if (Option.isNone(settings)) return names;
