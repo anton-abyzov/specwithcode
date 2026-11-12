@@ -61,6 +61,7 @@ import {
 import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
+import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -516,13 +517,22 @@ function EnvironmentNotifications({
             if (!inApp) {
               const { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds } =
                 presence.current;
-              const ownerMachineId = attentionOwnerMachine({
-                environmentId,
-                id: currentRaw.id,
-                ownerMachineId: currentRaw.ownerMachineId,
-              });
+              // A remote worker's owner is the coordinator machine that launched
+              // it, as the sidebar and Overview last published it. Before their
+              // first reading, or when no such view is mounted, the map is empty
+              // and the owner is the thread's own machine, as before.
+              // Read after the target, so a map published meanwhile counts.
+              const read = await readNotificationTarget(environmentId);
+              const ownerMachineId = attentionOwnerMachine(
+                {
+                  environmentId,
+                  id: currentRaw.id,
+                  ownerMachineId: currentRaw.ownerMachineId,
+                },
+                currentRemoteWorkerLaunchers(),
+              );
               const delivery = decideNotificationDelivery({
-                read: await readNotificationTarget(environmentId),
+                read,
                 ownClientId: backgroundActivityClientId(),
                 ownEnvironmentId,
                 servingEnvironmentId: environmentId,
