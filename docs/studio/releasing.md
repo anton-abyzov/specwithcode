@@ -87,13 +87,22 @@ the self-hosted **M1** release Mac, so a release needs neither the M4 nor anyone
 how releases are made; ask for one with:
 
 ```bash
-bash scripts/release/request-release.sh --by "<who asks>"   # dispatches it with no version
+bash scripts/release/request-release.sh --by "<who asks>"   # joins the waiting run, or dispatches one with no version
 bash scripts/release/request-release.sh --released <commit>   # exit 0 once a release holds the commit
 bash scripts/release/request-release.sh --dry-run             # what a run would decide now; dispatches nothing
 ```
 
 `--wait` after `--by` stays until the run ends and exits with its result; a release takes about 25
 minutes, so run it in the background.
+
+A request joins the run that is already waiting for its turn, when there is one. That run has not
+read main yet, so it releases everything main holds when it starts, and one more run behind it
+would find nothing left. Sessions ask more often than a release takes (ten runs were waiting on
+2026-11-12, and a run asked for at 21:40 UTC was still waiting an hour after 1.0.268 had shipped
+its change), so this keeps one run waiting behind the one that releases. A run is joined only while it has no jobs;
+when GitHub does not answer, the request dispatches a run of its own. `--wait` on a joined run
+checks afterwards that the release holds the head of main the request saw, and asks once more
+when it does not.
 
 Nobody who dispatches it picks the version, and nobody needs to check whether a release is
 running. Several people and agent sessions release from this repository, and each used to compute

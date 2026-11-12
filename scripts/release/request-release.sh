@@ -3,13 +3,16 @@
 # sessions alike: nobody picks a version or checks whether a release is running first.
 #
 #   bash scripts/release/request-release.sh [--by NAME] [--wait]
-#       Dispatches Release macOS with no version and prints the run. The run waits its turn, then
-#       releases what main holds as the next version, or ends green at once when main is already
-#       released (.github/workflows/release-macos.yml, scripts/release/release_plan.py). Any number
-#       of these may be dispatched; one run cuts each version. NAME (a session or thread name) is
-#       shown in the run's title, so runs can be told apart. --wait stays until the run ends and
-#       exits with its result. A release takes about 25 minutes, longer behind others, so run
-#       --wait in the background.
+#       Asks for a release of what main holds and prints the run that will make it. When a run is
+#       already waiting for its turn, the request joins that run: it has not read main yet, so it
+#       releases everything main holds when it starts, and one more run behind it would find nothing
+#       left. Otherwise it dispatches Release macOS with no version. The run releases main as the
+#       next version, or ends green at once when main is already released
+#       (.github/workflows/release-macos.yml, scripts/release/release_plan.py). Any number of
+#       sessions may ask; one run cuts each version. NAME (a session or thread name) is shown in
+#       the title of a run this request dispatches. --wait stays until the run ends and exits with
+#       its result. A release takes about 25 minutes, longer behind another, so run --wait in the
+#       background.
 #   bash scripts/release/request-release.sh --dry-run
 #       Prints what a run dispatched now would decide. Dispatches nothing.
 #   bash scripts/release/request-release.sh --released COMMIT
@@ -80,26 +83,75 @@ if [ "$MODE" = dry ]; then
   exec python3 -B "$HERE/release_plan.py" plan --repo "$REPO" --branch "$REF"
 fi
 
-# A label unique to this dispatch, so its run can be found among others dispatched at the same time.
-# Plain characters only: the label goes into the run's title and into the filter that finds it.
-by="$(printf '%s' "${BY:-$(whoami)@$(hostname -s)}" | tr -cd 'A-Za-z0-9 ._@:/-' | cut -c1-60)"
-label="${by:-someone} $(date -u +%H%M%S)-$RANDOM"
-gh workflow run release-macos.yml -R "$REPO" --ref "$REF" -f requested_by="$label" > /dev/null
-run="" tries=0
-while [ -z "$run" ] && [ "$tries" -lt 10 ]; do
-  sleep 2
-  run="$(gh run list -R "$REPO" --workflow release-macos.yml --event workflow_dispatch --limit 30 \
-    --json databaseId,displayTitle --jq "[.[] | select(.displayTitle | endswith(\"$label\"))][0].databaseId // empty" \
-    2> /dev/null || true)"
-  tries=$((tries + 1))
-done
-[ -n "$run" ] || die "dispatched, but the run did not show up in 20s; look for '$label' in: gh run list -R $REPO --workflow release-macos.yml"
-echo "Requested a release of $REF: run $run, https://github.com/$REPO/actions/runs/$run"
-echo "It waits for the releases before it. Its 'Plan the release' job names the version, or says main is already released."
-echo "Check that your change shipped: bash scripts/release/request-release.sh --released <commit>"
-if [ "$WAIT" -eq 1 ]; then
+# The run that waits for its turn and has not started: no job of it exists yet, so it has not read
+# main. The oldest one, since it starts first. Prints nothing when there is none, or when GitHub
+# did not answer; the request then dispatches a run of its own, which is always safe.
+waiting_run() {
+  local id
+  id="$(gh run list -R "$REPO" --workflow release-macos.yml --branch "$REF" --event workflow_dispatch \
+    --status pending --limit 50 --json databaseId,displayTitle \
+    --jq '[.[] | select(.displayTitle | startswith("Release macOS next"))] | last | .databaseId // empty' \
+    2> /dev/null)" || return 0
+  [ -n "$id" ] || return 0
+  [ "$(gh run view "$id" -R "$REPO" --json status,jobs --jq '"\(.status) \(.jobs | length)"' 2> /dev/null)" = "pending 0" ] || return 0
+  echo "$id"
+}
+
+# Sets run and joined.
+request() {
+  run="$(waiting_run)" joined=0
+  if [ -n "$run" ]; then
+    joined=1
+    echo "Joined run $run, which waits for its turn: https://github.com/$REPO/actions/runs/$run"
+    echo "It has not started, so it releases what $REF holds when it does. No new run was dispatched."
+    return 0
+  fi
+  # A label unique to this dispatch, so its run can be found among others dispatched at the same time.
+  # Plain characters only: the label goes into the run's title and into the filter that finds it.
+  local by label tries=0
+  by="$(printf '%s' "${BY:-$(whoami)@$(hostname -s)}" | tr -cd 'A-Za-z0-9 ._@:/-' | cut -c1-60)"
+  label="${by:-someone} $(date -u +%H%M%S)-$RANDOM"
+  gh workflow run release-macos.yml -R "$REPO" --ref "$REF" -f requested_by="$label" > /dev/null
+  while [ -z "$run" ] && [ "$tries" -lt 10 ]; do
+    sleep "${REQUEST_POLL_SECONDS:-2}"
+    run="$(gh run list -R "$REPO" --workflow release-macos.yml --event workflow_dispatch --limit 30 \
+      --json databaseId,displayTitle --jq "[.[] | select(.displayTitle | endswith(\"$label\"))][0].databaseId // empty" \
+      2> /dev/null || true)"
+    tries=$((tries + 1))
+  done
+  [ -n "$run" ] || die "dispatched, but the run did not show up; look for '$label' in: gh run list -R $REPO --workflow release-macos.yml"
+  echo "Requested a release of $REF: run $run, https://github.com/$REPO/actions/runs/$run"
+  echo "It waits for the release before it, if one is running."
+}
+
+wait_for_run() {
   gh run watch "$run" -R "$REPO" --exit-status --interval 30 > /dev/null ||
     die "run $run did not succeed: gh run view $run -R $REPO --log-failed"
+}
+
+# What this request must see released: the head of the branch before the request was made.
+head_sha=""
+if [ "$WAIT" -eq 1 ]; then
+  head_sha="$(gh api "repos/$REPO/commits/$REF" --jq .sha 2> /dev/null)" || die "cannot read $REF on $REPO"
+fi
+request
+echo "Its 'Plan the release' job names the version, or says $REF is already released."
+echo "Check that your change shipped: bash scripts/release/request-release.sh --released <commit>"
+if [ "$WAIT" -eq 1 ]; then
+  wait_for_run
+  newest="$(gh release view -R "$REPO" --json tagName --jq .tagName)"
+  if [ "$joined" -eq 1 ]; then
+    # A joined run is someone else's. It released this request's commit unless it had already
+    # started when GitHub still listed it as waiting, or it finished an older release first.
+    left="$(gh api "repos/$REPO/compare/$newest...$head_sha" --jq '.files | length' 2> /dev/null)" ||
+      die "run $run finished, but $head_sha could not be compared with $newest; check with --released"
+    if [ "$left" != 0 ]; then
+      echo "Run $run finished as $newest without ${head_sha:0:12}; asking once more."
+      request
+      wait_for_run
+      newest="$(gh release view -R "$REPO" --json tagName --jq .tagName)"
+    fi
+  fi
   echo "Run $run finished: $(gh run view "$run" -R "$REPO" --json jobs \
-    --jq '[.jobs[] | select(.name == "Plan the release")][0].conclusion // "unknown"') plan; newest release $(gh release view -R "$REPO" --json tagName --jq .tagName)"
+    --jq '[.jobs[] | select(.name == "Plan the release")][0].conclusion // "unknown"') plan; newest release $newest"
 fi

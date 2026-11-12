@@ -496,14 +496,30 @@ printf '%s\n' "$*" >> "$GH_LOG"
 case "$1 $2" in
   "api --paginate") for patch in $(seq 20 -1 1); do echo "refs/tags/v1.0.$patch"; done; echo refs/tags/v1.0.5-rc1 ;;
   "api repos/"*/commits/*) echo sha ;;
+  "api repos/"*...sha) echo "${GH_LEFT:-0}" ;;
   "api repos/"*)
     version="${2#*compare/v}" version="${version%%...*}"
     if [ "${version##*.}" = "${GH_BROKEN:-}" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ "${version##*.}" -ge "$GH_FIRST" ]; then echo behind; else echo ahead; fi ;;
   "workflow run") ;;
   "run list")
-    label="$(sed -n 's/.*requested_by=//p' "$GH_LOG" | tail -1)"
-    case "$*" in *"endswith(\"$label\")"*) echo 777 ;; esac ;;
+    case "$*" in
+      *"--status pending"*)
+        # One answer per line of GH_WAITING, in order; the last line repeats.
+        asked="$(grep -c -e '--status pending' "$GH_LOG")"
+        [ -n "${GH_WAITING:-}" ] || exit 0
+        [ "$GH_WAITING" != broken ] || exit 1
+        printf '%s\n' "$GH_WAITING" | awk -v n="$asked" '{ last = $0 } NR == n { print; found = 1 } END { if (!found) print last }' | grep . || true ;;
+      *) label="$(sed -n 's/.*requested_by=//p' "$GH_LOG" | tail -1)"
+         case "$*" in *"endswith(\"$label\")"*) echo 777 ;; esac ;;
+    esac ;;
+  "run view")
+    case "$*" in
+      *status,jobs*) [ "${GH_STATE:-}" != broken ] || exit 1; echo "${GH_STATE:-pending 0}" ;;
+      *) echo success ;;
+    esac ;;
+  "run watch") exit "${GH_WATCH:-0}" ;;
+  "release view") echo v1.0.20 ;;
   *) exit 1 ;;
 esac
 '''
@@ -512,14 +528,15 @@ esac
 class RequestHelper(unittest.TestCase):
     """request-release.sh, with gh replaced by a stub on PATH."""
 
-    def run_helper(self, *args, first=7, broken=''):
+    def run_helper(self, *args, first=7, broken='', **gh):
         with tempfile.TemporaryDirectory() as tmp:
             stub, log = pathlib.Path(tmp, 'gh'), pathlib.Path(tmp, 'log')
             stub.write_text(GH_STUB)
             stub.chmod(0o755)
             log.touch()
             env = dict(os.environ, PATH=f"{tmp}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log),
-                       GH_FIRST=str(first), GH_BROKEN=broken, RELEASE_REPO='o/r')
+                       GH_FIRST=str(first), GH_BROKEN=broken, RELEASE_REPO='o/r',
+                       REQUEST_POLL_SECONDS='0', **{f'GH_{name.upper()}': value for name, value in gh.items()})
             done = subprocess.run(['bash', str(HERE / 'request-release.sh'), *args],
                                   capture_output=True, text=True, env=env, check=False)
             return done.returncode, done.stdout + done.stderr, log.read_text().splitlines()
@@ -552,6 +569,51 @@ class RequestHelper(unittest.TestCase):
         self.assertEqual(len(dispatch), 1)
         self.assertNotIn('version=', dispatch[0])
         self.assertRegex(dispatch[0], r'requested_by=thread x id  \d{6}-\d+$')
+
+    def test_a_request_joins_the_run_that_already_waits(self):
+        code, said, calls = self.run_helper('--by', 'x', waiting='555')
+        self.assertEqual(code, 0, said)
+        self.assertIn('Joined run 555', said)
+        self.assertEqual([call for call in calls if call.startswith('workflow run')], [])
+
+    def test_a_run_that_started_or_could_not_be_read_is_not_joined(self):
+        # Listed as waiting, but it has jobs by now: it may have read main before this request.
+        for gh in ({'waiting': '555', 'state': 'in_progress 1'}, {'waiting': '555', 'state': 'pending 1'},
+                   {'waiting': '555', 'state': 'broken'}, {'waiting': 'broken'}):
+            code, said, calls = self.run_helper(**gh)
+            self.assertEqual(code, 0, said)
+            self.assertIn('Requested a release of main: run 777', said, gh)
+            self.assertEqual(sum(call.startswith('workflow run') for call in calls), 1, gh)
+
+    def test_waiting_on_a_joined_run_ends_with_it_when_it_released_the_commit(self):
+        code, said, calls = self.run_helper('--wait', waiting='555')
+        self.assertEqual(code, 0, said)
+        self.assertIn('Run 555 finished: success plan; newest release v1.0.20', said)
+        self.assertEqual([call for call in calls if call.startswith('workflow run')], [])
+        self.assertTrue(any(call.startswith('run watch 555') for call in calls))
+
+    def test_waiting_asks_once_more_when_the_joined_run_left_the_commit_out(self):
+        # The joined run finished without the commit and nothing waits now: a run of its own.
+        code, said, calls = self.run_helper('--wait', waiting='555\n', left='3')
+        self.assertEqual(code, 0, said)
+        self.assertIn('Run 555 finished as v1.0.20 without sha; asking once more.', said)
+        self.assertIn('Run 777 finished', said)
+        self.assertEqual(sum(call.startswith('workflow run') for call in calls), 1)
+        self.assertEqual([call.split()[2] for call in calls if call.startswith('run watch')], ['555', '777'])
+
+    def test_waiting_reports_a_run_that_failed_or_a_check_github_did_not_answer(self):
+        code, said, _ = self.run_helper('--wait', waiting='555', watch='1')
+        self.assertEqual(code, 1)
+        self.assertIn('run 555 did not succeed', said)
+        code, said, _ = self.run_helper('--wait', watch='1')
+        self.assertEqual(code, 1)
+        self.assertIn('run 777 did not succeed', said)
+
+    def test_waiting_on_its_own_run_does_not_ask_again(self):
+        code, said, calls = self.run_helper('--wait', left='3')
+        self.assertEqual(code, 0, said)
+        self.assertEqual(sum(call.startswith('workflow run') for call in calls), 1)
+        self.assertEqual(sum(call.startswith('run watch') for call in calls), 1)
 
     def test_help_prints_only_the_header(self):
         code, said, calls = self.run_helper('--help')
