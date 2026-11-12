@@ -620,6 +620,8 @@ export interface EnvironmentSessionPrincipalShape {
   readonly scopes: ReadonlySet<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  /** What the client said it is, such as a phone. Self-reported. */
+  readonly clientDeviceType?: string;
 }
 
 export class EnvironmentAuthenticatedPrincipal extends Context.Service<

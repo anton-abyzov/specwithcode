@@ -125,6 +125,8 @@ export function MachinesSettingsPanel() {
   const [allowFirst, setAllowFirst] = useState<boolean | null>(null);
   if (allowFirst === null && grants.snapshot && !grants.loading && !grants.failed)
     setAllowFirst(grants.snapshot.grants.length === 0);
+  // Until the first read says where it goes, the section waits instead of jumping.
+  const grantsPlacementPending = allowFirst === null && grants.loading && !grants.snapshot;
 
   const rows = useMemo(
     () =>
@@ -242,7 +244,7 @@ export function MachinesSettingsPanel() {
         }}
       />
       <AwayAccessRequestsAll />
-      {allowFirst === true ? null : workGrants}
+      {allowFirst === true || grantsPlacementPending ? null : workGrants}
       {fleet.primaryEnvironmentId ? (
         <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
       ) : null}

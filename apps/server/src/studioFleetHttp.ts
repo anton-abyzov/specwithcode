@@ -30,7 +30,7 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
 import { currentTeamRules } from "./teamRules/TeamRules.ts";
-import { isConnectSubject } from "./teamRules/TeamRulesReach.ts";
+import { isConnectSubject, isPhoneSession } from "./teamRules/TeamRulesReach.ts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -770,6 +770,13 @@ export const layer = HttpApiBuilder.group(
               return yield* new EnvironmentHttpForbiddenError({
                 message:
                   "Only a sign-in through this machine's own SpecWithCode Connect account can add a machine this way. Use Join a main machine on the other machine, then Add a machine here.",
+              });
+            // A phone signs in through Connect too. It is known by its own word,
+            // so this keeps the app's phones out of it, not a forged client.
+            if (isPhoneSession({ subject: session.subject, deviceType: session.clientDeviceType }))
+              return yield* new EnvironmentHttpForbiddenError({
+                message:
+                  "A phone cannot add a machine. Open the SpecWithCode desktop app on the machine that should take work, then choose Allow there.",
               });
             yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
             yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "connect"));

@@ -374,7 +374,8 @@ export async function joinAccountMachineForWorkers(input: {
         "EnvironmentHttpBadRequestError",
         "EnvironmentHttpForbiddenError",
         "EnvironmentHttpInternalServerError",
-      ]) ?? `${input.coordinatorLabel} did not answer. Check that it is online, then retry.`,
+      ]) ??
+        `${input.coordinatorLabel} did not answer in time. Check that it is online, then retry; a retry is safe if it added this machine anyway. Afterwards, under Settings > Machines > Authorized clients on this machine, revoke a setup session it no longer uses.`,
     );
   }
   return result.value;

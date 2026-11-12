@@ -152,6 +152,8 @@ async function api(
     readonly connectOrigin?: string;
     /** What made the session; a sign-in through SpecWithCode Connect is `cloud-connect`. */
     readonly subject?: string;
+    /** The device the session's client says it is. */
+    readonly deviceType?: string;
   } = {},
 ) {
   const secrets: Record<string, string> =
@@ -299,6 +301,7 @@ async function api(
             ? Effect.succeed({
                 sessionId: AuthSessionId.make("synthetic-session"),
                 subject: options.subject ?? "fixture",
+                ...(options.deviceType ? { clientDeviceType: options.deviceType } : {}),
                 ...(coordinatorEnvironmentId
                   ? {
                       principal: {
@@ -944,6 +947,17 @@ describe("a machine of this Connect account handing over its line", () => {
     );
     // A Connect sign-in that may only read.
     const reader = await connectApi([AuthOrchestrationReadScope]);
+    // A phone signs in through the same Connect account.
+    const phone = await api(
+      AuthStandardClientScopes,
+      false,
+      ORIGIN,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { ...CONNECT, deviceType: "mobile" },
+    );
     try {
       const refused = await owner.workers("account-join", join);
       expect(refused.status).toBe(403);
@@ -951,6 +965,9 @@ describe("a machine of this Connect account handing over its line", () => {
       expect((await coordinator.workers("account-join", join, bearer)).status).toBe(403);
       expect((await reader.workers("account-join", join, bearer)).status).toBe(403);
       expect((await reader.workers("account-join", join, {})).status).toBe(401);
+      const fromPhone = await phone.workers("account-join", join, bearer);
+      expect(fromPhone.status).toBe(403);
+      expect(await fromPhone.text()).toContain("A phone cannot add a machine");
       // The owner-only routes still refuse the Connect sign-in.
       const connect = await connectApi(AuthStandardClientScopes);
       try {
@@ -966,6 +983,7 @@ describe("a machine of this Connect account handing over its line", () => {
       await owner.dispose();
       await coordinator.dispose();
       await reader.dispose();
+      await phone.dispose();
     }
   });
 });

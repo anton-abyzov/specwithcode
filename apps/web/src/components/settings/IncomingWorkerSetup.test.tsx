@@ -22,15 +22,19 @@ vi.mock("../../state/environments", () => ({
   useEnvironments: vi.fn(),
   useRelayEnvironmentDiscovery: vi.fn(),
 }));
-vi.mock("../../connection/catalog", () => ({ environmentCatalog: {} }));
-vi.mock("../../state/relay", () => ({ relayEnvironmentDiscovery: {} }));
+vi.mock("../../connection/catalog", () => ({ environmentCatalog: { register: "register" } }));
+vi.mock("../../state/relay", () => ({ relayEnvironmentDiscovery: { refresh: "refresh" } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
 vi.mock("../../studio/machineNickname", () => ({ useMachineNicknames: vi.fn() }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
 vi.mock("../../env", () => ({ isElectron: true }));
+import * as Cause from "effect/Cause";
 import { requestConfirmDialog } from "../../confirmDialog";
+import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   addVisibleMachineToStudioFleet,
   allowIncomingStudioFleetWorkers,
@@ -42,6 +46,7 @@ import {
   accountMachinesToOffer,
   IncomingWorkerAction,
   IncomingWorkerSaved,
+  IncomingWorkerSetup,
   setUpIncomingWorkers,
 } from "./IncomingWorkerSetup";
 const here = EnvironmentId.make("m4");
@@ -220,6 +225,69 @@ describe("the account's machines the card offers", () => {
   });
   it("offers nothing when the account has no other machine", () => {
     expect(accountMachinesToOffer({ discovered: [record("m4")], here, known: [] })).toEqual([]);
+  });
+});
+describe("choosing a machine of the account on the card", () => {
+  const m5 = EnvironmentId.make("m5");
+  async function card(open: ReturnType<typeof vi.fn>) {
+    vi.mocked(useEnvironments).mockReturnValue({
+      environments: [{ environmentId: here, label: "M4", connection: { phase: "connected" } }],
+    } as never);
+    vi.mocked(useRelayEnvironmentDiscovery).mockReturnValue({
+      environments: new Map([[m5, { environment: { environmentId: m5, label: "M5" } }]]),
+      refreshing: false,
+      offline: false,
+    } as never);
+    vi.mocked(useMachineNicknames).mockReturnValue(
+      ((_id: string, label?: string | null) => label ?? "") as never,
+    );
+    const refresh = vi.fn(async () => ({ _tag: "Success" }));
+    vi.mocked(useAtomCommand).mockImplementation(((command: unknown) =>
+      command === "register" ? open : refresh) as never);
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerSetup
+          environmentId={here}
+          snapshot={{ grants: [], projects: [], accounts: [] } as never}
+          onGranted={vi.fn()}
+        />,
+      );
+    });
+    const select = () => renderer!.root.findByProps({ "aria-label": "Machine sending work" });
+    return { renderer: renderer!, select, refresh };
+  }
+  it("lists the account's machine and opens it through Connect when chosen", async () => {
+    const open = vi.fn(async () => ({ _tag: "Success" }));
+    const view = await card(open);
+    expect(view.refresh).toHaveBeenCalled();
+    expect(
+      view
+        .select()
+        .findAllByType("option")
+        .map((option) => option.props.value),
+    ).toEqual(["", "m5"]);
+    await act(async () => view.select().props.onChange({ target: { value: "m5" } }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ environmentId: m5, label: "M5" }),
+      }),
+    );
+    expect(view.select().props.value).toBe("m5");
+    expect(view.renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+    await act(async () => view.renderer.unmount());
+  });
+  it("goes back to no choice when the machine cannot be opened, so it can be chosen again", async () => {
+    const open = vi.fn(async () => ({ _tag: "Failure", cause: Cause.fail("offline") }));
+    const view = await card(open);
+    await act(async () => view.select().props.onChange({ target: { value: "m5" } }));
+    expect(view.select().props.value).toBe("");
+    expect(view.renderer.root.findByProps({ role: "alert" }).props.children).toContain(
+      "Could not open M5 through SpecWithCode Connect",
+    );
+    await act(async () => view.select().props.onChange({ target: { value: "m5" } }));
+    expect(open).toHaveBeenCalledTimes(2);
+    await act(async () => view.renderer.unmount());
   });
 });
 describe("incoming worker setup view", () => {

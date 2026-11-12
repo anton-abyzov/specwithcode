@@ -195,7 +195,10 @@ export function IncomingWorkerSetup({
       }),
     );
     setOpening(null);
-    if (result._tag !== "Success" && !isAtomCommandInterrupted(result))
+    if (result._tag === "Success") return;
+    // Back to no choice: picking the same machine again must be a change.
+    setSelected(null);
+    if (!isAtomCommandInterrupted(result))
       setOpenError(
         tx(
           "Could not open {label} through SpecWithCode Connect. Check that it is online, then choose it again.",
