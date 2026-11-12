@@ -18,6 +18,7 @@ const fresh: ConnectAtSignInInput = {
   linkStatePending: false,
   linkStateFailed: false,
   turnedOffAccounts: [],
+  turnedOffUnreadable: false,
   wizardOptOutAccounts: [],
   phoneCardPending: false,
 };
@@ -39,6 +40,14 @@ describe("SpecWithCode Connect at sign-in", () => {
     expect(connectAtSignIn({ ...fresh, turnedOffAccounts: ["user_a"] })).toBe("skip");
     // Another account's choice is not this account's.
     expect(connectAtSignIn({ ...fresh, turnedOffAccounts: ["user_b"] })).toBe("turn-on");
+  });
+  it("does not turn it on when the saved off choices cannot be read", () => {
+    // The unreadable value may be this account's off choice: nothing is assumed.
+    expect(connectAtSignIn({ ...fresh, turnedOffUnreadable: true })).toBe("skip");
+    // It is decided before anything is waited for, so it never turns on later either.
+    expect(connectAtSignIn({ ...fresh, turnedOffUnreadable: true, sessionKnown: false })).toBe(
+      "skip",
+    );
   });
   it("leaves alone an account that chose not to see the wizard again", () => {
     expect(connectAtSignIn({ ...fresh, wizardOptOutAccounts: ["user_a"] })).toBe("skip");

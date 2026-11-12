@@ -1872,7 +1872,6 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   ) : null;
   const {
     isSignedIn,
-    userId: connectAccount,
     linkState: primaryCloudLinkState,
     managedTunnelActive,
     publishAgentActivity,
@@ -1881,7 +1880,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     reconcileCloudState,
   } = useCloudLinkController();
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
-  const rememberConnectChoice = useRememberConnectChoice(connectAccount);
+  const rememberConnectChoice = useRememberConnectChoice();
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
