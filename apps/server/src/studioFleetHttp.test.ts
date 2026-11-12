@@ -917,6 +917,25 @@ describe("a machine of this Connect account handing over its line", () => {
       await main.dispose();
     }
   });
+  it("saves access management the token holds there, so the grant renews by itself", async () => {
+    const machine = fakeMachine({
+      environmentId: "env-m2",
+      origins: [M2_ORIGIN],
+      permissions: [...AuthStandardClientScopes, AuthAccessWriteScope],
+    });
+    vi.stubGlobal("fetch", machine.fetcher);
+    const main = await connectApi(AuthStandardClientScopes);
+    try {
+      const response = await main.workers("account-join", join, bearer);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        id: "m2",
+        workers: { status: "allowed", renewable: true },
+      });
+    } finally {
+      await main.dispose();
+    }
+  });
   it("takes back the machine when allowing its workers fails", async () => {
     const machine = fakeMachine({ environmentId: "env-m2", origins: [M2_ORIGIN] });
     vi.stubGlobal("fetch", machine.fetcher);

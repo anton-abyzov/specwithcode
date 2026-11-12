@@ -356,7 +356,11 @@ describe("incoming worker setup view", () => {
     expect(addVisibleMachineToStudioFleet).not.toHaveBeenCalled();
     expect(allowStudioFleetWorkers).not.toHaveBeenCalled();
     expect(allowIncomingStudioFleetWorkers).not.toHaveBeenCalled();
-    expect(onGranted).toHaveBeenCalledExactlyOnceWith({ access: "full-access", expiresAt: null });
+    expect(onGranted).toHaveBeenCalledExactlyOnceWith({
+      access: "full-access",
+      expiresAt: null,
+      renewable: true,
+    });
     await act(async () => renderer!.unmount());
   });
   it("reports an account join m1 did not confirm and grants nothing", async () => {
@@ -455,7 +459,11 @@ describe("incoming worker setup view", () => {
       id: "m4",
       access: "full-access",
     });
-    expect(onGranted).toHaveBeenCalledExactlyOnceWith({ access: "full-access", expiresAt: null });
+    expect(onGranted).toHaveBeenCalledExactlyOnceWith({
+      access: "full-access",
+      expiresAt: null,
+      renewable: true,
+    });
     await act(async () => renderer!.unmount());
   });
   it("asks this machine's server to have m1 add and allow it when m1 cannot be managed here", async () => {
@@ -489,7 +497,11 @@ describe("incoming worker setup view", () => {
     );
     expect(addVisibleMachineToStudioFleet).not.toHaveBeenCalled();
     expect(allowStudioFleetWorkers).not.toHaveBeenCalled();
-    expect(onGranted).toHaveBeenCalledExactlyOnceWith({ access: "full-access", expiresAt: null });
+    expect(onGranted).toHaveBeenCalledExactlyOnceWith({
+      access: "full-access",
+      expiresAt: null,
+      renewable: true,
+    });
     await act(async () => renderer!.unmount());
   });
   it("shows the saved access, its expiry and the sending side as done", () => {
@@ -502,6 +514,18 @@ describe("incoming worker setup view", () => {
     );
     expect(html).toContain("m1 can run work here · Full access · until November 6, 2027");
     expect(html).toContain("On m1: done");
+  });
+  it("says a grant that machine renews itself has no end date", () => {
+    const html = renderToStaticMarkup(
+      <IncomingWorkerSaved
+        coordinatorLabel="m1"
+        access="full-access"
+        expiresAt="2027-11-06T12:00:00.000Z"
+        renewable
+      />,
+    );
+    expect(html).toContain("m1 can run work here · Full access · renews by itself");
+    expect(html).not.toContain("until");
   });
   it("leaves the expiry out when none is known", () => {
     const html = renderToStaticMarkup(

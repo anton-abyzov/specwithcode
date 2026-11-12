@@ -9,6 +9,7 @@ import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - a random temp name keeps two writers from sharing one file.
 import * as NodeCrypto from "node:crypto";
 import {
+  AuthAccessWriteScope,
   AuthSessionId,
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
@@ -25,7 +26,6 @@ import {
 } from "./fleet/fleetTransport.ts";
 import { join } from "./nodePath.ts";
 import {
-  assertManagementTokenCanPair,
   FLEET_CONFIG_FILE,
   type FleetFetch,
   FleetError,
@@ -33,6 +33,7 @@ import {
   parseFleetConfig,
   readBoundedJson,
   readFleetConfigSource,
+  readManagementScopes,
 } from "./studioFleet.ts";
 import {
   revokeWorkerSessions,
@@ -297,6 +298,12 @@ export async function addFleetMachine(input: {
   readonly fetcher?: FleetFetch;
   /** This machine's environment id; a v2 invitation is redeemed for it. */
   readonly localEnvironmentId?: string | undefined;
+  /**
+   * For a machine of the owner's own account: save access management among
+   * its scopes when the token holds it there, so a worker grant allowed for it
+   * renews by itself instead of lapsing until the owner allows it again.
+   */
+  readonly renewWorkers?: boolean | undefined;
 }): Promise<FleetAddResult> {
   const invite = decodeFleetJoinCode(input.code);
   // Refused before anything is sent: a v2 line is spent by redeeming it.
@@ -383,7 +390,18 @@ export async function addFleetMachine(input: {
       ? document.machines[index]!.scopes
       : AuthStandardClientScopes
   ) as ReadonlyArray<AuthEnvironmentScope>;
-  await assertManagementTokenCanPair(link, { ...machine, managementToken }, wantedScopes);
+  const held = await readManagementScopes(link, { ...machine, managementToken });
+  if (held !== null && !wantedScopes.every((scope) => held.has(scope)))
+    throw new FleetError("invitation-limited");
+  // Renewal asks that machine with access management, so it is saved only when
+  // the token says it holds it. A fleet that lets operators connect cannot save it.
+  const savedScopes =
+    input.renewWorkers === true &&
+    held?.has(AuthAccessWriteScope) === true &&
+    document.allowConnectFrom === undefined &&
+    !wantedScopes.includes(AuthAccessWriteScope)
+      ? { scopes: [...wantedScopes, AuthAccessWriteScope] }
+      : {};
 
   let result: FleetAddResult;
   const machines = [...document.machines];
@@ -404,6 +422,7 @@ export async function addFleetMachine(input: {
       url: savedUrl,
       ...(savedConnectUrl === undefined ? {} : { connectUrl: savedConnectUrl }),
       managementToken,
+      ...savedScopes,
       ...(input.label === undefined ? {} : { label }),
     };
     machines[index] = next;
@@ -426,6 +445,7 @@ export async function addFleetMachine(input: {
       url: invite.url,
       ...(connectUrl === undefined ? {} : { connectUrl }),
       managementToken,
+      ...savedScopes,
     });
     result = {
       id,
