@@ -11,6 +11,7 @@ export const ja: Messages = {
   "wizard.title": "SpecWithCode をセットアップ",
   "wizard.stage.connect": "コンピューター",
   "wizard.stage.agents": "エージェント",
+  "wizard.stage.access": "アクセス",
   "wizard.stage.projects": "プロジェクト",
   "wizard.close": "セットアップを閉じる",
   "wizard.noun.mac": "Mac",
@@ -93,6 +94,44 @@ export const ja: Messages = {
   "wizard.import.otherFolders": "その他のフォルダー",
   "wizard.import.folderCount": { other: "{count} 個のフォルダー" },
   "wizard.import.now": "今",
+
+  "wizard.access.title": "エージェントに確認なしで作業させますか？",
+  "wizard.access.description":
+    "新しいチャットの開始時の設定です。各チャットのメッセージ欄から、または後で設定から変更できます。",
+  "wizard.access.fullAccess": "フルアクセス",
+  "wizard.access.recommended": "おすすめ",
+  "wizard.access.allowsIntro":
+    "エージェントが自分でタスクを完了します。事前に確認せずに次のことができます：",
+  "wizard.access.allowCommands":
+    "ターミナルコマンドの実行：パッケージのインストール、テストの実行、git の使用",
+  "wizard.access.allowFiles": "コンピューター上のファイルの作成、変更、削除",
+  "wizard.access.allowNetwork": "ネットワークと接続済みツールの使用",
+  "wizard.access.stillStops":
+    "あなたの判断、サインイン、メール送信などのアプリ承認では引き続き停止します",
+  "wizard.access.supervised": "監督付き",
+  "wizard.access.supervisedDescription":
+    "エージェントはコマンドやファイル変更のたびに確認します。作業はあなたの返答を待ちます。",
+  "wizard.access.use": "フルアクセスを使う",
+  "wizard.access.keepSupervised": "監督付きのままにする",
+  "wizard.access.keepCurrent": "現在のアクセスのままにする",
+  "wizard.access.saving": "保存中…",
+  "wizard.access.askedOnce": "一度だけ確認します。設定 > 一般 で変更できます。",
+  "wizard.access.saveFailed":
+    "フルアクセスを保存できませんでした。接続を確認して、もう一度お試しください。",
+  "wizard.access.calloutTitle": "おすすめ：フルアクセス",
+  "wizard.access.calloutIntroSupervised":
+    "このチャットは監督付きのため、エージェントはコマンドやファイル変更のたびに停止します。フルアクセスなら自分で作業を進め、次のことができます：",
+  "wizard.access.calloutIntroOther":
+    "このチャットは一部の操作の前にまだ確認します。フルアクセスならエージェントは自分で作業を進め、次のことができます：",
+  "wizard.access.switch": "フルアクセスに切り替え",
+  "wizard.access.calloutNote":
+    "このチャットと新しいチャットに適用されます。確認は一度だけで、ここでいつでも変更できます。",
+  "wizard.access.close": "閉じる",
+  "wizard.access.onTitle": "フルアクセスがオンです",
+  "wizard.access.onDescription":
+    "このチャットと新しいチャットに適用されます。メッセージ欄または 設定 > 一般 で変更できます。",
+  "wizard.access.undo": "元に戻す",
+  "wizard.access.undoFailed": "元に戻せませんでした。設定 > 一般 で変更してください。",
 
   "update.downloadFailed": "アップデートをダウンロードできませんでした",
   "update.startFailed": "アップデートのダウンロードを開始できませんでした",

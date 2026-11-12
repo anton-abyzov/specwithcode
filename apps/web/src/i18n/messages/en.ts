@@ -22,6 +22,7 @@ export const en = {
   "wizard.title": "Set up SpecWithCode",
   "wizard.stage.connect": "Computers",
   "wizard.stage.agents": "Agents",
+  "wizard.stage.access": "Access",
   "wizard.stage.projects": "Projects",
   "wizard.close": "Close setup",
   "wizard.noun.mac": "Mac",
@@ -109,6 +110,42 @@ export const en = {
   "wizard.import.otherFolders": "Other folders",
   "wizard.import.folderCount": { one: "{count} folder", other: "{count} folders" },
   "wizard.import.now": "now",
+
+  "wizard.access.title": "Let agents work without stopping to ask?",
+  "wizard.access.description":
+    "This sets how new chats start. You can change it for any chat from the message box, or later in Settings.",
+  "wizard.access.fullAccess": "Full access",
+  "wizard.access.recommended": "Recommended",
+  "wizard.access.allowsIntro":
+    "Agents finish the task on their own. Without asking first, they can:",
+  "wizard.access.allowCommands": "Run terminal commands: install packages, run tests, use git",
+  "wizard.access.allowFiles": "Create, change and delete files on the computer",
+  "wizard.access.allowNetwork": "Use the network and the tools you connected",
+  "wizard.access.stillStops":
+    "Still stops for your decisions, sign-ins and app approvals such as sending email",
+  "wizard.access.supervised": "Supervised",
+  "wizard.access.supervisedDescription":
+    "Agents ask before every command and file change. Work waits until you answer.",
+  "wizard.access.use": "Use Full access",
+  "wizard.access.keepSupervised": "Keep Supervised",
+  "wizard.access.keepCurrent": "Keep current access",
+  "wizard.access.saving": "Saving…",
+  "wizard.access.askedOnce": "Asked once. Change it in Settings > General.",
+  "wizard.access.saveFailed": "Full access was not saved. Check the connection and try again.",
+  "wizard.access.calloutTitle": "Recommended: Full access",
+  "wizard.access.calloutIntroSupervised":
+    "This chat is Supervised, so the agent stops before each command and file change. With Full access it works on its own and can:",
+  "wizard.access.calloutIntroOther":
+    "This chat still stops to ask before some actions. With Full access the agent works on its own and can:",
+  "wizard.access.switch": "Switch to Full access",
+  "wizard.access.calloutNote":
+    "Applies to this chat and new chats. Asked once; change it here any time.",
+  "wizard.access.close": "Close",
+  "wizard.access.onTitle": "Full access is on",
+  "wizard.access.onDescription":
+    "For this chat and new chats. Change it from the message box or in Settings > General.",
+  "wizard.access.undo": "Undo",
+  "wizard.access.undoFailed": "Could not undo. Change it in Settings > General.",
 
   // ── App update during setup ───────────────────────────────
   "update.downloadFailed": "Could not download update",

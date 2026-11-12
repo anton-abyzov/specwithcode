@@ -14,6 +14,7 @@ export const de: Messages = {
   "wizard.title": "SpecWithCode einrichten",
   "wizard.stage.connect": "Computer",
   "wizard.stage.agents": "Agenten",
+  "wizard.stage.access": "Zugriff",
   "wizard.stage.projects": "Projekte",
   "wizard.close": "Einrichtung schließen",
   "wizard.noun.mac": "Mac",
@@ -110,6 +111,45 @@ export const de: Messages = {
   "wizard.import.otherFolders": "Andere Ordner",
   "wizard.import.folderCount": { one: "{count} Ordner", other: "{count} Ordner" },
   "wizard.import.now": "jetzt",
+
+  "wizard.access.title": "Agenten arbeiten lassen, ohne ständig zu fragen?",
+  "wizard.access.description":
+    "Das legt fest, wie neue Chats starten. Du kannst es für jeden Chat im Nachrichtenfeld ändern oder später in den Einstellungen.",
+  "wizard.access.fullAccess": "Voller Zugriff",
+  "wizard.access.recommended": "Empfohlen",
+  "wizard.access.allowsIntro":
+    "Agenten erledigen die Aufgabe selbstständig. Ohne vorher zu fragen, können sie:",
+  "wizard.access.allowCommands":
+    "Terminalbefehle ausführen: Pakete installieren, Tests starten, git verwenden",
+  "wizard.access.allowFiles": "Dateien auf dem Computer erstellen, ändern und löschen",
+  "wizard.access.allowNetwork": "Das Netzwerk und deine verbundenen Tools nutzen",
+  "wizard.access.stillStops":
+    "Hält weiterhin an für deine Entscheidungen, Anmeldungen und App-Freigaben wie das Senden von E-Mails",
+  "wizard.access.supervised": "Beaufsichtigt",
+  "wizard.access.supervisedDescription":
+    "Agenten fragen vor jedem Befehl und jeder Dateiänderung. Die Arbeit wartet auf deine Antwort.",
+  "wizard.access.use": "Vollen Zugriff verwenden",
+  "wizard.access.keepSupervised": "Beaufsichtigt lassen",
+  "wizard.access.keepCurrent": "Aktuellen Zugriff behalten",
+  "wizard.access.saving": "Wird gespeichert…",
+  "wizard.access.askedOnce": "Nur einmal gefragt. Ändern unter Einstellungen > Allgemein.",
+  "wizard.access.saveFailed":
+    "Voller Zugriff wurde nicht gespeichert. Prüfe die Verbindung und versuche es erneut.",
+  "wizard.access.calloutTitle": "Empfohlen: voller Zugriff",
+  "wizard.access.calloutIntroSupervised":
+    "Dieser Chat ist beaufsichtigt, daher hält der Agent vor jedem Befehl und jeder Dateiänderung an. Mit vollem Zugriff arbeitet er selbstständig und kann:",
+  "wizard.access.calloutIntroOther":
+    "Dieser Chat fragt vor manchen Aktionen noch nach. Mit vollem Zugriff arbeitet der Agent selbstständig und kann:",
+  "wizard.access.switch": "Auf vollen Zugriff umstellen",
+  "wizard.access.calloutNote":
+    "Gilt für diesen Chat und neue Chats. Nur einmal gefragt; du kannst es hier jederzeit ändern.",
+  "wizard.access.close": "Schließen",
+  "wizard.access.onTitle": "Voller Zugriff ist an",
+  "wizard.access.onDescription":
+    "Für diesen Chat und neue Chats. Ändern im Nachrichtenfeld oder unter Einstellungen > Allgemein.",
+  "wizard.access.undo": "Rückgängig",
+  "wizard.access.undoFailed":
+    "Konnte nicht rückgängig gemacht werden. Ändere es unter Einstellungen > Allgemein.",
 
   "update.downloadFailed": "Update konnte nicht heruntergeladen werden",
   "update.startFailed": "Update-Download konnte nicht gestartet werden",
