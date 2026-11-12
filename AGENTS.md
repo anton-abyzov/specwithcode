@@ -57,7 +57,7 @@ Document changes to user tasks and durable architectural constraints, not copies
 
 Skills action regressions: from `apps/server`, `node ../../node_modules/vite-plus/bin/vp test run src/project/ProjectSkillsActions.test.ts src/project/ProjectSkillsToggles.test.ts src/provider/Drivers/ClaudeSkills.test.ts`; from `apps/web`, run the settings component suites. Plugin disable tests must rediscover the target before Undo, and update tests must change the registry between preview and apply.
 
-Releases: `bash scripts/release/release.sh <version>` (try `--dry-run` first); the runbook is docs/studio/releasing.md.
+Releases: `bash scripts/release/request-release.sh --by "<session or thread>"`. It dispatches Release macOS with no version; the workflow picks the version, runs wait in one queue, and a run that finds main already released ends green, so never choose a version or check for a running release first, and never dispatch a version you computed. Confirm a change shipped with `bash scripts/release/request-release.sh --released <commit>`. Pass a version only to continue a failed release (`-f version=X.Y.Z -f resume=true`). `bash scripts/release/release.sh <version>` on a Mac is the fallback when Actions cannot run, with nothing queued or running in Release macOS. The runbook is docs/studio/releasing.md.
 
 Focused ACP permission regression: `node node_modules/vite-plus/bin/vp test run apps/server/src/provider/acp/AcpPermissions.test.ts apps/server/src/provider/acp/AcpPermissions.lifecycle.test.ts apps/web/src/components/chat/unifiedPermissions.test.tsx`. Headless composer check: `node apps/web/tests/unified-permissions/check.mjs` (set `PLAYWRIGHT_MODULE` / `PLAYWRIGHT_EXECUTABLE` for a scoped installed runtime).
 
