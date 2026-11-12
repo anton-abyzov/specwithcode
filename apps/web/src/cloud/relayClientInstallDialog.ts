@@ -26,6 +26,8 @@ export type RelayClientInstallDialogState =
       readonly status: "installing";
       readonly version: string;
       readonly stage: RelayClientInstallProgressStage;
+      /** Started without the question: the caller draws the progress, so the dialog stays shut. */
+      readonly inline?: true;
     }
   | {
       readonly status: "closing";
@@ -82,6 +84,24 @@ export function requestRelayClientInstallConfirmation(version: string): Promise<
   });
 }
 
+/**
+ * Starts an install the person has already agreed to, such as the link that
+ * follows Sign in during first-run setup. Nothing is asked and the dialog does
+ * not open: whoever started it shows `stage` where the person is looking.
+ */
+export function startRelayClientInstallInline(version: string): void {
+  if (state.status !== "idle") {
+    const activeInstall = state.status === "closing" ? state.view : state;
+    throw new RelayClientInstallConfirmationConflictError({
+      requestedVersion: version,
+      activeVersion: activeInstall.version,
+      activeDialogStatus: state.status,
+      ...(activeInstall.status === "installing" ? { activeInstallStage: activeInstall.stage } : {}),
+    });
+  }
+  publish({ status: "installing", version, stage: "checking", inline: true });
+}
+
 export function respondToRelayClientInstallConfirmation(confirmed: boolean): void {
   if (state.status !== "confirming" || !resolveConfirmation) {
     return;
@@ -107,6 +127,11 @@ export function reportRelayClientInstallProgress(event: RelayClientInstallProgre
 export function finishRelayClientInstall(): void {
   resolveConfirmation?.(false);
   resolveConfirmation = null;
+  if (state.status === "installing" && state.inline) {
+    // No dialog was open, so there is no close to wait for.
+    publish(idleState);
+    return;
+  }
   if (state.status === "confirming" || state.status === "installing") {
     publish({ status: "closing", view: state });
   }

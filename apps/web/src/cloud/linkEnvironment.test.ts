@@ -1,16 +1,20 @@
 import {
   type DesktopBridge,
   EnvironmentId,
+  RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
+  type RelayClientStatus,
   WS_METHODS,
 } from "@specweave-studio/contracts";
 import { RelayWebClientId } from "@specweave-studio/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
@@ -42,12 +46,14 @@ const TARGET: CloudLinkTarget = {
 
 const relayClientInstallDialog = vi.hoisted(() => ({
   requestConfirmation: vi.fn(),
+  startInline: vi.fn(),
   reportProgress: vi.fn(),
   finish: vi.fn(),
 }));
 
 vi.mock("./relayClientInstallDialog", () => ({
   requestRelayClientInstallConfirmation: relayClientInstallDialog.requestConfirmation,
+  startRelayClientInstallInline: relayClientInstallDialog.startInline,
   reportRelayClientInstallProgress: relayClientInstallDialog.reportProgress,
   finishRelayClientInstall: relayClientInstallDialog.finish,
 }));
@@ -73,8 +79,10 @@ function layerRelay() {
 }
 
 function layerRegistry(options?: {
-  readonly status?: { readonly status: "available"; readonly version: string };
+  readonly status?: RelayClientStatus | { readonly status: "available"; readonly version: string };
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
+  /** The whole install as the machine streams it, in place of `installEvents`. */
+  readonly installStream?: Stream.Stream<RelayClientInstallProgressEvent, unknown>;
 }) {
   return Layer.effect(
     EnvironmentRegistry.EnvironmentRegistry,
@@ -83,7 +91,7 @@ function layerRegistry(options?: {
         [WS_METHODS.cloudGetRelayClientStatus]: () =>
           Effect.succeed(options?.status ?? { status: "available", version: "2026.6.0" }),
         [WS_METHODS.cloudInstallRelayClient]: () =>
-          Stream.fromIterable(options?.installEvents ?? []),
+          options?.installStream ?? Stream.fromIterable(options?.installEvents ?? []),
       } as unknown as RpcSession["client"];
       const session: RpcSession = {
         client,
@@ -364,6 +372,172 @@ describe("web cloud link environment client", () => {
       ).pipe(Effect.flip);
 
       expect(relayClientInstallDialog.requestConfirmation).not.toHaveBeenCalled();
+    }),
+  );
+
+  const INSTALLED: RelayClientStatus = {
+    status: "available",
+    executablePath: "/tools/cloudflared",
+    source: "managed",
+    version: "2026.6.0",
+  };
+  const INSTALL_EVENTS: ReadonlyArray<RelayClientInstallProgressEvent> = [
+    { type: "progress", stage: "downloading" },
+    { type: "complete", status: INSTALLED },
+  ];
+
+  it.effect("asks before installing a relay client the machine lacks", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ malformed: true }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withServices(linkPrimaryEnvironmentToCloud({ target: TARGET, clerkToken: "t" }), {
+        status: { status: "missing", version: "2026.6.0" },
+        installEvents: INSTALL_EVENTS,
+      }).pipe(Effect.flip);
+
+      expect(relayClientInstallDialog.requestConfirmation).toHaveBeenCalledExactlyOnceWith(
+        "2026.6.0",
+      );
+      expect(relayClientInstallDialog.startInline).not.toHaveBeenCalled();
+      expect(relayClientInstallDialog.reportProgress).toHaveBeenCalledWith({
+        type: "progress",
+        stage: "downloading",
+      });
+      expect(relayClientInstallDialog.finish).toHaveBeenCalledOnce();
+      // The install finished, so the link went on to the relay.
+      expect(fetchMock).toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("stops, and reaches no relay, when the question is declined", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      relayClientInstallDialog.requestConfirmation.mockResolvedValue(false);
+
+      const error = yield* withServices(
+        linkPrimaryEnvironmentToCloud({ target: TARGET, clerkToken: "t" }),
+        { status: { status: "missing", version: "2026.6.0" }, installEvents: INSTALL_EVENTS },
+      ).pipe(Effect.flip);
+
+      expect(error.message).toBe("Relay client installation was cancelled.");
+      expect(fetchMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  // First-run setup has no dialog on screen that could ask: a question there would never be
+  // answered and the link would wait for good. The caller that agreed installs straight away.
+  it.effect("installs with no question for a caller the person already agreed with", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ malformed: true }));
+      vi.stubGlobal("fetch", fetchMock);
+      // A question nobody could answer: it must not be asked.
+      relayClientInstallDialog.requestConfirmation.mockReturnValue(new Promise(() => {}));
+
+      yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "t",
+          relayClientInstall: "agreed",
+        }),
+        { status: { status: "missing", version: "2026.6.0" }, installEvents: INSTALL_EVENTS },
+      ).pipe(Effect.flip);
+
+      expect(relayClientInstallDialog.requestConfirmation).not.toHaveBeenCalled();
+      expect(relayClientInstallDialog.startInline).toHaveBeenCalledExactlyOnceWith("2026.6.0");
+      expect(relayClientInstallDialog.reportProgress).toHaveBeenCalledWith({
+        type: "progress",
+        stage: "downloading",
+      });
+      expect(relayClientInstallDialog.finish).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("says what the machine reported when the install fails", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const error = yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "t",
+          relayClientInstall: "agreed",
+        }),
+        {
+          status: { status: "missing", version: "2026.6.0" },
+          installStream: Stream.fail(
+            new RelayClientInstallFailedError({
+              reason: "download_failed",
+              message: "Could not download the relay client.",
+            }),
+          ),
+        },
+      ).pipe(Effect.flip);
+
+      expect(error.message).toBe(
+        "Could not install the relay client: Could not download the relay client.",
+      );
+      expect(relayClientInstallDialog.finish).toHaveBeenCalledOnce();
+      expect(fetchMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("gives up on an install that never ends, with a reason", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const fiber = yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "t",
+          relayClientInstall: "agreed",
+        }),
+        {
+          status: { status: "missing", version: "2026.6.0" },
+          // A download on a network that accepts the connection and never answers.
+          installStream: Stream.concat(
+            Stream.make({ type: "progress", stage: "downloading" } as const),
+            Stream.never,
+          ),
+        },
+      ).pipe(Effect.flip, Effect.forkChild);
+
+      yield* TestClock.adjust("4 minutes");
+      expect(relayClientInstallDialog.finish).not.toHaveBeenCalled();
+      yield* TestClock.adjust("2 minutes");
+      const error = yield* Fiber.join(fiber);
+
+      expect(error.message).toBe(
+        "Installing the relay client took longer than 5 minutes. Check this machine's internet connection, then try again.",
+      );
+      expect(relayClientInstallDialog.finish).toHaveBeenCalledOnce();
+      expect(fetchMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("fails with a reason when an agreed install cannot start", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      relayClientInstallDialog.startInline.mockImplementationOnce(() => {
+        throw new Error("another install is on screen");
+      });
+
+      const error = yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "t",
+          relayClientInstall: "agreed",
+        }),
+        { status: { status: "missing", version: "2026.6.0" }, installEvents: INSTALL_EVENTS },
+      ).pipe(Effect.flip);
+
+      expect(error.message).toBe("Could not start relay client installation.");
+      expect(fetchMock).not.toHaveBeenCalled();
     }),
   );
 

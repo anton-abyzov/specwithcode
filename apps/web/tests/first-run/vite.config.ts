@@ -18,6 +18,10 @@ const stubs = new Set(
     "state/query",
     "studio/machineNickname",
     "cloud/publicConfig",
+    "cloud/useCloudLinkController",
+    "studio/fleet",
+    "teamRules/useTeamRules",
+    "components/settings/AccountJoinCard",
     "connection/onboarding",
     "onboarding/useProjectScans",
     "onboarding/targetEnvironment.logic",
@@ -37,6 +41,9 @@ export default defineConfig({
       resolveId(source, importer) {
         if (source === "@clerk/react") return mocks;
         if (!importer || importer === mocks) return;
+        // The sign-in step reads one session atom; the stand-in hands it the value itself.
+        if (source === "@effect/atom-react" && importer.endsWith("SignInFirstStep.tsx"))
+          return mocks;
         const target = source.startsWith("~/")
           ? NodePath.resolve(appSource, source.slice(2))
           : source.startsWith(".")

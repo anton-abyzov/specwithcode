@@ -4083,6 +4083,22 @@ export const ko: PhraseCatalog = {
   "Happens by itself after you sign in.": "로그인하면 자동으로 진행됩니다.",
   "Checking this {machine}…": "이 {machine} 확인 중…",
   "Linking this {machine}…": "이 {machine} 연결 중…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Connect 도우미 가져오는 중: 설치된 항목 확인 (7단계 중 1단계)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Connect 도우미 가져오는 중: 다른 설치가 끝나기를 기다리는 중 (7단계 중 2단계)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Connect 도우미 가져오는 중: 다운로드 중 (7단계 중 3단계)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Connect 도우미 가져오는 중: 다운로드 확인 중 (7단계 중 4단계)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Connect 도우미 가져오는 중: 설치 중 (7단계 중 5단계)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Connect 도우미 가져오는 중: 테스트 중 (7단계 중 6단계)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Connect 도우미 가져오는 중: 켜는 중 (7단계 중 7단계)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "아직 연결 중입니다. 새 {machine}에서는 1분 정도 걸릴 수 있습니다. 계속 진행해도 자동으로 완료됩니다.",
   "This {machine} is linked": "이 {machine}가 연결되었습니다",
   "Your other machines and your phone can reach it.":
     "다른 컴퓨터와 휴대폰에서 접속할 수 있습니다.",
