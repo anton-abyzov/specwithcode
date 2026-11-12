@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
-import { ProjectEnvironmentSettings, projectRepositoryIdentity } from "./projectEnvironment.ts";
+import {
+  ProjectEnvironmentReadInput,
+  ProjectEnvironmentReadResult,
+  ProjectEnvironmentSettings,
+  projectRepositoryIdentity,
+} from "./projectEnvironment.ts";
+import { WorktreeMcpAddRepositoryResult } from "./worktreeMcp.ts";
 import { clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
 import { WS_METHODS } from "./rpc.ts";
 import {
@@ -74,6 +80,49 @@ describe("project environment", () => {
         repositories: [a, { ...a, url: "https://github.com/org/other" }],
       }),
     ).toThrow();
+  });
+  it("reads found repositories only when the server sends them", () => {
+    const base = { revision: 1, workspaceRoot: "/work", additionalFolders: [], repositories: [] };
+    const decode = Schema.decodeUnknownSync(ProjectEnvironmentReadResult);
+    expect(decode(base).found).toBeUndefined();
+    const found = {
+      relativePath: "repositories/acme/api",
+      path: "/work/repositories/acme/api",
+      name: "api",
+      origin: "acme/api",
+      branch: null,
+      defaultBranch: "main",
+      inSpecweave: true,
+      state: "available",
+      noRemote: false,
+      threadWorktrees: 2,
+    };
+    const result = decode({
+      ...base,
+      found: [found],
+      foundMore: 3,
+      skippedLinks: ["repositories/link"],
+      redundantEntries: [{ repositoryId: "old", reason: "found_clone" }],
+    });
+    expect(result.found).toEqual([found]);
+    expect(result.foundMore).toBe(3);
+    expect(() => decode({ ...base, found: [{ ...found, state: "unknown" }] })).toThrow();
+    expect(
+      Schema.decodeUnknownSync(ProjectEnvironmentReadInput)({ projectId: "p", discover: true }),
+    ).toEqual({ projectId: "p", discover: true });
+  });
+  it("names the base branch and dependency state on an added repository", () => {
+    const decode = Schema.decodeUnknownSync(WorktreeMcpAddRepositoryResult);
+    const legacy = { worktreePath: "/t", repositoryPath: "/t/api", branch: "b", members: [] };
+    expect(decode(legacy)).toEqual(legacy);
+    expect(
+      decode({
+        ...legacy,
+        baseRef: "origin/main",
+        dependencies: "not_installed",
+        alreadyMember: true,
+      }).dependencies,
+    ).toBe("not_installed");
   });
   it("retains two distinct existing checkouts of the same origin", () => {
     const repositories = [

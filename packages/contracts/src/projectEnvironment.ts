@@ -123,7 +123,48 @@ export function fullAccessAcpProjectFolders(policy: {
         sandbox.type === "dangerFullAccess"))
   );
 }
-export const ProjectEnvironmentReadInput = Schema.Struct({ projectId: ProjectId });
+export const ProjectEnvironmentReadInput = Schema.Struct({
+  projectId: ProjectId,
+  /** Ask for the repositories found in the project folder. Older servers ignore it. */
+  discover: Schema.optionalKey(Schema.Boolean),
+  /** With `discover`: walk the folder again instead of using the cached list. */
+  refresh: Schema.optionalKey(Schema.Boolean),
+});
+export type ProjectEnvironmentReadInput = typeof ProjectEnvironmentReadInput.Type;
+/** At most this many found repositories are listed; the rest are counted. */
+export const PROJECT_FOUND_REPOSITORIES_MAX = 50;
+/** A thread holds at most this many repositories. */
+export const THREAD_REPOSITORIES_MAX = 8;
+/**
+ * One repository a project's threads can use: a clone found in the project folder, a saved
+ * Environment repository, or one SpecWeave lists, joined by real path. Nothing here is saved;
+ * it is read from the folder at use.
+ */
+export const ProjectFoundRepository = Schema.Struct({
+  /** Path relative to the project folder ("." is the folder's own repository); the name a launch uses. */
+  relativePath: Schema.String,
+  path: Schema.String,
+  name: Schema.String,
+  /** The clone's origin as `owner/name`, or null when it has no usable remote. */
+  origin: Schema.NullOr(Schema.String),
+  /** The checked-out branch, or null when no branch is checked out. */
+  branch: Schema.NullOr(Schema.String),
+  /** The default branch on origin, when Git knows it. */
+  defaultBranch: Schema.NullOr(Schema.String),
+  inSpecweave: Schema.Boolean,
+  /** `available`: a clone is here. `absent`: saved or listed, never cloned. `missing`: its folder is gone. */
+  state: Schema.Literals(["available", "absent", "missing"]),
+  noRemote: Schema.Boolean,
+  threadWorktrees: NonNegativeInt,
+  repositoryId: Schema.optionalKey(ProjectRepositoryId),
+});
+export type ProjectFoundRepository = typeof ProjectFoundRepository.Type;
+/** A saved entry the found list makes redundant; removing it is always the user's click. */
+export const ProjectRedundantRepositoryEntry = Schema.Struct({
+  repositoryId: ProjectRepositoryId,
+  reason: Schema.Literals(["found_clone", "no_folder"]),
+});
+export type ProjectRedundantRepositoryEntry = typeof ProjectRedundantRepositoryEntry.Type;
 /**
  * A saved folder or repository checkout that runs skip, with the server's sentence naming
  * it and the fix. `updatePath` is offered only when a moved folder (or checkout) now
@@ -156,6 +197,18 @@ export const ProjectEnvironmentReadResult = Schema.Struct({
   ),
   /** Entries left out above because they cannot be used as saved. Older servers omit it. */
   problems: Schema.optionalKey(Schema.Array(ProjectEnvironmentProblem)),
+  /**
+   * The repositories threads can use, when the read asked with `discover`. Its presence is
+   * how a client knows the server finds repositories; older servers omit it.
+   */
+  found: Schema.optionalKey(Schema.Array(ProjectFoundRepository)),
+  /** How many found repositories were left out of `found` (the list stops at 50). */
+  foundMore: Schema.optionalKey(NonNegativeInt),
+  /** True when the folder walk stopped at its limits before reading every folder. */
+  foundTruncated: Schema.optionalKey(Schema.Boolean),
+  /** Links to a clone already found or to a folder outside the project, relative to the project folder. */
+  skippedLinks: Schema.optionalKey(Schema.Array(Schema.String)),
+  redundantEntries: Schema.optionalKey(Schema.Array(ProjectRedundantRepositoryEntry)),
 });
 export type ProjectEnvironmentReadResult = typeof ProjectEnvironmentReadResult.Type;
 export const ProjectEnvironmentPrepareInput = Schema.Struct({

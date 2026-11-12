@@ -182,6 +182,8 @@ interface StartThreadBootstrap {
     readonly baseBranch: string;
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
+    /** Repositories picked in the composer, as paths relative to the project folder. */
+    readonly repositories?: ReadonlyArray<string>;
   };
   readonly runSetupScript?: boolean;
 }
@@ -750,6 +752,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             ...(prepareWorktree.startFromOrigin === undefined
               ? {}
               : { startFromOrigin: prepareWorktree.startFromOrigin }),
+            ...(prepareWorktree.repositories === undefined ||
+            prepareWorktree.repositories.length === 0
+              ? {}
+              : { repositories: [...prepareWorktree.repositories] }),
           }
         : bootstrap?.worktreePath
           ? {
