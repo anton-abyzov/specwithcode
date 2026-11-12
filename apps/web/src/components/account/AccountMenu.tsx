@@ -11,7 +11,7 @@ import {
   SettingsIcon,
   UserRoundCogIcon,
 } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import { isElectron } from "../../env";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -20,7 +20,7 @@ import { usePrimaryEnvironment, usePullRequestsSupported } from "../../state/env
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
-import { ADD_DEVICE_OR_MACHINE_ANCHOR } from "../settings/AddDeviceWithCodeRow";
+import { AddDeviceDialog } from "../settings/AddDeviceDialog";
 import {
   Menu,
   MenuGroup,
@@ -66,7 +66,7 @@ export function AccountMenuView({
   readonly pullRequestsSupported: boolean;
   readonly onNavigate: (to: AccountMenuDestination) => void;
   readonly onOpenPullRequests: () => void;
-  /** Opens Settings > Machines, where every way to add a device or a machine lives. */
+  /** Opens the add dialog: a phone or a computer, each with its code. */
   readonly onAddDevice: () => void;
 }) {
   const { name, header, signIn } = accountMenuPresentation(
@@ -183,8 +183,8 @@ export function AccountMenuView({
 
 /**
  * One account button in place of the footer's row of icons, like Claude's:
- * Settings, Usage and Pull Requests live in its menu, along with the way to
- * Settings > Machines for adding a device or a machine. On Settings, Usage or
+ * Settings, Usage and Pull Requests live in its menu, along with the add
+ * dialog for a phone or a computer and the way to Settings > Machines. On Settings, Usage or
  * Pull Requests it shrinks to its avatar beside the Back button. `connect` is
  * null in builds without SpecWithCode Connect.
  */
@@ -213,23 +213,35 @@ export function AccountMenu({
     void navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
   }, [isMobile, navigate, setOpenMobile]);
 
-  // The join card: one click for a machine on the same account, with the join
-  // line and the code path folded below it.
+  // Adding opens a dialog over the current screen; Settings > Machines is the list.
+  const [adding, setAdding] = useState(false);
   const addDeviceOrMachine = useCallback(() => {
     if (isMobile) setOpenMobile(false);
-    void navigate({ to: "/settings/machines", hash: ADD_DEVICE_OR_MACHINE_ANCHOR });
-  }, [isMobile, navigate, setOpenMobile]);
+    setAdding(true);
+  }, [isMobile, setOpenMobile]);
+  const showFallback = useCallback(
+    (target: string) => void navigate({ to: "/settings/machines", hash: target }),
+    [navigate],
+  );
 
   return (
-    <AccountMenuView
-      compact={compact}
-      machine={primary?.label ?? "This machine"}
-      connect={connect}
-      usageShortcut={shortcutLabelForCommand(keybindings, "usage.open")}
-      pullRequestsSupported={pullRequestsSupported}
-      onNavigate={go}
-      onOpenPullRequests={openPullRequests}
-      onAddDevice={addDeviceOrMachine}
-    />
+    <>
+      <AccountMenuView
+        compact={compact}
+        machine={primary?.label ?? "This machine"}
+        connect={connect}
+        usageShortcut={shortcutLabelForCommand(keybindings, "usage.open")}
+        pullRequestsSupported={pullRequestsSupported}
+        onNavigate={go}
+        onOpenPullRequests={openPullRequests}
+        onAddDevice={addDeviceOrMachine}
+      />
+      <AddDeviceDialog
+        environmentId={primary?.environmentId ?? null}
+        open={adding}
+        onOpenChange={setAdding}
+        onShowFallback={showFallback}
+      />
+    </>
   );
 }

@@ -21,8 +21,19 @@ vi.mock("../pullRequest/pullRequestIcons", () => ({
 vi.mock("../pullRequest/pullRequestListPreferences", () => ({
   readPullRequestListPreferences: () => ({}),
 }));
-vi.mock("../settings/AddDeviceWithCodeRow", () => ({
-  ADD_DEVICE_OR_MACHINE_ANCHOR: "machines-join-card",
+vi.mock("../settings/AddDeviceDialog", () => ({
+  AddDeviceDialog: (props: {
+    open: boolean;
+    environmentId: string | null;
+    onShowFallback: (target: string) => void;
+  }) => (
+    <dialog
+      data-add-device
+      open={props.open}
+      data-environment={props.environmentId ?? ""}
+      onClose={() => props.onShowFallback("phone-connect")}
+    />
+  ),
 }));
 vi.mock("../ui/menu", () => {
   const Pass = ({ children }: { children?: ReactNode }) => <>{children}</>;
@@ -96,21 +107,32 @@ describe("the account menu's way to add a device or a machine", () => {
     expect(onAddDevice).toHaveBeenCalledOnce();
   });
 
-  it("opens Settings > Machines at the join card", async () => {
+  it("opens the add dialog in place instead of jumping to Settings > Machines", async () => {
     const renderer = await mount(<AccountMenu compact={false} connect={null} />);
+    const dialog = () => renderer.root.find((node) => node.props["data-add-device"] === true);
+    expect(dialog().props.open).toBe(false);
     await act(async () => item(renderer, "Add a device or machine").props.onClick());
-    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({
-      to: "/settings/machines",
-      hash: "machines-join-card",
-    });
+    expect(dialog().props.open).toBe(true);
+    expect(dialog().props["data-environment"]).toBe("env-here");
+    expect(state.navigate).not.toHaveBeenCalled();
     expect(state.setOpenMobile).not.toHaveBeenCalled();
   });
 
-  it("closes the phone sidebar before it opens Settings > Machines", async () => {
+  it("sends a fallback to its place in Settings > Machines", async () => {
+    const renderer = await mount(<AccountMenu compact={false} connect={null} />);
+    const dialog = renderer.root.find((node) => node.props["data-add-device"] === true);
+    await act(async () => dialog.props.onClose());
+    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({
+      to: "/settings/machines",
+      hash: "phone-connect",
+    });
+  });
+
+  it("closes the phone sidebar before it opens the dialog", async () => {
     state.isMobile = true;
     const renderer = await mount(<AccountMenu compact={false} connect={null} />);
     await act(async () => item(renderer, "Add a device or machine").props.onClick());
     expect(state.setOpenMobile).toHaveBeenCalledExactlyOnceWith(false);
-    expect(state.navigate).toHaveBeenCalledOnce();
+    expect(state.navigate).not.toHaveBeenCalled();
   });
 });

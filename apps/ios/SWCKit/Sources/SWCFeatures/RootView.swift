@@ -182,6 +182,7 @@ struct RouteDestination: View {
     case .machines: MachinesView()
     case let .machine(id): MachineDetailView(machineId: id)
     case .pair: PairMachineView()
+    case .addDevice: AddDeviceView()
     case let .repair(id): PairMachineView(expectedMachineId: id)
     }
   }

@@ -149,27 +149,32 @@ describe("Your phone", () => {
     const view = show(setupOf(on, { kind: "add-phone" }));
     expect(view.card()).toBe("add-phone");
     expect(view.text()).toContain("Waiting for your phone…");
-    expect(view.text()).toContain("Sam's MacBook Pro is on SpecWithCode Connect");
-    expect(view.text()).toContain("Linked as sam@example.com.");
+    // Connect being on is done, so it folds away: the summary's facts already say it.
+    expect(view.text()).not.toContain("Sam's MacBook Pro is on SpecWithCode Connect");
+    expect(view.steps().map(([state]) => state)).toEqual(["current", "todo"]);
     expect(view.text()).toContain("Sign in on the phone as sam@example.com");
     expect(view.text()).toContain("App Store · Google Play");
     expect(view.codes()).toEqual([[PHONE_APP_URL, 104]]);
     expect(view.buttons()).toEqual(["Not now"]);
   });
 
-  it("drops the highlight after Not now and keeps the steps and the code", () => {
+  it("drops the highlight after Not now and keeps the steps left and the code", () => {
     const view = show(setupOf(on, { kind: "done" }));
     expect(view.card()).toBe("plain");
     expect(view.text()).not.toContain("Next step");
-    expect(view.steps().map(([state]) => state)).toEqual(["done", "current", "todo"]);
+    expect(view.steps().map(([state]) => state)).toEqual(["current", "todo"]);
     expect(view.codes()).toHaveLength(1);
     expect(view.buttons()).toEqual([]);
   });
 
-  it("marks the steps done with a phone linked, lists it, and keeps a small code for another", () => {
+  it("is only the list of phones once every step is done", () => {
     const view = show(setupOf(on, { kind: "done" }, { phones: 1 }));
-    expect(view.steps().map(([state]) => state)).toEqual(["done", "done", "done"]);
-    expect(view.codes()).toEqual([[PHONE_APP_URL, 72]]);
+    expect(view.steps()).toEqual([]);
+    expect(view.codes()).toEqual([]);
+    const titles = view.root
+      .findAll((node) => typeof node.type === "string" && node.props["data-title"] !== undefined)
+      .map((node) => node.props["data-title"]);
+    expect(titles).toEqual(["Phones"]);
     expect(view.has("data-phone-list")).toBe(true);
     expect(view.buttons()).toEqual([]);
   });
@@ -247,7 +252,7 @@ describe("Your phone", () => {
       <button data-pair-row>Pair with a private QR code</button>,
     );
     expect(view.buttons()).toEqual(["Not now", "Pair with a private QR code"]);
-    expect(view.steps()).toHaveLength(3);
+    expect(view.steps()).toHaveLength(2);
   });
 
   it("reads its own setup when the page hands none in", () => {

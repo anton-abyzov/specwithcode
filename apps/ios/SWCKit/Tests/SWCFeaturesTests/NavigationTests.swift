@@ -394,7 +394,7 @@ struct RouterTests {
       .chat(.aide(ProjectRef(environmentId: "e", projectId: "aide"))),
       .chat(.thread(ThreadRef(environmentId: "e", threadId: "t"))),
       .overview(ProjectRef(environmentId: "e", projectId: "p")),
-      .machines, .machine("e"), .pair, .repair("e"),
+      .machines, .machine("e"), .pair, .addDevice, .repair("e"),
     ]
     let data = try JSONEncoder().encode(routes)
     #expect(try JSONDecoder().decode([Route].self, from: data) == routes)

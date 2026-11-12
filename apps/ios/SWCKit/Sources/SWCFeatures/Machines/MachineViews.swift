@@ -36,7 +36,7 @@ struct MachinesView: View {
                 EmptyView()
               }
             }
-            WeaveRow(model.connect == nil ? "Pair a machine" : "Pair with a link or QR code", symbol: "plus", showsChevron: true) { nav.push(.pair) }
+            WeaveRow(model.connect == nil ? "Pair a machine" : "Add a device or machine", symbol: "plus", showsChevron: true) { nav.push(model.connect == nil ? .pair : .addDevice) }
           }
         }
       }

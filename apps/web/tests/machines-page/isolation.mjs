@@ -8,10 +8,10 @@ const UPDATE_CARD = /(ManagedUpdatesSection|UpdatePausePolicyRow)\.tsx$/;
 const UPDATE_CARD_MOCKED =
   /^@effect\/atom-react$|\/(state\/(managedUpdates|query|session|server|use-atom-command)|studio\/machineNickname|confirmDialog|ServerUpdateAction|ui\/toast)$/;
 
-// `?view=page`: the summary, the phone card, the pairing row and the Advanced fold, with
+// `?view=page` and `?view=add-device`: the summary, the add dialog, the phone card, the pairing row and the Advanced fold, with
 // this machine's SpecWithCode Connect state chosen by `?state=`.
 const PAGE =
-  /(MachineSummary|PhoneConnectSettings|PhoneDevicesSettings|PairPhoneSettings|ThisMachineAdvanced|settingsLayout)\.tsx$/;
+  /(MachineSummary|AddDeviceDialog|PhoneConnectSettings|PhoneDevicesSettings|PairPhoneSettings|ThisMachineAdvanced|settingsLayout)\.tsx$/;
 const PAGE_MOCKED =
   /^@clerk\/react$|^@tanstack\/react-router$|\/(cloud\/(managedRelayState|publicConfig|useCloudLinkController|useRememberConnectChoice)|hooks\/useSettings|state\/(environments|session|use-atom-command)|studio\/machineNickname|teamRules\/useTeamRules|clerk\/useStudioConnectAuthPrompt|environments\/primary|RenameMachineDialog|useScopedSettings|ui\/toast)$/;
 

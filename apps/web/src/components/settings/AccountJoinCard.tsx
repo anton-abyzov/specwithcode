@@ -164,7 +164,7 @@ export function AccountJoinCardBody({
   const folded = !firstRun && foldedState.environments.includes(environmentId);
   const setFolded = (next: boolean) =>
     setFoldedState((state) => withJoinCardFolded(state, environmentId, next));
-  // A link that lands here (the account menu's "Add a device or machine") scrolls
+  // A link or a settings search that lands here scrolls
   // to the card when it appears, which can be after the page, and opens it.
   const targetRef = useSettingsSearchTarget<HTMLElement>(JOIN_CARD_ANCHOR);
   const landedOn = useSettingsSearchTargetId() === JOIN_CARD_ANCHOR;

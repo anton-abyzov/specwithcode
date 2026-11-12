@@ -69,11 +69,14 @@ function YourPhoneCard({
   const pending = isPendingMachineStep(setup.step) && (lock === null || connectStep);
   // A failed read is the one state where the card's own button is the way on.
   const failed = lock === null && connect.kind === "unknown";
+  // Finished steps fold away: the summary above already says Connect is on and how many
+  // phones are linked, so once all three are done the card is only the list of phones.
+  const left = failed ? steps : steps.filter((step) => step.state !== "done");
 
   return (
     <SettingsSection
       id="phone-connect"
-      title="Your phone"
+      title={left.length === 0 ? "Phones" : "Your phone"}
       variant="plain"
       icon={<SmartphoneIcon aria-hidden className="size-4" />}
     >
@@ -96,9 +99,9 @@ function YourPhoneCard({
             <p className="min-w-0 flex-1 text-muted-foreground">{lock.message}</p>
             <TeamRulesLabel>{lock.setBy}</TeamRulesLabel>
           </div>
-        ) : (
+        ) : left.length === 0 ? null : (
           <ol className={cn("divide-y divide-border/60", pending && "border-t border-border/60")}>
-            {steps.map((step, index) => (
+            {left.map((step, index) => (
               <PhoneStep key={step.title.text} index={index + 1} step={step}>
                 {index === 0 && failed ? (
                   <Button type="button" size="sm" onClick={setup.retry}>
@@ -169,7 +172,7 @@ function PhoneStep({
           <div className="rounded-lg bg-white p-1.5">
             <QRCodeSvg
               value={PHONE_APP_URL}
-              size={step.state === "done" ? 72 : 104}
+              size={104}
               level="M"
               marginSize={1}
               title={tx("Code that opens the App Store or Google Play")}
