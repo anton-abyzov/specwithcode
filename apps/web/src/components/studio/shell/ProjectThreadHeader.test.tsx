@@ -373,3 +373,67 @@ it.each([
   await act(async () => button("Reopen thread").click());
   expect(handlers.onToggleResolved).toHaveBeenCalledOnce();
 });
+
+describe("an open topic's header in the personal assistant", () => {
+  const words = () =>
+    [
+      container.textContent ?? "",
+      ...[...container.querySelectorAll("[aria-label], [title]")].flatMap((node) => [
+        node.getAttribute("aria-label") ?? "",
+        node.getAttribute("title") ?? "",
+      ]),
+    ].join("\n");
+  const renderFor = (personal: boolean) =>
+    act(() =>
+      root.render(
+        <ProjectThreadHeader
+          personal={personal}
+          thread={{ ...thread, title: "" }}
+          subagents={[]}
+          onPeekSubagent={vi.fn()}
+          providerEntry={null}
+          projectCwd="/scratch/atlas"
+          canChange
+          renameBlockedReason={null}
+          expanded={false}
+          {...handlers}
+        />,
+      ),
+    );
+
+  it("says topic, never thread, while a project's header still says thread", async () => {
+    await renderFor(true);
+    expect(button("Back to topics").textContent).toBe("Topics");
+    expect(container.querySelector("h2")?.textContent).toBe("Untitled topic");
+    for (const label of ["Resolve topic", "Topic actions", "Close topic pane"])
+      expect(button(label), label).not.toBeNull();
+    expect(words()).not.toMatch(/\bthreads?\b|coordinator/i);
+    await renderFor(false);
+    expect(words()).toMatch(/\bthreads?\b/i);
+    expect(button("Close thread pane")).not.toBeNull();
+  });
+
+  it("says topic in the rename toasts", async () => {
+    const add = vi.spyOn(toastManager, "add");
+    await act(() =>
+      root.render(
+        <ProjectThreadHeader
+          personal
+          thread={thread}
+          subagents={[]}
+          onPeekSubagent={vi.fn()}
+          providerEntry={null}
+          projectCwd="/scratch/atlas"
+          canChange={false}
+          renameBlockedReason="Ministorm isn't connected right now."
+          expanded={false}
+          {...handlers}
+        />,
+      ),
+    );
+    await act(async () =>
+      container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ title: "Can't rename this topic" }));
+  });
+});

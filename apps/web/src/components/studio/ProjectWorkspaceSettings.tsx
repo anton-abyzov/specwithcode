@@ -34,6 +34,7 @@ import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
 import { COORDINATOR_RECOMMENDED_TRAITS } from "../../studio/shellModel";
+import { paneWords } from "../../studio/assistantTerms";
 import { useStudioFleet } from "../../studio/fleet";
 import { workerMachineChoices, workerMachinesPatch } from "../../studio/fleetWorkers";
 import { ProjectWorkerMachines } from "./ProjectWorkerMachines";
@@ -190,6 +191,9 @@ export function ProjectWorkspaceSettings({
   const ownsName =
     !project.workspaceSettings?.logicalProject ||
     project.workspaceSettings.coordinatorBinding?.state === "active";
+  const personal = snapshot.settings.kind === "personal";
+  // Aide calls its threads topics, and itself Aide where a project says the coordinator.
+  const say = paneWords(personal);
   const [goal, setGoal] = useState(snapshot.settings.goal);
   const [instructions, setInstructions] = useState(snapshot.settings.instructions);
   const [coordinator, setCoordinator] = useState<ModelSelection | null>(
@@ -299,7 +303,9 @@ export function ProjectWorkspaceSettings({
     if (disabled || environmentBlocked) return false;
     if (titleEdited && title.trim() !== projectTitle && !ownsName) {
       setError(
-        "Open the active coordinator to rename this project. This checkout does not own its name.",
+        personal
+          ? "Rename Aide from the machine it runs on."
+          : "Open the active coordinator to rename this project. This checkout does not own its name.",
       );
       return false;
     }
@@ -378,7 +384,6 @@ export function ProjectWorkspaceSettings({
       );
     onDeleted();
   }
-  const personal = snapshot.settings.kind === "personal";
   const tabs = projectSettingsTabs(personal);
   // A remembered or linked tab this project does not have.
   if (!tabs.includes(tab)) setTab("general");
@@ -541,8 +546,8 @@ export function ProjectWorkspaceSettings({
                   </label>
                   <ProjectModels
                     environmentId={project.environmentId}
-                    label="Coordinator model"
-                    title="Coordinator model"
+                    label={personal ? "Aide's model" : "Coordinator model"}
+                    title={personal ? "Aide's model" : "Coordinator model"}
                     coordinator
                     recommendedTraits={COORDINATOR_RECOMMENDED_TRAITS}
                     value={coordinator ?? inheritedCoordinator}
@@ -551,20 +556,23 @@ export function ProjectWorkspaceSettings({
                   />
                   <p className="project-muted">
                     {coordinator
-                      ? "The coordinator runs on this model."
-                      : "No override saved: an existing coordinator keeps its thread model, and a new one starts on the recommended model for threads, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."}
+                      ? say("The coordinator runs on this model.")
+                      : personal
+                        ? "No override saved: Aide keeps the model it runs on now, and a new Aide starts on the recommended model for topics, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."
+                        : "No override saved: an existing coordinator keeps its thread model, and a new one starts on the recommended model for threads, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."}
                   </p>
                   <ProjectModels
                     environmentId={project.environmentId}
-                    label="Recommended model for threads"
-                    title="Model for new threads"
+                    label={say("Recommended model for threads")}
+                    title={say("Model for new threads")}
                     value={worker}
                     onChange={(v) => change(setWorker, v)}
                     disabled={disabled}
                   />
                   <p className="project-muted">
-                    Threads the coordinator starts, including the ones a routine needs, run on this
-                    model, on whichever provider serving it has room.
+                    {say(
+                      "Threads the coordinator starts, including the ones a routine needs, run on this model, on whichever provider serving it has room.",
+                    )}
                   </p>
                   {/* One chain under the models it guards: the same model elsewhere, then the
                       rules for another model, then recovery for a thread that stops anyway. */}
@@ -592,12 +600,14 @@ export function ProjectWorkspaceSettings({
                       disabled={disabled}
                       onChange={(e) => change(setAutoResume, e.target.checked)}
                     />
-                    Auto-continue this project's threads when limits reset
+                    {personal
+                      ? "Auto-continue Aide's topics when limits reset"
+                      : "Auto-continue this project's threads when limits reset"}
                   </label>
                   <p className="project-muted">
-                    Threads stopped on a usage limit continue by themselves at the reset, including
-                    threads already waiting, unless you turned a thread's own auto-continue off.
-                    This never changes accounts or enables paid overage.
+                    {say(
+                      "Threads stopped on a usage limit continue by themselves at the reset, including threads already waiting, unless you turned a thread's own auto-continue off. This never changes accounts or enables paid overage.",
+                    )}
                   </p>
                   <ProjectWorkerMachines
                     choices={machineChoices}
@@ -617,8 +627,9 @@ export function ProjectWorkspaceSettings({
                     <div>
                       <h3>{snapshot.settings.paused ? "Resume project" : "Pause new work"}</h3>
                       <p className="project-muted">
-                        Blocks new coordinator and routine dispatch. Running native turns retain
-                        their existing controls.
+                        {personal
+                          ? "Blocks new work from Aide and its routines. Running native turns retain their existing controls."
+                          : "Blocks new coordinator and routine dispatch. Running native turns retain their existing controls."}
                       </p>
                     </div>
                     <button
@@ -635,8 +646,9 @@ export function ProjectWorkspaceSettings({
                         {snapshot.settings.archived ? "Unarchive project" : "Archive project"}
                       </h3>
                       <p className="project-muted">
-                        Stops admission of new work; history remains available. Running threads are
-                        preserved.
+                        {say(
+                          "Stops admission of new work; history remains available. Running threads are preserved.",
+                        )}
                       </p>
                     </div>
                     <button
@@ -655,7 +667,9 @@ export function ProjectWorkspaceSettings({
                     <ProjectThreadsDeletion project={project} disabled={disabled} />
                     <h4>Delete project</h4>
                     <p>
-                      Permanently delete this project and all of its threads. This cannot be undone.
+                      {personal
+                        ? "Permanently delete Aide and all of its topics. This cannot be undone."
+                        : "Permanently delete this project and all of its threads. This cannot be undone."}
                     </p>
                     <p className="project-muted">
                       Project memory, plans, and routines are removed. Your project folder and Git
@@ -684,7 +698,7 @@ export function ProjectWorkspaceSettings({
                       }
                       onClick={() => void deleteProject()}
                     >
-                      Delete project and threads
+                      {personal ? "Delete Aide and topics" : "Delete project and threads"}
                     </button>
                   </section>
                 </section>
@@ -693,8 +707,9 @@ export function ProjectWorkspaceSettings({
                 <section className="project-settings-section">
                   <h2>Project instructions</h2>
                   <p className="project-muted">
-                    Standing context supplied to coordinator turns. Native thread histories and
-                    compaction stay with each provider.
+                    {personal
+                      ? "Standing context supplied to Aide. Native topic histories and compaction stay with each provider."
+                      : "Standing context supplied to coordinator turns. Native thread histories and compaction stay with each provider."}
                   </p>
                   <textarea
                     aria-label="Project instructions"

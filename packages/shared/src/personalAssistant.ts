@@ -52,4 +52,4 @@ export function machineAssistantOf<P extends PersonalAssistantCandidate>(
 
 /** The words every refusal uses, so the user hears one rule. */
 export const PERSONAL_ASSISTANT_PRIVATE_MESSAGE =
-  "A personal assistant is private to its machine: its threads, memory and routines never move, copy or sync to another machine, and other machines' work cannot reach them.";
+  "A personal assistant is private to its machine: its topics, memory and routines never move, copy or sync to another machine, and other machines' work cannot reach them.";

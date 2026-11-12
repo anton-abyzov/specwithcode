@@ -76,7 +76,7 @@ const shared = {
 const ProjectListTool = Tool.make("studio_project_list", {
   ...shared,
   description:
-    "List registered projects in this environment. Pages use the current project snapshot and may shift between calls.",
+    "List registered projects in this environment. A project's threads do not see the personal assistant here; it sees itself. Pages use the current project snapshot and may shift between calls.",
   parameters: Schema.Struct({
     cursor: Schema.optional(NonNegativeInt),
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
@@ -502,7 +502,7 @@ const RouteTargetsTool = Tool.make("studio_route_targets", {
 const ProjectRouteTool = Tool.make("studio_project_route", {
   ...shared,
   description:
-    "Personal assistant coordinators only. Only when the user's words ask to start, change, stop or steer work in a project, hand one message the user wrote in this conversation to the coordinator of the project that owns it; that coordinator starts or reuses its own workers. A question, a review or a status request is answered in the assistant's own chat instead, and it is refused here unless userAsked quotes the user asking for that project's work. The user's message that started this turn is routed (or pass forwardMessageId for an earlier one): their words and files arrive unchanged, shown as theirs and routed by you. The project must be one studio_route_targets lists; nothing here grants a folder or account. Routing the same message to the same project again delivers it once. For a request that spans projects, route it once to each, with a note naming that project's part. Answer the user in one line with the returned coordinatorLink copied verbatim.",
+    "Personal assistant coordinators only. Only when the user's words ask to start, change, stop or steer work in a project, hand one message the user wrote in this conversation to the coordinator of the project that owns it; that coordinator starts or reuses its own workers. A question, a review or a status request is answered in the assistant's own topic instead, and it is refused here unless userAsked quotes the user asking for that project's work. The user's message that started this turn is routed (or pass forwardMessageId for an earlier one): their words and files arrive unchanged, shown as theirs and routed by you. The project must be one studio_route_targets lists; nothing here grants a folder or account. Routing the same message to the same project again delivers it once. For a request that spans projects, route it once to each, with a note naming that project's part. Answer the user in one line with the returned coordinatorLink copied verbatim.",
   parameters: Schema.Struct({
     projectId: ProjectId,
     forwardMessageId: Schema.optional(

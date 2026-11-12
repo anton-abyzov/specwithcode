@@ -25,6 +25,7 @@ const STUDIO_CLIENT: GoogleOAuthClient = {
 };
 const PROJECT = ProjectId.make("project-personal");
 const OTHER_PROJECT = ProjectId.make("project-code");
+const AIDE_PROJECT = ProjectId.make("project-aide");
 const idToken = (email: string) =>
   `h.${Buffer.from(JSON.stringify({ email })).toString("base64url")}.s`;
 const SCOPE_GMAIL_CALENDAR =
@@ -188,7 +189,14 @@ const makeHarness = (
             Effect.succeed(
               projectId === PROJECT || projectId === OTHER_PROJECT
                 ? Option.some({ projectId, title: "Errands", deletedAt: null })
-                : Option.none(),
+                : projectId === AIDE_PROJECT
+                  ? Option.some({
+                      projectId,
+                      title: "Aide",
+                      deletedAt: null,
+                      workspaceSettings: { kind: "personal" },
+                    })
+                  : Option.none(),
             ),
           list: () => Effect.succeed(listed),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
@@ -526,6 +534,32 @@ it.effect(
         assert.isFalse(harness.secrets.has("google-refresh-token"));
       }).pipe(Effect.provide(harness.layer));
     }),
+);
+
+it.effect("names Aide, not a project, when the assistant lacks a service", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+      const state = new URL(
+        (yield* google.startSignIn({ services: ["gmail", "calendar"] })).signIn!.authorizationUrl,
+      ).searchParams.get("state");
+      yield* google.completeSignIn({ callbackUrl: `?code=good-code&state=${state}` });
+      assert.include(
+        failureDetail(yield* Effect.exit(google.gmailSearch(AIDE_PROJECT, { query: "x" }))),
+        "Gmail is not turned on for Aide. The user can turn it on under Settings > Google account.",
+      );
+      assert.include(
+        (yield* google.projectAccess(AIDE_PROJECT)).guidance,
+        "enable the needed services for Aide.",
+      );
+      assert.include(
+        failureDetail(yield* Effect.exit(google.gmailSearch(PROJECT, { query: "x" }))),
+        "Gmail is not turned on for this project.",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect("lets agents read only what their project was given", () =>

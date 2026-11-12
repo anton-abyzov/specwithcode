@@ -1644,10 +1644,6 @@ export const ja: PhraseCatalog = {
   "Make default": "既定にする",
   "Morning briefing": "朝のブリーフィング",
   "Not connected": "未接続",
-  "Let a project's agents read your Gmail, Calendar and Drive, so a Personal project can brief you on your day, find a document or check who is coming to a meeting.":
-    "プロジェクトのエージェントに Gmail、カレンダー、ドライブの読み取りを許可すると、個人プロジェクトで 1 日の予定のまとめ、ドキュメントの検索、会議の参加者の確認ができます。",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only your Personal project starts with access.":
-    "エージェントは読み取ります。Gmail の下書きをオンにすると返信の下書きを保存し、返信カードで「送信」を選んだときだけ送信します。何かを変更・削除することはありません。SpecWithCode はこのマシンから Google と通信し、サインイン情報をこのマシンの非公開ファイルに保存し、下でオンにするまでプロジェクトには何も渡しません。最初からアクセスできるのは個人プロジェクトだけです。",
   "The SpecWithCode service this app is connected to (version {serverVersion}) is older than Google account support. Update that service to use it.":
     "このアプリが接続している SpecWithCode サービス（バージョン {serverVersion}）は Google アカウントに対応する前のものです。使うにはそのサービスを更新してください。",
   "Your own OAuth client": "独自の OAuth クライアント",
@@ -1684,12 +1680,33 @@ export const ja: PhraseCatalog = {
   "Finish sign-in": "サインインを完了",
   "Projects that may read each account": "各アカウントを読み取れるプロジェクト",
   "Projects that may read it": "読み取れるプロジェクト",
-  "Agents in a project see only the services you turn on for it.{value}":
-    "プロジェクトのエージェントは、そのプロジェクトでオンにしたサービスだけを見られます。{value}",
+  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
+    "Aide と選んだプロジェクトに Gmail、Calendar、Drive の読み取りを許可すると、Aide が 1 日の予定のまとめ、ドキュメントの検索、会議の参加者の確認をできます。",
+  "Agents in a project see only the services you turn on for it.":
+    "プロジェクトのエージェントは、そのプロジェクトでオンにしたサービスだけを見られます。",
+  "Agents use the default account unless asked for another, and may read every account turned on here.":
+    "エージェントは別のアカウントを指定されない限り既定のアカウントを使い、ここでオンにしたすべてのアカウントを読み取れます。",
+  "Your personal assistant. It starts with access when you connect an account.":
+    "あなたのパーソナルアシスタントです。アカウントを接続するとすぐにアクセスできます。",
+  "Hidden on this machine. You can still turn its access off here.":
+    "このマシンでは非表示です。ここからアクセスをオフにすることはできます。",
+  "Proactive briefing": "プロアクティブなブリーフィング",
+  "No projects yet. Aide above can already use this account.":
+    "まだプロジェクトはありません。上の Aide はすでにこのアカウントを使えます。",
+  "No projects yet. Add one to let its agents read this account.":
+    "まだプロジェクトはありません。追加すると、そのエージェントがこのアカウントを読み取れます。",
+  "Enable {service} for all active projects":
+    "すべてのアクティブなプロジェクトで {service} を有効にする",
+  "Disable {service} for all projects": "すべてのプロジェクトで {service} を無効にする",
+  "{service} for {title}": "{title} の {service}",
+  "Make {account} the default for {title}": "{account} を {title} の既定にする",
+  "this account": "このアカウント",
+  "Aide is opened from its own entry, not as a project":
+    "Aide はプロジェクトとしてではなく、専用の入口から開きます",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
+    "エージェントは読み取ります。Gmail の下書きをオンにすると返信の下書きを保存し、返信カードで「送信」を選んだときだけ送信します。何かを変更・削除することはありません。SpecWithCode はこのマシンから Google と通信し、サインイン情報をこのマシンの非公開ファイルに保存し、下でオンにするまでプロジェクトには何も渡しません。最初からアクセスできるのは Aide だけです。",
   "Enable for all active projects": "すべてのアクティブなプロジェクトで有効にする",
   "Not now": "今はしない",
-  "Add a project first. A Personal project suits a personal agent.":
-    "先にプロジェクトを追加してください。個人用エージェントには個人プロジェクトが適しています。",
   "{span} · {onCount} of {length} active": "{span} · アクティブ {length} 件中 {onCount} 件",
   "No active projects of your own here.": "ここにはあなたのアクティブなプロジェクトがありません。",
   automated: "自動",
@@ -4560,4 +4577,8 @@ export const ja: PhraseCatalog = {
   "move pending": "移動の確認待ち",
   "separate project": "別のプロジェクト",
   "not synced here": "ここでは未同期",
+  "{value}Messages go to Aide. {value2}": "{value}メッセージは Aide に届きます。{value2}",
+  "Show only topics that need you in {project}": "{project} で対応が必要なトピックのみ表示",
+  "New topic in {title}": "{title} で新しいトピック",
+  Aide: "Aide",
 };

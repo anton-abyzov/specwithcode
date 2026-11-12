@@ -14,7 +14,7 @@ const project = (
 ): PickerProject => ({ environmentId, id: ProjectId.make(id), workspaceRoot, workspaceSettings });
 const cases = [
   [project("active", "/work/app"), null],
-  [project("personal", "/work/assistant", { kind: "personal" }), null],
+  [project("personal", "/work/assistant", { kind: "personal" }), "assistant"],
   [project("archive", "/work/old", { archived: true }), "archived"],
   [project("automatic", "/work/demo", { origin: "automated" }), "automated"],
   [project("temporary", "/work/demo", { temporarySessionId: "check" }), "automated"],
@@ -48,7 +48,19 @@ describe("shared web/mobile project choices", () => {
   it("keeps personal projects only for workflows supporting them", () => {
     const personal = cases[1][0];
     expect(projectPickerMembers([personal], scratch, "design")).toEqual([personal]);
+    expect(projectPickerMembers([personal], scratch, "any")).toEqual([personal]);
+    expect(projectPickerMembers([personal], scratch, "work")).toEqual([]);
     expect(projectChoiceIneligibleReason(personal, scratch, "code")).toBe("not-code");
+  });
+  it("keeps the scratch, archived and automated reasons ahead of assistant", () => {
+    const aide = (settings: PickerProject["workspaceSettings"]) =>
+      project("aide", "/work/assistant", { kind: "personal", ...settings });
+    expect(projectChoiceIneligibleReason(aide({ archived: true }), scratch)).toBe("archived");
+    expect(projectChoiceIneligibleReason(aide({ origin: "automated" }), scratch)).toBe("automated");
+    expect(
+      projectChoiceIneligibleReason(project("aide", scratch(), { kind: "personal" }), scratch),
+    ).toBe("scratch");
+    expect(projectChoiceIneligibleReason(aide({}), scratch, "any")).toBeNull();
   });
   it("keeps the app's scratch folder as No project when the scratch path is unknown", () => {
     // A session without orchestration:operate, or before the machine's config arrives.

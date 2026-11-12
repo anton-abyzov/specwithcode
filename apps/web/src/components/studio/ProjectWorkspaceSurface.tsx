@@ -4,6 +4,7 @@ import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAtte
 import * as DateTime from "effect/DateTime";
 import { environmentShell } from "../../state/shell";
 import { useProjectAttention } from "../../studio/useProjectAttention";
+import { paneWords } from "../../studio/assistantTerms";
 import { ThreadArtifactsMenu } from "../chat/ThreadArtifacts";
 import { CoordinatorComposerControls } from "./CoordinatorAccessPicker";
 import { useProjectThreadInventory } from "../../studio/useProjectThreadInventory";
@@ -239,10 +240,12 @@ function revealLatestCoordinatorMessage(): void {
   );
 }
 
-function missingModelMessage(modelsLoading: boolean): string {
+function missingModelMessage(modelsLoading: boolean, personal = false): string {
   return modelsLoading
     ? "Models are still loading from this host. Try again in a moment."
-    : "Choose and save a coordinator or worker model in project settings first.";
+    : personal
+      ? "Choose and save a model in Aide's settings first."
+      : "Choose and save a coordinator or worker model in project settings first.";
 }
 
 export function ProjectWorkspaceSurface({
@@ -312,6 +315,8 @@ export function ProjectWorkspaceSurface({
   const refreshWorkspace = query.refresh;
   const machinePrivate =
     (project.workspaceSettings?.kind ?? snapshot?.settings.kind) === "personal";
+  // Aide calls its threads topics, and itself Aide where a project says the coordinator.
+  const say = paneWords(machinePrivate);
   const coordinatorId = snapshot?.settings.coordinatorThreadId ?? null;
   // The project shell names the coordinator before the workspace read answers; the
   // panel needs it at once, so a link to the coordinator never lands there.
@@ -816,7 +821,10 @@ export function ProjectWorkspaceSurface({
       });
     },
     onError: setError,
-    onSaved: () => setNotice("Coordinator model saved for this project."),
+    onSaved: () =>
+      setNotice(
+        machinePrivate ? "Aide's model saved." : "Coordinator model saved for this project.",
+      ),
     onSettled: refreshSnapshot,
   });
   // The model new threads start on, saved on the project like Project settings > General.
@@ -835,10 +843,15 @@ export function ProjectWorkspaceSurface({
           setError(
             failure instanceof Error
               ? failure.message
-              : "The model for new threads was not saved. Try again.",
+              : say("The model for new threads was not saved. Try again."),
           );
         }
-        if (result._tag !== "Failure") setNotice("Model for new threads saved for this project.");
+        if (result._tag !== "Failure")
+          setNotice(
+            machinePrivate
+              ? "Model for new topics saved."
+              : "Model for new threads saved for this project.",
+          );
       })
       .finally(() => {
         setSavingThreadModel(false);
@@ -1096,7 +1109,8 @@ export function ProjectWorkspaceSurface({
         throw new Error("Another project message is being confirmed. Your draft is preserved.");
       if (blocked) throw new Error(blocked);
       if (modelCompatibility) throw new Error(modelCompatibility);
-      if (!model && !coordinatorId) throw new Error(missingModelMessage(modelsLoading));
+      if (!model && !coordinatorId)
+        throw new Error(missingModelMessage(modelsLoading, machinePrivate));
       inFlight.current = true;
       setSending(true);
       setError(null);
@@ -1208,9 +1222,13 @@ export function ProjectWorkspaceSurface({
     blocked ??
       modelCompatibility ??
       (voiceModelProblem === "coordinator_tools_required"
-        ? "Choose a coordinator model with tool support."
+        ? machinePrivate
+          ? "Choose a model with tool support for Aide."
+          : "Choose a coordinator model with tool support."
         : voiceModelProblem
-          ? "Connect a provider in Settings > Providers and choose a coordinator model first."
+          ? machinePrivate
+            ? "Connect a provider in Settings > Providers and choose a model for Aide first."
+            : "Connect a provider in Settings > Providers and choose a coordinator model first."
           : null),
   );
   const dictation = useVoiceDictation(setPrompt, project.id);
@@ -1240,7 +1258,7 @@ export function ProjectWorkspaceSurface({
   const composerProblem =
     blocked ??
     modelCompatibility ??
-    (!model && !coordinatorId ? missingModelMessage(modelsLoading) : null);
+    (!model && !coordinatorId ? missingModelMessage(modelsLoading, machinePrivate) : null);
   // Read to a screen reader when an answer is sent or a question settles.
   const [questionAnnouncement, announceQuestion] = useLiveAnnouncement();
   const retireError = useCallback(
@@ -1307,7 +1325,7 @@ export function ProjectWorkspaceSurface({
     const result = await toggleProjectThreadResolution(thread, actions, archived.refresh);
     if (result?._tag === "Failure") {
       const e = squashAtomCommandFailure(result);
-      setError(e instanceof Error ? e.message : "Thread status could not be changed.");
+      setError(e instanceof Error ? e.message : say("Thread status could not be changed."));
     }
     return result;
   }
@@ -1381,14 +1399,17 @@ export function ProjectWorkspaceSurface({
     (!model && !coordinatorId
       ? modelsLoading
         ? "Models are still loading from this host."
-        : "Choose a coordinator model to start one of these."
+        : machinePrivate
+          ? "Choose a model for Aide to start one of these."
+          : "Choose a coordinator model to start one of these."
       : null);
   const starterList = (
     <StarterSuggestions
       suggestions={starters.suggestions}
       loading={starters.loading}
       layout="list"
-      heading="Suggested first threads"
+      heading={say("Suggested first threads")}
+      personal={machinePrivate}
       blocked={startersBlocked}
       startingId={startingSuggestion}
       startedIds={sentSuggestions}
@@ -1648,7 +1669,7 @@ export function ProjectWorkspaceSurface({
           <section
             ref={coordinatorPaneRef}
             className="project-coordinator sws-coordinator"
-            aria-label="Project coordinator"
+            aria-label={machinePrivate ? "Aide" : "Project coordinator"}
             data-project-pane="coordinator"
           >
             {/* The top bar spans this column only: the panel beside it runs the full
@@ -1792,7 +1813,7 @@ export function ProjectWorkspaceSurface({
               />
             ) : null}
             <div className="contents">
-              <h2 className="sr-only">Coordinator</h2>
+              <h2 className="sr-only">{machinePrivate ? "Aide" : "Coordinator"}</h2>
               {query.error && (
                 <p className="project-notice sws-pane-notice" role="alert">
                   {query.error}{" "}
@@ -1867,7 +1888,9 @@ export function ProjectWorkspaceSurface({
                   sending
                 }
                 missingModel={
-                  !blocked && !model && !coordinatorId ? missingModelMessage(modelsLoading) : null
+                  !blocked && !model && !coordinatorId
+                    ? missingModelMessage(modelsLoading, machinePrivate)
+                    : null
                 }
                 canAttach={canOperate && connected}
                 uploadsSupported={uploadsSupported}
@@ -1875,13 +1898,17 @@ export function ProjectWorkspaceSurface({
                 sending={sending}
                 placeholder={
                   coordinatorQuestion
-                    ? "Answer the coordinator: type, paste or attach, then send"
+                    ? say("Answer the coordinator: type, paste or attach, then send")
                     : promptPlaceholder
                 }
                 promptLabel={
                   coordinatorQuestion
-                    ? "Your answer to the coordinator's question"
-                    : "Message the project coordinator"
+                    ? machinePrivate
+                      ? "Your answer to Aide's question"
+                      : "Your answer to the coordinator's question"
+                    : machinePrivate
+                      ? "Message Aide"
+                      : "Message the project coordinator"
                 }
                 question={
                   coordinatorQuestion ? (
@@ -1914,7 +1941,7 @@ export function ProjectWorkspaceSurface({
                     )}
                     {error && (
                       <p role="alert">
-                        {nameMachineInText(error, knownMachine)}
+                        {nameMachineInText(say(error), knownMachine)}
                         {providerFix && !coordinatorFailure ? (
                           <span className="mt-2 flex">
                             <CoordinatorFixButton
@@ -1935,7 +1962,7 @@ export function ProjectWorkspaceSurface({
                       !coordinatorFailure &&
                       !(coordinatorWorking && SEND_NOTICES.has(notice)) && (
                         <p className="project-muted" role="status">
-                          {notice}
+                          {say(notice)}
                         </p>
                       )}
                     <VoiceCallBar call={voiceCall} />
@@ -1988,10 +2015,14 @@ export function ProjectWorkspaceSurface({
                       <Tip
                         label={
                           chipOpens === "answer"
-                            ? "The coordinator asked you a question. Answer it in the message box"
+                            ? machinePrivate
+                              ? "Aide asked you a question. Answer it in the message box"
+                              : "The coordinator asked you a question. Answer it in the message box"
                             : attention && chipOpens === "coordinator-review"
-                              ? `${attention.message} Review here`
-                              : "Coordinator status. Show its latest message"
+                              ? `${say(attention.message)} Review here`
+                              : machinePrivate
+                                ? "Aide's status. Show its latest message"
+                                : "Coordinator status. Show its latest message"
                         }
                       >
                         <button
@@ -2011,10 +2042,14 @@ export function ProjectWorkspaceSurface({
                           {THREAD_TONE_LABELS[coordinatorTone]}
                           <span className="sr-only">
                             {chipOpens === "answer"
-                              ? ", answer the coordinator's question in the message box"
+                              ? machinePrivate
+                                ? ", answer Aide's question in the message box"
+                                : ", answer the coordinator's question in the message box"
                               : attention && chipOpens === "coordinator-review"
                                 ? `, ${attention.action.toLowerCase()} here`
-                                : ", show the coordinator's latest message"}
+                                : machinePrivate
+                                  ? ", show Aide's latest message"
+                                  : ", show the coordinator's latest message"}
                           </span>
                         </button>
                       </Tip>
@@ -2066,7 +2101,13 @@ export function ProjectWorkspaceSurface({
             <aside
               id="project-threads-pane"
               className="project-thread-pane sws-threads"
-              aria-label={selectedThread ? `Thread ${selectedThread.title}` : "Project threads"}
+              aria-label={
+                selectedThread
+                  ? `${say("Thread")} ${selectedThread.title}`
+                  : machinePrivate
+                    ? "Topics"
+                    : "Project threads"
+              }
               data-project-pane="threads"
             >
               {selectedThread ? (
@@ -2250,7 +2291,7 @@ export function ProjectWorkspaceSurface({
                       ) : null}
                       {archived.error ? (
                         <p className="project-notice" role="alert">
-                          Archived threads could not be loaded.{" "}
+                          {say("Archived threads could not be loaded.")}{" "}
                           <button
                             type="button"
                             className="project-control"

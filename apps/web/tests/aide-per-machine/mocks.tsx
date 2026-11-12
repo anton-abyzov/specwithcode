@@ -279,3 +279,19 @@ const NO_MEMBERS: never[] = [];
 export const useAttentionMembers = () => NO_MEMBERS;
 export const expandAttentionProjects = (members: readonly unknown[]) => members;
 export const projectAttentionRoots = () => NO_MEMBERS;
+// Later app imports reached through the sidebar and Run on menu.
+const ENVIRONMENT_IDS = environments.map((environment) => environment.environmentId);
+export const useEnvironmentIds = () => ENVIRONMENT_IDS;
+export const useThreadShell = () => null;
+export const useAtomRefresh = () => () => {};
+export const EMPTY_SERVER_PROVIDERS: readonly never[] = [];
+export const serverEnvironment = { providersValueAtom: () => ({ name: "providers" }) };
+export const useEnvironmentScope = () => false;
+export const useEnvironmentSettings = () => null;
+export const useProject = () => null;
+export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE = "This setting is saved on a server.";
+export const mergeEnvironmentSettings = (server: object, client: object) => ({
+  ...server,
+  ...client,
+});
+export const persistClientSettingsPatch = async () => {};

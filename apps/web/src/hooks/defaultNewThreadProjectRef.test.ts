@@ -19,21 +19,14 @@ const docs = project("docs");
 const projectOrder = [getProjectOrderKey(aide), getProjectOrderKey(app), getProjectOrderKey(docs)];
 
 describe("defaultNewThreadProjectRef", () => {
-  it("skips a hidden personal assistant and lands on the next project in sidebar order", () => {
-    expect(
-      defaultNewThreadProjectRef({ projects: [docs, aide, app], projectOrder, aideEnabled: false }),
-    ).toEqual({ environmentId: "env-a", projectId: "app" });
+  it("skips the personal assistant and lands on the next project in sidebar order", () => {
+    expect(defaultNewThreadProjectRef({ projects: [docs, aide, app], projectOrder })).toEqual({
+      environmentId: "env-a",
+      projectId: "app",
+    });
   });
 
-  it("keeps the personal assistant first while Aide is on", () => {
-    expect(
-      defaultNewThreadProjectRef({ projects: [docs, aide, app], projectOrder, aideEnabled: true }),
-    ).toEqual({ environmentId: "env-a", projectId: "aide" });
-  });
-
-  it("has no default when the hidden assistant is the only project", () => {
-    expect(
-      defaultNewThreadProjectRef({ projects: [aide], projectOrder, aideEnabled: false }),
-    ).toBeNull();
+  it("has no default when the assistant is the only project", () => {
+    expect(defaultNewThreadProjectRef({ projects: [aide], projectOrder })).toBeNull();
   });
 });

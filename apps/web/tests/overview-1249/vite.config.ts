@@ -18,6 +18,7 @@ const MOCKED = new Set(
     "state/environments",
     "state/session",
     "hooks/useNewChatDestination",
+    "hooks/useHandleNewThread",
     "composerDraftStore",
     "env",
     "components/WorkspacePageHeader",

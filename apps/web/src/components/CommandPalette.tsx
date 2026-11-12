@@ -3,6 +3,7 @@
 import { ProjectCreationAction } from "./studio/ProjectCreationAction";
 
 import {
+  assistantDisplayTitle,
   findMachineAssistant,
   machineOffersAssistant,
   PERSONAL_ASSISTANT_PER_MACHINE_LINE,
@@ -12,6 +13,8 @@ import {
   visibleWithAide,
 } from "../studio/personalAssistant";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { paneWords } from "../studio/assistantTerms";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { CloneProjectDestination } from "./studio/CloneProjectDestination";
 import { threadPullRequestLinkMode } from "@specweave-studio/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
@@ -176,7 +179,7 @@ import {
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { useMachineNicknames } from "../studio/machineNickname";
-import { projectPickerMembers } from "../studio/projectListVisibility";
+import { isAssistantGroup, projectPickerMembers } from "../studio/projectListVisibility";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
@@ -240,6 +243,8 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
   collapseRestartedBrowsePath,
+  machineHasOwnAssistant,
+  paletteAssistants,
   personalAssistantActionOffered,
   reduceCommandPaletteUiState,
   type SearchOverlayMode,
@@ -960,6 +965,16 @@ function OpenCommandPaletteDialog(props: {
   const threads = useMemo(
     () => threadsVisibleWithAide(allThreads, allProjects, aideEnabled),
     [allThreads, allProjects, aideEnabled],
+  );
+  // Commands on a thread of Aide's say "topic".
+  const threadWords = paneWords(
+    activeThread != null &&
+      allProjects.some(
+        (project) =>
+          project.id === activeThread.projectId &&
+          project.environmentId === activeThread.environmentId &&
+          isPersonalAssistantProject(project),
+      ),
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
@@ -2341,18 +2356,21 @@ function OpenCommandPaletteDialog(props: {
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
+    const preferredEntry = projectPickerEntries.find((entry) => entry.isPreferred);
     const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
+      preferredEntry?.group.displayName ??
       (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
+    const inAide = preferredEntry !== undefined && isAssistantGroup(preferredEntry.group);
 
     if (activeProjectTitle) {
       actionItems.push({
         kind: "action",
         value: "action:new-thread",
-        searchTerms: ["new thread", "chat", "create", "draft"],
+        searchTerms: ["new thread", "chat", "create", "draft", ...(inAide ? ["new topic"] : [])],
         title: (
           <>
-            New thread in <span className="font-semibold">{activeProjectTitle}</span>
+            {inAide ? "New topic in" : "New thread in"}{" "}
+            <span className="font-semibold">{activeProjectTitle}</span>
           </>
         ),
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
@@ -2425,7 +2443,9 @@ function OpenCommandPaletteDialog(props: {
       value: "action:copy-thread-reference",
       searchTerms: ["copy", "pull request", "pr link", "thread id", "reference"],
       title:
-        activeThreadReferenceCopyTarget.kind === "pull-request" ? "Copy PR link" : "Copy thread ID",
+        activeThreadReferenceCopyTarget.kind === "pull-request"
+          ? "Copy PR link"
+          : threadWords("Copy thread ID"),
       description: activeThreadReferenceCopyTarget.value,
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",
@@ -2442,7 +2462,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:link-increment",
       searchTerms: ["link", "increment", "specweave", "plan", "spec", "tasks"],
-      title: "Link SpecWeave increment to thread",
+      title: threadWords("Link SpecWeave increment to thread"),
       icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openLinkIncrementDialog(threadRef);
@@ -2483,7 +2503,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:link-pull-request",
       searchTerms: ["link", "pull request", "pr", "attach", "stack"],
-      title: "Link pull request to thread",
+      title: threadWords("Link pull request to thread"),
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         openLinkPullRequestDialog(threadRef);
@@ -2586,10 +2606,28 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+  // Each machine's own Aide is one go-to entry of its own, never a project row.
+  const paletteAssistantList = paletteAssistants(projects, primaryEnvironmentId);
+  const assistantItems: CommandPaletteActionItem[] = paletteAssistantList.map((assistant) => ({
+    kind: "action",
+    value: `assistant:${assistant.environmentId}:${assistant.id}`,
+    searchTerms: [assistant.title, "aide", "personal assistant", "assistant", "topics"],
+    title: assistantDisplayTitle(
+      assistant.title,
+      environmentLabelById.get(assistant.environmentId),
+      environments.length,
+    ),
+    description: PERSONAL_ASSISTANT_LABEL,
+    icon: <ConciergeBellIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openMachineAssistant(assistant);
+    },
+  }));
   if (
     personalAssistantActionOffered({
       aideEnabled,
       newProjectMachineCount: assistantEnvironmentOptions.length,
+      hasOwnAssistant: machineHasOwnAssistant(projects, primaryEnvironmentId),
     })
   ) {
     actionItems.push({
@@ -2999,6 +3037,7 @@ function OpenCommandPaletteDialog(props: {
     projectItems: rootProjectItems,
     actionItems,
     recentThreadItems,
+    assistantItems,
   });
   // Sections the query names lead as roots, then the rows of each section.
   const settingsSearchItems: CommandPaletteActionItem[] = searchSettingsBySection(

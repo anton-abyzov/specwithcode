@@ -1349,7 +1349,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "google-account",
     title: "Google account",
     to: "/settings/google",
-    searchTerms: ["gmail calendar drive google email personal agent briefing oauth sign in"],
+    searchTerms: [
+      "gmail calendar drive google email aide assistant personal agent briefing proactive morning oauth sign in projects access",
+    ],
   },
   ...(DESIGN_FEATURES.designSystems
     ? [

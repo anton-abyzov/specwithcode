@@ -2,9 +2,10 @@
 //
 // Runs the real server in a new private home with STUDIO_GOOGLE_API_URL
 // pointed at a local fake Google (consent screen, token, revoke). Saves an
-// OAuth client from Settings > Google, signs in through the fake consent
-// redirect, turns Gmail on for a Personal project, opens the morning briefing
-// template, signs in again by pasting the redirect address, adds a second
+// OAuth client from Settings > Google account, signs in through the fake consent
+// redirect, checks Aide (the personal assistant) is listed apart from projects
+// with its Proactive briefing, turns Gmail on for a regular project, opens the
+// morning briefing template, signs in again by pasting the redirect address, adds a second
 // account with a label and makes it a project's default, removes it again,
 // and disconnects.
 // No real Google account, provider turn or personal browser is involved.
@@ -298,6 +299,24 @@ try {
   const config = await rpc(context, "server.getConfig");
   const scopedSearch = `?machine=${encodeURIComponent(config.environment.environmentId)}`;
   receipt.checks.push({ personalProjectCreated: project.projectId });
+  // A regular project: it starts without access and offers the Morning briefing template.
+  // Its folder is temporary, which reads as automated, so it is saved as the person's own.
+  const research = { projectId: NodeCrypto.randomUUID() };
+  const researchRoot = NodePath.join(state, "research");
+  NodeFS.mkdirSync(researchRoot, { recursive: true });
+  const createdResearch = await context.request.post(origin + "/api/projects/mutate", {
+    data: {
+      type: "project.create",
+      commandId: NodeCrypto.randomUUID(),
+      projectId: research.projectId,
+      title: "Research",
+      workspaceRoot: researchRoot,
+      origin: "user",
+    },
+    headers: { Origin: origin },
+  });
+  NodeAssert.equal(createdResearch.status(), 200, await createdResearch.text());
+  receipt.checks.push({ regularProjectCreated: research.projectId });
 
   const page = await context.newPage();
   // A provider update notice can appear at any point and cover the controls
@@ -415,11 +434,48 @@ try {
     null,
     { timeout: 15000 },
   );
-  await page.getByRole("link", { name: "Morning briefing" }).waitFor({ timeout: 15000 });
+  // Aide has its own group, without a "(personal)" suffix, and its row opens the routine the
+  // host sets up for it instead of proposing a second briefing.
+  const aideGroup = page.getByRole("region", { name: "Aide", exact: true });
+  NodeAssert.equal(await aideGroup.getByRole("switch", { name: "Gmail for Errands" }).count(), 1);
+  NodeAssert.equal(await aideGroup.getByText("(personal)", { exact: false }).count(), 0);
+  const proactive = aideGroup.getByRole("link", { name: "Proactive briefing", exact: true });
+  await proactive.waitFor({ timeout: 15000 });
+  NodeAssert.equal((await proactive.getAttribute("href"))?.includes("template="), false);
+  NodeAssert.equal(await aideGroup.getByRole("link", { name: "Morning briefing" }).count(), 0);
+  receipt.checks.push({ aideListedApart: true, aideProactiveBriefingLink: true });
+
+  // The project may sit in a temporary folder, which the page lists under automated.
+  const showAutomated = page.getByRole("button", { name: /^Show automated/u });
+  const morningBriefing = async () => {
+    const link = page.getByRole("link", { name: "Morning briefing", exact: true });
+    await link.or(showAutomated).first().waitFor({ timeout: 15000 });
+    if (await showAutomated.isVisible()) await showAutomated.click();
+    return link;
+  };
+  const researchGmail = page.getByRole("switch", { name: "Gmail for Research" });
+  await researchGmail.or(showAutomated).first().waitFor({ timeout: 15000 });
+  if (await showAutomated.isVisible()) await showAutomated.click();
+  NodeAssert.equal(await aideGroup.getByRole("switch", { name: "Gmail for Research" }).count(), 0);
+  await researchGmail.click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Gmail for Research"]')?.getAttribute("aria-checked") ===
+      "true",
+    null,
+    { timeout: 15000 },
+  );
+  await (await morningBriefing()).waitFor({ timeout: 15000 });
   const granted = await rpc(context, "googleAccount.status");
-  NodeAssert.deepEqual(granted.projects, [
-    { projectId: project.projectId, services: ["gmail", "calendar"] },
-  ]);
+  NodeAssert.deepEqual(
+    granted.projects.toSorted((left, right) =>
+      left.projectId === project.projectId ? -1 : right.projectId === project.projectId ? 1 : 0,
+    ),
+    [
+      { projectId: project.projectId, services: ["gmail", "calendar"] },
+      { projectId: research.projectId, services: ["gmail"] },
+    ],
+  );
   await shot("3-google-connected.png");
   receipt.checks.push({ projectAccess: granted.projects });
 
@@ -440,7 +496,7 @@ try {
   };
   const tasksBefore = await rpc(context, "scheduledTasks.list");
   for (const method of ["cancel", "close", "escape", "backdrop"]) {
-    await page.getByRole("link", { name: "Morning briefing" }).click();
+    await (await morningBriefing()).click();
     await titleInput.waitFor({ timeout: 15000 });
     NodeAssert.equal(await titleInput.inputValue(), "Morning briefing");
     const prompt = await page.locator("textarea").first().inputValue();
@@ -457,7 +513,7 @@ try {
     receipt.checks.push({ morningBriefingDismissal: method, exactOriginRestored: true });
   }
   // Escape in a nested select closes only that control, then closes the editor.
-  await page.getByRole("link", { name: "Morning briefing" }).click();
+  await (await morningBriefing()).click();
   await titleInput.waitFor();
   const templateHref = page.url();
   await page.getByRole("dialog").getByRole("combobox").first().click();
@@ -472,7 +528,7 @@ try {
 
   const taskListHref = origin + "/settings/scheduled-tasks" + scopedSearch;
   const directTemplateHref =
-    taskListHref + `&template=morning-briefing&projectId=${project.projectId}`;
+    taskListHref + `&template=morning-briefing&projectId=${research.projectId}`;
   await page.goto(directTemplateHref);
   await titleInput.waitFor();
   await dismiss("cancel");
@@ -501,7 +557,7 @@ try {
   // Saving is a different outcome: keep the list and consume the template.
   // Disable the fixture before saving so this check can never start a turn.
   await page.goto(googleHref);
-  await page.getByRole("link", { name: "Morning briefing" }).click();
+  await (await morningBriefing()).click();
   await titleInput.waitFor();
   const enabledSwitch = page
     .getByRole("dialog")

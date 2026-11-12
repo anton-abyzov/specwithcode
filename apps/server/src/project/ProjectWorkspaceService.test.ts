@@ -620,7 +620,11 @@ it("tells the personal assistant its memory is about one person and threads are 
   const assistant = context("personal");
   assert.include(assistant, "Its memory is about them");
   assert.include(assistant, "`user_<subject>.md`");
-  assert.include(assistant, "say topic to them");
+  assert.include(assistant, "say topic to them, also where these instructions say thread");
+  assert.include(assistant, "not a new topic each time");
+  assert.include(assistant, "continues that routine's own topic");
+  assert.notInclude(assistant, "a new chat each time");
+  assert.notInclude(assistant, "this project's memory and each target");
   assert.include(assistant, "Pin one they call ongoing");
   assert.include(assistant, "studio_project_connections_list");
   assert.include(assistant, "only the user connects a service");

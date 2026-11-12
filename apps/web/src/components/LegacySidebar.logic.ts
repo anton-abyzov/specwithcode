@@ -1,10 +1,17 @@
 import { isAppScratchFolder } from "@specweave-studio/shared/projectOrigin";
 import {
+  isAssistantGroup,
   partitionProjectGroups,
   type ProjectListGroup,
   type ScratchRootLookup,
 } from "../studio/projectListVisibility";
+import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import { resolveThreadStatusPill } from "./Sidebar.logic";
+import {
+  assistantGroupHint,
+  assistantMembersOf,
+  sortAssistantGroups,
+} from "./studio/assistantEntries";
 
 /**
  * Whether a group may be a machine's "No project" folder the client cannot confirm yet
@@ -37,14 +44,16 @@ export interface LegacySidebarProjectSections<G extends ProjectListGroup> {
  * The legacy sidebar's project sections: automated and archived projects sit in folded
  * sections, as in the studio sidebar. A machine's "No project" folder keeps its row,
  * because this sidebar has no Chats section. A fold the person has not toggled (null)
- * opens while its project is open.
+ * opens while its project is open. Aide is not a project: it is in no section, even
+ * automated or archived, and has its own link above the list.
  */
 export function legacySidebarProjectSections<G extends ProjectListGroup>(
-  groups: ReadonlyArray<G>,
+  allGroups: ReadonlyArray<G>,
   scratchRootFor: ScratchRootLookup,
   activeProjectKey: string | null,
   folds: { readonly automated: boolean | null; readonly archived: boolean | null },
 ): LegacySidebarProjectSections<G> {
+  const groups = withoutAssistants(allGroups);
   const partition = partitionProjectGroups(groups, scratchRootFor);
   const automated = partition.automated.filter((group) => !mayBeScratchGroup(group));
   const archived = partition.archived.filter((group) => !mayBeScratchGroup(group));
@@ -98,4 +107,40 @@ export function legacySidebarWaitingCount(
       }).length,
     0,
   );
+}
+
+/** The groups a sidebar's project list shows: every one but a personal assistant. */
+export function withoutAssistants<G extends ProjectListGroup>(groups: ReadonlyArray<G>): G[] {
+  return groups.filter((group) => !isAssistantGroup(group));
+}
+
+/** One link above the Projects list that opens an assistant, as the studio sidebar's Aide row does. */
+export interface LegacySidebarAssistantLink {
+  readonly projectKey: string;
+  readonly title: string;
+  /** The machine it lives on once there is more than one, and "extra" for a duplicate. */
+  readonly hint: string | undefined;
+}
+
+/**
+ * The assistants the legacy sidebars link to, archived and automated ones included as in
+ * the studio sidebar's Aide block: this machine's first. Empty while Aide is off, since
+ * the sidebars leave a hidden assistant out of their groups.
+ */
+export function legacySidebarAssistantLinks(
+  groups: ReadonlyArray<SidebarProjectSnapshot>,
+  primaryEnvironmentId: string | null,
+): LegacySidebarAssistantLink[] {
+  const assistants = groups.filter(isAssistantGroup);
+  const members = assistantMembersOf(assistants);
+  const labels = new Map(
+    groups.flatMap((group) =>
+      group.memberProjects.map((member) => [member.environmentId, member.environmentLabel]),
+    ),
+  );
+  return sortAssistantGroups(assistants, members, primaryEnvironmentId).map((group) => ({
+    projectKey: group.projectKey,
+    title: group.displayName,
+    hint: assistantGroupHint(group, members, (id) => labels.get(id as never), labels.size),
+  }));
 }

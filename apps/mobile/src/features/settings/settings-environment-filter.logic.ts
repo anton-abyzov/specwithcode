@@ -54,7 +54,7 @@ export function settingsProjectChoices<
     const eligible = group.members.some(
       ({ project }) =>
         environmentIds.has(project.environmentId) &&
-        projectChoiceIneligibleReason(project, scratchRootFor) === null,
+        projectChoiceIneligibleReason(project, scratchRootFor, "any") === null,
     );
     if (!eligible) unavailable.add(group.key);
     return eligible || group.key === selectedKey;

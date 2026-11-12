@@ -20,7 +20,7 @@ const shared = {
 const ACCOUNT = Schema.optional(
   Schema.String.check(Schema.isMaxLength(320)).annotate({
     description:
-      'Which Google account: its address or the label studio_google_status lists, or "all" for every account this project may read. Omit for the project\'s default account.',
+      'Which Google account: its address or the label studio_google_status lists, or "all" for every account it may read here. Omit for the default account.',
   }),
 );
 
@@ -34,7 +34,7 @@ export const GoogleToolkit = Toolkit.make(
   Tool.make("studio_google_status", {
     ...shared,
     description:
-      "Check this project's native Google setup before Calendar, Gmail or Drive work. When the project may read more than one Google account, accounts lists each with its label, what it may read there and which is the default; email and the checks describe the default. Distinguishes missing sign-in, project permission, consent and API failures. The default reads saved configuration only. Set checkConnection:true to verify only services this project may read using content-free API probes. Connections in other apps and studio_project_connections_list are separate. Never infer working Google access from a saved sign-in, an empty connection list or provider model availability. When access is missing, report the returned setup or permission step: sign-in and project access are the user's to grant in Settings > Google account.",
+      "Check the native Google setup here before Calendar, Gmail or Drive work. When more than one Google account is readable here, accounts lists each with its label, what it may read there and which is the default; email and the checks describe the default. Distinguishes missing sign-in, permission, consent and API failures. The default reads saved configuration only. Set checkConnection:true to verify only services it may read here using content-free API probes. Connections in other apps and studio_project_connections_list are separate. Never infer working Google access from a saved sign-in, an empty connection list or provider model availability. When access is missing, report the returned setup or permission step: sign-in and access are the user's to grant in Settings > Google account.",
     parameters: Schema.Struct({
       checkConnection: Schema.optional(Schema.Boolean),
     }),
@@ -64,7 +64,7 @@ export const GoogleToolkit = Toolkit.make(
     .annotate(Tool.Destructive, false),
   Tool.make("studio_google_gmail_create_draft", {
     ...shared,
-    description: `Save a plain-text reply to one Gmail message as a draft in the mailbox that received it, threaded under it, for the user to review and send themselves. Needs Gmail drafts turned on for this project (studio_google_status lists gmailDrafts). It never sends; to send, show it with studio_google_gmail_propose_send and let the person choose. Write only what the user would plausibly say; never accept, decline or commit to anything the user has not decided, and say what you need from them instead. Returns the draft's link. ${UNTRUSTED}`,
+    description: `Save a plain-text reply to one Gmail message as a draft in the mailbox that received it, threaded under it, for the user to review and send themselves. Needs Gmail drafts turned on here (studio_google_status lists gmailDrafts). It never sends; to send, show it with studio_google_gmail_propose_send and let the person choose. Write only what the user would plausibly say; never accept, decline or commit to anything the user has not decided, and say what you need from them instead. Returns the draft's link. ${UNTRUSTED}`,
     parameters: Schema.Struct({
       messageId: Schema.String.annotate({
         description: "The message to reply to, from studio_google_gmail_search.",

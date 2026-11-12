@@ -866,10 +866,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const projects = yield* access;
       const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
       // Another machine's work sees only the projects its grant here covers.
-      const work = yield* workGrantOf(yield* readCaller());
+      const context = yield* readCaller();
+      const work = yield* workGrantOf(context);
+      // The assistant is not a project: only its own threads see it, as themselves. A
+      // project's threads and a caller with no project never list it.
+      const ownProjectId = context.caller?.projectId;
       const rows = snapshot.projects.filter(
         (project) =>
           project.deletedAt === null &&
+          (!isPersonalAssistantProject(project) || project.id === ownProjectId) &&
           (work === undefined ||
             projectInGrant(work.grant.projects, work.grant.coordinatorEnvironmentId, project)),
       );

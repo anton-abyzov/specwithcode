@@ -88,7 +88,7 @@ afterEach(async () => {
 it("offers only the person's own projects for the Telegram channel", async () => {
   await act(async () => root.render(<MessagingSettingsPanel />));
   expect(options()).toEqual([
-    ["Errands (personal)", false],
+    ["ErrandsPersonal assistant", false],
     ["App", false],
   ]);
   expect(saveButton().disabled).toBe(false);
@@ -102,7 +102,7 @@ it.each([
   await act(async () => root.render(<MessagingSettingsPanel />));
   expect(options()).toEqual([
     [`${title}${label}`, true],
-    ["Errands (personal)", false],
+    ["ErrandsPersonal assistant", false],
     ["App", false],
   ]);
   expect(container.textContent).toContain(
@@ -129,9 +129,9 @@ it("keeps the hidden personal assistant a channel already uses, so nothing chang
   runtime.status = { ...runtime.status, projectId: "errands" };
   await act(async () => root.render(<MessagingSettingsPanel />));
   expect(options()).toEqual([
-    ["Errands (personal)", false],
+    ["ErrandsPersonal assistant", false],
     ["App", false],
   ]);
-  expect(container.querySelector("[data-trigger]")?.textContent).toBe("Errands (personal)");
+  expect(container.querySelector("[data-trigger]")?.textContent).toBe("Errands");
   expect(saveButton().disabled).toBe(false);
 });

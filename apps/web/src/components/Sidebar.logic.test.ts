@@ -60,6 +60,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  sidebarProjectScopeItems,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@specweave-studio/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@specweave-studio/client-runtime/state/thread-sort";
@@ -1052,6 +1053,37 @@ describe("searchSidebarThreads", () => {
       threads[0],
       threads[2],
     ]);
+  });
+});
+
+describe("sidebarProjectScopeItems", () => {
+  const group = (projectKey: string, kind: "code" | "personal" = "code") => ({
+    projectKey,
+    displayName: projectKey,
+    memberProjects: [
+      {
+        environmentId: localEnvironmentId,
+        id: ProjectId.make(`project-${projectKey}`),
+        workspaceRoot: `/work/${projectKey}`,
+        workspaceSettings: { kind },
+      },
+    ],
+  });
+  const groups = [group("Aide", "personal"), group("app")];
+
+  it("never lists the personal assistant among projects", () => {
+    expect(sidebarProjectScopeItems(groups, () => "/scratch", null)).toEqual([
+      { value: "all", label: "All projects" },
+      { value: "app", label: "app" },
+    ]);
+  });
+
+  it("shows Aide as the current scope without offering it", () => {
+    expect(sidebarProjectScopeItems(groups, () => "/scratch", "Aide")[1]).toEqual({
+      value: "Aide",
+      label: "Aide",
+      unavailable: "Aide is opened from its own entry, not as a project",
+    });
   });
 });
 

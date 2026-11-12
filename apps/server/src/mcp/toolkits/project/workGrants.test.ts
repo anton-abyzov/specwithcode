@@ -862,20 +862,48 @@ describe("a personal assistant here, seen by another machine's work", () => {
     }).pipe(Effect.provide(world.layer));
   });
 
-  it.live("still shows it to a caller on this machine without a grant", () => {
-    const world = setup({ prefix: "studio-work-grant-personal-local-", legacy: [M4] });
+  it.live(
+    "lets a caller on this machine without a grant read it, but not list it as a project",
+    () => {
+      const world = setup({ prefix: "studio-work-grant-personal-local-", legacy: [M4] });
+      const errands = ThreadId.make("household-errands");
+      world.addThread(errands, householdProject, codex);
+      return Effect.gen(function* () {
+        const listed = yield* world.call("studio_project_list", localScope, {});
+        const ids = (listed.projects as ReadonlyArray<{ id: string }>).map((project) => project.id);
+        // Aide is not a project: a caller with no project of its own never lists it.
+        expect(ids).toEqual(expect.arrayContaining([linkedProject, otherProject]));
+        expect(ids).not.toContain(householdProject);
+        expect(
+          yield* world.call("studio_project_read", localScope, { projectId: householdProject }),
+        ).toMatchObject({ id: householdProject, title: "Example Household" });
+        yield* world.callThread("studio_thread_read", localScope, { threadId: errands });
+        expect(world.reached).toEqual([errands]);
+      }).pipe(Effect.provide(world.layer));
+    },
+  );
+
+  it.live("leaves it out of a project thread's list and shows it to its own threads", () => {
+    const world = setup({ prefix: "studio-work-grant-personal-list-", legacy: [M4] });
     const errands = ThreadId.make("household-errands");
+    const fix = ThreadId.make("project-fix");
     world.addThread(errands, householdProject, codex);
+    world.addThread(fix, otherProject, codex);
     return Effect.gen(function* () {
-      const listed = yield* world.call("studio_project_list", localScope, {});
+      const ids = (listed: Record<string, unknown>) =>
+        (listed.projects as ReadonlyArray<{ id: string }>).map((project) => project.id);
+      const fromProject = ids(yield* world.call("studio_project_list", world.threadScope(fix), {}));
+      expect(fromProject).toEqual(expect.arrayContaining([linkedProject, otherProject]));
+      expect(fromProject).not.toContain(householdProject);
       expect(
-        (listed.projects as ReadonlyArray<{ id: string }>).map((project) => project.id),
+        ids(yield* world.call("studio_project_list", world.threadScope(errands), {})),
       ).toContain(householdProject);
+      // Reading it by id is unchanged on this machine.
       expect(
-        yield* world.call("studio_project_read", localScope, { projectId: householdProject }),
-      ).toMatchObject({ id: householdProject, title: "Example Household" });
-      yield* world.callThread("studio_thread_read", localScope, { threadId: errands });
-      expect(world.reached).toEqual([errands]);
+        yield* world.call("studio_project_read", world.threadScope(fix), {
+          projectId: householdProject,
+        }),
+      ).toMatchObject({ id: householdProject });
     }).pipe(Effect.provide(world.layer));
   });
 });

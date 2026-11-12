@@ -1655,10 +1655,6 @@ export const fr: PhraseCatalog = {
   "Make default": "Définir par défaut",
   "Morning briefing": "Briefing du matin",
   "Not connected": "Non connecté",
-  "Let a project's agents read your Gmail, Calendar and Drive, so a Personal project can brief you on your day, find a document or check who is coming to a meeting.":
-    "Laissez les agents d'un projet lire votre Gmail, votre Agenda et votre Drive, pour qu'un projet Personnel puisse vous résumer la journée, trouver un document ou vérifier qui vient à une réunion.",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only your Personal project starts with access.":
-    "Les agents lisent. Avec les brouillons Gmail activés, ils enregistrent des brouillons de réponse et n'en envoient un que lorsque vous choisissez Envoyer sur une carte de réponse ; ils ne modifient ni ne suppriment jamais rien. SpecWithCode parle à Google depuis cette machine, garde la connexion dans un fichier privé sur cette machine et ne donne rien à un projet tant que vous ne l'activez pas ci-dessous. Seul votre projet Personnel a accès d'emblée.",
   "The SpecWithCode service this app is connected to (version {serverVersion}) is older than Google account support. Update that service to use it.":
     "Le service SpecWithCode auquel cette app est connectée (version {serverVersion}) est antérieur à la prise en charge des comptes Google. Mettez ce service à jour pour l'utiliser.",
   "Your own OAuth client": "Votre propre client OAuth",
@@ -1695,12 +1691,32 @@ export const fr: PhraseCatalog = {
   "Finish sign-in": "Terminer la connexion",
   "Projects that may read each account": "Projets autorisés à lire chaque compte",
   "Projects that may read it": "Projets autorisés à le lire",
-  "Agents in a project see only the services you turn on for it.{value}":
-    "Les agents d'un projet ne voient que les services que vous activez pour lui.{value}",
+  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
+    "Laissez Aide et les projets de votre choix lire votre Gmail, Calendar et Drive, pour qu'Aide puisse vous résumer la journée, trouver un document ou vérifier qui vient à une réunion.",
+  "Agents in a project see only the services you turn on for it.":
+    "Les agents d'un projet ne voient que les services que vous activez pour lui.",
+  "Agents use the default account unless asked for another, and may read every account turned on here.":
+    "Les agents utilisent le compte par défaut sauf si on leur en demande un autre, et peuvent lire tous les comptes activés ici.",
+  "Your personal assistant. It starts with access when you connect an account.":
+    "Votre assistant personnel. Il a accès dès que vous connectez un compte.",
+  "Hidden on this machine. You can still turn its access off here.":
+    "Masqué sur cette machine. Vous pouvez toujours désactiver son accès ici.",
+  "Proactive briefing": "Briefing proactif",
+  "No projects yet. Aide above can already use this account.":
+    "Aucun projet pour l'instant. Aide, ci-dessus, peut déjà utiliser ce compte.",
+  "No projects yet. Add one to let its agents read this account.":
+    "Aucun projet pour l'instant. Ajoutez-en un pour que ses agents lisent ce compte.",
+  "Enable {service} for all active projects": "Activer {service} pour tous les projets actifs",
+  "Disable {service} for all projects": "Désactiver {service} pour tous les projets",
+  "{service} for {title}": "{service} pour {title}",
+  "Make {account} the default for {title}": "Définir {account} par défaut pour {title}",
+  "this account": "ce compte",
+  "Aide is opened from its own entry, not as a project":
+    "Aide s'ouvre depuis sa propre entrée, pas comme un projet",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
+    "Les agents lisent. Avec les brouillons Gmail activés, ils enregistrent des brouillons de réponse et n'en envoient un que lorsque vous choisissez Envoyer sur une carte de réponse ; ils ne modifient ni ne suppriment jamais rien. SpecWithCode parle à Google depuis cette machine, garde la connexion dans un fichier privé sur cette machine et ne donne rien à un projet tant que vous ne l'activez pas ci-dessous. Seul Aide a accès d'emblée.",
   "Enable for all active projects": "Activer pour tous les projets actifs",
   "Not now": "Pas maintenant",
-  "Add a project first. A Personal project suits a personal agent.":
-    "Ajoutez d'abord un projet. Un projet Personnel convient à un agent personnel.",
   "{span} · {onCount} of {length} active": "{span} · {onCount} sur {length} actifs",
   "No active projects of your own here.": "Aucun de vos projets actifs ici.",
   automated: "automatisé",
@@ -4599,4 +4615,9 @@ export const fr: PhraseCatalog = {
   "move pending": "déplacement en attente",
   "separate project": "projet séparé",
   "not synced here": "non synchronisé ici",
+  "{value}Messages go to Aide. {value2}": "{value}Les messages vont à Aide. {value2}",
+  "Show only topics that need you in {project}":
+    "Afficher seulement les sujets qui ont besoin de vous dans {project}",
+  "New topic in {title}": "Nouveau sujet dans {title}",
+  Aide: "Aide",
 };

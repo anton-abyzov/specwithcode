@@ -8,7 +8,7 @@ import type { ThreadPaneGroup } from "./shellModel";
 export const ASSISTANT_COMPOSER_PLACEHOLDER = "Ask Aide anything";
 
 const REPLACEMENTS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\bthe coordinator\b/g, "Aide"],
+  [/\b[Tt]he coordinator\b/g, "Aide"],
   [/\bThreads\b/g, "Topics"],
   [/\bthreads\b/g, "topics"],
   [/\bThread\b/g, "Topic"],

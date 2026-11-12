@@ -118,6 +118,23 @@ describe("settings scope project choices", () => {
     expect(settingsScopeProjectChoices(groups, scratchRootFor, "live").unavailable).toBeNull();
   });
 
+  it("offers Aide first, since it has settings of its own", () => {
+    const aide = {
+      projectKey: "aide",
+      memberProjects: [
+        {
+          environmentId,
+          id: ProjectId.make("aide"),
+          workspaceRoot: "/assistants/aide",
+          workspaceSettings: { kind: "personal" },
+        },
+      ],
+    };
+    const result = settingsScopeProjectChoices([...groups, aide], scratchRootFor, "aide");
+    expect(keys(result)).toEqual(["aide", "live"]);
+    expect(result.unavailable).toBeNull();
+  });
+
   it("shows an archived or automated current scope apart, never as a choice", () => {
     const archived = settingsScopeProjectChoices(groups, scratchRootFor, "old");
     expect(keys(archived)).toEqual(["live"]);

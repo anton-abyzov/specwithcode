@@ -17,6 +17,8 @@ const projects = [
   { id: "ec-m1", environmentId: M1, title: "EasyChamp" },
   { id: "sketch", environmentId: M1, title: "sketchmate_project" },
   { id: "swc", environmentId: M4, title: "specwithcode-dev" },
+  // The personal assistant: its own entry in the rail, never a project card.
+  { id: "aide-m4", environmentId: M4, title: "Aide", workspaceSettings: { kind: "personal" } },
 ];
 const groups = [
   ["specweave", ["sw-m4", "sw-m1"]],
@@ -24,6 +26,7 @@ const groups = [
   ["EasyChamp", ["ec-m4", "ec-m1"]],
   ["sketchmate_project", ["sketch"]],
   ["specwithcode-dev", ["swc"]],
+  ["Aide", ["aide-m4"]],
 ].map(([name, ids]) => {
   const members = projects.filter((p) => (ids as string[]).includes(p.id));
   return {
@@ -89,6 +92,7 @@ const shells: EnvironmentThreadShell[] = [
   ...Array.from({ length: 26 }, (_, index) =>
     shell(`r${index + 6}`, `Routine check ${index + 1}`, "sw-m4", 3000 + index * 90),
   ),
+  shell("t1", "Plan the week", "aide-m4", 2400, ask),
   shell("d1", "Access card check (1.0.191)", "sw-m4", 2000, done),
   shell("d2", "Multiply 3 by 7", "sw-m4", 2100, done),
 ];
@@ -139,6 +143,12 @@ export const useEnvironmentScope = () => false;
 export const useEnvironmentScopeAccess = () => "denied";
 // hooks/useNewChatDestination
 export const useNewChatDestination = () => async () => ({ kind: "unavailable" });
+// hooks/useHandleNewThread: records each new chat a row starts, for verify.mjs to read.
+export const useNewThreadHandler = () => async (projectRef: unknown, options: unknown) => {
+  const started = ((window as { __newThreads?: unknown[] }).__newThreads ??= []);
+  started.push({ projectRef, options });
+  return null;
+};
 // composerDraftStore
 export const useComposerDraftStore = { getState: () => ({ setModelSelection: () => {} }) };
 // env

@@ -68,6 +68,7 @@ import { useStartAdversarialReview } from "./useStartAdversarialReview";
 import { useClientSettings } from "./useSettings";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
 import { isScratchMember } from "../studio/projectListVisibility";
+import { paneWords } from "../studio/assistantTerms";
 import { useThreadActions } from "./useThreadActions";
 
 /**
@@ -158,11 +159,19 @@ export function useThreadActionMenu(input: {
     },
     onError: (error) => failureToast("Failed to copy branch", error),
   });
-  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
-    onCopy: ({ threadId }) => {
-      toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
+    threadId: ThreadId;
+    personal: boolean;
+  }>({
+    onCopy: ({ threadId, personal }) => {
+      toastManager.add({
+        type: "success",
+        title: paneWords(personal)("Thread ID copied"),
+        description: threadId,
+      });
     },
-    onError: (error) => failureToast("Failed to copy thread ID", error),
+    onError: (error, { personal }) =>
+      failureToast(paneWords(personal)("Failed to copy thread ID"), error),
   });
 
   const openMenu = useCallback(
@@ -195,6 +204,9 @@ export function useThreadActionMenu(input: {
           ? (logicalProjectKeyByPhysicalKey.get(derivePhysicalProjectKey(menuProject)) ??
             deriveLogicalProjectKeyFromSettings(menuProject, projectGroupingSettings))
           : null;
+        // Aide calls its threads topics, in the menu and in what it reports.
+        const personal = isPersonalAssistantProject(menuProject);
+        const say = paneWords(personal);
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -213,11 +225,12 @@ export function useThreadActionMenu(input: {
           isRegeneratingTitle,
           titleLocked: isCoordinatorNamedThread(thread),
           renameFromHeading: true,
+          isPersonal: personal,
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           canOpenProjectWindow: canOpenProjectWindowFor(menuProjectKey),
           moveToProjectBlockedReason: threadMoveBlockedReason(thread, menuProject),
           // A personal assistant's threads stay on their machine: no handoff items.
-          handoff: isPersonalAssistantProject(menuProject)
+          handoff: personal
             ? undefined
             : withInheritedHandoff(
                 threadHandoffMenuState(handoffSnapshot, thread.id, thread.projectId),
@@ -252,8 +265,8 @@ export function useThreadActionMenu(input: {
           !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
         ) {
           failureToast(
-            "Thread action unavailable",
-            new Error("This connection cannot change threads."),
+            say("Thread action unavailable"),
+            new Error(say("This connection cannot change threads.")),
           );
           return;
         }
@@ -265,7 +278,7 @@ export function useThreadActionMenu(input: {
           if (!preset) return;
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
+            failureToast(say("Failed to snooze thread"), squashAtomCommandFailure(result));
           }
           return;
         }
@@ -312,28 +325,30 @@ export function useThreadActionMenu(input: {
               }),
             );
             if (result._tag === "Failure") {
-              failureToast("Could not create thread", squashAtomCommandFailure(result));
+              failureToast(say("Could not create thread"), squashAtomCommandFailure(result));
             }
             return;
           }
           case "settle":
-            await reportFailure(THREAD_LIFECYCLE_LABELS.failedResolve, () =>
+            await reportFailure(say(THREAD_LIFECYCLE_LABELS.failedResolve), () =>
               settleThread(threadRef),
             );
             return;
           case "unsettle":
-            await reportFailure(THREAD_LIFECYCLE_LABELS.failedReopen, () =>
+            await reportFailure(say(THREAD_LIFECYCLE_LABELS.failedReopen), () =>
               unsettleThread(threadRef),
             );
             return;
           case "unsnooze":
-            await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
+            await reportFailure(say("Failed to wake thread"), () => unsnoozeThread(threadRef));
             return;
           case "pin":
-            await reportFailure("Failed to pin thread", () => pinThread(threadRef));
+            await reportFailure(say("Failed to pin thread"), () => pinThread(threadRef));
             return;
           case "unpin": {
-            await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
+            await reportFailure(say("Failed to unpin thread"), () =>
+              confirmAndUnpinThread(threadRef),
+            );
             return;
           }
           case "auto-settle:enabled":
@@ -347,7 +362,7 @@ export function useThreadActionMenu(input: {
             return;
           case "regenerate-title":
             if (isRegeneratingTitle || isCoordinatorNamedThread(thread)) return;
-            await reportFailure("Failed to regenerate thread title", () =>
+            await reportFailure(say("Failed to regenerate thread title"), () =>
               updateThreadMetadata({
                 environmentId: threadRef.environmentId,
                 input: { threadId: threadRef.threadId, regenerateTitle: true },
@@ -364,7 +379,7 @@ export function useThreadActionMenu(input: {
                 stackedThreadToast({
                   type: "error",
                   title: "Path unavailable",
-                  description: "This thread does not have a workspace path to copy.",
+                  description: say("This thread does not have a workspace path to copy."),
                 }),
               );
               return;
@@ -378,7 +393,7 @@ export function useThreadActionMenu(input: {
             }
             return;
           case "copy-thread-id":
-            copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            copyThreadIdToClipboard(thread.id, { threadId: thread.id, personal });
             return;
           case "handoff-mode":
             return;
@@ -409,7 +424,7 @@ export function useThreadActionMenu(input: {
           case "archive": {
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(`Archive thread "${thread.title}"?`),
+                api.dialogs.confirm(`${say("Archive thread")} "${thread.title}"?`),
               );
               if (confirmed._tag === "Failure" || !confirmed.value) return;
             }
@@ -421,7 +436,11 @@ export function useThreadActionMenu(input: {
             });
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               failureToast(
-                didArchive ? "Thread archived, but navigation failed" : "Failed to archive thread",
+                say(
+                  didArchive
+                    ? "Thread archived, but navigation failed"
+                    : "Failed to archive thread",
+                ),
                 squashAtomCommandFailure(result),
               );
             }
@@ -432,8 +451,8 @@ export function useThreadActionMenu(input: {
               const confirmed = await settlePromise(() =>
                 api.dialogs.confirm(
                   [
-                    `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
+                    `${say("Delete thread")} "${thread.title}"?`,
+                    say("This permanently clears conversation history for this thread."),
                   ].join("\n"),
                   { variant: "destructive" },
                 ),
@@ -449,7 +468,7 @@ export function useThreadActionMenu(input: {
               // that itself, and "Failed to delete thread" would be a lie.
               readThreadShell(threadRef) !== null
             ) {
-              failureToast("Failed to delete thread", squashAtomCommandFailure(deleted));
+              failureToast(say("Failed to delete thread"), squashAtomCommandFailure(deleted));
             }
             return;
           }

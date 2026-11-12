@@ -26,6 +26,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAideEnabled } from "../../hooks/useSettings";
+import { findMachineAssistant } from "../../studio/personalAssistant";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -42,6 +43,7 @@ import { ArchivedDisclosure } from "./ArchivedDisclosure";
 import {
   bulkServiceChanges,
   enableAllChanges,
+  googleBriefingAction,
   partitionGoogleProjects,
 } from "./googleAccountSettings.logic";
 import { MORNING_BRIEFING_TEMPLATE } from "./scheduledTasksSettings.logic";
@@ -160,6 +162,7 @@ export function GoogleAccountSettingsPanel() {
     [statusAccounts, statusProjects],
   );
   const {
+    assistants,
     active: projects,
     automated: automatedProjects,
     archived: archivedProjects,
@@ -172,6 +175,9 @@ export function GoogleAccountSettingsPanel() {
       ),
     [aideEnabled, allProjects, environmentId, projectsWithAccess, scratchRoot],
   );
+  // The one assistant the host sets a Proactive briefing up for.
+  const machineAssistantId =
+    environmentId === null ? undefined : findMachineAssistant(allProjects, environmentId)?.id;
 
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -378,21 +384,36 @@ export function GoogleAccountSettingsPanel() {
   const enableAllPending =
     status === null ? [] : enableAllChanges(scopedProjects, activeIds, grantedReads);
 
-  const renderProjectRow = (project: (typeof projects)[number]) => {
+  const renderProjectRow = (project: (typeof projects)[number], assistant = false) => {
     if (status === null) return null;
     const enabled = scopedProjects.find((entry) => entry.projectId === project.id)?.services ?? [];
     const isDefault = selected !== null && defaultAccountOf(project.id) === selected.id;
+    const briefing = googleBriefingAction(enabled, {
+      assistant,
+      // An archived assistant gets no routine set up for it.
+      machineAssistant:
+        assistant &&
+        project.id === machineAssistantId &&
+        project.workspaceSettings?.archived !== true,
+      aideEnabled,
+    });
     return (
       <li
         key={project.id}
         className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4"
       >
-        <span className="min-w-0 truncate text-sm">
-          {project.title}
-          {project.workspaceSettings?.kind === "personal" ? (
-            <span className="text-muted-foreground"> (personal)</span>
-          ) : null}
-        </span>
+        {assistant ? (
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-sm">{project.title}</span>
+            <span className="text-muted-foreground text-xs">
+              {aideEnabled
+                ? tx("Your personal assistant. It starts with access when you connect an account.")
+                : tx("Hidden on this machine. You can still turn its access off here.")}
+            </span>
+          </span>
+        ) : (
+          <span className="min-w-0 truncate text-sm">{project.title}</span>
+        )}
         <TeamRulesInert lock={teamRulesLock}>
           <div className="flex flex-wrap items-center gap-4">
             {GOOGLE_SERVICES.map((service) => {
@@ -406,7 +427,10 @@ export function GoogleAccountSettingsPanel() {
                     size="sm"
                     checked={granted && enabled.includes(service)}
                     disabled={!canWrite || busy || !granted}
-                    aria-label={`${SERVICE_LABELS[service]} for ${project.title}`}
+                    aria-label={tx("{service} for {title}", {
+                      service: tx(SERVICE_LABELS[service]),
+                      title: project.title,
+                    })}
                     onCheckedChange={(on) => toggleService(project.id, service, on)}
                   />
                   {SERVICE_LABELS[service]}
@@ -421,14 +445,30 @@ export function GoogleAccountSettingsPanel() {
                   size="xs"
                   variant="ghost-muted"
                   disabled={!canWrite || busy}
-                  aria-label={`Make ${selected === null ? "this account" : accountTitle(selected)} the default for ${project.title}`}
+                  aria-label={tx("Make {account} the default for {title}", {
+                    account: selected === null ? tx("this account") : accountTitle(selected),
+                    title: project.title,
+                  })}
                   onClick={() => makeDefault(project.id)}
                 >
                   {tx("Make default")}
                 </Button>
               )
             ) : null}
-            {enabled.length > 0 ? (
+            {briefing === "proactive" ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                render={
+                  <Link
+                    to="/settings/scheduled-tasks"
+                    search={{ environmentId: project.environmentId }}
+                  />
+                }
+              >
+                {tx("Proactive briefing")}
+              </Button>
+            ) : briefing === "morning" ? (
               <Button
                 size="xs"
                 variant="ghost-muted"
@@ -469,12 +509,12 @@ export function GoogleAccountSettingsPanel() {
         <div className="flex flex-col gap-1 px-3 py-3 text-muted-foreground text-sm sm:px-4">
           <p>
             {tx(
-              "Let a project's agents read your Gmail, Calendar and Drive, so a Personal project can brief you on your day, find a document or check who is coming to a meeting.",
+              "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.",
             )}
           </p>
           <p className="text-xs">
             {tx(
-              "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only your Personal project starts with access.",
+              "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.",
             )}
           </p>
           {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
@@ -826,24 +866,13 @@ export function GoogleAccountSettingsPanel() {
 
         {status?.connected ? (
           <div className="flex flex-col border-t">
-            <div className="flex flex-col gap-1 px-3 pt-4 pb-2 sm:px-4">
-              <span className="font-medium text-sm">
-                {accounts.length > 1
-                  ? tx("Projects that may read each account")
-                  : tx("Projects that may read it")}
-              </span>
-              <span className="text-muted-foreground text-xs">
-                {renderRich(
-                  tx("Agents in a project see only the services you turn on for it.{value}"),
-                  {
-                    value:
-                      accounts.length > 1
-                        ? " Agents use the default account unless asked for another, and may read every account turned on here."
-                        : "",
-                  },
-                )}
-              </span>
-              {accounts.length > 1 ? (
+            {accounts.length > 1 ? (
+              <div className="flex flex-col gap-1 px-3 pt-4 sm:px-4">
+                <span className="text-muted-foreground text-xs">
+                  {tx(
+                    "Agents use the default account unless asked for another, and may read every account turned on here.",
+                  )}
+                </span>
                 <div
                   role="group"
                   aria-label={tx("Google account")}
@@ -861,7 +890,27 @@ export function GoogleAccountSettingsPanel() {
                     </Button>
                   ))}
                 </div>
-              ) : null}
+              </div>
+            ) : null}
+            {assistants.length > 0 ? (
+              <section aria-label={tx("Aide")} className="flex flex-col">
+                <span className="px-3 pt-4 font-medium text-sm sm:px-4">{tx("Aide")}</span>
+                <ul className="flex flex-col py-2">
+                  {assistants.map((assistant) => renderProjectRow(assistant, true))}
+                </ul>
+              </section>
+            ) : null}
+            <div
+              className={`flex flex-col gap-1 px-3 pt-4 pb-2 sm:px-4${assistants.length > 0 ? " border-t" : ""}`}
+            >
+              <span className="font-medium text-sm">
+                {accounts.length > 1
+                  ? tx("Projects that may read each account")
+                  : tx("Projects that may read it")}
+              </span>
+              <span className="text-muted-foreground text-xs">
+                {tx("Agents in a project see only the services you turn on for it.")}
+              </span>
             </div>
             {offerEnableAll && enableAllPending.length > 0 ? (
               <div
@@ -902,7 +951,9 @@ export function GoogleAccountSettingsPanel() {
             automatedProjects.length === 0 &&
             archivedProjects.length === 0 ? (
               <p className="px-3 pb-4 text-muted-foreground text-sm sm:px-4">
-                {tx("Add a project first. A Personal project suits a personal agent.")}
+                {assistants.length > 0
+                  ? tx("No projects yet. Aide above can already use this account.")
+                  : tx("No projects yet. Add one to let its agents read this account.")}
               </p>
             ) : (
               <>
@@ -942,7 +993,9 @@ export function GoogleAccountSettingsPanel() {
                                 size="xs"
                                 variant="ghost-muted"
                                 disabled={!canWrite || busy || onCount === projects.length}
-                                aria-label={`Enable ${label} for all active projects`}
+                                aria-label={tx("Enable {service} for all active projects", {
+                                  service: label,
+                                })}
                                 onClick={() => setServiceForAll(service, true)}
                               >
                                 {tx("Enable for all active projects")}
@@ -951,7 +1004,9 @@ export function GoogleAccountSettingsPanel() {
                                 size="xs"
                                 variant="ghost-muted"
                                 disabled={!canWrite || busy || !anyOn}
-                                aria-label={`Disable ${label} for all projects`}
+                                aria-label={tx("Disable {service} for all projects", {
+                                  service: label,
+                                })}
                                 onClick={() => setServiceForAll(service, false)}
                               >
                                 {tx("Disable all")}
@@ -964,7 +1019,9 @@ export function GoogleAccountSettingsPanel() {
                   </div>
                 ) : null}
                 {projects.length > 0 ? (
-                  <ul className="flex flex-col py-2">{projects.map(renderProjectRow)}</ul>
+                  <ul className="flex flex-col py-2">
+                    {projects.map((project) => renderProjectRow(project))}
+                  </ul>
                 ) : (
                   <p className="px-3 py-2 text-muted-foreground text-sm sm:px-4">
                     {tx("No active projects of your own here.")}
@@ -975,10 +1032,14 @@ export function GoogleAccountSettingsPanel() {
                   label={tx("automated")}
                   className="pb-1"
                 >
-                  <ul className="flex flex-col">{automatedProjects.map(renderProjectRow)}</ul>
+                  <ul className="flex flex-col">
+                    {automatedProjects.map((project) => renderProjectRow(project))}
+                  </ul>
                 </ArchivedDisclosure>
                 <ArchivedDisclosure count={archivedProjects.length} className="pb-2">
-                  <ul className="flex flex-col">{archivedProjects.map(renderProjectRow)}</ul>
+                  <ul className="flex flex-col">
+                    {archivedProjects.map((project) => renderProjectRow(project))}
+                  </ul>
                 </ArchivedDisclosure>
               </>
             )}

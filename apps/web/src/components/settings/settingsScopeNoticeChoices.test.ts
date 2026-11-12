@@ -2,6 +2,7 @@ import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  machineProjectGroups,
   settingsScopeNoticeCheckouts,
   settingsScopeNoticeProjects,
 } from "./settingsScopeNoticeChoices";
@@ -70,6 +71,18 @@ describe("settings scope notice projects", () => {
     expect(archived).toEqual([]);
   });
 
+  it("lists Aide first, as itself", () => {
+    const aide = group(
+      "aide",
+      "Aide",
+      [member("aide", "/assistants/aide", laptop, { kind: "personal" })],
+      { kind: "personal" },
+    );
+    const { listed } = settingsScopeNoticeProjects([...groups, aide], scratchRootFor, undefined);
+    expect(listed.map((entry) => entry.label)).toEqual(["Aide", "App", "Check"]);
+    expect(listed[0]?.detail).toBe("Personal assistant");
+  });
+
   it("does not count a No project member as a checkout", () => {
     const mixed = group("mixed", "Mixed", [
       member("m", "/work/mixed"),
@@ -110,5 +123,34 @@ describe("settings scope notice checkouts", () => {
     const { listed, archived } = settingsScopeNoticeCheckouts(groups, scratchRootFor, "old");
     expect(listed.map((entry) => entry.label)).toEqual(["Old · Laptop"]);
     expect(archived).toEqual([]);
+  });
+});
+
+describe("machine project groups", () => {
+  it("keeps each project's checkouts on the machine and never lists Aide", () => {
+    const aide = group(
+      "aide",
+      "Aide",
+      [member("aide", "/home/aide", laptop, { kind: "personal" })],
+      { kind: "personal" },
+    );
+    const archivedAide = group("aide-old", "Aide", [
+      member("aide-old", "/home/aide-old", laptop, { kind: "personal", archived: true }),
+    ]);
+    const onLaptop = machineProjectGroups([...groups, aide, archivedAide], laptop);
+    expect(onLaptop.map((entry) => entry.projectKey)).toEqual([
+      "app",
+      "old",
+      "check",
+      "scratch-laptop",
+    ]);
+    expect(onLaptop[0]?.memberProjects.map((entry) => entry.id)).toEqual(["app"]);
+    expect(machineProjectGroups([aide], laptop)).toEqual([]);
+    const { listed, archived } = settingsScopeNoticeCheckouts(
+      machineProjectGroups([aide, archivedAide], laptop),
+      scratchRootFor,
+      undefined,
+    );
+    expect([...listed, ...archived]).toEqual([]);
   });
 });

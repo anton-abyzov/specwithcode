@@ -12,6 +12,7 @@ import {
   type GoogleService,
   type ProjectId,
 } from "@specweave-studio/contracts";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as Clock from "effect/Clock";
@@ -35,6 +36,7 @@ import * as GmailSendApproval from "./GmailSendApproval.ts";
 import {
   googleHealthFailure,
   googleHealthRequest,
+  googleServiceOff,
   projectGoogleStatus,
   type GoogleProjectStatus,
   type GoogleServiceCheck,
@@ -374,7 +376,7 @@ const make = Effect.gen(function* () {
   const currentClient = Ref.get(clientRef).pipe(Effect.map(effectiveClient));
   const NO_CLIENT = "Save an OAuth client before signing in.";
   const NOT_CONNECTED =
-    "No Google account is connected. The user can sign in under Settings > Google.";
+    "No Google account is connected. The user can sign in under Settings > Google account.";
 
   const persistState = (state: GoogleAccountState) =>
     secrets.set(GOOGLE_STATE_SECRET, textEncoder.encode(encodeState(state))).pipe(
@@ -743,7 +745,7 @@ const make = Effect.gen(function* () {
       Effect.map(({ account }) =>
         callbackPage({
           ok: true,
-          message: `SpecWithCode can now read ${account.services.map((s) => SERVICE_LABEL[s]).join(", ") || "nothing yet"}${account.email ? ` for ${account.email}` : ""}. Personal projects can use it now; turn it on for other projects in SpecWithCode's settings. You can close this tab.`,
+          message: `SpecWithCode can now read ${account.services.map((s) => SERVICE_LABEL[s]).join(", ") || "nothing yet"}${account.email ? ` for ${account.email}` : ""}. Aide can use it now; turn it on for projects under Settings > Google account. You can close this tab.`,
         }),
       ),
       Effect.catch((error) => Effect.succeed(callbackPage({ ok: false, message: error.detail }))),
@@ -850,7 +852,7 @@ const make = Effect.gen(function* () {
         const refresh = (yield* Ref.get(refreshRef)).get(account.id);
         if (Option.isNone(client) || refresh === undefined) {
           return yield* fail(
-            `${accountName(account)} is not connected. The user can sign in under Settings > Google.`,
+            `${accountName(account)} is not connected. The user can sign in under Settings > Google account.`,
           );
         }
         const tokens = yield* api
@@ -876,7 +878,7 @@ const make = Effect.gen(function* () {
                     "Google ended SpecWithCode's access. Sign in again.",
                   );
                   return yield* fail(
-                    `Google ended SpecWithCode's access to ${accountName(account)}. The user needs to sign in again under Settings > Google.`,
+                    `Google ended SpecWithCode's access to ${accountName(account)}. The user needs to sign in again under Settings > Google account.`,
                   );
                 }
                 yield* setAccountError(account.id, error.message);
@@ -908,15 +910,27 @@ const make = Effect.gen(function* () {
     (accountId: string) =>
       tokens.has(accountId) && projectServices(state, projectId, accountId).includes(service);
 
+  /** Whether the caller is the personal assistant, read only to word refusals. */
+  const isAssistant = (projectId: ProjectId) =>
+    projects.get(projectId).pipe(
+      Effect.map((row) => Option.exists(row, isPersonalAssistantProject)),
+      Effect.orElseSucceed(() => false),
+    );
+  const notTurnedOn = (projectId: ProjectId, service: GoogleService, which = "") =>
+    Effect.map(isAssistant(projectId), (assistant) =>
+      googleServiceOff(SERVICE_LABEL[service], assistant, which),
+    );
+
   /** Why no account may serve this call: not connected, or not turned on for the project. */
   const unusableReason = (
     state: GoogleAccountState,
     tokens: ReadonlyMap<string, unknown>,
+    projectId: ProjectId,
     service: GoogleService,
   ) =>
     state.accounts.some((account) => tokens.has(account.id))
-      ? `${SERVICE_LABEL[service]} is not turned on for this project. The user can turn it on under Settings > Google.`
-      : NOT_CONNECTED;
+      ? notTurnedOn(projectId, service)
+      : Effect.succeed(NOT_CONNECTED);
 
   const requireService = (projectId: ProjectId, service: GoogleService, accountId: string) =>
     Effect.gen(function* () {
@@ -933,13 +947,11 @@ const make = Effect.gen(function* () {
       const allowed = projectServices(state, projectId, accountId);
       if (!allowed.includes(service)) {
         const which = allowed.length > 0 ? ` with ${accountName(account)}` : "";
-        return yield* fail(
-          `${SERVICE_LABEL[service]} is not turned on for this project${which}. The user can turn it on under Settings > Google.`,
-        );
+        return yield* fail(yield* notTurnedOn(projectId, service, which));
       }
       if (!tokens.has(accountId)) {
         return yield* fail(
-          `${accountName(account)} is not connected. The user can sign in under Settings > Google.`,
+          `${accountName(account)} is not connected. The user can sign in under Settings > Google account.`,
         );
       }
       return account;
@@ -955,7 +967,8 @@ const make = Effect.gen(function* () {
       const tokens = yield* Ref.get(refreshRef);
       const usable = usableFor(state, tokens, projectId, service);
       const allowed = state.accounts.filter((account) => usable(account.id));
-      if (allowed.length === 0) return yield* fail(unusableReason(state, tokens, service));
+      if (allowed.length === 0)
+        return yield* fail(yield* unusableReason(state, tokens, projectId, service));
       const wanted = name?.trim() ?? "";
       if (wanted === "") {
         const chosen = projectDefaultAccount(state, projectId, usable);
@@ -1384,6 +1397,7 @@ const make = Effect.gen(function* () {
         state.accounts.find((account) => tokens.has(account.id)) ??
         state.accounts[0];
       const base = projectGoogleStatus({
+        assistant: yield* isAssistant(projectId),
         clientConfigured: Option.isSome(client),
         connected: chosen !== undefined && tokens.has(chosen.id),
         email: chosen?.email ?? null,

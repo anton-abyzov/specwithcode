@@ -36,7 +36,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useEnvironmentQuery } from "../../../state/query";
-import { ASSISTANT_COMPOSER_PLACEHOLDER } from "../../../studio/assistantTerms";
+import { ASSISTANT_COMPOSER_PLACEHOLDER, paneWords } from "../../../studio/assistantTerms";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 
 const TOPIC_ICONS: Record<ProjectStarterSuggestion["topic"], LucideIcon> = {
@@ -100,7 +100,8 @@ export function useCoordinatorPlaceholder(
     counted.current = true;
     placeholderTurns++;
   }, []);
-  if (personal && hasThreads) return ASSISTANT_COMPOSER_PLACEHOLDER;
+  // The assistant has no repository to hint at, so it always offers the same plain prompt.
+  if (personal) return ASSISTANT_COMPOSER_PLACEHOLDER;
   return coordinatorPlaceholder({
     hasThreads,
     hint: hasThreads ? null : starterComposerHint(suggestions),
@@ -170,7 +171,10 @@ export function StarterSuggestions(props: {
   startingId: string | null;
   startedIds: ReadonlySet<string>;
   onStart: (suggestion: ProjectStarterSuggestion) => void;
+  /** The personal assistant says Aide where a project says the coordinator. */
+  personal?: boolean;
 }) {
+  const say = paneWords(props.personal);
   const shown =
     props.layout === "list" ? props.suggestions.slice(0, LIST_LIMIT) : props.suggestions;
   if (!props.loading && shown.length === 0) return null;
@@ -213,9 +217,9 @@ export function StarterSuggestions(props: {
                     <strong>{suggestion.title}</strong>
                     <span id={`${headingId}-${suggestion.id}`}>
                       {started
-                        ? "Sent to the coordinator."
+                        ? say("Sent to the coordinator.")
                         : starting
-                          ? "Sending to the coordinator…"
+                          ? say("Sending to the coordinator…")
                           : suggestion.detail}
                     </span>
                   </span>

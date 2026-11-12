@@ -27,9 +27,11 @@ vi.mock("../../../studio/projectWorkspace", () => ({
 
 import {
   coordinatorPlaceholder,
+  StarterSuggestions,
   useCoordinatorPlaceholder,
   useStarterSuggestions,
 } from "./StarterSuggestions";
+import { ASSISTANT_COMPOSER_PLACEHOLDER } from "../../../studio/assistantTerms";
 
 type Input = { enabled: boolean; goal: string; hasMemory: boolean };
 
@@ -126,10 +128,54 @@ describe("useCoordinatorPlaceholder", () => {
     prompt: 'Start a thread titled "Explain core.ts".',
   } as const;
 
-  function Probe(props: { hasThreads: boolean; onResult: (text: string) => void }) {
-    props.onResult(useCoordinatorPlaceholder(props.hasThreads, [explain]));
+  function Probe(props: {
+    hasThreads: boolean;
+    personal?: boolean;
+    onResult: (text: string) => void;
+  }) {
+    props.onResult(useCoordinatorPlaceholder(props.hasThreads, [explain], props.personal));
     return null;
   }
+
+  it("asks Aide anything, with or without topics", () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    for (const hasThreads of [false, true]) {
+      const root = createRoot(document.createElement("div"));
+      let text = "";
+      act(() =>
+        root.render(
+          <Probe hasThreads={hasThreads} personal onResult={(value) => (text = value)} />,
+        ),
+      );
+      expect(text).toBe(ASSISTANT_COMPOSER_PLACEHOLDER);
+      act(() => root.unmount());
+    }
+  });
+
+  it("says a sent starter went to Aide in the personal assistant", () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const list = (personal: boolean) => (
+      <StarterSuggestions
+        personal={personal}
+        suggestions={[explain]}
+        loading={false}
+        layout="list"
+        heading="Suggested first topics"
+        blocked={null}
+        startingId={null}
+        startedIds={new Set([explain.id])}
+        onStart={() => undefined}
+      />
+    );
+    act(() => root.render(list(true)));
+    expect(container.textContent).toContain("Sent to Aide.");
+    expect(container.textContent).not.toMatch(/coordinator/i);
+    act(() => root.render(list(false)));
+    expect(container.textContent).toContain("Sent to the coordinator.");
+    act(() => root.unmount());
+  });
 
   function openViews(strict: boolean): string[] {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

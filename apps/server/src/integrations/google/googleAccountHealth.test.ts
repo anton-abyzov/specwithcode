@@ -38,6 +38,24 @@ describe("project Google diagnostics privacy", () => {
     );
   });
 
+  it("names Aide instead of a project when the caller is the personal assistant", () => {
+    const input = {
+      clientConfigured: true,
+      connected: true,
+      email: "me@example.com",
+      grantedServices: ["gmail" as const],
+      projectServices: [],
+    };
+    expect(projectGoogleStatus(input).guidance).toBe(
+      "Open Settings > Google account and enable the needed services for this project.",
+    );
+    const aide = projectGoogleStatus({ ...input, assistant: true });
+    expect(aide.guidance).toBe(
+      "Open Settings > Google account and enable the needed services for Aide.",
+    );
+    expect(aide.serviceChecks[0]?.message).toBe("Aide has no access to this service.");
+  });
+
   it.each(["accessNotConfigured", "SERVICE_DISABLED", "serviceDisabled", "api_disabled"])(
     "recognizes disabled API code %s without repeating upstream text",
     (reason) => {

@@ -1,13 +1,16 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
-import { resolveEnvironmentMachineKind } from "@specweave-studio/contracts";
+import {
+  PERSONAL_ASSISTANT_LABEL,
+  resolveEnvironmentMachineKind,
+} from "@specweave-studio/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { ChevronDownIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useServerConfigs } from "../../state/entities";
-import { ineligibleProjectLabel } from "../../studio/projectListVisibility";
+import { ineligibleProjectLabel, isAssistantGroup } from "../../studio/projectListVisibility";
 import { type EnvironmentPresentation } from "../../state/environments";
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -269,6 +272,11 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
             <span className="flex min-w-0 items-center gap-2">
               <ProjectFavicon project={group} className="size-3.5" />
               <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
+              {isAssistantGroup(group) ? (
+                <span className="shrink-0 text-muted-foreground text-xs">
+                  {tx(PERSONAL_ASSISTANT_LABEL)}
+                </span>
+              ) : null}
               <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>

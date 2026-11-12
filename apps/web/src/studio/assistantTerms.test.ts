@@ -14,6 +14,15 @@ describe("paneWords", () => {
       "No topics yet. Ask Aide to start one.",
     );
     expect(say("1 thread is waiting on you")).toBe("1 topic is waiting on you");
+    expect(say("The coordinator runs on this model.")).toBe("Aide runs on this model.");
+    expect(say("Close thread pane")).toBe("Close topic pane");
+  });
+
+  it("leaves tool names and other words alone", () => {
+    const say = paneWords(true);
+    expect(say("Ask with studio_thread_send")).toBe("Ask with studio_thread_send");
+    expect(say("Open pull request")).toBe("Open pull request");
+    expect(say("Coordinator model")).toBe("Coordinator model");
   });
 
   it("leaves a project's words alone", () => {

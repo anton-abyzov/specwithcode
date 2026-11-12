@@ -171,13 +171,17 @@ export function ProjectRow({
   canStart,
   onFilter,
   onNewChat,
+  personal = false,
 }: {
   card: ProjectRowView;
   hosts: string;
   filtered: boolean;
   canStart: boolean;
   onFilter: () => void;
-  onNewChat: () => void;
+  /** Absent where the row has no new chat button. */
+  onNewChat?: (() => void) | undefined;
+  /** Aide's row: its chats are topics. */
+  personal?: boolean;
 }) {
   const tx = useTx();
   const attention =
@@ -193,7 +197,7 @@ export function ProjectRow({
         className="studio-row-main studio-row-link"
       >
         <span className="studio-row-title">{card.group.displayName}</span>
-        <span className="studio-row-meta">{hosts}</span>
+        {hosts ? <span className="studio-row-meta">{hosts}</span> : null}
       </Link>
       <span className="studio-row-counts">
         {card.attention > 0 ? (
@@ -201,9 +205,15 @@ export function ProjectRow({
             type="button"
             className="studio-pill amber"
             aria-pressed={filtered}
-            aria-label={tx("Show only chats that need you in {project}", {
-              project: card.group.displayName,
-            })}
+            aria-label={
+              personal
+                ? tx("Show only topics that need you in {project}", {
+                    project: card.group.displayName,
+                  })
+                : tx("Show only chats that need you in {project}", {
+                    project: card.group.displayName,
+                  })
+            }
             onClick={onFilter}
           >
             {attention}
@@ -215,15 +225,21 @@ export function ProjectRow({
             {card.working}
           </span>
         ) : null}
-        <button
-          type="button"
-          className="studio-icon-button"
-          disabled={!canStart}
-          aria-label={tx("New chat in {project}", { project: card.group.displayName })}
-          onClick={onNewChat}
-        >
-          <PlusIcon aria-hidden="true" />
-        </button>
+        {onNewChat ? (
+          <button
+            type="button"
+            className="studio-icon-button"
+            disabled={!canStart}
+            aria-label={
+              personal
+                ? tx("New topic in {title}", { title: card.group.displayName })
+                : tx("New chat in {project}", { project: card.group.displayName })
+            }
+            onClick={onNewChat}
+          >
+            <PlusIcon aria-hidden="true" />
+          </button>
+        ) : null}
       </span>
     </div>
   );

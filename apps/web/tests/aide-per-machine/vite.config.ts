@@ -35,5 +35,7 @@ export default defineConfig({
     target: "esnext",
     outDir: "../../../../.artifacts/aide-per-machine/site",
     emptyOutDir: true,
+    // One chunk: split chunks of the real app's runtime import each other in a cycle.
+    rollupOptions: { output: { inlineDynamicImports: true } },
   },
 });

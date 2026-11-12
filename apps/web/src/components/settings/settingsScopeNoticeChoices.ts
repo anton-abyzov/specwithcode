@@ -1,6 +1,7 @@
 import { PERSONAL_ASSISTANT_LABEL } from "@specweave-studio/contracts";
 
 import {
+  isAssistantGroup,
   isScratchMember,
   partitionProjectGroups,
   type ProjectListGroup,
@@ -8,6 +9,7 @@ import {
   type ScratchRootLookup,
 } from "../../studio/projectListVisibility";
 import type { SettingsScopeSearch } from "./settingsScope";
+import { assistantsFirst } from "./settingsScopeAxis";
 
 export interface ScopeNoticeMember extends ProjectListMember {
   readonly physicalProjectKey: string;
@@ -51,8 +53,8 @@ function partition<G extends ProjectListGroup>(
 }
 
 /**
- * The projects a scope notice offers. A machine's "No project" folder is not a project,
- * so it is never a row. Archived projects are kept apart, unless one is the selected
+ * The projects a scope notice offers, Aide first. A machine's "No project" folder is not
+ * a project, so it is never a row. Archived projects are kept apart, unless one is the selected
  * project, which stays in the main list.
  */
 export function settingsScopeNoticeProjects<G extends ScopeNoticeGroup<ScopeNoticeMember>>(
@@ -78,7 +80,8 @@ export function settingsScopeNoticeProjects<G extends ScopeNoticeGroup<ScopeNoti
     };
   };
   const { listed, archived } = partition(groups, scratchRootFor, selectedProjectKey);
-  return { listed: listed.map(entry), archived: archived.map(entry) };
+  // Aide has settings of its own: it leads, named as itself.
+  return { listed: assistantsFirst(listed).map(entry), archived: archived.map(entry) };
 }
 
 /**
@@ -111,4 +114,23 @@ export function settingsScopeNoticeCheckouts<M extends ScopeNoticeMember>(
       );
   const { listed, archived } = partition(groups, scratchRootFor, selectedProjectKey);
   return { listed: entries(listed), archived: entries(archived) };
+}
+
+/**
+ * A machine's own projects for its remote sheet: each group's checkouts on that machine.
+ * Aide is its own space, not a project, so it is never a row nor counted.
+ */
+export function machineProjectGroups<G extends ScopeNoticeGroup<ScopeNoticeMember>>(
+  groups: ReadonlyArray<G>,
+  environmentId: string,
+): G[] {
+  return groups
+    .filter((group) => !isAssistantGroup(group))
+    .map((group) => ({
+      ...group,
+      memberProjects: group.memberProjects.filter(
+        (member) => member.environmentId === environmentId,
+      ),
+    }))
+    .filter((group) => group.memberProjects.length > 0);
 }

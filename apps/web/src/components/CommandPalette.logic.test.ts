@@ -20,7 +20,9 @@ import {
   filterCommandPaletteGroups,
   findHighlightedCommandPaletteItem,
   latestThreadActivityByProjectKey,
+  machineHasOwnAssistant,
   orderProjectsForPalette,
+  paletteAssistants,
   personalAssistantActionOffered,
   RECENT_PROJECT_LIMIT,
   reduceCommandPaletteUiState,
@@ -199,6 +201,79 @@ describe("personalAssistantActionOffered", () => {
     expect(personalAssistantActionOffered({ aideEnabled: true, newProjectMachineCount: 0 })).toBe(
       false,
     );
+  });
+
+  it("leaves setup out once this machine has its assistant, which the Aide entry opens", () => {
+    expect(
+      personalAssistantActionOffered({
+        aideEnabled: true,
+        newProjectMachineCount: 2,
+        hasOwnAssistant: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("paletteAssistants", () => {
+  const assistant = (
+    id: string,
+    environmentId: string,
+    createdAt: string,
+    settings: { archived?: boolean } = {},
+  ) => ({ id, environmentId, createdAt, workspaceSettings: { kind: "personal", ...settings } });
+  const app = { id: "app", environmentId: "m4", workspaceSettings: { kind: "code" } };
+
+  it("lists each machine's own assistant, this machine's first", () => {
+    const projects = [
+      assistant("anna-aide", "anna", "2026-01-01"),
+      app,
+      assistant("aide", "m4", "2026-02-01"),
+      assistant("aide-extra", "m4", "2026-03-01"),
+    ];
+    expect(paletteAssistants(projects, "m4").map((project) => project.id)).toEqual([
+      "aide",
+      "anna-aide",
+    ]);
+  });
+
+  it("leaves out an archived assistant", () => {
+    expect(
+      paletteAssistants([assistant("aide", "m4", "2026-02-01", { archived: true })], "m4"),
+    ).toEqual([]);
+  });
+
+  it("still counts an archived assistant as the machine's own, so setup is not offered", () => {
+    const archived = [assistant("aide", "m4", "2026-02-01", { archived: true }), app];
+    expect(machineHasOwnAssistant(archived, "m4")).toBe(true);
+    expect(machineHasOwnAssistant(archived, "m1")).toBe(false);
+    expect(machineHasOwnAssistant([app], "m4")).toBe(false);
+    expect(machineHasOwnAssistant(archived, null)).toBe(false);
+  });
+});
+
+describe("buildRootGroups", () => {
+  const item = (value: string) => ({
+    kind: "action" as const,
+    value,
+    searchTerms: [value],
+    title: value,
+    icon: null,
+    run: async () => {},
+  });
+
+  it("puts Aide in a group of its own, after the actions", () => {
+    expect(
+      buildRootGroups({
+        projectItems: [],
+        actionItems: [item("action:new-thread")],
+        recentThreadItems: [item("thread:1")],
+        assistantItems: [item("assistant:m4:aide")],
+      }).map((group) => [group.value, group.label]),
+    ).toEqual([
+      ["actions", "Actions"],
+      ["assistant", "Aide"],
+      ["recent-threads", "Recent Threads"],
+    ]);
   });
 });
 

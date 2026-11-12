@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPersonalAssistantProject, machineAssistantOf } from "./personalAssistant.ts";
+import {
+  isPersonalAssistantProject,
+  machineAssistantOf,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "./personalAssistant.ts";
 
 const personal = (id: string, createdAt: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -32,5 +36,10 @@ describe("machine assistant", () => {
     expect(isPersonalAssistantProject({ kind: "personal" })).toBe(true);
     expect(isPersonalAssistantProject({ workspaceSettings: { kind: "code" } })).toBe(false);
     expect(isPersonalAssistantProject(undefined)).toBe(false);
+  });
+
+  it("calls the assistant's own threads topics in its privacy rule", () => {
+    expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).toContain("private to its machine");
+    expect(PERSONAL_ASSISTANT_PRIVATE_MESSAGE).toContain("its topics, memory and routines");
   });
 });

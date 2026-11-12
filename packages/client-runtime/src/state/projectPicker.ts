@@ -18,8 +18,17 @@ export interface PickerProject {
     | undefined;
 }
 export type ScratchRootLookup = (environmentId: EnvironmentId) => string | null | undefined;
-export type ProjectPickerPurpose = "work" | "design" | "code";
-export type IneligibleProjectReason = "scratch" | "archived" | "automated" | "not-code";
+/**
+ * "work" (the default) offers the person's own projects but no personal assistant, which
+ * has its own entry; "design" and "any" offer assistants too; "code" offers code projects.
+ */
+export type ProjectPickerPurpose = "work" | "design" | "code" | "any";
+export type IneligibleProjectReason =
+  | "scratch"
+  | "archived"
+  | "automated"
+  | "not-code"
+  | "assistant";
 
 export function projectChoiceIneligibleReason(
   project: PickerProject,
@@ -45,9 +54,9 @@ export function projectChoiceIneligibleReason(
     }) === "automated"
   )
     return "automated";
-  return purpose === "code" && (project.workspaceSettings?.kind ?? "code") !== "code"
-    ? "not-code"
-    : null;
+  const kind = project.workspaceSettings?.kind ?? "code";
+  if (purpose === "code") return kind === "code" ? null : "not-code";
+  return purpose === "work" && kind === "personal" ? "assistant" : null;
 }
 
 /** Ordinary choices only. A caller displays an excluded current selection separately. */

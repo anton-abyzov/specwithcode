@@ -17,6 +17,26 @@ const browser = await chromium.launch({
 });
 const shot = (page, name) =>
   page.screenshot({ path: path.join(output, `1190-${name}.png`), fullPage: false });
+// Every word the pane and an open thread's header show or announce, without the
+// thread titles, which are the person's own words.
+const paneWords = (page) =>
+  page.evaluate(() => {
+    const pane = document.querySelector("#project-threads-pane");
+    if (!pane) return "";
+    const titles = [
+      ...pane.querySelectorAll(".sws-thread-text strong, .sws-thread-head h2, .sws-thread-rename"),
+    ]
+      .map((node) => (node.textContent ?? "").trim())
+      .filter(Boolean);
+    const parts = [pane.textContent ?? ""];
+    for (const node of pane.querySelectorAll("[aria-label], [title], [placeholder]"))
+      for (const name of ["aria-label", "title", "placeholder"])
+        parts.push(node.getAttribute(name) ?? "");
+    let text = parts.join("\n");
+    for (const title of titles) text = text.split(title).join("");
+    return text;
+  });
+const THREAD_WORD = /\b(threads?|coordinator)\b/i;
 const openSettings = async (page) => {
   await page.getByLabel("Project settings", { exact: true }).dispatchEvent("click");
   await page.getByRole("dialog").waitFor();
@@ -32,6 +52,12 @@ try {
   await page.getByRole("tab", { name: /Threads/ }).waitFor({ timeout: 90_000 });
   assert.equal(await page.getByRole("tab", { name: /Topics/ }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Ask Aide for a topic" }).count(), 0);
+  // A project's pane and open thread still say thread.
+  assert.match(await paneWords(page), THREAD_WORD);
+  await page.locator(".sws-thread-open").first().click();
+  await page.locator(".sws-thread-head").waitFor();
+  assert.match(await paneWords(page), THREAD_WORD);
+  await page.locator(".sws-thread-crumb").click();
   await openSettings(page);
   await page.getByRole("dialog").getByRole("heading", { name: "Project settings" }).waitFor();
   assert.equal(await page.locator('button[data-tab="services"]').count(), 0);
@@ -42,6 +68,34 @@ try {
   assert.equal(await page.getByRole("tab", { name: /Threads/ }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Ask Aide for a topic" }).count(), 1);
   await shot(page, "aide-topics");
+  // No word in the list pane says thread or the coordinator.
+  await page.locator(".sws-thread-open").first().waitFor();
+  const listWords = await paneWords(page);
+  assert.doesNotMatch(listWords, THREAD_WORD, listWords.match(THREAD_WORD)?.[0]);
+  assert.match(listWords, /\btopics?\b/i);
+  // Nor does an open topic's header.
+  await page.locator(".sws-thread-open").first().click();
+  await page.locator(".sws-thread-head").waitFor();
+  const headWords = await page.evaluate(() => {
+    const head = document.querySelector(".sws-thread-head");
+    const title = head?.querySelector("h2")?.textContent ?? "";
+    const parts = [head?.textContent ?? ""];
+    for (const node of head?.querySelectorAll("[aria-label]") ?? [])
+      parts.push(node.getAttribute("aria-label") ?? "");
+    return parts.join("\n").split(title).join("");
+  });
+  assert.doesNotMatch(headWords, THREAD_WORD, headWords.match(THREAD_WORD)?.[0]);
+  assert.equal(await page.getByRole("button", { name: "Back to topics" }).count(), 1);
+  await shot(page, "aide-open-topic");
+  await page.locator(".sws-thread-crumb").click();
+  // The composer asks Aide, never the coordinator.
+  const prompt = page.locator("#project-prompt");
+  const promptWords = [
+    (await prompt.getAttribute("aria-label")) ?? "",
+    (await prompt.getAttribute("placeholder")) ?? "",
+    (await prompt.getAttribute("data-placeholder")) ?? "",
+  ].join("\n");
+  assert.doesNotMatch(promptWords, THREAD_WORD, promptWords);
 
   await openSettings(page);
   const dialog = page.getByRole("dialog");

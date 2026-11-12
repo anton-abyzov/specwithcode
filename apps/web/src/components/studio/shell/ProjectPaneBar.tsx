@@ -87,7 +87,7 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
       <div
         className="sws-pane-tabs"
         role="tablist"
-        aria-label="Project panel"
+        aria-label={props.personal ? "Aide panel" : "Project panel"}
         onKeyDown={onKeyDown}
       >
         {PROJECT_PANE_TABS.map((tab) => {
@@ -118,7 +118,7 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
                   className={`sws-count${count.tone === "waiting" ? " sws-count-waiting" : ""}`}
                 >
                   {count.value}
-                  <span className="sr-only"> {count.label}</span>
+                  <span className="sr-only"> {say(count.label)}</span>
                 </span>
               ) : null}
             </button>

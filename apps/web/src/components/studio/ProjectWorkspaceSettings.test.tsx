@@ -464,6 +464,30 @@ describe("project folder placement", () => {
     expect(text.indexOf("Project folder")).toBeLessThan(text.indexOf("Use worktrees"));
     expect(text.indexOf("Use worktrees")).toBeLessThan(text.indexOf("Goal"));
   });
+  it("says topics and Aide for the personal assistant, threads and the coordinator for a project", async () => {
+    await render("general", true, { kind: "personal" });
+    const aide = container.textContent ?? "";
+    for (const text of [
+      "Aide's model",
+      "Aide runs on this model.",
+      "Recommended model for topics",
+      "Topics Aide starts, including the ones a routine needs",
+      "Auto-continue Aide's topics when limits reset",
+      "Blocks new work from Aide and its routines.",
+      "Running topics are preserved.",
+      "Permanently delete Aide and all of its topics.",
+      "Delete Aide and topics",
+      "Standing context supplied to Aide.",
+    ])
+      expect(aide, text).toContain(text);
+    for (const text of ["Coordinator model", "model for threads", "Delete project and threads"])
+      expect(aide, text).not.toContain(text);
+    await render("general", true, { kind: "code" });
+    const code = container.textContent ?? "";
+    expect(code).toContain("Coordinator model");
+    expect(code).toContain("Recommended model for threads");
+    expect(code).toContain("Delete project and threads");
+  });
   it("has no Project folder for a personal project", async () => {
     await render("general", true, { kind: "personal" });
     expect(container.textContent).toContain("Name and icon");
@@ -487,6 +511,13 @@ describe("project folder placement", () => {
           : 1,
     );
     expect(rendered.map((index) => rows[index]!.id)).toEqual(rows.map((row) => row.id));
+  });
+  it("finds Aide's renamed model and auto-continue rows from settings search", async () => {
+    await render("general", true, { kind: "personal" });
+    for (const id of ["project-coordinator-model", "project-worker-model", "project-auto-resume"]) {
+      const row = PROJECT_SETTINGS_SEARCH_ROWS.find((candidate) => candidate.id === id)!;
+      expect(findProjectSettingsAnchor(container, row), id).not.toBeNull();
+    }
   });
   it("sets SpecWeave up only after the person confirms what it adds", async () => {
     state.specweaveSetUp.mockResolvedValue({ _tag: "Success", value: { alreadySetUp: false } });
@@ -567,7 +598,7 @@ describe("project settings and memory", () => {
   });
   it("names the model the coordinator thread runs on, as the project view does", async () => {
     const threadModel = { instanceId: ProviderInstanceId.make("claude"), model: "thread-model" };
-    await render("general", true, { coordinatorModelSelection: null }, threadModel);
+    await render("general", true, { kind: "code", coordinatorModelSelection: null }, threadModel);
     expect(container.textContent).toContain("Coordinator model: thread-model");
     expect(container.textContent).toContain("No override saved");
   });
@@ -592,7 +623,7 @@ describe("project settings and memory", () => {
     ).toBe("project");
   });
   it("falls back to the worker default, then the host default, with no coordinator thread", async () => {
-    await render("general", true, { coordinatorModelSelection: null });
+    await render("general", true, { kind: "code", coordinatorModelSelection: null });
     expect(container.textContent).toContain("Coordinator model: codex-worker");
   });
   it("saves the displayed revision and preserves edits after a conflict", async () => {
@@ -667,7 +698,7 @@ describe("project settings and memory", () => {
     expect(container.textContent).toContain("add it under Settings > Machines");
   });
   it("requires an exact typed title before destructive project deletion", async () => {
-    await render();
+    await render("general", true, { kind: "code" });
     const button = () =>
       [...container.querySelectorAll("button")].find(
         (b) => b.textContent === "Delete project and threads",
@@ -796,7 +827,7 @@ describe("project settings and memory", () => {
       _tag: "Success",
       value: { projectId: "project", removed: ["/wt/clean"], kept: [] },
     });
-    await render();
+    await render("general", true, { kind: "code" });
     expect(state.worktreesRead).not.toHaveBeenCalled();
     await input('[aria-label="Confirm project deletion"]', "Atlas");
     expect(state.worktreesRead).toHaveBeenCalledWith({
@@ -1235,7 +1266,7 @@ describe("project settings and memory", () => {
     expect(state.connectionCheck).not.toHaveBeenCalled();
   });
   it("preserves a connection draft across tabs and blocks deletion while it is unsaved", async () => {
-    await render("environment");
+    await render("environment", true, { kind: "code" });
     await setLabel("Connection name", "Draft documents");
     await click("General");
     await input('input[aria-label="Confirm project deletion"]', "Atlas");
@@ -1425,7 +1456,7 @@ describe("canonical project name in workspace settings", () => {
   }
   it("displays and discards to the canonical name while deletion still requires the physical project name", async () => {
     bindName("active");
-    await render();
+    await render("general", true, { kind: "code" });
     expect(container.querySelector<HTMLInputElement>("#project-settings-name")?.value).toBe(
       "EasyChamp",
     );
@@ -1450,7 +1481,7 @@ describe("canonical project name in workspace settings", () => {
   });
   it("rejects a predecessor name edit and keeps its draft without reporting success", async () => {
     bindName("transferred");
-    await render();
+    await render("general", true, { kind: "code" });
     await input("#project-settings-name", "New EasyChamp");
     await click("Save changes");
     expect(container.textContent).toContain("Open the active coordinator to rename this project");

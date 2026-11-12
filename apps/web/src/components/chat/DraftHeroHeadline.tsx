@@ -153,14 +153,23 @@ export function DraftHeroHeadline({
     [environments],
   );
   // A machine's "No project" folder stays, as its own item; archived projects and projects
-  // a check or agent made for itself are not destinations.
+  // a check or agent made for itself are not destinations. Aide is never offered to
+  // another project's draft, but a draft that already targets it keeps it as its choice.
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({
         groups: projectGroups.map((group) => ({
           ...group,
           memberProjects: group.memberProjects.filter((project) => {
-            const reason = projectChoiceIneligibleReason(project, scratchWorkspaceRootFor);
+            const isCurrent =
+              activeProjectRef !== null &&
+              project.environmentId === activeProjectRef.environmentId &&
+              project.id === activeProjectRef.projectId;
+            const reason = projectChoiceIneligibleReason(
+              project,
+              scratchWorkspaceRootFor,
+              isCurrent ? "any" : "work",
+            );
             return reason === null || reason === "scratch";
           }),
         })),
@@ -211,7 +220,7 @@ export function DraftHeroHeadline({
   const unavailableReason =
     activeProject !== null &&
     !menuEntries.some(({ group }) => group.projectKey === activeProjectKey)
-      ? projectChoiceIneligibleReason(activeProject, scratchWorkspaceRootFor)
+      ? projectChoiceIneligibleReason(activeProject, scratchWorkspaceRootFor, "any")
       : null;
 
   // The picker can change the draft's target while the no-project home is

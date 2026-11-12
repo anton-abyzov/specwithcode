@@ -23,8 +23,10 @@ const server = NodeHttp.createServer(async (req, res) => {
       : file.endsWith(".css")
         ? "text/css"
         : "text/html";
+    // Read first: a missing file answers 404 instead of failing after the headers.
+    const body = await NodeFSP.readFile(file);
     res.writeHead(200, { "Content-Type": mime });
-    res.end(await NodeFSP.readFile(file));
+    res.end(body);
   } catch {
     res.writeHead(404).end();
   }
@@ -87,6 +89,61 @@ try {
         unnamed.length === 0,
         unnamed.join(" | "),
       );
+      // Aide is its own entry above Projects, out of the project cards and counts.
+      const rail = await page.evaluate(() => {
+        const entry = document.querySelector('[aria-labelledby="studio-assistant-title"]');
+        const projects = document.querySelector('[aria-labelledby="studio-projects-title"]');
+        return {
+          entryRows: [...(entry?.querySelectorAll(".studio-project .studio-row-title") ?? [])].map(
+            (title) => title.textContent,
+          ),
+          entryFirst: Boolean(
+            entry &&
+            projects &&
+            entry.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING,
+          ),
+          projectTitles: [...(projects?.querySelectorAll(".studio-row-title") ?? [])].map(
+            (title) => title.textContent,
+          ),
+          projectCount: projects?.querySelector(".studio-count")?.textContent ?? null,
+        };
+      });
+      check(
+        `${label}: Aide has its own entry above Projects`,
+        JSON.stringify(rail.entryRows) === '["Aide"]' && rail.entryFirst,
+        JSON.stringify(rail),
+      );
+      check(
+        `${label}: Aide is not a project card or counted`,
+        !rail.projectTitles.includes("Aide") && rail.projectCount === "5",
+        JSON.stringify(rail),
+      );
+      // Its "+" starts a new topic aimed at Aide, and its waiting pill names topics.
+      const aideRow = page.locator('[aria-labelledby="studio-assistant-title"] .studio-project');
+      check(
+        `${label}: Aide's pill shows only its topics`,
+        (await aideRow
+          .getByRole("button", { name: "Show only topics that need you in Aide" })
+          .count()) === 1,
+      );
+      const newTopic = aideRow.getByRole("button", { name: "New topic in Aide", exact: true });
+      check(`${label}: Aide row offers a new topic`, (await newTopic.isEnabled()) === true);
+      // Clicked once, where no keyboard check follows on the same page.
+      if (theme === "dark" && width === 1440) {
+        await newTopic.click();
+        const started = await page.evaluate(() => window.__newThreads ?? []);
+        check(
+          `${label}: a new topic is a draft aimed at Aide`,
+          JSON.stringify(started) ===
+            JSON.stringify([
+              {
+                projectRef: { environmentId: "m4", projectId: "aide-m4" },
+                options: { environmentSelection: "manual" },
+              },
+            ]) && (await page.locator("#studio-project").count()) === 0,
+          JSON.stringify(started),
+        );
+      }
       const file = NodePath.join(output, `overview-${theme}-${width}.png`);
       await page.screenshot({ path: file, fullPage: true });
       receipt.screenshots.push(file);
@@ -96,6 +153,9 @@ try {
         const focused = await page.evaluate(() => document.activeElement?.textContent ?? "");
         check("J focuses the first Needs you row", focused.includes("Fix Sadiya Datadog"), focused);
         await page.screenshot({ path: NodePath.join(output, "overview-keyboard-focus.png") });
+        await page
+          .locator(".studio-rail")
+          .screenshot({ path: NodePath.join(output, "overview-rail-aide.png") });
         // A machine narrows every list to it.
         await page.getByRole("button", { name: /^M1 Max/ }).click();
         const scope = await page.locator(".studio-scope").textContent();
@@ -109,6 +169,16 @@ try {
       }
       await page.close();
     }
+  }
+  // The rail with Aide's own section, at 1280x900 in both themes.
+  for (const theme of ["light", "dark"]) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.goto(`${origin}/?theme=${theme}`);
+    await page.locator("#studio-assistant-title").waitFor();
+    const file = NodePath.join(output, `overview-rail-aide-${theme}-1280.png`);
+    await page.screenshot({ path: file });
+    receipt.screenshots.push(file);
+    await page.close();
   }
   const page = await browser.newPage({ viewport: { width: 1024, height: 800 } });
   await page.goto(`${origin}/?theme=light&data=empty`);
