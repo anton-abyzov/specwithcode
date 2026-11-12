@@ -51,7 +51,7 @@ export function providerUsageLink(input: {
   const acp = driver === "acpregistry";
   const kind =
     BY_DRIVER[driver] ??
-    (acp && /github-copilot|^copilot\b/i.test(input.agentId ?? input.label ?? "")
+    (acp && /github-copilot|\bcopilot\b/i.test(input.agentId ?? input.label ?? "")
       ? "copilot"
       : undefined) ??
     (acp && /^cursor/i.test(input.agentId ?? "") ? "cursor" : undefined);

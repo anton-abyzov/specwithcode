@@ -11,7 +11,9 @@ import { UsagePageLink } from "../usage/AccountHeader";
 /** A subscription sign-in, not an API key or a cloud backend billed elsewhere. */
 function isPlanAccount(auth: ProviderInstanceEntry["snapshot"]["auth"]): boolean {
   if (auth.status !== "authenticated" || auth.apiKeyBilling === true) return false;
-  return !/^(apiKey|bedrock|amazonBedrock|vertex|foundry)$/i.test(auth.type ?? "");
+  // Drivers spell the type differently: apiKey, api-key, api_key.
+  const type = (auth.type ?? "").toLowerCase().replace(/[\s_.-]+/g, "");
+  return !["apikey", "bedrock", "amazonbedrock", "vertex", "foundry"].includes(type);
 }
 
 /** The plan and account a provider signs in with, from its auth snapshot. */
