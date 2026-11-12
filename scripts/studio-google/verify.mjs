@@ -300,7 +300,22 @@ try {
   const scopedSearch = `?machine=${encodeURIComponent(config.environment.environmentId)}`;
   receipt.checks.push({ personalProjectCreated: project.projectId });
   // A regular project: it starts without access and offers the Morning briefing template.
-  const research = await rpc(context, "projects.createNew", { kind: "code", name: "Research" });
+  // Its folder is temporary, which reads as automated, so it is saved as the person's own.
+  const research = { projectId: NodeCrypto.randomUUID() };
+  const researchRoot = NodePath.join(state, "research");
+  NodeFS.mkdirSync(researchRoot, { recursive: true });
+  const createdResearch = await context.request.post(origin + "/api/projects/mutate", {
+    data: {
+      type: "project.create",
+      commandId: NodeCrypto.randomUUID(),
+      projectId: research.projectId,
+      title: "Research",
+      workspaceRoot: researchRoot,
+      origin: "user",
+    },
+    headers: { Origin: origin },
+  });
+  NodeAssert.equal(createdResearch.status(), 200, await createdResearch.text());
   receipt.checks.push({ regularProjectCreated: research.projectId });
 
   const page = await context.newPage();
