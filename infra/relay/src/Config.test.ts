@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  adminUserIdsConfig,
   connectFreeTunnelLimitConfig,
   globalManagedTunnelCapConfig,
   legacyManagedEndpointCleanupModeConfig,
@@ -110,4 +111,30 @@ it.effect.each(["0", "-1", "2.5", "many"])("rejects a global tunnel cap of %s", 
     );
     expect(error._tag).toBe("ConfigError");
   }),
+);
+
+it.effect.each([
+  { name: "missing", env: {}, expected: [] },
+  { name: "blank", env: { RELAY_ADMIN_USER_IDS: "  " }, expected: [] },
+  { name: "one owner", env: { RELAY_ADMIN_USER_IDS: "user_2abcDEF" }, expected: ["user_2abcDEF"] },
+  {
+    name: "two owners with spaces and a trailing comma",
+    env: { RELAY_ADMIN_USER_IDS: " user_a1 , user_b2, " },
+    expected: ["user_a1", "user_b2"],
+  },
+] as const)("loads $name as the admin owners", ({ env, expected }) =>
+  Effect.gen(function* () {
+    const owners = yield* adminUserIdsConfig.parse(ConfigProvider.fromEnv({ env }));
+    expect([...owners]).toEqual(expected);
+  }),
+);
+
+it.effect.each(["someone@example.com", "user_ok,not an id", "*"])(
+  "rejects %s as admin owners instead of admitting nobody silently",
+  (value) =>
+    Effect.gen(function* () {
+      const provider = ConfigProvider.fromEnv({ env: { RELAY_ADMIN_USER_IDS: value } });
+      const error = yield* Effect.flip(adminUserIdsConfig.parse(provider));
+      expect(error._tag).toBe("ConfigError");
+    }),
 );

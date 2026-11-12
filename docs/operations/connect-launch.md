@@ -115,6 +115,7 @@ team that signs the iPhone app:
 | `RELAY_TUNNEL_CLEANUP_MODE`        | `dry-run`                      | `production` variable       |
 | `RELAY_GLOBAL_MANAGED_TUNNEL_CAP`  | `180`                          | `production` variable       |
 | `RELAY_CONNECT_FREE_TUNNEL_LIMIT`  | unset (default `3`)            | `production` variable       |
+| `RELAY_ADMIN_USER_IDS`             | unset (admin routes off)       | `production` variable       |
 | `CLERK_PUBLISHABLE_KEY`            | `pk_live_...`                  | `production` variable       |
 | `CLERK_JWT_AUDIENCE`               | `studio-code-relay`            | `production` variable       |
 | `CLERK_JWT_TEMPLATE`               | `studio-relay`                 | `production` variable       |
@@ -135,6 +136,14 @@ linked machine is one DNS record, and the Free zone allows 200 records, so keep 
 the tunnel zone is on Pro, then raise it to `1500`. Unset means no global cap.
 `RELAY_CONNECT_FREE_TUNNEL_LIMIT` is the machine limit for accounts without a founder seat or a
 manual override; leave it unset for 3.
+`RELAY_ADMIN_USER_IDS` lists the owners who may use the relay's admin routes (`/v1/admin/...`:
+every account's machines, phones and machine limit), as Clerk user ids (`user_...`), comma
+separated. Unset, the routes answer 404 for everyone. An owner must be signed in to Connect in the
+app; the headless CLI's token is refused. Every admin request is logged as `connect_admin_request`
+with the owner's id. The routes are left out of `/openapi.json` and `/docs`. A search's email or
+name travels in the request body, never in the URL, so request logs and traces do not record it. A malformed value (anything that is not a `user_...` id) fails
+the relay deploy on purpose, so fix the variable before the next push to `main`. Changing the list
+takes a relay deploy.
 
 Leave `RELAY_DOMAIN` unset: the `prod` stage derives `relay.spec-weave.com` from the zone. Leave
 `RELAY_TUNNEL_BASE_DOMAIN` unset so tunnels sit directly under `spec-weave.com`. Leave

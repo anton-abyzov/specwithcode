@@ -54,6 +54,9 @@ import * as FcmDeliveryQueueSender from "./agentActivity/FcmDeliveryQueueSender.
 import * as FcmDeliveries from "./agentActivity/FcmDeliveries.ts";
 import * as FcmDeliveryQueueConsumer from "./agentActivity/FcmDeliveryQueueConsumer.ts";
 import * as RelayConfiguration from "./Config.ts";
+import * as AdminIdentities from "./admin/AdminIdentities.ts";
+import * as ConnectAdmin from "./admin/ConnectAdmin.ts";
+import * as ConnectAdminQueries from "./admin/ConnectAdminQueries.ts";
 import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
 import * as ApnsClient from "./agentActivity/ApnsClient.ts";
 import * as ApnsProviderTokens from "./agentActivity/ApnsProviderTokens.ts";
@@ -196,6 +199,7 @@ export const layer = Api.make(
     );
     const connectFreeTunnelLimit = yield* RelayConfiguration.connectFreeTunnelLimitConfig;
     const globalManagedTunnelCap = yield* RelayConfiguration.globalManagedTunnelCapConfig;
+    const adminUserIds = yield* RelayConfiguration.adminUserIdsConfig;
     // Keys are endpoint keys or hashes over them, which already differ per
     // stage, so stages sharing an account cannot collide in these namespaces.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
@@ -264,6 +268,7 @@ export const layer = Api.make(
         ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
         connectFreeTunnelLimit,
         ...(globalManagedTunnelCap === undefined ? {} : { globalManagedTunnelCap }),
+        adminUserIds,
       });
     });
 
@@ -404,7 +409,11 @@ export const layer = Api.make(
         Layer.provide(layerHookRateLimiter),
       ),
       Reports.layerApi.pipe(Layer.provide(layerReportRateLimiter)),
+      ConnectAdmin.layerApi.pipe(
+        Layer.provide(Layer.mergeAll(ConnectAdminQueries.layer, AdminIdentities.layer)),
+      ),
     ).pipe(
+      Layer.provideMerge(ConnectAdmin.layerAdminAuth),
       Layer.provideMerge(RelayHttpApi.layerClientAuth),
       Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
       Layer.provideMerge(RelayHttpApi.layerEnvironmentAuth),
