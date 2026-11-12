@@ -129,6 +129,11 @@ try {
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       for (let step = 0; step < 12; step += 1) await page.mouse.wheel(0, 400);
       await settle();
+      // The popover itself never scrolls: only the panel does, with no space below it.
+      const outer = await page
+        .locator("[data-model-picker-popup] [data-slot=popover-viewport]")
+        .evaluate((node) => node.scrollHeight - node.clientHeight);
+      if (!before) assert.ok(outer <= 1, `${tag}: ${outer}px of empty space below the panel`);
       const scroll = await panel.evaluate((node) => ({
         top: node.scrollTop,
         room: node.scrollHeight - node.clientHeight,
