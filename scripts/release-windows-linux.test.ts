@@ -1305,3 +1305,14 @@ describe("release signs the .deb", () => {
     );
   });
 });
+
+describe("one Windows and Linux build per release", () => {
+  const macos = NodeFS.readFileSync(
+    new URL("../.github/workflows/release-macos.yml", import.meta.url),
+    "utf8",
+  );
+
+  it("has the release-macos post-job read the on-publish variable", () => {
+    expect(macos).toContain("ON_PUBLISH: ${{ vars.RELEASE_WINDOWS_LINUX_ON_PUBLISH == 'true' }}");
+  });
+});

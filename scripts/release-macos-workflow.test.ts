@@ -185,6 +185,22 @@ esac
       expect(step({ FAKE_RUNS: dryRun })).toEqual({ status: 0, dispatched: true });
     });
 
+    it("counts the release event's build only while it is turned on", () => {
+      const event = JSON.stringify([
+        { displayTitle: "SpecWithCode 1.0.265", event: "release", conclusion: "" },
+      ]);
+      expect(step({ FAKE_RUNS: event, ON_PUBLISH: "true" })).toEqual({ status: 0, dispatched: false });
+      expect(step({ FAKE_RUNS: event, ON_PUBLISH: "false" })).toEqual({ status: 0, dispatched: true });
+      const skipped = JSON.stringify([
+        { displayTitle: "SpecWithCode 1.0.265", event: "release", conclusion: "skipped" },
+      ]);
+      expect(step({ FAKE_RUNS: skipped, ON_PUBLISH: "true" })).toEqual({ status: 0, dispatched: true });
+      const older = JSON.stringify([
+        { displayTitle: "SpecWithCode 1.0.264", event: "release", conclusion: "success" },
+      ]);
+      expect(step({ FAKE_RUNS: older, ON_PUBLISH: "true" })).toEqual({ status: 0, dispatched: true });
+    });
+
     it("skips a draft or missing release and fails on any other gh error", () => {
       expect(step({ FAKE_DRAFT: "true" })).toEqual({ status: 0, dispatched: false });
       expect(step({ FAKE_RELEASE_ERROR: "release not found" })).toEqual({ status: 0, dispatched: false });

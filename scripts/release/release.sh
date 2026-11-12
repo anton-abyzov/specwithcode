@@ -1121,15 +1121,21 @@ stage_publish_public() {
   dispatch_site_deploy
 }
 
-# One Windows and Linux build per release, started as soon as the public release exists. The
-# workflow's on-publish trigger stays off (RELEASE_WINDOWS_LINUX_ON_PUBLISH), and its daily catch-up
-# only runs at 07:23 UTC, so without this every release waited for a hand dispatch. A dispatched
+# One Windows and Linux build per release, started as soon as the public release exists. When the
+# repository variable RELEASE_WINDOWS_LINUX_ON_PUBLISH is true the published release starts that
+# build itself, so this skips its dispatch; read here at publish time, so a release run by hand on
+# the M4 and one in release-macos.yml behave alike. Otherwise the daily catch-up only runs at
+# 07:23 UTC, so without this every release waited for a hand dispatch. A dispatched
 # run does not check whether the version already has its apps: a second one builds again and then
 # stops at plan-upload without replacing anything. Best effort: a failed dispatch only warns.
 # RELEASE_WINDOWS_LINUX_DISPATCH=0 turns it off.
 dispatch_windows_linux() {
   if [ "${RELEASE_WINDOWS_LINUX_DISPATCH:-1}" = 0 ]; then
     say "windows-linux: not dispatched (RELEASE_WINDOWS_LINUX_DISPATCH=0)"
+    return 0
+  fi
+  if [ "$(q windows-linux-on-publish --may-fail -- gh variable get RELEASE_WINDOWS_LINUX_ON_PUBLISH -R "$PRIVATE_REPO")" = true ]; then
+    say "windows-linux: started by the published release (RELEASE_WINDOWS_LINUX_ON_PUBLISH)"
     return 0
   fi
   x dispatch-windows-linux -- gh workflow run release-windows-linux.yml -R "$PRIVATE_REPO" \
