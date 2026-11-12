@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - Reads the workflow file as text.
+import * as NodeChild from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { parse } from "yaml";
 
@@ -114,6 +117,89 @@ describe("release-macos.yml: one run cuts each version", () => {
     const run = String(job?.steps?.[0]?.run ?? "");
     expect(run).toMatch(/gh release view "v\$VERSION"/);
     expect(run.indexOf("gh release view")).toBeLessThan(run.indexOf("gh workflow run"));
+  });
+
+  describe("the Windows and Linux step, run against a fake gh", () => {
+    const run = String(parsed.jobs.windows_linux?.steps?.[0]?.run ?? "");
+    const fakeGh = `#!/usr/bin/env bash
+echo "$*" >> "$FAKE_LOG"
+case "$1 $2" in
+  "release view")
+    if [ -n "$FAKE_RELEASE_ERROR" ]; then echo "$FAKE_RELEASE_ERROR" >&2; exit 1; fi
+    echo "$FAKE_DRAFT" ;;
+  "run list")
+    while [ "$#" -gt 0 ]; do if [ "$1" = --jq ]; then expr="$2"; fi; shift; done
+    printf '%s' "$FAKE_RUNS" | jq -r "$expr" ;;
+  "workflow run") echo dispatched >> "$FAKE_LOG" ;;
+  *) echo "unexpected gh $*" >&2; exit 2 ;;
+esac
+`;
+    const step = (env: Record<string, string>) => {
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "windows-linux-step-"));
+      NodeFS.writeFileSync(NodePath.join(dir, "gh"), fakeGh, { mode: 0o755 });
+      const log = NodePath.join(dir, "log");
+      NodeFS.writeFileSync(log, "");
+      const result = NodeChild.spawnSync("bash", ["-c", run], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH ?? ""}`,
+          FAKE_LOG: log,
+          GITHUB_REPOSITORY: "owner/repo",
+          VERSION: "1.0.265",
+          FAKE_DRAFT: "false",
+          FAKE_RELEASE_ERROR: "",
+          FAKE_RUNS: "[]",
+          ...env,
+        },
+      });
+      const calls = NodeFS.readFileSync(log, "utf8");
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+      return { status: result.status, dispatched: calls.includes("dispatched") };
+    };
+    const runs = (...items: ReadonlyArray<[string, string]>) =>
+      JSON.stringify(items.map(([displayTitle, conclusion]) => ({ displayTitle, conclusion })));
+
+    it("dispatches a published release whose build no run started", () => {
+      expect(step({})).toEqual({ status: 0, dispatched: true });
+    });
+
+    it("dispatches even when another version's build started meanwhile", () => {
+      // 1.0.265 skipped its build because a hand dispatch for 1.0.261 fell in its time window.
+      const other = runs(["Release Windows and Linux 1.0.261", ""], ["Release Windows and Linux", "success"]);
+      expect(step({ FAKE_RUNS: other })).toEqual({ status: 0, dispatched: true });
+    });
+
+    it("does not dispatch twice for the same version, and retries after a failed build", () => {
+      const same = runs(["Release Windows and Linux 1.0.265", ""]);
+      expect(step({ FAKE_RUNS: same })).toEqual({ status: 0, dispatched: false });
+      const failed = runs(["Release Windows and Linux 1.0.265", "failure"]);
+      expect(step({ FAKE_RUNS: failed })).toEqual({ status: 0, dispatched: true });
+      const dryRun = runs(["Release Windows and Linux 1.0.265 (dry run)", "success"]);
+      expect(step({ FAKE_RUNS: dryRun })).toEqual({ status: 0, dispatched: true });
+    });
+
+    it("skips a draft or missing release and fails on any other gh error", () => {
+      expect(step({ FAKE_DRAFT: "true" })).toEqual({ status: 0, dispatched: false });
+      expect(step({ FAKE_RELEASE_ERROR: "release not found" })).toEqual({ status: 0, dispatched: false });
+      expect(step({ FAKE_RELEASE_ERROR: "HTTP 403: API rate limit exceeded" })).toEqual({
+        status: 1,
+        dispatched: false,
+      });
+    });
+
+    it("matches the title release-windows-linux.yml gives a dispatched run", () => {
+      const windowsLinux = parse(
+        NodeFS.readFileSync(
+          new URL("../.github/workflows/release-windows-linux.yml", import.meta.url),
+          "utf8",
+        ),
+      ) as { "run-name"?: string };
+      expect(windowsLinux["run-name"]).toBe(
+        "${{ github.event_name == 'workflow_dispatch' && format('Release Windows and Linux {0}{1}', inputs.version, inputs.dry_run && ' (dry run)' || '') || '' }}",
+      );
+      expect(run).toContain('.displayTitle == \\"Release Windows and Linux $VERSION\\"');
+    });
   });
 
   it("asks for another run only after a run with no version continued an older candidate", () => {

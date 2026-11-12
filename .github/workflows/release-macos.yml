@@ -355,20 +355,25 @@ jobs:
         run: |
           set -euo pipefail
           # A release job that failed before publish-public left nothing to build against.
-          if ! gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json isDraft \
-            --jq 'if .isDraft then error("draft") else empty end' > /dev/null 2>&1; then
+          # Any other gh error fails the job, so a rate limit never passes for "not published".
+          if ! draft="$(gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>&1)"; then
+            case "$draft" in
+              *"release not found"*) draft=missing ;;
+              *) echo "$draft"; exit 1 ;;
+            esac
+          fi
+          if [ "$draft" != false ]; then
             echo "v$VERSION is not published; nothing to build for Windows and Linux"
             exit 0
           fi
-          # Since the release job started, not since the run was dispatched: a run that waited
-          # its turn would count the build the release before it started.
-          since="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
-            --jq '[.jobs[] | select(.name | startswith("Release SpecWithCode")) | .started_at][0]')"
+          # Match this version's own run by title (release-windows-linux.yml's run-name), not by
+          # time: release runs overlap, and a build dispatched for another version while this one
+          # ran made 1.0.265 skip its own. A failed or cancelled run does not count.
           started="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-windows-linux.yml \
-            --event workflow_dispatch --limit 20 --json createdAt \
-            --jq "[.[] | select(.createdAt >= \"$since\")] | length")"
+            --event workflow_dispatch --limit 50 --json displayTitle,conclusion \
+            --jq "[.[] | select(.displayTitle == \"Release Windows and Linux $VERSION\" and .conclusion != \"failure\" and .conclusion != \"cancelled\")] | length")"
           if [ "$started" -gt 0 ]; then
-            echo "release.sh already started the Windows and Linux build for $VERSION"
+            echo "The Windows and Linux build for $VERSION was already started"
             exit 0
           fi
           gh workflow run release-windows-linux.yml -R "$GITHUB_REPOSITORY" \
