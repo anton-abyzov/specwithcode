@@ -295,6 +295,7 @@ export const ru: Messages = {
   "limitSettings.action.wait": "Ждать сброса",
   "limitSettings.action.switch": "Переключать автоматически",
   "limitSettings.switchAtOption": "Когда осталось {percent}%",
+  "limitSettings.switchAtOptionDefault": "Когда осталось {percent}% (по умолчанию)",
   "limitSettings.waitOption.never": "Никогда не ждать",
   "limitSettings.waitOption.hour": "Меньше 1 часа",
   "limitSettings.waitOption.twoHours": "Меньше 2 часов",
@@ -331,6 +332,10 @@ export const ru: Messages = {
   "limitSettings.switchAt.description":
     "В режиме «Переключать автоматически» следующий ход начинается на резервной модели, когда в самом заполненном окне использования провайдера остаётся столько. В режиме «Предложить замену» тред в этот момент предлагает переключиться. Никогда посреди хода и только на провайдера, у которого осталось больше.",
   "limitSettings.switchAt.off": "Только при остановке",
+  "limitSettings.switchAt.custom": "Свой вариант…",
+  "limitSettings.switchAt.customLabel": "Использование для переключения, в процентах",
+  "limitSettings.switchAt.customUnit": "% использовано",
+  "limitSettings.switchAt.customError": "Введите целое число от {min} до {max}.",
   "limitSettings.waitUnder.title": "Ждать, если сброс скоро",
   "limitSettings.waitUnder.description":
     "Если использование, достигшее лимита или порога, сбрасывается в пределах этого времени, ничего не переключается, не погашается и не тратится: тред ждёт и продолжает на том же провайдере после сброса. Если недельное окно тоже исчерпано, ожидание не применяется.",

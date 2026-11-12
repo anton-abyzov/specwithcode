@@ -127,5 +127,8 @@ describe("formatSettingValueFor", () => {
       ]),
     ).toBe("claude-opus-5-5, gpt-6.1-sol");
     expect(formatSettingValueFor("providerLimitSwitchAtPercent", 95)).toBe("95%");
+    expect(formatSettingValueFor("providerLimitSwitchAtPercent", 93)).toBe("93%");
+    // A null threshold never switches early; it is a choice, not a missing value.
+    expect(formatSettingValueFor("providerLimitSwitchAtPercent", null)).toBe("Only when it stops");
   });
 });

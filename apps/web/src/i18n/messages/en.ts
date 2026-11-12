@@ -275,6 +275,7 @@ export const en = {
   "limitSettings.action.wait": "Wait for the reset",
   "limitSettings.action.switch": "Switch automatically",
   "limitSettings.switchAtOption": "At {percent}% left",
+  "limitSettings.switchAtOptionDefault": "At {percent}% left (default)",
   "limitSettings.waitOption.never": "Never wait",
   "limitSettings.waitOption.hour": "Under 1 hour",
   "limitSettings.waitOption.twoHours": "Under 2 hours",
@@ -310,6 +311,10 @@ export const en = {
   "limitSettings.switchAt.description":
     "With Switch automatically, the next turn starts on the fallback once the provider's lowest usage window has only this much left. With Offer the fallback, the thread suggests the switch at this point instead. Never mid-turn, and only to a provider with more left.",
   "limitSettings.switchAt.off": "Only when it stops",
+  "limitSettings.switchAt.custom": "Custom…",
+  "limitSettings.switchAt.customLabel": "Usage to switch at, in percent",
+  "limitSettings.switchAt.customUnit": "% used",
+  "limitSettings.switchAt.customError": "Enter a whole number from {min} to {max}.",
   "limitSettings.waitUnder.title": "Wait when the reset is close",
   "limitSettings.waitUnder.description":
     "When the usage that reached the limit or the threshold resets within this time, nothing switches, redeems or spends: the thread waits and resumes on the same provider at the reset. A weekly window that is also full keeps the wait from applying.",

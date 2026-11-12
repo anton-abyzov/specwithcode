@@ -274,6 +274,7 @@ export const pt: Messages = {
   "limitSettings.action.wait": "Esperar o reinício",
   "limitSettings.action.switch": "Trocar automaticamente",
   "limitSettings.switchAtOption": "Com {percent}% restante",
+  "limitSettings.switchAtOptionDefault": "Com {percent}% restante (padrão)",
   "limitSettings.waitOption.never": "Nunca esperar",
   "limitSettings.waitOption.hour": "Menos de 1 hora",
   "limitSettings.waitOption.twoHours": "Menos de 2 horas",
@@ -310,6 +311,10 @@ export const pt: Messages = {
   "limitSettings.switchAt.description":
     "Com Trocar automaticamente, o próximo turno começa no fallback quando a janela de uso mais baixa do provedor tiver só isso restante. Com Oferecer o fallback, a thread sugere a troca nesse ponto. Nunca no meio do turno, e só para um provedor com mais restante.",
   "limitSettings.switchAt.off": "Só quando parar",
+  "limitSettings.switchAt.custom": "Personalizado…",
+  "limitSettings.switchAt.customLabel": "Uso em que trocar, em porcentagem",
+  "limitSettings.switchAt.customUnit": "% usado",
+  "limitSettings.switchAt.customError": "Digite um número inteiro de {min} a {max}.",
   "limitSettings.waitUnder.title": "Esperar quando o reinício estiver perto",
   "limitSettings.waitUnder.description":
     "Quando o uso que atingiu o limite ou o patamar reinicia dentro desse tempo, nada troca, resgata ou gasta: a thread espera e continua no mesmo provedor no reinício. Uma janela semanal também esgotada impede essa espera.",

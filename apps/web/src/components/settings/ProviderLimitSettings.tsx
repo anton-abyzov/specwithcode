@@ -1,6 +1,8 @@
 import {
   DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
   DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES,
+  PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX,
+  PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN,
   type ModelSelection,
   type ProviderLimitAction,
 } from "@specweave-studio/contracts";
@@ -14,7 +16,7 @@ import {
   describeFallbackOptions,
   toggleExcludedModel,
 } from "@specweave-studio/shared/fallbackOptions";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -37,6 +39,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { AddApiCreditAccountDialog } from "./AddApiCreditAccountDialog";
@@ -84,9 +87,22 @@ const SWITCH_AT_OPTIONS = [
   "98",
   "99",
 ] as const;
+const SWITCH_AT_CUSTOM = "custom";
+const isSwitchAtPreset = (value: string) =>
+  (SWITCH_AT_OPTIONS as readonly string[]).includes(value);
 /** The stored threshold is a used share; the label names what is left at that point. */
 const switchAtLabel = (t: Translate, value: string) =>
   t("limitSettings.switchAtOption", { percent: 100 - Number(value) });
+/** A typed threshold: a whole number of percent used, inside the setting's bounds. */
+function parseSwitchAtPercent(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return value >= PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN &&
+    value <= PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX
+    ? value
+    : null;
+}
 const WAIT_UNDER_OPTIONS = ["0", "15", "30", "60", "120"] as const;
 const waitUnderLabel = (t: Translate, value: string) =>
   value === "0"
@@ -189,6 +205,39 @@ export function ProviderLimitSettings() {
     provider.displayName ?? provider.instanceId;
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const switchAt = settings.providerLimitSwitchAtPercent;
+  // "Custom…" opens the field before anything is typed; a stored value outside the presets keeps it open.
+  const [customSwitchAt, setCustomSwitchAt] = useState(false);
+  const [switchAtDraft, setSwitchAtDraft] = useState<string | null>(null);
+  const [switchAtInvalid, setSwitchAtInvalid] = useState(false);
+  const switchAtErrorId = useId();
+  const switchAtMode = mixedSwitchAt
+    ? customSwitchAt
+      ? SWITCH_AT_CUSTOM
+      : null
+    : switchAt === null
+      ? customSwitchAt
+        ? SWITCH_AT_CUSTOM
+        : "off"
+      : customSwitchAt || !isSwitchAtPreset(String(switchAt))
+        ? SWITCH_AT_CUSTOM
+        : String(switchAt);
+  const leaveCustomSwitchAt = () => {
+    setCustomSwitchAt(false);
+    setSwitchAtDraft(null);
+    setSwitchAtInvalid(false);
+  };
+  const commitSwitchAtDraft = () => {
+    if (switchAtDraft === null) return;
+    const value = parseSwitchAtPercent(switchAtDraft);
+    if (value === null) {
+      setSwitchAtInvalid(true);
+      return;
+    }
+    setSwitchAtInvalid(false);
+    setSwitchAtDraft(null);
+    if (value !== switchAt || mixedSwitchAt)
+      updateSettings({ providerLimitSwitchAtPercent: value });
+  };
   // Spending a banked reset or paid credits is consent a person gives once, in so many words.
   const [confirmingRedeem, setConfirmingRedeem] = useState(false);
   const [confirmingSpend, setConfirmingSpend] = useState(false);
@@ -381,42 +430,104 @@ export function ProviderLimitSettings() {
           switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
             <SettingResetButton
               label={tx("switch threshold")}
-              onClick={() =>
+              onClick={() => {
+                leaveCustomSwitchAt();
                 updateSettings({
                   providerLimitSwitchAtPercent: DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
-                })
-              }
+                });
+              }}
             />
           ) : null
         }
         control={
-          <Select
-            value={mixedSwitchAt ? null : switchAt === null ? "off" : String(switchAt)}
-            onValueChange={(value) => {
-              if (value === "off") updateSettings({ providerLimitSwitchAtPercent: null });
-              else if (value !== null && (SWITCH_AT_OPTIONS as readonly string[]).includes(value))
-                updateSettings({ providerLimitSwitchAtPercent: Number(value) });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label={t("limitSettings.switchAt.title")}>
-              <SelectValue>
-                {(value: string | null) =>
-                  value === "off"
-                    ? t("limitSettings.switchAt.off")
-                    : value === null
-                      ? t("limitSettings.mixed")
-                      : switchAtLabel(t, value)
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {SWITCH_AT_OPTIONS.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {option === "off" ? t("limitSettings.switchAt.off") : switchAtLabel(t, option)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Select
+                value={switchAtMode}
+                onValueChange={(value) => {
+                  if (value === SWITCH_AT_CUSTOM) {
+                    setCustomSwitchAt(true);
+                    setSwitchAtInvalid(false);
+                  } else if (value === "off") {
+                    leaveCustomSwitchAt();
+                    updateSettings({ providerLimitSwitchAtPercent: null });
+                  } else if (value !== null && isSwitchAtPreset(value)) {
+                    leaveCustomSwitchAt();
+                    updateSettings({ providerLimitSwitchAtPercent: Number(value) });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" aria-label={t("limitSettings.switchAt.title")}>
+                  <SelectValue>
+                    {(value: string | null) =>
+                      value === "off"
+                        ? t("limitSettings.switchAt.off")
+                        : value === null
+                          ? t("limitSettings.mixed")
+                          : value === SWITCH_AT_CUSTOM
+                            ? switchAt === null || mixedSwitchAt
+                              ? t("limitSettings.switchAt.custom")
+                              : switchAtLabel(t, String(switchAt))
+                            : switchAtLabel(t, value)
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SWITCH_AT_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option === "off"
+                        ? t("limitSettings.switchAt.off")
+                        : option === String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT)
+                          ? t("limitSettings.switchAtOptionDefault", {
+                              percent: 100 - Number(option),
+                            })
+                          : switchAtLabel(t, option)}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={SWITCH_AT_CUSTOM}>
+                    {t("limitSettings.switchAt.custom")}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              {switchAtMode === SWITCH_AT_CUSTOM ? (
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Input
+                    size="sm"
+                    className="w-16"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    aria-label={t("limitSettings.switchAt.customLabel")}
+                    aria-invalid={switchAtInvalid || undefined}
+                    aria-describedby={switchAtInvalid ? switchAtErrorId : undefined}
+                    placeholder={String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT)}
+                    value={
+                      switchAtDraft ?? (switchAt === null || mixedSwitchAt ? "" : String(switchAt))
+                    }
+                    onChange={(event) => {
+                      setSwitchAtDraft(event.currentTarget.value);
+                      setSwitchAtInvalid(false);
+                    }}
+                    onBlur={commitSwitchAtDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitSwitchAtDraft();
+                      }
+                    }}
+                  />
+                  {t("limitSettings.switchAt.customUnit")}
+                </label>
+              ) : null}
+            </div>
+            {switchAtInvalid ? (
+              <p id={switchAtErrorId} role="alert" className="text-xs text-destructive-foreground">
+                {t("limitSettings.switchAt.customError", {
+                  min: PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN,
+                  max: PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX,
+                })}
+              </p>
+            ) : null}
+          </div>
         }
       />
       <SettingsRow

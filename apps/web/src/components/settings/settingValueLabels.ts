@@ -78,7 +78,9 @@ export function formatSettingValueFor(
             ? "Text generation model"
             : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
               ? "Inherit"
-              : "Not set";
+              : key === "providerLimitSwitchAtPercent"
+                ? "Only when it stops"
+                : "Not set";
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
