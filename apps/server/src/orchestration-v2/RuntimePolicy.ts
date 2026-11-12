@@ -199,7 +199,8 @@ export const layerFromProjectStore: Layer.Layer<
             ? null
             : yield* projects.get(input.thread.projectId).pipe(
                 Effect.map(Option.getOrNull),
-                Effect.orElseSucceed(() => null),
+                // Best effort: a store that cannot answer leaves the thread without the guard.
+                Effect.catchCause(() => Effect.succeed(null)),
               );
         const manualWorktreesBlocked =
           localProject !== null
