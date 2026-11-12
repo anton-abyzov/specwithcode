@@ -543,7 +543,7 @@ it.effect(
           currentMs: { p50: round(percentile(busyMs, 0.5)), p95: round(percentile(busyMs, 0.95)) },
         },
       };
-      console.info(`slow query timings ${JSON.stringify(report)}`);
+      yield* Effect.logInfo(`slow query timings ${JSON.stringify(report)}`);
 
       assert.isBelow(percentile(listStatementMs, 0.95), SLOW_STATEMENT_BUDGET_MS);
       assert.isBelow(percentile(oneThreadMs, 0.95), SLOW_STATEMENT_BUDGET_MS);
