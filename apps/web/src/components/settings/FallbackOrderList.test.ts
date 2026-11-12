@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId } from "@specweave-studio/contracts";
-import { addFallbackEntry, MAX_FALLBACK_MODELS, moveFallbackEntry } from "./FallbackOrderList";
+import {
+  addFallbackEntry,
+  MAX_FALLBACK_MODELS,
+  moveFallbackEntry,
+  reorderFallbackEntry,
+} from "./FallbackOrderList";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
@@ -30,5 +35,26 @@ describe("fallback order", () => {
     ]);
     expect(moveFallbackEntry(order, 0, -1)).toBe(order);
     expect(moveFallbackEntry(order, 2, 1)).toBe(order);
+  });
+
+  it("drag-reorders an entry to a new position and ignores invalid drops", () => {
+    const order = [
+      addFallbackEntry([], codex, "gpt-6-astra")[0]!,
+      addFallbackEntry([], codex, "gpt-6.1-sol")[0]!,
+      addFallbackEntry([], claude, "claude-opus-5-5")[0]!,
+    ];
+    expect(reorderFallbackEntry(order, 0, 2).map((entry) => entry.model)).toEqual([
+      "gpt-6.1-sol",
+      "claude-opus-5-5",
+      "gpt-6-astra",
+    ]);
+    expect(reorderFallbackEntry(order, 2, 0).map((entry) => entry.model)).toEqual([
+      "claude-opus-5-5",
+      "gpt-6-astra",
+      "gpt-6.1-sol",
+    ]);
+    expect(reorderFallbackEntry(order, 1, 1)).toBe(order);
+    expect(reorderFallbackEntry(order, -1, 0)).toBe(order);
+    expect(reorderFallbackEntry(order, 0, 3)).toBe(order);
   });
 });

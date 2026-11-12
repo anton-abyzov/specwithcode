@@ -3,8 +3,16 @@ import type { ReviewerStepStatus } from "@specweave-studio/shared/adversarialRev
 import { MODEL_FAMILY_LABELS, type ModelFamily } from "@specweave-studio/shared/fallbackOptions";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
-import { ArrowDownIcon, ArrowUpIcon, CornerDownRightIcon, XIcon } from "lucide-react";
-import { useMemo } from "react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  CornerDownRightIcon,
+  GripVerticalIcon,
+  XIcon,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
@@ -48,6 +56,19 @@ export function moveFallbackEntry(
   if (index < 0 || index >= order.length || to < 0 || to >= order.length) return order;
   const next = [...order];
   [next[index], next[to]] = [next[to]!, next[index]!];
+  return next;
+}
+
+/** Moves the entry at `from` to `to` (a drag drop); out-of-range moves change nothing. */
+export function reorderFallbackEntry(
+  order: ReadonlyArray<ModelSelection>,
+  from: number,
+  to: number,
+): ReadonlyArray<ModelSelection> {
+  if (from === to || from < 0 || from >= order.length || to < 0 || to >= order.length) return order;
+  const next = [...order];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved!);
   return next;
 }
 
@@ -138,6 +159,9 @@ export function ModelOrderList(props: {
   const tr = useT();
   const { label, steps, providers, order, onChange } = props;
   const entries = useMemo(() => deriveProviderInstanceEntries(providers), [providers]);
+  // Alternates start collapsed behind a "+N" chip; a step expands in place.
+  const [expandedAlternates, setExpandedAlternates] = useState<ReadonlySet<string>>(new Set());
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
   if (steps.length === 0) return null;
   const editable = onChange !== undefined && order !== undefined;
   const identity = (selection: ModelOrderStep["selection"]) => {
@@ -181,11 +205,23 @@ export function ModelOrderList(props: {
                 item.model === step.selection.model,
             )
           : -1;
+        const stepKey = `${step.selection.instanceId}:${step.selection.model}`;
+        const alternatesOpen = expandedAlternates.has(stepKey);
         return (
           <li
-            key={`${step.selection.instanceId}:${step.selection.model}`}
+            key={stepKey}
             className="border-b border-border/60 px-2.5 py-2 last:border-b-0"
             data-step={index + 1}
+            onDragOver={editable ? (event) => event.preventDefault() : undefined}
+            onDrop={
+              editable && at >= 0
+                ? (event) => {
+                    event.preventDefault();
+                    if (dragIndex !== null) onChange(reorderFallbackEntry(order, dragIndex, at));
+                    setDragIndex(null);
+                  }
+                : undefined
+            }
           >
             <div className="flex min-w-0 items-center gap-2.5">
               <span
@@ -210,6 +246,22 @@ export function ModelOrderList(props: {
               </span>
               {editable && at >= 0 ? (
                 <span className="flex shrink-0 items-center">
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    aria-hidden
+                    draggable
+                    title={rowLabel}
+                    data-drag-handle={rowLabel}
+                    className="flex size-5 cursor-grab items-center justify-center text-icon-muted active:cursor-grabbing"
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      setDragIndex(at);
+                    }}
+                    onDragEnd={() => setDragIndex(null)}
+                  >
+                    <GripVerticalIcon className="size-3.5" />
+                  </span>
                   <Button
                     size="icon-xs"
                     variant="ghost"
@@ -240,6 +292,37 @@ export function ModelOrderList(props: {
               ) : null}
             </div>
             {step.alternates && step.alternates.length > 0 ? (
+              <button
+                type="button"
+                aria-expanded={alternatesOpen}
+                aria-label={`${tr("fallback.sameModelAria", { label: rowLabel })} (${step.alternates.length})`}
+                data-alternates-toggle={rowLabel}
+                className="mt-1.5 ml-[1.375rem] flex items-center gap-1.5 rounded-full border border-border/70 py-0.5 pr-2 pl-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() =>
+                  setExpandedAlternates((open) => {
+                    const next = new Set(open);
+                    if (next.has(stepKey)) next.delete(stepKey);
+                    else next.add(stepKey);
+                    return next;
+                  })
+                }
+              >
+                {alternatesOpen ? (
+                  <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+                ) : (
+                  <ChevronRightIcon aria-hidden className="size-3 shrink-0" />
+                )}
+                <span aria-hidden className="flex items-center -space-x-1">
+                  {step.alternates.map((alternate) => (
+                    <span key={`${alternate.selection.instanceId}:${alternate.selection.model}`}>
+                      {icon(identity(alternate.selection).entry, "size-3.5")}
+                    </span>
+                  ))}
+                </span>
+                +{step.alternates.length}
+              </button>
+            ) : null}
+            {step.alternates && step.alternates.length > 0 && alternatesOpen ? (
               <ul
                 aria-label={tr("fallback.sameModelAria", { label: rowLabel })}
                 className="mt-1.5 ml-[1.375rem] flex flex-col gap-1 border-l border-border/70 pl-3"
