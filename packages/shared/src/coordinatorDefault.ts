@@ -339,6 +339,22 @@ export function capCoordinatorEffort(
   };
 }
 
+/**
+ * The selection a coordinator turn runs on: the coordinator defaults for every
+ * option nobody chose (Medium effort, Thinking), then the cap. A model picked a
+ * moment ago has no saved effort yet, and its provider default can be above
+ * High, so the default is applied here and not only when the server starts.
+ */
+export function coordinatorRunSelection(
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  return capCoordinatorEffort(
+    withDefaultModelOptions(selection, providers, "coordinator"),
+    providers,
+  );
+}
+
 /** Whether a saved coordinator effort is above the cap, so the popover can say so once. */
 export function coordinatorEffortIsCapped(
   selection: ModelSelection | null | undefined,

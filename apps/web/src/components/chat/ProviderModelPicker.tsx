@@ -235,7 +235,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
 
     const shouldAllowOverlayScroll = (target: EventTarget | null) => {
-      return target instanceof Element && target.closest("[data-model-picker-content]");
+      return (
+        target instanceof Element &&
+        target.closest("[data-model-picker-content], [data-project-models-popover]")
+      );
     };
     const preventBackgroundWheel = (event: WheelEvent) => {
       if (shouldAllowOverlayScroll(event.target)) {

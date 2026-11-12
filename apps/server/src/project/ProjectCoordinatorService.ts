@@ -18,7 +18,7 @@ import {
   type OrchestrationV2ThreadOrigin,
 } from "@specweave-studio/contracts";
 import {
-  capCoordinatorEffort,
+  coordinatorRunSelection,
   coordinatorSelectionProblem,
   coordinatorUnavailableDetail,
   resolveCoordinatorModelSelection,
@@ -243,7 +243,7 @@ const make = Effect.gen(function* () {
             projectId: input.projectId,
             title: `${project.title} coordinator`,
             // The saved choice is kept as saved; the run itself never goes above High.
-            modelSelection: capCoordinatorEffort(modelSelection, providers),
+            modelSelection: coordinatorRunSelection(modelSelection, providers),
             runtimeMode: teamRulesClampToCarried(
               teamRulesClampMode(
                 yield* teamRulesForFolder(project.workspaceRoot),
@@ -416,7 +416,7 @@ const make = Effect.gen(function* () {
       // A coordinator routes and replies: an effort above High, saved before the cap or
       // carried by the thread, runs at High. Saved settings are left as they are.
       const capped = effectiveSelection
-        ? capCoordinatorEffort(effectiveSelection, providers)
+        ? coordinatorRunSelection(effectiveSelection, providers)
         : undefined;
       return {
         selection: capped && capped !== effectiveSelection ? capped : selection,

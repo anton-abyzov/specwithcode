@@ -21,8 +21,8 @@ const entry = (
 describe("providerShortLabels", () => {
   it("tells two accounts of one product apart by the word that differs", () => {
     const labels = providerShortLabels([
-      entry("a", "acpRegistry", "Copilot Enterprise (abycrash-corp)", undefined, "github-copilot"),
-      entry("b", "acpRegistry", "Copilot personal (anton-abyzov)", undefined, "github-copilot"),
+      entry("a", "acpRegistry", "Copilot Enterprise (acme-corp)", undefined, "github-copilot"),
+      entry("b", "acpRegistry", "Copilot personal (fixture-person)", undefined, "github-copilot"),
     ]);
     expect([...labels.values()]).toEqual(["Enterprise", "Personal"]);
   });

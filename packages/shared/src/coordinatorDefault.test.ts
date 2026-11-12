@@ -11,6 +11,7 @@ import {
   capCoordinatorEffort,
   coordinatorEffortIsCapped,
   coordinatorEffortModel,
+  coordinatorRunSelection,
   defaultModelOptions,
   defaultProjectModelSelection,
   defaultWorkerModelSelection,
@@ -466,6 +467,17 @@ describe("coordinator effort cap", () => {
     const bare = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
     expect(capCoordinatorEffort(bare, [wide])).toBe(bare);
     expect(coordinatorEffortIsCapped(null, [wide])).toBe(false);
+  });
+
+  it("runs a model picked without an effort at Medium, never its provider default", () => {
+    const bare = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    expect(coordinatorRunSelection(bare, [wide]).options).toEqual([
+      { id: "effort", value: "medium" },
+    ]);
+    expect(coordinatorRunSelection(pick("max"), [wide]).options?.[0]).toEqual({
+      id: "effort",
+      value: "high",
+    });
   });
 
   it("offers the coordinator only the levels up to High", () => {

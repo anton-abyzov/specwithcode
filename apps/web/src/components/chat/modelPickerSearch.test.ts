@@ -37,8 +37,8 @@ const item = (
   slug: extra.slug ?? name.toLowerCase().replace(/[^a-z0-9]+/gu, "-"),
   ...(extra.aliases ? { aliases: extra.aliases } : {}),
 });
-const ENTERPRISE = "Copilot Enterprise (abycrash-robotics-on)";
-const PERSONAL = "Copilot personal (anton-abyzov)";
+const ENTERPRISE = "Copilot Enterprise (acme-robotics-on)";
+const PERSONAL = "Copilot personal (fixture-person)";
 const CATALOG = [
   item(ENTERPRISE, "acpRegistry", "Gemini 4 Carbon"),
   item("Claude Code", "claudeAgent", "Claude Opus 5.5", { aliases: ["opus-5.5"] }),
@@ -107,6 +107,19 @@ describe("scoreModelPickerSearch", () => {
     };
     const cursor = { driverKind: "cursor", providerDisplayName: "Cursor", name: "Opus 4.7" };
     expect(scoreModelPickerSearch(claude, "opu")).toBe(scoreModelPickerSearch(cursor, "opu"));
+  });
+
+  it("finds a version glued to the name and a word inside a run-together name", () => {
+    const local = (name: string) => ({
+      driverKind: "opencode",
+      providerDisplayName: "Local",
+      name,
+    });
+    expect(scoreModelPickerSearch(local("Qwen3 Coder"), "qwen 3")).not.toBeNull();
+    expect(scoreModelPickerSearch(local("qwen2.5-coder:7b"), "qwen 2.5")).not.toBeNull();
+    expect(scoreModelPickerSearch(local("llama3.2:latest"), "llama 3.2")).not.toBeNull();
+    expect(scoreModelPickerSearch(local("DeepSeek-V3.1"), "seek")).not.toBeNull();
+    expect(scoreModelPickerSearch(local("Claude Opus 5.5"), "pus")).toBeNull();
   });
 
   it("matches without the separators", () => {

@@ -743,7 +743,7 @@ describe("calm picker search", () => {
   const enterprise = provider(
     "copilot_work",
     "acpRegistry",
-    "Copilot Enterprise (abycrash-robotics-on)",
+    "Copilot Enterprise (acme-robotics-on)",
   );
   const claude = provider("claudeAgent", "claudeAgent", "Claude Code");
   const cursor = provider("cursor", "cursor", "Cursor", {

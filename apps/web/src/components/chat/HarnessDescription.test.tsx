@@ -50,7 +50,7 @@ describe("HarnessDescription", () => {
     const text = describeProviderRow(
       entry({
         driverKind: ProviderDriverKind.make("acpRegistry"),
-        displayName: "Copilot Enterprise (abycrash)",
+        displayName: "Copilot Enterprise (acme)",
         snapshot: {
           auth: { status: "authenticated", label: "Copilot Enterprise", email: "a@example.com" },
         } as never,
@@ -58,9 +58,9 @@ describe("HarnessDescription", () => {
       { slug: "m", name: "M", isCustom: false, capabilities: null },
     );
     expect(text.split("\n")).toEqual([
-      "Copilot Enterprise (abycrash)",
+      "Copilot Enterprise (acme)",
       "Copilot Enterprise · a@example.com",
-      "Harness: Copilot Enterprise (abycrash) · ACP",
+      "Harness: Copilot Enterprise (acme) · ACP",
       "Billing not reported",
     ]);
   });
