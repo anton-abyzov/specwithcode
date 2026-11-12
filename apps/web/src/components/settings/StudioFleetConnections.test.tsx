@@ -357,7 +357,7 @@ describe("private machine roster", () => {
     before.props.onRemove(snapshot.machines[1]!);
     await vi.waitFor(() => expect(runtime.removeMachine).toHaveBeenCalledExactlyOnceWith(m4, "m1"));
     expect(runtime.confirm.mock.calls[0]![0]).toContain(
-      "If Mac M1 is on your SpecWithCode Connect account, it stays registered there until you deregister it: account menu > Manage account > SpecWithCode Connect > Deregister.",
+      "If Mac M1 is on your SpecWithCode Connect account, it stays registered there until you deregister it: account menu > Manage account > Machines > Deregister.",
     );
     await vi.waitFor(() => expect(container().props.removedLabel).toBe("Mac M1"));
     expect(hint(StudioFleetRoster(container().props))?.props.label).toBe("Mac M1");
@@ -369,10 +369,7 @@ describe("private machine roster", () => {
   it("offers the Connect account page after a removal only when it can be opened", () => {
     const open = vi.fn();
     const button = (tree: unknown) =>
-      visitElements(
-        tree,
-        (element) => element.props.children === "Open SpecWithCode Connect settings",
-      );
+      visitElements(tree, (element) => element.props.children === "Open Manage account");
     const signedIn = ConnectDeregisterHintView({ label: "Mac M1", onOpen: open });
     (button(signedIn)?.props.onClick as () => void)();
     expect(open).toHaveBeenCalledOnce();
@@ -381,7 +378,7 @@ describe("private machine roster", () => {
         signedIn,
         (element) =>
           element.props.children ===
-          "If Mac M1 is on your SpecWithCode Connect account, it is still registered there. Deregister it under account menu > Manage account > SpecWithCode Connect.",
+          "If Mac M1 is on your SpecWithCode Connect account, it is still registered there. Deregister it under account menu > Manage account > Machines.",
       ),
     ).not.toBeNull();
     expect(button(ConnectDeregisterHintView({ label: "Mac M1", onOpen: null }))).toBeNull();

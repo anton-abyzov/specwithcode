@@ -34,7 +34,7 @@ const browser = await chromium.launch({
 });
 const cases = {
   list: {
-    has: ["5 machines linked", "This machine", "Linked Oct 26, 2026"],
+    has: ["5 machines linked", "This machine", "Managed tunnel"],
     hasNot: ["Deregister machine"],
   },
   confirm: { has: ["Deregister “minisforum”?", "Deregister machine", "Cancel"], hasNot: [] },

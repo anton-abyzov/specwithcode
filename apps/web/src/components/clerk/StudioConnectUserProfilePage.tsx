@@ -85,7 +85,7 @@ export function StudioConnectEnvironmentRow(props: {
           <div className="min-w-0 flex-1">
             {/* The name wraps instead of being cut: it is how a machine is told apart. */}
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <h3 className="line-clamp-3 min-w-0 text-sm leading-5 font-medium wrap-anywhere text-foreground">
+              <h3 className="min-w-0 text-sm leading-5 font-medium wrap-anywhere text-foreground">
                 {environment.label}
               </h3>
               {current ? (
