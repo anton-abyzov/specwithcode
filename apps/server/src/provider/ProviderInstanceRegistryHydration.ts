@@ -110,11 +110,12 @@ export const deriveProviderInstanceConfigMap = (
     const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
     const legacyConfig = settings.providers[legacyKey];
     if (legacyConfig === undefined) {
-      // Muse Code has no legacy entry. It still gets a default slot, off
-      // until someone turns it on, so a found CLI has a row without Add
-      // provider. Registry agents need an agent id and get no slot.
+      // Muse Code has no legacy entry. It still gets a default slot, so a
+      // found CLI has a row without Add provider. The slot says off itself:
+      // without a legacy entry, a missing flag would read as on elsewhere.
+      // Registry agents need an agent id and get no slot.
       if (driver.driverKind === MUSE_DRIVER) {
-        merged[instanceId] = { driver: driver.driverKind, config: {} };
+        merged[instanceId] = { driver: driver.driverKind, enabled: false, config: {} };
       }
       continue;
     }

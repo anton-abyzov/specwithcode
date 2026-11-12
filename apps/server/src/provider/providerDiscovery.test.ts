@@ -8,6 +8,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -582,8 +583,14 @@ describe("finding every agent", () => {
     const fresh = DEFAULT_SERVER_SETTINGS;
     assert.deepEqual(deriveProviderInstanceConfigMap(fresh)[ProviderInstanceId.make("muse")], {
       driver: ProviderDriverKind.make("muse"),
+      enabled: false,
       config: {},
     });
+    assert.isFalse(
+      resolveProviderInstanceEnabled(
+        deriveProviderInstanceConfigMap(fresh)[ProviderInstanceId.make("muse")]!,
+      ),
+    );
     const chosen = {
       driver: ProviderDriverKind.make("muse"),
       enabled: true,
