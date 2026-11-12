@@ -5,9 +5,10 @@ import { OrchestratorToolkit } from "./tools.ts";
 import { requestAccess } from "./requestAccess.ts";
 import { waitThreads } from "./threadsWait.ts";
 import * as Effect from "effect/Effect";
-import { OrchestratorMcpFailure, ThreadId } from "@specweave-studio/contracts";
+import { OrchestratorMcpFailure, type ProjectId, ThreadId } from "@specweave-studio/contracts";
 import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/threadReport";
 import * as Option from "effect/Option";
+import { assertPersonalReadBoundary } from "../../personalChatBoundary.ts";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -47,11 +48,15 @@ const guardThread = (threadId: string, access: "read" | "write" | "send" = "read
   Effect.gen(function* () {
     const caller = yield* loadCaller();
     const work = yield* workGrantOf(caller);
-    if (work === undefined) return;
+    // An agent in another project never reads the personal assistant's chats.
+    const personalRead = access === "read" && caller.caller !== undefined;
+    if (work === undefined && !personalRead) return;
     const shell = yield* caller.threads
       .getThreadShell(localThreadIdOf(threadId))
       .pipe(Effect.mapError(unavailable));
     if (shell === null) return;
+    if (personalRead) yield* assertPersonalReadBoundary(caller.caller?.projectId, shell.projectId);
+    if (work === undefined) return;
     yield* assertThreadInGrant(work, shell);
     if (access === "read") return;
     yield* assertThreadWritable(work, shell);
@@ -214,6 +219,10 @@ const handlers = {
       if (target.kind === "remote") return yield* listRemote(target.machine, withoutMachine(input));
       const listed = yield* listFederatedProjectThreads(input);
       yield* guardProject(listed.projectId);
+      yield* assertPersonalReadBoundary(
+        (yield* loadCaller()).caller?.projectId,
+        listed.projectId as ProjectId,
+      );
       return listed;
     }),
   ),

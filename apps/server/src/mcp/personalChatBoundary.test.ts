@@ -13,7 +13,12 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { expect, it } from "@effect/vitest";
 import * as ProjectService from "../project/ProjectService.ts";
-import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
+import {
+  assertPersonalChatBoundary,
+  assertPersonalReadBoundary,
+  PERSONAL_READ_REFUSAL,
+  personalReadAllowed,
+} from "./personalChatBoundary.ts";
 import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -133,3 +138,15 @@ for (const direction of ["incoming", "outgoing"] as const) {
     }).pipe(Effect.provide(services));
   });
 }
+
+it.effect("keeps the assistant's chats from other projects' reads, not the reverse", () =>
+  Effect.gen(function* () {
+    expect(yield* personalReadAllowed(aide, aide)).toBe(true);
+    expect(yield* personalReadAllowed(undefined, aide)).toBe(true);
+    expect(yield* personalReadAllowed(aide, code)).toBe(true);
+    expect(yield* personalReadAllowed(code, other)).toBe(true);
+    expect(yield* personalReadAllowed(code, aide)).toBe(false);
+    const refused = yield* assertPersonalReadBoundary(code, aide).pipe(Effect.flip);
+    expect(refused).toMatchObject({ code: "capability_denied", message: PERSONAL_READ_REFUSAL });
+  }).pipe(Effect.provide(projects)),
+);

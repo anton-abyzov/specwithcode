@@ -9,6 +9,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as Workspace from "../../../project/ProjectWorkspaceService.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Invocation from "../../McpInvocationContext.ts";
@@ -20,6 +21,7 @@ const shared = {
     Workspace.ProjectWorkspaceService,
     Threads.ThreadManagementService,
     Invocation.McpInvocationContext,
+    ProjectService.ProjectService,
   ],
 };
 export const ProjectMemoryToolkit = Toolkit.make(

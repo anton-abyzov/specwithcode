@@ -16,6 +16,8 @@ import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import { PERSONAL_READ_REFUSAL } from "../../personalChatBoundary.ts";
 import { layer as handlers } from "./handlers.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -152,3 +154,155 @@ for (const testCase of cases) {
     }).pipe(Effect.provide(services));
   });
 }
+
+// The personal assistant's chats stay private to it: an agent thread in
+// another project may not read or search them; the assistant, its workers and
+// a thread-less user-approved client may, and the assistant reads projects.
+const readCase = (caller: "aide" | "code" | undefined) => {
+  const callerId = ThreadId.make(`caller-${caller ?? "client"}`);
+  const shell = (id: ThreadId) => ({
+    ...liveThreadShell(id),
+    ...(caller === undefined ? { runtimeMode: "approval-required" as const } : {}),
+    projectId: ProjectId.make(
+      id === callerId ? caller! : String(id).startsWith("aide") ? "aide" : "code",
+    ),
+  });
+  return Layer.mergeAll(
+    NodeCrypto.layer,
+    Layer.mock(ProjectService.ProjectService)({
+      getById: (id) =>
+        Effect.succeed(
+          Option.some({
+            workspaceSettings: { kind: id === "aide" ? "personal" : "code" },
+          } as never),
+        ),
+    }),
+    Layer.succeed(McpInvocationContext.McpInvocationContext, {
+      environmentId: EnvironmentId.make("test"),
+      requestNamespace: "test",
+      issuedAt: 1,
+      capabilities: new Set(["orchestration" as const]),
+      client: undefined,
+      thread:
+        caller === undefined
+          ? undefined
+          : {
+              threadId: callerId,
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              providerSessionId: "test",
+            },
+    }),
+    Layer.mock(Threads.ThreadManagementService)({
+      getThreadShell: (id) => Effect.succeed(shell(id)),
+      getProjectThreadRecords: ((input: { threadId: ThreadId }) =>
+        Effect.succeed({
+          thread: shell(input.threadId),
+          messages: [],
+          runs: [],
+          runtimeRequests: [],
+          turnItems: [],
+          contextTransfers: [],
+        })) as never,
+    }),
+    Layer.mock(ThreadSearch.ThreadSearch)({
+      search: () =>
+        Effect.succeed({
+          matches: (["aide", "code"] as const).map((project) => ({
+            threadId: ThreadId.make(`${project}-match`),
+            projectId: ProjectId.make(project),
+            source: "user" as const,
+            snippet: project,
+            messageCreatedAt: null,
+          })),
+        }),
+    }),
+    Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+  );
+};
+const runReads = (caller: "aide" | "code" | undefined, target: string) =>
+  Effect.gen(function* () {
+    const toolkit = yield* ThreadToolkit.pipe(
+      Effect.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+    );
+    const threadId = ThreadId.make(target);
+    const last = (output: Iterable<{ readonly result: unknown }>) =>
+      Array.from(output).at(-1)?.result;
+    return {
+      transfers: last(
+        yield* toolkit
+          .handle("studio_thread_transfers", { threadId })
+          .pipe(Stream.unwrap, Stream.runCollect),
+      ),
+      configuration: last(
+        yield* toolkit
+          .handle("studio_thread_configuration", { threadId })
+          .pipe(Stream.unwrap, Stream.runCollect),
+      ),
+      pending: last(
+        yield* toolkit
+          .handle("studio_pending_request_list", { threadId })
+          .pipe(Stream.unwrap, Stream.runCollect),
+      ),
+      queue: last(
+        yield* toolkit
+          .handle("studio_queue_list", { threadId })
+          .pipe(Stream.unwrap, Stream.runCollect),
+      ),
+    };
+  }).pipe(Effect.provide(readCase(caller)));
+const search = (caller: "aide" | "code" | undefined, projectId?: string) =>
+  Effect.gen(function* () {
+    const toolkit = yield* ThreadToolkit.pipe(
+      Effect.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+    );
+    const output = yield* toolkit
+      .handle("studio_thread_search", {
+        query: "report",
+        ...(projectId === undefined ? {} : { projectId: ProjectId.make(projectId) }),
+      })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    return Array.from(output).at(-1)?.result as unknown;
+  }).pipe(Effect.provide(readCase(caller)));
+
+it.effect("refuses another project's agent the assistant's thread reads", () =>
+  Effect.gen(function* () {
+    const results = yield* runReads("code", "aide-thread");
+    for (const result of Object.values(results))
+      expect(result).toMatchObject({
+        code: "capability_denied",
+        message: PERSONAL_READ_REFUSAL,
+      });
+  }),
+);
+it.effect.each([
+  ["the assistant reads its own thread", "aide", "aide-thread"],
+  ["a thread-less client reads the assistant's thread", undefined, "aide-thread"],
+  ["the assistant reads a code project's thread", "aide", "code-thread"],
+] as const)("%s", ([, caller, target]) =>
+  Effect.gen(function* () {
+    const results = yield* runReads(caller, target);
+    for (const result of Object.values(results))
+      expect(result).not.toMatchObject({ code: "capability_denied" });
+    expect(results.configuration).toMatchObject({ threadId: target });
+  }),
+);
+it.effect("refuses another project's agent a search of the assistant's project", () =>
+  Effect.gen(function* () {
+    expect(yield* search("code", "aide")).toMatchObject({
+      code: "capability_denied",
+      message: PERSONAL_READ_REFUSAL,
+    });
+    // An omitted project is the caller's own, which holds no assistant chats.
+    expect(yield* search("code")).toEqual({
+      matches: [expect.objectContaining({ projectId: "code" })],
+    });
+    expect(yield* search("aide")).toEqual({
+      matches: [expect.objectContaining({ projectId: "aide" })],
+    });
+    expect(yield* search("aide", "code")).toEqual({
+      matches: [expect.objectContaining({ projectId: "code" })],
+    });
+    // A thread-less client keeps searching every project.
+    expect(((yield* search(undefined)) as { matches: unknown[] }).matches).toHaveLength(2);
+  }),
+);

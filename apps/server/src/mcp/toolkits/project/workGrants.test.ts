@@ -805,11 +805,18 @@ describe("a personal assistant here, seen by another machine's work", () => {
       expect(
         (local.matches as ReadonlyArray<{ projectId: string }>).map((match) => match.projectId),
       ).toContain(householdProject);
-      yield* world.callTool("memory", "studio_project_memory_read", localScope, {
-        projectId: householdProject,
-        name: "MEMORY.md",
+      // ...but no credential marks a thread-less client as the owner's, so the
+      // assistant's memory stays with its own threads.
+      expect(
+        yield* world.callTool("memory", "studio_project_memory_read", localScope, {
+          projectId: householdProject,
+          name: "MEMORY.md",
+        }),
+      ).toMatchObject({
+        code: "capability_denied",
+        message: ProjectMemoryHandlers.PERSONAL_MEMORY_REFUSAL,
       });
-      expect(world.reached).toEqual([fix, `memory:${householdProject}`]);
+      expect(world.reached).toEqual([fix]);
     }).pipe(Effect.provide(world.layer));
   });
 

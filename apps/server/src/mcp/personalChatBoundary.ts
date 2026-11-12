@@ -44,3 +44,40 @@ export const assertPersonalChatBoundary = Effect.fn("mcp.assertPersonalChatBound
       message: PERSONAL_CHAT_ROUTE_REFUSAL,
     });
 });
+
+export const PERSONAL_READ_REFUSAL =
+  "The personal assistant's chats are private to it. Ask the user to bring what you need into this project.";
+
+const lookupFailure = () =>
+  new OrchestratorMcpFailure({
+    code: "orchestration_error",
+    message: "Unable to check the personal assistant's privacy boundary.",
+  });
+
+/**
+ * Whether a caller in `callerProjectId` may read threads of `targetProjectId`.
+ * Thread-less clients and the assistant's own threads may; an agent thread in
+ * any other project may not read a personal project's chats. The assistant
+ * reading a project's threads stays allowed.
+ */
+export const personalReadAllowed = Effect.fn("mcp.personalReadAllowed")(function* (
+  callerProjectId: ProjectId | undefined,
+  targetProjectId: ProjectId,
+) {
+  if (callerProjectId === undefined || callerProjectId === targetProjectId) return true;
+  const projects = yield* ProjectService.ProjectService;
+  const target = yield* projects.getById(targetProjectId).pipe(Effect.mapError(lookupFailure));
+  return Option.isNone(target) || target.value.workspaceSettings?.kind !== "personal";
+});
+
+/** Refuses an agent in another project reading the personal assistant's chats. */
+export const assertPersonalReadBoundary = Effect.fn("mcp.assertPersonalReadBoundary")(function* (
+  callerProjectId: ProjectId | undefined,
+  targetProjectId: ProjectId,
+) {
+  if (yield* personalReadAllowed(callerProjectId, targetProjectId)) return;
+  return yield* new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message: PERSONAL_READ_REFUSAL,
+  });
+});

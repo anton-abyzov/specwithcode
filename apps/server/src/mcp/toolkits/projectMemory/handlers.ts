@@ -6,12 +6,16 @@ import {
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import * as MachineHandoff from "../../../fleet/MachineHandoff.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as Workspace from "../../../project/ProjectWorkspaceService.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller, resolveProjectId } from "../../threadAccess.ts";
 import { assertProjectReadable } from "../../workGrantAccess.ts";
 import { ProjectMemoryToolkit } from "./tools.ts";
+
+export const PERSONAL_MEMORY_REFUSAL = "The personal assistant's memory is private to it.";
 
 const boundProject = Effect.fn("mcp.projectMemory.boundProject")(function* (requested?: ProjectId) {
   const context = yield* readCaller();
@@ -24,6 +28,25 @@ const boundProject = Effect.fn("mcp.projectMemory.boundProject")(function* (requ
   }
   // Another machine's work reaches only the projects its grant covers.
   yield* assertProjectReadable(context, projectId);
+  // No credential marks an outside client as the owner's, so only the
+  // assistant's own threads reach its memory.
+  if (context.caller === undefined) {
+    const projects = yield* ProjectService.ProjectService;
+    const project = yield* projects.getById(projectId).pipe(
+      Effect.mapError(
+        () =>
+          new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: "Unable to check the personal assistant's privacy boundary.",
+          }),
+      ),
+    );
+    if (Option.isSome(project) && isPersonalAssistantProject(project.value))
+      return yield* new OrchestratorMcpFailure({
+        code: "capability_denied",
+        message: PERSONAL_MEMORY_REFUSAL,
+      });
+  }
   return { projectId, context };
 });
 const failure = (error: ProjectWorkspaceError) =>

@@ -20,6 +20,8 @@ import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import { ProjectMemoryToolkit } from "./tools.ts";
 import * as Handlers from "./handlers.ts";
 import * as MachineHandoff from "../../../fleet/MachineHandoff.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as Option from "effect/Option";
 
 it("pages a large memory list and caps one page", () => {
   const files = Array.from({ length: 1_500 }, (_, i) => ({
@@ -86,8 +88,16 @@ const scope = {
   issuedAt: 0,
   capabilities: new Set(["orchestration" as const]),
 };
+const assistant = ProjectId.make("assistant");
+const projectService = Layer.mock(ProjectService.ProjectService)({
+  getById: (id) =>
+    Effect.succeed(
+      Option.some({ workspaceSettings: { kind: id === assistant ? "personal" : "code" } } as never),
+    ),
+});
 const dependencies = Layer.mergeAll(
   Workspace.layer.pipe(Layer.provideMerge(Projects.layer)),
+  projectService,
   Layer.mock(Threads.ThreadManagementService)({ getThreadShell: () => Effect.succeed(caller) }),
   Layer.succeed(Context.McpInvocationContext, scope),
 ).pipe(Layer.provideMerge(Persistence.layerMemory));
@@ -236,4 +246,68 @@ it.effect("refuses an agent's memory write while the project moves to another ma
       message: expect.stringContaining("moving to another machine"),
     });
   }).pipe(Effect.provide(movingLayer));
+});
+
+const outsideClient = {
+  ...scope,
+  thread: undefined,
+  client: { sessionId: "outside", label: "Fixture", access: "full-access" as const },
+};
+it.effect("refuses a thread-less client the assistant's memory and keeps code memory open", () =>
+  Effect.gen(function* () {
+    const toolkit = yield* ProjectMemoryToolkit;
+    const call = <
+      N extends
+        | "studio_project_memory_read"
+        | "studio_project_memory_write"
+        | "studio_project_memory_list",
+    >(
+      name: N,
+      input: Parameters<typeof toolkit.handle<N>>[1],
+    ) =>
+      toolkit.handle(name, input).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((parts) => parts.at(-1)?.result),
+      );
+    for (const result of [
+      yield* call("studio_project_memory_list", { projectId: assistant }),
+      yield* call("studio_project_memory_read", { projectId: assistant, name: "MEMORY.md" }),
+      yield* call("studio_project_memory_write", {
+        projectId: assistant,
+        name: "MEMORY.md",
+        content: "leak",
+      }),
+    ])
+      expect(result).toMatchObject({
+        code: "capability_denied",
+        message: Handlers.PERSONAL_MEMORY_REFUSAL,
+      });
+    // A code project's memory is not behind the assistant's boundary.
+    const code = yield* call("studio_project_memory_list", { projectId: caller.projectId });
+    expect(code).not.toMatchObject({ message: Handlers.PERSONAL_MEMORY_REFUSAL });
+  }).pipe(
+    Effect.provideService(Context.McpInvocationContext, outsideClient),
+    Effect.provide(layer),
+  ),
+);
+it.effect("the assistant's own thread reads and writes its memory", () => {
+  const own = { ...caller, projectId: assistant };
+  const ownLayer = Access.HandlersLayer.layer(Handlers.layer).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Workspace.layer.pipe(Layer.provideMerge(Projects.layer)),
+        projectService,
+        Layer.mock(Threads.ThreadManagementService)({ getThreadShell: () => Effect.succeed(own) }),
+        Layer.succeed(Context.McpInvocationContext, scope),
+      ).pipe(Layer.provideMerge(Persistence.layerMemory)),
+    ),
+  );
+  return Effect.gen(function* () {
+    const toolkit = yield* ProjectMemoryToolkit;
+    const result = yield* toolkit
+      .handle("studio_project_memory_list", {})
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(result.at(-1)?.result).not.toMatchObject({ code: "capability_denied" });
+  }).pipe(Effect.provide(ownLayer));
 });
