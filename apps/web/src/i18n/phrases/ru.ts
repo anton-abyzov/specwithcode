@@ -4411,4 +4411,6 @@ export const ru: PhraseCatalog = {
   "Account {id}": "Аккаунт {id}",
   "By {id}": "Кем: {id}",
   "Not finished": "Не завершено",
+  "Setup can be closed once the import finishes.":
+    "Настройку можно закрыть, когда импорт завершится.",
 };

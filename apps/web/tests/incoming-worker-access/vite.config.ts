@@ -22,6 +22,8 @@ const stubs = new Set(
     "teamRules/teamRulesView",
     "components/clerk/useStudioConnectAuthPrompt",
     "components/settings/settingsLayout",
+    "components/onboarding/FirstRunUpdateNotice",
+    "components/github/StarOnGitHub",
     "env",
     "confirmDialog",
   ].map((path) => NodePath.resolve(appSource, path)),

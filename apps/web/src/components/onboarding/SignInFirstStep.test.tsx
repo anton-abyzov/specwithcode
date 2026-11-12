@@ -342,14 +342,18 @@ it("keeps the way on when who may run work here cannot be read", async () => {
   expect(mainButtons()).toEqual(["Continue"]);
 });
 
-it("opens with the way on before the side path, for the keyboard", async () => {
+it("opens on the way on, not on the side path, for the keyboard", async () => {
   signIn();
   world.link.data = { linked: true };
   await render();
-  const labels = [...container.querySelectorAll("button")].map((element) =>
-    element.textContent?.trim(),
-  );
-  expect(labels.indexOf("Continue")).toBeLessThan(labels.indexOf("Set up other computers too"));
+  expect(document.activeElement?.textContent?.trim()).toBe("Continue");
+  expect(document.activeElement?.getAttribute("aria-keyshortcuts")).toBe("Enter");
+});
+
+it("keeps Enter off going on while signing in is still the main action", async () => {
+  await render();
+  expect(button("Continue without an account")!.hasAttribute("data-wizard-primary")).toBe(false);
+  expect(container.querySelector("[data-wizard-primary]")).toBeNull();
 });
 
 it("continues on a first machine, where there is nothing to choose", async () => {

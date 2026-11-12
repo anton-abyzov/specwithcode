@@ -22,6 +22,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@specweave-studio/shared/keybindin
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
@@ -110,6 +111,12 @@ vi.mock("../ui/wizard", () => ({
   WizardPanel: "div",
   WizardPopup: "div",
   WizardHeader: "div",
+  WizardFooter: ({ children, leading }: { children: ReactNode; leading?: ReactNode }) => (
+    <div>
+      {leading}
+      {children}
+    </div>
+  ),
   WizardSteps: ({ onStepChange }: { onStepChange: (step: number) => void }) => (
     <button onClick={() => onStepChange(0)}>Back</button>
   ),
@@ -257,7 +264,12 @@ async function enterRemoteAgents() {
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("document", { activeElement: null, body: {}, getElementById: () => null });
+  vi.stubGlobal("document", {
+    activeElement: null,
+    body: {},
+    documentElement: { dataset: {} },
+    getElementById: () => null,
+  });
   state.registry = AtomRegistry.make();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(

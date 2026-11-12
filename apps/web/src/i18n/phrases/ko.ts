@@ -4366,4 +4366,5 @@ export const ko: PhraseCatalog = {
   "Account {id}": "계정 {id}",
   "By {id}": "실행: {id}",
   "Not finished": "완료되지 않음",
+  "Setup can be closed once the import finishes.": "가져오기가 끝나면 설정을 닫을 수 있습니다.",
 };

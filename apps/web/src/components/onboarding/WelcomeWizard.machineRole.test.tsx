@@ -291,19 +291,114 @@ it.each([
   expect(machineRole.onChange).not.toHaveBeenCalled();
 });
 
-it("keeps Escape inside setup, where the agent terminal also uses it", async () => {
+const pressEscape = (target: Element) =>
+  act(async () => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+
+it("leaves setup on Escape, as the close button does", async () => {
+  const machineRole = role();
+  const onDone = vi.fn();
+  await act(async () =>
+    root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={onDone} />),
+  );
+  await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await pressEscape(document.activeElement!);
+  expect(mocks.complete).toHaveBeenCalledOnce();
+  expect(onDone).toHaveBeenCalledExactlyOnceWith(undefined);
+  expect(machineRole.onChange).not.toHaveBeenCalled();
+});
+
+it("keeps Escape for a terminal inside setup", async () => {
   const onDone = vi.fn();
   await act(async () =>
     root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={onDone} />),
   );
-  await act(async () => {
-    document.activeElement?.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-    );
-  });
+  const terminal = document.createElement("div");
+  terminal.className = "xterm";
+  terminal.append(document.createElement("textarea"));
+  document.querySelector('[data-slot="dialog-panel"]')!.append(terminal);
+  await pressEscape(terminal.firstElementChild!);
   expect(heading()).toBe("How will you use this machine?");
   expect(mocks.complete).not.toHaveBeenCalled();
   expect(onDone).not.toHaveBeenCalled();
+});
+
+const stageBar = () =>
+  [...document.querySelectorAll('[aria-label="Setup progress"] li')].map(
+    (item) => item.textContent?.trim().replace(/^\d+/, "") ?? "",
+  );
+const currentStage = () =>
+  document.querySelector('[aria-label="Setup progress"] [aria-current="step"]')?.textContent ?? "";
+
+it("shows the stage bar on every step and goes back with the footer's Back", async () => {
+  await act(async () =>
+    root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
+  );
+  expect(stageBar()).toEqual(["Computers", "Agents", "Projects"]);
+  expect(currentStage()).toContain("Computers");
+  await choose("Start as a main machine");
+  expect(heading()).toBe("Connect your computers");
+  expect(stageBar()).toEqual(["Computers", "Agents", "Projects"]);
+  // The first step of the bar has nowhere to go back to.
+  expect(
+    [...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Back"),
+  ).toBe(false);
+
+  await click("Continue");
+  expect(heading()).toBe("Connect your agents");
+  expect(currentStage()).toContain("Agents");
+  await click("Back");
+  expect(heading()).toBe("Connect your computers");
+
+  await click("Continue");
+  await click("Continue");
+  expect(currentStage()).toContain("Projects");
+  await click("Back");
+  expect(heading()).toBe("Connect your agents");
+});
+
+it("draws each step's footer below the scrolling panel, with the Enter key on its primary", async () => {
+  await act(async () =>
+    root.render(
+      <WelcomeWizard localAvailable machineRole={role({ offer: false })} onDone={vi.fn()} />,
+    ),
+  );
+  const primary = document.querySelector<HTMLButtonElement>("[data-wizard-primary]")!;
+  expect(primary.textContent?.trim()).toBe("Continue");
+  expect(primary.getAttribute("aria-keyshortcuts")).toBe("Enter");
+  expect(primary.querySelector("kbd")?.getAttribute("data-key")).toMatch(/^(↵|Enter)$/);
+  expect(primary.closest('[data-slot="wizard-footer-slot"]')).not.toBeNull();
+  expect(primary.closest('[data-slot="dialog-panel"]')).toBeNull();
+});
+
+const pressEnter = (target: Element) =>
+  act(async () => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+
+it("presses the step's primary on Enter from the step, and leaves other buttons their Enter", async () => {
+  await act(async () =>
+    root.render(
+      <WelcomeWizard localAvailable machineRole={role({ offer: false })} onDone={vi.fn()} />,
+    ),
+  );
+  expect(heading()).toBe("Connect your computers");
+  // A button keeps its own Enter: this one opens the pairing form.
+  const pairing = [...document.querySelectorAll("button")].find((b) =>
+    b.textContent?.includes("Add a computer"),
+  )!;
+  await pressEnter(pairing);
+  expect(heading()).toBe("Connect your computers");
+  // Anywhere else in the step, Enter is Continue.
+  await pressEnter(document.querySelector('[data-slot="dialog-panel"] h1')!);
+  expect(heading()).toBe("Connect your agents");
+});
+
+it("keeps setup open on Escape where there is no server to open", async () => {
+  await act(async () => root.render(<WelcomeWizard localAvailable={false} onDone={vi.fn()} />));
+  await pressEscape(document.querySelector('[data-slot="dialog-popup"]')!);
+  expect(mocks.complete).not.toHaveBeenCalled();
 });
 
 it("keeps pairing required without a server on this machine", async () => {
@@ -547,10 +642,24 @@ it("starts the desktop app with Connect at the sign-in, with no role question", 
     await click("Back");
     expect(heading()).toBe("Sign-in first");
 
+    // Going on from the step that pairs other computers, Back from Agents returns
+    // there, where the computers picked are, not to the sign-in.
+    await act(async () => (start.props!.onOtherComputers as () => void)());
+    await click("Continue");
+    expect(heading()).toBe("Connect your agents");
+    await click("Back");
+    expect(heading()).toBe("Connect your computers");
+    await click("Back");
+    expect(heading()).toBe("Sign-in first");
+
     // Continuing sets up the agents on this machine; no role is saved.
     await act(async () => (start.props!.onContinue as () => void)());
     expect(heading()).not.toBe("Sign-in first");
     expect(document.body.textContent).not.toContain("Connect your computers");
+    // Going on from the sign-in, Back returns to the sign-in.
+    await click("Back");
+    expect(heading()).toBe("Sign-in first");
+    await act(async () => (start.props!.onContinue as () => void)());
     expect(machineRole.onChange).not.toHaveBeenCalled();
     expect(mocks.invite).not.toHaveBeenCalled();
   } finally {

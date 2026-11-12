@@ -11,13 +11,17 @@ import { DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 export function WizardPopup({
   children,
   size = "default",
+  clearTitlebar = false,
   ...props
-}: Omit<ComponentProps<typeof DialogPopup>, "className" | "style"> & {
+}: Omit<ComponentProps<typeof DialogPopup>, "className" | "style" | "viewportClassName"> & {
   readonly size?: "default" | "wide";
+  /** Keep the window's top strip free: its buttons sit there and it drags the window. */
+  readonly clearTitlebar?: boolean;
 }) {
   return (
     <DialogPopup
       {...props}
+      viewportClassName={clearTitlebar ? "pt-[var(--workspace-topbar-height)]" : undefined}
       className={cn("overflow-hidden", size === "wide" ? "max-w-3xl" : "max-w-xl")}
     >
       {/* The panel takes the scroll so the header and footer actions stay in view. */}

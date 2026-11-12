@@ -4415,4 +4415,6 @@ export const ja: PhraseCatalog = {
   "Account {id}": "アカウント {id}",
   "By {id}": "実行者: {id}",
   "Not finished": "未完了",
+  "Setup can be closed once the import finishes.":
+    "インポートが終わると、セットアップを閉じられます。",
 };

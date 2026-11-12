@@ -7,7 +7,7 @@ import {
   type EnvironmentId,
 } from "@specweave-studio/contracts";
 import type { AsyncResult } from "effect/reactivity";
-import { ArrowRightIcon, CheckIcon } from "lucide-react";
+import { CheckIcon } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import {
@@ -33,6 +33,7 @@ import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt"
 import { AccountJoinCard } from "../settings/AccountJoinCard";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { WizardStepFooter } from "./WizardFrame";
 import {
   canTurnOnFromSignInFirst,
   machinesStillToAllow,
@@ -224,6 +225,9 @@ export function SignInFirstStep({
                 : tx("If this is your first machine, there is nothing to choose: continue."),
           };
 
+  const mainActionPending =
+    account === null || canTurnOnFromSignInFirst(link) || link.kind === "linking";
+
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
@@ -266,27 +270,28 @@ export function SignInFirstStep({
           />
         </div>
       ) : null}
-      {/* Continue comes first for the keyboard: setup opens focused on the step's first control. */}
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
-        {choosing ? null : (
-          <Button
-            className="shrink-0 self-end"
-            // One main button at a time: it is Sign in, Turn on or Try again until those are done.
-            variant={
-              account === null || canTurnOnFromSignInFirst(link) || link.kind === "linking"
-                ? "outline"
-                : "default"
-            }
-            onClick={onContinue}
-          >
-            {account === null ? tx("Continue without an account") : tx("Continue")}
-            <ArrowRightIcon className="size-3.5" />
+      {/* One main button at a time: Sign in, Turn on or Try again in their rows, Allow in the
+          card, then Continue here. Until then going on is a skip, which Enter never presses. */}
+      <WizardStepFooter
+        leading={
+          <Button variant="ghost" size="sm" onClick={onOtherComputers}>
+            {tx("Set up other computers too")}
           </Button>
-        )}
-        <Button variant="ghost" size="sm" className="self-start" onClick={onOtherComputers}>
-          {tx("Set up other computers too")}
-        </Button>
-      </div>
+        }
+        skip={
+          !choosing && mainActionPending
+            ? {
+                label: account === null ? tx("Continue without an account") : tx("Continue"),
+                onClick: onContinue,
+              }
+            : undefined
+        }
+        primary={
+          !choosing && !mainActionPending
+            ? { label: tx("Continue"), onClick: onContinue }
+            : undefined
+        }
+      />
     </>
   );
 }
