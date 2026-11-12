@@ -62,6 +62,7 @@ import {
 } from "../ui/menu";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { RenameMachineDialog } from "../settings/RenameMachineDialog";
+import { platformName } from "../settings/AccountJoinCard.logic";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "../studio/ProjectLinkDialog";
 import { cn } from "~/lib/utils";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
@@ -372,6 +373,8 @@ export function DraftMachinePicker(props: Props) {
     const status = machineStatus(environment.connection, canOperate, thisMachine);
     const isRetrying = retrying.has(environment.environmentId);
     const name = nameOf(environment.environmentId, environment.label);
+    // The system it reported, so a person can pick a Mac for simulator or Xcode work.
+    const os = platformName(environment.serverConfig?.environment.platform.os);
     // This machine is only busy, so it has no "last seen" or failure to explain.
     const detail = machineDetail(
       reason && !thisMachine
@@ -398,7 +401,14 @@ export function DraftMachinePicker(props: Props) {
           className="size-4 shrink-0"
         />
         <span className="min-w-0 flex-1">
-          <span className="block truncate">{name}</span>
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <span className="block truncate">{name}</span>
+            {os && (
+              <span className="shrink-0 text-xs text-muted-foreground" data-machine-os>
+                {os}
+              </span>
+            )}
+          </span>
           <span
             className={`block truncate text-xs ${retryRow || fixRow ? "text-warning-foreground" : "text-muted-foreground"}`}
             title={statusText}

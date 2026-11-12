@@ -138,7 +138,7 @@ export function AdversarialReviewSettings() {
   };
   const openAppWideOrder = () =>
     void navigate({
-      to: "/settings/providers",
+      to: "/settings/models",
       search: target ? { environmentId: target.environmentId } : {},
       hash: "adversarial-review-order",
       state: { settingsTargetHighlight: true },

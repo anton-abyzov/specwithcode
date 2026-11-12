@@ -1,3 +1,5 @@
+import { VoiceConsentDialog } from "../studio/VoiceCall";
+import { ComposerVoiceMenu } from "../studio/ComposerVoiceMenu";
 import { useTx } from "../../i18n";
 import { threadModelIdentity } from "@specweave-studio/shared/threadModelIdentity";
 import {
@@ -9,6 +11,11 @@ import { routesViaCoordinator, useProjectMessageRouting } from "../../studio/pro
 import { questionAskerLabel } from "../../studio/coordinatorQuestionAnswers";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
+import {
+  AccessRecommendationAnchor,
+  composerAccessRecommendationFor,
+  type ComposerAccessRecommendation,
+} from "./AccessRecommendation";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useMachineNickname } from "../../studio/machineNickname";
@@ -289,7 +296,6 @@ import { fallbackModelState } from "./ModelStateTag";
 import { modelLabel } from "../../studio/shellModel";
 import { MachineLimitsPanel } from "../studio/shell/ProjectUsageIndicator";
 import { useDictationShortcut } from "../studio/dictationShortcut";
-import { VoiceConsentDialog } from "../studio/VoiceCall";
 import { insertDictatedText, useVoiceDictation, VoiceDictationBar } from "../studio/VoiceDictation";
 import { resolveModelPickerSelectedModel } from "./modelPickerOptions";
 import {
@@ -1133,7 +1139,6 @@ import {
   FileIcon,
   BotIcon,
   CircleAlertIcon,
-  MicIcon,
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
@@ -1309,6 +1314,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   hidden?: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** Present while Full access is recommended: the chip is highlighted and the callout shows. */
+  accessRecommendation?: Pick<ComposerAccessRecommendation, "accept" | "decline"> | null;
 }) {
   const tx = useTx();
   const size = props.size ?? "sm";
@@ -1361,68 +1368,80 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
     </>
   ) : null;
 
+  const runtimeModeControl = (
+    <Tooltip>
+      <Select
+        open={open}
+        onOpenChange={setOpen}
+        value={props.runtimeMode}
+        onValueChange={(value) => props.onRuntimeModeChange(value!)}
+      >
+        <TooltipTrigger
+          render={
+            <ComposerSelectControl
+              data-composer-shortcut="composer.mode"
+              data-runtime-mode={runtimeModeOption.mode}
+              size={size}
+              aria-label={`Access: ${runtimeModeOption.label}`}
+              // Full access is the one mode that runs without asking, so it reads
+              // at a glance; the stricter modes stay neutral.
+              className={cn(
+                "shrink-0 whitespace-nowrap",
+                runtimeModeOption.mode === "full-access" &&
+                  "text-warning-foreground hover:text-warning-foreground [&_[data-composer-control-icon]]:text-warning-foreground [&_[data-composer-control-icon]]:opacity-100",
+              )}
+            />
+          }
+        >
+          <ComposerControlIcon icon={RuntimeModeIcon} size={size} />
+          <SelectValue data-composer-control-label>{runtimeModeOption.label}</SelectValue>
+        </TooltipTrigger>
+        <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
+          {props.runtimeModeOptions.map((option) => {
+            const OptionIcon = option.icon;
+            return (
+              <SelectItem
+                key={option.mode}
+                value={option.mode}
+                hideIndicator
+                disabled={option.aboveTeamLimit === true}
+                className="min-w-64"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="grid min-w-0 flex-1 gap-0.5">
+                    <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                      <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                      {option.label}
+                    </span>
+                    <span className="text-muted-foreground text-xs leading-4">
+                      {option.aboveTeamLimit === true ? TEAM_RULES_ABOVE_LIMIT : option.description}
+                    </span>
+                  </div>
+                </div>
+              </SelectItem>
+            );
+          })}
+        </SelectPopup>
+      </Select>
+      <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
+    </Tooltip>
+  );
+
   return (
     <>
       <ComposerControlSeparator size={size} />
 
-      <Tooltip>
-        <Select
-          open={open}
-          onOpenChange={setOpen}
-          value={props.runtimeMode}
-          onValueChange={(value) => props.onRuntimeModeChange(value!)}
+      {props.accessRecommendation ? (
+        <AccessRecommendationAnchor
+          mode={props.runtimeMode}
+          hidden={props.hidden === true}
+          recommendation={props.accessRecommendation}
         >
-          <TooltipTrigger
-            render={
-              <ComposerSelectControl
-                data-composer-shortcut="composer.mode"
-                data-runtime-mode={runtimeModeOption.mode}
-                size={size}
-                aria-label={`Access: ${runtimeModeOption.label}`}
-                // Full access is the one mode that runs without asking, so it reads
-                // at a glance; the stricter modes stay neutral.
-                className={cn(
-                  "shrink-0 whitespace-nowrap",
-                  runtimeModeOption.mode === "full-access" &&
-                    "text-warning-foreground hover:text-warning-foreground [&_[data-composer-control-icon]]:text-warning-foreground [&_[data-composer-control-icon]]:opacity-100",
-                )}
-              />
-            }
-          >
-            <ComposerControlIcon icon={RuntimeModeIcon} size={size} />
-            <SelectValue data-composer-control-label>{runtimeModeOption.label}</SelectValue>
-          </TooltipTrigger>
-          <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
-            {props.runtimeModeOptions.map((option) => {
-              const OptionIcon = option.icon;
-              return (
-                <SelectItem
-                  key={option.mode}
-                  value={option.mode}
-                  hideIndicator
-                  disabled={option.aboveTeamLimit === true}
-                  className="min-w-64"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="grid min-w-0 flex-1 gap-0.5">
-                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        {option.label}
-                      </span>
-                      <span className="text-muted-foreground text-xs leading-4">
-                        {option.aboveTeamLimit === true
-                          ? TEAM_RULES_ABOVE_LIMIT
-                          : option.description}
-                      </span>
-                    </div>
-                  </div>
-                </SelectItem>
-              );
-            })}
-          </SelectPopup>
-        </Select>
-        <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
-      </Tooltip>
+          {runtimeModeControl}
+        </AccessRecommendationAnchor>
+      ) : (
+        runtimeModeControl
+      )}
 
       {interactionModeToggle}
     </>
@@ -1617,6 +1636,8 @@ export interface ChatComposerProps {
   activeThreadShell: ThreadShell | null;
   /** The rules for this thread's folder, not only the machine's. */
   teamRulesSummary: TeamRulesSummary | undefined;
+  /** The one-time Full access recommendation for this chat; absent where it never applies. */
+  accessRecommendation?: ComposerAccessRecommendation | undefined;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   /** Skills this thread used, for the footer's Skills popover. */
@@ -2283,6 +2304,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         aboveTeamLimit: !teamRulesThreadModeAllowed(teamRules.state, carriedTeamRules, option.mode),
       })),
     [carriedTeamRules, compatibleRuntimeModeOptions, teamRules.state],
+  );
+  const accessRecommendation = composerAccessRecommendationFor(
+    props.accessRecommendation,
+    compatibleRuntimeMode,
+    runtimeModeMenuOptions,
   );
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
@@ -4275,7 +4301,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     disabled: dictationBlocked || props.dictationSuspended === true,
   });
   const dictationShortcutLabel = shortcutLabelForCommand(keybindings, "composer.dictation.toggle");
-  const dictationTip = dictation.active ? tx("Stop dictating") : tx("Dictate into the message");
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -5820,6 +5845,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
+          accessRecommendation={accessRecommendation}
         />
       ),
     },
@@ -6048,6 +6074,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       {machine && !showProviderUnavailable ? (
         <ThreadMachineComposerChip
           machine={machine}
+          threadRef={canOperateThread && routeKind === "server" ? routeThreadRef : null}
           size={composerControlsCollapsed ? "xs" : "sm"}
         />
       ) : null}
@@ -8100,36 +8127,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {dictation.available && !isComposerResting ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant={dictation.active ? "secondary" : "ghost"}
-                            size="icon-sm"
-                            data-chat-composer-dictate="true"
-                            aria-label={dictationTip}
-                            aria-pressed={dictation.active}
-                            disabled={
-                              dictation.phase === "finishing" ||
-                              (dictationBlocked && !dictation.active)
-                            }
-                            onPointerDown={(event) => event.preventDefault()}
-                            onClick={() =>
-                              void (dictation.active ? dictation.stop() : dictation.start())
-                            }
-                          />
-                        }
-                      >
-                        <MicIcon />
-                      </TooltipTrigger>
-                      <TooltipPopup>
-                        {dictationShortcutLabel
-                          ? `${dictationTip} (${dictationShortcutLabel})`
-                          : dictationTip}
-                      </TooltipPopup>
-                    </Tooltip>
+                  {!isComposerResting ? (
+                    <ComposerVoiceMenu
+                      renderConsent={false}
+                      dictation={dictation}
+                      disabled={dictationBlocked}
+                      shortcut={dictationShortcutLabel}
+                    />
                   ) : null}
                   {showComposerAttachAction ? (
                     <>

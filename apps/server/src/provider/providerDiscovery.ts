@@ -1,20 +1,25 @@
 /**
- * Startup discovery for default-off providers. Once the server is up, every
- * discoverable driver the user never switched on or off gets one cheap probe
- * of its CLI: is it installed, and is it signed in. Drivers that are both are
- * turned on, and Settings says so with an Undo.
+ * The search for installed agents. Once the server is up, and again whenever
+ * a client asks, every known agent gets one cheap probe of its CLI: is it
+ * installed, and is it signed in. Drivers that are both, and that the user
+ * never switched on or off, are turned on, and Settings says so with an Undo.
  *
  * A probe never logs in, opens a browser, reads a credential file or touches
  * the Keychain itself: it runs `--version` and one status command with stdin
  * closed and a hard timeout, and reads environment variables for presence only.
  */
-import { ProviderInstanceId, type ServerSettings } from "@specweave-studio/contracts";
+import {
+  type AgentSearch as AgentSearchSnapshot,
+  ProviderInstanceId,
+  type ServerSettings,
+} from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -23,6 +28,7 @@ import {
   type DiscoverableProviderDriver,
   ServerSettingsService,
 } from "../serverSettings.ts";
+import { AgentSearch } from "./agentSearch.ts";
 import { parseGrokModelsCliOutput } from "./GrokProvider.ts";
 import { type CommandResult, isCommandMissingCause, spawnAndCollect } from "./providerSnapshot.ts";
 
@@ -325,9 +331,13 @@ export function searchedFolders(
 // Most of these CLIs are Node programs; starting ten at once stalls a small machine.
 const PROBE_CONCURRENCY = 4;
 
-/** Looks for every known agent. Reads only; settings are not changed. */
+/**
+ * Looks for every known agent. Reads only; settings are not changed.
+ * `onResult` hears each agent as it answers, before the others are done.
+ */
 export const discoverAgents = Effect.fn("providerDiscovery.discoverAgents")(function* (
   settings: ServerSettings,
+  onResult: (result: AgentDiscoveryResult) => Effect.Effect<void> = () => Effect.void,
 ) {
   const platform = yield* HostProcessPlatform;
   const environment = discoveryEnvironment(yield* HostProcessEnvironment, platform);
@@ -337,6 +347,7 @@ export const discoverAgents = Effect.fn("providerDiscovery.discoverAgents")(func
       const command = commandFor(settings, agent, fallback);
       return probe(command, environment).pipe(
         Effect.map((state): AgentDiscoveryResult => ({ agent, kind, command, state })),
+        Effect.tap(onResult),
       );
     },
     { concurrency: PROBE_CONCURRENCY },
@@ -354,34 +365,158 @@ const isDiscoverableDriver = (agent: string): agent is DiscoverableProviderDrive
  * Looks for every agent, then turns on the signed-in ones nobody has switched
  * on or off. Muse Code and registry agents are found and never turned on here.
  */
-export const runProviderDiscovery = Effect.gen(function* () {
+const searchAndTurnOn = Effect.fn("providerDiscovery.searchAndTurnOn")(function* (
+  onResult?: (result: AgentDiscoveryResult) => Effect.Effect<void>,
+) {
   const settingsService = yield* ServerSettingsService;
-  const { providerDiscoveryCandidates, autoEnableDiscoveredProviders } = settingsService;
-  if (!providerDiscoveryCandidates || !autoEnableDiscoveredProviders) return [];
   yield* settingsService.ready;
-  const { results } = yield* discoverAgents(yield* settingsService.getSettings);
+  const report = yield* discoverAgents(yield* settingsService.getSettings, onResult);
   yield* Effect.logInfo("Provider discovery finished", {
-    results: Object.fromEntries(results.map(({ agent, state }) => [agent, state])),
+    results: Object.fromEntries(report.results.map(({ agent, state }) => [agent, state])),
   });
+  const { providerDiscoveryCandidates, autoEnableDiscoveredProviders } = settingsService;
+  if (!providerDiscoveryCandidates || !autoEnableDiscoveredProviders) {
+    return { report, enabled: [] };
+  }
   const candidates = yield* providerDiscoveryCandidates;
-  const ready = results
+  const ready = report.results
     .filter(({ state }) => state === "ready")
     .map(({ agent }) => agent)
     .filter(isDiscoverableDriver)
     .filter((driver) => candidates.has(driver));
-  if (ready.length === 0) return [];
+  if (ready.length === 0) return { report, enabled: [] };
   const at = DateTime.formatIso(yield* DateTime.now);
   const enabled = yield* autoEnableDiscoveredProviders(ready, at);
   if (enabled.length > 0) {
     yield* Effect.logInfo("Turned on signed-in providers", { drivers: enabled });
   }
-  return enabled;
+  return { report, enabled };
 });
 
-/** Runs discovery once, in the background, after settings are ready. */
+/** One search, start to finish. Returns the drivers it turned on. */
+export const runProviderDiscovery = searchAndTurnOn().pipe(Effect.map(({ enabled }) => enabled));
+
+/** A search this recent answers a client that did not ask for a fresh one. */
+export const AGENT_SEARCH_MAX_AGE_MS = 60_000;
+
+interface AgentSearchRun {
+  readonly snapshot: AgentSearchSnapshot;
+  readonly running: boolean;
+  /** Epoch milliseconds of the last finished search. */
+  readonly finishedAt: number | undefined;
+}
+
+const ALL_AGENTS: ReadonlyArray<string> = DISCOVERED_AGENTS.map(({ agent }) => agent);
+
+/** Every agent, with "no answer" for one a search that died never reached. */
+const withNoAnswer = (answered: AgentSearchSnapshot["agents"]): AgentSearchSnapshot["agents"] =>
+  DISCOVERED_AGENTS.map(
+    ({ agent, kind, command }) =>
+      answered.find((result) => result.agent === agent) ?? {
+        agent,
+        kind,
+        command,
+        state: "unknown" as const,
+      },
+  );
+
+/**
+ * Keeps what the search has found, and runs one search at a time. A search
+ * outlives the request that started it; later requests read its progress.
+ */
+export const makeAgentSearch = Effect.gen(function* () {
+  const services = yield* Effect.context<
+    ServerSettingsService | ChildProcessSpawner.ChildProcessSpawner
+  >();
+  const scope = yield* Effect.scope;
+  // Read once here: a search runs on its own fiber, not on the caller's.
+  const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const run = yield* Ref.make<AgentSearchRun>({
+    snapshot: {
+      agents: [],
+      pending: [],
+      searched: searchedFolders(discoveryEnvironment(hostEnvironment, platform), platform),
+    },
+    running: false,
+    finishedAt: undefined,
+  });
+
+  const answered = (result: AgentDiscoveryResult) =>
+    Ref.update(run, (current) => {
+      const pending = current.snapshot.pending.filter((agent) => agent !== result.agent);
+      return {
+        ...current,
+        snapshot: {
+          ...current.snapshot,
+          agents: [
+            ...current.snapshot.agents.filter(({ agent }) => agent !== result.agent),
+            result,
+          ],
+          // Nothing pending means finished, so the last agent stays until `finished` runs.
+          pending: pending.length === 0 ? current.snapshot.pending : pending,
+        },
+      };
+    });
+
+  const finished = (report: AgentDiscoveryReport | undefined) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      yield* Ref.update(run, (current) => ({
+        running: false,
+        finishedAt: DateTime.toEpochMillis(now),
+        snapshot: {
+          // In the order agents are listed, not the order they answered.
+          agents: report?.results ?? withNoAnswer(current.snapshot.agents),
+          pending: [],
+          searched: report?.searched ?? current.snapshot.searched,
+          checkedAt: DateTime.formatIso(now),
+        },
+      }));
+    });
+
+  const search = searchAndTurnOn(answered).pipe(
+    Effect.matchCauseEffect({
+      onSuccess: ({ report }) => finished(report),
+      // A search that died still ends, so the next request can start another.
+      onFailure: (cause) =>
+        Effect.logWarning("Provider discovery failed", { cause }).pipe(
+          Effect.andThen(finished(undefined)),
+        ),
+    }),
+    Effect.provideService(HostProcessEnvironment, hostEnvironment),
+    Effect.provideService(HostProcessPlatform, platform),
+    Effect.provideContext(services),
+  );
+
+  return AgentSearch.of({
+    search: ({ fresh }) =>
+      Effect.gen(function* () {
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const start = yield* Ref.modify(run, (current) => {
+          const stale =
+            current.finishedAt === undefined || now - current.finishedAt > AGENT_SEARCH_MAX_AGE_MS;
+          if (current.running || !(fresh || stale)) return [false, current] as const;
+          const next: AgentSearchRun = {
+            ...current,
+            running: true,
+            snapshot: { ...current.snapshot, pending: ALL_AGENTS },
+          };
+          return [true, next] as const;
+        });
+        if (start) yield* Effect.forkIn(search, scope);
+        return (yield* Ref.get(run)).snapshot;
+      }),
+  });
+});
+
+/** The search service. The registry offers it to clients through the refresh call. */
+export const layerSearch = Layer.effect(AgentSearch, makeAgentSearch);
+
+/** Runs one search in the background as the server starts. */
 export const layer = Layer.effectDiscard(
-  runProviderDiscovery.pipe(
-    Effect.catchCause((cause) => Effect.logWarning("Provider discovery failed", { cause })),
-    Effect.forkScoped,
-  ),
+  Effect.gen(function* () {
+    const { search } = yield* AgentSearch;
+    yield* search({ fresh: true });
+  }),
 );

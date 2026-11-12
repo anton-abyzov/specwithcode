@@ -14,6 +14,7 @@ export const pt: Messages = {
   "wizard.title": "Configurar o SpecWithCode",
   "wizard.stage.connect": "Computadores",
   "wizard.stage.agents": "Agentes",
+  "wizard.stage.access": "Acesso",
   "wizard.stage.projects": "Projetos",
   "wizard.close": "Fechar configuração",
   "wizard.noun.mac": "Mac",
@@ -108,6 +109,43 @@ export const pt: Messages = {
   "wizard.import.otherFolders": "Outras pastas",
   "wizard.import.folderCount": { one: "{count} pasta", other: "{count} pastas" },
   "wizard.import.now": "agora",
+
+  "wizard.access.title": "Deixar os agentes trabalharem sem parar para perguntar?",
+  "wizard.access.description":
+    "Isso define como os chats novos começam. Você pode mudar em qualquer chat pela caixa de mensagem, ou depois em Configurações.",
+  "wizard.access.fullAccess": "Acesso total",
+  "wizard.access.recommended": "Recomendado",
+  "wizard.access.allowsIntro":
+    "Os agentes terminam a tarefa sozinhos. Sem perguntar antes, eles podem:",
+  "wizard.access.allowCommands":
+    "Rodar comandos no terminal: instalar pacotes, rodar testes, usar git",
+  "wizard.access.allowFiles": "Criar, alterar e excluir arquivos no computador",
+  "wizard.access.allowNetwork": "Usar a rede e as ferramentas que você conectou",
+  "wizard.access.stillStops":
+    "Ainda para nas suas decisões, logins e aprovações de apps como enviar e-mail",
+  "wizard.access.supervised": "Supervisionado",
+  "wizard.access.supervisedDescription":
+    "Os agentes perguntam antes de cada comando e alteração de arquivo. O trabalho espera sua resposta.",
+  "wizard.access.use": "Usar acesso total",
+  "wizard.access.keepSupervised": "Manter supervisionado",
+  "wizard.access.keepCurrent": "Manter o acesso atual",
+  "wizard.access.saving": "Salvando…",
+  "wizard.access.askedOnce": "Perguntado uma vez. Mude em Configurações > Geral.",
+  "wizard.access.saveFailed": "O acesso total não foi salvo. Verifique a conexão e tente de novo.",
+  "wizard.access.calloutTitle": "Recomendado: acesso total",
+  "wizard.access.calloutIntroSupervised":
+    "Este chat é supervisionado, então o agente para antes de cada comando e alteração de arquivo. Com acesso total ele trabalha sozinho e pode:",
+  "wizard.access.calloutIntroOther":
+    "Este chat ainda pergunta antes de algumas ações. Com acesso total o agente trabalha sozinho e pode:",
+  "wizard.access.switch": "Mudar para acesso total",
+  "wizard.access.calloutNote":
+    "Vale para este chat e os novos. Perguntado uma vez; mude aqui quando quiser.",
+  "wizard.access.close": "Fechar",
+  "wizard.access.onTitle": "Acesso total ativado",
+  "wizard.access.onDescription":
+    "Para este chat e os novos. Mude pela caixa de mensagem ou em Configurações > Geral.",
+  "wizard.access.undo": "Desfazer",
+  "wizard.access.undoFailed": "Não foi possível desfazer. Mude em Configurações > Geral.",
 
   "update.downloadFailed": "Não foi possível baixar a atualização",
   "update.startFailed": "Não foi possível iniciar o download da atualização",
@@ -274,6 +312,7 @@ export const pt: Messages = {
   "limitSettings.action.wait": "Esperar o reinício",
   "limitSettings.action.switch": "Trocar automaticamente",
   "limitSettings.switchAtOption": "Com {percent}% restante",
+  "limitSettings.switchAtOptionDefault": "Com {percent}% restante (padrão)",
   "limitSettings.waitOption.never": "Nunca esperar",
   "limitSettings.waitOption.hour": "Menos de 1 hora",
   "limitSettings.waitOption.twoHours": "Menos de 2 horas",
@@ -310,6 +349,10 @@ export const pt: Messages = {
   "limitSettings.switchAt.description":
     "Com Trocar automaticamente, o próximo turno começa no fallback quando a janela de uso mais baixa do provedor tiver só isso restante. Com Oferecer o fallback, a thread sugere a troca nesse ponto. Nunca no meio do turno, e só para um provedor com mais restante.",
   "limitSettings.switchAt.off": "Só quando parar",
+  "limitSettings.switchAt.custom": "Personalizado…",
+  "limitSettings.switchAt.customLabel": "Porcentagem restante em que trocar",
+  "limitSettings.switchAt.customUnit": "% restante",
+  "limitSettings.switchAt.customError": "Digite um número inteiro de {min} a {max}.",
   "limitSettings.waitUnder.title": "Esperar quando o reinício estiver perto",
   "limitSettings.waitUnder.description":
     "Quando o uso que atingiu o limite ou o patamar reinicia dentro desse tempo, nada troca, resgata ou gasta: a thread espera e continua no mesmo provedor no reinício. Uma janela semanal também esgotada impede essa espera.",

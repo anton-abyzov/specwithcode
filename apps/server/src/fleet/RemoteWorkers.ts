@@ -66,6 +66,11 @@ import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts"
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import * as WorkerEpochStore from "./WorkerEpochStore.ts";
+import {
+  readMachineProbeFacts,
+  type MachineProbeFacts,
+  withThisMachinePlatform,
+} from "./machineProbeFacts.ts";
 
 const PROBE_TTL = Duration.seconds(60);
 /**
@@ -446,20 +451,11 @@ const readLaunchAnswer = (value: unknown) => {
   }));
 };
 
-interface Probe {
+interface Probe extends MachineProbeFacts {
   readonly at: number;
   readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
   readonly projects: ReadonlyArray<Project>;
-  /** Which projects the grant there covers; absent from machines older than this field. */
-  readonly projectScope?: GrantProjectScope | undefined;
 }
-
-type GrantProjectScope = "all" | "linked" | "listed";
-
-const readProjectScope = (capabilities: unknown): GrantProjectScope | undefined => {
-  const scope = isRecord(capabilities) ? capabilities.grantProjects : undefined;
-  return scope === "all" || scope === "linked" || scope === "listed" ? scope : undefined;
-};
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})$/;
 const isoOrNull = (value: unknown) =>
@@ -716,7 +712,7 @@ const make = Effect.gen(function* () {
         at: now,
         providers: readProviders(capabilities),
         projects: listed,
-        projectScope: readProjectScope(capabilities),
+        ...readMachineProbeFacts(capabilities),
       };
       yield* Ref.update(probes, (current) => new Map(current).set(machine.id, next));
       return next;
@@ -795,6 +791,7 @@ const make = Effect.gen(function* () {
             }
             row.reachable = true;
             row.providers = probed.success.providers;
+            if (probed.success.platform !== undefined) row.platform = probed.success.platform;
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;
             if (project !== undefined) {
@@ -815,11 +812,11 @@ const make = Effect.gen(function* () {
         { concurrency: 4 },
       );
       return {
-        local: {
+        local: yield* withThisMachinePlatform({
           id: "local" as const,
           label: (yield* nicknames).get(descriptor.environmentId) ?? descriptor.label,
           environmentId: descriptor.environmentId,
-        },
+        }),
         machines: rows,
         ...workerMachineSummary(project, descriptor.environmentId),
         ...(yield* incoming(configured).pipe(

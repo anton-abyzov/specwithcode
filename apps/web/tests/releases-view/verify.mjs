@@ -1,5 +1,6 @@
 // Headless check of the Releases view on the fixture run records: the stage graph and both machine
-// tables render, nothing overflows the page, at desktop and phone widths, light and dark.
+// tables render, nothing overflows the page, at desktop and phone widths, light and dark; and
+// Speed by version over synthetic timings, and with none.
 // Screenshots go to argv[2] (default .artifacts/releases-view).
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
@@ -122,6 +123,71 @@ try {
     const file = NodePath.join(out, `releases-${name}-${width}-${theme}.png`);
     await page.screenshot({ path: file, fullPage: true, animations: "disabled" });
     console.log(`${label}: ${facts.stages.length} stages, ${facts.hosts.length} hosts -> ${file}`);
+    await page.close();
+  }
+  // Speed by version: synthetic timings of seven versions and five installs here, and a machine
+  // with none. Every version row has a total, the regressions are marked, nothing overflows.
+  for (const [name, query, width, theme] of [
+    ["speed", "&speed=1", 1280, "light"],
+    ["speed", "&speed=1", 1280, "dark"],
+    ["speed", "&speed=1", 390, "light"],
+    ["speed", "&speed=1", 390, "dark"],
+    ["speed-empty", "&speed=empty", 390, "light"],
+    ["speed-empty", "&speed=empty", 390, "dark"],
+  ]) {
+    const page = await browser.newPage({
+      viewport: { width, height: 900 },
+      reducedMotion: "reduce",
+    });
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`${url}?theme=${theme}${query}`, { timeout: 240_000 });
+    await page.locator("[data-release-speed]").waitFor({ timeout: 60_000 });
+    // Open every version so the captures show each stage's and phase's change.
+    await page.evaluate(() => {
+      for (const node of document.querySelectorAll("[data-release-speed] details"))
+        node.open = true;
+    });
+    const facts = await page.evaluate(() => {
+      const speed = document.querySelector("[data-release-speed]");
+      const box = speed.getBoundingClientRect();
+      return {
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        versions: [...speed.querySelectorAll("[data-speed-version]")].map((node) =>
+          node.getAttribute("data-speed-version"),
+        ),
+        totals: [...speed.querySelectorAll("[data-speed-total]")].map((node) => node.textContent),
+        slower: [...speed.querySelectorAll('[data-speed-part][data-verdict="slower"]')].map(
+          (node) => node.getAttribute("data-speed-part"),
+        ),
+        faster: [...speed.querySelectorAll('[data-speed-part][data-verdict="faster"]')].map(
+          (node) => node.getAttribute("data-speed-part"),
+        ),
+        empty: speed.querySelector("[data-speed-empty]") !== null,
+        cut: [...speed.querySelectorAll("*:not(.sr-only)")].filter((node) => {
+          const rect = node.getBoundingClientRect();
+          return rect.width > 0 && (rect.right > box.right + 0.5 || rect.left < box.left - 0.5);
+        }).length,
+      };
+    });
+    const label = `${name} ${width}px ${theme}`;
+    if (errors.length > 0) failures.push(`${label}: page errors: ${errors.join("; ")}`);
+    if (facts.overflow > 0) failures.push(`${label}: page overflows by ${facts.overflow}px`);
+    if (facts.cut > 0) failures.push(`${label}: ${facts.cut} elements outside the section`);
+    if (name === "speed") {
+      // Six release versions (1.0.196 to 1.0.191) and five installs (1.0.195 to 1.0.191).
+      if (facts.versions.length !== 11) failures.push(`${label}: versions ${facts.versions}`);
+      if (facts.totals.some((total) => !/\d+(h|m|s)/.test(total)))
+        failures.push(`${label}: totals ${facts.totals}`);
+      for (const part of ["test.server", "canary", "readiness"])
+        if (!facts.slower.includes(part)) failures.push(`${label}: ${part} not marked slower`);
+      if (!facts.faster.includes("build.mac")) failures.push(`${label}: build.mac not faster`);
+    }
+    if (name === "speed-empty" && !facts.empty) failures.push(`${label}: no empty state`);
+    const file = NodePath.join(out, `releases-${name}-${width}-${theme}.png`);
+    const section = page.locator("[data-release-speed]");
+    await section.screenshot({ path: file, animations: "disabled" });
+    console.log(`${label}: ${facts.versions.length} rows, slower ${facts.slower} -> ${file}`);
     await page.close();
   }
 } finally {

@@ -1,5 +1,7 @@
 // Stand-ins for what the first-run steps read, driven by the page's query:
-//   ?view=connection|projects        which step is shown in the setup frame
+//   ?view=connection|projects|signin which step is shown in the setup frame
+//   ?link=helper|linked              sign-in step: signed in, with the Connect helper being
+//                                    installed (&stage=downloading), or with this machine linked
 //   ?found=0                         setup found no project to import
 //   ?connect=off                     a build without SpecWithCode Connect
 import { useSyncExternalStore } from "react";
@@ -37,10 +39,43 @@ export const StarOnGitHubLink = () => null;
 // Connection step.
 export const hasCloudPublicConfig = () => params.get("connect") !== "off";
 export const isOnboardingRelayEnvironment = () => false;
-export const useAuth = () => ({ isLoaded: true, isSignedIn: false, userId: null });
+const link = params.get("view") === "signin" ? params.get("link") : null;
+const signedIn = link === "helper" || link === "linked";
+export const useAuth = () =>
+  signedIn
+    ? { isLoaded: true, isSignedIn: true, userId: "user_1" }
+    : { isLoaded: true, isSignedIn: false, userId: null };
+export const useUser = () => ({
+  user: signedIn ? { primaryEmailAddress: { emailAddress: "sam@example.com" } } : null,
+});
 export const useStudioConnectAuthPrompt = () => ({
   authPrompt: null,
   openAuthPrompt: () => calls.push(["sign-in"]),
+  openSetupAuthPrompt: () => calls.push(["sign-in"]),
+});
+
+// Sign-in step: what it reads about this machine's link, and a link request that stays open so
+// the row can be looked at while the request runs.
+export const useAtomValue = (value: unknown) => value;
+export const environmentSession = { sessionStateAtom: () => ({ _tag: "Success" }) };
+export const useEnvironmentScope = () => true;
+export const useRelayEnvironmentDiscovery = () => ({ environments: new Map() });
+export const useMachineWorkGrants = () => ({ snapshot: { grants: [] } });
+export const useTeamRules = () => ({ summary: undefined });
+export const AccountJoinCard = () => null;
+export const useCloudLinkController = () => ({
+  linkState: {
+    data: { linked: link === "linked", managedTunnelActive: link === "linked" },
+    isPending: false,
+    error: null,
+    target: { environmentId: HERE },
+  },
+  publishAgentActivity: false,
+  operationError: null,
+  reconcileCloudState: (desired: unknown) => {
+    calls.push(["link", JSON.stringify(desired)]);
+    return new Promise<boolean>(() => {});
+  },
 });
 export const CloudEnvironmentConnectRows = () => null;
 export const connectPairing = "pair";

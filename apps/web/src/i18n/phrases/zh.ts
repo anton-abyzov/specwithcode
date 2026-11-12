@@ -3973,6 +3973,22 @@ export const zh: PhraseCatalog = {
   "Happens by itself after you sign in.": "登录后会自动完成。",
   "Checking this {machine}…": "正在检查这台{machine}…",
   "Linking this {machine}…": "正在关联这台{machine}…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "正在获取 Connect 助手：检查已安装内容（第 1 步，共 7 步）",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "正在获取 Connect 助手：等待另一个安装完成（第 2 步，共 7 步）",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "正在获取 Connect 助手：正在下载（第 3 步，共 7 步）",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "正在获取 Connect 助手：正在校验下载（第 4 步，共 7 步）",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "正在获取 Connect 助手：正在安装（第 5 步，共 7 步）",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "正在获取 Connect 助手：正在测试（第 6 步，共 7 步）",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "正在获取 Connect 助手：正在启用（第 7 步，共 7 步）",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "仍在关联。在新的{machine}上可能需要一分钟。你可以继续，它会自行完成。",
   "This {machine} is linked": "这台{machine}已关联",
   "Your other machines and your phone can reach it.": "你的其他电脑和手机可以连接到它。",
   "This {machine} could not be linked": "无法关联这台{machine}",
@@ -4257,4 +4273,22 @@ export const zh: PhraseCatalog = {
   "Shown on the device you are using. Your other computers show a badge.":
     "显示在你正在使用的设备上。你的其他电脑会显示角标。",
   "{count} more on {machine}, in use there": "{machine} 上还有 {count} 项，正在那里使用",
+  "Agents found on {machine}": "在 {machine} 上找到的智能体",
+  "Looking for {agents}…": "正在查找 {agents}…",
+  "{found} of {count} agents found on {machine}.":
+    "在 {machine} 上找到 {count} 个智能体中的 {found} 个。",
+  "Find agents": "查找智能体",
+  "Installed, not added.": "已安装，未添加。",
+  "Signed in, not turned on.": "已登录，未开启。",
+  "Installed, not signed in.": "已安装，未登录。",
+  "Installed, not turned on.": "已安装，未开启。",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "开启 Contributor 模式后，Muse Code 可能会与 Meta 共享你的代码。开启前请检查该设置。",
+  "Add agent": "添加智能体",
+  "Not found: {agents}.": "未找到：{agents}。",
+  "No answer from: {agents}.": "无响应：{agents}。",
+  "Where it looked": "查找位置",
+  "{names} and {count} more": "{names} 等另外 {count} 个",
+  "Turn on {agent}": "开启 {agent}",
+  "Add {agent}": "添加 {agent}",
 };

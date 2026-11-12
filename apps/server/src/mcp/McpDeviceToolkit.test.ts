@@ -14,6 +14,8 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as AccessRequests from "../access/AccessRequests.ts";
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import { IosSimulatorSupport } from "../device/iosSimulatorSupport.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
@@ -414,4 +416,106 @@ it.effect("a card grant for one device does not reach another device", () => {
       ),
     ),
   );
+});
+
+/**
+ * A machine whose own simulator check says `iosSimulators`, with no device
+ * host set up and only an Android emulator listed. The local host still
+ * reports iOS as available (xcrun is there), which the hint must not trust.
+ */
+const simulatorHintCall = (machine: {
+  os: "linux" | "darwin";
+  iosSimulators: boolean;
+  /** What the local device host reports for iOS; true unless set. */
+  iosHost?: boolean;
+}) => {
+  const emulator = { ...device, id: "emulator-5554", platform: "android" as const, name: "Pixel" };
+  const hosts = state.hosts.map((host) => ({
+    ...host,
+    platforms: host.platforms.map((platform) =>
+      platform.platform === "ios" ? { ...platform, available: machine.iosHost ?? true } : platform,
+    ),
+  }));
+  const listed = { ...state, hosts, devices: [emulator] };
+  const devices = Layer.mock(DeviceService.DeviceService)({
+    state: Effect.succeed(listed),
+    list: Effect.succeed(listed),
+    sessionsForThread: () => Effect.succeed([]),
+  });
+  const call = (name: string, args: Record<string, unknown>) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({ name, arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      return {
+        isError: result.isError,
+        text: result.content.map((part) => ("text" in part ? part.text : "")).join("\n"),
+        structured: result.structuredContent as { readonly hint?: string } | undefined,
+      };
+    });
+  const layer = McpHttpServer.layerDeviceToolkit.pipe(
+    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+    Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
+    Layer.provideMerge(devices),
+    Layer.provideMerge(layerNoAccessGrants),
+    Layer.provideMerge(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId,
+          label: "Test machine",
+          platform: { os: machine.os, arch: "x64" },
+        } as never),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(IosSimulatorSupport, { current: () => machine.iosSimulators }),
+    ),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-device-hint-" })),
+    Layer.provide(NodeServices.layer),
+  );
+  return { call, layer };
+};
+
+it.effect("tells a thread at list time and on open that simulators run on a Mac", () => {
+  const { call, layer } = simulatorHintCall({ os: "linux", iosSimulators: false });
+  return Effect.gen(function* () {
+    const listed = yield* call("device_list", {});
+    expect(listed.isError).toBe(false);
+    expect(listed.structured?.hint).toContain("This machine cannot run iOS Simulators");
+    const opened = yield* call("device_open", { platform: "ios" });
+    expect(opened.isError).toBe(true);
+    expect(opened.text).toContain("No ios devices were found");
+    expect(opened.text).toContain("This machine cannot run iOS Simulators");
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.effect("keeps a mistyped device id error free of the Mac hint", () => {
+  const { call, layer } = simulatorHintCall({ os: "linux", iosSimulators: false, iosHost: false });
+  return Effect.gen(function* () {
+    const opened = yield* call("device_open", { deviceId: "TYPO" });
+    expect(opened.isError).toBe(true);
+    expect(opened.text).toContain("No device TYPO");
+    expect(opened.text).not.toContain("cannot run iOS Simulators");
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.effect("judges this machine by the same simulator check that places work", () => {
+  const working = simulatorHintCall({ os: "darwin", iosSimulators: true });
+  const broken = simulatorHintCall({ os: "darwin", iosSimulators: false });
+  return Effect.gen(function* () {
+    const fine = yield* working
+      .call("device_open", { platform: "ios" })
+      .pipe(Effect.scoped, Effect.provide(working.layer));
+    expect(fine.text).not.toContain("cannot run iOS Simulators");
+    // xcrun is there, so the host lists iOS as available, but simctl does not answer.
+    const listed = yield* broken
+      .call("device_list", {})
+      .pipe(Effect.scoped, Effect.provide(broken.layer));
+    expect(listed.structured?.hint).toContain("This machine cannot run iOS Simulators");
+  });
 });

@@ -28,8 +28,11 @@ export const SETTINGS_GLOBAL_PATHS: ReadonlySet<string> = new Set([
   "/settings/mods",
 ]);
 
-/** Provider setup always belongs to exactly one machine; it has no "all machines" choice. */
-export const SETTINGS_SINGLE_MACHINE_PATHS: ReadonlySet<string> = new Set(["/settings/providers"]);
+/** Provider setup and model policy belong to exactly one machine; no "all machines" choice. */
+export const SETTINGS_SINGLE_MACHINE_PATHS: ReadonlySet<string> = new Set([
+  "/settings/providers",
+  "/settings/models",
+]);
 
 export function settingsPageScope(pathname: string): SettingsPageScope {
   if (SETTINGS_PROJECT_PATHS.has(pathname)) return "project";

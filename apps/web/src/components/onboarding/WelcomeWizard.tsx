@@ -1,7 +1,19 @@
-import type { EnvironmentId, ScopedProjectRef } from "@specweave-studio/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type EnvironmentId,
+  type ScopedProjectRef,
+} from "@specweave-studio/contracts";
+import { teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
+import {
+  useFullAccessRecommendation,
+  type AcceptedFullAccess,
+} from "../../onboarding/accessRecommendation";
+import { shouldRecommendFullAccess } from "../../onboarding/accessRecommendation.logic";
+import { teamRulesFromSummary } from "../../teamRules/teamRulesView";
+import { AccessStep } from "./AccessStep";
 import { SignInFirstStep } from "./SignInFirstStep";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useProjectScans } from "../../onboarding/useProjectScans";
@@ -40,13 +52,14 @@ import {
  * back on the next launch.
  */
 
-type WizardStep = "start" | "connection" | "agents" | "import";
+type WizardStep = "start" | "connection" | "agents" | "access" | "import";
 /** A stage of the bar. Several steps can belong to one stage. */
-type WizardStageId = "connect" | "agents" | "projects";
+type WizardStageId = "connect" | "agents" | "access" | "projects";
 const STAGE_OF_STEP: Record<WizardStep, WizardStageId> = {
   start: "connect",
   connection: "connect",
   agents: "agents",
+  access: "access",
   import: "projects",
 };
 
@@ -92,6 +105,46 @@ export function WelcomeWizard({
       ? "wizard.noun.mac"
       : "wizard.noun.machine",
   );
+  // Access is recommended once, for the machines being set up, while new chats
+  // there would start below Full access and nothing else has decided it.
+  const fullAccess = useFullAccessRecommendation();
+  // A chat on another machine starts with this machine's access, so this
+  // machine is always one of them.
+  const accessMachineIds = [
+    ...new Set([...(primaryEnvironmentId ? [primaryEnvironmentId] : []), ...setupIds]),
+  ];
+  const accessMachines = accessMachineIds.map(
+    (id) => environments.find((environment) => environment.environmentId === id)?.serverConfig,
+  );
+  // Decide only once every machine's settings and rules have loaded; a guess
+  // made before that could show the stage and then take it away.
+  const accessMachinesKnown =
+    accessMachines.length > 0 && accessMachines.every((config) => config != null);
+  const startingMode =
+    accessMachines
+      .map((config) => config?.settings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE)
+      .find((mode) => mode !== "full-access") ?? "full-access";
+  // Answered on this run: the stage keeps its place, and going back to it can change the answer.
+  const [accessAnswer, setAccessAnswer] = useState<{
+    readonly accepted: AcceptedFullAccess | null;
+  } | null>(null);
+  const recommendAccess = shouldRecommendFullAccess({
+    answer: fullAccess.answer,
+    settingsKnown: fullAccess.hydrated && accessMachinesKnown,
+    machineRole: fullAccess.machineRole,
+    mode: startingMode,
+    projectSetsMode: false,
+    fullAccessAllowed: accessMachines.every((config) =>
+      teamRulesModeAllowed(teamRulesFromSummary(config?.teamRules).state, "full-access"),
+    ),
+    fullAccessOffered: true,
+    chatStarted: false,
+  });
+  // Once in the bar, the stage stays for the rest of this run, whatever loads later.
+  const [accessStageShown, setAccessStageShown] = useState(false);
+  if (recommendAccess && !accessStageShown) setAccessStageShown(true);
+  const showAccess =
+    accessStageShown || recommendAccess || accessAnswer !== null || step === "access";
   // The whole bar, in order. A stage that does not apply sets `when: false` and
   // drops out of the bar, of Back and of Continue.
   const stages: readonly WizardStage<WizardStageId>[] = [
@@ -100,6 +153,7 @@ export function WelcomeWizard({
       label: entryStep === "start" ? tx("Sign in") : t("wizard.stage.connect"),
     },
     { id: "agents", label: t("wizard.stage.agents") },
+    { id: "access", label: t("wizard.stage.access"), when: showAccess },
     { id: "projects", label: t("wizard.stage.projects") },
   ];
   const barStages = shownStages(stages);
@@ -111,7 +165,9 @@ export function WelcomeWizard({
       ? (leftConnectFrom ?? (entryStep === "start" ? "start" : "connection"))
       : stage === "agents"
         ? "agents"
-        : "import";
+        : stage === "access"
+          ? "access"
+          : "import";
   const goToStage = (stage: WizardStageId | null) => {
     if (stage !== null) setStep(stepOfStage(stage));
   };
@@ -264,6 +320,35 @@ export function WelcomeWizard({
           environmentIds={setupIds}
           onBack={() => goToStage(stageBefore(stages, "agents"))}
           onContinue={() => goToStage(stageAfter(stages, "agents"))}
+        />
+      ) : step === "access" ? (
+        <AccessStep
+          keepsSupervised={
+            (accessAnswer?.accepted != null
+              ? [...accessAnswer.accepted.values()][0]
+              : startingMode) === "approval-required"
+          }
+          onBack={() => goToStage(stageBefore(stages, "access"))}
+          onAccept={async () => {
+            const accepted = await fullAccess.accept(accessMachineIds);
+            if (accepted === null) return t("wizard.access.saveFailed");
+            // Accepting again after an earlier accept on this run keeps the first access to undo.
+            setAccessAnswer((current) => ({ accepted: current?.accepted ?? accepted }));
+            goToStage(stageAfter(stages, "access"));
+            return null;
+          }}
+          onDecline={async () => {
+            // Back on this step after accepting: Keep puts the earlier access back.
+            const accepted = accessAnswer?.accepted;
+            if (accepted != null) {
+              if (!(await fullAccess.undo(accepted))) return t("wizard.access.undoFailed");
+            } else {
+              await fullAccess.decline();
+            }
+            setAccessAnswer({ accepted: null });
+            goToStage(stageAfter(stages, "access"));
+            return null;
+          }}
         />
       ) : (
         <ImportStep

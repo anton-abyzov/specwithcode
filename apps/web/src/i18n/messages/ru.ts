@@ -11,6 +11,7 @@ export const ru: Messages = {
   "wizard.title": "Настройка SpecWithCode",
   "wizard.stage.connect": "Компьютеры",
   "wizard.stage.agents": "Агенты",
+  "wizard.stage.access": "Доступ",
   "wizard.stage.projects": "Проекты",
   "wizard.close": "Закрыть настройку",
   "wizard.noun.mac": "Mac",
@@ -118,6 +119,44 @@ export const ru: Messages = {
     other: "{count} папки",
   },
   "wizard.import.now": "сейчас",
+
+  "wizard.access.title": "Разрешить агентам работать, не останавливаясь на вопросы?",
+  "wizard.access.description":
+    "Это задаёт, как начинаются новые чаты. Режим любого чата можно сменить в поле сообщения или позже в настройках.",
+  "wizard.access.fullAccess": "Полный доступ",
+  "wizard.access.recommended": "Рекомендуется",
+  "wizard.access.allowsIntro":
+    "Агенты сами доводят задачу до конца. Не спрашивая заранее, они могут:",
+  "wizard.access.allowCommands":
+    "Выполнять команды в терминале: ставить пакеты, запускать тесты, работать с git",
+  "wizard.access.allowFiles": "Создавать, изменять и удалять файлы на компьютере",
+  "wizard.access.allowNetwork": "Пользоваться сетью и подключёнными инструментами",
+  "wizard.access.stillStops":
+    "По-прежнему останавливаются на ваших решениях, входах в аккаунты и подтверждениях в приложениях, например отправке почты",
+  "wizard.access.supervised": "Под присмотром",
+  "wizard.access.supervisedDescription":
+    "Агенты спрашивают перед каждой командой и изменением файла. Работа ждёт вашего ответа.",
+  "wizard.access.use": "Включить полный доступ",
+  "wizard.access.keepSupervised": "Оставить под присмотром",
+  "wizard.access.keepCurrent": "Оставить текущий доступ",
+  "wizard.access.saving": "Сохранение…",
+  "wizard.access.askedOnce": "Спрашиваем один раз. Изменить можно в Настройки > Общие.",
+  "wizard.access.saveFailed":
+    "Полный доступ не сохранён. Проверьте подключение и попробуйте ещё раз.",
+  "wizard.access.calloutTitle": "Рекомендуем: полный доступ",
+  "wizard.access.calloutIntroSupervised":
+    "Этот чат под присмотром, поэтому агент останавливается перед каждой командой и изменением файла. С полным доступом он работает сам и может:",
+  "wizard.access.calloutIntroOther":
+    "Этот чат ещё спрашивает перед некоторыми действиями. С полным доступом агент работает сам и может:",
+  "wizard.access.switch": "Включить полный доступ",
+  "wizard.access.calloutNote":
+    "Для этого чата и новых чатов. Спрашиваем один раз; изменить можно здесь в любой момент.",
+  "wizard.access.close": "Закрыть",
+  "wizard.access.onTitle": "Полный доступ включён",
+  "wizard.access.onDescription":
+    "Для этого чата и новых чатов. Изменить можно в поле сообщения или в Настройки > Общие.",
+  "wizard.access.undo": "Отменить",
+  "wizard.access.undoFailed": "Не удалось отменить. Измените это в Настройки > Общие.",
 
   "update.downloadFailed": "Не удалось скачать обновление",
   "update.startFailed": "Не удалось начать загрузку обновления",
@@ -295,6 +334,7 @@ export const ru: Messages = {
   "limitSettings.action.wait": "Ждать сброса",
   "limitSettings.action.switch": "Переключать автоматически",
   "limitSettings.switchAtOption": "Когда осталось {percent}%",
+  "limitSettings.switchAtOptionDefault": "Когда осталось {percent}% (по умолчанию)",
   "limitSettings.waitOption.never": "Никогда не ждать",
   "limitSettings.waitOption.hour": "Меньше 1 часа",
   "limitSettings.waitOption.twoHours": "Меньше 2 часов",
@@ -331,6 +371,10 @@ export const ru: Messages = {
   "limitSettings.switchAt.description":
     "В режиме «Переключать автоматически» следующий ход начинается на резервной модели, когда в самом заполненном окне использования провайдера остаётся столько. В режиме «Предложить замену» тред в этот момент предлагает переключиться. Никогда посреди хода и только на провайдера, у которого осталось больше.",
   "limitSettings.switchAt.off": "Только при остановке",
+  "limitSettings.switchAt.custom": "Свой вариант…",
+  "limitSettings.switchAt.customLabel": "Остаток в процентах, при котором переключаться",
+  "limitSettings.switchAt.customUnit": "% осталось",
+  "limitSettings.switchAt.customError": "Введите целое число от {min} до {max}.",
   "limitSettings.waitUnder.title": "Ждать, если сброс скоро",
   "limitSettings.waitUnder.description":
     "Если использование, достигшее лимита или порога, сбрасывается в пределах этого времени, ничего не переключается, не погашается и не тратится: тред ждёт и продолжает на том же провайдере после сброса. Если недельное окно тоже исчерпано, ожидание не применяется.",

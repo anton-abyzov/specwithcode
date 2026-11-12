@@ -40,7 +40,7 @@
   "autoResumeLimitedThreads": false,
   "providerLimitAction": "switch",
   "providerLimitFallbackModelSelection": null,
-  "providerLimitSwitchAtPercent": 98,
+  "providerLimitSwitchAtPercent": 99,
   "providerLimitWaitUnderMinutes": 30,
   "providerLimitRedeemResets": false,
   "providerLimitSpendCredits": false,

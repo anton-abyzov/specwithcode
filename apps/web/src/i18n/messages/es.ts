@@ -11,6 +11,7 @@ export const es: Messages = {
   "wizard.title": "Configura SpecWithCode",
   "wizard.stage.connect": "Ordenadores",
   "wizard.stage.agents": "Agentes",
+  "wizard.stage.access": "Acceso",
   "wizard.stage.projects": "Proyectos",
   "wizard.close": "Cerrar configuración",
   "wizard.noun.mac": "Mac",
@@ -103,6 +104,44 @@ export const es: Messages = {
   "wizard.import.otherFolders": "Otras carpetas",
   "wizard.import.folderCount": { one: "{count} carpeta", other: "{count} carpetas" },
   "wizard.import.now": "ahora",
+
+  "wizard.access.title": "¿Dejar que los agentes trabajen sin parar a preguntar?",
+  "wizard.access.description":
+    "Esto define cómo empiezan los chats nuevos. Puedes cambiarlo en cualquier chat desde el cuadro de mensaje o más tarde en Ajustes.",
+  "wizard.access.fullAccess": "Acceso total",
+  "wizard.access.recommended": "Recomendado",
+  "wizard.access.allowsIntro":
+    "Los agentes terminan la tarea por su cuenta. Sin preguntar antes, pueden:",
+  "wizard.access.allowCommands":
+    "Ejecutar comandos de terminal: instalar paquetes, ejecutar pruebas, usar git",
+  "wizard.access.allowFiles": "Crear, cambiar y eliminar archivos en el equipo",
+  "wizard.access.allowNetwork": "Usar la red y las herramientas que conectaste",
+  "wizard.access.stillStops":
+    "Sigue parando para tus decisiones, inicios de sesión y aprobaciones de apps como enviar correo",
+  "wizard.access.supervised": "Supervisado",
+  "wizard.access.supervisedDescription":
+    "Los agentes preguntan antes de cada comando y cambio de archivo. El trabajo espera tu respuesta.",
+  "wizard.access.use": "Usar acceso total",
+  "wizard.access.keepSupervised": "Mantener supervisado",
+  "wizard.access.keepCurrent": "Mantener el acceso actual",
+  "wizard.access.saving": "Guardando…",
+  "wizard.access.askedOnce": "Solo se pregunta una vez. Cámbialo en Ajustes > General.",
+  "wizard.access.saveFailed":
+    "No se guardó el acceso total. Revisa la conexión e inténtalo de nuevo.",
+  "wizard.access.calloutTitle": "Recomendado: acceso total",
+  "wizard.access.calloutIntroSupervised":
+    "Este chat es supervisado, así que el agente para antes de cada comando y cambio de archivo. Con acceso total trabaja por su cuenta y puede:",
+  "wizard.access.calloutIntroOther":
+    "Este chat todavía pregunta antes de algunas acciones. Con acceso total el agente trabaja por su cuenta y puede:",
+  "wizard.access.switch": "Cambiar a acceso total",
+  "wizard.access.calloutNote":
+    "Se aplica a este chat y a los nuevos. Solo se pregunta una vez; cámbialo aquí cuando quieras.",
+  "wizard.access.close": "Cerrar",
+  "wizard.access.onTitle": "El acceso total está activado",
+  "wizard.access.onDescription":
+    "Para este chat y los nuevos. Cámbialo desde el cuadro de mensaje o en Ajustes > General.",
+  "wizard.access.undo": "Deshacer",
+  "wizard.access.undoFailed": "No se pudo deshacer. Cámbialo en Ajustes > General.",
 
   "update.downloadFailed": "No se pudo descargar la actualización",
   "update.startFailed": "No se pudo iniciar la descarga de la actualización",
@@ -270,6 +309,7 @@ export const es: Messages = {
   "limitSettings.action.wait": "Esperar el reinicio",
   "limitSettings.action.switch": "Cambiar automáticamente",
   "limitSettings.switchAtOption": "Con {percent} % restante",
+  "limitSettings.switchAtOptionDefault": "Con {percent} % restante (predeterminado)",
   "limitSettings.waitOption.never": "No esperar nunca",
   "limitSettings.waitOption.hour": "Menos de 1 hora",
   "limitSettings.waitOption.twoHours": "Menos de 2 horas",
@@ -306,6 +346,10 @@ export const es: Messages = {
   "limitSettings.switchAt.description":
     "Con Cambiar automáticamente, el siguiente turno empieza en el respaldo cuando a la ventana de uso más baja del proveedor solo le queda esto. Con Ofrecer el respaldo, el hilo sugiere el cambio en ese momento. Nunca a mitad de un turno, y solo a un proveedor con más margen.",
   "limitSettings.switchAt.off": "Solo cuando se detiene",
+  "limitSettings.switchAt.custom": "Personalizado…",
+  "limitSettings.switchAt.customLabel": "Porcentaje restante al que cambiar",
+  "limitSettings.switchAt.customUnit": "% restante",
+  "limitSettings.switchAt.customError": "Escribe un número entero de {min} a {max}.",
   "limitSettings.waitUnder.title": "Esperar si el reinicio está cerca",
   "limitSettings.waitUnder.description":
     "Si el uso que alcanzó el límite o el umbral se reinicia dentro de este tiempo, nada cambia, se canjea ni se gasta: el hilo espera y continúa en el mismo proveedor al reiniciarse. Si una ventana semanal también está llena, la espera no se aplica.",

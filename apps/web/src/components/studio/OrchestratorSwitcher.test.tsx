@@ -173,7 +173,7 @@ it("shows a nickname as typed, never trimming its owner", async () => {
       />,
     ),
   );
-  expect(container.querySelector(".sws-host-name")?.textContent).toBe("Anna's Air");
+  expect(container.querySelector(".sws-host-name")?.textContent).toBe("Runs on Anna's Air");
 });
 
 it("runs one coordinator start at a time across the switcher and the composer notice", async () => {

@@ -1,3 +1,4 @@
+import { ComposerVoiceMenu } from "./ComposerVoiceMenu";
 import { needsYouLabel } from "@specweave-studio/client-runtime/state/projectAttention";
 import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAttention";
 import * as DateTime from "effect/DateTime";
@@ -173,9 +174,9 @@ import { useOpenLink } from "../../browser/useOpenLink";
 import { ProjectWorkerPane } from "./ProjectWorkerPane";
 import { coordinatorProgress } from "../../studio/coordinatorProgress";
 import { Tip } from "./shell/Tip";
-import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar, VoiceCallButton } from "./VoiceCall";
+import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar } from "./VoiceCall";
 import { useDictationShortcut } from "./dictationShortcut";
-import { useVoiceDictation, VoiceDictationBar, VoiceDictationButton } from "./VoiceDictation";
+import { useVoiceDictation, VoiceDictationBar } from "./VoiceDictation";
 import { ProjectIconButton } from "./ProjectIconEditor";
 import { ProjectMoreMenu } from "./shell/ProjectMoreMenu";
 import { randomUUID } from "../../lib/utils";
@@ -1943,14 +1944,45 @@ export function ProjectWorkspaceSurface({
                 }
                 meta={
                   <>
-                    <VoiceDictationButton
-                      dictation={dictation}
-                      disabled={voiceCall.active}
-                      shortcut={shortcutLabelForCommand(keybindings, "composer.dictation.toggle")}
+                    <ProjectOrchestratorSwitcher
+                      project={project}
+                      members={iconCheckouts}
+                      label={environment?.label ?? "Host"}
+                      connected={connected}
+                      isThisDevice={hostIsThisDevice}
+                      disconnectedLabel={hostDisconnectedLabel(
+                        environment?.connection,
+                        hostAdmission,
+                      )}
+                      current={`${project.environmentId}:${project.id}`}
+                      copies={checkouts}
+                      unknown={unknownMachines}
+                      savedMachineMissing={savedMachineMissing}
+                      // Viewing only changes what this page shows.
+                      onView={
+                        onCheckout
+                          ? (key) => {
+                              if (key !== `${project.environmentId}:${project.id}`) onCheckout(key);
+                            }
+                          : null
+                      }
+                      // Moving is its own confirmed dialog, and needs a coordinator to move.
+                      // A personal assistant is private to its machine: it never moves.
+                      onMove={
+                        mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
+                      }
+                      onAdd={canOperate && !machinePrivate ? () => requestHandoff("add") : null}
+                      onMoveElsewhere={
+                        mainCoordinatorId && canOperate && !machinePrivate
+                          ? () => requestHandoff("move")
+                          : null
+                      }
                     />
-                    <VoiceCallButton
+                    <ComposerVoiceMenu
+                      dictation={dictation}
                       call={voiceCall}
-                      disabled={Boolean(blocked) || (!model && !coordinatorId) || dictation.active}
+                      callDisabled={Boolean(blocked) || (!model && !coordinatorId)}
+                      shortcut={shortcutLabelForCommand(keybindings, "composer.dictation.toggle")}
                     />
                     {coordinator && coordinatorTone ? (
                       <Tip
@@ -1987,40 +2019,6 @@ export function ProjectWorkspaceSurface({
                         </button>
                       </Tip>
                     ) : null}
-                    <ProjectOrchestratorSwitcher
-                      project={project}
-                      members={iconCheckouts}
-                      label={environment?.label ?? "Host"}
-                      connected={connected}
-                      isThisDevice={hostIsThisDevice}
-                      disconnectedLabel={hostDisconnectedLabel(
-                        environment?.connection,
-                        hostAdmission,
-                      )}
-                      current={`${project.environmentId}:${project.id}`}
-                      copies={checkouts}
-                      unknown={unknownMachines}
-                      savedMachineMissing={savedMachineMissing}
-                      // Viewing only changes what this page shows.
-                      onView={
-                        onCheckout
-                          ? (key) => {
-                              if (key !== `${project.environmentId}:${project.id}`) onCheckout(key);
-                            }
-                          : null
-                      }
-                      // Moving is its own confirmed dialog, and needs a coordinator to move.
-                      // A personal assistant is private to its machine: it never moves.
-                      onMove={
-                        mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
-                      }
-                      onAdd={canOperate && !machinePrivate ? () => requestHandoff("add") : null}
-                      onMoveElsewhere={
-                        mainCoordinatorId && canOperate && !machinePrivate
-                          ? () => requestHandoff("move")
-                          : null
-                      }
-                    />
                     {machinePrivate ? null : (
                       <ProjectMachineHandoff
                         key={`${project.environmentId}:${project.id}`}

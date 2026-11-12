@@ -4158,6 +4158,22 @@ export const fr: PhraseCatalog = {
   "Happens by itself after you sign in.": "Se fait tout seul une fois connecté.",
   "Checking this {machine}…": "Vérification de ce {machine}…",
   "Linking this {machine}…": "Liaison de ce {machine}…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Récupération de l’assistant Connect : vérification de ce qui est installé (étape 1 sur 7)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Récupération de l’assistant Connect : attente de la fin d’une autre installation (étape 2 sur 7)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Récupération de l’assistant Connect : téléchargement (étape 3 sur 7)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Récupération de l’assistant Connect : vérification du téléchargement (étape 4 sur 7)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Récupération de l’assistant Connect : installation (étape 5 sur 7)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Récupération de l’assistant Connect : test (étape 6 sur 7)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Récupération de l’assistant Connect : activation (étape 7 sur 7)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "Liaison toujours en cours. Sur un nouveau {machine}, cela peut prendre une minute. Vous pouvez continuer : elle se termine toute seule.",
   "This {machine} is linked": "Ce {machine} est lié",
   "Your other machines and your phone can reach it.":
     "Vos autres machines et votre téléphone peuvent le joindre.",
@@ -4471,4 +4487,22 @@ export const fr: PhraseCatalog = {
     "Affiché sur l’appareil que vous utilisez. Vos autres ordinateurs affichent un badge.",
   "{count} more on {machine}, in use there":
     "{count} de plus sur {machine}, en cours d’utilisation là-bas",
+  "Agents found on {machine}": "Agents trouvés sur {machine}",
+  "Looking for {agents}…": "Recherche de {agents}…",
+  "{found} of {count} agents found on {machine}.":
+    "{found} agents sur {count} trouvés sur {machine}.",
+  "Find agents": "Rechercher des agents",
+  "Installed, not added.": "Installé, pas ajouté.",
+  "Signed in, not turned on.": "Connecté, pas activé.",
+  "Installed, not signed in.": "Installé, pas connecté.",
+  "Installed, not turned on.": "Installé, pas activé.",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "Muse Code peut partager votre code avec Meta quand son mode Contributor est activé. Vérifiez ce réglage avant de l'activer.",
+  "Add agent": "Ajouter un agent",
+  "Not found: {agents}.": "Introuvables : {agents}.",
+  "No answer from: {agents}.": "Pas de réponse de : {agents}.",
+  "Where it looked": "Où la recherche a eu lieu",
+  "{names} and {count} more": "{names} et {count} de plus",
+  "Turn on {agent}": "Activer {agent}",
+  "Add {agent}": "Ajouter {agent}",
 };

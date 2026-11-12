@@ -1,10 +1,11 @@
-import type {
-  ReleaseRun,
-  ReleaseRunHost,
-  ReleaseRunHostState,
-  ReleaseRunStage,
-  ReleaseRunStageState,
-  ReleaseRunState,
+import {
+  releaseStageSeconds,
+  type ReleaseRun,
+  type ReleaseRunHost,
+  type ReleaseRunHostState,
+  type ReleaseRunStage,
+  type ReleaseRunStageState,
+  type ReleaseRunState,
 } from "@specweave-studio/contracts";
 
 /**
@@ -278,47 +279,8 @@ export function formatSeconds(totalSeconds: number): string {
  * the publish), and that gap is no time the stage took.
  */
 export function stageDuration(stage: ReleaseRunStage, nowMs: number): string | null {
-  const intervals: Array<[number, number]> = [];
-  for (const step of stage.steps) {
-    const started = parseMs(step.startedAt);
-    if (started === null) continue;
-    // A step that started but never recorded its end (killed, failed mid-way) ran until the
-    // stage ended, or until now while the stage still runs. A finished stage never counts on.
-    const ended =
-      parseMs(step.endedAt) ??
-      (stage.state === "running"
-        ? nowMs
-        : (parseMs(stage.endedAt) ?? (step.state === "running" ? nowMs : null)));
-    if (ended !== null && ended >= started) intervals.push([started, ended]);
-  }
-  // A running stage between two steps (one passed, the next not started) keeps counting.
-  if (
-    stage.state === "running" &&
-    intervals.length > 0 &&
-    !stage.steps.some((step) => step.state === "running")
-  ) {
-    const last = Math.max(...intervals.map(([, end]) => end));
-    if (nowMs > last) intervals.push([last, nowMs]);
-  }
-  if (intervals.length > 0) {
-    intervals.sort((left, right) => left[0] - right[0]);
-    let total = 0;
-    let [from, to] = intervals[0]!;
-    for (const [start, end] of intervals.slice(1)) {
-      if (start > to) {
-        total += to - from;
-        [from, to] = [start, end];
-      } else {
-        to = Math.max(to, end);
-      }
-    }
-    return formatSeconds((total + (to - from)) / 1000);
-  }
-  const started = parseMs(stage.startedAt);
-  if (started === null) return null;
-  const ended = parseMs(stage.endedAt) ?? (stage.state === "running" ? nowMs : null);
-  if (ended === null) return null;
-  return formatSeconds((ended - started) / 1000);
+  const seconds = releaseStageSeconds(stage, nowMs);
+  return seconds === null ? null : formatSeconds(seconds);
 }
 
 /** A record time as the viewer's local clock time, `14:05`; an em dash when absent. */

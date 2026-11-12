@@ -1,4 +1,10 @@
-import type { ReleaseRun, ReleaseRunHost, ReleaseRunStage } from "@specweave-studio/contracts";
+import type {
+  ReleaseInstallTiming,
+  ReleaseRun,
+  ReleaseRunHost,
+  ReleaseRunStage,
+  ReleaseRunTiming,
+} from "@specweave-studio/contracts";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
@@ -35,6 +41,8 @@ import {
   type ReleaseStageViewState,
   type ReleaseTone,
 } from "./releaseRunModel";
+import { ReleaseSpeed } from "./ReleaseSpeed";
+import { releaseTimings } from "./releaseSpeedModel";
 
 export interface ReleasesViewProps {
   readonly runs: ReadonlyArray<ReleaseRun>;
@@ -47,6 +55,10 @@ export interface ReleasesViewProps {
   readonly onSelectRun: (runId: string) => void;
   readonly onRefresh?: () => void;
   readonly nowMs: number;
+  /** Timings of more runs than `runs`; a server from before them sends none. */
+  readonly timings?: ReadonlyArray<ReleaseRunTiming> | undefined;
+  /** Verified installs on this machine; undefined from a server from before them. */
+  readonly installs?: ReadonlyArray<ReleaseInstallTiming> | undefined;
 }
 
 function Chip({ tone, children }: { tone: ReleaseTone; children: ReactNode }) {
@@ -307,6 +319,8 @@ export function ReleasesView({
   onSelectRun,
   onRefresh,
   nowMs,
+  timings,
+  installs,
 }: ReleasesViewProps) {
   const pickerId = useId();
   const run = selectedRun(runs, selectedRunId);
@@ -362,6 +376,9 @@ export function ReleasesView({
             <ReleaseHostTables hosts={run.hosts} />
           </section>
         </>
+      )}
+      {(loading || failed) && runs.length === 0 && timings === undefined ? null : (
+        <ReleaseSpeed timings={releaseTimings(runs, timings, nowMs)} installs={installs} />
       )}
       {skipped > 0 ? (
         <p className="text-muted-foreground text-xs">

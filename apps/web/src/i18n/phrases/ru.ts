@@ -4121,6 +4121,22 @@ export const ru: PhraseCatalog = {
   "Happens by itself after you sign in.": "Происходит само после входа.",
   "Checking this {machine}…": "Проверяем этот {machine}…",
   "Linking this {machine}…": "Привязываем этот {machine}…",
+  "Getting the Connect helper: checking what is installed (step 1 of 7)":
+    "Получаем помощник Connect: проверяем, что уже установлено (шаг 1 из 7)",
+  "Getting the Connect helper: waiting for another install to finish (step 2 of 7)":
+    "Получаем помощник Connect: ждём завершения другой установки (шаг 2 из 7)",
+  "Getting the Connect helper: downloading (step 3 of 7)":
+    "Получаем помощник Connect: загрузка (шаг 3 из 7)",
+  "Getting the Connect helper: checking the download (step 4 of 7)":
+    "Получаем помощник Connect: проверяем загруженный файл (шаг 4 из 7)",
+  "Getting the Connect helper: installing (step 5 of 7)":
+    "Получаем помощник Connect: установка (шаг 5 из 7)",
+  "Getting the Connect helper: testing it (step 6 of 7)":
+    "Получаем помощник Connect: проверяем работу (шаг 6 из 7)",
+  "Getting the Connect helper: turning it on (step 7 of 7)":
+    "Получаем помощник Connect: включаем (шаг 7 из 7)",
+  "Still linking. This can take a minute on a new {machine}. You can continue: it finishes by itself.":
+    "Привязка ещё идёт. На новом {machine} это может занять минуту. Можно продолжить: она завершится сама.",
   "This {machine} is linked": "Этот {machine} привязан",
   "Your other machines and your phone can reach it.":
     "Другие ваши компьютеры и телефон могут к нему подключаться.",
@@ -4428,4 +4444,22 @@ export const ru: PhraseCatalog = {
   "Shown on the device you are using. Your other computers show a badge.":
     "Показывается на устройстве, которым вы пользуетесь. На других компьютерах появляется значок.",
   "{count} more on {machine}, in use there": "Ещё {count} на {machine}, там сейчас работают",
+  "Agents found on {machine}": "Агенты, найденные на {machine}",
+  "Looking for {agents}…": "Ищем {agents}…",
+  "{found} of {count} agents found on {machine}.":
+    "Найдено агентов на {machine}: {found} из {count}.",
+  "Find agents": "Найти агентов",
+  "Installed, not added.": "Установлен, не добавлен.",
+  "Signed in, not turned on.": "Вход выполнен, не включён.",
+  "Installed, not signed in.": "Установлен, вход не выполнен.",
+  "Installed, not turned on.": "Установлен, не включён.",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "Muse Code может передавать ваш код в Meta, когда включён режим Contributor. Проверьте эту настройку, прежде чем включать.",
+  "Add agent": "Добавить агента",
+  "Not found: {agents}.": "Не найдены: {agents}.",
+  "No answer from: {agents}.": "Нет ответа от: {agents}.",
+  "Where it looked": "Где искали",
+  "{names} and {count} more": "{names} и ещё {count}",
+  "Turn on {agent}": "Включить {agent}",
+  "Add {agent}": "Добавить {agent}",
 };

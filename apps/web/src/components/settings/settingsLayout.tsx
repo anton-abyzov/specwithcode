@@ -1,3 +1,4 @@
+import { CollapsibleSection } from "./CollapsibleSection";
 import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -152,6 +153,52 @@ export function SettingsSearchTarget({
 
 /** Layout for the composer model/traits pickers in a settings row: drop the composer's max-width. */
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-none shrink-0";
+
+/**
+ * A page that sets this shows a long description behind an info button beside
+ * the title instead of printing it under every row. Short ones still print.
+ */
+const SettingsCompactDescriptionsContext = createContext(false);
+
+export function SettingsCompactDescriptions({ children }: { readonly children: ReactNode }) {
+  return (
+    <SettingsCompactDescriptionsContext value={true}>{children}</SettingsCompactDescriptionsContext>
+  );
+}
+
+/** Descriptions longer than this move behind the info button on a compact page. */
+export const COMPACT_DESCRIPTION_MAX_LENGTH = 90;
+
+export function descriptionGoesBehindInfo(description: unknown, compact: boolean): boolean {
+  return (
+    compact &&
+    typeof description === "string" &&
+    description.length > COMPACT_DESCRIPTION_MAX_LENGTH
+  );
+}
+
+function DescriptionTooltip({ label, children }: { readonly label: string; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        delay={150}
+        render={
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={label}
+            data-slot="settings-row-info"
+          >
+            <InfoIcon className="size-3.5" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-xs">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
@@ -316,6 +363,14 @@ export function SettingsSection({
   );
 }
 
+/** A collapsible section that settings search can reveal and focus. */
+export function SettingsCollapsibleSection(
+  props: Omit<ComponentPropsWithoutRef<typeof CollapsibleSection>, "ref">,
+) {
+  const targetRef = useSettingsSearchTarget<HTMLDetailsElement>(props.id);
+  return <CollapsibleSection {...props} ref={targetRef} />;
+}
+
 export function SettingsUnavailableGroup({
   children,
   message,
@@ -387,6 +442,10 @@ export function SettingsRow({
   const tx = useTx();
   const shownTitle = typeof title === "string" && !literal ? tx(title) : title;
   const shownDescription = typeof description === "string" ? tx(description) : description;
+  const descriptionBehindInfo = descriptionGoesBehindInfo(
+    shownDescription,
+    useContext(SettingsCompactDescriptionsContext),
+  );
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const navigate = useNavigate();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
@@ -582,6 +641,17 @@ export function SettingsRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <h3 className="min-w-0 text-sm font-medium text-foreground">{shownTitle}</h3>
+            {descriptionBehindInfo ? (
+              <DescriptionTooltip
+                label={
+                  typeof shownTitle === "string"
+                    ? tx("About {setting}", { setting: shownTitle })
+                    : tx("About this setting")
+                }
+              >
+                {shownDescription}
+              </DescriptionTooltip>
+            ) : null}
             {renderedInheritance ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {renderedInheritance}
@@ -594,7 +664,7 @@ export function SettingsRow({
               </span>
             ) : null}
           </div>
-          {description ? (
+          {description && !descriptionBehindInfo ? (
             <div className="max-w-xl text-xs leading-normal text-muted-foreground">
               {shownDescription}
             </div>

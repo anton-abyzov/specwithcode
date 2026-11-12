@@ -30,6 +30,7 @@ import {
   finishRelayClientInstall,
   reportRelayClientInstallProgress,
   requestRelayClientInstallConfirmation,
+  startRelayClientInstallInline,
 } from "./relayClientInstallDialog";
 
 function relayUrl(): string | null {
@@ -48,8 +49,32 @@ const relayClientRpcError = (message: string) => (cause: unknown) =>
     cause,
   });
 
+/**
+ * Whether a missing relay client is installed after a question, or straight
+ * away because the person already agreed to the link that needs it.
+ */
+export type RelayClientInstallConsent = "ask" | "agreed";
+
+/** Longer than this and an install is not slow but stuck: the link then fails with a reason. */
+export const RELAY_CLIENT_INSTALL_TIMEOUT = "5 minutes";
+
+/** What the machine said went wrong with the install, when it said anything. */
+function relayClientInstallFailure(cause: unknown): string | null {
+  if (typeof cause !== "object" || cause === null) return null;
+  if (
+    "_tag" in cause &&
+    cause._tag === "RelayClientInstallFailedError" &&
+    "message" in cause &&
+    typeof cause.message === "string"
+  ) {
+    return cause.message;
+  }
+  return "cause" in cause ? relayClientInstallFailure(cause.cause) : null;
+}
+
 function ensureRelayClientAvailable(
   environmentId: EnvironmentId,
+  consent: RelayClientInstallConsent,
 ): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry.EnvironmentRegistry> {
   return Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
@@ -63,14 +88,24 @@ function ensureRelayClientAvailable(
       });
     }
 
-    const confirmed = yield* Effect.tryPromise({
-      try: () => requestRelayClientInstallConfirmation(status.version),
-      catch: relayClientRpcError("Could not confirm relay client installation."),
-    });
-    if (!confirmed) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "Relay client installation was cancelled.",
+    if (consent === "agreed") {
+      yield* Effect.try({
+        try: () => startRelayClientInstallInline(status.version),
+        catch: relayClientRpcError("Could not start relay client installation."),
       });
+    } else {
+      const confirmed = yield* Effect.tryPromise({
+        try: () => requestRelayClientInstallConfirmation(status.version),
+        catch: relayClientRpcError("Could not confirm relay client installation."),
+      }).pipe(
+        // A link that is given up while the question is open takes the question with it.
+        Effect.onInterrupt(() => Effect.sync(finishRelayClientInstall)),
+      );
+      if (!confirmed) {
+        return yield* new CloudEnvironmentLinkError({
+          message: "Relay client installation was cancelled.",
+        });
+      }
     }
 
     const installed = yield* registry
@@ -82,7 +117,26 @@ function ensureRelayClientAvailable(
       )
       .pipe(
         Stream.runLast,
-        Effect.mapError(relayClientRpcError("Could not install the relay client.")),
+        Effect.mapError((cause) => {
+          const reason = relayClientInstallFailure(cause);
+          return new CloudEnvironmentLinkError({
+            message: reason
+              ? `Could not install the relay client: ${reason}`
+              : "Could not install the relay client.",
+            cause,
+          });
+        }),
+        // The machine's install has no end of its own on a network that stops answering.
+        Effect.timeoutOrElse({
+          duration: RELAY_CLIENT_INSTALL_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new CloudEnvironmentLinkError({
+                message:
+                  "Installing the relay client took longer than 5 minutes. Check this machine's internet connection, then try again.",
+              }),
+            ),
+        }),
         Effect.ensuring(Effect.sync(finishRelayClientInstall)),
       );
     if (Option.isNone(installed) || installed.value.type !== "complete") {
@@ -256,6 +310,8 @@ export function linkPrimaryEnvironmentToCloud(input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string;
   readonly mode?: CloudLinkMode;
+  /** "ask" unless given: only a caller that shows the install's progress itself may pass "agreed". */
+  readonly relayClientInstall?: RelayClientInstallConsent;
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
@@ -275,7 +331,10 @@ export function linkPrimaryEnvironmentToCloud(input: {
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
     const environmentClient = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
     if (managedTunnelsEnabled) {
-      yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId));
+      yield* ensureRelayClientAvailable(
+        EnvironmentId.make(input.target.environmentId),
+        input.relayClientInstall ?? "ask",
+      );
     }
 
     const challenge = yield* relayClient

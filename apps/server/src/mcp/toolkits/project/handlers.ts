@@ -400,9 +400,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const skipped = [...placed.skipped];
         const explicit = placed.candidates.some((candidate) => candidate.reason === "explicit");
         let landedHere = false;
+        let landed: (typeof placed.candidates)[number] | undefined;
         for (const candidate of placed.candidates) {
           if (candidate.target.kind === "local") {
             landedHere = true;
+            landed = candidate;
             break;
           }
           // A personal assistant's work stays on its machine: neither it nor
@@ -467,13 +469,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               placement: {
                 machine: machine.machine.label,
                 reason: candidate.reason,
+                ...(candidate.note === undefined ? {} : { note: candidate.note }),
                 skipped,
               },
             };
           skipped.push({ machine: machine.machine.label, reason: launched.error.message });
         }
         // The project's list leaves this machine out: never run here on its own.
-        if (!landedHere && placed.strict) return yield* noWorkerMachineFailure(skipped);
+        if (!landedHere && placed.strict)
+          return yield* noWorkerMachineFailure(skipped, (input.needs ?? []).length > 0);
         // Work another machine started here stays inside the grant this machine gave it.
         const work = yield* admitLaunch(context, input.delegation);
         const threadId = ThreadId.make(commandId);
@@ -830,7 +834,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           delegationChecked: true,
           placement: {
             machine: "this machine",
-            reason: explicit ? "explicit" : "this_machine",
+            reason: explicit ? "explicit" : landed?.reason === "needs" ? "needs" : "this_machine",
+            ...(landed?.note === undefined ? {} : { note: landed.note }),
             skipped,
           },
         };

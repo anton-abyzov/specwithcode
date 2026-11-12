@@ -6,18 +6,24 @@ import {
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/relay";
 import { ServerIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
 } from "../../cloud/managedRelayState";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toastManager } from "../ui/toast";
 import {
+  ClerkUserProfileError,
+  ClerkUserProfileList,
+  ClerkUserProfileListCaption,
+  ClerkUserProfileListSkeleton,
   ClerkUserProfilePage,
   ClerkUserProfileRefreshButton,
   ClerkUserProfileRow,
@@ -25,11 +31,15 @@ import {
 
 const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
-function linkedAtLabel(value: string): string {
+/** "Linked Oct 26, 2026", with the date marked up as a date. */
+function LinkedAt({ value }: { readonly value: string }) {
   const linkedAt = new Date(value);
-  return Number.isNaN(linkedAt.getTime())
-    ? "Link date unavailable"
-    : `Linked ${linkedAtFormatter.format(linkedAt)}`;
+  if (Number.isNaN(linkedAt.getTime())) return <>Link date unavailable</>;
+  return (
+    <>
+      Linked <time dateTime={value}>{linkedAtFormatter.format(linkedAt)}</time>
+    </>
+  );
 }
 
 function endpointLabel(environment: RelayClientEnvironmentRecord): string {
@@ -38,29 +48,66 @@ function endpointLabel(environment: RelayClientEnvironmentRecord): string {
     : "Activity publishing only";
 }
 
+/** This machine first, then by name: the list reads the same on every refresh. */
+export function orderConnectMachines(
+  environments: ReadonlyArray<RelayClientEnvironmentRecord>,
+  currentEnvironmentId: EnvironmentId | null,
+): ReadonlyArray<RelayClientEnvironmentRecord> {
+  return environments.toSorted((left, right) => {
+    const leftCurrent = left.environmentId === currentEnvironmentId;
+    const rightCurrent = right.environmentId === currentEnvironmentId;
+    if (leftCurrent !== rightCurrent) return leftCurrent ? -1 : 1;
+    return (
+      left.label.localeCompare(right.label, undefined, { sensitivity: "base", numeric: true }) ||
+      left.environmentId.localeCompare(right.environmentId)
+    );
+  });
+}
+
+export function connectMachineCountLabel(count: number): string {
+  return count === 1 ? "1 machine linked" : `${count} machines linked`;
+}
+
 export function StudioConnectEnvironmentRow(props: {
   readonly environment: RelayClientEnvironmentRecord;
+  /** True for the machine this window runs on. */
+  readonly current?: boolean;
   readonly confirmationOpen: boolean;
   readonly mutationPending: boolean;
   readonly onConfirmationChange: (open: boolean) => void;
   readonly onDeregister: (environment: RelayClientEnvironmentRecord) => void;
 }) {
-  const { environment } = props;
+  const { environment, current = false } = props;
   return (
     <ClerkUserProfileRow icon={<ServerIcon className="size-4" />}>
       <Collapsible open={props.confirmationOpen} onOpenChange={props.onConfirmationChange}>
-        <div className="flex items-start gap-4">
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3">
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm leading-4.5 font-medium text-foreground">
-              {environment.label}
-            </h3>
-            <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
-              {linkedAtLabel(environment.linkedAt)} · {endpointLabel(environment)}
+            {/* The name wraps instead of being cut: it is how a machine is told apart. */}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <h3 className="min-w-0 text-sm leading-5 font-medium wrap-anywhere text-foreground">
+                {environment.label}
+              </h3>
+              {current ? (
+                <Badge className="shrink-0" size="sm" variant="info">
+                  This machine
+                </Badge>
+              ) : null}
+            </div>
+            <p className="mt-0.5 text-xs leading-4.5 text-muted-foreground">
+              <LinkedAt value={environment.linkedAt} /> · {endpointLabel(environment)}
             </p>
           </div>
+          {/* Neutral on purpose: the red button is the confirmation, one at a time. */}
           <CollapsibleTrigger
             render={
-              <Button size="sm" variant="destructive-outline" disabled={props.mutationPending}>
+              <Button
+                className="shrink-0 self-start sm:self-auto"
+                size="sm"
+                variant="outline"
+                aria-label={`Deregister ${environment.label}`}
+                disabled={props.mutationPending}
+              >
                 Deregister
               </Button>
             }
@@ -70,25 +117,26 @@ export function StudioConnectEnvironmentRow(props: {
         <CollapsiblePanel>
           <div className="pt-3">
             <div
-              className="rounded-lg border border-input bg-muted/32 px-5 py-4 shadow-xs/5"
+              className="rounded-lg border border-destructive/24 bg-destructive/4 p-4"
               role="group"
               aria-label={`Confirm deregistration of ${environment.label}`}
             >
-              <h4 className="text-sm leading-4.5 font-semibold text-foreground">
-                Deregister server
+              <h4 className="text-sm leading-5 font-semibold text-foreground">
+                Deregister “{environment.label}”?
               </h4>
-              <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
-                “{environment.label}” will be removed from this account.
+              <p className="mt-1 max-w-xl text-xs leading-4.5 text-pretty text-muted-foreground">
+                It loses SpecWithCode Connect access and its managed tunnel, and a host space
+                becomes available. Local connections on your devices are not changed.
               </p>
-              <p className="mt-4 max-w-xl text-xs leading-4.5 text-muted-foreground">
-                SpecWithCode Connect access will be revoked, any managed tunnel will be removed, and
-                a host space will become available. Local connections on your devices are not
-                changed.
-              </p>
-              <div className="mt-4 flex justify-end gap-2">
+              {current ? (
+                <p className="mt-2 text-xs leading-4.5 font-medium text-warning-foreground">
+                  This is the machine you are using now.
+                </p>
+              ) : null}
+              <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   disabled={props.mutationPending}
                   onClick={() => props.onConfirmationChange(false)}
                 >
@@ -97,10 +145,11 @@ export function StudioConnectEnvironmentRow(props: {
                 <Button
                   size="sm"
                   variant="destructive"
+                  aria-busy={props.mutationPending}
                   disabled={props.mutationPending}
                   onClick={() => props.onDeregister(environment)}
                 >
-                  {props.mutationPending ? "Deregistering…" : "Deregister"}
+                  {props.mutationPending ? "Deregistering…" : "Deregister machine"}
                 </Button>
               </div>
             </div>
@@ -111,8 +160,96 @@ export function StudioConnectEnvironmentRow(props: {
   );
 }
 
+/**
+ * The page without its data: every state it can show, so a fixture can render
+ * it outside the account modal.
+ */
+export function StudioConnectMachinesView(props: {
+  readonly environments: ReadonlyArray<RelayClientEnvironmentRecord>;
+  readonly currentEnvironmentId: EnvironmentId | null;
+  readonly loading: boolean;
+  readonly refreshing: boolean;
+  readonly error: string | null;
+  readonly confirmingEnvironmentId: EnvironmentId | null;
+  readonly deregisteringEnvironmentId: EnvironmentId | null;
+  readonly onRefresh: () => void;
+  readonly onConfirmationChange: (environmentId: EnvironmentId | null) => void;
+  readonly onDeregister: (environment: RelayClientEnvironmentRecord) => void;
+}) {
+  const environments = orderConnectMachines(props.environments, props.currentEnvironmentId);
+  const mutationPending = props.deregisteringEnvironmentId !== null;
+  let body: ReactNode = null;
+  if (props.loading) {
+    body = <ClerkUserProfileListSkeleton label="Loading machines" />;
+  } else if (environments.length > 0) {
+    body = (
+      <>
+        <ClerkUserProfileListCaption>
+          {connectMachineCountLabel(environments.length)}
+        </ClerkUserProfileListCaption>
+        <ClerkUserProfileList label="Machines linked to your account">
+          {environments.map((environment) => (
+            <StudioConnectEnvironmentRow
+              key={environment.environmentId}
+              environment={environment}
+              current={environment.environmentId === props.currentEnvironmentId}
+              confirmationOpen={props.confirmingEnvironmentId === environment.environmentId}
+              mutationPending={mutationPending}
+              onConfirmationChange={(open) =>
+                props.onConfirmationChange(open ? environment.environmentId : null)
+              }
+              onDeregister={props.onDeregister}
+            />
+          ))}
+        </ClerkUserProfileList>
+      </>
+    );
+  } else if (!props.error) {
+    body = (
+      <div className="rounded-xl border bg-muted/16">
+        <Empty size="compact">
+          <EmptyMedia variant="icon">
+            <ServerIcon />
+          </EmptyMedia>
+          <EmptyHeader>
+            <EmptyTitle>No machines linked</EmptyTitle>
+            <EmptyDescription>
+              Sign in to SpecWithCode Connect on a machine to link it. It then shows up here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
+    );
+  }
+
+  return (
+    <ClerkUserProfilePage
+      title="Machines"
+      description="Machines linked to your SpecWithCode Connect account. Connections on this device are managed in Settings."
+      action={
+        <ClerkUserProfileRefreshButton
+          disabled={mutationPending}
+          isPending={props.refreshing}
+          onClick={props.onRefresh}
+        />
+      }
+    >
+      {props.error ? (
+        <ClerkUserProfileError
+          title="Could not load your machines"
+          detail={props.error}
+          retryDisabled={props.refreshing || mutationPending}
+          onRetry={props.onRefresh}
+        />
+      ) : null}
+      {body}
+    </ClerkUserProfilePage>
+  );
+}
+
 export function StudioConnectUserProfilePage() {
   const environmentsState = useManagedRelayEnvironments();
+  const currentEnvironmentId = usePrimaryEnvironmentId();
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
     reportFailure: false,
   });
@@ -150,7 +287,7 @@ export function StudioConnectUserProfilePage() {
       environmentsState.refresh();
       toastManager.add({
         type: "success",
-        title: "Server deregistered",
+        title: "Machine deregistered",
         description: "SpecWithCode Connect access was revoked and a host space is now available.",
       });
       return;
@@ -158,7 +295,7 @@ export function StudioConnectUserProfilePage() {
     if (isAtomCommandInterrupted(result)) return;
 
     const cause = squashAtomCommandFailure(result);
-    const message = cause instanceof Error ? cause.message : "Could not deregister the server.";
+    const message = cause instanceof Error ? cause.message : "Could not deregister the machine.";
     const traceId = findErrorTraceId(cause);
     console.error("[studio-connect] Could not deregister environment", {
       environmentId: environment.environmentId,
@@ -168,7 +305,7 @@ export function StudioConnectUserProfilePage() {
     });
     toastManager.add({
       type: "error",
-      title: "Could not deregister server",
+      title: "Could not deregister machine",
       description: message,
       data: traceId
         ? {
@@ -193,63 +330,17 @@ export function StudioConnectUserProfilePage() {
     !environmentsState.accountId || (environmentsState.data === null && !environmentsState.error);
 
   return (
-    <ClerkUserProfilePage
-      title="SpecWithCode Connect"
-      description="Environments registered to your account. Connections on this device are managed in Settings."
-      action={
-        <ClerkUserProfileRefreshButton
-          disabled={deregisteringEnvironmentId !== null}
-          isPending={environmentsState.isPending}
-          onClick={environmentsState.refresh}
-        />
-      }
-    >
-      <div>
-        {environmentsState.error ? (
-          <div className="mb-4 border-t border-destructive/35 py-3 text-xs" role="alert">
-            <p className="font-medium text-destructive-foreground">
-              Could not load SpecWithCode Connect environments
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">{environmentsState.error}</p>
-          </div>
-        ) : null}
-
-        {isInitialLoad ? (
-          <p className="border-t py-4 text-xs text-muted-foreground" role="status">
-            Loading environments…
-          </p>
-        ) : environments.length > 0 ? (
-          <ul className="border-t">
-            {environments.map((environment) => (
-              <StudioConnectEnvironmentRow
-                key={environment.environmentId}
-                environment={environment}
-                confirmationOpen={confirmingEnvironmentId === environment.environmentId}
-                mutationPending={deregisteringEnvironmentId !== null}
-                onConfirmationChange={(open) =>
-                  setConfirmingEnvironmentId(open ? environment.environmentId : null)
-                }
-                onDeregister={(selected) => void handleDeregister(selected)}
-              />
-            ))}
-          </ul>
-        ) : environmentsState.error ? null : (
-          <div className="border-t">
-            <Empty size="compact">
-              <EmptyMedia variant="icon">
-                <ServerIcon />
-              </EmptyMedia>
-              <EmptyHeader>
-                <EmptyTitle>No SpecWithCode Connect environments</EmptyTitle>
-                <EmptyDescription>
-                  Link an environment from its local Settings to make it available through
-                  SpecWithCode Connect.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </div>
-        )}
-      </div>
-    </ClerkUserProfilePage>
+    <StudioConnectMachinesView
+      environments={environments}
+      currentEnvironmentId={currentEnvironmentId}
+      loading={isInitialLoad}
+      refreshing={environmentsState.isPending}
+      error={environmentsState.error}
+      confirmingEnvironmentId={confirmingEnvironmentId}
+      deregisteringEnvironmentId={deregisteringEnvironmentId}
+      onRefresh={environmentsState.refresh}
+      onConfirmationChange={setConfirmingEnvironmentId}
+      onDeregister={(environment) => void handleDeregister(environment)}
+    />
   );
 }

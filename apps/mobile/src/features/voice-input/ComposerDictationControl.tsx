@@ -1,4 +1,8 @@
-import type { VoiceInputPhase, VoiceInputState } from "@specweave-studio/client-runtime/voice-input";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import type {
+  VoiceInputPhase,
+  VoiceInputState,
+} from "@specweave-studio/client-runtime/voice-input";
 import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -444,19 +448,32 @@ export function ComposerDictationStartAction(props: {
 }) {
   if (!props.isAvailable) return null;
   const openSettings = props.state.phase === "error" && props.state.errorAction === "settings";
+  const start = () => {
+    if (openSettings) {
+      props.onCancel();
+      void Linking.openSettings();
+    } else props.onStart();
+  };
   return (
-    <VoiceActionButton
-      accessibilityLabel={openSettings ? "Open microphone settings" : "Start dictation"}
-      disabled={props.disabled}
-      icon="mic"
-      onPress={
-        openSettings
-          ? () => {
-              props.onCancel();
-              void Linking.openSettings();
-            }
-          : props.onStart
-      }
-    />
+    <ControlPillMenu
+      accessibilityLabel="Voice"
+      shouldOpenOnLongPress={false}
+      actions={[
+        {
+          id: "dictate",
+          title: openSettings ? "Open microphone settings" : "Dictate into the message",
+          attributes: { disabled: Boolean(props.disabled) },
+        },
+      ]}
+      onPressAction={start}
+    >
+      <ControlPill
+        icon="mic"
+        label="Voice"
+        variant="pill"
+        accessibilityLabel="Voice"
+        disabled={props.disabled}
+      />
+    </ControlPillMenu>
   );
 }

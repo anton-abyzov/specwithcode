@@ -24,6 +24,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/models"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -112,6 +113,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
   "/settings/agents": "Agents",
   "/settings/providers": "Providers",
+  "/settings/models": "Models",
   "/settings/scheduled-tasks": "Routines",
   "/settings/mods": "Mods",
   "/settings/source-control": "Source Control",
@@ -154,6 +156,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/agents",
       "/settings/providers",
+      "/settings/models",
       "/settings/scheduled-tasks",
       "/settings/mods",
     ],
@@ -873,7 +876,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "adversarial-review",
     title: "Adversarial review",
-    to: "/settings/providers",
+    to: "/settings/models",
     searchTerms: [
       "review finished features automatically second opinion critique other model family reviewer order depth frontier",
     ],
@@ -882,7 +885,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "provider-model-tiers",
     title: "Regular and frontier models",
-    to: "/settings/providers",
+    to: "/settings/models",
     searchTerms: ["model tiers everyday strongest best model per provider review depth"],
     providerSettingsOnly: true,
   },
@@ -1385,6 +1388,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   // environment at any selection. Neither needs a particular scope to render.
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/models": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

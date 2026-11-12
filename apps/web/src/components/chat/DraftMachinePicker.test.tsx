@@ -729,3 +729,31 @@ it("wears the color of the machine the draft will run on", async () => {
   // The name stays beside the color: color is never the only cue.
   expect(trigger.textContent).toContain("M4");
 });
+
+it("names each machine's operating system so a person can pick a Mac", async () => {
+  const os = { m4: "darwin", m1: "linux" } as Record<string, string>;
+  runtime.environments = runtime.environments.map((environment) =>
+    os[environment.environmentId] === undefined
+      ? environment
+      : {
+          ...environment,
+          serverConfig: {
+            environment: { platform: { os: os[environment.environmentId], arch: "arm64" } },
+          },
+        },
+  );
+  const shown = () =>
+    [...document.querySelectorAll("[data-machine-os]")].map((node) => [
+      node.previousElementSibling?.textContent,
+      node.textContent,
+    ]);
+  await render();
+  await open();
+  expect(shown()).toEqual([["M4", "macOS"]]);
+  await click("Another project or no project");
+  // M3 has not reported a system, so nothing is guessed for it.
+  expect(shown()).toEqual([
+    ["M4", "macOS"],
+    ["M1", "Linux"],
+  ]);
+});
