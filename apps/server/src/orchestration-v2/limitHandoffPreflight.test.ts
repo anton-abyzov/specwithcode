@@ -168,7 +168,15 @@ const scenario = (options: { readonly modeOn: boolean }) =>
       workspaceRoot: roots.root,
       workspaceSettings:
         target === destination
-          ? { logicalProject: { members: [{ environmentId: m4, projectId: sourceProject }] } }
+          ? {
+              // Linked both ways, as the receiver requires.
+              logicalProject: {
+                members: [
+                  { environmentId: m4, projectId: sourceProject },
+                  { environmentId: minis, projectId: destinationProject },
+                ],
+              },
+            }
           : undefined,
     });
 
