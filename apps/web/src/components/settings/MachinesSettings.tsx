@@ -65,10 +65,17 @@ import {
   AddProjectToMachineDialog,
   type AddProjectTarget,
 } from "./AddProjectToMachine";
+import {
+  MachineNextStepCard,
+  MachineSetupState,
+  MachineSummary,
+  type MachineSetup,
+} from "./MachineSummary";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
+import { isPhoneConnectShown, PhoneConnectSettings } from "./PhoneConnectSettings";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingHelp } from "./SettingHelp";
 import {
@@ -78,6 +85,7 @@ import {
   TeamRulesLabel,
 } from "./settingsLayout";
 import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
+import { ThisMachineAdvanced } from "./ThisMachineAdvanced";
 import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
 
@@ -102,7 +110,11 @@ function currentServerOrigin(): string | null {
   }
 }
 
-/** Settings > Machines: the machines this app knows of, then who may run work on this one. */
+/**
+ * Settings > Machines, in one order: this machine and its one next step, your
+ * phone, the other machines, who may run work here, then everything most
+ * people never change, folded.
+ */
 export function MachinesSettingsPanel() {
   const tx = useTx();
   const fleet = usePrimaryFleet();
@@ -134,13 +146,6 @@ export function MachinesSettingsPanel() {
   // The add dialog is the page's, not a card's: a card can leave the list while a clone runs.
   const [addingProject, setAddingProject] = useState<AddProjectTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // While no machine may run work here, allowing one is this page's first step. Decided
-  // once per visit, so the section does not jump away the moment a machine is allowed.
-  const [allowFirst, setAllowFirst] = useState<boolean | null>(null);
-  if (allowFirst === null && grants.snapshot && !grants.loading && !grants.failed)
-    setAllowFirst(grants.snapshot.grants.length === 0);
-  // Until the first read says where it goes, the section waits instead of jumping.
-  const grantsPlacementPending = allowFirst === null && grants.loading && !grants.snapshot;
 
   const rows = useMemo(
     () =>
@@ -187,10 +192,12 @@ export function MachinesSettingsPanel() {
     details?: ReactNode,
     workersControl?: ReactNode,
     card?: FleetMachineCardExtras,
+    bare = false,
   ) => (
     <MachineRow
       key={row.environmentId}
       row={row}
+      bare={bare}
       hereLabel={hereLabel}
       workersControl={workersControl}
       actions={card?.actions}
@@ -243,29 +250,40 @@ export function MachinesSettingsPanel() {
       onShowConnectSwitch={() => scrollToSettingsTarget("connections-environment")}
     />
   ) : null;
-  // The page container is the scroll area: without it Settings > Machines cannot scroll.
-  return (
-    <SettingsPageContainer width="wide">
-      <p className="text-sm text-muted-foreground">
-        {tx(
-          "Each card says, in both directions, whose agents may start work on which machine. Open projects lets you use that machine's projects yourself and needs no worker permission.",
-        )}
-      </p>
+  // This machine's own card holds what the summary does not: its projects and accounts.
+  const hereRow = rows.find((row) => row.seen.state === "this-machine") ?? null;
+  const page = (setup: MachineSetup | null) => (
+    <>
       {error ? (
         <p role="alert" className="text-sm text-destructive-foreground">
           {error}
         </p>
       ) : null}
-      {allowFirst === true ? (
-        <>
-          {joinCard}
-          {workGrants}
-        </>
+      {setup && fleet.primaryEnvironmentId ? (
+        <MachineSummary environmentId={fleet.primaryEnvironmentId} rows={rows} setup={setup} />
+      ) : null}
+      {hereRow ? (
+        <details data-machine-here-details className="rounded-xl border border-border/60 text-sm">
+          <summary className="cursor-pointer rounded-xl px-4 py-2.5 text-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring">
+            <span className="ml-2">{tx("Projects and accounts on this machine")}</span>
+          </summary>
+          <ul className="border-t border-border/50">
+            {renderRow(hereRow, undefined, undefined, undefined, true)}
+          </ul>
+        </details>
+      ) : null}
+      {/* A pending step is drawn as the head of the phone card; this is the line once none is. */}
+      {setup &&
+      setup.step.kind === "done" &&
+      setup.connect.kind !== "unavailable" &&
+      setup.connect.kind !== "unknown" ? (
+        <MachineNextStepCard setup={setup} machineName={hereLabel} />
       ) : null}
       <ConnectionsSettings
         additionalMachines={rows
           .filter(
             (row) =>
+              row !== hereRow &&
               !fleet.snapshot?.machines.some(
                 (machine) => machine.environmentId === row.environmentId,
               ),
@@ -273,6 +291,8 @@ export function MachinesSettingsPanel() {
           .map((row) => renderRow(row))}
         renderMachine={(environmentId, controls, workersControl, card) => {
           const row = rows.find((item) => item.environmentId === environmentId);
+          // This machine has its own fold above; the list holds the others.
+          if (row && row === hereRow) return null;
           return row
             ? renderRow(
                 row,
@@ -285,18 +305,44 @@ export function MachinesSettingsPanel() {
               )
             : controls;
         }}
+        renderLayout={(parts) => (
+          <>
+            {isPhoneConnectShown() ? (
+              <PhoneConnectSettings setup={setup ?? undefined} pairRow={parts.pairPhone} />
+            ) : (
+              parts.pairPhone
+            )}
+            <p className="text-sm text-muted-foreground">
+              {tx(
+                "Each card says, in both directions, whose agents may start work on which machine. Open projects lets you use that machine's projects yourself and needs no worker permission.",
+              )}
+            </p>
+            {parts.otherMachines}
+            {joinCard}
+            <AwayAccessRequestsAll />
+            {workGrants}
+            {fleet.primaryEnvironmentId ? (
+              <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
+            ) : null}
+            {parts.routing}
+            <ThisMachineAdvanced>
+              {parts.thisMachine}
+              {parts.savedConnections}
+            </ThisMachineAdvanced>
+          </>
+        )}
       />
       <AddProjectToMachineDialog target={addingProject} onClose={() => setAddingProject(null)} />
-      <AwayAccessRequestsAll />
-      {allowFirst === true || grantsPlacementPending ? null : (
-        <>
-          {workGrants}
-          {joinCard}
-        </>
-      )}
+    </>
+  );
+  // The page container is the scroll area: without it Settings > Machines cannot scroll.
+  return (
+    <SettingsPageContainer width="wide">
       {fleet.primaryEnvironmentId ? (
-        <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
-      ) : null}
+        <MachineSetupState environmentId={fleet.primaryEnvironmentId}>{page}</MachineSetupState>
+      ) : (
+        page(null)
+      )}
     </SettingsPageContainer>
   );
 }
@@ -361,7 +407,7 @@ export function MachineListSection({
       <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
         {renderRich(
           tx(
-            "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.",
+            "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Saved connections stops this app seeing it.",
           ),
           {
             link: (
@@ -676,7 +722,10 @@ export function MachineRow({
   connectBothWays,
   allowBack,
   addProject,
+  bare = false,
 }: {
+  /** Without the name line and Rename: this machine's card under the page's own summary. */
+  bare?: boolean;
   remoteControl?: ReactNode;
   /** The Allow workers control for agents here; it sits on the first access line. */
   workersControl?: ReactNode;
@@ -707,7 +756,7 @@ export function MachineRow({
   const here = { name: nickname, seen: row.seen };
   return (
     <li className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4" aria-label={nickname}>
-      <div className="flex min-w-0 flex-wrap items-center gap-3">
+      <div className={bare ? "hidden" : "flex min-w-0 flex-wrap items-center gap-3"}>
         <LaptopIcon aria-hidden className="size-4 shrink-0 text-foreground/70" />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm break-words sm:truncate">
@@ -1209,7 +1258,7 @@ export function ConnectBothWaysView({
           <p className="text-xs text-foreground/80">
             {created.link
               ? connectBothWaysInstruction(machineLabel)
-              : `On ${machineLabel}, open Settings > Machines > Add environment > Remote link, enter this machine's private address and this pairing code.`}
+              : `On ${machineLabel}, open Settings > Machines > Advanced > Saved connections > Add connection > Remote link, enter this machine's private address and this pairing code.`}
           </p>
           <div className="flex min-w-0 gap-2">
             <Input

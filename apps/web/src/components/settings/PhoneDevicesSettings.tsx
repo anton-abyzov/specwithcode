@@ -37,7 +37,8 @@ import { SettingsRow, TeamRulesLabel } from "./settingsLayout";
 /**
  * The phones signed in to this SpecWithCode Connect account, each removable.
  * A removed phone is signed out and stays cut off until it signs in again.
- * Rows inside "Your phones", shown only while this window is signed in to Connect.
+ * Rows inside "Your phone", shown only while this window is signed in to Connect.
+ * With no phone yet it draws nothing: the card's steps already say how to add one.
  */
 export function PhoneDevicesSettings() {
   const tx = useTx();
@@ -120,24 +121,9 @@ export function PhoneDevicesSettings() {
             </Button>
           }
         />
-      ) : (
-        <SettingsRow title="Loading your phones" description="One moment." />
-      );
+      ) : null;
     }
-    if (phones.length === 0) {
-      return (
-        <SettingsRow
-          title="No phones yet"
-          description={
-            teamRulesLock?.message ??
-            "Sign in on the iPhone app with this account and it shows here."
-          }
-          status={
-            teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : undefined
-          }
-        />
-      );
-    }
+    if (phones.length === 0) return null;
     return phones.map((phone) => (
       <SettingsRow
         key={phone.deviceId}
@@ -173,7 +159,14 @@ export function PhoneDevicesSettings() {
 
   return (
     <>
-      {rows}
+      {rows ? (
+        <div
+          data-phone-list
+          className="border-t border-border/60 [&>*+*]:border-t [&>*+*]:border-border/50"
+        >
+          {rows}
+        </div>
+      ) : null}
       <AlertDialog
         open={confirming !== null}
         onOpenChange={(open) => {

@@ -86,7 +86,7 @@ export function resolvePhonePairingAddress(input: {
 
 /**
  * The link the phone scans. It names the server directly, never the hosted web
- * app, because the iPhone app talks to the server itself; its scanner reads the
+ * app, because the phone app talks to the server itself; its scanner reads the
  * token from the `#token=` fragment.
  */
 export function buildPhonePairingUrl(address: PhonePairingAddress, credential: string): string {
@@ -96,10 +96,10 @@ export function buildPhonePairingUrl(address: PhonePairingAddress, credential: s
 export function describePhoneNetworkHint(hint: PhoneNetworkHint): string {
   switch (hint) {
     case "tailnet":
-      return "Your iPhone needs the Tailscale app, signed in to the same tailnet as this computer.";
+      return "Your phone needs the Tailscale app, signed in to the same Tailscale network as this computer.";
     case "same-network":
-      return "Your iPhone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.";
+      return "Your phone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.";
     case "anywhere":
-      return "Your iPhone must be able to open this address. Keep this computer awake and online.";
+      return "Your phone must be able to open this address. Keep this computer awake and online.";
   }
 }

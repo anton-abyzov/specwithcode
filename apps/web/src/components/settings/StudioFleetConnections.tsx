@@ -703,7 +703,7 @@ export function fleetConnectionReason(
     // A relay port on another machine reads as such even when it is the
     // address the fleet lists for this machine.
     const relay = relayHostMachine(url, machine?.id ?? "", machines);
-    if (relay) return `a relay on ${relay.label}, port ${url.port}`;
+    if (relay) return `port ${url.port} on ${relay.label}`;
     if (machine && url.origin === originOf(machine.url))
       return url.hostname.toLowerCase().endsWith(".ts.net") ? "its Tailscale address" : null;
     return null;
@@ -832,7 +832,7 @@ export function StudioFleetRoster({
   return (
     <SettingsSection
       id={renderMachine ? "machines" : "private-machines"}
-      title={renderMachine ? "Machines" : "Your private machines"}
+      title={renderMachine ? "Other machines" : "Your private machines"}
       headerAction={
         <Button
           size="xs"
@@ -1050,7 +1050,7 @@ export function StudioFleetRoster({
                     {current || saved ? (
                       <CheckIcon
                         aria-label={
-                          current ? tx("Current environment") : tx("Saved for the machine picker")
+                          current ? tx("Current machine") : tx("Saved for the machine picker")
                         }
                         className="size-3.5 text-muted-foreground"
                       />
@@ -1176,7 +1176,7 @@ export function StudioFleetRoster({
             <span className="block text-sm">{tx("Connect automatically")}</span>
             <span className="block text-xs text-muted-foreground">
               {tx(
-                "When this app opens, connect it to your machines that answer, so their projects show here without Connect machine. It changes no agent permissions. Saved on this device.",
+                "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.",
               )}
             </span>
           </span>
@@ -1351,7 +1351,7 @@ export function StudioFleetRoster({
         <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
           {renderRich(
             tx(
-              "To connect one, open a pairing link from this server’s owner with {value}, or use Add environment with that machine’s own link.",
+              "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.",
             ),
             {
               value:

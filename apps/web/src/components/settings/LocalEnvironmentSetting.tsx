@@ -45,15 +45,15 @@ export function LocalEnvironmentSetting() {
         {...searchableSetting("local-environment")}
         description={
           enabled
-            ? "Run agents on this computer. Turn off to use SpecWithCode only with remote environments."
-            : "Turned off. Agents only run in remote environments."
+            ? "Agents run on this machine. Turn off and they run only on your other machines."
+            : "Turned off. Agents run only on your other machines."
         }
         control={
           <Switch
             checked={enabled}
             disabled={isUpdating}
             onCheckedChange={() => setConfirmOpen(true)}
-            aria-label={tx("Local environment")}
+            aria-label={tx("Run agents on this machine")}
           />
         }
       />
@@ -68,12 +68,14 @@ export function LocalEnvironmentSetting() {
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {enabled ? tx("Turn off local environment?") : tx("Turn on local environment?")}
+              {enabled
+                ? tx("Stop running agents on this machine?")
+                : tx("Run agents on this machine again?")}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {enabled
                 ? tx(
-                    "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.",
+                    "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history and other machines are unaffected.",
                   )
                 : tx(
                     "SpecWithCode will restart and start running a server on this computer again.",

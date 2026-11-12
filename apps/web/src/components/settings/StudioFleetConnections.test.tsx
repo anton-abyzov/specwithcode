@@ -171,12 +171,12 @@ describe("why a saved machine can't be reached", () => {
   it("names an old relay port on another machine instead of the raw HTTP error", () => {
     expect(
       fleetConnectionReason(raw("https://fixture.tailnet.ts.net:8444"), m3.environmentId, machines),
-    ).toBe("No answer from a relay on Mac M4, port 8444 (fixture.tailnet.ts.net:8444).");
+    ).toBe("No answer from port 8444 on Mac M4 (fixture.tailnet.ts.net:8444).");
   });
   it("names a relay port even when it is the address the fleet lists for the machine", () => {
     expect(
       fleetConnectionReason(raw("https://fixture.tailnet.ts.net:8443"), m1, snapshot.machines),
-    ).toBe("No answer from a relay on Mac M4, port 8443 (fixture.tailnet.ts.net:8443).");
+    ).toBe("No answer from port 8443 on Mac M4 (fixture.tailnet.ts.net:8443).");
   });
   it("names the machine's own Tailscale and Connect addresses", () => {
     expect(fleetConnectionReason(raw(m3.url), m3.environmentId, machines)).toBe(

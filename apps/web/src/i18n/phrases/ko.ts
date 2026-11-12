@@ -16,7 +16,6 @@ export const ko: PhraseCatalog = {
   "Add project starts in": "프로젝트 추가 시작 폴더",
   Advanced: "고급",
   "Advanced connections": "고급 연결",
-  "Advanced routes and saved connections": "고급 경로 및 저장된 연결",
   "Adversarial review": "적대적 리뷰",
   "Agent browser access": "에이전트 브라우저 접근",
   "Agent computer access": "에이전트 컴퓨터 접근",
@@ -65,7 +64,6 @@ export const ko: PhraseCatalog = {
   "Chat width": "채팅 너비",
   "ChatGPT account": "ChatGPT 계정",
   "Check for updates automatically": "자동으로 업데이트 확인",
-  "Checking SpecWithCode Connect": "SpecWithCode Connect 확인 중",
   Checkouts: "체크아웃",
   Chrome: "Chrome",
   "Chrome for agents": "에이전트용 Chrome",
@@ -122,7 +120,6 @@ export const ko: PhraseCatalog = {
   "Display name": "표시 이름",
   "Download in the background": "백그라운드에서 다운로드",
   Driver: "드라이버",
-  "Environment icon": "환경 아이콘",
   "Environment identification": "환경 식별",
   "Environment-wide setting. Select an environment to change it.":
     "환경 전체 설정입니다. 변경하려면 환경을 선택하세요.",
@@ -165,8 +162,6 @@ export const ko: PhraseCatalog = {
   "Live Processes": "실행 중인 프로세스",
   "Live process tree": "실행 중인 프로세스 트리",
   "Load balancing": "부하 분산",
-  "Loading your phones": "휴대폰 불러오는 중",
-  "Local environment": "로컬 환경",
   "MCP connections": "MCP 연결",
   Machines: "컴퓨터",
   Messaging: "메시지",
@@ -185,10 +180,8 @@ export const ko: PhraseCatalog = {
   "Network access": "네트워크 접근",
   "New keybinding": "새 키 바인딩",
   "New threads": "새 스레드",
-  "No environment selected": "선택된 환경 없음",
   "No hubs configured.": "설정된 허브가 없습니다.",
   "No matching routines": "일치하는 루틴 없음",
-  "No phones yet": "아직 휴대폰이 없습니다",
   "No routines": "루틴 없음",
   "No routines for active projects": "활성 프로젝트의 루틴 없음",
   "No routines match these filters": "이 필터와 일치하는 루틴 없음",
@@ -292,8 +285,6 @@ export const ko: PhraseCatalog = {
   "This connection does not have permission to change environment settings.":
     "이 연결에는 환경 설정을 변경할 권한이 없습니다.",
   "This machine": "이 컴퓨터",
-  "This window cannot turn on SpecWithCode Connect":
-    "이 창에서는 SpecWithCode Connect를 켤 수 없습니다",
   "Thread notifications": "스레드 알림",
   "Time format": "시간 형식",
   "Timeline detail": "타임라인 세부 정보",
@@ -329,7 +320,6 @@ export const ko: PhraseCatalog = {
   "Worktree storage": "워크트리 저장소",
   Worktrees: "워크트리",
   "Your data": "내 데이터",
-  "Your phones": "내 휴대폰",
   "specweave-studio.json is invalid": "specweave-studio.json이 올바르지 않습니다",
   "Clear settings search": "설정 검색 지우기",
   "No settings found": "설정을 찾을 수 없습니다",
@@ -394,8 +384,6 @@ export const ko: PhraseCatalog = {
     "이 프로젝트의 체크아웃이나 워크트리에서 실행하는 명령으로, 단축키를 지정할 수 있습니다.",
   "Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way.":
     "간결한 에이전트는 몇 개의 쉬운 문장으로 결과부터 알리고, 단계를 다시 늘어놓는 대신 결과와 그것을 증명하는 경로나 링크를 코디네이터에게 보냅니다. 자세한 에이전트는 단계를 설명합니다. 오류, 실패한 테스트, 보안 경고는 어느 쪽이든 모두 표시됩니다.",
-  "Connect an environment to view its settings and access.":
-    "환경을 연결하면 설정과 접근 권한을 볼 수 있습니다.",
   "Couldn't load the WSL backend state.": "WSL 백엔드 상태를 불러오지 못했습니다.",
   "Creates the worktree from the latest matching branch on origin instead of your local branch.":
     "로컬 브랜치 대신 origin의 일치하는 최신 브랜치에서 워크트리를 만듭니다.",
@@ -485,7 +473,6 @@ export const ko: PhraseCatalog = {
   "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.":
     "연결된 풀 리퀘스트를 먼저 엽니다. 없으면 파일 3개 이상 또는 50줄 이상을 수정했을 때 변경 사항을 엽니다.",
   "Optional marker shown in the picker.": "선택 목록에 표시되는 선택적 표시입니다.",
-  "Or pair with a private QR code": "또는 비공개 QR 코드로 페어링",
   "Order of projects in the sidebar project picker and command palette.":
     "사이드바 프로젝트 선택기와 명령 팔레트에서의 프로젝트 순서입니다.",
   "Page zoom applied to new browser tabs.": "새 브라우저 탭에 적용할 페이지 확대/축소입니다.",
@@ -534,8 +521,6 @@ export const ko: PhraseCatalog = {
     "에이전트가 소유한 대화를 SpecWithCode 스레드로 재개합니다.",
   "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
     "사용량 한도로 멈춘 스레드를 보고된 초기화 시간에 재개합니다. 각 스레드에서 예약된 계속을 취소할 수 있습니다.",
-  "Run only the WSL backend. SpecWithCode restarts when this changes.":
-    "WSL 백엔드만 실행합니다. 변경하면 SpecWithCode가 다시 시작됩니다.",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "선택한 WSL 배포판을 Windows와 함께 실행합니다. 프로젝트는 현재 파일 시스템에 그대로 남습니다.",
   "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
@@ -590,8 +575,6 @@ export const ko: PhraseCatalog = {
     "일반 모델은 일상 작업을 맡고, 최첨단 모델은 가장 강한 모델이 필요할 때(예: 최첨단 깊이의 리뷰) 실행됩니다.",
   "Then running work is stopped for the update, the app restarts, and running and queued threads continue after it.":
     "그다음 실행 중인 작업이 업데이트를 위해 멈추고, 앱이 다시 시작되며, 실행 중이거나 대기 중인 스레드는 그 후에 이어집니다.",
-  "Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports.":
-    "그다음 사용하는 각 iPhone의 iPhone 앱에서 같은 계정으로 로그인하세요. Tailscale, VPN, 포트 개방이 필요 없습니다.",
   "This routine no longer exists or is outside the selected project scope.":
     "이 루틴은 더 이상 없거나 선택한 프로젝트 범위 밖에 있습니다.",
   "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
@@ -1349,11 +1332,6 @@ export const ko: PhraseCatalog = {
   "Copy trace ID": "추적 ID 복사",
   "Remove from this device…": "이 기기에서 제거…",
   "Sign in": "로그인",
-  "No saved remote environments": "저장된 원격 환경이 없습니다",
-  "Click “Add environment” to pair another environment, or connect one from SpecWithCode Connect.":
-    "다른 환경을 페어링하려면 '환경 추가'를 클릭하거나 SpecWithCode Connect에서 연결하세요.",
-  "Click “Add environment” to pair another environment.":
-    "다른 환경을 페어링하려면 '환경 추가'를 클릭하세요.",
   Host: "호스트",
   "Paste a full pairing URL here to fill both fields automatically.":
     "전체 페어링 URL을 여기에 붙여 넣으면 두 필드가 자동으로 채워집니다.",
@@ -1361,7 +1339,6 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터는 SpecWithCode Connect 계정에 있습니다. 대체 경로로 사용하세요.",
   "Add SpecWithCode Connect": "SpecWithCode Connect 추가",
   "Add route": "경로 추가",
-  "Add environment": "환경 추가",
   "SSH host or alias": "SSH 호스트 또는 별칭",
   "Search hosts or type devbox": "호스트를 검색하거나 devbox 입력",
   "Loading hosts…": "호스트를 불러오는 중…",
@@ -1377,8 +1354,6 @@ export const ko: PhraseCatalog = {
   "Default distro": "기본 배포판",
   "Run WSL only": "WSL만 실행",
   "Enable Tailscale HTTPS": "Tailscale HTTPS 사용",
-  "Not encrypted: anyone on the same network can capture the sign-in. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
-    "암호화되지 않음: 같은 네트워크의 누구나 로그인 정보를 가로챌 수 있습니다. 원격 액세스에는 SpecWithCode Connect나 Tailscale HTTPS를 사용하세요.",
   "More actions for this machine": "이 컴퓨터의 추가 작업",
   "Up to date": "최신 상태",
   "This connection can create access links but cannot view authorized clients.":
@@ -1430,10 +1405,8 @@ export const ko: PhraseCatalog = {
   "HTTPS endpoint": "HTTPS 주소",
   "Pending MagicDNS endpoint": "대기 중인 MagicDNS 주소",
   Enable: "사용",
-  "Add Environment": "환경 추가",
   "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine.":
     "Tailscale 이름 같은 다른 주소로 이 컴퓨터를 다시 페어링합니다. 두 번째 컴퓨터를 추가하지 않고 기존 경로에 합류합니다.",
-  "Pair another environment to this client.": "다른 환경을 이 클라이언트와 페어링합니다.",
   value: "값",
   "Choice value": "선택지 값",
   "Choice label": "선택지 레이블",
@@ -1578,10 +1551,8 @@ export const ko: PhraseCatalog = {
   Manage: "관리",
   "Add an agent, complete its sign-in, then choose its models in chat. Registry agents work in the project folder; projects with additional approved folders currently require Codex, Claude or Muse Code.":
     "에이전트를 추가하고 로그인을 마친 다음 채팅에서 모델을 고르세요. 레지스트리 에이전트는 프로젝트 폴더에서 작업합니다. 추가로 승인된 폴더가 있는 프로젝트에는 현재 Codex, Claude 또는 Muse Code가 필요합니다.",
-  "Main machine environment ID": "주 컴퓨터 환경 ID",
   "Main machine": "주 컴퓨터",
   "Another machine": "다른 컴퓨터",
-  "This machine’s environment ID: {code}": "이 컴퓨터의 환경 ID: {code}",
   "Invitation line for the main machine": "주 컴퓨터용 초대 문자열",
   " Use it within an hour; it works once.": " 한 시간 안에 사용하세요. 한 번만 작동합니다.",
   "Revoke this line": "이 문자열 취소",
@@ -1815,10 +1786,6 @@ export const ko: PhraseCatalog = {
   "Automatically balance load": "자동으로 부하 분산",
   "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.":
     "공유 프로젝트의 새 스레드는 각 컴퓨터의 선호도를 반영해 여유 CPU와 메모리가 가장 많은 컴퓨터에서 시작됩니다.",
-  "Turn off local environment?": "로컬 환경을 끌까요?",
-  "Turn on local environment?": "로컬 환경을 켤까요?",
-  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.":
-    "SpecWithCode가 이 컴퓨터에서 서버를 실행하지 않고 다시 시작됩니다. 여기서 실행 중인 에이전트와 터미널은 중지되며, 다른 기기는 더 이상 이 컴퓨터에 연결할 수 없습니다. 프로젝트, 기록, 원격 환경은 영향을 받지 않습니다.",
   "SpecWithCode will restart and start running a server on this computer again.":
     "SpecWithCode가 다시 시작되어 이 컴퓨터에서 다시 서버를 실행합니다.",
   "Restart and turn off": "다시 시작하고 끄기",
@@ -1884,8 +1851,6 @@ export const ko: PhraseCatalog = {
     "취소하면 새 작업이 즉시 거부됩니다. 여기서 시작한 스레드는 2분 동안 계속 실행된 뒤 중지되며, 워크트리와 변경 사항은 남습니다.{value}",
   "Checking your machines…": "컴퓨터를 확인하는 중…",
   "No machines yet.": "아직 컴퓨터가 없습니다.",
-  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
-    "{link}에서 컴퓨터를 추가하고, 경로를 관리하고, 워커를 허용하거나 중지하세요. 여기서 작업을 실행할 수 있는 컴퓨터는 '여기서 작업을 실행할 수 있는 대상'에 있습니다. 연결을 끊으려면 그곳의 카드를 사용하세요. '컴퓨터 제거'는 여기의 에이전트가 그 컴퓨터를 쓰지 못하게 하고, '환경'의 '제거'는 이 앱에서 그 컴퓨터를 숨깁니다.",
   "Advanced connection settings": "고급 연결 설정",
   "also on {value}": "{value}에도 있음",
   "also on": "다른 위치:",
@@ -2004,50 +1969,21 @@ export const ko: PhraseCatalog = {
   "Turning on…": "켜는 중…",
   "This phone": "이 휴대폰",
   "Remove phone": "휴대폰 제거",
-  "The simplest way to reach this computer from your iPhone is to sign in to SpecWithCode Connect in the desktop app. No Tailscale is needed. To pair with a private QR code instead, this computer needs a private HTTPS address: set up Tailscale on this computer and your iPhone, sign in to the same tailnet, then enable Tailscale HTTPS in Connections.":
-    "iPhone에서 이 컴퓨터에 연결하는 가장 간단한 방법은 데스크톱 앱에서 SpecWithCode Connect에 로그인하는 것입니다. Tailscale은 필요 없습니다. 대신 비공개 QR 코드로 페어링하려면 이 컴퓨터에 비공개 HTTPS 주소가 필요합니다. 이 컴퓨터와 iPhone에 Tailscale을 설정하고, 같은 tailnet에 로그인한 다음, 연결에서 Tailscale HTTPS를 사용 설정하세요.",
-  "Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn the VPN on.":
-    "iPhone에 Tailscale을 설치하세요. 이 컴퓨터와 같은 tailnet에 로그인하고 VPN을 켜세요.",
-  "Copy the computer address below and open it in Safari on your iPhone. If it cannot load, check Tailscale on both devices before making a code.":
-    "아래 컴퓨터 주소를 복사해 iPhone의 Safari에서 여세요. 열리지 않으면 코드를 만들기 전에 두 기기의 Tailscale을 확인하세요.",
-  "Open SpecWithCode on your iPhone, tap Pair a machine, then Scan QR code.":
-    "iPhone에서 SpecWithCode를 열고 컴퓨터 페어링, QR 코드 스캔 순으로 탭하세요.",
-  "Open the computer address in Safari on your iPhone. Once it loads, open SpecWithCode and tap Pair a machine, then Scan QR code.":
-    "iPhone의 Safari에서 컴퓨터 주소를 여세요. 열리면 SpecWithCode를 열고 컴퓨터 페어링, QR 코드 스캔 순으로 탭하세요.",
-  "Scan with your iPhone": "iPhone으로 스캔",
   "Pair with a private QR code": "비공개 QR 코드로 페어링",
-  "A fallback for when you can't use SpecWithCode Connect. Your iPhone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
-    "SpecWithCode Connect를 쓸 수 없을 때의 대안입니다. iPhone이 같은 네트워크나 Tailscale을 통해 이 컴퓨터에 직접 연결할 수 있어야 합니다. 먼저 연결을 준비한 다음 일회용 코드를 만드세요.",
   "Computer address · no pairing code": "컴퓨터 주소 · 페어링 코드 없음",
   "Copy computer address": "컴퓨터 주소 복사",
   "This window cannot create pairing codes. Reopen SpecWithCode with access to this computer.":
     "이 창에서는 페어링 코드를 만들 수 없습니다. 이 컴퓨터에 액세스할 수 있는 상태로 SpecWithCode를 다시 여세요.",
-  "Pairing code for the SpecWithCode iPhone app": "SpecWithCode iPhone 앱용 페어링 코드",
   "Ready to scan. The phone has not confirmed a connection yet.":
     "스캔할 준비가 되었습니다. 휴대폰이 아직 연결을 확인하지 않았습니다.",
   "This code expired. Generate a new code when your phone is ready.":
     "이 코드가 만료되었습니다. 휴대폰이 준비되면 새 코드를 생성하세요.",
   "The computer address changed. Generate a new code for this address.":
     "컴퓨터 주소가 바뀌었습니다. 이 주소에 대한 새 코드를 생성하세요.",
-  "If scanning fails, check the address in Safari, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
-    "스캔에 실패하면 Safari에서 주소, VPN 연결, 코드 만료를 확인하세요. 이 컴퓨터에서 주소가 작동한다고 휴대폰이 접근할 수 있다는 뜻은 아닙니다.",
   "Set up Tailscale HTTPS": "Tailscale HTTPS 설정",
   "Copy pairing link": "페어링 링크 복사",
   "Generate pairing code": "페어링 코드 생성",
   "Generate new code": "새 코드 생성",
-  "Add your iPhone with SpecWithCode Connect": "SpecWithCode Connect로 iPhone 추가",
-  "Sign in with the same account on this computer and on the iPhone. It works from anywhere, with no Tailscale, VPN or QR code.":
-    "이 컴퓨터와 iPhone에서 같은 계정으로 로그인하세요. Tailscale, VPN, QR 코드 없이 어디서든 작동합니다.",
-  "On this computer, check Your phones. If it does not say this computer is ready for your iPhone yet, sign in there and turn it on.":
-    "이 컴퓨터에서 내 휴대폰을 확인하세요. 이 컴퓨터가 iPhone을 위한 준비가 되었다고 표시되지 않으면 그곳에서 로그인하고 켜세요.",
-  "On the iPhone, open SpecWithCode and sign in with the same account.":
-    "iPhone에서 SpecWithCode를 열고 같은 계정으로 로그인하세요.",
-  "This computer appears in the iPhone's list. Tap it to start.":
-    "iPhone의 목록에 이 컴퓨터가 나타납니다. 탭해서 시작하세요.",
-  "For a second iPhone, repeat the last two steps on it. Each iPhone signs in on its own; phones do not count toward your Connect machines.":
-    "두 번째 iPhone에서는 마지막 두 단계를 반복하세요. 각 iPhone은 따로 로그인하며, 휴대폰은 Connect 컴퓨터 수에 포함되지 않습니다.",
-  "Use a private QR code instead": "대신 비공개 QR 코드 사용",
-  "Go to SpecWithCode Connect": "SpecWithCode Connect로 이동",
   "This is the entire report. It contains versions, diagnostic counts, and failure categories. Conversation content, raw logs, files, credentials, paths, and identifiers are excluded.":
     "이것이 보고서 전체입니다. 버전, 진단 횟수, 실패 범주가 포함됩니다. 대화 내용, 원시 로그, 파일, 자격 증명, 경로, 식별자는 제외됩니다.",
   "Diagnostics report preview": "진단 보고서 미리보기",
@@ -2739,7 +2675,6 @@ export const ko: PhraseCatalog = {
   "Change access": "권한 변경",
   "Private machines could not be checked. Refresh to retry.":
     "비공개 컴퓨터를 확인할 수 없습니다. 새로 고쳐 다시 시도하세요.",
-  "Current environment": "현재 환경",
   "Saved for the machine picker": "컴퓨터 선택기에 저장됨",
   "Approve again": "다시 승인",
   "Connect machine": "컴퓨터 연결",
@@ -2769,8 +2704,6 @@ export const ko: PhraseCatalog = {
   "Link SpecWithCode Connect here first, then make a line to paste on your main machine.":
     "먼저 여기에서 SpecWithCode Connect를 연결한 다음, 메인 컴퓨터에 붙여 넣을 줄을 만드세요.",
   "Make a join line": "참여 줄 만들기",
-  "To connect one, open a pairing link from this server’s owner with {value}, or use Add environment with that machine’s own link.":
-    "연결하려면 이 서버 소유자가 보낸 페어링 링크를 {value}(으)로 열거나, 그 컴퓨터 자체의 링크로 환경 추가를 사용하세요.",
   "Turn Auto off": "Auto 끄기",
   "Long audio is transcribed first (speech to text), the transcript is split into chunks that fit the model's context, and the cheaper model works through the chunks. Auto never sends audio to a model that cannot hear it.":
     "긴 오디오는 먼저 전사(음성을 텍스트로)되고, 전사본은 모델의 컨텍스트에 맞는 조각으로 나뉘며, 더 저렴한 모델이 조각을 차례로 처리합니다. Auto는 오디오를 들을 수 없는 모델에 오디오를 보내지 않습니다.",
@@ -3632,9 +3565,6 @@ export const ko: PhraseCatalog = {
   "Paste the pairing code.": "페어링 코드를 붙여 넣으세요.",
   "Name the profile, for example Work or Marketing.": "프로필 이름을 지정하세요(예: 업무, 마케팅).",
   "Click Pair.": "페어링을 클릭하세요.",
-  "Send activity to mobile notifications and Live Activities without SpecWithCode Connect.":
-    "SpecWithCode Connect 없이 활동을 모바일 알림과 실시간 현황으로 보냅니다.",
-  "Publish agent activity to mobile clients": "에이전트 활동을 모바일 클라이언트에 게시",
   "Ask Google for {service}": "Google에 요청: {service}",
   "Edit shortcut for {command}: {shortcut}": "{command} 단축키 편집: {shortcut}",
   "Edit when clause for {command}": "{command} 조건 편집",
@@ -3670,14 +3600,6 @@ export const ko: PhraseCatalog = {
     "이 브라우저 페이지가 열려 있는 동안 연결된 머신의 알림을 이 기기에 표시합니다. 페이지를 닫으면 전달이 중단됩니다.",
   "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer.":
     "이 창에서는 페어링 코드를 만들 수 없습니다. SpecWithCode를 종료하고 다시 열어 이 컴퓨터에 대한 전체 접근 권한으로 로그인하게 하세요.",
-  "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
-    "비공개 QR 코드로 페어링하려면 휴대폰에 이 컴퓨터의 주소가 필요합니다. 먼저 네트워크 접근 또는 Tailscale HTTPS를 켜세요. 어디서나 접속하려면 대신 SpecWithCode Connect에 로그인하세요.",
-  "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`.":
-    "휴대폰에서 이 컴퓨터에 접속하려면 SpecWithCode 데스크톱 앱에서 이 설정을 열고 SpecWithCode Connect에 로그인하세요. 대신 비공개 QR 코드로 페어링하려면 `specweave-studio pair --tailscale`로 Tailscale Serve를 설정하세요.",
-  "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code.":
-    "SpecWithCode Connect를 쓸 수 없는 경우에만: iPhone이 같은 네트워크나 Tailscale을 통해 이 컴퓨터에 직접 접속하고 일회용 코드를 스캔합니다.",
-  "Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to {url}.":
-    "iPhone의 SpecWithCode 앱으로 비공개 페어링 코드를 스캔하세요. {url}에 연결됩니다.",
   "Selected environment: local tracing on; external diagnostic export configured.":
     "선택한 환경: 로컬 추적 켜짐, 외부 진단 내보내기 구성됨.",
   "Selected environment: local tracing on; external diagnostic export off.":
@@ -4249,4 +4171,155 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터의 연결을 확인한 뒤 다시 시도하세요.",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect가 이 페이지에서 읽을 수 없는 응답을 보냈습니다",
+  "Get SpecWithCode on your phone": "휴대폰에서 SpecWithCode 사용하기",
+  "It gets a private address that only your account can use.":
+    "내 계정만 사용할 수 있는 비공개 주소가 생깁니다.",
+  "It links {machine} to your account in the same click. No VPN, open ports or terminal.":
+    "같은 클릭으로 {machine}을(를) 내 계정에 연결합니다. VPN, 포트 개방, 터미널이 필요 없습니다.",
+  "Linked as {account}. Reachable from anywhere, by your account only.":
+    "{account}(으)로 연결됨. 어디서나 접속할 수 있고, 내 계정만 사용할 수 있습니다.",
+  "Pair over your own network instead.": "대신 내 네트워크로 페어링하기.",
+  "Reachable from anywhere, by its account only.":
+    "어디서나 접속할 수 있고, 해당 계정만 사용할 수 있습니다.",
+  "Scan this with the phone's camera. It opens the App Store on an iPhone and Google Play on Android. Or search the store for “SpecWithCode”.":
+    "휴대폰 카메라로 스캔하세요. iPhone에서는 App Store가, Android에서는 Google Play가 열립니다. 스토어에서 “SpecWithCode”를 검색해도 됩니다.",
+  "Sign in on the phone as {account}": "휴대폰에서 {account}(으)로 로그인",
+  "Sign in on the phone with the same account": "휴대폰에서 같은 계정으로 로그인",
+  "Signed in as {account}. It gets a private address that only your account can use.":
+    "{account}(으)로 로그인됨. 내 계정만 사용할 수 있는 비공개 주소가 생깁니다.",
+  "SpecWithCode Connect is not in this build": "이 빌드에는 SpecWithCode Connect가 없습니다",
+  "To add another phone, scan this with its camera. It opens the App Store on an iPhone and Google Play on Android.":
+    "다른 휴대폰을 추가하려면 그 카메라로 스캔하세요. iPhone에서는 App Store가, Android에서는 Google Play가 열립니다.",
+  "Turn on SpecWithCode Connect for {machine}": "{machine}에서 SpecWithCode Connect 켜기",
+  "Your phone": "내 휴대폰",
+  "iPhone or Android. The store code shows here once this machine is on SpecWithCode Connect.":
+    "iPhone 또는 Android. 이 컴퓨터가 SpecWithCode Connect를 사용하면 스토어 코드가 여기에 표시됩니다.",
+  "{machine} is on SpecWithCode Connect": "{machine}이(가) SpecWithCode Connect를 사용 중입니다",
+  "{machine} shows up on the phone by itself, and the phone shows up here. Nothing to scan or type.":
+    "{machine}이(가) 휴대폰에 자동으로 나타나고, 휴대폰도 여기에 나타납니다. 스캔하거나 입력할 필요가 없습니다.",
+  "{machine} shows up there by itself.": "{machine}이(가) 거기에 자동으로 나타납니다.",
+  "Next step": "다음 단계",
+  "Open SpecWithCode on {machine} to do this.":
+    "이 작업을 하려면 {machine}에서 SpecWithCode를 여세요.",
+  "Waiting for your phone…": "휴대폰을 기다리는 중…",
+  "You are set": "준비 완료",
+  "Agents run on this machine. Turn off and they run only on your other machines.":
+    "에이전트가 이 컴퓨터에서 실행됩니다. 끄면 다른 컴퓨터에서만 실행됩니다.",
+  "Run agents on this machine": "이 컴퓨터에서 에이전트 실행",
+  "Run agents on this machine again?": "이 컴퓨터에서 에이전트를 다시 실행할까요?",
+  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history and other machines are unaffected.":
+    "SpecWithCode가 이 컴퓨터에서 서버를 실행하지 않은 상태로 다시 시작됩니다. 여기서 실행 중인 에이전트와 터미널은 모두 중지되고, 다른 기기는 더 이상 이 컴퓨터에 연결할 수 없습니다. 프로젝트, 기록, 다른 컴퓨터는 영향을 받지 않습니다.",
+  "Stop running agents on this machine?": "이 컴퓨터에서 에이전트 실행을 중지할까요?",
+  "Turned off. Agents run only on your other machines.":
+    "껐습니다. 에이전트는 다른 컴퓨터에서만 실행됩니다.",
+  "App Store · Google Play": "App Store · Google Play",
+  "Code that opens the App Store or Google Play": "App Store 또는 Google Play를 여는 코드",
+  "Main machine ID": "주 컴퓨터 ID",
+  "This machine’s ID: {code}": "이 컴퓨터의 ID: {code}",
+  "Copy the computer address below and open it in the phone's browser. If it does not load, check Tailscale on both devices before making a code.":
+    "아래 컴퓨터 주소를 복사해 휴대폰 브라우저에서 여세요. 열리지 않으면 코드를 만들기 전에 두 기기에서 Tailscale을 확인하세요.",
+  "For when you cannot use SpecWithCode Connect. Your phone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
+    "SpecWithCode Connect를 쓸 수 없을 때를 위한 방법입니다. 휴대폰이 같은 네트워크나 Tailscale을 통해 이 컴퓨터에 직접 연결할 수 있어야 합니다. 먼저 연결을 준비한 다음 일회용 코드를 만드세요.",
+  "If scanning fails, check the address in the phone's browser, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
+    "스캔에 실패하면 휴대폰 브라우저에서 주소, VPN 연결, 코드 만료를 확인하세요. 이 컴퓨터에서 주소가 작동한다고 휴대폰이 접근할 수 있다는 뜻은 아닙니다.",
+  "Install Tailscale on your phone. Sign in to the same Tailscale network as this computer and turn the VPN on.":
+    "휴대폰에 Tailscale을 설치하세요. 이 컴퓨터와 같은 Tailscale 네트워크에 로그인하고 VPN을 켜세요.",
+  "Network access, for a phone on the same Wi-Fi or network.":
+    "네트워크 접근. 같은 Wi-Fi나 네트워크에 있는 휴대폰용입니다.",
+  "Open SpecWithCode on your phone, choose Pair a machine, then Scan QR code.":
+    "휴대폰에서 SpecWithCode를 열고 컴퓨터 페어링, QR 코드 스캔 순으로 선택하세요.",
+  "Open the computer address in the phone's browser. Once it loads, open SpecWithCode and choose Pair a machine, then Scan QR code.":
+    "휴대폰 브라우저에서 컴퓨터 주소를 여세요. 열리면 SpecWithCode를 열고 컴퓨터 페어링, QR 코드 스캔 순으로 선택하세요.",
+  "Pair over your own network": "내 네트워크로 페어링",
+  "Pairing code for the SpecWithCode phone app": "SpecWithCode 휴대폰 앱용 페어링 코드",
+  "Scan with your phone": "휴대폰으로 스캔",
+  "Show Network access and Tailscale HTTPS": "네트워크 접근과 Tailscale HTTPS 표시",
+  "Tailscale HTTPS, for a phone on your Tailscale network, anywhere.":
+    "Tailscale HTTPS. 어디서나 Tailscale 네트워크의 휴대폰용입니다.",
+  "This window cannot change how this computer is reached. Open SpecWithCode on this computer and turn on Network access or Tailscale HTTPS there, or sign in to SpecWithCode Connect, which needs neither.":
+    "이 창에서는 이 컴퓨터에 접속하는 방식을 바꿀 수 없습니다. 이 컴퓨터에서 SpecWithCode를 열어 네트워크 접근 또는 Tailscale HTTPS를 켜거나, 둘 다 필요 없는 SpecWithCode Connect에 로그인하세요.",
+  "Turn on Network access": "네트워크 접근 켜기",
+  "Your phone needs an address for this computer. Turn on one of these first:":
+    "휴대폰에 이 컴퓨터의 주소가 필요합니다. 먼저 다음 중 하나를 켜세요:",
+  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Saved connections stops this app seeing it.":
+    "{link}에서 컴퓨터를 추가하고, 경로를 관리하고, 워커를 허용하거나 중지하세요. 여기서 작업을 실행할 수 있는 컴퓨터는 ‘여기서 작업을 실행할 수 있는 사람’에 있습니다. 연결을 끊으려면 그곳의 카드를 사용하세요. ‘컴퓨터 제거’를 누르면 여기의 에이전트가 그 컴퓨터를 사용하지 못하고, ‘저장된 연결’의 ‘제거’를 누르면 이 앱에서 그 컴퓨터가 보이지 않습니다.",
+  "Projects and accounts on this machine": "이 컴퓨터의 프로젝트와 계정",
+  "Activity for phone notifications": "휴대폰 알림용 활동",
+  "Machine icon": "컴퓨터 아이콘",
+  "Saved connections": "저장된 연결",
+  "Advanced: run agents on this machine, network access, Tailscale, signed-in browsers and apps, saved connections":
+    "고급: 이 컴퓨터에서 에이전트 실행, 네트워크 접근, Tailscale, 로그인된 브라우저와 앱, 저장된 연결",
+  "Keep webhook requests for up to 24 hours while this machine is offline, then deliver them. Turn off and SpecWithCode Connect only forwards requests and stores nothing.":
+    "이 컴퓨터가 오프라인인 동안 웹훅 요청을 최대 24시간 보관했다가 전달합니다. 끄면 SpecWithCode Connect는 요청을 전달만 하고 아무것도 저장하지 않습니다.",
+  "Optional. Sign in to reach your machines from anywhere and to change the settings below.":
+    "선택 사항. 로그인하면 어디서나 내 컴퓨터에 접속하고 아래 설정을 바꿀 수 있습니다.",
+  "Send activity for phone notifications": "휴대폰 알림용 활동 보내기",
+  "Send agent activity to your phone's notifications and Live Activities, even while SpecWithCode Connect is off for this machine. Turn off and your phone shows no activity from this machine.":
+    "이 컴퓨터에서 SpecWithCode Connect가 꺼져 있어도 에이전트 활동을 휴대폰 알림과 실시간 현황으로 보냅니다. 끄면 휴대폰에 이 컴퓨터의 활동이 표시되지 않습니다.",
+  "Sign in to SpecWithCode Connect to change this. Notifications go to the phones signed in to your account.":
+    "이 설정을 바꾸려면 SpecWithCode Connect에 로그인하세요. 알림은 내 계정에 로그인된 휴대폰으로 갑니다.",
+  "Turn on to reach this machine from your phone and your other machines, from anywhere.":
+    "켜면 휴대폰과 다른 컴퓨터에서 어디서나 이 컴퓨터에 접속할 수 있습니다.",
+  "Your phone and your other machines reach this machine from anywhere. Turn off and they can no longer reach it this way.":
+    "휴대폰과 다른 컴퓨터가 어디서나 이 컴퓨터에 접속할 수 있습니다. 끄면 이 방식으로는 더 이상 접속할 수 없습니다.",
+  "Current machine": "현재 컴퓨터",
+  "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
+    "연결하려면 이 서버 소유자가 보낸 {value} 포함 페어링 링크를 열거나, 그 컴퓨터의 자체 링크로 연결 추가를 사용하세요.",
+  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
+    "이 앱을 열 때 응답하는 내 컴퓨터에 자동으로 연결해 그 프로젝트를 여기에 표시합니다. 끄면 컴퓨터 연결로 하나씩 직접 연결합니다. 에이전트 권한은 바뀌지 않습니다. 이 기기에 저장됩니다.",
+  "Cannot use Connect? Pair over your own network": "Connect를 쓸 수 없나요? 내 네트워크로 페어링",
+  "Cannot use Connect? Pair over your own network.":
+    "Connect를 쓸 수 없나요? 내 네트워크로 페어링하세요.",
+  "Scan a one-time code with the SpecWithCode app on your phone. It connects to {url}.":
+    "휴대폰의 SpecWithCode 앱으로 일회용 코드를 스캔하세요. {url}에 연결됩니다.",
+  "To pair over your own network, open these settings in the SpecWithCode desktop app on this computer and turn on Network access or Tailscale HTTPS.":
+    "내 네트워크로 페어링하려면 이 컴퓨터의 SpecWithCode 데스크톱 앱에서 이 설정을 열고 네트워크 접근 또는 Tailscale HTTPS를 켜세요.",
+  "To pair over your own network, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first.":
+    "내 네트워크로 페어링하려면 휴대폰에 이 컴퓨터의 주소가 필요합니다. 먼저 네트워크 접근 또는 Tailscale HTTPS를 켜세요.",
+  "Your phone must be able to open this address. Keep this computer awake and online.":
+    "휴대폰에서 이 주소를 열 수 있어야 합니다. 이 컴퓨터를 절전 모드로 두지 말고 온라인 상태로 유지하세요.",
+  "Your phone needs the Tailscale app, signed in to the same Tailscale network as this computer.":
+    "휴대폰에 Tailscale 앱이 필요하며, 이 컴퓨터와 같은 Tailscale 네트워크에 로그인해야 합니다.",
+  "Your phone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
+    "휴대폰이 이 컴퓨터와 같은 Wi-Fi에 있어야 합니다. 어디서나 접속하려면 대신 SpecWithCode Connect에 로그인하세요.",
+  "Add a connection": "연결 추가",
+  "Add connection": "연결 추가",
+  "Click “Add connection” to pair another machine, or connect one from SpecWithCode Connect.":
+    "‘연결 추가’를 눌러 다른 컴퓨터를 페어링하거나 SpecWithCode Connect에서 연결하세요.",
+  "Click “Add connection” to pair another machine.":
+    "‘연결 추가’를 눌러 다른 컴퓨터를 페어링하세요.",
+  "Connect a machine to see its settings and access.":
+    "컴퓨터를 연결하면 해당 설정과 접근 권한을 볼 수 있습니다.",
+  "No machine connected": "연결된 컴퓨터 없음",
+  "No saved connections": "저장된 연결 없음",
+  "Not encrypted: anyone on the same network can capture the sign-in. Turn off and only this machine can open the app. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
+    "암호화되지 않음: 같은 네트워크에 있는 누구나 로그인 정보를 가로챌 수 있습니다. 끄면 이 컴퓨터에서만 앱을 열 수 있습니다. 원격 접속에는 SpecWithCode Connect 또는 Tailscale HTTPS를 사용하세요.",
+  "Pair another machine with this app.": "이 앱으로 다른 컴퓨터를 페어링합니다.",
+  "Run only the WSL backend. Turn off and the Windows backend runs beside it again. SpecWithCode restarts when this changes.":
+    "WSL 백엔드만 실행합니다. 끄면 Windows 백엔드가 다시 함께 실행됩니다. 변경하면 SpecWithCode가 다시 시작됩니다.",
+  "Turn on to reach this machine at an HTTPS address on your tailnet, through Tailscale Serve.":
+    "켜면 Tailscale Serve를 통해 tailnet의 HTTPS 주소로 이 컴퓨터에 접속할 수 있습니다.",
+  "Add your phone": "휴대폰 추가",
+  "Connect: checking…": "Connect: 확인 중…",
+  "Connect: could not check": "Connect: 확인하지 못함",
+  "Connect: linked as {account}": "Connect: {account}(으)로 연결됨",
+  "Connect: not in this build": "Connect: 이 빌드에 없음",
+  "Connect: not signed in": "Connect: 로그인 안 됨",
+  "Connect: off by your team's rules": "Connect: 팀 규칙으로 꺼짐",
+  "Connect: off for this machine": "Connect: 이 컴퓨터에서 꺼짐",
+  "Connect: on": "Connect: 켜짐",
+  "Helper for {machine}": "{machine} 도우미",
+  "Helper for {machine} and {count} more": "{machine} 외 {count}대 도우미",
+  "Not set up": "설정 안 됨",
+  "Other machines: none": "다른 컴퓨터: 없음",
+  "Other machines: {count}": "다른 컴퓨터: {count}대",
+  "Phone: 1 linked": "휴대폰: 1대 연결됨",
+  "Phone: checking…": "휴대폰: 확인 중…",
+  "Phone: none yet": "휴대폰: 아직 없음",
+  "Phone: sign in to see": "휴대폰: 로그인하면 표시됨",
+  "Phones: {count} linked": "휴대폰: {count}대 연결됨",
+  "Turn on SpecWithCode Connect for this machine": "이 컴퓨터에서 SpecWithCode Connect 켜기",
+  "{version}, up to date": "{version}, 최신 상태",
+  "{version}, update to {next} available": "{version}, {next}(으)로 업데이트 가능",
+  "{url}. Turn off and this address stops answering.": "{url}. 끄면 이 주소는 응답하지 않습니다.",
 };

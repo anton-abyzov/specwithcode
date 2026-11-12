@@ -626,5 +626,5 @@ export function pairingLinkBaseUrl(input: {
 
 /** Where to paste the link on the other machine. */
 export function connectBothWaysInstruction(machineLabel: string): string {
-  return `On ${machineLabel}, open Settings > Machines > Advanced routes and saved connections > Add environment > Remote link and paste this link.`;
+  return `On ${machineLabel}, open Settings > Machines > Advanced > Saved connections > Add connection > Remote link and paste this link.`;
 }

@@ -606,15 +606,15 @@ describe("FleetInvitePanel main machine choice", () => {
         { mainMachines: [{ environmentId: "env-m4", label: "M4" }] },
       ),
     );
-    expect(markup).toContain("Main machine environment ID");
+    expect(markup).toContain("Main machine ID");
     expect(markup).toContain("env-typed");
   });
 
   it("asks for an ID only when this app knows no other machine", () => {
-    expect(renderToStaticMarkup(tree([]))).toContain("Main machine environment ID");
+    expect(renderToStaticMarkup(tree([]))).toContain("Main machine ID");
     const known = renderToStaticMarkup(tree([{ environmentId: "env-m4", label: "M4" }]));
     expect(known).toContain("M4");
     expect(known).toContain("Another machine");
-    expect(known).not.toContain("Main machine environment ID");
+    expect(known).not.toContain("Main machine ID");
   });
 });

@@ -407,6 +407,9 @@ export type TimelineDetail = typeof TimelineDetail.Type;
 export const ThreadTimelineDetail = Schema.Record(TrimmedNonEmptyString, TimelineDetail);
 export type ThreadTimelineDetail = typeof ThreadTimelineDetail.Type;
 
+export const MachinePhoneStepDismissed = Schema.Record(TrimmedNonEmptyString, Schema.Boolean);
+export type MachinePhoneStepDismissed = typeof MachinePhoneStepDismissed.Type;
+
 export const DictationLanguage = Schema.String.check(
   Schema.isMaxLength(35),
   Schema.isPattern(/^(?:[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*)?$/),
@@ -446,6 +449,13 @@ export const ClientSettingsSchema = Schema.Struct({
   whatYouCanDoDismissed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** The first-run screen's "Star on GitHub" link was dismissed. Settings > About keeps its own. */
   starOnGitHubDismissed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Settings > Machines: machines whose "Add your phone" step was put off with
+   * Not now, keyed by environment id.
+   */
+  machinePhoneStepDismissed: MachinePhoneStepDismissed.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
@@ -2613,6 +2623,7 @@ export const ClientSettingsPatch = Schema.Struct({
   autoConnectPrivateMachines: Schema.optionalKey(Schema.Boolean),
   whatYouCanDoDismissed: Schema.optionalKey(Schema.Boolean),
   starOnGitHubDismissed: Schema.optionalKey(Schema.Boolean),
+  machinePhoneStepDismissed: Schema.optionalKey(MachinePhoneStepDismissed),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   timelineDetail: Schema.optionalKey(TimelineDetail),

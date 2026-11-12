@@ -10,10 +10,13 @@ import {
 } from "../../src/components/settings/MachinesSettings";
 import { buildMachineRows } from "../../src/components/settings/machinesSettings.logic";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
+import { MachinesPage } from "./page";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
+// `?platform=windows` or `linux`: the system whose fonts, corners and key names the page follows.
+document.documentElement.dataset.platform = params.get("platform") ?? "macos";
 
 const m4 = EnvironmentId.make("env-m4");
 const windows = EnvironmentId.make("env-windows");
@@ -149,15 +152,32 @@ function UpdateCard(props: {
 createRoot(document.getElementById("root")!).render(
   <TooltipProvider>
     <main className="min-h-screen bg-background p-4 text-foreground sm:p-8">
-      {scene?.startsWith("update-pause") ? (
+      {params.get("view") === "page" ? (
+        // `?view=page&state=add-phone`: the whole page in its order; page.tsx lists the states.
+        <MachinesPage
+          hereCard={
+            <MachineRow
+              hereLabel="M4"
+              row={row(0)}
+              pending={null}
+              onConnect={() => undefined}
+              bare
+            />
+          }
+          others={
+            <MachineRow hereLabel="M4" row={row(1)} pending={null} onConnect={() => undefined} />
+          }
+        />
+      ) : scene?.startsWith("update-pause") ? (
         <div className="mx-auto max-w-xl" data-scene={scene}>
           <UpdateCard label="M4" local os="darwin" support="supported" />
           <UpdateCard label="Minisforum" local={false} os="linux" support="unsupported" />
         </div>
       ) : (
         <ul className="mx-auto max-w-3xl divide-y divide-border/60 rounded-xl border">
-          <MachineRow row={row(0)} pending={null} onConnect={() => undefined} />
+          <MachineRow hereLabel="M4" row={row(0)} pending={null} onConnect={() => undefined} />
           <MachineRow
+            hereLabel="M4"
             row={row(1)}
             pending={null}
             onConnect={() => undefined}
