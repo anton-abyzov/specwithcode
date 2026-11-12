@@ -1461,6 +1461,18 @@ export const ProviderLimitWaitUnderMinutes = Schema.Int.check(
 );
 export type ProviderLimitWaitUnderMinutes = typeof ProviderLimitWaitUnderMinutes.Type;
 
+export const DEFAULT_PROVIDER_SESSION_IDLE_MINUTES = 15;
+/**
+ * Minutes after its last activity at which this machine closes an agent
+ * process whose thread has no turn running, no open request and nothing
+ * queued. The thread resumes its native session on its next message. `0`
+ * keeps idle agent processes open.
+ */
+export const ProviderSessionIdleMinutes = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 1440 }),
+);
+export type ProviderSessionIdleMinutes = typeof ProviderSessionIdleMinutes.Type;
+
 /**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
@@ -1839,6 +1851,10 @@ export const ServerSettings = Schema.Struct({
    * of asking the user to pick an unnamed browser. Off keeps Claude in Chrome.
    */
   preferSpecWithCodeBrowser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** A machine-wide choice with no project override; see `ProviderSessionIdleMinutes`. */
+  providerSessionIdleMinutes: ProviderSessionIdleMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_SESSION_IDLE_MINUTES)),
+  ),
   /**
    * Whether this server may install and run Studio's device helper processes.
    * Kept separate from agent access so enabling the user's Device panel does
@@ -2382,6 +2398,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
+  providerSessionIdleMinutes: Schema.optionalKey(ProviderSessionIdleMinutes),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),
   promptSuggestions: Schema.optionalKey(PromptSuggestionsMode),

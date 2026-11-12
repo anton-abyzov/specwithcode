@@ -175,6 +175,20 @@ describe("ServerSettings SpecWithCode Browser preference", () => {
   });
 });
 
+describe("ServerSettings idle agent processes", () => {
+  it("closes idle agent processes after 15 minutes unless the machine says otherwise", () => {
+    expect(DEFAULT_SERVER_SETTINGS.providerSessionIdleMinutes).toBe(15);
+    expect(decodeServerSettings({}).providerSessionIdleMinutes).toBe(15);
+    for (const minutes of [0, 45]) {
+      const choice = { providerSessionIdleMinutes: minutes };
+      expect(encodeServerSettings(decodeServerSettings(choice))).toMatchObject(choice);
+      expect(decodeServerSettingsPatch(choice)).toEqual(choice);
+    }
+    expect(() => decodeServerSettingsPatch({ providerSessionIdleMinutes: -1 })).toThrow();
+    expect(() => decodeServerSettingsPatch({ providerSessionIdleMinutes: 1.5 })).toThrow();
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("requires approval when a runtime default was not configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("approval-required");

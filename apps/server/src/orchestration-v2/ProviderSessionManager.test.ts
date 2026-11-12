@@ -35,7 +35,10 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
@@ -353,6 +356,8 @@ function makeProviderAdapter(
     readonly spawnBeforeOpen?: boolean;
     /** Completed when a hanging scope close reaches its wedged finalizer. */
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    /** Acquired in the session's scope, like the provider's own process. */
+    readonly sessionResource?: Effect.Effect<void, never, Scope.Scope>;
   } = {},
 ): ProviderAdapterV2Shape {
   const countClose = Effect.addFinalizer(() =>
@@ -389,6 +394,9 @@ function makeProviderAdapter(
         }
         if (options.beforeOpen !== undefined) {
           yield* options.beforeOpen(input);
+        }
+        if (options.sessionResource !== undefined) {
+          yield* options.sessionResource;
         }
         if (options.mcpConfigs !== undefined && options.spawnBeforeOpen !== true) {
           yield* Ref.update(options.mcpConfigs, (configs) => [
@@ -506,8 +514,10 @@ function layerAdapterInstances(
 
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly idleTimeoutMs: number;
+  /** Left out, the machine's setting (or the default without one) decides. */
+  readonly idleTimeoutMs?: number;
   readonly maxIdlePinMs?: number;
+  readonly sessionResource?: Effect.Effect<void, never, Scope.Scope>;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
   readonly mcpConfigs?: Ref.Ref<
@@ -582,6 +592,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.sessionResource === undefined ? {} : { sessionResource: input.sessionResource }),
     }),
   );
   const layerConfiguredMcpRegistry =
@@ -605,7 +616,7 @@ function layerTest(input: {
     IdAllocator.layer,
     layerConfiguredMcpRegistry,
     ProviderSessionManager.layerWithOptions({
-      idleTimeoutMs: input.idleTimeoutMs,
+      ...(input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs }),
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
       Layer.provide(
@@ -3384,6 +3395,280 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+/** A thread with an open session, for the idle-window tests below. */
+const openIdleSession = Effect.fn("openIdleSession")(function* (fixtureName: string) {
+  const eventSink = yield* EventSink.EventSinkV2;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const now = yield* DateTime.now;
+  const threadId = yield* idAllocator.allocate.thread({
+    fixtureName,
+    projectId: yield* idAllocator.allocate.project({ fixtureName }),
+  });
+  const providerSessionId = yield* idAllocator.allocate.providerSession({
+    providerInstanceId: modelSelection.instanceId,
+    threadId,
+  });
+  yield* eventSink.write({
+    events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+  });
+  const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+  yield* open;
+  // Reading the session counts as activity, so only ask once it should be gone.
+  const live = manager.get(providerSessionId).pipe(Effect.map(Option.isSome));
+  return { eventSink, idAllocator, manager, now, threadId, providerSessionId, open, live };
+});
+
+it.effect(
+  "ProviderSessionManagerV2 closes an idle session 15 minutes after its last activity and the thread resumes",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = ServerSettings.layerTest({});
+      yield* Effect.gen(function* () {
+        const session = yield* openIdleSession("provider-session-manager-idle-default");
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+
+        yield* TestClock.adjust("10 minutes");
+        // Activity (here the thread opening its live session again) starts the window again.
+        yield* session.open;
+        yield* TestClock.adjust("14 minutes");
+        yield* TestClock.adjust("59 seconds");
+        yield* Effect.yieldNow;
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* session.live);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        const projection = yield* projectionStore.getThreadProjection(session.threadId);
+        assert.equal(projection.providerSessions.at(-1)?.status, "stopped");
+
+        // The next message opens a new process, which resumes the native thread.
+        const runtime = yield* session.open;
+        yield* runtime.resumeThread({
+          providerThread: makeProviderThread({
+            idAllocator: session.idAllocator,
+            threadId: session.threadId,
+            providerSessionId: session.providerSessionId,
+            now: session.now,
+          }),
+          threadId: session.threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.include(yield* Ref.get(state), { openCount: 2, closeCount: 1, resumeCount: 1 });
+        assert.isTrue(yield* session.live);
+      }).pipe(Effect.provide(layerTest({ state, serverSettingsLayer: settings })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps idle sessions while the machine's setting is 0 and follows a change",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = ServerSettings.layerTest({ providerSessionIdleMinutes: 0 });
+      yield* Effect.gen(function* () {
+        const session = yield* openIdleSession("provider-session-manager-idle-off");
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+
+        yield* TestClock.adjust("24 hours");
+        yield* Effect.yieldNow;
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        // Turned on, the setting reaches the session that was already waiting.
+        yield* serverSettings.updateSettings({ providerSessionIdleMinutes: 5 });
+        yield* TestClock.adjust("15 minutes");
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* session.live);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+
+        // A longer window is read when the wait ends, not when it began.
+        yield* session.open;
+        yield* serverSettings.updateSettings({ providerSessionIdleMinutes: 45 });
+        yield* TestClock.adjust("44 minutes");
+        yield* Effect.yieldNow;
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        yield* TestClock.adjust("1 minute");
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* session.live);
+        assert.equal((yield* Ref.get(state)).closeCount, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layerTest({ state, serverSettingsLayer: settings }), settings),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 never idle-closes a session whose thread has an open request",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const session = yield* openIdleSession("provider-session-manager-idle-request");
+        const request = yield* makePendingRuntimeRequestEvents({
+          idAllocator: session.idAllocator,
+          threadId: session.threadId,
+          providerSessionId: session.providerSessionId,
+          providerThread: makeProviderThread({
+            idAllocator: session.idAllocator,
+            threadId: session.threadId,
+            providerSessionId: session.providerSessionId,
+            now: session.now,
+          }),
+          now: session.now,
+        });
+        yield* session.eventSink.write({ events: request.events });
+
+        // Far past the pin cap: a request is not a pin.
+        yield* TestClock.adjust("1 hour");
+        yield* Effect.yieldNow;
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        const pending = request.events.find((event) => event.type === "runtime-request.updated");
+        assert.isDefined(pending);
+        if (pending === undefined) return;
+        const resolvedAt = yield* DateTime.now;
+        yield* session.eventSink.write({
+          events: [
+            {
+              ...pending,
+              id: yield* session.idAllocator.allocate.event({ threadId: session.threadId }),
+              occurredAt: resolvedAt,
+              payload: { ...pending.payload, status: "resolved" as const, resolvedAt },
+            },
+          ],
+        });
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* session.live);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, maxIdlePinMs: 3000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 never idle-closes a session whose thread has a queued turn",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const session = yield* openIdleSession("provider-session-manager-idle-queue");
+        const runId = session.idAllocator.derive.run({ threadId: session.threadId, ordinal: 1 });
+        const queued = {
+          id: runId,
+          threadId: session.threadId,
+          ordinal: 1,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: yield* session.idAllocator.allocate.message({
+            threadId: session.threadId,
+            ordinal: 1,
+          }),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "queued" as const,
+          queueHeld: true,
+          requestedAt: session.now,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        yield* session.eventSink.write({
+          events: [
+            {
+              id: yield* session.idAllocator.allocate.event({ threadId: session.threadId }),
+              type: "run.created",
+              threadId: session.threadId,
+              runId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: session.now,
+              payload: queued,
+            },
+          ],
+        });
+
+        yield* TestClock.adjust("1 hour");
+        yield* Effect.yieldNow;
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        const cancelledAt = yield* DateTime.now;
+        yield* session.eventSink.write({
+          events: [
+            {
+              id: yield* session.idAllocator.allocate.event({ threadId: session.threadId }),
+              type: "run.updated",
+              threadId: session.threadId,
+              occurredAt: cancelledAt,
+              payload: {
+                ...queued,
+                status: "cancelled" as const,
+                queueHeld: false,
+                completedAt: cancelledAt,
+              },
+            },
+          ],
+        });
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* session.live);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, maxIdlePinMs: 3000 })));
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 leaves no process of an idle-closed session running", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const spawner = yield* Effect.gen(function* () {
+      return yield* ChildProcessSpawner.ChildProcessSpawner;
+    }).pipe(Effect.provide(NodeServices.layer));
+    const pids: number[] = [];
+    const exited = yield* Deferred.make<void>();
+    // A real child in the session's scope, as an agent CLI is.
+    const sessionResource = spawner
+      .spawn(ChildProcess.make(process.execPath, ["-e", "setInterval(() => {}, 1000)"]))
+      .pipe(
+        Effect.tap((child) => Effect.sync(() => pids.push(Number(child.pid)))),
+        Effect.tap((child) =>
+          child.exitCode.pipe(
+            Effect.exit,
+            Effect.andThen(Deferred.succeed(exited, undefined)),
+            Effect.forkDetach,
+          ),
+        ),
+        Effect.asVoid,
+        Effect.orDie,
+      );
+    const running = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    yield* Effect.gen(function* () {
+      const session = yield* openIdleSession("provider-session-manager-idle-process");
+      assert.equal(pids.length, 1);
+      assert.isTrue(running(pids[0]!));
+
+      yield* TestClock.adjust("15 minutes");
+      yield* Effect.yieldNow;
+      assert.isFalse(yield* session.live);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      // Only the release ends this child: nothing else signals it.
+      yield* Deferred.await(exited);
+      assert.isFalse(running(pids[0]!));
+    }).pipe(Effect.provide(layerTest({ state, sessionResource })));
   }),
 );
 
