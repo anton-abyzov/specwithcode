@@ -4551,4 +4551,13 @@ export const ja: PhraseCatalog = {
   "Older releases were not counted.": "古いリリースは含まれていません。",
   "Installs from npm could not be read.": "npm からのインストール数を読み取れませんでした。",
   "Installs from npm": "npm からのインストール",
+  "View this project on": "このプロジェクトを表示するマシン",
+  "Move to {machine}…": "{machine} に移動…",
+  "Start a coordinator on {machine}": "{machine} でコーディネーターを開始",
+  "Machine access settings": "マシンのアクセス設定",
+  "{machine} offline": "{machine} はオフライン",
+  "workers only": "ワーカーのみ",
+  "move pending": "移動の確認待ち",
+  "separate project": "別のプロジェクト",
+  "not synced here": "ここでは未同期",
 };

@@ -68,7 +68,7 @@ const item = (role: string, text: string) =>
 it("keeps viewing, moving and starting as separate actions", async () => {
   const calls = handlers();
   await renderSwitcher(calls);
-  await act(async () => item("menuitemradio", "View Minis's orchestrator")!.click());
+  await act(async () => item("menuitemradio", "Minis")!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
   expect(calls.onMove).not.toHaveBeenCalled();
   expect(calls.onStart).not.toHaveBeenCalled();
@@ -81,7 +81,7 @@ it("switches the view only after its menu has closed", async () => {
     menuOpenAtSwitch.push(document.querySelector('[role="menu"]') !== null),
   );
   await renderSwitcher(calls);
-  await act(async () => item("menuitemradio", "View Minis's orchestrator")!.click());
+  await act(async () => item("menuitemradio", "Minis")!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledTimes(1));
   expect(menuOpenAtSwitch).toEqual([false]);
 });
@@ -89,7 +89,7 @@ it("switches the view only after its menu has closed", async () => {
 it("moves the coordinator only from its own item", async () => {
   const calls = handlers();
   await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Move coordinator to Minis")!.click());
+  await act(async () => item("menuitem", "Move to Minis…")!.click());
   expect(calls.onMove).toHaveBeenCalledWith("minis:p");
   expect(calls.onView).not.toHaveBeenCalled();
 });
@@ -109,7 +109,7 @@ it("opens thread migration as its own action, after the menu closes", async () =
     menuOpenAtMigrate.push(document.querySelector('[role="menu"]') !== null),
   );
   await renderSwitcher({ ...calls, onMigrate });
-  await act(async () => item("menuitem", "Move M4's running threads…")!.click());
+  await act(async () => item("menuitem", "Move running threads…")!.click());
   await vi.waitFor(() => expect(onMigrate).toHaveBeenCalledTimes(1));
   expect(menuOpenAtMigrate).toEqual([false]);
   expect(calls.onView).not.toHaveBeenCalled();
@@ -119,9 +119,9 @@ it("opens thread migration as its own action, after the menu closes", async () =
 
 it("leaves thread migration off while the viewed machine is unreachable", async () => {
   await renderSwitcher(handlers());
-  const migrate = item("menuitem", "Move M4's running threads…");
+  const migrate = item("menuitem", "Move running threads…");
   expect(migrate?.getAttribute("aria-disabled")).toBe("true");
-  expect(migrate?.textContent).toBe("Move M4's running threads… (M4 offline)");
+  expect(migrate?.textContent).toBe("Move running threads…M4 offline");
 });
 
 it("lists a linked machine never synced here as Unknown", async () => {
@@ -132,7 +132,7 @@ it("lists a linked machine never synced here as Unknown", async () => {
     unknown: [{ key: "minis:p", machine: "Minis" }],
   });
   const unknown = item("menuitemradio", "Minis");
-  expect(unknown?.textContent).toContain("Unknown");
+  expect(unknown?.textContent).toBe("Minisnot synced here");
   await act(async () => unknown!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
 });
@@ -239,13 +239,38 @@ it("offers Add, Move and Leave in one machine menu, even with one copy", async (
       .querySelector<HTMLButtonElement>(`[aria-label="M4: this project's machines"]`)!
       .click(),
   );
-  expect(item("menuitemradio", "orchestrator")).toBeUndefined();
+  expect(document.querySelector('[role="menuitemradio"]')).toBeNull();
   expect(item("menuitem", "Add to another machine…")).toBeDefined();
   expect(item("menuitem", "Leave this machine…")).toBeDefined();
   await act(async () => item("menuitem", "Move to another machine…")!.click());
   await vi.waitFor(() => expect(onMoveElsewhere).toHaveBeenCalledTimes(1));
   expect(onAdd).not.toHaveBeenCalled();
   expect(onLeave).not.toHaveBeenCalled();
+});
+
+it("names machines once and labels every group of actions", async () => {
+  const calls = handlers();
+  await renderSwitcher({ ...calls, onAdd: vi.fn(), onMoveElsewhere: vi.fn(), onLeave: vi.fn() });
+  expect(
+    [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
+  ).toEqual(["M4", "Minisworkers only"]);
+  expect(
+    [...document.querySelectorAll('[data-slot="menu-label"]')].map((row) => row.textContent),
+  ).toEqual(["View this project on", "This project", "On M4"]);
+  expect([...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)).toEqual(
+    [
+      "Add to another machine…",
+      "Move to Minis…",
+      "Move to another machine…",
+      "Start a coordinator on Minis",
+      "Move running threads…M4 offline",
+      "Leave this machine…",
+      "Machine access settings",
+    ],
+  );
+  expect(document.querySelector('[role="menu"]')?.textContent).not.toMatch(/orchestrator/i);
+  await act(async () => item("menuitem", "Machine access settings")!.click());
+  expect(calls.onAllowWorkers).toHaveBeenCalledTimes(1);
 });
 
 it("stays a plain label with one copy and no machine actions", async () => {

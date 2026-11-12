@@ -4577,4 +4577,13 @@ export const de: PhraseCatalog = {
   "Installs from npm could not be read.":
     "Die Installationen über npm konnten nicht gelesen werden.",
   "Installs from npm": "Installationen über npm",
+  "View this project on": "Projekt ansehen auf",
+  "Move to {machine}…": "Auf {machine} verschieben…",
+  "Start a coordinator on {machine}": "Koordinator auf {machine} starten",
+  "Machine access settings": "Zugriffseinstellungen der Rechner",
+  "{machine} offline": "{machine} offline",
+  "workers only": "nur Worker",
+  "move pending": "Umzug ausstehend",
+  "separate project": "eigenes Projekt",
+  "not synced here": "hier nicht synchronisiert",
 };
