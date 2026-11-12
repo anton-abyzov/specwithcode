@@ -328,6 +328,8 @@ export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
 
 export const MACHINE_NICKNAME_MAX_LENGTH = 16;
+/** A machine's short label ("M4", "LM"), what a chip keeps when it runs out of room. */
+export const MACHINE_SHORT_NAME_MAX_LENGTH = 3;
 
 /**
  * The eight hues a machine can wear. An id, never a hex: each theme maps it to
@@ -351,13 +353,18 @@ export type MachineColorId = typeof MachineColorId.Type;
  * empty name means "use the default short name"; it still carries a stamp so
  * a reset wins over an older rename. `color` and `icon` are absent until
  * someone picks them (a default then follows from the machine's id and kind),
- * and a value a build does not know decodes as absent.
+ * and a value a build does not know decodes as absent. `short` is the label a
+ * chip keeps when it runs out of room; absent or empty means a fleet-unique
+ * abbreviation of the name.
  */
 export const MachineNickname = Schema.Struct({
   name: Schema.String.check(Schema.isMaxLength(MACHINE_NICKNAME_MAX_LENGTH)),
   updatedAt: Schema.String.check(Schema.isMaxLength(64)),
   color: ForwardCompatibleOptional(MachineColorId),
   icon: ForwardCompatibleOptional(EnvironmentMachineKind),
+  short: ForwardCompatibleOptional(
+    Schema.String.check(Schema.isMaxLength(MACHINE_SHORT_NAME_MAX_LENGTH)),
+  ),
 });
 export type MachineNickname = typeof MachineNickname.Type;
 

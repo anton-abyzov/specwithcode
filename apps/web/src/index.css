@@ -2564,6 +2564,27 @@ video.artifact-viewer-media {
 .machine-chip[data-machine-color]:hover {
   background: color-mix(in srgb, var(--machine) 20%, transparent);
 }
+/* A machine chip out of room: the icon and name step aside, keeping their width so the
+   row's fit stays the same, and the short label ("M4", "LM") shows in the same tint.
+   The chip never shrinks to the icon alone; its tooltip and accessible name stay full. */
+[data-machine-short] {
+  display: none;
+}
+[data-machine-compact] {
+  position: relative;
+}
+[data-machine-compact] [data-machine-full] {
+  visibility: hidden;
+}
+[data-machine-compact] [data-machine-short] {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  display: flex;
+  align-items: center;
+  padding-inline-start: inherit;
+  white-space: nowrap;
+}
 /* A machine's name in its color where a chip would be too much (thread and sidebar rows). */
 .machine-mark[data-machine-color] {
   color: var(--machine-text);

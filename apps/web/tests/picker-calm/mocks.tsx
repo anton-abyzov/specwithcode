@@ -70,6 +70,10 @@ export const environmentServerConfigsAtom = Atom.make(
   new Map([
     ["env-m4", machine("env-m4", "Fixture MacBook", "laptop", nicknames)],
     ["env-m1", machine("env-m1", "Fixture mini", "mac-mini", nicknames)],
+    // The narrow-chip scene adds a machine with a long name and no nickname.
+    ...(new URLSearchParams(location.search).get("scene") === "machines"
+      ? [["env-lm", machine("env-lm", "linux-mini", "server", nicknames)] as const]
+      : []),
   ]),
 );
 // The window in the fixture belongs to M4.

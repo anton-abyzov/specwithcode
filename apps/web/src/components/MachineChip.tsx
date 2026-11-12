@@ -3,36 +3,50 @@ import type { ComponentProps } from "react";
 import { cn } from "~/lib/utils";
 import { machineColorProps, type MachineIdentity } from "../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { useMachineNameFit } from "./machineNameFit";
 
 /**
- * A machine as a chip: its icon and name in its color. The name can be hidden
- * (`iconOnly`) where the chip has shrunk; the accessible name still says it.
+ * A machine as a chip: its icon and name in its color. Where the chip has
+ * shrunk too far to read the name, the icon and name give way to the machine's
+ * short label ("M4", "LM"), never the icon alone; the accessible name still
+ * says it in full.
  */
 export function MachineChip({
   identity,
-  iconOnly = false,
   label,
   className,
   ...props
 }: Omit<ComponentProps<"span">, "children"> & {
   readonly identity: MachineIdentity;
-  readonly iconOnly?: boolean;
   /** What the chip says in full, for assistive technology ("Runs on M1"). */
   readonly label?: string;
 }) {
+  const text = label ?? identity.name;
+  const fit = useMachineNameFit<HTMLSpanElement>(text);
   return (
     <span
       {...machineColorProps(identity)}
       data-machine-chip={identity.environmentId}
+      {...(fit.compact ? { "data-machine-compact": "" } : {})}
       className={cn(
-        "machine-chip inline-flex h-6 max-w-40 min-w-0 shrink-0 items-center gap-1.5 rounded-full ps-1.5 pe-2 text-xs font-semibold",
-        iconOnly && "pe-1.5",
+        "machine-chip inline-flex h-6 max-w-40 min-w-10 shrink-0 items-center gap-1.5 rounded-full ps-1.5 pe-2 text-xs font-semibold",
         className,
       )}
       {...props}
     >
-      <EnvironmentMachineIcon kind={identity.icon} className="size-3.5 shrink-0" aria-hidden />
-      <span className={iconOnly ? "sr-only" : "min-w-0 truncate"}>{label ?? identity.name}</span>
+      <EnvironmentMachineIcon
+        kind={identity.icon}
+        className="size-3.5 shrink-0"
+        aria-hidden
+        data-machine-full=""
+      />
+      <span ref={fit.ref} className="min-w-0 truncate" data-machine-full="">
+        {text}
+      </span>
+      {fit.compact ? <span className="sr-only">{text}</span> : null}
+      <span aria-hidden data-machine-short="">
+        {identity.short}
+      </span>
     </span>
   );
 }

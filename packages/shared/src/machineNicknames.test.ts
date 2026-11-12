@@ -106,6 +106,22 @@ describe("machine nicknames", () => {
       expect(sameMachineNicknames({ m4: colored }, { m4: { ...colored } })).toBe(true);
     });
 
+    it("keeps a short label through a merge with an entry that states none", () => {
+      const labelled = { ...colored, short: "LM" };
+      expect(newerMachineNickname(labelled, at("M4", stamp))).toBe(labelled);
+      expect(newerMachineNickname(labelled, at("Desk", "2026-11-10T22:00:00.000Z"))).toEqual({
+        ...at("Desk", "2026-11-10T22:00:00.000Z"),
+        color: "violet",
+        icon: "laptop",
+        short: "LM",
+      });
+      expect(sameMachineNicknames({ m4: labelled }, { m4: colored })).toBe(false);
+      // A label longer than a build allows decodes as absent, keeping the rest.
+      expect(
+        Schema.decodeUnknownSync(MachineNicknames)({ m4: { ...labelled, short: "LONG" } }).m4,
+      ).toEqual(colored);
+    });
+
     it("decodes a color this build does not know as absent, keeping the name", () => {
       const decoded = Schema.decodeUnknownSync(MachineNicknames)({
         m4: { name: "M4", updatedAt: stamp, color: "ultraviolet", icon: "hologram" },

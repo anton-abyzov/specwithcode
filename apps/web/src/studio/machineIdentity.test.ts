@@ -47,7 +47,22 @@ describe("resolveMachineIdentities", () => {
       name: "M1",
       color: "teal",
       icon: "desktop",
+      short: "M1",
     });
+  });
+
+  it("gives every machine a short label of its own, or the one chosen for it", () => {
+    const resolve = resolveMachineIdentities({ nicknames: {}, labels, kinds });
+    const shorts = [...labels.keys()].map((id) => resolve(id).short);
+    expect(new Set(shorts).size).toBe(3);
+    for (const short of shorts) expect(short.length).toBeGreaterThanOrEqual(2);
+    const chosen = resolveMachineIdentities({
+      nicknames: { "env-m3": { name: "", updatedAt: "2026-11-10T21:00:00.000Z", short: "ST" } },
+      labels,
+      kinds,
+    });
+    expect(chosen("env-m3").short).toBe("ST");
+    expect(chosen("env-unknown", "linux-mini").short).toBe("LM");
   });
 
   it("gives a machine it has never seen a color without changing the others", () => {
@@ -75,6 +90,21 @@ describe("machineIdentityPatch", () => {
     });
     const merged = mergeMachineNicknames(current, patch.machineNicknames);
     expect(merged["env-m4"]?.color).toBe("violet");
+    // A short label is written only when one is given, and a merge keeps it.
+    const withShort = machineIdentityPatch(
+      merged,
+      "env-m4",
+      { name: "M4", color: "violet", icon: "laptop", short: " M 4X " },
+      NOW + 1,
+    );
+    expect(withShort.machineNicknames["env-m4"]?.short).toBe("M4X");
+    const kept = machineIdentityPatch(
+      mergeMachineNicknames(merged, withShort.machineNicknames),
+      "env-m4",
+      { name: "Desk", color: "violet", icon: "laptop" },
+      NOW + 2,
+    );
+    expect(kept.machineNicknames["env-m4"]?.short).toBe("M4X");
     // A paired machine on an older build answers with the entry stripped: nothing is lost.
     expect(
       mergeMachineNicknames(merged, {

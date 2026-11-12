@@ -3,14 +3,20 @@ import { useTx } from "../../i18n";
 import {
   ENVIRONMENT_MACHINE_KINDS,
   MACHINE_NICKNAME_MAX_LENGTH,
+  MACHINE_SHORT_NAME_MAX_LENGTH,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
-import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
+import {
+  normalizeMachineNickname,
+  normalizeMachineShortName,
+} from "@specweave-studio/shared/machineNicknames";
+import { MACHINE_SHORT_LABEL_MIN_LENGTH } from "@specweave-studio/shared/machineShortLabel";
 import { useEffect, useId, useState } from "react";
 
 import {
   renameMachineLockText,
   useCustomMachineNickname,
+  useMachineNameSources,
   useMachineNicknames,
 } from "../../studio/machineNickname";
 import {
@@ -37,7 +43,8 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 
 /**
- * Gives a machine a short name of up to 16 characters, a color and an icon.
+ * Gives a machine a short name of up to 16 characters, a color, an icon and
+ * the two or three characters its chip keeps when it runs out of room.
  * They are saved against the machine's id, so renaming the computer or
  * reconnecting it under another address keeps them, and every paired machine
  * shows the same name, color and icon.
@@ -56,6 +63,8 @@ export function RenameMachineDialog({
   const tx = useTx();
   const fieldId = useId();
   const countId = useId();
+  const shortId = useId();
+  const shortHintId = useId();
   const resolve = useMachineNicknames();
   const custom = useCustomMachineNickname(environmentId);
   const { lock, saveIdentity } = useRenameMachine();
@@ -67,8 +76,12 @@ export function RenameMachineDialog({
   const defaultName = shortMachineName(hostLabel).slice(0, MACHINE_NICKNAME_MAX_LENGTH);
   const current = environmentId ? resolve(environmentId, hostLabel) : defaultName;
   const [value, setValue] = useState(current);
+  const { nicknames } = useMachineNameSources();
+  const storedShort = (environmentId ? nicknames[environmentId]?.short : undefined) ?? "";
+  const [shortValue, setShortValue] = useState(storedShort);
   useEffect(() => {
     if (open) setValue(current);
+    if (open) setShortValue(storedShort);
     if (open && identity) {
       setColor(identity.color);
       setIcon(identity.icon);
@@ -78,13 +91,24 @@ export function RenameMachineDialog({
   }, [open]);
   const next = normalizeMachineNickname(value);
   const lockText = renameMachineLockText(lock);
-  const looksChanged = identity !== null && (color !== identity.color || icon !== identity.icon);
+  const nextShort = normalizeMachineShortName(shortValue);
+  const shortValid = nextShort === "" || [...nextShort].length >= MACHINE_SHORT_LABEL_MIN_LENGTH;
+  const looksChanged =
+    identity !== null &&
+    (color !== identity.color || icon !== identity.icon || nextShort !== storedShort);
   const canSave =
-    environmentId !== null && lock === null && next !== "" && (next !== current || looksChanged);
+    environmentId !== null &&
+    lock === null &&
+    next !== "" &&
+    shortValid &&
+    (next !== current || looksChanged);
   const save = (name: string) => {
     // The default name is kept as "no nickname", so a host rename still shows through.
     const saved = name === defaultName && custom === null ? "" : name;
-    if (environmentId === null || !saveIdentity(environmentId, { name: saved, color, icon })) {
+    if (
+      environmentId === null ||
+      !saveIdentity(environmentId, { name: saved, color, icon, short: nextShort })
+    ) {
       return;
     }
     onOpenChange(false);
@@ -125,6 +149,28 @@ export function RenameMachineDialog({
               onChange={(event) => setValue(event.target.value)}
             />
             <CharacterCount id={countId} value={value} max={MACHINE_NICKNAME_MAX_LENGTH} />
+            <Label htmlFor={shortId} className="mt-2">
+              {tx("Short label")}
+            </Label>
+            <Input
+              id={shortId}
+              className="w-24"
+              value={shortValue}
+              maxLength={MACHINE_SHORT_NAME_MAX_LENGTH}
+              placeholder={identity?.short ?? ""}
+              aria-describedby={shortHintId}
+              aria-invalid={!shortValid || undefined}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={lock !== null}
+              data-machine-short-input=""
+              onChange={(event) => setShortValue(event.target.value)}
+            />
+            <p id={shortHintId} className="text-muted-foreground text-xs">
+              {shortValid
+                ? tx("2 or 3 characters a narrow chip shows instead of the icon.")
+                : tx("Use 2 or 3 characters.")}
+            </p>
             <span id={colorId} className="mt-2 text-sm font-medium">
               {tx("Color")}
             </span>
