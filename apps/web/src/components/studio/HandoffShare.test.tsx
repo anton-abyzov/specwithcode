@@ -251,3 +251,40 @@ it("keeps old-source discovery and truncated lists explicitly uncertain", async 
   expect(container.textContent).toContain("Check in transfer review");
   expect(container.textContent).toContain("list is incomplete");
 });
+
+const tick = (label: string) =>
+  [...container.querySelectorAll("label")]
+    .find((item) => item.textContent?.startsWith(label))
+    ?.querySelector<HTMLElement>('[role="checkbox"]');
+
+it("says ignored files and secrets stay behind, with both ticks off", async () => {
+  await show();
+  expect(container.textContent).toContain(
+    "Files Git ignores and secret files, such as .env, stay on M4",
+  );
+  expect(tick("Copy ignored files")?.getAttribute("aria-checked")).toBe("false");
+  expect(tick("Include secrets")?.getAttribute("aria-checked")).toBe("false");
+});
+
+it("sends ignored files with the clone when ticked", async () => {
+  await show();
+  await act(async () => tick("Copy ignored files")!.click());
+  await act(async () => button("Add Ministorm")!.click());
+  expect(state.job).toHaveBeenCalledWith(
+    expect.objectContaining({ copyIgnored: true, secrets: [] }),
+  );
+});
+
+it("opens the full review to pick secrets when Include secrets is ticked", async () => {
+  await show();
+  await act(async () => tick("Include secrets")!.click());
+  await act(async () => button("Add Ministorm")!.click());
+  expect(base.onNeedsFolderChoice).toHaveBeenCalledOnce();
+  expect(state.clone).not.toHaveBeenCalled();
+  expect(state.job).not.toHaveBeenCalled();
+});
+
+it("shows no extras ticks once the machine has the project", async () => {
+  await show({ linked: true });
+  expect(tick("Copy ignored files")).toBeUndefined();
+});

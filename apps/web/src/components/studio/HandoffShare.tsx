@@ -17,6 +17,7 @@ import {
   cloneUrlsFor,
   defaultDestinationFolder,
   destinationPlan,
+  IGNORED_FILES_NOTE,
   listAddToMachineJobs,
   writeAddToMachineJob,
 } from "~/studio/addToMachine";
@@ -99,6 +100,9 @@ export function HandoffShare({
     reportFailure: false,
   });
   const [alsoMove, setAlsoMove] = useState(false);
+  // Git carries tracked files only; these two send the rest, and both start off.
+  const [copyIgnored, setCopyIgnored] = useState(false);
+  const [includeSecrets, setIncludeSecrets] = useState(false);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState<EnvironmentId | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -145,6 +149,11 @@ export function HandoffShare({
 
   const add = async () => {
     if (!machine || !machineLabel || remoteUrl === null) return;
+    // Secret files are picked one by one, in the full Add to another machine review.
+    if (includeSecrets) {
+      onNeedsFolderChoice();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -191,7 +200,7 @@ export function HandoffShare({
           workspaceRoot: project.workspaceRoot,
         },
         destination: { environmentId: machine, projectId, workspaceRoot: inspected.path },
-        copyIgnored: false,
+        copyIgnored,
         secrets: [],
         createdAt: new Date().toISOString(),
       });
@@ -259,6 +268,28 @@ export function HandoffShare({
         </p>
       )}
       {machineLabel && !linked && remoteUrl !== null && !justAdded && (
+        <div className="space-y-2" data-slot="handoff-share-extras">
+          <p className="wrap-anywhere text-sm text-muted-foreground">
+            Files Git ignores and secret files, such as .env, stay on {sourceLabel} unless you send
+            them.
+          </p>
+          <ShareTick
+            checked={copyIgnored}
+            disabled={busy || includeSecrets}
+            onChange={setCopyIgnored}
+            label="Copy ignored files"
+            note={IGNORED_FILES_NOTE}
+          />
+          <ShareTick
+            checked={includeSecrets}
+            disabled={busy}
+            onChange={setIncludeSecrets}
+            label="Include secrets"
+            note="Add opens the full review, where you pick the secret files and ignored files to send."
+          />
+        </div>
+      )}
+      {machineLabel && !linked && remoteUrl !== null && !justAdded && (
         <label className="flex items-start gap-2 text-sm" data-slot="handoff-share-move">
           <span className="flex h-5 shrink-0 items-center">
             <Checkbox
@@ -318,5 +349,35 @@ export function HandoffShare({
         </Button>
       </HandoffCopyActions>
     </div>
+  );
+}
+
+function ShareTick({
+  checked,
+  disabled,
+  onChange,
+  label,
+  note,
+}: {
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onChange: (checked: boolean) => void;
+  readonly label: string;
+  readonly note: string;
+}) {
+  return (
+    <label className="flex items-start gap-2 text-sm">
+      <span className="flex h-5 shrink-0 items-center">
+        <Checkbox
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={(value) => onChange(value === true)}
+        />
+      </span>
+      <span className="min-w-0 wrap-anywhere leading-5">
+        {label}
+        <span className="block text-xs text-muted-foreground">{note}</span>
+      </span>
+    </label>
   );
 }
