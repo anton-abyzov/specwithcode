@@ -2178,6 +2178,8 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 }
 .sws-composer-meta {
   min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
   flex: 1 1 auto;
   display: flex;
   align-items: center;
@@ -2325,7 +2327,7 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   cursor: not-allowed;
 }
 @media (max-width: 900px) {
-  .sws-host {
+  .sws-host:not(.sws-execution-control) {
     display: none;
   }
   .sws-composer-meta {
@@ -3636,4 +3638,11 @@ html.dark[data-theme-id]:not([data-theme-id=""])
     outline: 2px solid var(--ring);
     outline-offset: 1px;
   }
+}
+
+/* The execution picker is the only machine control, including on phones. */
+.sws-host.sws-execution-control {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 15rem;
 }

@@ -31,7 +31,8 @@ it("names each orchestrator by its nickname, as typed", async () => {
   await act(async () =>
     root.render(<ProjectWorkspace projectKey="atlas" onSelectCheckout={vi.fn()} />),
   );
-  expect(container.querySelector(".sws-host-name")?.textContent).toBe("Studio M4");
+  expect(container.querySelector(".sws-host-name")?.textContent).toBe("Runs on Studio M4");
+  expect(container.querySelectorAll("[data-coordinator-machine]")).toHaveLength(1);
   await act(async () =>
     container.querySelector<HTMLButtonElement>('[aria-label^="Viewing Studio M4"]')!.click(),
   );
