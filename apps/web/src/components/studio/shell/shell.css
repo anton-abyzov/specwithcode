@@ -2855,6 +2855,16 @@ html.dark[data-theme-id]:not([data-theme-id=""])
     display: inline;
   }
 }
+/* The criteria count goes before the increment number; the tooltip keeps it. */
+@container rowmeta (width < 420px) {
+  .sws-thread-plan-ac {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
 @container rowmeta (width < 360px) {
   .sws-thread-plan-id {
     position: absolute;
