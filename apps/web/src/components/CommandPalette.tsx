@@ -22,7 +22,6 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
-  getNewProjectGitHubRepository,
   getNewProjectGitHubTarget,
   getNewProjectPathPreview,
   normalizePastedCloneUrl,
@@ -162,12 +161,17 @@ import {
   type NewProjectKind,
 } from "../studio/projectCreation";
 import {
+  newProjectGitHubRowNote,
+  projectMachineUnavailableReason,
+} from "../studio/newProjectAvailability";
+import {
   projectCreationGroups,
   projectMachineGroup,
   ProjectCreationPreview,
   AddExistingProjectLink,
   ProjectMachineChoice,
   SpecweaveSetupDetails,
+  newProjectGitHubRow,
 } from "./studio/ProjectCreation";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
@@ -328,6 +332,7 @@ interface AddProjectEnvironmentOption {
   readonly machine: EnvironmentMachineKind;
   readonly isPrimary: boolean;
   readonly isConnected: boolean;
+  readonly canOperate: boolean;
   readonly status: string;
 }
 
@@ -1283,6 +1288,7 @@ function OpenCommandPaletteDialog(props: {
         isConnected:
           canCreateProjectInEnvironment(environment.connection.phase) &&
           readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope),
+        canOperate: readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope),
         status: readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope)
           ? environmentConnectionStatusText(
               environment.connection,
@@ -3330,7 +3336,9 @@ function OpenCommandPaletteDialog(props: {
           ? { parentPath: folderChoice.path }
           : {}),
         github:
-          newProjectFlow.kind === "code" && newProjectPublishesToGitHub
+          newProjectFlow.kind === "code" &&
+          newProjectPublishesToGitHub &&
+          folderChoice.outcome?.kind !== "use"
             ? newProjectGitHubTarget
             : null,
         specweave:
@@ -3611,6 +3619,13 @@ function OpenCommandPaletteDialog(props: {
             label: option.label,
             isPrimary: option.environmentId === thisDeviceEnvironmentId,
             isConnected: option.isConnected,
+            unavailableReason: projectMachineUnavailableReason({
+              online: option.isConnected,
+              status: option.status,
+              canOperate: option.canOperate,
+              supportsCreate:
+                newProjectFlow.kind !== "code" || newProjectsRootFor(option.environmentId) !== null,
+            }),
             icon: <EnvironmentMachineIcon kind={option.machine} className="size-3.5" />,
           }));
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
@@ -3618,16 +3633,20 @@ function OpenCommandPaletteDialog(props: {
     displayedGroups = projectCreationGroups({
       kind: newProjectFlow.kind,
       busy: isCreatingNewProject,
-      github:
-        newProjectGitHubTarget && newProjectPathPreview
-          ? {
-              description: newProjectName
-                ? getNewProjectGitHubRepository(newProjectGitHubTarget, newProjectPathPreview)
-                : (newProjectGitHubTarget.account ?? "Your GitHub account"),
-              checked: newProjectPublishesToGitHub,
-              toggle: () => setNewProjectPublishesToGitHub((value) => !value),
-            }
-          : null,
+      github: newProjectGitHubRow({
+        target: newProjectGitHubTarget,
+        pathPreview: newProjectPathPreview,
+        name: newProjectName,
+        unavailable: newProjectGitHubRowNote({
+          hasTarget: newProjectGitHubTarget !== null,
+          usesExistingFolder: folderChoice.outcome?.kind === "use",
+          discovery: sourceControlDiscovery.data ?? null,
+          pending: sourceControlDiscovery.isPending,
+          machine: newProjectEnvironmentLabel ?? "this machine",
+        }),
+        checked: newProjectPublishesToGitHub,
+        toggle: () => setNewProjectPublishesToGitHub((value) => !value),
+      }),
       specweave: newProjectSupportsSpecweave
         ? {
             checked: newProjectUsesSpecweave,
@@ -4144,7 +4163,10 @@ function OpenCommandPaletteDialog(props: {
             }
           : isAddFolder
             ? { startAddon: <FolderPlusIcon /> }
-            : {}),
+            : newProjectFlow !== null
+              ? // A name field, not a search: no magnifier.
+                { startAddon: <FolderGit2Icon /> }
+              : {}),
         ...(isAddFolder
           ? { "aria-label": "Folder path", onPaste: addFolder.bar.onPaste, ...addFolder.bar.aria }
           : {}),

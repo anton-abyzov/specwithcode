@@ -1080,3 +1080,126 @@ it.effect("inspects a clone destination without reading a parent repository", ()
     ),
   ),
 );
+
+it.effect("says why GitHub refused to create the repository, without its raw text", () =>
+  Effect.gen(function* () {
+    const cases = [
+      [{ _tag: "GitHubCliAuthenticationError" }, "not_signed_in", "gh auth login"],
+      [{ _tag: "GitHubCliUnavailableError" }, "not_signed_in", "gh auth login"],
+      [{ _tag: "GitHubCliCommandError", httpStatus: 422 }, "name_taken", "already exists"],
+      [
+        { _tag: "GitHubCliCommandError", httpStatus: 422 },
+        "name_taken",
+        "or the name is not allowed",
+      ],
+      [
+        {
+          _tag: "GitHubCliCommandError",
+          httpStatus: 422,
+          message: "name already exists on this account",
+        },
+        "name_taken",
+        "already exists in the octocat account. Rename",
+      ],
+      [{ _tag: "GitHubCliCommandError", httpStatus: 403 }, "no_permission", "may not create"],
+      [{ _tag: "GitHubPullRequestNotFoundError" }, "no_permission", "the octocat account"],
+      [
+        { _tag: "GitHubCliCommandError", cause: { _tag: "GitHubApiRequestError" } },
+        "network",
+        "could not reach GitHub",
+      ],
+    ] as const;
+    for (const [providerCause, reason, words] of cases) {
+      const provider = makeProvider({
+        createRepository: () =>
+          Effect.fail(
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "createRepository",
+              cwd: "/workspace",
+              detail: "credential token abc123 was rejected",
+              cause: providerCause,
+            }),
+          ),
+      });
+      const error = yield* Effect.flip(
+        SourceControlRepositoryService.SourceControlRepositoryService.pipe(
+          Effect.flatMap((service) =>
+            service.publishRepository({
+              cwd: "/workspace",
+              provider: "github",
+              repository: "octocat/studio",
+              visibility: "private",
+            }),
+          ),
+          Effect.provide(layer({ provider })),
+        ),
+      );
+      if (error._tag !== "SourceControlRepositoryError") return assert.fail(error.message);
+      assert.strictEqual(error.publishFailure, reason);
+      assert.include(error.detail, words);
+      assert.notInclude(error.detail, "could not be completed");
+      assert.notInclude(error.message, "abc123");
+    }
+  }),
+);
+
+it.effect("keeps an unrecognized provider failure generic", () => {
+  const provider = makeProvider({
+    createRepository: () =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "github",
+          operation: "createRepository",
+          cwd: "/workspace",
+          detail: "credential token abc123 was rejected",
+        }),
+      ),
+  });
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.publishRepository({
+        cwd: "/workspace",
+        provider: "github",
+        repository: "octocat/studio",
+        visibility: "private",
+      }),
+    );
+    assert.strictEqual(error.publishFailure, undefined);
+    assert.notInclude(error.message, "abc123");
+  }).pipe(Effect.provide(layer({ provider })));
+});
+
+it.effect("says a push after the repository was created failed", () =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.publishRepository({
+        cwd: "/workspace",
+        provider: "github",
+        repository: "octocat/studio",
+        visibility: "private",
+      }),
+    );
+    assert.strictEqual(error.publishFailure, "push_failed");
+    assert.include(error.detail, "The repository was created, but pushing to it failed");
+    assert.notInclude(error.detail, "secret");
+  }).pipe(
+    Effect.provide(
+      layer({
+        git: {
+          pushCurrentBranch: (cwd) =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "push",
+                command: "git",
+                cwd,
+                detail: "remote rejected https://user:secret@github.com/octocat/studio",
+              }),
+            ),
+        },
+      }),
+    ),
+  ),
+);

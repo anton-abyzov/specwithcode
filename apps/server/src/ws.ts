@@ -570,6 +570,7 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   readonly failure: FilesystemBrowseFailure;
   readonly parentPath?: string;
   readonly platform?: string;
+  readonly missing?: boolean;
   readonly message?: string;
 } {
   switch (error._tag) {
@@ -582,6 +583,7 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
       return {
         failure: "read_directory_failed",
         parentPath: error.parentPath,
+        ...(WorkspaceEntries.readDirectoryMissing(error.cause) ? { missing: true } : {}),
         ...(message === undefined ? {} : { message }),
       };
     }
@@ -2827,13 +2829,16 @@ const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsCreateNew]: (input) =>
-          managedFolders
-            .createNamedProject(input)
-            .pipe(
-              Effect.mapError(
-                (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
-              ),
+          managedFolders.createNamedProject(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: cause.message,
+                  ...ManagedProjectFolders.projectCreateFailureOf(cause),
+                  cause,
+                }),
             ),
+          ),
         [WS_METHODS.projectCloneCancel]: (input) =>
           projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.projectCloneRetry]: (input) =>
@@ -2923,6 +2928,10 @@ const layerWsRpc = (
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
+            // With a project name, say what creating it here does, by the create's own rules.
+            Effect.flatMap((result) =>
+              ManagedProjectFolders.withCreateOutcome(managedFolders, input.projectName, result),
+            ),
             Effect.mapError(
               (cause) =>
                 new FilesystemBrowseError({

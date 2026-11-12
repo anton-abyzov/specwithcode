@@ -75,7 +75,8 @@ export function CommandPaletteContent({
         {primaryAction}
         <CommandFooter className="max-sm:flex-col max-sm:items-start">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <KbdGroup>
+            {/* A form is tapped on a phone: arrow and Esc hints mean nothing there. */}
+            <KbdGroup className={panelSize === "form" ? "max-sm:hidden" : undefined}>
               <Kbd>
                 <ArrowUpIcon />
               </Kbd>
@@ -96,7 +97,7 @@ export function CommandPaletteContent({
                 <span>Back</span>
               </KbdGroup>
             ) : null}
-            <KbdGroup>
+            <KbdGroup className={panelSize === "form" ? "max-sm:hidden" : undefined}>
               <Kbd keyName="escape" />
               <span>{escapeLabel}</span>
             </KbdGroup>

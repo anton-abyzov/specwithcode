@@ -1,7 +1,19 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDebouncedValue } from "@tanstack/react-pacer";
 import type { EnvironmentId } from "@specweave-studio/contracts";
+import { newProjectFolderName } from "@specweave-studio/shared/path";
+import { filesystemEnvironment } from "../../state/filesystem";
+import { useEnvironmentQuery } from "../../state/query";
 import { FolderBrowser, type FolderListing, type FolderPlace } from "./FolderBrowser";
-import { displayPath, folderOutcome, type KnownProject } from "./folderBrowser.logic";
+import {
+  displayPath,
+  folderOutcome,
+  outcomeFromServer,
+  sameFolder,
+  withSeparator,
+  type FolderOutcome,
+  type KnownProject,
+} from "./folderBrowser.logic";
 
 const NO_PLACES: readonly FolderPlace[] = [];
 const NO_PROJECTS: readonly KnownProject[] = [];
@@ -26,6 +38,7 @@ export function NewProjectFolderPicker({
   canCreateFolder = false,
   disabled,
   onSelect,
+  onOutcome,
   onPickNatively,
 }: {
   environmentId: EnvironmentId;
@@ -44,6 +57,8 @@ export function NewProjectFolderPicker({
   disabled: boolean;
   /** The folder shown, or null while there is none to choose (loading, or it cannot be read). */
   onSelect: (path: string | null) => void;
+  /** What creating the project in the chosen folder does, once known; null while unknown. */
+  onOutcome?: (outcome: FolderOutcome | null) => void;
   onPickNatively?: (initialPath: string | null) => Promise<string | null>;
 }) {
   // With no remembered or default folder the list starts at home, which is
@@ -81,10 +96,41 @@ export function NewProjectFolderPicker({
     }
   };
   const shown = listing === null ? null : displayPath(listing.path, listing.homePath);
+  // The server decides "Creates" or "Uses" by the create's own rules; a folder
+  // listing alone misses a .git file, a child's .specweave and unmarked rows.
+  // An older server answers without one, and the listing's guess stands.
+  const [debouncedName] = useDebouncedValue(projectName?.trim() ?? "", { wait: 250 });
+  const asked =
+    listing !== null && debouncedName.length > 0 && debouncedName === projectName?.trim()
+      ? { path: listing.path, name: debouncedName }
+      : null;
+  const decided = useEnvironmentQuery(
+    asked === null
+      ? null
+      : filesystemEnvironment.browse({
+          environmentId,
+          input: { partialPath: withSeparator(asked.path), projectName: asked.name },
+        }),
+  );
+  const serverOutcome =
+    asked !== null &&
+    decided.data?.outcome !== undefined &&
+    sameFolder(decided.data.parentPath, asked.path)
+      ? outcomeFromServer(decided.data.outcome, newProjectFolderName(asked.name))
+      : null;
   const outcome =
     listing === null || projectName === undefined
       ? null
-      : folderOutcome({ folder: listing.path, name: projectName, entries: listing.entries });
+      : (serverOutcome ??
+        folderOutcome({ folder: listing.path, name: projectName, entries: listing.entries }));
+  const reportedOutcome = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const value = chosen ? outcome : null;
+    const key = value === null ? null : `${value.kind}\n${value.path}`;
+    if (reportedOutcome.current === key) return;
+    reportedOutcome.current = key;
+    onOutcome?.(value);
+  });
   return (
     <section aria-label="Project location" className="mx-4 my-2">
       <p className="mb-1.5 text-sm font-medium">Project location{onMachine}</p>

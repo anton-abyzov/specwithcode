@@ -25,6 +25,8 @@ const state = vi.hoisted(() => ({
   created: [] as any[],
   createFailure: null as string | null,
   unreadable: null as string | null,
+  /** What the server says creating the project does, for browses that name one. */
+  serverOutcome: null as Record<string, unknown> | null,
 }));
 vi.mock("../../state/filesystem", () => ({
   useFilesystemReadAccess: () => ({
@@ -73,6 +75,9 @@ vi.mock("../../state/query", () => ({
               parentPath,
               homePath: HOME,
               ...(state.unreadable === parentPath ? { unreadable: true } : {}),
+              ...(input.input.projectName && state.serverOutcome
+                ? { outcome: state.serverOutcome }
+                : {}),
               entries: TREE[parentPath]!.map((entry) => ({
                 ...entry,
                 fullPath: `${parentPath}/${entry.name}`,
@@ -94,6 +99,7 @@ beforeEach(() => {
     requests: [],
     created: [],
     createFailure: null,
+    serverOutcome: null,
   });
   delete TREE[`${HOME}/Projects/clients`];
   localStorage.clear();
@@ -348,7 +354,7 @@ it("names a folder the machine may not read and never offers it as the choice", 
       projectName: "x",
     });
     expect(container.querySelector('[role="alert"]')!.textContent).toContain(
-      `m1 does not allow reading ${HOME}/Projects.`,
+      "You do not have permission to read this folder on m1. Open another folder for the project.",
     );
     expect(container.textContent).not.toContain("No folders inside");
     expect(onSelect.mock.calls.every(([path]) => path === null)).toBe(true);
@@ -422,4 +428,43 @@ it("finds the parent of a folder without ../ paths", () => {
   expect(parentFolderOf("/Users")).toBe("/");
   expect(parentFolderOf("/")).toBeNull();
   expect(parentFolderOf("C:\\Users")).toBe("C:\\");
+});
+
+it("says Creates or Uses as the server decides, over what the listing suggests", async () => {
+  // The listing shows no .git in notes; the server sees its .git file (a worktree).
+  state.serverOutcome = { kind: "uses", path: `${HOME}/Projects/notes`, because: "repository" };
+  const onOutcome = vi.fn();
+  await render({ selectedPath: `${HOME}/Projects/notes`, projectName: "Example", onOutcome });
+  await act(async () => new Promise((done) => setTimeout(done, 350)));
+  expect(outcome()).toBe("Uses ~/Projects/notes as the project. It is already a Git repository.");
+  expect(state.requests.some((request) => request.input.projectName === "Example")).toBe(true);
+  expect(onOutcome).toHaveBeenLastCalledWith(
+    expect.objectContaining({ kind: "use", path: `${HOME}/Projects/notes` }),
+  );
+});
+
+it("keeps the listing's answer when an older server sends no outcome", async () => {
+  await render({ selectedPath: `${HOME}/Projects`, projectName: "acme" });
+  await act(async () => new Promise((done) => setTimeout(done, 350)));
+  expect(outcome()).toBe("Uses ~/Projects/acme as the project. It is already a Git repository.");
+});
+
+it("marks folder links in the list", async () => {
+  TREE[`${HOME}/Projects`]!.push({ name: "shared", kind: "folder", link: true } as never);
+  try {
+    await render({ selectedPath: `${HOME}/Projects` });
+    expect(row("shared").textContent).toContain("Link");
+  } finally {
+    TREE[`${HOME}/Projects`]!.pop();
+  }
+});
+
+it("treats a typed missing folder as not made yet, whatever its words", async () => {
+  state.error = Object.assign(new Error("Gone."), { missing: true }) as never;
+  try {
+    await render({ defaultPath: `${HOME}/Code`, machineLabel: "m1", projectName: "x" });
+    expect(container.textContent).toContain("does not exist yet");
+  } finally {
+    state.error = null;
+  }
 });

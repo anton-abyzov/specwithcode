@@ -28,6 +28,8 @@ const DISKS: Record<string, Record<string, Entry[]>> = {
     ],
     "/Users/you/Projects/github/notes": [],
     "/Users/you/Projects/playground": [],
+    // Exists, but this account may not list it.
+    "/Users/you/Private": [],
   },
   m1: {
     "/Users/remote": [
@@ -37,6 +39,7 @@ const DISKS: Record<string, Record<string, Entry[]>> = {
     "/Users/remote/work": [{ name: "client-app", kind: "git" }],
   },
 };
+const UNREADABLE = new Set(["/Users/you/Private"]);
 let version = 0;
 const listeners = new Set<() => void>();
 export const filesystemEnvironment = {
@@ -81,6 +84,7 @@ export const useEnvironmentQuery = (value: any) => {
       parentPath: path,
       homePath: home,
       version,
+      ...(UNREADABLE.has(path) ? { unreadable: true } : {}),
       entries: entries
         .toSorted((left, right) => left.name.localeCompare(right.name))
         .map((entry) => ({ ...entry, fullPath: `${path}/${entry.name}` })),

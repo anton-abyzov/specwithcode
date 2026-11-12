@@ -166,6 +166,40 @@ export function folderOutcome(input: {
   return { kind: "create", path: join(slug), note: null };
 }
 
+/** The server's own answer for the browsed folder (`filesystem.browse` with a project name). */
+export interface ServerFolderOutcome {
+  readonly kind: "creates" | "uses";
+  readonly path: string;
+  readonly because?:
+    | "repository"
+    | "specweave"
+    | "named_like_project"
+    | "empty_named_like_project"
+    | "name_taken"
+    | undefined;
+}
+
+/**
+ * The footer's outcome from the server's decision, which knows what a listing
+ * of folders cannot: a `.git` file, a child's `.specweave`, a child past the
+ * marked entries, an empty folder. `slug` names the taken folder.
+ */
+export function outcomeFromServer(outcome: ServerFolderOutcome, slug: string): FolderOutcome {
+  const note =
+    outcome.because === "repository"
+      ? "It is already a Git repository."
+      : outcome.because === "specweave"
+        ? "It already uses SpecWeave."
+        : outcome.because === "named_like_project"
+          ? "Its name matches the project."
+          : outcome.because === "empty_named_like_project"
+            ? "Its name matches the project and it is empty, so the new project is set up in it."
+            : outcome.because === "name_taken"
+              ? `A folder named ${slug} is already here.`
+              : null;
+  return { kind: outcome.kind === "creates" ? "create" : "use", path: outcome.path, note };
+}
+
 /**
  * Folders that already hold projects on a machine, newest first, for the
  * Recent places. `skip` drops places listed elsewhere and app-managed storage.

@@ -15,6 +15,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
+import { ChildProcessSpawner } from "effect/process";
+import { homedir } from "node:os";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -23,6 +25,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { GIT_SPAWN_FAILURE_DETAIL } from "../vcs/GitVcsDriverCore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -110,6 +113,7 @@ const withScratch = <A, E>(
     E,
     | ManagedProjectFolders.ManagedProjectFolders
     | ProjectService.ProjectService
+    | ServerConfig.ServerConfig
     | NodeServices.NodeServices
     | Scope.Scope
   >,
@@ -1176,5 +1180,243 @@ it.effect("says why SpecWeave could not be added to an existing folder", () =>
         assert.equal(result.specweaveError, "SpecWeave setup is not available on this machine.");
       }),
     { git: noGitDriver },
+  ),
+);
+
+// A failed create says why, as a typed reason the client words for its machine.
+const createFailure = (input: { readonly name: string; readonly parentPath?: string }) =>
+  Effect.gen(function* () {
+    const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+    const failure = yield* Effect.flip(folders.createNamedProject(input));
+    return {
+      failure,
+      wire: ManagedProjectFolders.projectCreateFailureOf(failure).projectCreateFailure,
+    };
+  });
+
+const previewFor = (input: { readonly name: string; readonly parentPath: string }) =>
+  Effect.gen(function* () {
+    const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+    return yield* folders.previewNamedProject(input);
+  });
+
+it.effect("says the parent folder is missing, naming it", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const parentPath = path.join(baseDir, "gone");
+      const { failure, wire } = yield* createFailure({ name: "Example", parentPath });
+      assert.deepEqual(wire, { reason: "parent_missing", folder: parentPath });
+      assert.equal(failure.message, `The folder '${parentPath}' does not exist on this machine.`);
+    }),
+  ),
+);
+
+it.effect("says the server may not write in the parent folder", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Root may write anywhere, and Windows ignores a folder's mode bits, so
+      // there is no refusal to see on either.
+      if (process.getuid?.() === 0 || process.platform === "win32") return;
+      const parentPath = path.join(baseDir, "locked");
+      yield* fs.makeDirectory(parentPath);
+      yield* fs.chmod(parentPath, 0o555);
+      const { failure, wire } = yield* createFailure({ name: "Example", parentPath }).pipe(
+        Effect.ensuring(fs.chmod(parentPath, 0o755).pipe(Effect.ignore)),
+      );
+      assert.deepEqual(wire, { reason: "permission_denied", folder: parentPath });
+      assert.equal(
+        failure.message,
+        `This machine does not allow making a folder in '${parentPath}'.`,
+      );
+    }),
+  ),
+);
+
+it.effect("says Git is not installed when it cannot start, and leaves no folder", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parentPath = path.join(baseDir, "parent");
+        yield* fs.makeDirectory(parentPath);
+        const { failure, wire } = yield* createFailure({ name: "Example", parentPath });
+        assert.deepEqual(wire, {
+          reason: "git_missing",
+          folder: path.join(parentPath, "example"),
+        });
+        assert.include(failure.message, "Git is not installed on this machine");
+        assert.deepEqual(yield* fs.readDirectory(parentPath), []);
+      }),
+    {
+      git: Layer.mock(GitVcsDriver.GitVcsDriver)({
+        readConfigValue: () => Effect.succeed(null),
+        execute: (input) =>
+          Effect.fail(
+            new GitCommandError({
+              operation: input.operation,
+              command: "git",
+              cwd: input.cwd,
+              detail: GIT_SPAWN_FAILURE_DETAIL,
+            }),
+          ),
+      }),
+    },
+  ),
+);
+
+it.effect("passes git's own message through when git init fails", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parentPath = path.join(baseDir, "parent");
+        yield* fs.makeDirectory(parentPath);
+        const { failure, wire } = yield* createFailure({ name: "Example", parentPath });
+        const folder = path.join(parentPath, "example");
+        assert.deepEqual(wire, {
+          reason: "git_init_failed",
+          folder,
+          detail: "fatal: invalid initial branch name: 'bad..name'",
+        });
+        assert.equal(
+          failure.message,
+          `git init failed in '${folder}': fatal: invalid initial branch name: 'bad..name'`,
+        );
+        assert.deepEqual(yield* fs.readDirectory(parentPath), []);
+      }),
+    {
+      git: Layer.mock(GitVcsDriver.GitVcsDriver)({
+        readConfigValue: () => Effect.succeed(null),
+        execute: () =>
+          Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(128),
+            stdout: "",
+            stderr: "\nfatal: invalid initial branch name: 'bad..name'\n",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          }),
+      }),
+    },
+  ),
+);
+
+it.effect("says every folder name was taken after 100 tries", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentPath = path.join(baseDir, "full");
+      yield* fs.makeDirectory(path.join(parentPath, "example"), { recursive: true });
+      for (let attempt = 2; attempt <= 100; attempt++) {
+        yield* fs.makeDirectory(path.join(parentPath, `example-${attempt}`));
+      }
+      const { failure, wire } = yield* createFailure({ name: "Example", parentPath });
+      assert.deepEqual(wire, { reason: "name_exhausted", folder: parentPath, detail: "example" });
+      assert.include(failure.message, `Every folder name for "example" in '${parentPath}'`);
+    }),
+  ),
+);
+
+it.effect("refuses denied parents with New folder's words, links to them included", () =>
+  withScratch(({ baseDir }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      for (const parentPath of [path.join(homedir(), ".ssh"), config.stateDir]) {
+        const { failure, wire } = yield* createFailure({ name: "Example", parentPath });
+        assert.deepEqual(wire, { reason: "refused", folder: parentPath });
+        assert.equal(failure.message, `SpecWithCode does not make folders in '${parentPath}'.`);
+        // The picker's footer agrees: no "Creates" for a parent the create refuses.
+        assert.isTrue(Option.isNone(yield* previewFor({ name: "Example", parentPath })));
+      }
+      // A link to the state folder is refused by where it leads.
+      const link = path.join(baseDir, "shortcut");
+      yield* fs.symlink(config.stateDir, link);
+      const { wire } = yield* createFailure({ name: "Example", parentPath: link });
+      assert.deepEqual(wire, { reason: "refused", folder: link });
+      assert.isTrue(Option.isNone(yield* previewFor({ name: "Example", parentPath: link })));
+      assert.isFalse(yield* fs.exists(path.join(config.stateDir, "example")));
+    }),
+  ),
+);
+
+// The picker's "Creates" or "Uses" comes from the same rules the create runs.
+it.effect("previews what the create does, and the create agrees", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = (name: string) => path.join(baseDir, name);
+        // A worktree or submodule holds a .git file, not a folder.
+        yield* fs.makeDirectory(parent("worktree"));
+        yield* fs.writeFileString(path.join(parent("worktree"), ".git"), "gitdir: /elsewhere\n");
+        // A child named like the project that already uses SpecWeave.
+        yield* fs.makeDirectory(path.join(parent("specweave"), "example", ".specweave"), {
+          recursive: true,
+        });
+        // The child sorts past the first 200 folders a listing marks.
+        yield* fs.makeDirectory(parent("crowded"));
+        for (let index = 0; index < 205; index++) {
+          yield* fs.makeDirectory(
+            path.join(parent("crowded"), `a${String(index).padStart(3, "0")}`),
+          );
+        }
+        yield* fs.makeDirectory(path.join(parent("crowded"), "example", ".git"), {
+          recursive: true,
+        });
+        // A plain folder of the project's name: the new one is numbered.
+        yield* fs.makeDirectory(path.join(parent("taken"), "example"), { recursive: true });
+        yield* fs.makeDirectory(parent("empty"));
+
+        const cases = [
+          ["worktree", { kind: "uses", path: parent("worktree"), because: "repository" }],
+          [
+            "specweave",
+            { kind: "uses", path: path.join(parent("specweave"), "example"), because: "specweave" },
+          ],
+          [
+            "crowded",
+            { kind: "uses", path: path.join(parent("crowded"), "example"), because: "repository" },
+          ],
+          [
+            "taken",
+            {
+              kind: "creates",
+              path: path.join(parent("taken"), "example-2"),
+              because: "name_taken",
+            },
+          ],
+          ["empty", { kind: "creates", path: path.join(parent("empty"), "example") }],
+        ] as const;
+        for (const [folder, expected] of cases) {
+          const preview = yield* folders.previewNamedProject({
+            name: "Example",
+            parentPath: parent(folder),
+          });
+          assert.deepEqual(Option.getOrNull(preview), expected);
+          const created = yield* folders.createNamedProject({
+            name: "Example",
+            parentPath: parent(folder),
+          });
+          assert.equal(created.workspaceRoot, expected.path);
+          assert.equal(created.existing === true, expected.kind === "uses");
+        }
+        assert.isTrue(
+          Option.isNone(
+            yield* folders.previewNamedProject({ name: "Example", parentPath: parent("missing") }),
+          ),
+        );
+      }),
+    ),
   ),
 );

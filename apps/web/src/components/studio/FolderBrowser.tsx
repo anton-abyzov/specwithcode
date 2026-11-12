@@ -42,6 +42,8 @@ export interface FolderListing {
     readonly name: string;
     readonly fullPath: string;
     readonly kind?: "folder" | "git" | undefined;
+    /** A link to a folder elsewhere. */
+    readonly link?: boolean | undefined;
   }>;
 }
 
@@ -175,9 +177,18 @@ export function FolderRows({
           )}
         />
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        {project || entry.kind === "git" ? (
+        {project || entry.kind === "git" || entry.link ? (
           <span className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">
-            {project ? `Project: ${project.title}` : "Git repository"}
+            {[
+              project
+                ? `Project: ${project.title}`
+                : entry.kind === "git"
+                  ? "Git repository"
+                  : null,
+              entry.link ? "Link" : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         ) : null}
         <ChevronRightIcon
@@ -264,7 +275,9 @@ export function FolderBrowser({
     failed &&
     missingOkPath !== null &&
     sameFolder(withSeparator(missingOkPath), browsePath) &&
-    /does not exist/.test(errorText(query.error));
+    // Typed by newer servers; an older one only says so in words.
+    ((query.error as { missing?: unknown } | null)?.missing === true ||
+      /does not exist/.test(errorText(query.error)));
   const currentPath = loaded ? query.data!.parentPath : missingOk ? missingOkPath : null;
   const homePath = query.data?.homePath ?? null;
   const entries = useMemo(() => (loaded ? query.data!.entries : []), [loaded, query.data]);
@@ -573,7 +586,7 @@ export function FolderBrowser({
           ) : unreadable ? (
             <div className="space-y-2 px-2 py-1.5">
               <p role="alert" className="text-sm text-destructive-foreground">
-                {machineLabel ?? "This machine"} does not allow reading {query.data!.parentPath}.
+                {`You do not have permission to read this folder ${onMachine.trim() || "on this machine"}.`}{" "}
                 Open another folder for the project.
               </p>
               {parent ? (
