@@ -1,7 +1,7 @@
 import { ProviderInstanceId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { providerShortLabels } from "./providerShortLabel";
+import { chipAccountTag, providerShortLabels } from "./providerShortLabel";
 
 const entry = (
   id: string,
@@ -44,5 +44,21 @@ describe("providerShortLabels", () => {
       entry("b", "codex", "Codex"),
     ]);
     expect([...labels.values()]).toEqual(["Codex", "Codex"]);
+  });
+});
+
+describe("chipAccountTag", () => {
+  const copilots = [
+    entry("a", "acpRegistry", "Copilot Enterprise (acme-corp)", undefined, "github-copilot"),
+    entry("b", "acpRegistry", "Copilot personal (fixture-person)", undefined, "github-copilot"),
+    entry("claudeAgent", "claudeAgent", "Claude Code", {
+      status: "authenticated",
+      label: "Claude Max",
+    }),
+  ];
+  it("tags the chip only when the product is signed in more than once", () => {
+    expect(chipAccountTag(copilots, ProviderInstanceId.make("b"))).toBe("Personal");
+    expect(chipAccountTag(copilots, ProviderInstanceId.make("claudeAgent"))).toBeNull();
+    expect(chipAccountTag(copilots, ProviderInstanceId.make("missing"))).toBeNull();
   });
 });

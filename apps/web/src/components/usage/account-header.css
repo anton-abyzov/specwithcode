@@ -1,0 +1,104 @@
+/* One account on every usage surface: logo, name, plan, email, then small marks. */
+.sws-account-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.sws-account-logo {
+  flex: none;
+}
+.sws-account-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sws-account-name {
+  flex: 0 1 auto;
+  min-width: 2.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.sws-account-plan {
+  flex: none;
+  align-self: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 9%, transparent);
+}
+.sws-account-email {
+  flex: 0 1 auto;
+  min-width: 3rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  outline: none;
+}
+.sws-account-marks {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.sws-account-rank {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--primary, var(--foreground)) 16%, transparent);
+  outline: none;
+}
+.sws-account-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  outline: none;
+}
+.sws-account-machine svg {
+  width: 12px;
+  height: 12px;
+}
+.sws-account-link {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+}
+.sws-account-link:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.sws-account-link svg {
+  width: 13px;
+  height: 13px;
+}
+.sws-account-rank:focus-visible,
+.sws-account-machine:focus-visible,
+.sws-account-email:focus-visible,
+.sws-account-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 4px;
+}

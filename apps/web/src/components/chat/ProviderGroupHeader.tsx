@@ -5,6 +5,8 @@ import { accountLimitPhrase, isAvailabilityBlocking } from "../../studio/modelAv
 import { modelPickerGroupKey } from "./modelPickerKeys";
 import type { ModelPickerUsage } from "./ModelUsage";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { providerUsageLink } from "@specweave-studio/shared/providerUsageLinks";
+import { UsagePageLink } from "../usage/AccountHeader";
 
 /** The plan and account a provider signs in with, from its auth snapshot. */
 export function providerGroupAccount(entry: ProviderInstanceEntry): {
@@ -50,6 +52,13 @@ export const ProviderGroupHeader = memo(function ProviderGroupHeader(props: {
   const { entry } = props;
   const { plan, email } = providerGroupAccount(entry);
   const limit = providerGroupUsage(entry, props.usage);
+  const link = providerUsageLink({
+    driver: entry.driverKind,
+    agentId: entry.acpRegistryAgentId,
+    label: entry.displayName,
+    subscription:
+      entry.snapshot.auth.status === "authenticated" && entry.snapshot.auth.type !== "apiKey",
+  });
   return (
     <div
       className="sws-picker-group flex min-w-0 items-center gap-1.5 px-2 pt-2 pb-1"
@@ -90,6 +99,11 @@ export const ProviderGroupHeader = memo(function ProviderGroupHeader(props: {
           data-model-picker-group-usage={limit.tone}
         >
           {limit.text}
+        </span>
+      ) : null}
+      {link ? (
+        <span className={cn("shrink-0", !limit && "ms-auto")}>
+          <UsagePageLink link={link} tabIndex={-1} />
         </span>
       ) : null}
     </div>

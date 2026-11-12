@@ -18,6 +18,7 @@ import { TraitsPicker } from "../../src/components/chat/TraitsPicker";
 import { MachineChip } from "../../src/components/MachineChip";
 import { MachineWindowTint } from "../../src/components/MachineWindowTint";
 import { ProjectModelsPopover } from "../../src/components/studio/shell/ProjectModelsPopover";
+import { MachineLimitsPanel } from "../../src/components/studio/shell/ProjectUsageIndicator";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { deriveProviderInstanceEntries } from "../../src/providerInstances";
 import { machineColorProps, useMachineIdentities } from "../../src/studio/machineIdentity";
@@ -245,6 +246,123 @@ function PickerScene() {
   );
 }
 
+/**
+ * "Limits by account" inside the thread's model picker, with enough accounts on two
+ * fictional machines that the panel must scroll.
+ */
+const account = (
+  instanceId: string,
+  driver: string,
+  displayName: string,
+  email: string | undefined,
+  plan: string | undefined,
+  windows: ServerProviderUsageWindow[],
+  over: Partial<ServerProvider> = {},
+) =>
+  provider(instanceId, driver, displayName, [{ slug: "m", name: "Model" }], limits(windows), {
+    auth: {
+      status: "authenticated",
+      type: "subscription",
+      ...(plan ? { label: `${plan} Subscription` } : {}),
+      ...(email ? { email } : {}),
+    },
+    ...over,
+  } as never);
+const M4_ACCOUNTS = [
+  account("claudeAgent", "claudeAgent", "Claude", "dev@example.com", "Claude Ultra", [
+    usageWindow("seven_day", "weekly", "Weekly", 68, 48 * HOUR),
+    {
+      ...usageWindow("seven_day_fable", "weekly", "Fable weekly", 100, 48 * HOUR),
+      modelScope: "fable",
+    },
+  ]),
+  account("codex", "codex", "Codex", "ops@example.org", "ChatGPT Pro", [
+    usageWindow("monthly", "monthly" as never, "Monthly", 100, 540 * HOUR),
+  ]),
+  account(
+    "copilot-personal",
+    "acpRegistry",
+    "Copilot personal (fixture-person)",
+    undefined,
+    undefined,
+    [usageWindow("chat", "weekly", "Chat", 100, 442 * HOUR)],
+    { acpRegistryAgentId: "github-copilot" } as never,
+  ),
+  account("cursor", "cursor", "Cursor", "dev@example.com", "Cursor Pro", [
+    usageWindow("monthly", "monthly" as never, "Monthly", 41, 300 * HOUR),
+  ]),
+];
+const M1_ACCOUNTS = [
+  account("grok", "grok", "Grok", "person@example.net", "SuperGrok", [
+    usageWindow("weekly", "weekly", "Weekly", 4, 125 * HOUR),
+  ]),
+  account("claude-team", "claudeAgent", "Claude team", "team@example.com", "Claude Team", [
+    usageWindow("five_hour", "session", "Session", 12, 3 * HOUR),
+    usageWindow("seven_day", "weekly", "Weekly", 55, 90 * HOUR),
+  ]),
+  account("gemini", "gemini", "Gemini", "person@example.net", "Google AI Pro", [
+    usageWindow("daily", "daily" as never, "Daily", 20, 9 * HOUR),
+  ]),
+];
+const presentation = (label: string, primary: boolean, providers: ServerProvider[]) => ({
+  connection: { phase: "connected" },
+  serverConfig: { providers },
+  entry: { target: { label, _tag: primary ? "PrimaryConnectionTarget" : "SavedConnectionTarget" } },
+});
+function LimitsScene() {
+  (globalThis as { __fixturePresentations?: Map<string, unknown> }).__fixturePresentations ??=
+    new Map([
+      ["env-m4", presentation("Fixture MacBook", true, M4_ACCOUNTS)],
+      ["env-m1", presentation("Fixture mini", false, M1_ACCOUNTS)],
+    ]);
+  return (
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-end gap-3 p-4 pb-6">
+      <h1 className="text-sm text-muted-foreground">
+        Limits by account. Providers, accounts and machines are fictional.
+      </h1>
+      <div className="@container/composer-surface flex min-w-0 items-center gap-2 rounded-2xl border bg-card px-3 py-2">
+        <ProviderModelPicker
+          activeInstanceId={id(params.get("account") ?? "claudeAgent")}
+          model={params.has("account") ? "claude-opus-5.5" : "claude-opus-5-5"}
+          lockedProvider={null}
+          instanceEntries={entries}
+          modelOptionsByInstance={options}
+          keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+          size="sm"
+          title="Model for this thread"
+          triggerParts={{ provider: "Claude Code", model: "Opus 5.5" }}
+          usage={{
+            connected: true,
+            environmentId: "env-m4",
+            machineLabel: "M4",
+            running: null,
+            surface: "thread",
+          }}
+          secondaryView={{
+            label: "Limits by account",
+            render: ({ back, close }) => (
+              <MachineLimitsPanel
+                projectEnvironmentId={"env-m4" as never}
+                coordinatorInstanceId={id("claudeAgent")}
+                fallbackOrder={[
+                  { instanceId: "claudeAgent", label: "Claude Code · Opus 5.5" },
+                  { instanceId: "codex", label: "Codex · GPT-6.1 Sol" },
+                ]}
+                surface="thread"
+                onBack={back}
+                onClose={close}
+              />
+            ),
+          }}
+          onOpenProviderSetup={() => {}}
+          onManageProviders={() => {}}
+          onInstanceModelChange={() => {}}
+        />
+      </div>
+    </main>
+  );
+}
+
 function ModelsScene() {
   const [threads, setThreads] = useState<ModelSelection | null>({
     instanceId: id("claudeAgent"),
@@ -433,7 +551,9 @@ function TraitsScene() {
 
 createRoot(document.getElementById("root")!).render(
   <TooltipProvider>
-    {scene === "traits" ? (
+    {scene === "limits" ? (
+      <LimitsScene />
+    ) : scene === "traits" ? (
       <TraitsScene />
     ) : scene === "models" ? (
       <ModelsScene />

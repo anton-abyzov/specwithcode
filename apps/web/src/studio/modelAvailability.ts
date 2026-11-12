@@ -498,7 +498,7 @@ export function availabilityText(
       const words =
         availability.reason === "probeFailed"
           ? {
-              short: "Usage unavailable",
+              short: "Usage not reported",
               long: `${provider} usage could not be read. The model stays selectable.`,
             }
           : availability.reason === "notSignedIn"
@@ -508,11 +508,11 @@ export function availabilityText(
               }
             : availability.reason === "notRead"
               ? {
-                  short: "Usage not read",
+                  short: "Usage not reported",
                   long: `${provider} usage has not been read on this machine recently, so its room is unknown. Opening the model picker reads it again. The model stays selectable.`,
                 }
               : {
-                  short: "No limits reported",
+                  short: "Usage not reported",
                   long: `${provider} reported no limit windows for this account.`,
                 };
       return { ...words, label: lowerFirst(words.short), tone: "muted" };
@@ -527,8 +527,8 @@ export function availabilityText(
     case "unreported":
       return availability.message
         ? {
-            short: "Usage not read",
-            label: "usage not read",
+            short: "Usage not reported",
+            label: "usage not reported",
             long: `${availability.message} The model stays selectable.`,
             tone: "muted",
           }
@@ -580,6 +580,9 @@ export function accountLimitPhrase(
     case "unreported":
     case "perToken":
       return null;
+    case "unknown":
+      // Unknown usage is the dashed ring's tooltip, never words in a header.
+      return availability.reason === "notSignedIn" ? "not signed in" : null;
     default:
       return lowerFirst(input.short);
   }

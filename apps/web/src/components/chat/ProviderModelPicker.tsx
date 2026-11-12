@@ -1,4 +1,6 @@
 import { useTx } from "../../i18n";
+import { allowsPickerOverlayScroll } from "./pickerScrollLock";
+import { chipAccountTag } from "./providerShortLabel";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -234,12 +236,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       body.style.paddingRight = `${scrollbarWidth}px`;
     }
 
-    const shouldAllowOverlayScroll = (target: EventTarget | null) => {
-      return (
-        target instanceof Element &&
-        target.closest("[data-model-picker-content], [data-project-models-popover]")
-      );
-    };
+    const shouldAllowOverlayScroll = allowsPickerOverlayScroll;
     const preventBackgroundWheel = (event: WheelEvent) => {
       if (shouldAllowOverlayScroll(event.target)) {
         return;
@@ -328,7 +325,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? `${parts.provider} · ${parts.model}`
       : parts.model
     : (activeText ?? triggerLabel);
-  const tooltipName = parts ? currentLabel : triggerName;
+  // Two accounts of one product: the chip says which one, the logo alone can't.
+  const accountTag =
+    parts && triggerEntry
+      ? chipAccountTag(props.instanceEntries, triggerEntry.instanceId as ProviderInstanceId)
+      : null;
+  const tooltipName = parts
+    ? accountTag
+      ? `${currentLabel} · ${accountTag}`
+      : currentLabel
+    : triggerName;
   const triggerTooltipContent = shortcutLabel ? `${tooltipName} · ${shortcutLabel}` : tooltipName;
   // A chip follows its host's fit; on its own it measures the room its host gives it.
   const hostFit = use(ModelChipFitContext);
@@ -342,7 +348,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   // The name stays short (model, what is left, the window); the description has the rest.
   const chipAriaLabel =
     parts || stateCopy
-      ? `Model: ${currentLabel}${stateAria ?? ""}${selectedUsageLabel ? `, ${selectedUsageLabel}` : ""}. Change model`
+      ? `Model: ${currentLabel}${accountTag ? `, ${accountTag} account` : ""}${stateAria ?? ""}${selectedUsageLabel ? `, ${selectedUsageLabel}` : ""}. Change model`
       : undefined;
   const hostAriaLabel =
     props.triggerAriaLabel && selectedUsageLabel
@@ -461,7 +467,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       accentColor={triggerEntry.accentColor}
                       acpRegistryAgentId={triggerEntry.acpRegistryAgentId}
                       acpRegistryIconUrl={triggerEntry.acpRegistryIconUrl}
-                      showBadge={showInstanceBadge}
+                      showBadge={showInstanceBadge && !accountTag}
                       className="size-4"
                       iconClassName={cn("size-4", props.activeProviderIconClassName)}
                       indicatorBackground={
@@ -489,6 +495,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     >
                       {parts.model}
                     </span>
+                    {accountTag ? (
+                      <span
+                        className="shrink-0 rounded-full bg-foreground/8 px-1.5 text-2xs leading-4 font-medium text-muted-foreground"
+                        data-model-chip-part="account"
+                        aria-hidden
+                      >
+                        {accountTag}
+                      </span>
+                    ) : null}
                   </>
                 ) : (
                   <span
@@ -551,6 +566,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         collisionAvoidance={PICKER_COLLISION_AVOIDANCE}
         className="max-h-(--available-height) before:hidden"
         padding="none"
+        data-model-picker-popup=""
       >
         {props.frontView && !showingPicker && !showingSecondary ? (
           props.frontView.render({

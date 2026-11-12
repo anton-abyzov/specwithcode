@@ -383,7 +383,7 @@ describe("modelAvailability", () => {
     expect(state).toEqual({ kind: "unreported", message: reason });
     expect(isAvailabilityBlocking(state)).toBe(false);
     const words = availabilityText(state, { provider: "Copilot", nowMs: now });
-    expect(words.short).toBe("Usage not read");
+    expect(words.short).toBe("Usage not reported");
     expect(words.long).toContain("as abycrash");
     expect(words.long).not.toContain("does not report usage limits");
     // A signed-out provider says so instead of "stays selectable".

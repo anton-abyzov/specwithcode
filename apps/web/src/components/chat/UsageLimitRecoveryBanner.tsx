@@ -31,9 +31,38 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Checkbox } from "../ui/checkbox";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import { LimitHandoffCandidates } from "./LimitHandoffCandidates";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import type { ProviderDriverKind } from "@specweave-studio/contracts";
 import { getLocale, t, useT, type Translate } from "../../i18n";
 
+/** The provider a limit notice is about; its logo leads the notice. */
+type BannerProvider = {
+  readonly driver: ProviderDriverKind;
+  readonly displayName?: string | undefined;
+  readonly acpRegistryAgentId?: string | undefined;
+  readonly iconUrl?: string | undefined;
+};
+
+/** The provider's logo when the notice knows whose limit it is, the gauge otherwise. */
+function bannerIcon(provider: BannerProvider | null | undefined) {
+  return provider ? (
+    <ProviderInstanceIcon
+      driverKind={provider.driver}
+      displayName={provider.displayName ?? String(provider.driver)}
+      acpRegistryAgentId={provider.acpRegistryAgentId}
+      acpRegistryIconUrl={provider.iconUrl}
+      showBadge={false}
+      className="size-4 shrink-0"
+      iconClassName="size-4"
+    />
+  ) : (
+    <GaugeIcon />
+  );
+}
+
 type RecoveryProps = {
+  /** Whose limit stopped the turn. */
+  provider?: BannerProvider | null;
   canCheck?: boolean;
   credits?: CreditRecoveryProps | null;
   /** API accounts the stopped turn can continue on, or the way to add one. */
@@ -232,7 +261,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
     priority: "urgent",
-    icon: <GaugeIcon />,
+    icon: bannerIcon(props.provider),
     title: props.creditsExhausted
       ? t("limit.title.credits")
       : props.credits
@@ -517,6 +546,7 @@ function RecoveryActions({
  */
 export function usageApproachingBannerItem(props: {
   id: string;
+  provider?: BannerProvider | null;
   providerLabel: string;
   /** Share of the fullest window still left, 0..100. */
   leftPercent: number;
@@ -529,7 +559,7 @@ export function usageApproachingBannerItem(props: {
     id: props.id,
     variant: "info",
     priority: "notice",
-    icon: <GaugeIcon />,
+    icon: bannerIcon(props.provider),
     title: t("limit.approaching.title", {
       provider: props.providerLabel,
       percent: Math.max(0, Math.round(props.leftPercent)),

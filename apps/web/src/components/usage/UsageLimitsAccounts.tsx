@@ -7,12 +7,13 @@ import {
   type UnreportedLimitAccount,
 } from "@specweave-studio/shared/usageLimits";
 import type { ServerProviderUsageWindow } from "@specweave-studio/contracts";
-import { CircleSlashIcon, HistoryIcon, KeyRoundIcon, TicketIcon, UserXIcon } from "lucide-react";
+import { CircleDashedIcon, HistoryIcon, KeyRoundIcon, TicketIcon, UserXIcon } from "lucide-react";
 import { type CSSProperties, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { AccountHeader } from "./AccountHeader";
 import { usageTone, usageToneTextClass } from "../../studio/usageIndicatorModel";
-import { limitAccountLabel } from "./usageAccountLabel";
+import { instanceLabel, limitAccountLabel } from "./usageAccountLabel";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 export function accountInitials(email: string): string {
@@ -233,17 +234,16 @@ function AccountCard({
       className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card p-4 shadow-xs/5 motion-safe:animate-[usage-card-in_420ms_ease-out_both]"
       style={{ animationDelay: `${Math.min(index, 6) * 50}ms` } as CSSProperties}
     >
-      <header className="flex min-w-0 items-start gap-2.5">
-        {account.email ? (
-          <AccountChip email={account.email} className="mt-0.5 size-6 text-2xs" />
-        ) : null}
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-sm font-medium text-foreground select-text">
-            {label.primary}
-          </span>
-          {account.plan ? (
-            <span className="truncate text-xs text-muted-foreground">{account.plan}</span>
-          ) : null}
+      <header className="flex min-w-0 items-center gap-2.5">
+        <div className="min-w-0 flex-1 select-text">
+          <AccountHeader
+            driver={account.driver}
+            label={instanceLabel(account)}
+            plan={account.plan}
+            email={account.email}
+            subscription={account.plan !== undefined || account.email !== undefined}
+            size="md"
+          />
         </div>
         {credits ? (
           <span
@@ -285,7 +285,7 @@ const UNREPORTED_COPY: Record<
 > = {
   apiBilling: { title: "Billed to the API", icon: KeyRoundIcon },
   signedOut: { title: "Not signed in", icon: UserXIcon },
-  unread: { title: "Limits not read", icon: CircleSlashIcon },
+  unread: { title: "Usage not reported", icon: CircleDashedIcon },
 };
 
 /**
@@ -308,7 +308,7 @@ function UnreportedCard({ entry }: { readonly entry: UnreportedLimitAccount }) {
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-sm font-medium text-foreground">{copy.title}</span>
           <span className="truncate text-xs text-muted-foreground">
-            {[entry.email, entry.plan].filter(Boolean).join(" · ") || "Account not reported"}
+            {[entry.email, entry.plan].filter(Boolean).join(" · ")}
           </span>
         </div>
       </header>

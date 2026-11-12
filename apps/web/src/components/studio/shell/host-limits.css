@@ -500,3 +500,48 @@
     flex-basis: 100%;
   }
 }
+
+/* The account header spans the row; windows are a short label, a bar, a percent and a reset. */
+/* Logo in the icon column, name on the window labels' line. */
+.sws-hl-compact-row > .sws-account-header {
+  grid-column: 1 / -1;
+  justify-self: stretch;
+  gap: 8px;
+}
+.sws-hl-compact-row > .sws-account-header .sws-account-logo {
+  width: 16px;
+  justify-content: center;
+}
+.sws-hl-compact-window {
+  border-radius: 4px;
+  outline: none;
+}
+.sws-hl-compact-window:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-hl-compact-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.sws-hl-compact-value svg {
+  width: 12px;
+  height: 12px;
+}
+.sws-hl-compact-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  outline: none;
+}
+.sws-hl-compact-notice svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.sws-hl-compact-notice:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 4px;
+}

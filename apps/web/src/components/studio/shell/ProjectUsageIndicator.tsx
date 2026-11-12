@@ -13,7 +13,7 @@ import {
   type LimitPool,
 } from "@specweave-studio/shared/usageLimits";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, ArrowRightIcon, TicketIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, InfoIcon, TicketIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { environmentPresentations } from "../../../state/presentation";
 import { useMachineNicknames } from "../../../studio/machineNickname";
@@ -33,6 +33,7 @@ import { resetCreditsSummary } from "../../usage/UsageLimits";
 import { openUsageSheet } from "../../usage/usageSheetStore";
 import type { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 import { AccountLimits } from "./HostLimits";
+import { Tip } from "./Tip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 
 const driverLabel = (driver: LimitPool["driver"]) =>
@@ -227,11 +228,17 @@ export function MachineLimitsPanel({
             Models
           </button>
         ) : null}
-        <h2 className="sws-machine-limits-title">Limits by account</h2>
-        <p>
-          A limit belongs to the account, so every model and machine on it shares it. Of several
-          windows, the one with the least left is brighter.
-        </p>
+        <h2 className="sws-machine-limits-title">
+          Limits by account
+          <Tip
+            label="A limit belongs to the account, so every model and machine on it shares it. Of several windows, the one with the least left is brighter."
+            side="bottom"
+          >
+            <button type="button" className="sws-machine-limits-info" aria-label="About limits">
+              <InfoIcon aria-hidden />
+            </button>
+          </Tip>
+        </h2>
       </header>
       <AccountLimits
         projectEnvironmentId={projectEnvironmentId}
@@ -250,11 +257,11 @@ export function MachineLimitsPanel({
             openUsageSheet({ metric: "limits" });
           }}
         >
-          All limits and accounts <ArrowRightIcon aria-hidden />
+          All accounts <ArrowRightIcon aria-hidden />
         </button>
         {onOpenProjectUsage ? (
           <button type="button" className="sws-usage-link" onClick={onOpenProjectUsage}>
-            This project's tokens <ArrowRightIcon aria-hidden />
+            Project tokens <ArrowRightIcon aria-hidden />
           </button>
         ) : null}
       </footer>
