@@ -2,10 +2,6 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SettingsGroup } from "./SettingsGroup";
-import { DecisionModelSettings } from "./DecisionModelSettings";
-import { ModelLanesSettings } from "./ModelLanesSettings";
-import { AdversarialReviewSettings } from "./AdversarialReviewSettings";
-import { ProviderModelTiersSettings } from "./ProviderModelTiersSettings";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AuthSettingsWriteScope,
@@ -1420,33 +1416,6 @@ export function EnvironmentProviderSettings({
             )}
           </div>
         </SettingsGroup>
-      </SettingsSection>
-
-      <SettingsSection title="Model tiers" reach={{ kind: "machine", name: environmentLabel }}>
-        <ModelLanesSettings />
-      </SettingsSection>
-
-      <SettingsSection
-        id={searchableSetting("provider-model-tiers").id}
-        title="Regular and frontier models"
-        reach={{ kind: "machine", name: environmentLabel }}
-      >
-        <ProviderModelTiersSettings />
-      </SettingsSection>
-
-      <SettingsSection
-        id={searchableSetting("adversarial-review").id}
-        title="Adversarial review"
-        reach={{ kind: "machine", name: environmentLabel }}
-      >
-        <AdversarialReviewSettings />
-      </SettingsSection>
-
-      <SettingsSection title="Decision model" reach={{ kind: "machine", name: environmentLabel }}>
-        <DecisionModelSettings
-          environmentId={environmentId}
-          readOnly={readOnly || !canWriteSettings}
-        />
       </SettingsSection>
 
       <UsageProviderSettings
