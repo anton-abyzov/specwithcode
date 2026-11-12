@@ -195,6 +195,11 @@ export interface IncomingWorkerAllowInput {
   /** The cap, when the caller keeps it across choices; kept here otherwise. */
   access?: StudioFleetWorkerAccess | undefined;
   onAccessChange?: ((access: StudioFleetWorkerAccess) => void) | undefined;
+  /**
+   * False where the surface already states what Allow hands over, so the
+   * press is the decision: the first-run card. Asked everywhere else.
+   */
+  confirm?: boolean | undefined;
   /** Told while Allow runs, so the caller can hold its own controls still. */
   onPendingChange?: ((pending: boolean) => void) | undefined;
   onGranted: (grant: {
@@ -216,6 +221,7 @@ export function useIncomingWorkerAllow({
   connected,
   coordinatorFleetId,
   accountJoin,
+  confirm,
   access: controlledAccess,
   onAccessChange,
   onPendingChange,
@@ -285,10 +291,12 @@ export function useIncomingWorkerAllow({
     setPending(true);
     setError(null);
     try {
-      const confirmed = await requestConfirmDialog(
-        `Allow ${coordinatorLabel} to run work on ${hereLabel}?\n${coordinatorLabel} receives a management key to ${hereLabel} for a year, including access, update and skill management, plus worker access capped at ${FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access}. Existing project and sign-in limits stay in force. Each secret transfer still needs your approval.`,
-      );
-      if (confirmed !== true) return;
+      if (confirm !== false) {
+        const confirmed = await requestConfirmDialog(
+          `Allow ${coordinatorLabel} to run work on ${hereLabel}?\n${coordinatorLabel} receives a management key to ${hereLabel} for a year, including access, update and skill management, plus worker access capped at ${FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access}. Existing project and sign-in limits stay in force. Each secret transfer still needs your approval.`,
+        );
+        if (confirmed !== true) return;
+      }
       const result = throughAccount
         ? await allowThroughAccount()
         : fromHere && coordinatorFleetId !== undefined
