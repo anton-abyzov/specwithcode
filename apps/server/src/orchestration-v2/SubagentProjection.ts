@@ -20,6 +20,8 @@ import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError
 import * as DateTime from "effect/DateTime";
 import { isOrchestrationV2WorkActive } from "@specweave-studio/contracts";
 
+import { lastingThreadTitle } from "./LastingThreadTitle.ts";
+
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
   return result && result.length > 0 ? result : undefined;
@@ -29,7 +31,7 @@ function trimmed(value: string | null | undefined): string | undefined {
 const CONTEXT_LEAD =
   /^(?:repo|repository|project|path|folder|directory|cwd|working directory|workspace|worktree|branch|context|model)\s*:/i;
 
-function taskSummary(prompt: string): string {
+export function taskSummary(prompt: string): string {
   const sentences = prompt.trim().split(/(?<=[.!?])\s+|\n+/);
   return (
     sentences.find((sentence) => sentence.trim() && !CONTEXT_LEAD.test(sentence.trim())) ?? prompt
@@ -42,7 +44,8 @@ export function subagentThreadTitle(input: {
   readonly prompt: string;
   readonly ordinal: number;
 }): string {
-  const detail = trimmed(input.title) ?? trimmed(taskSummary(input.prompt));
+  const written = trimmed(input.title) ?? trimmed(taskSummary(input.prompt));
+  const detail = written === undefined ? undefined : lastingThreadTitle(written);
   if (detail === undefined) {
     return `${input.parentTitle} subagent ${input.ordinal}`;
   }

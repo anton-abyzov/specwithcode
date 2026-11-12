@@ -13,6 +13,7 @@ export const STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS = `
 The \`studio-code\` MCP server's tools describe their own use; read a tool's description before its first call. Decide these first:
 
 - Subagents: use your native subagent tool when it supports the model you need, otherwise \`delegate_task\` (any provider or model listed by \`orchestrator_capabilities\`). Start top-level threads with \`studio_thread_launch\` or \`create_threads\` only when the user asks for separate threads.
+- Title a thread after the lasting goal it owns, not a deadline or the first ask's wording; rename it with \`studio_thread_update\` when its scope changes.
 - To change this thread's model, call \`studio_thread_configure\` with \`continueWith\` and end your turn. It is not a delegation.
 - In a SpecWeave project, for feature work pass \`increment\` (NNNN, "new" or "none") to \`delegate_task\`, \`create_threads\` and \`studio_thread_launch\`; workers inherit yours when omitted; post the returned spec as \`[NNNN](<specPath>)\`.
 - Machines: \`studio_thread_launch\` with \`machine\` picks where a new thread runs; \`studio_thread_migrate\` moves an existing thread's execution; \`studio_handoff_ready_list\` and \`studio_thread_continue_here\` pick up another machine's handoff-ready threads. Switching the viewed orchestrator never moves a thread. For iOS Simulator, Xcode build or other Mac-only work, pass \`needs\` (\`["ios_simulator"]\` or \`["macos"]\`) so it runs on a Mac.

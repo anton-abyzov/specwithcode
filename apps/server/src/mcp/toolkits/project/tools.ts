@@ -29,6 +29,7 @@ import {
   OrchestratorMcpTaskClassHint,
   OrchestratorMcpTaskLaneHint,
   OrchestratorMcpTierHint,
+  THREAD_TITLE_RULE,
   ProviderInstanceId,
   TaskRoutingDecision,
   SourceControlCloneProtocol,
@@ -334,7 +335,9 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
           "With scratch:true from a thread in a project: the user explicitly asked for a chat outside any project. Otherwise threads started from a project stay in it.",
       }),
     ),
-    title: TrimmedNonEmptyString,
+    title: TrimmedNonEmptyString.annotate({
+      description: `The thread's name: ${THREAD_TITLE_RULE}`,
+    }),
     modelSelection: Schema.optional(ModelSelection),
     provider: Schema.optional(
       ProviderInstanceId.annotate({

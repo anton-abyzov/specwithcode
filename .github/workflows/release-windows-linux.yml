@@ -75,6 +75,11 @@ name: Release Windows and Linux
 #
 # Not yet: the WSL backend, which needs the Linux CLI archive built into the Windows app.
 
+# A dispatched run carries its version, so release-macos.yml's windows_linux job can tell whether
+# this version's build was already started (by release.sh or by hand). Other events keep the
+# default title.
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Release Windows and Linux {0}{1}', inputs.version, inputs.dry_run && ' (dry run)' || '') || '' }}
+
 on:
   workflow_dispatch:
     inputs:

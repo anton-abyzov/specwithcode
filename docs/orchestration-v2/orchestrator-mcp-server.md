@@ -452,7 +452,10 @@ Updates metadata for the calling thread or any other thread in the environment.
 The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
 `unlink_pull_request`. A link input supplies the repository, number, and URL;
 the server records the target thread's project ID. Branch and workspace changes
-are outside this tool.
+are outside this tool. A title an agent passes here, or to `delegate_task`,
+`create_threads` and `studio_thread_launch`, loses a deadline or time window at
+its end ("in 3 hours", "by Friday", "today"); `create_threads` without a title
+seeds a generated title from the task.
 
 The result includes the command ID and durable event sequence together with the
 resultant title, title-regeneration marker, and linked pull request. Reusing a

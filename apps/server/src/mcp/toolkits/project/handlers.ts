@@ -37,6 +37,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import { lastingThreadTitle } from "../../../orchestration-v2/LastingThreadTitle.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -779,7 +780,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           commandId,
           threadId,
           projectId,
-          title: input.title,
+          title: lastingThreadTitle(input.title),
           modelSelection: launchSelection,
           ...(routing === undefined ? {} : { routing }),
           ...(launchFallbackFrom === null ? {} : { launchFallbackFrom }),
