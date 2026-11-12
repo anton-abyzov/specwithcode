@@ -17,16 +17,20 @@ const TRAILING_TIME_WINDOWS: ReadonlyArray<RegExp> = [
     `\\s+(?:with)?in\\s+(?:the\\s+next\\s+|under\\s+|less\\s+than\\s+)?${AMOUNT}[\\s-]*${UNIT}$`,
     "i",
   ),
-  // "by Friday", "before tomorrow", "until 5pm"
-  new RegExp(`\\s+(?:by|before|until)\\s+${DAY}$`, "i"),
-  // "today", "this week", "ASAP"
-  /\s+(?:today|tonight|tomorrow|asap|urgently|this\s+(?:morning|afternoon|evening|week))$/i,
+  // "by Friday", "due before tomorrow", "until 5pm"
+  new RegExp(`\\s+(?:due\\s+)?(?:by|before|until)\\s+${DAY}$`, "i"),
+  // "today", "for this week", "ASAP"
+  /\s+(?:(?:for|due|on)\s+)?(?:today|tonight|tomorrow|asap|urgently|this\s+(?:morning|afternoon|evening|week))$/i,
 ];
 
 const TRAILING_SEPARATOR = /[\s,;:(\-–—]+$/;
+// A cut that leaves one of these at the end took part of a phrase, so the title stays as written.
+const DANGLING_WORD = /\s(?:a|an|the|and|or|for|due|on|at|of|by|in|to|with|from)$/i;
 
 export function lastingThreadTitle(title: string): string {
-  let result = title.trim().replace(/[.!]+$/, "");
+  const written = title.trim();
+  const body = written.replace(/[.!]+$/, "");
+  let result = body;
   for (let pass = 0; pass < 3; pass += 1) {
     const before = result;
     for (const pattern of TRAILING_TIME_WINDOWS) {
@@ -34,5 +38,6 @@ export function lastingThreadTitle(title: string): string {
     }
     if (result === before) break;
   }
-  return result.split(/\s+/).filter(Boolean).length >= 2 ? result : title.trim();
+  if (result === body || DANGLING_WORD.test(result)) return written;
+  return result.split(/\s+/).filter(Boolean).length >= 2 ? result : written;
 }

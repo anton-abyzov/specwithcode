@@ -14,6 +14,9 @@ describe("lastingThreadTitle", () => {
       ["Land open PRs today", "Land open PRs"],
       ["Fix sign-in, ASAP", "Fix sign-in"],
       ["Release all platforms in 3 hours today.", "Release all platforms"],
+      ["Triage bugs for today", "Triage bugs"],
+      ["Release notes for this week", "Release notes"],
+      ["Send report due by Friday", "Send report"],
     ];
     for (const [title, expected] of cases) {
       assert.strictEqual(lastingThreadTitle(title), expected, title);
@@ -28,6 +31,7 @@ describe("lastingThreadTitle", () => {
       "Sessions expire after 24 hours of idle",
       "Thread naming rules",
       "Cut cold start time in half",
+      "Create tip.py at the repo root.",
     ];
     for (const title of titles) {
       assert.strictEqual(lastingThreadTitle(title), title, title);
