@@ -145,7 +145,7 @@ export function StudioConnectEnvironmentRow(props: {
                   role="alert"
                   className="mt-2 text-xs leading-4.5 font-medium wrap-anywhere text-destructive"
                 >
-                  It was not deregistered: {failure}
+                  Deregistering did not finish: {failure}
                 </p>
               ) : null}
               <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -366,8 +366,10 @@ export function StudioConnectUserProfilePage() {
     });
     toastManager.add({
       type: "error",
-      title: "Could not deregister machine",
-      description: message,
+      // The account may have removed the machine before a later step failed,
+      // so this does not claim that it is still registered.
+      title: "Deregistering did not finish",
+      description: `${message} The list was read again: a machine missing from it was removed.`,
       data: traceId
         ? {
             secondaryActionProps: {

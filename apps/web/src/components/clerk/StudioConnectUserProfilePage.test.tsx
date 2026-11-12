@@ -123,11 +123,11 @@ describe("Studio Connect machine row", () => {
 });
 
 describe("Studio Connect machine row after a failed deregistration", () => {
-  it("says in the row that it was not deregistered, with the reason", () => {
+  it("says in the row that deregistering did not finish, with the reason", () => {
     const html = renderRow({ confirmationOpen: true, failure: "The relay did not answer." });
 
     expect(html).toContain('role="alert"');
-    expect(html).toContain("It was not deregistered: The relay did not answer.");
+    expect(html).toContain("Deregistering did not finish: The relay did not answer.");
     expect(html).toContain("Try again");
     expect(html).not.toContain("Deregister machine");
   });
@@ -156,7 +156,7 @@ describe("Studio Connect machine row after a failed deregistration", () => {
     });
 
     expect(html.match(/role="alert"/g)).toHaveLength(1);
-    expect(html).toContain("It was not deregistered: The relay did not answer.");
+    expect(html).toContain("Deregistering did not finish: The relay did not answer.");
   });
 });
 

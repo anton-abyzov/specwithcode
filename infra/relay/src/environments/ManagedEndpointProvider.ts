@@ -755,8 +755,10 @@ export const make = Effect.gen(function* () {
           // refuses to delete a tunnel while its connector is attached. That
           // is not a failed removal: the link is revoked and the DNS record is
           // gone, so the address is dead. Keep the allocation, which still
-          // names the tunnel, so a later teardown (another unlink, or the
-          // sweep once the connector drops) can finish.
+          // names the tunnel: another unlink can finish the teardown, and the
+          // idle-tunnel sweep finds the tunnel through it once the connector
+          // has dropped. Forget the deleted DNS record, though, or the row
+          // would hold one of the global slots for as long as it exists.
           const tunnelDeleted = yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
             Effect.as(true),
             Effect.catchIf(isManagedEndpointTunnelInUse, () => Effect.succeed(false)),
@@ -771,6 +773,26 @@ export const make = Effect.gen(function* () {
             ),
           );
           if (!tunnelDeleted) {
+            if (dnsRecordId !== null) {
+              yield* allocations
+                .clearClaimedDns({
+                  userId: input.userId,
+                  environmentId: input.environmentId,
+                  generation: claimedGeneration,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointDeprovisioningFailed({
+                        ...input,
+                        stage: "remove-allocation",
+                        tunnelId,
+                        dnsRecordId,
+                        cause,
+                      }),
+                  ),
+                );
+            }
             yield* Effect.logWarning("Managed tunnel still has a connector; left for later", {
               environmentId: input.environmentId,
               tunnelId,

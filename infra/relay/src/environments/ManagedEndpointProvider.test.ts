@@ -54,6 +54,7 @@ interface AllocationCall {
     | "markReady"
     | "claimRelease"
     | "claimDeprovision"
+    | "clearClaimedDns"
     | "remove"
     | "removeClaimed";
   readonly input: unknown;
@@ -324,6 +325,17 @@ function makeAllocations(
         }
         mutate(allocationKey(input), (current) => current);
         return allocations.get(allocationKey(input))?.generation ?? null;
+      }),
+    clearClaimedDns: (input) =>
+      Effect.sync(() => {
+        calls.push({ operation: "clearClaimedDns", input });
+        const key = allocationKey(input);
+        const allocation = allocations.get(key);
+        if (allocation === undefined || allocation.generation !== input.generation) {
+          return false;
+        }
+        allocations.set(key, { ...allocation, dnsRecordId: null });
+        return true;
       }),
     remove: (input) =>
       Effect.sync(() => {
@@ -1802,11 +1814,8 @@ describe("ManagedEndpointProvider", () => {
           }
         }),
     });
-    const layer = layerProvider(
-      tunnelClient,
-      makeDnsClient(dnsCalls),
-      makeAllocations(allocationCalls),
-    );
+    const allocations = makeAllocations(allocationCalls);
+    const layer = layerProvider(tunnelClient, makeDnsClient(dnsCalls), allocations);
 
     return Effect.gen(function* () {
       const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -1817,10 +1826,14 @@ describe("ManagedEndpointProvider", () => {
       });
 
       // Removing a machine that is still online: no error, the DNS record goes,
-      // and the allocation stays so the tunnel can still be found.
+      // and the allocation stays so the tunnel can still be found. It forgets
+      // the deleted DNS record, so it stops counting toward the global cap.
       expect(yield* provider.deprovision(key)).toBe(false);
       expect(dnsCalls.map((call) => call.operation)).toContain("deleteRecord");
       expect(allocationCalls.map((call) => call.operation)).not.toContain("removeClaimed");
+      expect(allocationCalls.map((call) => call.operation)).toContain("clearClaimedDns");
+      expect(yield* allocations.get(key)).toMatchObject({ dnsRecordId: null });
+      expect((yield* allocations.get(key))?.tunnelId).not.toBeNull();
 
       // Once the connector is gone the same call finishes the teardown.
       connectorAttached = false;

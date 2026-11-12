@@ -344,8 +344,8 @@ To remove an environment from SpecWithCode Connect, open the account menu and ch
 **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. It also works while the environment is online: its
-address stops working at once, and its tunnel is removed once the environment
-lets go of it. Deregistering the machine you are using also turns SpecWithCode
+address stops working at once, and the idle tunnel cleanup deletes its tunnel
+after the environment has disconnected. Deregistering the machine you are using also turns SpecWithCode
 Connect off on it. Removing an environment from a device's connection
 settings only forgets it on that device; it stays registered to your account.
 
