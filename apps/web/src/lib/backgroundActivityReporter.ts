@@ -8,6 +8,7 @@ import {
   type BackgroundScope,
   type ClientActivityReportInput,
   type EnvironmentId,
+  ProviderInstanceId,
   WS_METHODS,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -177,6 +178,13 @@ function scopeForSubscription(
 ): BackgroundScope | null {
   if (observation.method === WS_METHODS.subscribeResourceTelemetry) {
     return { type: "diagnostics" };
+  }
+  if (observation.method === WS_METHODS.providerAuthSubscribe) {
+    // An agent's sign-in state is on screen: its machine may look again sooner.
+    const instanceId = (observation.input as { readonly instanceId?: unknown }).instanceId;
+    return typeof instanceId === "string" && instanceId.trim().length > 0
+      ? { type: "provider-status", instanceId: ProviderInstanceId.make(instanceId) }
+      : null;
   }
   if (observation.method !== WS_METHODS.subscribeVcsStatus) {
     return null;

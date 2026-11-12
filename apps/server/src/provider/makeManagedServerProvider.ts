@@ -63,6 +63,25 @@ function loginChanged(published: ServerProvider, probed: ServerProvider): boolea
 }
 
 /**
+ * A check that could not read the sign-in keeps the last answer that did, for
+ * the row to show instead of "Not reported". `auth` itself stays "unknown":
+ * what may run is decided by what was read, never by what was remembered.
+ */
+export function withLastKnownAuth(
+  published: ServerProvider,
+  probed: ServerProvider,
+): ServerProvider {
+  const { lastKnownAuth: _reported, ...rest } = probed;
+  if (!probed.enabled || !probed.installed || probed.auth.status !== "unknown") return rest;
+  const lastKnownAuth =
+    published.auth.status === "unknown" ? published.lastKnownAuth : published.auth;
+  return lastKnownAuth ? { ...rest, lastKnownAuth } : rest;
+}
+
+/** How often a row that is not signed in is asked about again while it is on screen. */
+const SIGN_IN_PROBE_INTERVAL: Duration.Input = "5 seconds";
+
+/**
  * The usage a probe publishes, marked with when this server first saw the
  * account it belongs to (see `ProviderSnapshotState.accountChangedAt`).
  */
@@ -96,6 +115,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
   /** Keeps the signed-in subscription across restarts, so a change during one is noticed. */
   readonly subscriptionMemory?: SubscriptionMemory;
+  /**
+   * A cheap question asked every few seconds while this agent's row is on
+   * screen and not signed in, so a sign-in done in a terminal shows without a
+   * manual refresh. `mark` is any text that changes when the sign-in may have
+   * changed (undefined: no answer this time). A changed mark runs the full
+   * check; so does the first mark after the row appears. `beforeCheck` drops
+   * whatever the full check would otherwise answer from memory.
+   */
+  readonly signInProbe?: {
+    readonly mark: Effect.Effect<string | undefined>;
+    readonly beforeCheck?: Effect.Effect<void>;
+    readonly interval?: Duration.Input;
+  };
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
@@ -219,7 +251,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         ? (probedSnapshot.usageLimits?.checkedAt ?? probedSnapshot.checkedAt)
         : state.accountChangedAt;
       const snapshot = withUsageLimits(
-        probedSnapshot,
+        withLastKnownAuth(state.snapshot, probedSnapshot),
         withAccountChange(
           switched || loginChanged(state.snapshot, probedSnapshot)
             ? probedSnapshot.usageLimits
@@ -361,6 +393,39 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
+
+  const signInProbe = input.signInProbe;
+  if (signInProbe) {
+    // The mark the last full check went with; null while nobody is looking.
+    let checkedMark: string | null = null;
+    yield* Effect.sleep(signInProbe.interval ?? SIGN_IN_PROBE_INTERVAL).pipe(
+      Effect.andThen(
+        Effect.gen(function* () {
+          const { snapshot } = yield* Ref.get(snapshotStateRef);
+          const watching =
+            snapshot.enabled &&
+            snapshot.installed &&
+            snapshot.auth.status !== "authenticated" &&
+            (yield* backgroundPolicy.shouldRunScopeWork({
+              type: "provider-status",
+              instanceId: snapshot.instanceId,
+            }));
+          if (!watching) {
+            checkedMark = null;
+            return;
+          }
+          const mark = yield* signInProbe.mark;
+          if (mark === undefined || mark === checkedMark) return;
+          checkedMark = mark;
+          if (signInProbe.beforeCheck) yield* signInProbe.beforeCheck;
+          yield* refreshSnapshot();
+        }),
+      ),
+      Effect.ignoreCause({ log: true }),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+  }
 
   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
     Effect.ignoreCause({ log: true }),

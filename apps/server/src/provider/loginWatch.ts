@@ -1,6 +1,6 @@
 /**
  * Notices a CLI login switching accounts outside Studio (`claude /login`,
- * `codex login` in a terminal) so the provider re-reads its usage straight
+ * `codex login` or `muse login` in a terminal) so the provider re-reads its usage straight
  * away instead of showing the previous account's meter until the next probe.
  *
  * Watches the directory that holds the login file, because CLIs replace the
@@ -84,6 +84,59 @@ export function codexLoginIdentity(contents: string): string | undefined {
     jwtEmail(field(tokens, "id_token")),
   ]);
 }
+
+/**
+ * Muse Code keeps its account beside its settings: `$XDG_CONFIG_HOME/muse`,
+ * or `~/.config/muse` by default.
+ */
+export const museAccountConfigPath = (environment: NodeJS.ProcessEnv) =>
+  Effect.map(Path.Path, (path) =>
+    path.join(
+      environment.XDG_CONFIG_HOME?.trim() || path.join(NodeOS.homedir(), ".config"),
+      "muse",
+      "auth.json",
+    ),
+  );
+
+/** The signed-in Muse Code account recorded in `auth.json` (`providers.meta`). */
+export function museLoginIdentity(contents: string): string | undefined {
+  const parsed = parseObject(contents);
+  if (!parsed) return undefined;
+  const meta = field(parsed.providers, "meta");
+  return JSON.stringify([
+    text(field(meta, "mechanism")),
+    text(field(meta, "user_email"))?.toLowerCase() ?? null,
+    field(meta, "subs_active") === true,
+  ]);
+}
+
+/** A 53-bit hash of a text (cyrb53): enough to tell two versions of one small file apart. */
+function textHash(value: string): string {
+  let high = 0xdeadbeef;
+  let low = 0x41c6ce57;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    high = Math.imul(high ^ code, 2654435761);
+    low = Math.imul(low ^ code, 1597334677);
+  }
+  high = Math.imul(high ^ (high >>> 16), 2246822507) ^ Math.imul(low ^ (low >>> 13), 3266489909);
+  low = Math.imul(low ^ (low >>> 16), 2246822507) ^ Math.imul(high ^ (high >>> 13), 3266489909);
+  return (4294967296 * (2097151 & low) + (high >>> 0)).toString(16);
+}
+
+/**
+ * A mark of the whole login file. Unlike an identity it also changes when the
+ * same account signs in again, which is what an expired sign-in needs. It is a
+ * short hash and a length: nothing in the file can be read back from it. Never
+ * fails: a missing or unreadable file is its own mark.
+ */
+export const loginFileMark = (
+  filePath: string,
+): Effect.Effect<string, never, FileSystem.FileSystem> =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(filePath)).pipe(
+    Effect.map((contents) => `${contents.length}:${textHash(contents)}`),
+    Effect.orElseSucceed(() => "none"),
+  );
 
 /**
  * Runs `onChange` whenever the account in `filePath` differs from the one

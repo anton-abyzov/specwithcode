@@ -12,6 +12,7 @@ import type {
   ServerProviderUsageLimits,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -24,6 +25,31 @@ import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 export const DEFAULT_TIMEOUT_MS = 4_000;
 // Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
 export const AUTH_PROBE_TIMEOUT_MS = 10_000;
+/** The longer limit a check gets, once, after it gave no answer in its usual time. */
+export const RETRY_TIMEOUT_MS = 15_000;
+
+/**
+ * A check that gives no answer in its usual time runs once more with a longer
+ * limit before anything is shown: a busy machine often answers the second time.
+ * None means it stayed silent both times.
+ */
+export const answerOrRetry = <A, E, R>(
+  check: Effect.Effect<A, E, R>,
+  limitMs: number,
+  retryLimitMs: number = RETRY_TIMEOUT_MS,
+): Effect.Effect<Option.Option<A>, E, R> =>
+  check.pipe(
+    Effect.timeoutOption(limitMs),
+    Effect.flatMap((answer) =>
+      Option.isSome(answer)
+        ? Effect.succeed(answer)
+        : check.pipe(Effect.timeoutOption(retryLimitMs)),
+    ),
+  );
+
+/** What a row says when a check stayed silent. "Check again" sits beside it. */
+export const noAnswerMessage = (agent: string, limitMs: number = RETRY_TIMEOUT_MS) =>
+  `Could not check ${agent}: no answer in ${Math.round(limitMs / 1000)} seconds.`;
 /**
  * auth.type when the status probe itself failed or timed out (usually a busy
  * host), so the sign-in was never read. Admission reports a failed check, not a sign-out.
