@@ -14,6 +14,12 @@ import * as OpenApi from "effect/http-api/OpenApi";
 /** Accounts one page of the account list holds. */
 export const RELAY_ADMIN_ACCOUNTS_PAGE_SIZE = 50;
 
+/** The highest machine limit an owner can set for one account. */
+export const RELAY_ADMIN_MACHINE_LIMIT_MAX = 1000;
+
+/** Recorded actions the action list returns, newest first. */
+export const RELAY_ADMIN_ACTIONS_PAGE_SIZE = 100;
+
 /** The signed-in owner an admin request runs as. */
 export class RelayAdminPrincipal extends Context.Service<
   RelayAdminPrincipal,
@@ -24,7 +30,17 @@ export class RelayAdminUnavailableError extends Schema.TaggedError<RelayAdminUna
   "RelayAdminUnavailableError",
   {
     code: Schema.Literal("admin_unavailable"),
-    reason: Schema.Literals(["persistence_failed", "identity_lookup_failed"]),
+    /**
+     * - "record_failed": the action's record could not be written, so the action did not run.
+     * - "action_failed": the record was written and the action then failed part way; it is
+     *   safe to run again.
+     */
+    reason: Schema.Literals([
+      "persistence_failed",
+      "identity_lookup_failed",
+      "record_failed",
+      "action_failed",
+    ]),
     traceId: Schema.String,
   },
   { httpApiStatus: 503 },
@@ -41,6 +57,20 @@ export class RelayAdminAccountNotFoundError extends Schema.TaggedError<RelayAdmi
 ) {
   override get message(): string {
     return "No Connect account has that id.";
+  }
+}
+
+/** The account exists, but it has no such linked machine or phone. */
+export class RelayAdminTargetNotFoundError extends Schema.TaggedError<RelayAdminTargetNotFoundError>()(
+  "RelayAdminTargetNotFoundError",
+  {
+    code: Schema.Literal("target_not_found"),
+    target: Schema.Literals(["machine", "phone"]),
+  },
+  { httpApiStatus: 404 },
+) {
+  override get message(): string {
+    return `The account has no such ${this.target}.`;
   }
 }
 
@@ -211,5 +241,135 @@ export const RelayAdminGroup = HttpApiGroup.make("admin")
   )
   .annotate(OpenApi.Description, "Owner-only view of Connect accounts. Read-only.")
   // Not in the public /openapi.json or /docs: nothing there tells a visitor the routes exist.
+  .annotate(OpenApi.Exclude, true)
+  .middleware(RelayAdminAuth);
+
+/**
+ * What an owner sets as one account's machine limit:
+ * - "limited": this many machines, 0 to 1000.
+ * - "unlimited": no account limit; the relay's global cap still applies.
+ * - "default": remove the owner's setting, back to the founder or free limit.
+ */
+export const RelayAdminMachineLimitSetting = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("limited"),
+    maxMachines: Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(0),
+      Schema.isLessThanOrEqualTo(RELAY_ADMIN_MACHINE_LIMIT_MAX),
+    ),
+  }),
+  Schema.Struct({ kind: Schema.Literal("unlimited") }),
+  Schema.Struct({ kind: Schema.Literal("default") }),
+]);
+export type RelayAdminMachineLimitSetting = typeof RelayAdminMachineLimitSetting.Type;
+
+export const RelayAdminSetMachineLimitRequest = Schema.Struct({
+  limit: RelayAdminMachineLimitSetting,
+});
+
+export const RelayAdminSetMachineLimitResponse = Schema.Struct({
+  /** The account's limit now. Machines already linked stay linked. */
+  limit: RelayAdminMachineLimit,
+});
+export type RelayAdminSetMachineLimitResponse = typeof RelayAdminSetMachineLimitResponse.Type;
+
+export const RelayAdminMachineParams = Schema.Struct({
+  userId: Schema.String,
+  environmentId: Schema.String,
+});
+
+export const RelayAdminUnlinkMachineResponse = Schema.Struct({ unlinked: Schema.Boolean });
+export type RelayAdminUnlinkMachineResponse = typeof RelayAdminUnlinkMachineResponse.Type;
+
+export const RelayAdminPhoneParams = Schema.Struct({
+  userId: Schema.String,
+  deviceId: Schema.String,
+});
+
+export const RelayAdminRemovePhoneResponse = Schema.Struct({ removed: Schema.Boolean });
+export type RelayAdminRemovePhoneResponse = typeof RelayAdminRemovePhoneResponse.Type;
+
+export const RelayAdminActionKind = Schema.Literals([
+  "set_machine_limit",
+  "unlink_machine",
+  "remove_phone",
+]);
+export type RelayAdminActionKind = typeof RelayAdminActionKind.Type;
+
+/**
+ * - "started": recorded, and the action has not reported back (it may still be running, or the
+ *   relay stopped part way).
+ * - "done": the action finished.
+ * - "failed": the action failed part way.
+ */
+export const RelayAdminActionOutcome = Schema.Literals(["started", "done", "failed"]);
+export type RelayAdminActionOutcome = typeof RelayAdminActionOutcome.Type;
+
+/** One recorded owner action: who did what to which account, and when. */
+export const RelayAdminAction = Schema.Struct({
+  id: Schema.String,
+  /** The owner who acted. */
+  ownerUserId: Schema.String,
+  action: RelayAdminActionKind,
+  /** The account acted on. */
+  targetUserId: Schema.String,
+  /** The machine's environment id or the phone's device id; null for a limit change. */
+  targetId: Schema.NullOr(Schema.String),
+  /** The machine's or phone's name when the action ran. */
+  targetLabel: Schema.NullOr(Schema.String),
+  /** For a limit change: the account's limit before it. */
+  limitBefore: Schema.NullOr(RelayAdminMachineLimit),
+  /** For a limit change: what the owner set. */
+  limitSet: Schema.NullOr(RelayAdminMachineLimitSetting),
+  outcome: RelayAdminActionOutcome,
+  createdAt: Schema.String,
+});
+export type RelayAdminAction = typeof RelayAdminAction.Type;
+
+export const RelayAdminActionsResponse = Schema.Struct({
+  actions: Schema.Array(RelayAdminAction),
+});
+export type RelayAdminActionsResponse = typeof RelayAdminActionsResponse.Type;
+
+/**
+ * What an owner can change. Every route here is a POST so the relay's CORS
+ * rules need no new method, and each writes its record before it acts.
+ */
+export const RelayAdminActionsGroup = HttpApiGroup.make("adminActions")
+  .add(
+    HttpApiEndpoint.get("listActions", "/v1/admin/actions", {
+      success: RelayAdminActionsResponse,
+      error: RelayAdminUnavailableError,
+    }).annotate(OpenApi.Summary, "The last recorded owner actions, newest first"),
+    HttpApiEndpoint.post("setMachineLimit", "/v1/admin/accounts/:userId/machine-limit", {
+      params: RelayAdminAccountParams,
+      payload: RelayAdminSetMachineLimitRequest,
+      success: RelayAdminSetMachineLimitResponse,
+      error: [RelayAdminUnavailableError, RelayAdminAccountNotFoundError],
+    }).annotate(OpenApi.Summary, "Set, lift or reset one account's machine limit"),
+    HttpApiEndpoint.post(
+      "unlinkMachine",
+      "/v1/admin/accounts/:userId/machines/:environmentId/unlink",
+      {
+        params: RelayAdminMachineParams,
+        success: RelayAdminUnlinkMachineResponse,
+        error: [
+          RelayAdminUnavailableError,
+          RelayAdminAccountNotFoundError,
+          RelayAdminTargetNotFoundError,
+        ],
+      },
+    ).annotate(OpenApi.Summary, "Unlink one machine of one account"),
+    HttpApiEndpoint.post("removePhone", "/v1/admin/accounts/:userId/phones/:deviceId/remove", {
+      params: RelayAdminPhoneParams,
+      success: RelayAdminRemovePhoneResponse,
+      error: [
+        RelayAdminUnavailableError,
+        RelayAdminAccountNotFoundError,
+        RelayAdminTargetNotFoundError,
+      ],
+    }).annotate(OpenApi.Summary, "Remove one phone of one account"),
+  )
+  .annotate(OpenApi.Description, "Owner-only changes to Connect accounts. Each is recorded.")
   .annotate(OpenApi.Exclude, true)
   .middleware(RelayAdminAuth);

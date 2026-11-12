@@ -123,7 +123,7 @@ export const layerAdminAuth = Layer.effect(
   }),
 );
 
-const unavailable = (reason: RelayAdminUnavailableError["reason"]) =>
+export const unavailable = (reason: RelayAdminUnavailableError["reason"]) =>
   currentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(new RelayAdminUnavailableError({ code: "admin_unavailable", reason, traceId })),
