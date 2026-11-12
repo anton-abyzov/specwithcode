@@ -607,18 +607,21 @@ describe("the agents step: sign-in", () => {
   it("reads the agent at once when its sign-in command ends, and says Checking", async () => {
     await enterRemoteAgents();
     await click("Sign in");
-    const reading = deferred<CommandResult>();
+    const reading = deferred<AsyncResult.AsyncResult<unknown, Error>>();
     state.refresh.mockClear().mockReturnValueOnce(reading.promise);
     await act(async () => state.viewport!.onSessionExited());
     expect(hasViewport()).toBe(false);
     expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
       environmentId: remoteId,
-      input: { instanceId: signedOutGrok.instanceId },
+      input: { instanceId: signedOutGrok.instanceId, fresh: true },
     });
     expect(text(renderer!.root)).toContain("Checking…");
     expect(button("Sign in")).toBeUndefined();
     await setProviders(remoteId, [missingClaude, signedInGrok]);
-    await act(async () => reading.resolve(AsyncResult.success(undefined)));
+    await act(async () =>
+      reading.resolve(AsyncResult.success({ providers: [missingClaude, signedInGrok] })),
+    );
+    expect(state.refresh).toHaveBeenCalledOnce();
     expect(text(renderer!.root)).toContain("Ready: Grok.");
     expect(button("Sign in")).toBeUndefined();
   });
@@ -635,6 +638,30 @@ describe("the agents step: sign-in", () => {
     // Starting it again takes the line away.
     await click("Sign in");
     expect(text(renderer!.root)).not.toContain("The sign-in ended before");
+  });
+
+  it("reads the agent by itself when its sign-in ends, and once more while it is signed out", async () => {
+    await enterRemoteAgents();
+    await click("Sign in");
+    state.refresh.mockClear();
+    await act(async () => state.viewport!.onSessionExited());
+    // The first read cannot join one that began before the sign-in saved the account.
+    expect(state.refresh.mock.calls).toEqual([
+      [{ environmentId: remoteId, input: { instanceId: signedOutGrok.instanceId, fresh: true } }],
+      [{ environmentId: remoteId, input: { instanceId: signedOutGrok.instanceId } }],
+    ]);
+  });
+
+  it("reads the agent once when that answer says it is signed in", async () => {
+    await enterRemoteAgents();
+    await click("Sign in");
+    state.refresh.mockClear();
+    state.refresh.mockResolvedValueOnce(AsyncResult.success({ providers: [signedInGrok] }));
+    await act(async () => state.viewport!.onSessionExited());
+    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: { instanceId: signedOutGrok.instanceId, fresh: true },
+    });
   });
 
   it("closes the panel once the machine reads the agent as signed in", async () => {

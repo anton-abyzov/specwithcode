@@ -96,6 +96,24 @@ interface AgentTerminalSession {
 }
 
 /** Claude Code is the product name of the agent the driver list calls Claude. */
+/** Whether a read's own answer says that agent is signed in. */
+function readAsSignedIn(
+  result:
+    | {
+        readonly _tag: string;
+        readonly value?: { readonly providers?: ReadonlyArray<ServerProvider> } | undefined;
+      }
+    | undefined,
+  instanceId: ProviderInstanceId,
+): boolean {
+  if (result?._tag !== "Success") return false;
+  return (
+    result.value?.providers?.some(
+      (provider) => provider.instanceId === instanceId && provider.auth.status === "authenticated",
+    ) === true
+  );
+}
+
 function rowName(agent: string, provider?: ServerProvider): string {
   return provider?.displayName || (agent === "claudeAgent" ? "Claude Code" : agentName(agent));
 }
@@ -202,6 +220,7 @@ function ConnectedAgentsStep({
   // The agent whose sign-in in the panel ended last, for a line on its row if it is still signed out.
   const [endedInstance, setEndedInstance] = useState<ProviderInstanceId | null>(null);
   const polling = useRef(false);
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
   // refresh; harmless when nothing changed (single-flighted per environment).
@@ -255,6 +274,13 @@ function ConnectedAgentsStep({
     providers?.find((provider) => provider.instanceId === signInInstanceId)?.auth.status ===
       "authenticated";
   if (panelSignedIn) setTerminalSession(null);
+  // The line about a sign-in that ended is about that sign-in only.
+  if (
+    endedInstance !== null &&
+    providers?.find((provider) => provider.instanceId === endedInstance)?.auth.status ===
+      "authenticated"
+  )
+    setEndedInstance(null);
   useEffect(() => {
     if (signInInstanceId === null) return;
     const timer = setInterval(() => {
@@ -301,11 +327,21 @@ function ConnectedAgentsStep({
       setCheckingInstance((current) => (current === instanceId ? null : current));
     setCheckingInstance(instanceId);
     setEndedInstance(instanceId);
-    void Promise.resolve(refreshProviders({ environmentId, input: { instanceId } })).finally(
-      checked,
-    );
+    // A read already under way may have begun before the sign-in saved the account.
+    // So this one is asked for by itself, and a signed-out answer is read once more.
+    const read = (fresh: boolean) =>
+      Promise.resolve(
+        refreshProviders({
+          environmentId,
+          input: fresh ? { instanceId, fresh } : { instanceId },
+        }),
+      );
+    void read(true)
+      .then((result) => (readAsSignedIn(result, instanceId) ? undefined : read(false)))
+      .finally(checked);
     // A check that never answers must not hold the row on "Checking…".
-    setTimeout(checked, AGENT_CHECK_TIMEOUT_MS);
+    if (checkTimer.current !== null) clearTimeout(checkTimer.current);
+    checkTimer.current = setTimeout(checked, AGENT_CHECK_TIMEOUT_MS);
   };
 
   const turnOn = (agent: string) => {
