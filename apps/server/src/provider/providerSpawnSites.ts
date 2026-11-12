@@ -33,6 +33,7 @@ export const PROVIDER_PROCESS_SPAWN_SITES: Readonly<Record<string, string>> = {
  * capability probes, sign-in helpers, installers and process cleanup.
  */
 export const NON_AGENT_PROVIDER_SPAWNS: Readonly<Record<string, string>> = {
+  "provider/ClaudeCliLogin.ts": "claude auth login and logout, the sign-in the app runs",
   "provider/ClaudeProvider.ts": "claude CLI status and version probes",
   "provider/CodexProvider.ts": "codex app-server account and model probe, no turns",
   "provider/CodexInstallation.ts": "codex install and version checks",
