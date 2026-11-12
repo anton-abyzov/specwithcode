@@ -66,6 +66,45 @@ describe("the Connect admin's read of the relay database", () => {
     }).pipe(Effect.provide(layer())),
   );
 
+  it.effect("counts new accounts, accounts seen and machines linked per window", () =>
+    Effect.gen(function* () {
+      yield* seedConnectAdmin;
+      const queries = yield* ConnectAdminQueries.ConnectAdminQueries;
+      // A Wednesday. The month window starts on October 12 at noon.
+      const usage = yield* queries.usage(Date.parse("2026-11-11T12:00:00.000Z"));
+      expect(usage).toMatchObject({
+        // Only the account with a client key was first seen inside the month.
+        created: { day: 0, week: 0, month: 1 },
+        // The owner's phone was seen 12 hours ago; the key a month ago.
+        active: { day: 1, week: 1, month: 2 },
+        machinesLinked: { day: 0, week: 0, month: 0 },
+      });
+      expect(usage.weekly.map((week) => week.count)).toEqual([0, 0, 0, 0, 0, 1, 2, 2, 0, 0, 0, 0]);
+      expect(usage.weekly[5]?.weekStart).toBe("2026-09-28T00:00:00.000Z");
+
+      // Earlier, the same rows fall in other windows; later rows are not counted yet.
+      const earlier = yield* queries.usage(Date.parse("2026-10-10T12:00:00.000Z"));
+      expect(earlier).toMatchObject({
+        created: { day: 1, week: 2, month: 3 },
+        // The owner's phone is seen a month after this moment, so the owner is not counted.
+        active: { day: 1, week: 2, month: 2 },
+        // An unlinked machine was still linked in that window.
+        machinesLinked: { day: 1, week: 2, month: 5 },
+      });
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("reads usage of an empty database as zeros for every window and week", () =>
+    Effect.gen(function* () {
+      const queries = yield* ConnectAdminQueries.ConnectAdminQueries;
+      const usage = yield* queries.usage(Date.parse("2026-11-11T12:00:00.000Z"));
+      const none = { day: 0, week: 0, month: 0 };
+      expect(usage).toMatchObject({ created: none, active: none, machinesLinked: none });
+      expect(usage.weekly).toHaveLength(12);
+      expect(usage.weekly.every((week) => week.count === 0)).toBe(true);
+    }).pipe(Effect.provide(layer())),
+  );
+
   it.effect("lists every account newest first, also one with only a phone or a key", () =>
     Effect.gen(function* () {
       yield* seedConnectAdmin;

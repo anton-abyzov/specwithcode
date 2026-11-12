@@ -29,6 +29,7 @@ import {
 } from "../testing/connectAdminFixtures.ts";
 import { layerSqliteRelayDb, makeSqliteD1 } from "../testing/sqliteD1.ts";
 import * as AdminIdentities from "./AdminIdentities.ts";
+import * as AdminSignUps from "./AdminSignUps.ts";
 import * as ConnectAdmin from "./ConnectAdmin.ts";
 import * as ConnectAdminActions from "./ConnectAdminActions.ts";
 import * as ConnectAdminQueries from "./ConnectAdminQueries.ts";
@@ -124,6 +125,9 @@ const withActions = <A, E>(
       Layer.mock(AdminIdentities.AdminIdentities, {
         lookup: () => Effect.succeed(new Map()),
         search: () => Effect.succeed({ userIds: [], truncated: false }),
+      }),
+      Layer.mock(AdminSignUps.AdminSignUps, {
+        read: () => Effect.fail(new AdminSignUps.AdminSignUpsReadFailed({ cause: "not used" })),
       }),
       Layer.mock(ManagedEndpointProvider.ManagedEndpointTunnelClient, {
         get: (tunnelId) => Effect.succeed({ id: tunnelId, status: "healthy" }),

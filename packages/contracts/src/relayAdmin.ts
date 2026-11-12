@@ -214,6 +214,63 @@ export const RelayAdminAccountResponse = Schema.Struct({
 });
 export type RelayAdminAccountResponse = typeof RelayAdminAccountResponse.Type;
 
+/** Weeks the sign-up and new-account series cover, the running week included. */
+export const RELAY_ADMIN_USAGE_WEEKS = 12;
+
+/** A count over the last 24 hours, 7 days and 30 days. */
+export const RelayAdminUsageWindows = Schema.Struct({
+  day: Schema.Number,
+  week: Schema.Number,
+  month: Schema.Number,
+});
+export type RelayAdminUsageWindows = typeof RelayAdminUsageWindows.Type;
+
+export const RelayAdminUsageWeek = Schema.Struct({
+  /** The Monday the week starts on, 00:00 UTC. */
+  weekStart: Schema.String,
+  count: Schema.Number,
+});
+export type RelayAdminUsageWeek = typeof RelayAdminUsageWeek.Type;
+
+/** Everyone who signed up, as Clerk counts them. Counts only: no person is named. */
+export const RelayAdminSignUps = Schema.Struct({
+  total: Schema.Number,
+  /** People who signed up in each window. */
+  created: RelayAdminUsageWindows,
+  /** People Clerk saw active in each window. Clerk records this by the day. */
+  active: RelayAdminUsageWindows,
+  /** Sign-ups per week, oldest first. */
+  weekly: Schema.Array(RelayAdminUsageWeek),
+  /**
+   * False when more people fall inside the windows than one read of Clerk
+   * returns; the windows and weeks are then at least this many.
+   */
+  complete: Schema.Boolean,
+});
+export type RelayAdminSignUps = typeof RelayAdminSignUps.Type;
+
+/** What the relay's own tables say about use of Connect. */
+export const RelayAdminConnectUsage = Schema.Struct({
+  /** Accounts the relay first saw in each window. */
+  created: RelayAdminUsageWindows,
+  /** Accounts the relay last saw in each window. */
+  active: RelayAdminUsageWindows,
+  /** Machines linked in each window, also ones unlinked since. */
+  machinesLinked: RelayAdminUsageWindows,
+  /** New accounts per week, oldest first. */
+  weekly: Schema.Array(RelayAdminUsageWeek),
+});
+export type RelayAdminConnectUsage = typeof RelayAdminConnectUsage.Type;
+
+export const RelayAdminUsageResponse = Schema.Struct({
+  /** The moment the windows end at. */
+  generatedAt: Schema.String,
+  /** Null when Clerk could not be read; the rest of the answer still stands. */
+  signUps: Schema.NullOr(RelayAdminSignUps),
+  connect: RelayAdminConnectUsage,
+});
+export type RelayAdminUsageResponse = typeof RelayAdminUsageResponse.Type;
+
 export const RelayAdminGroup = HttpApiGroup.make("admin")
   .add(
     HttpApiEndpoint.get("me", "/v1/admin/me", {
@@ -223,6 +280,10 @@ export const RelayAdminGroup = HttpApiGroup.make("admin")
       success: RelayAdminOverviewResponse,
       error: RelayAdminUnavailableError,
     }).annotate(OpenApi.Summary, "Totals across every Connect account"),
+    HttpApiEndpoint.get("usage", "/v1/admin/usage", {
+      success: RelayAdminUsageResponse,
+      error: RelayAdminUnavailableError,
+    }).annotate(OpenApi.Summary, "Sign-ups and activity over time, as counts"),
     HttpApiEndpoint.get("listAccounts", "/v1/admin/accounts", {
       query: RelayAdminAccountsQuery,
       success: RelayAdminAccountsResponse,

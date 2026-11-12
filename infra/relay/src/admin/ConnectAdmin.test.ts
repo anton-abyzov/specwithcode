@@ -25,6 +25,7 @@ import {
 } from "../testing/connectAdminFixtures.ts";
 import { layerSqliteRelayDb, makeSqliteD1 } from "../testing/sqliteD1.ts";
 import * as AdminIdentities from "./AdminIdentities.ts";
+import * as AdminSignUps from "./AdminSignUps.ts";
 import * as ConnectAdmin from "./ConnectAdmin.ts";
 import * as ConnectAdminQueries from "./ConnectAdminQueries.ts";
 
@@ -37,6 +38,7 @@ const AUDIENCE = "studio-code-relay";
 const ROUTES = [
   "/v1/admin/me",
   "/v1/admin/overview",
+  "/v1/admin/usage",
   "/v1/admin/accounts",
   "/v1/admin/accounts/user_owner",
 ] as const;
@@ -70,6 +72,7 @@ beforeEach(() => {
 interface World {
   readonly owners?: ReadonlyArray<string> | undefined;
   readonly identities?: Partial<AdminIdentities.AdminIdentities["Service"]>;
+  readonly signUps?: Partial<AdminSignUps.AdminSignUps["Service"]>;
   readonly tunnels?: Partial<ManagedEndpointProvider.ManagedEndpointTunnelClient["Service"]>;
   /** Clerk session ids the relay removed with a phone. */
   readonly removedSessions?: ReadonlyArray<string>;
@@ -83,6 +86,18 @@ const KNOWN: ReadonlyMap<string, AdminIdentities.AdminIdentity> = new Map([
   ["user_owner", { email: "owner@example.test", name: "Owner Person" }],
   ["user_free", { email: "free@example.test", name: null }],
 ]);
+
+/** What Clerk counts in these tests: 83 people, 6 of them new this week. */
+const SIGN_UPS = (nowMs: number) =>
+  AdminSignUps.summarizeSignUps({
+    nowMs,
+    total: 83,
+    newest: Array.from({ length: 6 }, (_, index) => ({
+      createdAt: nowMs - (index + 1) * 3_600_000,
+      lastActiveAt: nowMs - index * 3_600_000,
+    })),
+    lastActive: [{ createdAt: 0, lastActiveAt: nowMs - 3_600_000 }],
+  });
 
 /** The admin routes over a seeded relay database, with Clerk and Cloudflare stood in. */
 const withAdmin = <A, E>(
@@ -114,6 +129,10 @@ const withAdmin = <A, E>(
           Effect.succeed(new Map([...KNOWN].filter(([userId]) => userIds.includes(userId)))),
         search: () => Effect.succeed({ userIds: [], truncated: false }),
         ...world.identities,
+      }),
+      Layer.mock(AdminSignUps.AdminSignUps, {
+        read: (nowMs) => Effect.succeed(SIGN_UPS(nowMs)),
+        ...world.signUps,
       }),
       Layer.mock(ManagedEndpointProvider.ManagedEndpointTunnelClient, {
         get: (tunnelId) => Effect.succeed({ id: tunnelId, status: "healthy" }),
@@ -675,6 +694,58 @@ describe("what nobody else learns about the Connect admin routes", () => {
   });
 });
 
+describe("the usage numbers an owner reads", () => {
+  it.effect("counts sign-ups from Clerk next to what Connect itself saw", () =>
+    withAdmin({ owners: ["user_owner"] }, (call) =>
+      Effect.gen(function* () {
+        const response = yield* call("/v1/admin/usage", "owner-session");
+        expect(response.status).toBe(200);
+        const usage = (yield* json(response)) as {
+          generatedAt: string;
+          signUps: { total: number; created: unknown; weekly: ReadonlyArray<unknown> } | null;
+          connect: { created: unknown; active: unknown; weekly: ReadonlyArray<unknown> };
+        };
+        expect(Number.isNaN(Date.parse(usage.generatedAt))).toBe(false);
+        expect(usage.signUps).toMatchObject({ total: 83, created: { day: 6, week: 6, month: 6 } });
+        expect(usage.signUps?.weekly).toHaveLength(12);
+        expect(usage.connect.weekly).toHaveLength(12);
+        expect(usage.connect.created).toEqual(
+          expect.objectContaining({ day: expect.any(Number), month: expect.any(Number) }),
+        );
+      }),
+    ),
+  );
+
+  it.effect("still answers with Connect's own numbers when Clerk cannot be read", () =>
+    withAdmin(
+      {
+        owners: ["user_owner"],
+        signUps: {
+          read: () => Effect.fail(new AdminSignUps.AdminSignUpsReadFailed({ cause: "down" })),
+        },
+      },
+      (call) =>
+        Effect.gen(function* () {
+          const response = yield* call("/v1/admin/usage", "owner-session");
+          expect(response.status).toBe(200);
+          const usage = (yield* json(response)) as { signUps: unknown; connect: unknown };
+          expect(usage.signUps).toBeNull();
+          expect(usage.connect).toMatchObject({ weekly: expect.any(Array) });
+        }),
+    ),
+  );
+
+  it.effect("names no person: the answer holds counts and week dates only", () =>
+    withAdmin({ owners: ["user_owner"] }, (call) =>
+      Effect.gen(function* () {
+        const raw = yield* text(yield* call("/v1/admin/usage", "owner-session"));
+        expect(raw).not.toContain("user_");
+        expect(raw).not.toContain("@");
+      }),
+    ),
+  );
+});
+
 describe("what a Connect owner never reads", () => {
   /** Field names that would carry a key, a credential or a session. */
   const FORBIDDEN_FIELD = /key|credential|token|thumbprint|session|secret|hash|password/iu;
@@ -696,6 +767,7 @@ describe("what a Connect owner never reads", () => {
       Effect.gen(function* () {
         const routes = [
           "/v1/admin/overview",
+          "/v1/admin/usage",
           "/v1/admin/accounts",
           "/v1/admin/accounts/user_owner",
           "/v1/admin/accounts/user_founder",

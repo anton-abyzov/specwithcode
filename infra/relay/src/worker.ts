@@ -55,6 +55,7 @@ import * as FcmDeliveries from "./agentActivity/FcmDeliveries.ts";
 import * as FcmDeliveryQueueConsumer from "./agentActivity/FcmDeliveryQueueConsumer.ts";
 import * as RelayConfiguration from "./Config.ts";
 import * as AdminIdentities from "./admin/AdminIdentities.ts";
+import * as AdminSignUps from "./admin/AdminSignUps.ts";
 import * as ConnectAdmin from "./admin/ConnectAdmin.ts";
 import * as ConnectAdminActions from "./admin/ConnectAdminActions.ts";
 import * as ConnectAdminQueries from "./admin/ConnectAdminQueries.ts";
@@ -411,7 +412,9 @@ export const layer = Api.make(
       ),
       Reports.layerApi.pipe(Layer.provide(layerReportRateLimiter)),
       ConnectAdmin.layerApi.pipe(
-        Layer.provide(Layer.mergeAll(ConnectAdminQueries.layer, AdminIdentities.layer)),
+        Layer.provide(
+          Layer.mergeAll(ConnectAdminQueries.layer, AdminIdentities.layer, AdminSignUps.layer),
+        ),
       ),
       ConnectAdminActions.layerApi.pipe(
         Layer.provide(Layer.mergeAll(ConnectAdminQueries.layer, ConnectAdminActions.layerLog)),
