@@ -199,7 +199,7 @@ export function ProviderLimitSettings() {
   const apiKeyInstances = providers.filter(
     (provider) => provider.enabled && isDirectClaudeApiKeyProvider(provider),
   );
-  const readyApiKeyInstances = apiKeyInstances.filter(canTakeTurn);
+  const readyApiKeyInstances = apiKeyInstances.filter((provider) => canTakeTurn(provider));
   const apiKeyInstance = readyApiKeyInstances[0];
   const instanceName = (provider: (typeof providers)[number]) =>
     provider.displayName ?? provider.instanceId;

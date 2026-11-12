@@ -1146,6 +1146,61 @@ describe("model-scoped windows", () => {
     const fableSaved = { ...input, saved: { ...saved, model: "claude-fable-5-1" } };
     expect(coordinatorOnLimitFallback(fableSaved)).toBe(true);
   });
+
+  // The live snapshot of November 12, 2026: the Fable rejection was also
+  // written provider-wide (`ordinaryUsageAllowed: false`), which moved an
+  // Opus coordinator off Claude although its weekly sat at 19%.
+  const fableDenied = (): ServerProvider => ({
+    ...withFable(100, 19),
+    models: [
+      { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+      { slug: "claude-fable-5-2", name: "Claude Fable 5.2", isCustom: false, capabilities: null },
+    ],
+    usageLimits: {
+      ...withFable(100, 19).usageLimits!,
+      ordinaryUsageAllowed: false,
+      rateLimitReachedType: "rate_limit_reached",
+      nativeDenialResetsAt: later,
+    },
+  });
+
+  it("does not let a Fable denial written provider-wide move Opus off Claude", () => {
+    const saved = { instanceId: claude.instanceId, model: "claude-opus-5-5" };
+    const thread = { instanceId: codex.instanceId, model: "codex-default" };
+    const input = { thread, providers: [fableDenied(), codex], rule: switchRule, nowMs: now };
+    expect(resolveCoordinatorTurnSelection({ ...input, saved })).toEqual({
+      selection: saved,
+      reason: "saved",
+    });
+    // Fable itself stays refused on the same snapshot.
+    expect(
+      resolveCoordinatorTurnSelection({ ...input, saved: { ...saved, model: "claude-fable-5-2" } })
+        .reason,
+    ).not.toBe("saved");
+  });
+
+  it("continues a Fable-limited coordinator on the Opus entry of its own instance in the fallback order", () => {
+    const saved = { instanceId: claude.instanceId, model: "claude-fable-5-2" };
+    const fullCodex = provider("codex", "codex", 100);
+    expect(
+      resolveCoordinatorTurnSelection({
+        saved,
+        thread: saved,
+        providers: [fableDenied(), fullCodex],
+        rule: {
+          ...switchRule,
+          providerLimitFallbackModels: [
+            { instanceId: claude.instanceId, model: "claude-opus-5-5" },
+            { instanceId: fullCodex.instanceId, model: "codex-default" },
+          ],
+        },
+        nowMs: now,
+      }),
+    ).toEqual({
+      selection: { instanceId: claude.instanceId, model: "claude-opus-5-5" },
+      reason: "fallback",
+    });
+  });
 });
 
 describe("coordinatorOnLimitFallback", () => {

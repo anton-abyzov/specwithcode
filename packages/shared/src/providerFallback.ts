@@ -20,7 +20,7 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
-import { describeModel, sameModelOn } from "./modelIdentity.ts";
+import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import {
   effectiveFallbackOrder,
   fallbackModelOrder,
@@ -113,25 +113,35 @@ export function providerUsedPercent(
   return effectiveUsedPercent(provider.usageLimits?.windows ?? [], nowMs, model);
 }
 
-/** Match native admission's denial signals; window percentages cannot override them. */
-export function usageDeniesTurn(provider: ServerProvider): boolean {
+/**
+ * Match native admission's denial signals; window percentages cannot override
+ * them. With a `model`, a denial every spent window scopes to other models
+ * does not deny this one: a Fable rejection written provider-wide
+ * (`ordinaryUsageAllowed: false` beside a spent Fable weekly) refuses Fable
+ * alone, so Opus on the same account still runs while its own windows have
+ * room. A spend control is account-wide and always denies.
+ */
+export function usageDeniesTurn(provider: ServerProvider, model?: string | null): boolean {
   const limits = provider.usageLimits;
-  return (
+  const denied =
     limits?.ordinaryUsageAllowed === false ||
     limits?.spendControlReached === true ||
-    (!!limits?.rateLimitReachedType && limits.ordinaryUsageAllowed !== true)
-  );
+    (!!limits?.rateLimitReachedType && limits.ordinaryUsageAllowed !== true);
+  if (!denied || model == null || limits?.spendControlReached === true) return denied;
+  const spent = (limits?.windows ?? []).filter((window) => window.usedPercent >= 100);
+  if (spent.length === 0) return true;
+  return spent.some((window) => windowAppliesToModel(window, model));
 }
 
-/** Signed in, enabled and ready: it can take the next turn now. */
-export function canTakeTurn(provider: ServerProvider): boolean {
+/** Signed in, enabled and ready: it can take the next turn now (on `model`, when named). */
+export function canTakeTurn(provider: ServerProvider, model?: string | null): boolean {
   return (
     provider.enabled &&
     provider.installed &&
     isProviderAvailable(provider) &&
     provider.status === "ready" &&
     provider.auth.status !== "unauthenticated" &&
-    !usageDeniesTurn(provider)
+    !usageDeniesTurn(provider, model)
   );
 }
 
@@ -215,7 +225,7 @@ export function hasUsableFallbackCapacity(
 ): boolean {
   const limits = provider.usageLimits;
   if (
-    !canTakeTurn(provider) ||
+    !canTakeTurn(provider, model) ||
     provider.auth.status !== "authenticated" ||
     !limits ||
     limits.unavailable
@@ -388,7 +398,7 @@ function roomOn(
 ): "verified" | "unreported" | null {
   if (input.limited?.has(provider.instanceId) || isPaidModelOn(provider, model)) return null;
   if (input.named !== true && isUnknownBillingAgent(provider, model)) return null;
-  if (reportsNoUsage(provider)) return canTakeTurn(provider) ? "unreported" : null;
+  if (reportsNoUsage(provider)) return canTakeTurn(provider, model) ? "unreported" : null;
   if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return null;
   const used = providerUsedPercent(provider, input.nowMs, model);
   return used !== null && (input.belowPercent == null || used < input.belowPercent)
@@ -527,7 +537,7 @@ export function resolveApiCreditSelections(input: {
   const selections: ModelSelection[] = [];
   for (const provider of input.providers) {
     if (provider.instanceId === current.instanceId || provider.driver !== current.driver) continue;
-    if (!isApiCreditProvider(provider) || !canTakeTurn(provider)) continue;
+    if (!isApiCreditProvider(provider) || !canTakeTurn(provider, input.current.model)) continue;
     if (isExcludedFallbackModel(input.excludedModels, provider.instanceId, input.current.model))
       continue;
     if (provider.models.some((model) => model.slug === input.current.model))
@@ -652,7 +662,15 @@ export function describeFallbackOrder(input: {
       resetAt = null as number | null,
       guess = false,
     ) => ({ selection, provider, unavailable, resetAt, ...(guess ? { guess } : {}) });
-    if (selection.instanceId === input.currentInstanceId) return entry("current");
+    // "Current" is the same model, not merely the same instance: a fallback
+    // entry on the limited provider's own account with another model (Opus
+    // for a Fable-limited Claude thread) is a continuation, not a repeat.
+    if (
+      selection.instanceId === input.currentInstanceId &&
+      (input.currentModel === undefined ||
+        isSameModel({ slug: selection.model }, describeModel(provider, input.currentModel)))
+    )
+      return entry("current");
     if (
       provider === undefined ||
       !provider.models.some((model) => model.slug === selection.model && !model.isCustom)
@@ -667,9 +685,9 @@ export function describeFallbackOrder(input: {
     )
       return entry("per-token");
     if (!named && isUnknownBillingAgent(provider, selection.model)) return entry("per-token");
-    if (!canTakeTurn(provider)) {
+    if (!canTakeTurn(provider, selection.model)) {
       if (provider.auth.status === "unauthenticated") return entry("signed-out");
-      if (usageDeniesTurn(provider)) return entry("full");
+      if (usageDeniesTurn(provider, selection.model)) return entry("full");
       // An ACP agent that was never prepared here (or any instance that is not
       // ready) can't open a session; offering it only leads to a failed turn.
       return entry("not-ready");
@@ -786,7 +804,7 @@ function resolveProviderFallbackPass(input: {
     )
       return false;
     if (reportsNoUsage(provider))
-      return allowUnreported && canTakeTurn(provider) && !isPerTokenProvider(provider);
+      return allowUnreported && canTakeTurn(provider, model) && !isPerTokenProvider(provider);
     if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return false;
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && (input.belowPercent == null || used < input.belowPercent);
@@ -895,7 +913,7 @@ function resolveProviderFallbackPass(input: {
     !input.limitedInstanceIds?.has(homeSelection.instanceId) &&
     !excluded(homeSelection.instanceId, homeSelection.model) &&
     homeProvider.models.some((model) => model.slug === homeSelection.model && !model.isCustom) &&
-    canTakeTurn(homeProvider)
+    canTakeTurn(homeProvider, homeSelection.model)
       ? homeSelection
       : null;
   if (same !== null && perTokenHome === null) return same;
@@ -917,7 +935,7 @@ function resolveProviderFallbackPass(input: {
     if (
       provider !== undefined &&
       !input.limitedInstanceIds?.has(provider.instanceId) &&
-      canTakeTurn(provider) &&
+      canTakeTurn(provider, proven.model) &&
       !isPaidModelOn(provider, proven.model) &&
       !isUnknownBillingAgent(provider, proven.model) &&
       (perTokenHome === null || !reportsNoUsage(provider)) &&
@@ -1058,7 +1076,7 @@ export function resolveWorkerLaunchSelection(input: {
   );
   const full = (provider: ServerProvider | undefined, model: string): boolean => {
     if (provider === undefined) return false;
-    if (limited.has(provider.instanceId) || usageDeniesTurn(provider)) return true;
+    if (limited.has(provider.instanceId) || usageDeniesTurn(provider, model)) return true;
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && used >= threshold;
   };
@@ -1100,7 +1118,7 @@ export function resolveWorkerLaunchSelection(input: {
     const provider = input.providers.find((entry) => entry.instanceId === coordinator.instanceId);
     if (
       provider !== undefined &&
-      canTakeTurn(provider) &&
+      canTakeTurn(provider, coordinator.model) &&
       !isPaidModelOn(provider, coordinator.model) &&
       !isUnknownBillingAgent(provider, coordinator.model) &&
       !full(provider, coordinator.model) &&
@@ -1362,7 +1380,7 @@ export function resolveCoordinatorTurnSelection(input: {
   const full = (provider: ServerProvider | undefined, model: string): boolean => {
     if (provider === undefined) return false;
     if (limited.has(provider.instanceId)) return true;
-    if (usageDeniesTurn(provider)) return true;
+    if (usageDeniesTurn(provider, model)) return true;
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && used >= threshold;
   };
@@ -1427,7 +1445,7 @@ export function resolveCoordinatorTurnSelection(input: {
     if (
       current !== undefined &&
       !paid &&
-      canTakeTurn(current) &&
+      canTakeTurn(current, thread.model) &&
       !full(current, thread.model) &&
       !isExcludedFallbackModel(
         input.rule.providerLimitExcludedModels,
@@ -1541,6 +1559,7 @@ export function coordinatorFallbackReason(input: {
       text: `${lower(fullest.label)} at ${Math.round(fullest.usedPercent)}% used`,
       resetsAt: resetOf(fullest),
     };
-  if (provider && usageDeniesTurn(provider)) return { text: "refuses new usage", resetsAt: null };
+  if (provider && usageDeniesTurn(provider, input.saved.model))
+    return { text: "refuses new usage", resetsAt: null };
   return { text: "has no room", resetsAt: null };
 }

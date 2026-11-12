@@ -143,7 +143,7 @@ export function defaultCoordinatorModelSelection(
   const free = providers
     .filter((provider) => !isPerTokenProvider(provider) && usable(provider))
     .map(automaticModels);
-  const ready = free.filter(canTakeTurn);
+  const ready = free.filter((provider) => canTakeTurn(provider));
   const claude = ready.filter((provider) => provider.driver === "claudeAgent");
   for (const provider of claude) {
     const model = preferredModel(provider);

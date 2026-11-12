@@ -122,7 +122,7 @@ const readyAfter = (provider: ServerProvider, atMs: number) =>
 
 /** The usage read says the provider has no room for `model` now. */
 const limitedNow = (provider: ServerProvider, nowMs: number, model: string | null) =>
-  usageDeniesTurn(provider) || (providerUsedPercent(provider, nowMs, model) ?? 0) >= 100;
+  usageDeniesTurn(provider, model) || (providerUsedPercent(provider, nowMs, model) ?? 0) >= 100;
 
 /**
  * Whether a failed open says the provider cannot open, not just that one
