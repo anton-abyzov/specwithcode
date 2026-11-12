@@ -3,7 +3,8 @@
  * A usage limit moved the thread from Claude Code · Opus 5.5 to Codex · GPT-6.1-Sol
  * (27% left), Opus has room again, effort Low, Full access; the picker states the fallback. `?case=running` this turn runs on Codex while the saved model
  * is Opus; `?case=same` (or `idle`) nothing to add; `?case=next` the next message goes
- * to Opus, picked by hand while the thread is on Codex; `?case=long` the thread is on a
+ * to Opus, picked by hand while a turn runs on Codex; `?case=picked` the same pick with
+ * nothing running, so the chip names Opus; `?case=long` the thread is on a
  * long custom Codex model id, nothing else to add. `?theme=dark` the theme;
  * `?width=` the column width in px, in a desktop-sized window, as a narrow chat pane is.
  * `?surface=design` puts the composer in the design editor's thread column (the real
@@ -184,7 +185,8 @@ const scenarios: Record<
   running: { thread: opus, running: sol, fallbackFrom: null },
   same: { thread: sol, running: null, fallbackFrom: null },
   idle: { thread: sol, running: null, fallbackFrom: null },
-  next: { thread: sol, running: null, fallbackFrom: null },
+  next: { thread: sol, running: sol, fallbackFrom: null },
+  picked: { thread: sol, running: null, fallbackFrom: null },
   long: { thread: long, running: null, fallbackFrom: null },
   // A new chat with no project default: the thread holds only the placeholder.
   // `draft` nothing picked; `draft-picked` GPT-6.1-Sol picked by hand.
@@ -203,7 +205,7 @@ const scenarios: Record<
 const scenarioName = params.get("case") ?? "fallback";
 const surface = params.get("surface") ?? "thread";
 fixtureEnvironment(environmentId, providers);
-if (scenarioName === "next") {
+if (scenarioName === "next" || scenarioName === "picked") {
   useComposerDraftStore.getState().setModelSelection(threadRef, opus, { explicit: true });
 }
 const isDraft = scenarioName.startsWith("draft");

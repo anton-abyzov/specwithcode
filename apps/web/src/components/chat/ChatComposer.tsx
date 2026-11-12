@@ -1142,7 +1142,7 @@ import {
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
-import { composerDisplayedThreadSelection } from "./composerModelDisplay";
+import { composerChipModel, composerDisplayedThreadSelection } from "./composerModelDisplay";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -2602,7 +2602,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       running: runningModelSelection,
       fallbackFrom: limitFallbackFrom as ModelSelection | null,
     });
-  const displayedModel = displayedIdentity.current;
+  // An explicit pick the thread has not taken: "next:" beside a running turn's
+  // model, and the chip's own model as soon as nothing runs.
+  const pickedModel = {
+    instanceId: selectedInstanceId,
+    model: selectedModelForPickerWithCustomFallback,
+  };
+  const chipModel = composerChipModel({
+    current: {
+      instanceId: displayedIdentity.current.instanceId,
+      model: displayedIdentity.current.model,
+    },
+    pick: pickedModel,
+    pickExplicit: composerDraft.modelSelectionExplicit === true,
+    // A queued or starting turn ("connecting") is in flight too, on the thread's model.
+    turnRunning: phase === "running" || phase === "connecting",
+  });
+  const displayedModel = chipModel.shown;
   // "next on <model>" belongs to the model the chip shows, never to another pick.
   const nextOnLimit =
     limitNextTurn &&
@@ -2634,17 +2650,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const preferredLabel = displayedIdentity.preferred
     ? composerModelLabel(displayedIdentity.preferred)
     : null;
-  const pendingNextLabel =
-    composerDraft.modelSelectionExplicit &&
-    (selectedInstanceId !== displayedModel.instanceId ||
-      selectedModelForPickerWithCustomFallback !== displayedModel.model)
-      ? composerModelLabel({
-          instanceId: selectedInstanceId,
-          model: selectedModelForPickerWithCustomFallback,
-        }).full
-      : null;
+  const pendingNextLabel = chipModel.state === "next" ? composerModelLabel(pickedModel) : null;
+  // The saved-model and fallback suffixes describe the thread's model, which a
+  // chip that names the pick no longer shows.
   const composerModelStateValue =
-    preferredLabel === null
+    preferredLabel === null || chipModel.state === "pick"
       ? null
       : displayedIdentity.kind === "fallback"
         ? fallbackModelState({
@@ -2665,14 +2675,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const pickerTriggerState = providerCatalogPending
     ? null
     : pendingNextLabel
-      ? {
-          kind: "next" as const,
-          pick: pendingNextLabel,
-          pickModel: composerModelLabel({
-            instanceId: selectedInstanceId,
-            model: selectedModelForPickerWithCustomFallback,
-          }).model,
-        }
+      ? { kind: "next" as const, pick: pendingNextLabel.full, pickModel: pendingNextLabel.model }
       : composerModelStateValue;
 
   // ------------------------------------------------------------------

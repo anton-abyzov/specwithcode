@@ -1,6 +1,7 @@
 // Build first: vp build --config apps/web/tests/fallback-composer/vite.config.ts
 // Then: STUDIO_PLAYWRIGHT_MODULE=/abs/path/playwright-core/index.mjs node apps/web/tests/fallback-composer/draft-chip.mjs [outDir]
-// Always headless. A new chat's model chip names the model its first message goes to.
+// Always headless. A new chat's model chip names the model its first message goes to,
+// and so does a saved thread's once nothing runs; "next" shows only beside a turn's model.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
@@ -41,6 +42,7 @@ const EXPECT = {
   "draft-picked": { model: "GPT-6.1-Sol", next: false },
   "draft-seeded": { model: "GPT-6.1-Sol", next: false },
   next: { model: "GPT-6.1-Sol", next: true },
+  picked: { model: "Opus 5.5", next: false },
 };
 const receipt = { headless: true, checks: [], screenshots: [] };
 try {
