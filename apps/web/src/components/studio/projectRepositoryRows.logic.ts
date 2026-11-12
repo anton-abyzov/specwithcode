@@ -185,8 +185,10 @@ export function defaultCloneFolder(
   const name = parts.at(-1);
   const owner = parts.at(-2);
   if (name === undefined || owner === undefined || !/^[\w.-]+$/u.test(name)) return "";
+  // Judged by the clones that are here; one that is missing says nothing about the layout.
+  const here = found.filter((row) => row.state === "available");
   const umbrella =
-    found.length > 0 && found.every((row) => row.relativePath.startsWith("repositories/"));
+    here.length > 0 && here.every((row) => row.relativePath.startsWith("repositories/"));
   return umbrella && /^[\w.-]+$/u.test(owner) ? `repositories/${owner}/${name}` : name;
 }
 
