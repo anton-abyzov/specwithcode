@@ -1,15 +1,32 @@
 import {
   MACHINE_COLOR_IDS,
   MACHINE_NICKNAME_MAX_LENGTH,
+  MACHINE_SHORT_NAME_MAX_LENGTH,
   type MachineColorId,
   type MachineNickname,
   type MachineNicknames,
 } from "@specweave-studio/contracts";
 import { DateTime } from "effect";
 
+import { graphemes } from "./machineShortLabel.ts";
+
 /** Trims, collapses inner whitespace and caps a typed name at 16 characters. */
 export function normalizeMachineNickname(name: string): string {
   return name.trim().replace(/\s+/g, " ").slice(0, MACHINE_NICKNAME_MAX_LENGTH).trim();
+}
+
+/**
+ * A typed short label: no spaces, whole visible characters only, and within the
+ * stored limit of 3 code units (an accent or emoji is never cut in half). Empty
+ * means "derive one".
+ */
+export function normalizeMachineShortName(short: string): string {
+  let out = "";
+  for (const part of graphemes(short.replace(/\s+/g, "").normalize("NFC"))) {
+    if (out.length + part.length > MACHINE_SHORT_NAME_MAX_LENGTH) break;
+    out += part;
+  }
+  return out;
 }
 
 const stamp = (entry: MachineNickname): number => {
@@ -17,14 +34,15 @@ const stamp = (entry: MachineNickname): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const identityOf = (entry: MachineNickname) => `${entry.color ?? ""}\u0000${entry.icon ?? ""}`;
+const identityOf = (entry: MachineNickname) =>
+  `${entry.color ?? ""}\u0000${entry.icon ?? ""}\u0000${entry.short ?? ""}`;
 
 /**
  * Last writer wins. Equal stamps fall back to the name, then to the color and
  * icon, so every machine picks the same entry whichever order the changes
  * arrive in.
  *
- * A color or icon is never dropped by a merge: the winner keeps its own, and
+ * A color, icon or short label is never dropped by a merge: the winner keeps its own, and
  * takes the other entry's where it states none. A paired machine on an older
  * build decodes an entry without them and sends it back stripped; that copy
  * (same stamp, or a newer rename made there) must not erase what was chosen.
@@ -47,11 +65,13 @@ export function newerMachineNickname(
   const [winner, other] = incomingWins ? [incoming, current] : [current, incoming];
   const color = winner.color ?? other.color;
   const icon = winner.icon ?? other.icon;
-  if (color === winner.color && icon === winner.icon) return winner;
+  const short = winner.short ?? other.short;
+  if (color === winner.color && icon === winner.icon && short === winner.short) return winner;
   return {
     ...winner,
     ...(color === undefined ? {} : { color }),
     ...(icon === undefined ? {} : { icon }),
+    ...(short === undefined ? {} : { short }),
   };
 }
 
@@ -79,7 +99,8 @@ export function sameMachineNicknames(a: MachineNicknames, b: MachineNicknames): 
       b[key]?.name === a[key]!.name &&
       b[key]?.updatedAt === a[key]!.updatedAt &&
       b[key]?.color === a[key]!.color &&
-      b[key]?.icon === a[key]!.icon,
+      b[key]?.icon === a[key]!.icon &&
+      b[key]?.short === a[key]!.short,
   );
 }
 

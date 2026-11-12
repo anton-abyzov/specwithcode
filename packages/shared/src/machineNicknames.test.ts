@@ -9,6 +9,7 @@ import {
   newerMachineNickname,
   nextMachineNicknameStamp,
   normalizeMachineNickname,
+  normalizeMachineShortName,
   sameMachineNicknames,
 } from "./machineNicknames.ts";
 
@@ -104,6 +105,29 @@ describe("machine nicknames", () => {
     it("compares maps by color and icon too", () => {
       expect(sameMachineNicknames({ m4: colored }, { m4: at("M4", stamp) })).toBe(false);
       expect(sameMachineNicknames({ m4: colored }, { m4: { ...colored } })).toBe(true);
+    });
+
+    it("trims a typed short label by whole characters within the stored limit", () => {
+      expect(normalizeMachineShortName(" l m ")).toBe("lm");
+      expect(normalizeMachineShortName("e\u0301xyz")).toBe("\u00e9xy");
+      // An emoji takes two code units: a third would pass the limit, so it stops before.
+      expect(normalizeMachineShortName("A\u{1F680}B")).toBe("A\u{1F680}");
+    });
+
+    it("keeps a short label through a merge with an entry that states none", () => {
+      const labelled = { ...colored, short: "LM" };
+      expect(newerMachineNickname(labelled, at("M4", stamp))).toBe(labelled);
+      expect(newerMachineNickname(labelled, at("Desk", "2026-11-10T22:00:00.000Z"))).toEqual({
+        ...at("Desk", "2026-11-10T22:00:00.000Z"),
+        color: "violet",
+        icon: "laptop",
+        short: "LM",
+      });
+      expect(sameMachineNicknames({ m4: labelled }, { m4: colored })).toBe(false);
+      // A label longer than a build allows decodes as absent, keeping the rest.
+      expect(
+        Schema.decodeUnknownSync(MachineNicknames)({ m4: { ...labelled, short: "LONG" } }).m4,
+      ).toEqual(colored);
     });
 
     it("decodes a color this build does not know as absent, keeping the name", () => {

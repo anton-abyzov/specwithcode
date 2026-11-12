@@ -93,9 +93,9 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
 
 /**
  * The machine chip and its separator, each with the gap it takes in the row. The chip
- * counts at its icon: its name is the first thing in the row to give way (it shrinks to
- * an ellipsis, then to nothing), so no control folds into the overflow menu while the
- * name still shows. The color, the icon and the tooltip keep naming the machine.
+ * counts at its smallest: its name is the first thing in the row to give way (it shrinks
+ * to an ellipsis, then the chip shows the machine's short label at its minimum width), so
+ * no control folds into the overflow menu while the name still shows.
  */
 function machineChipWidth(controls: HTMLElement, gap: number): number {
   let width = 0;
@@ -108,7 +108,8 @@ function machineChipWidth(controls: HTMLElement, gap: number): number {
       ? name.getBoundingClientRect().width +
         (Number.parseFloat(getComputedStyle(element!).columnGap) || 0)
       : 0;
-    width += Math.max(0, outer - nameWidth) + gap;
+    const minWidth = Number.parseFloat(getComputedStyle(element!).minWidth) || 0;
+    width += Math.max(minWidth, outer - nameWidth) + gap;
   }
   return width;
 }
