@@ -59,7 +59,7 @@ vi.mock("@tanstack/react-router", () => ({
     </a>
   ),
 }));
-import { CapacityFleet, quotaDuration } from "./CapacityFleet";
+import { CapacityFleet, quotaDuration, signedInProviders } from "./CapacityFleet";
 import { absoluteTime } from "../../studio/overviewModel";
 import { EnvironmentId, ServerConfig } from "@specweave-studio/contracts";
 import { PrimaryConnectionTarget } from "@specweave-studio/client-runtime/connection";
@@ -133,6 +133,8 @@ let config = Schema.decodeUnknownSync(ServerConfig)({
     },
   ],
 });
+/** The provider as first decoded, so one test's sign-in state never reaches the next. */
+const signedInProvider = config.providers[0]!;
 function fixture(status = "ready", selectedAccount: string | null = null) {
   const now = Date.now();
   return {
@@ -199,7 +201,7 @@ beforeEach(() => {
   state.canOperate.mockReturnValue(true);
   config = {
     ...config,
-    providers: [{ ...config.providers[0]!, checkedAt: new Date().toISOString() }],
+    providers: [{ ...signedInProvider, checkedAt: new Date().toISOString() }],
   };
   state.mutate.mockClear();
   state.draft.mockClear();
@@ -511,4 +513,142 @@ it("displays unknown credits and allowance without implying extra capacity or re
   expect(container.textContent).toContain("Provider allowance unknown");
   expect(state.mutate).not.toHaveBeenCalled();
   expect(state.draft).not.toHaveBeenCalled();
+});
+
+/** What a server reports while Switch has never answered on its machine. */
+function withoutSwitchFixture() {
+  return {
+    ...fixture(),
+    available: false,
+    error: null,
+    switchSeen: false,
+    quotaPoolIdentity: "unavailable",
+    accounts: [],
+    policy: null,
+    recommendations: [],
+  };
+}
+/** A Switch read that failed on a machine where Switch answered before. */
+function failedSwitchFixture(error: string, switchSeen?: boolean) {
+  return {
+    ...withoutSwitchFixture(),
+    error,
+    ...(switchSeen === undefined ? { switchSeen: undefined } : { switchSeen }),
+  };
+}
+function withUsage(usedPercent: number) {
+  const now = Date.now();
+  config = {
+    ...config,
+    providers: [
+      {
+        ...config.providers[0]!,
+        checkedAt: new Date(now).toISOString(),
+        usageLimits: {
+          checkedAt: new Date(now - 60_000).toISOString(),
+          windows: [
+            {
+              id: "primary",
+              kind: "session",
+              label: "Session",
+              usedPercent,
+              resetsAt: new Date(now + 2 * 3_600_000).toISOString(),
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+const buttons = () => [...container.querySelectorAll("button")].map((b) => b.textContent?.trim());
+const links = () =>
+  [...container.querySelectorAll("a")].map((a) => [a.textContent?.trim(), a.getAttribute("href")]);
+
+it("shows the signed-in providers and no Switch warning on a machine that never ran Switch", async () => {
+  state.snapshot = withoutSwitchFixture();
+  withUsage(38);
+  await render();
+  expect(container.textContent).not.toContain("Switch");
+  expect(container.textContent).not.toContain("Independent capacity unknown");
+  expect(container.textContent).not.toContain("eligible");
+  expect(container.querySelector(".studio-notice")).toBeNull();
+  expect(container.querySelector(".studio-capacity-note")).toBeNull();
+  const row = container.querySelector(".studio-account")!;
+  expect(row.querySelector("strong")!.textContent).toBe("Codex");
+  const usage = row.querySelector(".studio-provider-usage")!;
+  expect(usage.textContent).toMatch(/^62% left · resets in /);
+  expect(usage.getAttribute("data-tone")).toBe("ok");
+  // Refresh asks Switch, which this machine does not have.
+  expect(buttons()).not.toContain("Refresh observations");
+  expect(links()).toContainEqual(["Providers", "/settings/providers"]);
+  expect(container.textContent).not.toContain("No providers signed in yet.");
+  expect(state.mutate).not.toHaveBeenCalled();
+});
+it("offers provider setup on a machine without Switch where nobody has signed in", async () => {
+  state.snapshot = withoutSwitchFixture();
+  config = {
+    ...config,
+    providers: [{ ...config.providers[0]!, auth: { status: "unauthenticated" } }],
+  };
+  await render();
+  expect(container.textContent).toContain("No providers signed in yet.");
+  expect(links()).toContainEqual(["Set up providers", "/settings/providers"]);
+  expect(container.querySelector(".studio-account")).toBeNull();
+  expect(container.querySelector(".studio-notice")).toBeNull();
+  expect(container.textContent).not.toContain("Switch");
+  expect(container.textContent).not.toContain("Independent capacity unknown");
+});
+it.each([
+  [
+    "switch-unavailable",
+    "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.",
+  ],
+  [
+    "switch-timeout",
+    "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.",
+  ],
+  [
+    "switch-invalid-response",
+    "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.",
+  ],
+])("says what to do about %s where Switch answered before", async (error, message) => {
+  state.snapshot = failedSwitchFixture(error, true);
+  await render();
+  expect(container.querySelector(".studio-notice")!.textContent).toBe(message);
+  expect(buttons()).toContain("Refresh observations");
+  expect(container.textContent).toContain("Independent capacity unknown");
+  expect(container.querySelector(".studio-provider-usage")).toBeNull();
+});
+it("keeps the Switch warning for a server too old to say whether Switch ever answered", async () => {
+  state.snapshot = failedSwitchFixture("switch-unavailable");
+  await render();
+  expect(container.querySelector(".studio-notice")!.textContent).toContain(
+    "The local Switch service is unavailable.",
+  );
+  expect(buttons()).toContain("Refresh observations");
+});
+it("says nothing about capacity while the first read is on its way", async () => {
+  state.snapshot = null;
+  state.loading = true;
+  await render();
+  expect(container.textContent).toContain("Reading host-local observations…");
+  expect(container.textContent).not.toContain("Independent capacity unknown");
+  expect(container.querySelector(".studio-capacity-note")).toBeNull();
+});
+it("counts a provider as signed in only when it is enabled, installed, available and authenticated", () => {
+  const ready = config.providers[0]!;
+  expect(
+    signedInProviders([
+      ready,
+      { ...ready, instanceId: "off" as typeof ready.instanceId, enabled: false },
+      { ...ready, instanceId: "missing" as typeof ready.instanceId, installed: false },
+      { ...ready, instanceId: "shadow" as typeof ready.instanceId, availability: "unavailable" },
+      {
+        ...ready,
+        instanceId: "out" as typeof ready.instanceId,
+        auth: { status: "unauthenticated" },
+      },
+      { ...ready, instanceId: "unsure" as typeof ready.instanceId, auth: { status: "unknown" } },
+    ]).map((provider) => provider.instanceId),
+  ).toEqual(["codex"]);
 });

@@ -3,8 +3,10 @@ import { useTx } from "../../i18n";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  isProviderAvailable,
   type ModelSelection,
   type ServerConfig,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import type {
   StudioCapacityAccount,
@@ -18,6 +20,9 @@ import type { EnvironmentPresentation } from "../../state/environments";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useEnvironmentScope } from "../../state/session";
+import { planLabel } from "../../studio/accountSwitches";
+import { availabilityText, modelAvailability } from "../../studio/modelAvailability";
+import { getDriverOption } from "../settings/providerDriverMeta";
 import {
   canOperateStudioCapacity,
   mutateStudioCapacity,
@@ -42,6 +47,30 @@ const POLICIES: ReadonlyArray<{ value: StudioCapacityMode; label: string; hint: 
   { value: "spend-first", label: "Spend first", hint: "Most used account first" },
 ];
 
+/**
+ * What a host card knows of its Switch read. `loading` is a host whose first
+ * read has not come back, so nothing can be said about it yet.
+ */
+type HostCapacity = StudioCapacitySnapshot | "loading";
+
+/** Switch has never answered on that machine: it is not installed there. */
+const withoutSwitch = (snapshot: StudioCapacitySnapshot | null | undefined) =>
+  snapshot?.switchSeen === false;
+
+/**
+ * The providers signed in on a machine, in the order its server lists them.
+ * A machine without Switch shows these instead of Switch profiles.
+ */
+export function signedInProviders(providers: ReadonlyArray<ServerProvider>) {
+  return providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.installed &&
+      isProviderAvailable(provider) &&
+      provider.auth.status === "authenticated",
+  );
+}
+
 type Props = {
   environments: readonly EnvironmentPresentation[];
   configs: ReadonlyMap<EnvironmentId, ServerConfig>;
@@ -60,21 +89,27 @@ export function CapacityFleet({ environments, configs, onNewDraft }: Props) {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
-  const [snapshots, setSnapshots] = useState<ReadonlyMap<EnvironmentId, StudioCapacitySnapshot>>(
-    new Map(),
-  );
-  const onSnapshot = useCallback((id: EnvironmentId, snapshot: StudioCapacitySnapshot | null) => {
+  const [snapshots, setSnapshots] = useState<ReadonlyMap<EnvironmentId, HostCapacity>>(new Map());
+  const onSnapshot = useCallback((id: EnvironmentId, snapshot: HostCapacity | null) => {
     setSnapshots((previous) => {
+      if (previous.get(id) === (snapshot ?? undefined)) return previous;
       const next = new Map(previous);
       if (snapshot) next.set(id, snapshot);
       else next.delete(id);
       return next;
     });
   }, []);
-  const current = environments
+  const reported = environments
     .filter((e) => e.connection.phase === "connected")
     .flatMap((e) => snapshots.get(e.environmentId) ?? []);
+  // Quota pools are counted by Switch, so only machines that run it count.
+  const current = reported.filter(
+    (entry): entry is StudioCapacitySnapshot => entry !== "loading" && !withoutSwitch(entry),
+  );
   const summary = capacitySummary(current, now);
+  // With no Switch read to count, the line would say "unknown · 0 · 0" about a
+  // service the machine does not have, or about a read still on its way.
+  const showSummary = current.length > 0 || reported.length === 0;
   return (
     <section className="studio-fleet" aria-labelledby="studio-fleet-title">
       <div className="studio-section-heading">
@@ -83,42 +118,46 @@ export function CapacityFleet({ environments, configs, onNewDraft }: Props) {
           {tx("Manage connections")} <ArrowRightIcon aria-hidden="true" />
         </Link>
       </div>
-      <p className="studio-capacity-note">
-        <strong>
-          {summary.verifiedPools === null
-            ? tx("Independent capacity unknown")
-            : tx(
-                summary.verifiedPools === 1
-                  ? "{count} verified quota pool"
-                  : "{count} verified quota pools",
-                { count: summary.verifiedPools },
+      {showSummary && (
+        <p className="studio-capacity-note">
+          <strong>
+            {summary.verifiedPools === null
+              ? tx("Independent capacity unknown")
+              : tx(
+                  summary.verifiedPools === 1
+                    ? "{count} verified quota pool"
+                    : "{count} verified quota pools",
+                  { count: summary.verifiedPools },
+                )}
+          </strong>
+          <span>
+            {tx("{eligible} eligible · {unknownPools} unverified", {
+              eligible: summary.eligible,
+              unknownPools: summary.unknownPools,
+            })}
+          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="studio-capacity-info"
+                  aria-label={tx(
+                    "Hosts and prepared slots do not create additional subscriptions.",
+                  )}
+                />
+              }
+            >
+              <InfoIcon aria-hidden="true" />
+            </TooltipTrigger>
+            <TooltipPopup>
+              {tx(
+                "Eligible profiles map to a verified quota pool. Hosts and prepared slots do not create additional subscriptions.",
               )}
-        </strong>
-        <span>
-          {tx("{eligible} eligible · {unknownPools} unverified", {
-            eligible: summary.eligible,
-            unknownPools: summary.unknownPools,
-          })}
-        </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="studio-capacity-info"
-                aria-label={tx("Hosts and prepared slots do not create additional subscriptions.")}
-              />
-            }
-          >
-            <InfoIcon aria-hidden="true" />
-          </TooltipTrigger>
-          <TooltipPopup>
-            {tx(
-              "Eligible profiles map to a verified quota pool. Hosts and prepared slots do not create additional subscriptions.",
-            )}
-          </TooltipPopup>
-        </Tooltip>
-      </p>
+            </TooltipPopup>
+          </Tooltip>
+        </p>
+      )}
       {environments.length === 0 ? (
         <div className="studio-empty">
           <h3>{tx("Connect a host.")}</h3>
@@ -158,7 +197,7 @@ function HostCard({
 }: {
   environment: EnvironmentPresentation;
   config: ServerConfig | null;
-  onSnapshot: (id: EnvironmentId, s: StudioCapacitySnapshot | null) => void;
+  onSnapshot: (id: EnvironmentId, s: HostCapacity | null) => void;
   onNewDraft: Props["onNewDraft"];
   now: number;
 }) {
@@ -207,9 +246,16 @@ function HostCard({
     });
   };
   useEffect(() => {
-    onSnapshot(e.environmentId, connected && !failed ? snapshot : null);
-    return () => onSnapshot(e.environmentId, null);
-  }, [e.environmentId, connected, failed, snapshot, onSnapshot]);
+    onSnapshot(
+      e.environmentId,
+      connected && !failed ? (snapshot ?? (loading ? "loading" : null)) : null,
+    );
+  }, [e.environmentId, connected, failed, loading, snapshot, onSnapshot]);
+  useEffect(() => () => onSnapshot(e.environmentId, null), [e.environmentId, onSnapshot]);
+  // Switch is optional. A machine that never ran it shows its signed-in
+  // providers; the Switch profiles, policy and refresh do not apply to it.
+  const noSwitch = connected && !failed && withoutSwitch(snapshot);
+  const providers = noSwitch ? signedInProviders(config?.providers ?? []) : [];
   const perform = async (operation: Parameters<typeof mutateStudioCapacity>[1]) => {
     if (busy || !connected || !canWrite) return;
     setBusy(true);
@@ -233,11 +279,17 @@ function HostCard({
     : failed
       ? tx("Capacity read failed or was denied. No available capacity is assumed.")
       : snapshot?.error === "switch-timeout"
-        ? tx("The local Switch service timed out.")
+        ? tx(
+            "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.",
+          )
         : snapshot?.error === "switch-invalid-response"
-          ? tx("The local Switch response could not be verified.")
+          ? tx(
+              "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.",
+            )
           : snapshot?.error === "switch-unavailable"
-            ? tx("The local Switch service is unavailable.")
+            ? tx(
+                "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.",
+              )
             : !snapshot && !loading
               ? tx("Capacity is unavailable with this connection’s session read permission.")
               : null;
@@ -280,6 +332,17 @@ function HostCard({
         {accounts.length === 0 && snapshot?.available && !problem && (
           <p className="studio-small">{tx("No native profiles were reported.")}</p>
         )}
+        {noSwitch && config !== null && providers.length === 0 && (
+          <p className="studio-small studio-host-empty">{tx("No providers signed in yet.")}</p>
+        )}
+        {providers.map((provider) => (
+          <ProviderRow
+            key={provider.instanceId}
+            provider={provider}
+            hostLabel={e.label}
+            now={now}
+          />
+        ))}
         {displayed.map((account) => (
           <AccountRow
             key={account.id}
@@ -402,18 +465,60 @@ function HostCard({
           search={{ environmentId: e.environmentId }}
           className="studio-text-link"
         >
-          {tx("Providers")} <ArrowRightIcon aria-hidden="true" />
+          {noSwitch && config !== null && providers.length === 0
+            ? tx("Set up providers")
+            : tx("Providers")}{" "}
+          <ArrowRightIcon aria-hidden="true" />
         </Link>
-        <button
-          className="studio-text-link"
-          disabled={!connected || !canWrite || busy}
-          onClick={() => void perform({ kind: "refresh" })}
-        >
-          <RefreshCwIcon aria-hidden="true" />
-          {busy ? tx("Checking…") : tx("Refresh observations")}
-        </button>
+        {!noSwitch && (
+          <button
+            className="studio-text-link"
+            disabled={!connected || !canWrite || busy}
+            onClick={() => void perform({ kind: "refresh" })}
+          >
+            <RefreshCwIcon aria-hidden="true" />
+            {busy ? tx("Checking…") : tx("Refresh observations")}
+          </button>
+        )}
       </footer>
     </article>
+  );
+}
+
+/**
+ * A signed-in provider on a machine without Switch: its name and the usage
+ * line the model picker shows for it, read from the snapshot the machine
+ * already holds.
+ */
+function ProviderRow({
+  provider,
+  hostLabel,
+  now,
+}: {
+  provider: ServerProvider;
+  hostLabel: string;
+  now: number;
+}) {
+  const name =
+    provider.displayName?.trim() || getDriverOption(provider.driver)?.label || provider.driver;
+  const usage = availabilityText(
+    modelAvailability({ provider, model: null, nowMs: now, connected: true }),
+    { provider: name, account: planLabel(provider.auth), machine: hostLabel, nowMs: now },
+  );
+  return (
+    <div className="studio-account">
+      <div className="studio-account-title">
+        <strong>{name}</strong>
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className="studio-provider-usage" data-tone={usage.tone} tabIndex={0} />}
+          >
+            {usage.short}
+          </TooltipTrigger>
+          <TooltipPopup>{usage.long}</TooltipPopup>
+        </Tooltip>
+      </div>
+    </div>
   );
 }
 

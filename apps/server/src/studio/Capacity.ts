@@ -29,6 +29,7 @@ import { CLAUDE_STATUS_CHECK_FAILED } from "../provider/providerSnapshot.ts";
 import { nativeDenialResetPassed } from "../provider/providerUsageLimits.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import * as SwitchClient from "./SwitchClient.ts";
+import { SwitchSeen } from "./SwitchSeen.ts";
 import {
   companionCreditFailureCleared,
   nativeCreditContinuationAllowed,
@@ -393,19 +394,26 @@ const make = Effect.gen(function* () {
   const providers = yield* Providers.ProviderRegistry;
   const baseEnv = yield* HostProcessEnvironment;
   const nativeRoute = yield* NativeRoute.NativeRoute;
+  const switchSeen = yield* SwitchSeen;
   const build = (raw: unknown, observedProviders?: ReadonlyArray<ServerProvider>) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const config = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
       if (!config) return unavailableCapacity(now, "switch-unavailable");
-      return capacitySnapshot({
+      const snapshot = capacitySnapshot({
         raw,
         settings: config,
         providers: observedProviders ?? (yield* providers.getProviders),
         baseEnv,
         now,
       });
+      // Only an answer this server could read proves Switch runs here.
+      if (snapshot.available) yield* switchSeen.mark;
+      return snapshot;
     });
+  // The Overview's read. Switch is optional: until it has answered once on
+  // this machine, a failed read means "not installed" and carries no error.
+  // Starts and changes below keep the plain failure either way.
   const current = client.read.pipe(
     Effect.flatMap(build),
     Effect.catchTags({
@@ -419,6 +427,17 @@ const make = Effect.gen(function* () {
           ),
         ),
     }),
+    Effect.flatMap((snapshot) =>
+      snapshot.available
+        ? Effect.succeed<StudioCapacitySnapshot>({ ...snapshot, switchSeen: true })
+        : switchSeen.get.pipe(
+            Effect.map((seen): StudioCapacitySnapshot =>
+              seen
+                ? { ...snapshot, switchSeen: true }
+                : { ...snapshot, error: null, switchSeen: false },
+            ),
+          ),
+    ),
   );
   const mutate = (request: Effect.Effect<unknown, SwitchClient.SwitchRequestError>) =>
     request.pipe(

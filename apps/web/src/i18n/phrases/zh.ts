@@ -3681,9 +3681,14 @@ export const zh: PhraseCatalog = {
   "Reconnect this host to observe current capacity.": "重新连接此主机以观察当前容量。",
   "Capacity read failed or was denied. No available capacity is assumed.":
     "读取容量失败或被拒绝。不假定有可用容量。",
-  "The local Switch service timed out.": "本地 Switch 服务超时。",
-  "The local Switch response could not be verified.": "无法验证本地 Switch 的响应。",
-  "The local Switch service is unavailable.": "本地 Switch 服务不可用。",
+  "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.":
+    "本地 Switch 服务不可用。请在这台电脑上启动 Switch，然后选择“刷新观察数据”。",
+  "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.":
+    "本地 Switch 服务超时。请选择“刷新观察数据”重试。如果仍然超时，请在这台电脑上重启 Switch。",
+  "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.":
+    "无法验证本地 Switch 的响应。请在这台电脑上更新 Switch，然后选择“刷新观察数据”。",
+  "No providers signed in yet.": "尚未登录任何提供方。",
+  "Set up providers": "设置提供方",
   "Capacity is unavailable with this connection’s session read permission.":
     "以此连接的会话读取权限无法获取容量。",
   "Client not supported": "不支持的客户端",

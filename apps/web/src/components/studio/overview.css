@@ -251,6 +251,24 @@
 .studio-account-status.available {
   color: var(--success-foreground);
 }
+/* A signed-in provider's usage on a machine without Switch, as the model picker words it. */
+.studio-provider-usage {
+  color: var(--desk-muted);
+  font-size: 12px;
+  text-align: right;
+}
+.studio-provider-usage[data-tone="ok"] {
+  color: var(--success-foreground);
+}
+.studio-provider-usage[data-tone="warn"] {
+  color: var(--desk-amber);
+}
+.studio-provider-usage[data-tone="full"] {
+  color: var(--desk-red);
+}
+.studio-host-empty {
+  padding: 12px 0;
+}
 .studio-quota-windows {
   display: grid;
   gap: 8px;

@@ -14,6 +14,7 @@ import { CodexNativeRouteCheckError } from "../provider/CodexProvider.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import * as Capacity from "./Capacity.ts";
 import { SwitchFetch } from "./SwitchClient.ts";
+import { SwitchSeen, type SwitchSeenShape } from "./SwitchSeen.ts";
 import { provider, rawAccount, rawSnapshot, settings } from "./fixtures.ts";
 
 const run = <A, E>(
@@ -31,11 +32,17 @@ const run = <A, E>(
     requests?: string[];
     malformedJson?: boolean;
     refreshFailures?: number;
+    /** Whether Switch has answered on this machine; without it, it counts as seen. */
+    seen?: SwitchSeenShape;
   } = {},
 ) =>
   Effect.runPromise(
     effect.pipe(
       Effect.provide(Capacity.layer),
+      (provided) =>
+        switchOptions.seen
+          ? provided.pipe(Effect.provideService(SwitchSeen, switchOptions.seen))
+          : provided,
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(NativeRoute.NativeRoute, {
@@ -80,6 +87,91 @@ const start = (id = "codex") =>
   Effect.flatMap(Capacity.Capacity, (capacity) =>
     capacity.assertNativeStart(ProviderInstanceId.make(id), "/workspace"),
   );
+const current = Effect.flatMap(Capacity.Capacity, (capacity) => capacity.current);
+
+describe("the Overview's read on a machine without Switch", () => {
+  /** A machine where Switch has not answered yet, and whether it has since. */
+  const neverSeen = () => {
+    let answered = false;
+    const store: SwitchSeenShape = {
+      get: Effect.sync(() => answered),
+      mark: Effect.sync(() => {
+        answered = true;
+      }),
+    };
+    return { store, answered: () => answered };
+  };
+  const read = (
+    seen: SwitchSeenShape | undefined,
+    switchState: "answers" | "absent" | "malformed",
+  ) =>
+    run(
+      current,
+      rawSnapshot(),
+      [provider()],
+      settings,
+      switchState === "absent",
+      true,
+      [provider()],
+      [],
+      { ...(seen ? { seen } : {}), malformedJson: switchState === "malformed" },
+    );
+
+  it("reports no error while Switch has never answered", async () => {
+    const machine = neverSeen();
+    const seen = machine.store;
+    expect(await read(seen, "absent")).toMatchObject({
+      available: false,
+      error: null,
+      switchSeen: false,
+      accounts: [],
+      policy: null,
+    });
+    // Something else on the port is still not Switch.
+    expect(await read(seen, "malformed")).toMatchObject({
+      available: false,
+      error: null,
+      switchSeen: false,
+    });
+    expect(machine.answered()).toBe(false);
+  });
+
+  it("remembers the first answer and reports every failure after it", async () => {
+    const machine = neverSeen();
+    const seen = machine.store;
+    expect(await read(seen, "answers")).toMatchObject({ available: true, switchSeen: true });
+    expect(machine.answered()).toBe(true);
+    expect(await read(seen, "absent")).toMatchObject({
+      available: false,
+      error: "switch-unavailable",
+      switchSeen: true,
+    });
+    expect(await read(seen, "malformed")).toMatchObject({
+      available: false,
+      error: "switch-invalid-response",
+      switchSeen: true,
+    });
+  });
+
+  it("reports the failure when nothing records whether Switch answered", async () => {
+    expect(await read(undefined, "absent")).toMatchObject({
+      available: false,
+      error: "switch-unavailable",
+      switchSeen: true,
+    });
+  });
+
+  it("still starts a native session while Switch has never answered", async () => {
+    const machine = neverSeen();
+    await expect(
+      run(start(), null, [provider()], settings, true, true, [provider()], [], {
+        seen: machine.store,
+      }),
+    ).resolves.toBeUndefined();
+    expect(machine.answered()).toBe(false);
+  });
+});
+
 describe("blocking usage reset estimates", () => {
   const scenarios = [
     {
