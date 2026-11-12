@@ -1,4 +1,5 @@
 name: Release macOS
+run-name: Release macOS ${{ inputs.version }}
 
 # One-button SpecWithCode release on a Mac runner: scripts/release/release.sh --ci, the same
 # stages the M4 runs (stage 1, server suite, signed and notarized build, bundle, plan, drafts,
@@ -49,14 +50,53 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-macos
-  cancel-in-progress: false
-
 jobs:
+  # Refuse a duplicate dispatch in seconds, on a hosted runner, before it queues for the M1.
+  # The release job's concurrency group holds the M1 for one release at a time, so a second
+  # dispatch of a version that is already running or released used to wait out the whole run
+  # (about 25 minutes) and then fail in release.sh's own check (runs #69 and #70 for 1.0.260).
+  # The oldest run for a version wins, so two dispatches at once never cancel each other.
+  # resume skips the tag check: it may continue a release that already published.
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Refuse a version that is released or already running
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          RESUME: ${{ inputs.resume }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version must look like 1.2.3, got '$VERSION'"
+            exit 1
+          fi
+          if [ "$RESUME" != "true" ] && gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > /dev/null 2>&1; then
+            echo "::error::v$VERSION is already tagged, so it is released. Dispatch the next version, or resume to continue this one."
+            exit 1
+          fi
+          older="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-macos.yml --limit 30 \
+            --json databaseId,status,displayTitle \
+            --jq "[.[] | select(.databaseId < $GITHUB_RUN_ID and .status != \"completed\" and .displayTitle == \"Release macOS $VERSION\")] | map(.databaseId | tostring) | join(\" \")")"
+          if [ -n "$older" ]; then
+            echo "::error::Release macOS for $VERSION is already queued or running (run $older)."
+            exit 1
+          fi
+          echo "No other release of $VERSION found"
+
   release:
     name: Release SpecWithCode ${{ inputs.version }}
+    needs: [preflight]
     runs-on: ${{ vars.RELEASE_MACOS_RUNNER || 'swc-release' }}
+    # One release at a time on the M1. On the job, not the workflow, so preflight runs at once.
+    concurrency:
+      group: release-macos
+      cancel-in-progress: false
     environment: release
     timeout-minutes: 240
     # RELEASE_GH_TOKEN goes only to the steps that call gh or git against GitHub (Check secrets,
