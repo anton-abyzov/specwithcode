@@ -236,6 +236,25 @@ export function fleetAddFailureMessage(cause: Cause.Cause<unknown>): string {
   );
 }
 
+/**
+ * What to say when a machine of the same account did not take this machine's
+ * line: its own words, or, when it said nothing, that the join may still have
+ * gone through and how to tidy up after a retry.
+ */
+export function accountJoinFailureMessage(
+  cause: Cause.Cause<unknown>,
+  coordinatorLabel: string,
+): string {
+  return (
+    messageOfDeclared(cause, [
+      "EnvironmentHttpBadRequestError",
+      "EnvironmentHttpForbiddenError",
+      "EnvironmentHttpInternalServerError",
+    ]) ??
+    `${coordinatorLabel} did not answer in time. Check that it is online, then retry; a retry is safe if it added this machine anyway. Afterwards, under Settings > Machines > Authorized clients on this machine, revoke a setup session it no longer uses.`
+  );
+}
+
 export async function pairStudioFleet(environmentId: EnvironmentId, id: string) {
   const prepared = readPreparedConnection(environmentId);
   const observation = appAtomRegistry.get(fleetAtom(environmentId));
@@ -369,14 +388,7 @@ export async function joinAccountMachineForWorkers(input: {
     // Unspent, the line would stay valid for an hour; spent, this is a no-op.
     await revokeStudioFleetInvitation(invitation).catch(() => undefined);
     // That machine words what to do, such as a team rule or an address it cannot reach.
-    throw new Error(
-      messageOfDeclared(result.cause, [
-        "EnvironmentHttpBadRequestError",
-        "EnvironmentHttpForbiddenError",
-        "EnvironmentHttpInternalServerError",
-      ]) ??
-        `${input.coordinatorLabel} did not answer in time. Check that it is online, then retry; a retry is safe if it added this machine anyway. Afterwards, under Settings > Machines > Authorized clients on this machine, revoke a setup session it no longer uses.`,
-    );
+    throw new Error(accountJoinFailureMessage(result.cause, input.coordinatorLabel));
   }
   return result.value;
 }

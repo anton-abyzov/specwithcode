@@ -368,10 +368,13 @@ async function api(
     path: "allow" | "stop" | "self-allow" | "incoming" | "account-join",
     body: object,
     headers?: Record<string, string>,
+    /** Aborting it is the caller hanging up mid-request. */
+    signal?: AbortSignal,
   ) =>
     handler(
       new Request(`http://localhost:8319/api/studio/fleet/workers/${path}`, {
         method: "POST",
+        ...(signal ? { signal } : {}),
         headers: {
           "content-type": "application/json",
           host: "localhost:8319",
@@ -931,6 +934,41 @@ describe("a machine of this Connect account handing over its line", () => {
       expect(await response.json()).toMatchObject({
         id: "m2",
         workers: { status: "allowed", renewable: true },
+      });
+    } finally {
+      await main.dispose();
+    }
+  });
+  it("finishes the join when the caller hangs up while its workers are being allowed", async () => {
+    const machine = fakeMachine({ environmentId: "env-m2", origins: [M2_ORIGIN] });
+    // The machine is added by now; allowing waits here until the caller is gone.
+    const allowing = Promise.withResolvers<void>();
+    const callerGone = Promise.withResolvers<void>();
+    vi.stubGlobal("fetch", (async (input, init) => {
+      if (new URL(String(input)).pathname === "/api/auth/pairing-token") {
+        allowing.resolve();
+        await callerGone.promise;
+      }
+      return machine.fetcher(input, init);
+    }) as typeof fetch);
+    const main = await connectApi(AuthStandardClientScopes);
+    try {
+      const caller = new AbortController();
+      const answer = main.workers("account-join", join, bearer, caller.signal).catch(() => null);
+      await allowing.promise;
+      caller.abort();
+      callerGone.resolve();
+      await answer;
+      await vi.waitFor(async () => {
+        const fleet = (await (await main.request()).json()) as {
+          machines: Array<{ id: string; workers?: { status: string } }>;
+        };
+        expect(fleet.machines).toContainEqual(
+          expect.objectContaining({
+            id: "m2",
+            workers: expect.objectContaining({ status: "allowed" }),
+          }),
+        );
       });
     } finally {
       await main.dispose();
