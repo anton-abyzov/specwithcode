@@ -248,7 +248,7 @@ export function DeviceSetup(props: {
         ) : null}
       </WizardPanel>
 
-      <WizardFooter>
+      <WizardFooter buttonOrder="source">
         {step === 0 ? (
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
         ) : (

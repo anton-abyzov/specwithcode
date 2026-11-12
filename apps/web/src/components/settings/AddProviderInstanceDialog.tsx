@@ -735,7 +735,7 @@ export function AddProviderInstanceDialog({
               ) : null}
             </WizardPanel>
 
-            <WizardFooter>
+            <WizardFooter buttonOrder="source">
               <Button
                 variant={wizardStep === 0 ? "ghost-muted" : "outline"}
                 size="sm"

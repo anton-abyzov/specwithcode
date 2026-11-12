@@ -3780,9 +3780,14 @@ export const ko: PhraseCatalog = {
     "현재 용량을 관측하려면 이 호스트를 다시 연결하세요.",
   "Capacity read failed or was denied. No available capacity is assumed.":
     "용량 읽기가 실패했거나 거부되었습니다. 사용 가능한 용량이 없다고 가정합니다.",
-  "The local Switch service timed out.": "로컬 Switch 서비스가 시간 초과되었습니다.",
-  "The local Switch response could not be verified.": "로컬 Switch 응답을 검증할 수 없습니다.",
-  "The local Switch service is unavailable.": "로컬 Switch 서비스를 사용할 수 없습니다.",
+  "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.":
+    "로컬 Switch 서비스를 사용할 수 없습니다. 이 컴퓨터에서 Switch를 시작한 다음 ‘관측 새로 고침’을 선택하세요.",
+  "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.":
+    "로컬 Switch 서비스가 시간 초과되었습니다. ‘관측 새로 고침’을 선택해 다시 시도하세요. 계속 시간 초과되면 이 컴퓨터에서 Switch를 다시 시작하세요.",
+  "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.":
+    "로컬 Switch 응답을 검증할 수 없습니다. 이 컴퓨터의 Switch를 업데이트한 다음 ‘관측 새로 고침’을 선택하세요.",
+  "No providers signed in yet.": "아직 로그인한 제공업체가 없습니다.",
+  "Set up providers": "제공업체 설정",
   "Capacity is unavailable with this connection’s session read permission.":
     "이 연결의 세션 읽기 권한으로는 용량을 사용할 수 없습니다.",
   "Client not supported": "지원되지 않는 클라이언트",

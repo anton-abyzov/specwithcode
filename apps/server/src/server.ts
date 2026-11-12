@@ -915,7 +915,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(
-    StudioCapacity.layer.pipe(
+    StudioCapacity.layerLive.pipe(
       Layer.provide(layerServerSettings),
       Layer.provide(StudioNativeRoute.layer),
     ),

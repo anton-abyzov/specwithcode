@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { currentPlatform, defaultButtonPlacement } from "~/lib/platformConventions";
 import { cn } from "~/lib/utils";
 import { usePagePopup } from "./pagePopups";
 import { DialogCloseButton } from "~/components/ui/dialog-close-button";
@@ -143,22 +144,35 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+/**
+ * Write the buttons in one order everywhere: the default action last. The
+ * footer draws them the way the system does (default first on Windows) without
+ * changing the source order, so focus opens on the same button on every system.
+ * A child pushed to the start with `mr-auto` or `me-auto` stays at the start.
+ * `buttonOrder="source"` is for a footer that is not a plain row of buttons, and
+ * for one that holds Back: Back comes before the default on every system.
+ */
 function DialogFooter({
   className,
   variant = "default",
+  buttonOrder = "platform",
   ...props
 }: React.ComponentProps<"div"> & {
   variant?: "default" | "bare";
+  buttonOrder?: "platform" | "source";
 }) {
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
+        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--dialog-radius)-1px)]",
         variant === "default" && "border-t bg-muted/72 py-4",
         variant === "bare" && "py-4",
         className,
       )}
       data-slot="dialog-footer"
+      data-default-button={
+        buttonOrder === "platform" ? defaultButtonPlacement(currentPlatform()) : undefined
+      }
       {...props}
     />
   );

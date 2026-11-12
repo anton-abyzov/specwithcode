@@ -409,7 +409,7 @@ function WebhookDeliveriesDialog({
             </ul>
           )}
         </DialogPanel>
-        <DialogFooter>
+        <DialogFooter buttonOrder="source">
           {selectedId !== null ? (
             <Button variant="outline" size="sm" onClick={() => setSelectedId(null)}>
               {tx("Back")}

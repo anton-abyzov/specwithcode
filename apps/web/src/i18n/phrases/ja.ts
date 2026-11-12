@@ -3812,10 +3812,14 @@ export const ja: PhraseCatalog = {
     "現在のキャパシティを観測するには、このホストを再接続してください。",
   "Capacity read failed or was denied. No available capacity is assumed.":
     "キャパシティの読み取りが失敗したか、拒否されました。利用可能なキャパシティはないものとみなします。",
-  "The local Switch service timed out.": "ローカルの Switch サービスがタイムアウトしました。",
-  "The local Switch response could not be verified.":
-    "ローカルの Switch の応答を検証できませんでした。",
-  "The local Switch service is unavailable.": "ローカルの Switch サービスを利用できません。",
+  "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.":
+    "ローカルの Switch サービスを利用できません。このマシンで Switch を起動してから、「観測を更新」を選んでください。",
+  "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.":
+    "ローカルの Switch サービスがタイムアウトしました。「観測を更新」を選んでもう一度お試しください。タイムアウトが続く場合は、このマシンで Switch を再起動してください。",
+  "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.":
+    "ローカルの Switch の応答を検証できませんでした。このマシンの Switch をアップデートしてから、「観測を更新」を選んでください。",
+  "No providers signed in yet.": "サインイン済みのプロバイダーはまだありません。",
+  "Set up providers": "プロバイダーを設定",
   "Capacity is unavailable with this connection’s session read permission.":
     "この接続のセッション読み取り権限ではキャパシティを取得できません。",
   "Client not supported": "未対応のクライアント",

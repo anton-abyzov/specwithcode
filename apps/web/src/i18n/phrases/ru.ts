@@ -3809,10 +3809,14 @@ export const ru: PhraseCatalog = {
     "Переподключите этот хост, чтобы видеть текущую ёмкость.",
   "Capacity read failed or was denied. No available capacity is assumed.":
     "Чтение ёмкости не удалось или было запрещено. Доступная ёмкость не предполагается.",
-  "The local Switch service timed out.": "Время ожидания локальной службы Switch истекло.",
-  "The local Switch response could not be verified.":
-    "Не удалось проверить ответ локальной службы Switch.",
-  "The local Switch service is unavailable.": "Локальная служба Switch недоступна.",
+  "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.":
+    "Локальная служба Switch недоступна. Запустите Switch на этой машине, затем выберите «Обновить наблюдения».",
+  "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.":
+    "Время ожидания локальной службы Switch истекло. Выберите «Обновить наблюдения», чтобы повторить попытку. Если время ожидания истекает снова, перезапустите Switch на этой машине.",
+  "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.":
+    "Не удалось проверить ответ локальной службы Switch. Обновите Switch на этой машине, затем выберите «Обновить наблюдения».",
+  "No providers signed in yet.": "Вход пока не выполнен ни у одного провайдера.",
+  "Set up providers": "Настроить провайдеров",
   "Capacity is unavailable with this connection’s session read permission.":
     "Ёмкость недоступна с разрешением этого подключения на чтение сессий.",
   "Client not supported": "Клиент не поддерживается",

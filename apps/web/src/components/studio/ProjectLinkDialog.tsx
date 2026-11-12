@@ -478,7 +478,7 @@ export function ProjectLinkDialog({
           )}
         </DialogPanel>
         {!complete && (
-          <DialogFooter>
+          <DialogFooter buttonOrder="source">
             {sides && (
               <Button
                 variant="outline"
