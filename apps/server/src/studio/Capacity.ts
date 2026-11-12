@@ -29,7 +29,7 @@ import { CLAUDE_STATUS_CHECK_FAILED } from "../provider/providerSnapshot.ts";
 import { nativeDenialResetPassed } from "../provider/providerUsageLimits.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import * as SwitchClient from "./SwitchClient.ts";
-import { SwitchSeen } from "./SwitchSeen.ts";
+import * as SwitchSeen from "./SwitchSeen.ts";
 import {
   companionCreditFailureCleared,
   nativeCreditContinuationAllowed,
@@ -394,7 +394,7 @@ const make = Effect.gen(function* () {
   const providers = yield* Providers.ProviderRegistry;
   const baseEnv = yield* HostProcessEnvironment;
   const nativeRoute = yield* NativeRoute.NativeRoute;
-  const switchSeen = yield* SwitchSeen;
+  const switchSeen = yield* SwitchSeen.SwitchSeen;
   const build = (raw: unknown, observedProviders?: ReadonlyArray<ServerProvider>) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
@@ -902,3 +902,9 @@ const make = Effect.gen(function* () {
   });
 });
 export const layer = Layer.effect(Capacity, make).pipe(Layer.provide(SwitchClient.layer));
+/**
+ * The server's layer: `layer` with the record of whether Switch has answered
+ * kept in the state directory. Without it every machine counts as having run
+ * Switch, and a machine that never did warns about it again.
+ */
+export const layerLive = layer.pipe(Layer.provide(SwitchSeen.layer));

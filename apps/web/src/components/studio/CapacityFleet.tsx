@@ -58,17 +58,36 @@ const withoutSwitch = (snapshot: StudioCapacitySnapshot | null | undefined) =>
   snapshot?.switchSeen === false;
 
 /**
- * The providers signed in on a machine, in the order its server lists them.
+ * The providers set up on a machine, in the order its server lists them:
+ * enabled, installed and not signed out. A provider whose sign-in check failed
+ * or has not finished reports `unknown` and stays listed with what is known of
+ * its usage, so the card never says nobody is signed in while somebody is.
  * A machine without Switch shows these instead of Switch profiles.
  */
-export function signedInProviders(providers: ReadonlyArray<ServerProvider>) {
+export function providersOnHost(providers: ReadonlyArray<ServerProvider>) {
   return providers.filter(
     (provider) =>
       provider.enabled &&
       provider.installed &&
       isProviderAvailable(provider) &&
-      provider.auth.status === "authenticated",
+      provider.auth.status !== "unauthenticated",
   );
+}
+
+/**
+ * A provider's usage for a host card: the limits every model of the account
+ * shares. When each limit it reports belongs to one model family, there is no
+ * account-wide reading, so the default model's is shown instead of "no limits".
+ * A spent limit of one model family is not shown here; the model picker shows
+ * it on that family's models.
+ */
+export function hostProviderAvailability(provider: ServerProvider, nowMs: number) {
+  const account = modelAvailability({ provider, model: null, nowMs, connected: true });
+  if (account.kind !== "unknown" || account.reason !== "noWindows") return account;
+  const model = provider.models.find((entry) => entry.isDefault) ?? provider.models[0];
+  return model
+    ? modelAvailability({ provider, model: model.slug, nowMs, connected: true })
+    : account;
 }
 
 type Props = {
@@ -252,10 +271,10 @@ function HostCard({
     );
   }, [e.environmentId, connected, failed, loading, snapshot, onSnapshot]);
   useEffect(() => () => onSnapshot(e.environmentId, null), [e.environmentId, onSnapshot]);
-  // Switch is optional. A machine that never ran it shows its signed-in
-  // providers; the Switch profiles, policy and refresh do not apply to it.
+  // Switch is optional. A machine that never ran it shows the providers set
+  // up there; the Switch profiles, policy and refresh do not apply to it.
   const noSwitch = connected && !failed && withoutSwitch(snapshot);
-  const providers = noSwitch ? signedInProviders(config?.providers ?? []) : [];
+  const providers = noSwitch ? providersOnHost(config?.providers ?? []) : [];
   const perform = async (operation: Parameters<typeof mutateStudioCapacity>[1]) => {
     if (busy || !connected || !canWrite) return;
     setBusy(true);
@@ -486,8 +505,8 @@ function HostCard({
 }
 
 /**
- * A signed-in provider on a machine without Switch: its name and the usage
- * line the model picker shows for it, read from the snapshot the machine
+ * A provider on a machine without Switch: its name and its account's usage in
+ * the model picker's words, read from the snapshot the machine
  * already holds.
  */
 function ProviderRow({
@@ -501,17 +520,26 @@ function ProviderRow({
 }) {
   const name =
     provider.displayName?.trim() || getDriverOption(provider.driver)?.label || provider.driver;
-  const usage = availabilityText(
-    modelAvailability({ provider, model: null, nowMs: now, connected: true }),
-    { provider: name, account: planLabel(provider.auth), machine: hostLabel, nowMs: now },
-  );
+  const usage = availabilityText(hostProviderAvailability(provider, now), {
+    provider: name,
+    account: planLabel(provider.auth),
+    machine: hostLabel,
+    nowMs: now,
+  });
   return (
     <div className="studio-account">
       <div className="studio-account-title">
         <strong>{name}</strong>
         <Tooltip>
           <TooltipTrigger
-            render={<span className="studio-provider-usage" data-tone={usage.tone} tabIndex={0} />}
+            render={
+              <span
+                className="studio-provider-usage"
+                data-tone={usage.tone}
+                tabIndex={0}
+                aria-label={usage.label}
+              />
+            }
           >
             {usage.short}
           </TooltipTrigger>

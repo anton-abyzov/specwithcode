@@ -8,13 +8,15 @@ const state = vi.hoisted(() => ({
   failed: false,
   loading: false,
   canWrite: true,
+  /** Per-host reads, for a fleet of more than one machine; `snapshot` answers the rest. */
+  snapshots: {} as Record<string, unknown>,
   canOperate: vi.fn(() => true),
   mutate: vi.fn(async () => undefined),
   draft: vi.fn(),
 }));
 vi.mock("../../studio/capacity", () => ({
-  useStudioCapacity: () => ({
-    snapshot: state.snapshot,
+  useStudioCapacity: (environmentId: string) => ({
+    snapshot: environmentId in state.snapshots ? state.snapshots[environmentId] : state.snapshot,
     loading: state.loading,
     failed: state.failed,
   }),
@@ -59,7 +61,12 @@ vi.mock("@tanstack/react-router", () => ({
     </a>
   ),
 }));
-import { CapacityFleet, quotaDuration, signedInProviders } from "./CapacityFleet";
+import {
+  CapacityFleet,
+  hostProviderAvailability,
+  providersOnHost,
+  quotaDuration,
+} from "./CapacityFleet";
 import { absoluteTime } from "../../studio/overviewModel";
 import { EnvironmentId, ServerConfig } from "@specweave-studio/contracts";
 import { PrimaryConnectionTarget } from "@specweave-studio/client-runtime/connection";
@@ -194,6 +201,7 @@ let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   state.snapshot = fixture();
+  state.snapshots = {};
   state.failed = false;
   state.loading = false;
   state.canWrite = true;
@@ -635,10 +643,51 @@ it("says nothing about capacity while the first read is on its way", async () =>
   expect(container.textContent).not.toContain("Independent capacity unknown");
   expect(container.querySelector(".studio-capacity-note")).toBeNull();
 });
-it("counts a provider as signed in only when it is enabled, installed, available and authenticated", () => {
+it("lists a provider whose sign-in check failed instead of saying nobody is signed in", async () => {
+  state.snapshot = withoutSwitchFixture();
+  config = {
+    ...config,
+    providers: [{ ...config.providers[0]!, auth: { status: "unknown" } }],
+  };
+  await render();
+  expect(container.textContent).not.toContain("No providers signed in yet.");
+  expect(container.querySelector(".studio-account strong")!.textContent).toBe("Codex");
+  expect(container.querySelector(".studio-provider-usage")!.textContent).not.toBe("");
+  expect(links()).toContainEqual(["Providers", "/settings/providers"]);
+});
+it("counts only machines that run Switch in the summary of a mixed fleet", async () => {
+  const other = EnvironmentId.make("air");
+  const air: EnvironmentPresentation = { ...environment, environmentId: other, label: "Air" };
+  state.snapshots = { main: fixture(), air: withoutSwitchFixture() };
+  withUsage(38);
+  await act(async () =>
+    root.render(
+      <CapacityFleet
+        environments={[environment, air]}
+        configs={
+          new Map([
+            [environment.environmentId, config],
+            [other, config],
+          ])
+        }
+        onNewDraft={state.draft}
+      />,
+    ),
+  );
+  // The Switch machine is counted; the one without Switch adds nothing and warns of nothing.
+  const note = container.querySelector(".studio-capacity-note")!;
+  expect(note.textContent).toContain("1 eligible · 1 unverified");
+  expect(container.querySelector(".studio-notice")).toBeNull();
+  const cards = [...container.querySelectorAll(".studio-host")];
+  expect(cards).toHaveLength(2);
+  expect(cards[0]!.textContent).toContain("Refresh observations");
+  expect(cards[1]!.textContent).not.toContain("Refresh observations");
+  expect(cards[1]!.querySelector(".studio-provider-usage")!.textContent).toMatch(/^62% left/);
+});
+it("counts a provider as set up when it is enabled, installed, available and not signed out", () => {
   const ready = config.providers[0]!;
   expect(
-    signedInProviders([
+    providersOnHost([
       ready,
       { ...ready, instanceId: "off" as typeof ready.instanceId, enabled: false },
       { ...ready, instanceId: "missing" as typeof ready.instanceId, installed: false },
@@ -648,7 +697,37 @@ it("counts a provider as signed in only when it is enabled, installed, available
         instanceId: "out" as typeof ready.instanceId,
         auth: { status: "unauthenticated" },
       },
+      // A failed or unfinished sign-in check says nothing about being signed out.
       { ...ready, instanceId: "unsure" as typeof ready.instanceId, auth: { status: "unknown" } },
     ]).map((provider) => provider.instanceId),
-  ).toEqual(["codex"]);
+  ).toEqual(["codex", "unsure"]);
+});
+it("reads the account's shared limits, and a model's only when no limit is shared", () => {
+  const now = Date.now();
+  const window = (usedPercent: number, modelScope?: string) => ({
+    id: modelScope ? "seven_day_native" : "primary",
+    kind: modelScope ? ("weekly" as const) : ("session" as const),
+    label: modelScope ? "Weekly · Native" : "Session",
+    usedPercent,
+    resetsAt: new Date(now + 2 * 3_600_000).toISOString(),
+    ...(modelScope ? { modelScope } : {}),
+  });
+  const withWindows = (windows: ReturnType<typeof window>[]) => ({
+    ...config.providers[0]!,
+    checkedAt: new Date(now).toISOString(),
+    usageLimits: { checkedAt: new Date(now - 60_000).toISOString(), windows },
+  });
+  // A spent limit of one model family does not make the account read as spent.
+  expect(
+    hostProviderAvailability(withWindows([window(38), window(100, "Native")]), now),
+  ).toMatchObject({ kind: "room", leftPercent: 62 });
+  // Only model limits reported: the default model's reading, not "no limits".
+  expect(hostProviderAvailability(withWindows([window(20, "Native")]), now)).toMatchObject({
+    kind: "room",
+    leftPercent: 80,
+  });
+  expect(hostProviderAvailability(withWindows([]), now)).toMatchObject({
+    kind: "unknown",
+    reason: "noWindows",
+  });
 });

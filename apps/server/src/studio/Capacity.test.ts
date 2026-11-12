@@ -161,6 +161,38 @@ describe("the Overview's read on a machine without Switch", () => {
     });
   });
 
+  it("fails a refresh, a policy change and a pin as before while Switch has never answered", async () => {
+    const machine = neverSeen();
+    const categories = async (seen: SwitchSeenShape | undefined) => {
+      const failures: unknown[] = [];
+      for (const use of [
+        (capacity: Capacity.Capacity["Service"]) => capacity.refresh,
+        (capacity: Capacity.Capacity["Service"]) => capacity.policy({ mode: "balanced" }),
+        (capacity: Capacity.Capacity["Service"]) => capacity.select({ id: "codex-1" }),
+      ])
+        failures.push(
+          await run(
+            Effect.flatMap(Capacity.Capacity, use).pipe(Effect.flip),
+            rawSnapshot(),
+            [provider()],
+            settings,
+            true,
+            true,
+            [provider()],
+            [],
+            seen ? { seen } : {},
+          ),
+        );
+      return failures.map((failure) => (failure as { category: string }).category);
+    };
+    // A pin is refused first because a machine with Switch down reports no profile to pin.
+    const expected = ["switch-unavailable", "switch-unavailable", "profile-not-eligible"];
+    expect(await categories(machine.store)).toEqual(expected);
+    // The same answers as on a machine where Switch has answered before.
+    expect(await categories(undefined)).toEqual(expected);
+    expect(machine.answered()).toBe(false);
+  });
+
   it("still starts a native session while Switch has never answered", async () => {
     const machine = neverSeen();
     await expect(

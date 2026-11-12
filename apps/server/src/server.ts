@@ -119,7 +119,6 @@ import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegi
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as StudioCapacity from "./studio/Capacity.ts";
 import * as StudioNativeRoute from "./studio/NativeRoute.ts";
-import * as StudioSwitchSeen from "./studio/SwitchSeen.ts";
 import * as StudioHttp from "./studio/http.ts";
 import * as StudioFleetHttp from "./studioFleetHttp.ts";
 import * as FleetSkills from "./fleet/fleetSkills.ts";
@@ -916,8 +915,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(
-    StudioCapacity.layer.pipe(
-      Layer.provide(StudioSwitchSeen.layer),
+    StudioCapacity.layerLive.pipe(
       Layer.provide(layerServerSettings),
       Layer.provide(StudioNativeRoute.layer),
     ),
