@@ -219,7 +219,6 @@ export function ProjectEnvironment({
     setPending(null);
     void run(pending.id, pending.mode);
     // `run` reads the latest state; only the saved entry starts it.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSaved]);
   /** Save an entry for `repositoryUrl` at `localPath`, then clone or match it there. */
   const addEntry = (repositoryUrl: string, localPath: string, mode: "clone" | "match") => {

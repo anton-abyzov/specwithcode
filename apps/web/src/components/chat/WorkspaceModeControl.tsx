@@ -83,8 +83,13 @@ export function ComposerRepositoriesControl({
   return (
     <Popover>
       <PopoverTrigger
-        className="inline-flex min-h-7 max-w-56 shrink items-center gap-1 truncate rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-        data-composer-repositories=""
+        render={
+          <button
+            type="button"
+            className="inline-flex min-h-7 max-w-56 shrink items-center gap-1 truncate rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            data-composer-repositories=""
+          />
+        }
       >
         <span className="truncate">{composerRepositoriesLabel(pick, found)}</span>
         <span aria-hidden>▾</span>

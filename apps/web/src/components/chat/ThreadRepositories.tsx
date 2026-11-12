@@ -269,9 +269,14 @@ export function ThreadRepositoriesChip({ shell }: { shell: ThreadRepositoriesShe
   return (
     <Popover>
       <PopoverTrigger
-        className="inline-flex min-h-6 max-w-64 shrink items-center truncate rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-        aria-label={`Repositories: ${label}`}
-        data-thread-repositories-chip=""
+        render={
+          <button
+            type="button"
+            className="inline-flex min-h-6 max-w-64 shrink items-center truncate rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label={`Repositories: ${label}`}
+            data-thread-repositories-chip=""
+          />
+        }
       >
         <span className="truncate">{label}</span>
       </PopoverTrigger>

@@ -269,6 +269,7 @@ describe("isGitCommitOrSwitch", () => {
   });
 });
 
+// oxlint-disable-next-line studio/no-global-process-runtime -- the shim runs under the real host shell.
 describe.skipIf(process.platform === "win32")(
   "the clone guard of a thread with its own folder",
   () => {
@@ -277,7 +278,7 @@ describe.skipIf(process.platform === "win32")(
       const project = NodePath.join(stateDir, "project");
       const clone = NodePath.join(project, "repositories", "acme", "api");
       const threadFolder = NodePath.join(stateDir, "worktrees", "thread");
-      const realGit = resolveRealGit(process.env.PATH, { platform: process.platform })!;
+      const realGit = resolveRealGit(process.env.PATH, { platform: "linux" })!;
       const gitEnv = {
         ...process.env,
         GIT_CONFIG_GLOBAL: "/dev/null",
@@ -300,7 +301,7 @@ describe.skipIf(process.platform === "win32")(
       const guard = installManualWorktreeGuard({
         stateDir,
         serverEnvironment: { PATH: process.env.PATH },
-        platform: process.platform,
+        platform: "linux",
       })!;
       const environment = withManualWorktreeGuardFor(guard, gitEnv, project);
       const git = (cwd: string, ...args: string[]) =>
@@ -336,7 +337,7 @@ describe.skipIf(process.platform === "win32")(
       const guard = installManualWorktreeGuard({
         stateDir,
         serverEnvironment: { PATH: process.env.PATH },
-        platform: process.platform,
+        platform: "linux",
       })!;
       const blocked = manualWorktreeGuardPath({ PATH: "/usr/bin" }, true, guard).PATH!;
       const cloned = manualWorktreeGuardPath({ PATH: blocked }, stateDir, guard).PATH!;

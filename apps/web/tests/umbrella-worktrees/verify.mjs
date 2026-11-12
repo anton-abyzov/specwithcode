@@ -3,13 +3,19 @@
 // cleanup code (no browser, no provider, no account): every way a thread gets its
 // repositories lands where the app says it does.
 // Usage: node apps/web/tests/umbrella-worktrees/verify.mjs [/absolute/owned/report-dir]
-import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { addIncrement, git, makeUmbrella } from "./fixture.mjs";
+
+const assert = NodeAssert.default;
+const fs = NodeFS;
+const path = NodePath;
+const { createRequire } = NodeModule;
+const { fileURLToPath, pathToFileURL } = NodeURL;
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const server = (file) => import(pathToFileURL(path.join(repo, "apps/server/src", file)).href);

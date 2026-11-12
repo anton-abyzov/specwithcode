@@ -1,9 +1,14 @@
 // An umbrella on disk, with real Git: a root repository that ignores `repositories/`,
 // and child clones under it. Nothing is saved in any project's Environment.
-import { execFileSync } from "node:child_process";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+const { execFileSync } = NodeChildProcess;
+const fs = NodeFS;
+const os = NodeOS;
+const path = NodePath;
 
 const env = {
   ...process.env,

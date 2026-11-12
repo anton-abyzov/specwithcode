@@ -1,12 +1,19 @@
 // Build with vp build --config apps/web/tests/environment-repositories/vite.config.ts first.
 // Usage: node apps/web/tests/environment-repositories/verify.mjs /absolute/owned/report-dir
 // Optional STUDIO_PLAYWRIGHT_MODULE and STUDIO_CHROMIUM_EXECUTABLE point at an installed runtime.
-import * as fs from "node:fs/promises";
-import * as http from "node:http";
-import * as path from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+
+const assert = NodeAssert.default;
+const fs = NodeFSP;
+const http = NodeHttp;
+const path = NodePath;
+const { createRequire } = NodeModule;
+const { pathToFileURL } = NodeURL;
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
 // playwright-core is a dependency of apps/server, not of the web app.
