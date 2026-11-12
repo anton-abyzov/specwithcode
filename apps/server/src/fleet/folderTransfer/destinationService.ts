@@ -109,7 +109,7 @@ export interface DestinationRecord {
   readonly targetFolder: string;
   readonly title: string;
   readonly selection: ReadonlyArray<FileClass>;
-  readonly purpose?: "add-to-machine";
+  readonly purpose?: "add-to-machine" | "review";
   readonly decisions: Readonly<Record<string, Choice>>;
   readonly clone: ReadonlyArray<string>;
   /** Repository rows left out of the copy; missing on records from before it existed. */
@@ -157,7 +157,7 @@ export interface StartCopyInput {
   readonly title: string;
   readonly selection?: ReadonlyArray<FileClass>;
   readonly projectId?: string;
-  readonly purpose?: "add-to-machine";
+  readonly purpose?: "add-to-machine" | "review";
 }
 
 export interface DestinationHooks {
@@ -1118,7 +1118,9 @@ export class DestinationCopies {
         cloneOrigins: await this.cloneOrigins(record, manifest, signal),
         skip: record.skip ?? [],
         mirror: record.mirror,
-        protectDiverged: record.purpose === "add-to-machine",
+        // Only a copy the person reviews in the Copy files dialog may take theirs on a
+        // diverged repository; any other start, with or without a purpose, is protected.
+        protectDiverged: record.purpose !== "review",
       }),
       ...(destination.fingerprint !== undefined
         ? { destinationFingerprint: destination.fingerprint }

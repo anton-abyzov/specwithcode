@@ -461,7 +461,7 @@ export function planReconcile(input: PlanInput): Plan {
           : ["keep-mine", "take-theirs", "leave-both"];
         if (decision === "take-theirs" && input.protectDiverged)
           warnings.push(
-            `${source.path}: "Take theirs" is not available for a diverged repository when adding a project to a machine; choose Keep mine or Leave both.`,
+            `${source.path}: "Take theirs" is not available for a diverged repository outside the Copy files review; choose Keep mine or Leave both.`,
           );
         else if (decision === "take-theirs") {
           moveHead = "take-theirs";
