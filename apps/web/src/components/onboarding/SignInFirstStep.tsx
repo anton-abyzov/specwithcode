@@ -314,7 +314,8 @@ export function SignInFirstStep({
           card, then Continue here. Until then going on is a skip, which Enter never presses. */}
       <WizardStepFooter
         leading={
-          <Button variant="ghost" size="sm" onClick={onOtherComputers}>
+          // Outlined: as quiet text it did not read as something to press.
+          <Button variant="outline" onClick={onOtherComputers}>
             {tx("Set up other computers too")}
           </Button>
         }
