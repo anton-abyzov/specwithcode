@@ -4163,4 +4163,12 @@ export const ru: PhraseCatalog = {
     "Не удалось подтвердить изменение на {machine}. Переключатель показывает то, что сообщает {machine}.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "На {machine} версия SpecWithCode без этой настройки. Сначала обновите {machine}.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} может запускать только проект, копия которого на ней есть. Сначала откройте проект на этой машине, затем добавьте его на {name} здесь.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} может запускать только проект, копия которого на ней есть. Добавьте проект, затем выберите {name} в меню «Запустить на» в чате или внесите её в список «Machines for workers» в настройках проекта.",
+  "Add {project} to {name}": "Добавить {project} на {name}",
+  "Add a project to {name}": "Добавить проект на {name}",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "Дальше на {coordinatorLabel}: эта машина может запускать только проект, копия которого на ней есть. Откройте там «Настройки > Машины» и добавьте проект на эту машину. Затем выберите её в меню «Запустить на» в чате или внесите в список «Machines for workers» в настройках проекта.",
 };

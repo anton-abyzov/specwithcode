@@ -4200,4 +4200,12 @@ export const fr: PhraseCatalog = {
     "Le changement n’a pas pu être confirmé sur {machine}. L’interrupteur indique ce que {machine} signale.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} utilise une version de SpecWithCode sans ce réglage. Mettez d’abord {machine} à jour.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ouvrez d’abord un projet sur cette machine, puis ajoutez-le à {name} ici.",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ajoutez-en un, puis choisissez {name} sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
+  "Add {project} to {name}": "Ajouter {project} à {name}",
+  "Add a project to {name}": "Ajouter un projet à {name}",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "Étape suivante, sur {coordinatorLabel} : cette machine ne peut exécuter qu’un projet dont elle a une copie. Ouvrez-y Réglages > Machines et ajoutez un projet à cette machine. Choisissez-la ensuite sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
 };

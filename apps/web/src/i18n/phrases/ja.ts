@@ -4164,4 +4164,12 @@ export const ja: PhraseCatalog = {
     "{machine} で変更を確認できませんでした。スイッチは {machine} が報告する状態を表示しています。",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} の SpecWithCode にはこの設定がありません。先に {machine} を更新してください。",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
+    "{name} が実行できるのは、コピーを持っているプロジェクトだけです。まずこのマシンでプロジェクトを開いてから、ここで {name} に追加してください。",
+  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} が実行できるのは、コピーを持っているプロジェクトだけです。プロジェクトを追加してから、チャットの「実行先」で {name} を選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
+  "Add {project} to {name}": "{project} を {name} に追加",
+  "Add a project to {name}": "プロジェクトを {name} に追加",
+  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "次は {coordinatorLabel} で: このマシンが実行できるのは、コピーを持っているプロジェクトだけです。そちらで 設定 > マシン を開き、このマシンにプロジェクトを追加してください。その後、チャットの「実行先」でこのマシンを選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
 };
