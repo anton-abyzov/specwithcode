@@ -30,7 +30,6 @@ import {
   ProviderInstanceId,
   TaskRoutingDecision,
   SourceControlCloneProtocol,
-  SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   OrchestratorMcpModelPreferenceInput,
   OrchestratorMcpModelPreferenceResult,
@@ -58,6 +57,7 @@ import * as SourceControlRepositoryService from "../../../sourceControl/SourceCo
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { INCREMENT_LAUNCH_INSTRUCTION } from "../../../project/launchIncrement.ts";
+import { AgentCloneInput } from "./agentClone.ts";
 
 const shared = {
   success: Project,
@@ -161,12 +161,13 @@ const ProjectDeleteTool = Tool.make("studio_project_delete", {
 const ProjectCloneTool = Tool.make("studio_project_clone", {
   ...shared,
   description:
-    "Clone a repository using the app's source-control service. This only clones; register the returned cwd with studio_project_create. An existing destination is not adopted or removed on failure.",
-  parameters: SourceControlCloneRepositoryInput,
+    "Clone a repository using the app's source-control service. This only clones; register the returned cwd with studio_project_create. It runs up to 10 minutes; a failed clone into a missing or empty folder removes what it left there. An existing destination is never removed, and is used only with resumeExisting when it is a clean clone of the same repository.",
+  parameters: AgentCloneInput,
   success: SourceControlCloneRepositoryResult,
   dependencies: [
     ...shared.dependencies,
     SourceControlRepositoryService.SourceControlRepositoryService,
+    GitVcsDriver.GitVcsDriver,
   ],
 })
   .annotate(Tool.Destructive, true)

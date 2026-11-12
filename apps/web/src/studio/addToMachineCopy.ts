@@ -214,6 +214,8 @@ export async function startCopy(
         mode: offer.mode,
         targetFolder: input.targetFolder,
         selection: input.selection,
+        // The destination refuses "take theirs" on a diverged repository itself.
+        purpose: "add-to-machine",
       },
     }),
   );

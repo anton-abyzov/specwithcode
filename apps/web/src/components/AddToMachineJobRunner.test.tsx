@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   clones: [] as Array<Record<string, unknown>>,
   projects: [] as Array<Record<string, unknown>>,
   link: { status: "linked" } as Record<string, unknown>,
+  linkFails: null as Record<string, unknown> | null,
   toasts: [] as Array<Record<string, unknown>>,
 }));
 
@@ -71,7 +72,7 @@ vi.mock("../studio/projectLink", () => ({
   projectLink: new Proxy({}, { get: (_target, name) => `link:${String(name)}` }),
   linkCopyAsWorkers: (...args: unknown[]) => {
     state.calls.push(["linkCopyAsWorkers", args[1]]);
-    return Promise.resolve(state.link);
+    return state.linkFails ? Promise.reject(state.linkFails) : Promise.resolve(state.link);
   },
 }));
 vi.mock("../studio/machineNickname", () => ({
@@ -135,6 +136,7 @@ beforeEach(() => {
   state.handlers = {};
   state.toasts = [];
   state.link = { status: "linked" };
+  state.linkFails = null;
   localStorage.clear();
 });
 
@@ -268,5 +270,75 @@ describe("after a restart, with no clone snapshot left", () => {
     expect(state.toasts).toEqual([
       expect.objectContaining({ title: "App did not finish copying to Mini" }),
     ]);
+  });
+});
+
+describe("when the runner gives up or the app starts again", () => {
+  const stale = { createdAt: new Date(Date.now() - 60_000).toISOString() };
+  async function mount(Runner: typeof AddToMachineJobRunner = AddToMachineJobRunner) {
+    root = createRoot(document.createElement("div"));
+    await act(async () => root!.render(<Runner />));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  }
+
+  it("says so when it drops a job whose project never appeared", async () => {
+    writeAddToMachineJob(job("clone-never", stale));
+    state.projects = [source];
+    state.clones = [];
+    await mount();
+    expect(calls("linkCopyAsWorkers")).toEqual([]);
+    expect(listAddToMachineJobs()).toEqual([]);
+    expect(state.toasts).toEqual([
+      expect.objectContaining({
+        type: "warning",
+        title: "App was not added to Mini",
+        description:
+          "App was not added to Mini: the project never appeared there. Add it to that machine again from Run on.",
+      }),
+    ]);
+  });
+
+  it("says so when it drops a job whose source project is gone", async () => {
+    writeAddToMachineJob(job("clone-orphan"));
+    state.projects = [destinationProject("clone-orphan")];
+    state.clones = [{ projectId: "clone-orphan", phase: "done" }];
+    await mount();
+    expect(calls("linkCopyAsWorkers")).toEqual([]);
+    expect(listAddToMachineJobs()).toEqual([]);
+    expect(state.toasts).toEqual([
+      expect.objectContaining({
+        description:
+          "app was cloned on Mini but is not linked: its source project is no longer on this machine.",
+      }),
+    ]);
+  });
+
+  it("keeps a job a busy machine stopped and runs it again on the next start", async () => {
+    state.linkFails = { _tag: "ProjectLinkError", code: "coordinator_busy" };
+    writeAddToMachineJob(job("clone-busy"));
+    state.projects = [source, destinationProject("clone-busy")];
+    state.clones = [{ projectId: "clone-busy", phase: "done" }];
+    await mount();
+    expect(calls("linkCopyAsWorkers")).toHaveLength(1);
+    expect(listAddToMachineJobs()).toHaveLength(1);
+    expect(state.toasts).toEqual([
+      expect.objectContaining({ type: "error", title: "App on Mini is not linked yet" }),
+    ]);
+
+    // Same page: it waits for the next start instead of retrying in a loop.
+    await act(async () => root?.unmount());
+    await mount();
+    expect(calls("linkCopyAsWorkers")).toHaveLength(1);
+
+    // The next app start loads the runner afresh and finishes the job.
+    await act(async () => root?.unmount());
+    state.linkFails = null;
+    const restartPath = "./AddToMachineJobRunner?restart";
+    const restarted: typeof import("./AddToMachineJobRunner") = await import(
+      /* @vite-ignore */ restartPath
+    );
+    await mount(restarted.AddToMachineJobRunner);
+    expect(calls("linkCopyAsWorkers")).toHaveLength(2);
+    expect(listAddToMachineJobs()).toEqual([]);
   });
 });

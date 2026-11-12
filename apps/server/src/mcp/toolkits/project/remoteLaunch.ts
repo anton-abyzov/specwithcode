@@ -407,12 +407,12 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
             error,
             `This project already names a copy on ${machine.label}, and it cannot be used now: that machine may be briefly out, or the copy was moved or unlinked there. Do not add another copy. Check studio_machine_list, try again later, or ask the user to relink it (its sidebar menu > Link…).`,
           );
-        const linkable =
-          logical != null &&
-          params.machineProjectId === undefined &&
-          (yield* workGrantOf(context)) === undefined;
+        // A machineProjectId naming an unlinked copy of this repository is linked too,
+        // and only that one: launching in it is refused until it is.
+        const named = params.scratch === true ? undefined : params.machineProjectId;
+        const linkable = logical != null && (yield* workGrantOf(context)) === undefined;
         const existing = linkable
-          ? yield* linkExistingCopy({ project, machine }).pipe(
+          ? yield* linkExistingCopy({ project, machine, copyId: named }).pipe(
               Effect.catch(() => Effect.succeed({ kind: "none" } as ExistingCopyOutcome)),
             )
           : ({ kind: "none" } as ExistingCopyOutcome);
@@ -445,10 +445,16 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
                 ", ",
               )}. Ask the user which one to link (its sidebar menu > Link…), then launch again.`,
           );
+        // studio_project_add_to_machine would return this same copy, so it is not offered.
         if (existing.kind === "unlinked")
           return yield* hinted(
             error,
-            `${machine.label} has this repository as a separate project, ${existing.copy.title} (${existing.copy.id}), not linked to this one. ${existing.problem}`,
+            `${machine.label} has this repository as a separate project, ${existing.copy.title} (${existing.copy.id}), not linked to this one. ${existing.problem} Do not call studio_project_add_to_machine for it: that finds this same copy.`,
+          );
+        if (named !== undefined)
+          return yield* hinted(
+            error,
+            `${named} on ${machine.label} is not a copy of this project's repository that can be linked. studio_machine_list shows this project's copy there, if it has one. ${addToMachineHint(machine, project.id)}`,
           );
         // A project that is not there yet can be put there over MCP.
         return yield* hinted(error, addToMachineHint(machine, project.id));

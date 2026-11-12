@@ -646,6 +646,7 @@ const make = Effect.gen(function* () {
             ? { projectRelativePath: input.projectRelativePath }
             : {}),
           ...(input.selection ? { selection: input.selection } : {}),
+          ...(input.purpose ? { purpose: input.purpose } : {}),
           ...(input.mode === "copy-and-move" && input.projectId
             ? { projectId: input.projectId }
             : {}),

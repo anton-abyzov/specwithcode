@@ -273,5 +273,7 @@ export function copyStartInput(
     ...(offer.projectRelativePath ? { projectRelativePath: offer.projectRelativePath } : {}),
     selection,
     ...(saved.projectId ? { projectId: ProjectId.make(saved.projectId) } : {}),
+    // The person reviews every repository here, so "take theirs" stays offered.
+    purpose: "review",
   };
 }
