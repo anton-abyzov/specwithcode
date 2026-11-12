@@ -45,14 +45,25 @@ try {
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       "composer must fit viewport",
     );
-    await page.screenshot({ path: resolve(output, `after-${width}.png`) });
+    await page.screenshot({ animations: "disabled", path: resolve(output, `after-${width}.png`) });
     await page.getByRole("button", { name: "Voice", exact: true }).click();
     await page.getByRole("menuitem", { name: "Call the coordinator" }).waitFor();
-    await page.screenshot({ path: resolve(output, `voice-menu-${width}.png`) });
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('[role="menu"]')].some(
+        (el) => getComputedStyle(el).opacity === "1",
+      ),
+    );
+    await page.screenshot({
+      animations: "disabled",
+      path: resolve(output, `voice-menu-${width}.png`),
+    });
     await page.keyboard.press("Escape");
     await page.locator("[data-coordinator-machine]").click();
     await page.getByRole("menuitem", { name: "Move to another machine…", exact: true }).waitFor();
-    await page.screenshot({ path: resolve(output, `machine-menu-${width}.png`) });
+    await page.screenshot({
+      animations: "disabled",
+      path: resolve(output, `machine-menu-${width}.png`),
+    });
   }
   assert.deepEqual(errors, []);
   console.log("Passed: desktop/narrow controls, voice menu, migration menu, no runtime errors.");
