@@ -3832,11 +3832,14 @@ export const de: PhraseCatalog = {
     "Verbinde diesen Host erneut, um die aktuelle Kapazität zu beobachten.",
   "Capacity read failed or was denied. No available capacity is assumed.":
     "Das Lesen der Kapazität ist fehlgeschlagen oder wurde verweigert. Es wird keine verfügbare Kapazität angenommen.",
-  "The local Switch service timed out.":
-    "Der lokale Switch-Dienst hat das Zeitlimit überschritten.",
-  "The local Switch response could not be verified.":
-    "Die Antwort des lokalen Switch-Dienstes konnte nicht verifiziert werden.",
-  "The local Switch service is unavailable.": "Der lokale Switch-Dienst ist nicht verfügbar.",
+  "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.":
+    "Der lokale Switch-Dienst ist nicht verfügbar. Starte Switch auf diesem Rechner und wähle dann „Beobachtungen aktualisieren“.",
+  "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.":
+    "Der lokale Switch-Dienst hat das Zeitlimit überschritten. Wähle „Beobachtungen aktualisieren“, um es erneut zu versuchen. Wenn das Zeitlimit weiter überschritten wird, starte Switch auf diesem Rechner neu.",
+  "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.":
+    "Die Antwort des lokalen Switch-Dienstes konnte nicht verifiziert werden. Aktualisiere Switch auf diesem Rechner und wähle dann „Beobachtungen aktualisieren“.",
+  "No providers signed in yet.": "Noch bei keinem Anbieter angemeldet.",
+  "Set up providers": "Anbieter einrichten",
   "Capacity is unavailable with this connection’s session read permission.":
     "Kapazität ist mit der Sitzungs-Leseberechtigung dieser Verbindung nicht verfügbar.",
   "Client not supported": "Client nicht unterstützt",

@@ -72,6 +72,12 @@ export const StudioCapacitySnapshot = Schema.Struct({
   scope: Schema.Literal("environment-local"),
   available: Schema.Boolean,
   error: Schema.NullOr(Schema.Literals(["switch-unavailable", "switch-timeout", "switch-invalid-response"])),
+  /**
+   * False while Switch has never answered on this machine: it is not installed
+   * there, so `error` is null and nothing is wrong. Absent from servers older
+   * than this field, which report every failed read as an error.
+   */
+  switchSeen: Schema.optionalKey(Schema.Boolean),
   quotaPoolIdentity: Schema.Literals(["unavailable", "partial", "available"]),
   /** Counts only fresh verified hashes. Partial coverage is not a subscription total. */
   verifiedQuotaPoolCount: Schema.NullOr(Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),

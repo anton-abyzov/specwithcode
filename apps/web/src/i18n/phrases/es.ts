@@ -3835,10 +3835,14 @@ export const es: PhraseCatalog = {
     "Vuelve a conectar este host para observar la capacidad actual.",
   "Capacity read failed or was denied. No available capacity is assumed.":
     "La lectura de capacidad falló o fue denegada. No se supone capacidad disponible.",
-  "The local Switch service timed out.": "El servicio Switch local agotó el tiempo de espera.",
-  "The local Switch response could not be verified.":
-    "No se pudo verificar la respuesta del servicio Switch local.",
-  "The local Switch service is unavailable.": "El servicio Switch local no está disponible.",
+  "The local Switch service is unavailable. Start Switch on this machine, then choose Refresh observations.":
+    "El servicio Switch local no está disponible. Inicia Switch en este equipo y luego elige «Actualizar observaciones».",
+  "The local Switch service timed out. Choose Refresh observations to try again. If it keeps timing out, restart Switch on this machine.":
+    "El servicio Switch local agotó el tiempo de espera. Elige «Actualizar observaciones» para volver a intentarlo. Si sigue agotándose, reinicia Switch en este equipo.",
+  "The local Switch response could not be verified. Update Switch on this machine, then choose Refresh observations.":
+    "No se pudo verificar la respuesta del servicio Switch local. Actualiza Switch en este equipo y luego elige «Actualizar observaciones».",
+  "No providers signed in yet.": "Aún no has iniciado sesión en ningún proveedor.",
+  "Set up providers": "Configurar proveedores",
   "Capacity is unavailable with this connection’s session read permission.":
     "La capacidad no está disponible con el permiso de lectura de sesiones de esta conexión.",
   "Client not supported": "Cliente no compatible",
