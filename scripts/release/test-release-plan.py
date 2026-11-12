@@ -493,33 +493,68 @@ class Cli(unittest.TestCase):
 GH_STUB = r'''#!/bin/bash
 # Tags v1.0.1 to v1.0.20; a commit is in every release from v1.0.$GH_FIRST on.
 printf '%s\n' "$*" >> "$GH_LOG"
+# The answer to the nth call of a kind: $1 holds the answers, separated by $2; the last one repeats.
+nth() { printf '%s' "$1" | awk -v RS="$2" -v n="$(grep -c -e "$3" "$GH_LOG")" '{ last = $0 } NR == n { print; found = 1 } END { if (!found) print last }'; }
 case "$1 $2" in
-  "api --paginate") for patch in $(seq 20 -1 1); do echo "refs/tags/v1.0.$patch"; done; echo refs/tags/v1.0.5-rc1 ;;
-  "api repos/"*/commits/*) echo sha ;;
+  "api --paginate") [ "${GH_TAGS:-}" != broken ] || { echo "HTTP 502" >&2; exit 1; }; for patch in $(seq 20 -1 1); do echo "refs/tags/v1.0.$patch"; done; echo refs/tags/v1.0.5-rc1 ;;
+  "api repos/"*/commits/*)
+    case "$*" in
+      *tree.sha*) [ "${GH_TREES:-}" != broken ] || exit 1; if [ "${GH_TREES:-}" = same ]; then echo tree; else echo "tree of ${2##*/}"; fi ;;
+      *) echo sha ;;
+    esac ;;
+  "api repos/"*...sha)
+    # What the newest release lacks of the head a --wait request saw, as a number of files.
+    [ "${GH_LEFT:-0}" != broken ] || exit 1
+    nth "${GH_LEFT:-0}" , '\.\.\.sha' ;;
   "api repos/"*)
     version="${2#*compare/v}" version="${version%%...*}"
     if [ "${version##*.}" = "${GH_BROKEN:-}" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ "${version##*.}" -ge "$GH_FIRST" ]; then echo behind; else echo ahead; fi ;;
   "workflow run") ;;
   "run list")
-    label="$(sed -n 's/.*requested_by=//p' "$GH_LOG" | tail -1)"
-    case "$*" in *"endswith(\"$label\")"*) echo 777 ;; esac ;;
+    case "$*" in
+      *"--status pending"*)
+        # The waiting runs as "id title" lines, newest first, as the helper's --jq prints them;
+        # one list per call, separated by |, and "none" for an empty one.
+        [ "${GH_WAITING:-}" != broken ] || exit 1
+        nth "${GH_WAITING:-}" '|' '--status pending' | grep -v '^none$' | grep . || true ;;
+      *) label="$(sed -n 's/.*requested_by=//p' "$GH_LOG" | tail -1)"
+         case "$*" in *"endswith(\"$label\")"*) echo 777 ;; esac ;;
+    esac ;;
+  "run view")
+    case "$*" in
+      *status,conclusion*) [ "${GH_RESULT:-}" != broken ] || exit 1; echo "${GH_RESULT:-completed failure}" ;;
+      *) [ "${GH_STATE:-}" != broken ] || exit 1; echo "${GH_STATE:-pending 1 0}" ;;
+    esac ;;
+  "run watch") exit "$(nth "${GH_WATCH:-0}" , '^run watch')" ;;
   *) exit 1 ;;
 esac
 '''
+
+# Waiting runs as gh lists them, newest first. Only 555 and 444 are requests this helper made.
+WAITING = '\n'.join((
+    '999 Release macOS 1.0.21 (resume) · x 101010-1',
+    '888 Release macOS next (resume) · x 101010-2',
+    '666 Release macOS next',
+    '555 Release macOS next · thread b 101010-3',
+    '444 Release macOS next · thread a 090909-4',
+    '333 Release macOS next · typed by hand',
+    '222 Release macOS 1.0.21',
+))
 
 
 class RequestHelper(unittest.TestCase):
     """request-release.sh, with gh replaced by a stub on PATH."""
 
-    def run_helper(self, *args, first=7, broken=''):
+    def run_helper(self, *args, first=7, broken='', **gh):
         with tempfile.TemporaryDirectory() as tmp:
             stub, log = pathlib.Path(tmp, 'gh'), pathlib.Path(tmp, 'log')
             stub.write_text(GH_STUB)
             stub.chmod(0o755)
             log.touch()
             env = dict(os.environ, PATH=f"{tmp}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log),
-                       GH_FIRST=str(first), GH_BROKEN=broken, RELEASE_REPO='o/r')
+                       GH_FIRST=str(first), GH_BROKEN=broken, RELEASE_REPO='o/r',
+                       REQUEST_POLL_SECONDS='0', REQUEST_RETRY_SECONDS='0', **{f'GH_{name.upper()}': value for name, value in gh.items()})
             done = subprocess.run(['bash', str(HERE / 'request-release.sh'), *args],
                                   capture_output=True, text=True, env=env, check=False)
             return done.returncode, done.stdout + done.stderr, log.read_text().splitlines()
@@ -552,6 +587,94 @@ class RequestHelper(unittest.TestCase):
         self.assertEqual(len(dispatch), 1)
         self.assertNotIn('version=', dispatch[0])
         self.assertRegex(dispatch[0], r'requested_by=thread x id  \d{6}-\d+$')
+
+    def dispatched(self, calls):
+        return sum(call.startswith('workflow run') for call in calls)
+
+    def watched(self, calls):
+        return [call.split()[2] for call in calls if call.startswith('run watch')]
+
+    def test_a_request_joins_the_oldest_waiting_run_this_helper_made(self):
+        code, said, calls = self.run_helper('--by', 'x', waiting=WAITING)
+        self.assertEqual(code, 0, said)
+        self.assertIn('Joined run 444', said)
+        self.assertEqual(self.dispatched(calls), 0)
+        listing = next(call for call in calls if '--status pending' in call)
+        self.assertIn('--branch main --event workflow_dispatch', listing)
+
+    def test_a_run_made_by_hand_or_for_a_version_is_never_joined(self):
+        # Their titles do not show stop_after, and a resume or a named version does not release main.
+        by_hand = '\n'.join(line for line in WAITING.splitlines() if line[:3] not in ('555', '444'))
+        code, said, calls = self.run_helper(waiting=by_hand)
+        self.assertEqual(code, 0, said)
+        self.assertIn('Requested a release of main: run 777', said)
+        self.assertEqual(self.dispatched(calls), 1)
+
+    def test_a_run_that_started_or_could_not_be_read_is_not_joined(self):
+        # Listed as waiting, but it has jobs, left the wait, or is a rerun: it may hold an older plan.
+        for gh in ({'state': 'in_progress 1 1'}, {'state': 'pending 1 1'}, {'state': 'in_progress 1 0'},
+                   {'state': 'queued 1 0'}, {'state': 'pending 2 0'}, {'state': 'broken'}, {'waiting': 'broken'}):
+            code, said, calls = self.run_helper(**{'waiting': WAITING, **gh})
+            self.assertEqual(code, 0, said)
+            self.assertIn('Requested a release of main: run 777', said, gh)
+            self.assertEqual(self.dispatched(calls), 1, gh)
+
+    def test_waiting_on_a_joined_run_ends_with_it_when_it_released_the_commit(self):
+        code, said, calls = self.run_helper('--wait', waiting=WAITING)
+        self.assertEqual(code, 0, said)
+        self.assertIn('Run 444 finished; sha is released, newest release v1.0.20', said)
+        self.assertEqual((self.dispatched(calls), self.watched(calls)), (0, ['444']))
+
+    def test_waiting_asks_again_when_a_run_left_the_commit_out(self):
+        # The joined run finished without the commit and nothing waits now: a run of its own.
+        code, said, calls = self.run_helper('--wait', waiting=WAITING + '|none', left='3,0')
+        self.assertEqual(code, 0, said)
+        self.assertIn('Run 444 finished as v1.0.20 without sha; asking once more.', said)
+        self.assertIn('Run 777 finished; sha is released', said)
+        self.assertEqual((self.dispatched(calls), self.watched(calls)), (1, ['444', '777']))
+        # Its own run finished an older release first: the same, and it may join the next one.
+        code, said, calls = self.run_helper('--wait', waiting='none|' + WAITING, left='3,0')
+        self.assertEqual(code, 0, said)
+        self.assertEqual((self.dispatched(calls), self.watched(calls)), (1, ['777', '444']))
+
+    def test_waiting_gives_up_after_three_runs_without_the_commit(self):
+        code, said, calls = self.run_helper('--wait', left='3')
+        self.assertEqual(code, 1)
+        self.assertIn('sha is still not released after 3 runs', said)
+        self.assertEqual((self.dispatched(calls), len(self.watched(calls))), (3, 3))
+
+    def test_waiting_takes_a_release_with_the_same_tree_as_holding_the_commit(self):
+        # A squashed release pull request: the tag is no ancestor of main, the content is equal.
+        code, said, calls = self.run_helper('--wait', left='2', trees='same')
+        self.assertEqual(code, 0, said)
+        self.assertEqual((self.dispatched(calls), len(self.watched(calls))), (1, 1))
+
+    def test_waiting_reports_a_run_that_failed_or_a_check_github_did_not_answer(self):
+        code, said, _ = self.run_helper('--wait', waiting=WAITING, watch='1')
+        self.assertEqual(code, 1)
+        self.assertIn('run 444 did not succeed', said)
+        code, said, _ = self.run_helper('--wait', watch='1')
+        self.assertEqual(code, 1)
+        self.assertIn('run 777 did not succeed', said)
+        for gh in ({'left': 'broken'}, {'left': '2', 'trees': 'broken'}):
+            code, said, calls = self.run_helper('--wait', **gh)
+            self.assertEqual((code, self.dispatched(calls)), (1, 1), said)
+            self.assertIn('could not be compared with v1.0.20; check with --released', said)
+        code, said, calls = self.run_helper('--wait', tags='broken')
+        self.assertEqual((code, self.dispatched(calls)), (1, 1), said)
+        self.assertIn('run 777 finished, but the v1.x.y tags of o/r could not be read', said)
+
+    def test_a_watch_github_broke_off_is_not_a_failed_run(self):
+        # The watch failed, the run goes on: watch again. It ended green meanwhile: done.
+        for gh in ({'watch': '1,0', 'result': 'in_progress '}, {'watch': '1', 'result': 'completed success'},
+                   {'watch': '1,1,0', 'result': 'broken'}):
+            code, said, calls = self.run_helper('--wait', **gh)
+            self.assertEqual(code, 0, said)
+            self.assertIn('Run 777 finished; sha is released', said)
+            self.assertEqual((self.dispatched(calls), len(self.watched(calls))), (1, gh['watch'].count(',') + 1), gh)
+        code, said, calls = self.run_helper('--wait', watch='1', result='in_progress ')
+        self.assertEqual((code, len(self.watched(calls))), (1, 20), said)
+        self.assertIn('run 777 could not be watched and may still be running', said)
 
     def test_help_prints_only_the_header(self):
         code, said, calls = self.run_helper('--help')

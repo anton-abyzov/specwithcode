@@ -3,13 +3,17 @@
 # sessions alike: nobody picks a version or checks whether a release is running first.
 #
 #   bash scripts/release/request-release.sh [--by NAME] [--wait]
-#       Dispatches Release macOS with no version and prints the run. The run waits its turn, then
-#       releases what main holds as the next version, or ends green at once when main is already
-#       released (.github/workflows/release-macos.yml, scripts/release/release_plan.py). Any number
-#       of these may be dispatched; one run cuts each version. NAME (a session or thread name) is
-#       shown in the run's title, so runs can be told apart. --wait stays until the run ends and
-#       exits with its result. A release takes about 25 minutes, longer behind others, so run
-#       --wait in the background.
+#       Asks for a release of what main holds and prints the run that will make it. When a run is
+#       already waiting for its turn, the request joins that run: it has not read main yet, so it
+#       releases everything main holds when it starts, and one more run behind it would find nothing
+#       left. Otherwise it dispatches Release macOS with no version. The run releases main as the
+#       next version, or ends green at once when main is already released
+#       (.github/workflows/release-macos.yml, scripts/release/release_plan.py). Any number of
+#       sessions may ask; one run cuts each version. NAME (a session or thread name) is shown in
+#       the title of a run this request dispatches. --wait stays until a release holds the head of
+#       main the request saw, and exits 1 when a run fails. A run can end green without it (it
+#       finished an older release first), so --wait then asks again, three runs at most. A
+#       release takes about 25 minutes, longer behind another, so run --wait in the background.
 #   bash scripts/release/request-release.sh --dry-run
 #       Prints what a run dispatched now would decide. Dispatches nothing.
 #   bash scripts/release/request-release.sh --released COMMIT
@@ -40,15 +44,18 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# The released versions, oldest first.
+release_tags() {
+  gh api --paginate "repos/$REPO/git/matching-refs/tags/v1.?per_page=100" --jq '.[].ref' |
+    sed -n 's|^refs/tags/v\(1\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' | sort -t. -k1,1n -k2,2n -k3,3n
+}
+
 if [ "$MODE" = released ]; then
   [[ $COMMIT =~ ^[0-9a-f]{7,40}$ ]] || die "--released takes a commit sha"
   # Oldest first. A release holds the commit when its tag is not behind it, and every release
   # after the first one that does holds it too, so a binary search finds that first one.
   tags=()
-  while IFS= read -r version; do tags+=("$version"); done < <(
-    gh api --paginate "repos/$REPO/git/matching-refs/tags/v1.?per_page=100" --jq '.[].ref' |
-      sed -n 's|^refs/tags/v\(1\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' | sort -t. -k1,1n -k2,2n -k3,3n
-  )
+  while IFS= read -r version; do tags+=("$version"); done < <(release_tags)
   [ "${#tags[@]}" -gt 0 ] || die "cannot read the v1.x.y tags of $REPO"
   gh api "repos/$REPO/commits/$COMMIT" --jq .sha > /dev/null 2>&1 || die "cannot read $COMMIT on $REPO"
   # An answer GitHub did not give is never "not released": ask once more, then stop.
@@ -80,26 +87,103 @@ if [ "$MODE" = dry ]; then
   exec python3 -B "$HERE/release_plan.py" plan --repo "$REPO" --branch "$REF"
 fi
 
-# A label unique to this dispatch, so its run can be found among others dispatched at the same time.
-# Plain characters only: the label goes into the run's title and into the filter that finds it.
-by="$(printf '%s' "${BY:-$(whoami)@$(hostname -s)}" | tr -cd 'A-Za-z0-9 ._@:/-' | cut -c1-60)"
-label="${by:-someone} $(date -u +%H%M%S)-$RANDOM"
-gh workflow run release-macos.yml -R "$REPO" --ref "$REF" -f requested_by="$label" > /dev/null
-run="" tries=0
-while [ -z "$run" ] && [ "$tries" -lt 10 ]; do
-  sleep 2
-  run="$(gh run list -R "$REPO" --workflow release-macos.yml --event workflow_dispatch --limit 30 \
-    --json databaseId,displayTitle --jq "[.[] | select(.displayTitle | endswith(\"$label\"))][0].databaseId // empty" \
-    2> /dev/null || true)"
-  tries=$((tries + 1))
-done
-[ -n "$run" ] || die "dispatched, but the run did not show up in 20s; look for '$label' in: gh run list -R $REPO --workflow release-macos.yml"
-echo "Requested a release of $REF: run $run, https://github.com/$REPO/actions/runs/$run"
-echo "It waits for the releases before it. Its 'Plan the release' job names the version, or says main is already released."
+# The run that waits for its turn and has not started: no job of it exists yet, so it has not read
+# main. Only a run this helper dispatched, told by the label at the end of its title: a run
+# dispatched by hand may carry stop_after or resume, which the title does not show, and would not
+# release main. The oldest one, since it starts first. Prints nothing when there is none, or when
+# GitHub did not answer; the request then dispatches a run of its own, which is always safe.
+waiting_run() {
+  local id
+  id="$(gh run list -R "$REPO" --workflow release-macos.yml --branch "$REF" --event workflow_dispatch \
+    --status pending --limit 50 --json databaseId,displayTitle --jq '.[] | "\(.databaseId) \(.displayTitle)"' \
+    2> /dev/null | grep -E '^[0-9]+ Release macOS next · .+ [0-9]{6}-[0-9]+$' | tail -1 | cut -d' ' -f1)" || return 0
+  [ -n "$id" ] || return 0
+  # Read again by id: still waiting, never rerun, and no job yet.
+  [ "$(gh run view "$id" -R "$REPO" --json status,attempt,jobs \
+    --jq '"\(.status) \(.attempt) \(.jobs | length)"' 2> /dev/null)" = "pending 1 0" ] || return 0
+  echo "$id"
+}
+
+# Sets run.
+request() {
+  run="$(waiting_run)"
+  if [ -n "$run" ]; then
+    echo "Joined run $run, which waits for its turn: https://github.com/$REPO/actions/runs/$run"
+    echo "It has not started, so it releases what $REF holds when it does. No new run was dispatched."
+    return 0
+  fi
+  # A label unique to this dispatch, so its run can be found among others dispatched at the same time.
+  # Plain characters only: the label goes into the run's title and into the filter that finds it.
+  local by label tries=0
+  by="$(printf '%s' "${BY:-$(whoami)@$(hostname -s)}" | tr -cd 'A-Za-z0-9 ._@:/-' | cut -c1-60)"
+  label="${by:-someone} $(date -u +%H%M%S)-$RANDOM"
+  gh workflow run release-macos.yml -R "$REPO" --ref "$REF" -f requested_by="$label" > /dev/null
+  while [ -z "$run" ] && [ "$tries" -lt 10 ]; do
+    sleep "${REQUEST_POLL_SECONDS:-2}"
+    run="$(gh run list -R "$REPO" --workflow release-macos.yml --event workflow_dispatch --limit 30 \
+      --json databaseId,displayTitle --jq "[.[] | select(.displayTitle | endswith(\"$label\"))][0].databaseId // empty" \
+      2> /dev/null || true)"
+    tries=$((tries + 1))
+  done
+  [ -n "$run" ] || die "dispatched, but the run did not show up; look for '$label' in: gh run list -R $REPO --workflow release-macos.yml"
+  echo "Requested a release of $REF: run $run, https://github.com/$REPO/actions/runs/$run"
+  echo "It waits for the release before it, if one is running."
+}
+
+# Sets newest to the highest v1.x.y tag, and left to 0 when that release holds everything
+# $head_sha holds. A release whose pull request was squashed is not an ancestor of main, so equal
+# trees count too.
+compare_with_newest() {
+  local tags ours theirs
+  tags="$(release_tags 2> /dev/null)" && [ -n "$tags" ] ||
+    die "run $run finished, but the v1.x.y tags of $REPO could not be read; check with --released"
+  newest="$(printf '%s\n' "$tags" | tail -1)"
+  left="$(gh api "repos/$REPO/compare/v$newest...$head_sha" --jq '.files | length' 2> /dev/null)" ||
+    die "run $run finished, but $head_sha could not be compared with v$newest; check with --released"
+  [ "$left" != 0 ] || return 0
+  ours="$(gh api "repos/$REPO/commits/$head_sha" --jq .commit.tree.sha 2> /dev/null)" &&
+    theirs="$(gh api "repos/$REPO/commits/v$newest" --jq .commit.tree.sha 2> /dev/null)" ||
+    die "run $run finished, but $head_sha could not be compared with v$newest; check with --released"
+  [ "$ours" != "$theirs" ] || left=0
+}
+
+# Returns when $run ended green, and stops when it ended any other way. gh run watch also fails when
+# GitHub does not answer in between, which says nothing about the run, so the run itself is asked.
+wait_for_run() {
+  local state tries=0
+  while ! gh run watch "$run" -R "$REPO" --exit-status --interval 30 > /dev/null 2>&1; do
+    state="$(gh run view "$run" -R "$REPO" --json status,conclusion --jq '"\(.status) \(.conclusion)"' 2> /dev/null)" || state=""
+    case "$state" in
+      "completed success") return 0 ;;
+      completed*) die "run $run did not succeed: gh run view $run -R $REPO --log-failed" ;;
+    esac
+    tries=$((tries + 1))
+    [ "$tries" -lt 20 ] || die "run $run could not be watched and may still be running: gh run view $run -R $REPO"
+    sleep "${REQUEST_RETRY_SECONDS:-30}"
+  done
+}
+
+# What this request must see released: the head of the branch before the request was made.
+head_sha=""
+if [ "$WAIT" -eq 1 ]; then
+  head_sha="$(gh api "repos/$REPO/commits/$REF" --jq .sha 2> /dev/null)" || die "cannot read $REF on $REPO"
+fi
+request
+echo "Its 'Plan the release' job names the version, or says $REF is already released."
 echo "Check that your change shipped: bash scripts/release/request-release.sh --released <commit>"
 if [ "$WAIT" -eq 1 ]; then
-  gh run watch "$run" -R "$REPO" --exit-status --interval 30 > /dev/null ||
-    die "run $run did not succeed: gh run view $run -R $REPO --log-failed"
-  echo "Run $run finished: $(gh run view "$run" -R "$REPO" --json jobs \
-    --jq '[.jobs[] | select(.name == "Plan the release")][0].conclusion // "unknown"') plan; newest release $(gh release view -R "$REPO" --json tagName --jq .tagName)"
+  # A run can end green without this request's commit: a joined run had started after all, or a run
+  # finished an older release first. Ask again then, a few times at most.
+  rounds=1
+  while :; do
+    wait_for_run
+    compare_with_newest
+    [ "$left" != 0 ] || break
+    [ "$rounds" -lt 3 ] ||
+      die "run $run finished as v$newest, and ${head_sha:0:12} is still not released after $rounds runs; see why in the runs' plan jobs"
+    echo "Run $run finished as v$newest without ${head_sha:0:12}; asking once more."
+    rounds=$((rounds + 1))
+    request
+  done
+  echo "Run $run finished; ${head_sha:0:12} is released, newest release v$newest"
 fi
