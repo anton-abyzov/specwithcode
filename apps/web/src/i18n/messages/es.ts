@@ -309,6 +309,7 @@ export const es: Messages = {
   "limitSettings.action.wait": "Esperar el reinicio",
   "limitSettings.action.switch": "Cambiar automáticamente",
   "limitSettings.switchAtOption": "Con {percent} % restante",
+  "limitSettings.switchAtOptionDefault": "Con {percent} % restante (predeterminado)",
   "limitSettings.waitOption.never": "No esperar nunca",
   "limitSettings.waitOption.hour": "Menos de 1 hora",
   "limitSettings.waitOption.twoHours": "Menos de 2 horas",
@@ -345,6 +346,10 @@ export const es: Messages = {
   "limitSettings.switchAt.description":
     "Con Cambiar automáticamente, el siguiente turno empieza en el respaldo cuando a la ventana de uso más baja del proveedor solo le queda esto. Con Ofrecer el respaldo, el hilo sugiere el cambio en ese momento. Nunca a mitad de un turno, y solo a un proveedor con más margen.",
   "limitSettings.switchAt.off": "Solo cuando se detiene",
+  "limitSettings.switchAt.custom": "Personalizado…",
+  "limitSettings.switchAt.customLabel": "Porcentaje restante al que cambiar",
+  "limitSettings.switchAt.customUnit": "% restante",
+  "limitSettings.switchAt.customError": "Escribe un número entero de {min} a {max}.",
   "limitSettings.waitUnder.title": "Esperar si el reinicio está cerca",
   "limitSettings.waitUnder.description":
     "Si el uso que alcanzó el límite o el umbral se reinicia dentro de este tiempo, nada cambia, se canjea ni se gasta: el hilo espera y continúa en el mismo proveedor al reiniciarse. Si una ventana semanal también está llena, la espera no se aplica.",

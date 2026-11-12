@@ -320,6 +320,7 @@ export const de: Messages = {
   "limitSettings.action.wait": "Auf Zurücksetzen warten",
   "limitSettings.action.switch": "Automatisch wechseln",
   "limitSettings.switchAtOption": "Bei {percent} % übrig",
+  "limitSettings.switchAtOptionDefault": "Bei {percent} % übrig (Standard)",
   "limitSettings.waitOption.never": "Nie warten",
   "limitSettings.waitOption.hour": "Unter 1 Stunde",
   "limitSettings.waitOption.twoHours": "Unter 2 Stunden",
@@ -356,6 +357,10 @@ export const de: Messages = {
   "limitSettings.switchAt.description":
     "Mit „Automatisch wechseln“ startet der nächste Turn auf dem Fallback, sobald das knappste Nutzungsfenster des Anbieters nur noch so viel übrig hat. Mit „Fallback anbieten“ schlägt der Thread an diesem Punkt stattdessen den Wechsel vor. Nie mitten im Turn und nur zu einem Anbieter mit mehr Rest.",
   "limitSettings.switchAt.off": "Nur wenn er stoppt",
+  "limitSettings.switchAt.custom": "Eigener Wert…",
+  "limitSettings.switchAt.customLabel": "Verbleibender Anteil, bei dem gewechselt wird, in Prozent",
+  "limitSettings.switchAt.customUnit": "% übrig",
+  "limitSettings.switchAt.customError": "Gib eine ganze Zahl von {min} bis {max} ein.",
   "limitSettings.waitUnder.title": "Warten, wenn das Zurücksetzen nah ist",
   "limitSettings.waitUnder.description":
     "Wenn die Nutzung, die das Limit oder die Schwelle erreicht hat, innerhalb dieser Zeit zurückgesetzt wird, wird weder gewechselt noch eingelöst noch Geld ausgegeben: Der Thread wartet und macht beim Zurücksetzen auf demselben Anbieter weiter. Ist auch ein Wochenfenster ausgeschöpft, gilt das Warten nicht.",

@@ -314,6 +314,7 @@ export const fr: Messages = {
   "limitSettings.action.wait": "Attendre la réinitialisation",
   "limitSettings.action.switch": "Basculer automatiquement",
   "limitSettings.switchAtOption": "À {percent} % restants",
+  "limitSettings.switchAtOptionDefault": "À {percent} % restants (par défaut)",
   "limitSettings.waitOption.never": "Ne jamais attendre",
   "limitSettings.waitOption.hour": "Moins d’1 heure",
   "limitSettings.waitOption.twoHours": "Moins de 2 heures",
@@ -350,6 +351,10 @@ export const fr: Messages = {
   "limitSettings.switchAt.description":
     "Avec « Basculer automatiquement », le tour suivant démarre sur le secours dès que la fenêtre d’utilisation la plus basse du fournisseur n’a plus que ce reste. Avec « Proposer le secours », le fil propose la bascule à ce moment-là. Jamais en plein tour, et seulement vers un fournisseur qui a plus de marge.",
   "limitSettings.switchAt.off": "Seulement à l’arrêt",
+  "limitSettings.switchAt.custom": "Personnalisé…",
+  "limitSettings.switchAt.customLabel": "Pourcentage restant auquel basculer",
+  "limitSettings.switchAt.customUnit": "% restants",
+  "limitSettings.switchAt.customError": "Saisissez un nombre entier de {min} à {max}.",
   "limitSettings.waitUnder.title": "Attendre quand la réinitialisation est proche",
   "limitSettings.waitUnder.description":
     "Quand l’utilisation qui a atteint la limite ou le seuil se réinitialise dans ce délai, rien ne bascule, rien n’est utilisé ni dépensé : le fil attend et reprend sur le même fournisseur à la réinitialisation. Une fenêtre hebdomadaire elle aussi épuisée empêche cette attente.",

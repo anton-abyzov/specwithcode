@@ -273,6 +273,7 @@ export const zh: Messages = {
   "limitSettings.action.wait": "等待重置",
   "limitSettings.action.switch": "自动切换",
   "limitSettings.switchAtOption": "剩余 {percent}% 时",
+  "limitSettings.switchAtOptionDefault": "剩余 {percent}% 时（默认）",
   "limitSettings.waitOption.never": "从不等待",
   "limitSettings.waitOption.hour": "1 小时以内",
   "limitSettings.waitOption.twoHours": "2 小时以内",
@@ -307,6 +308,10 @@ export const zh: Messages = {
   "limitSettings.switchAt.description":
     "选择“自动切换”时，当提供方用量最紧张的窗口只剩这么多时，下一回合会在备用模型上开始。选择“提示使用备用模型”时，会话会在此时建议切换。绝不会在回合中途切换，且只会切换到剩余更多的提供方。",
   "limitSettings.switchAt.off": "仅在停止时",
+  "limitSettings.switchAt.custom": "自定义…",
+  "limitSettings.switchAt.customLabel": "切换时的剩余百分比",
+  "limitSettings.switchAt.customUnit": "% 剩余",
+  "limitSettings.switchAt.customError": "请输入 {min} 到 {max} 之间的整数。",
   "limitSettings.waitUnder.title": "重置临近时等待",
   "limitSettings.waitUnder.description":
     "如果达到上限或阈值的用量会在这段时间内重置，就不会切换、兑换或花费任何额度：会话会等待，并在重置后在同一提供方上继续。如果每周窗口也已用满，则不会等待。",

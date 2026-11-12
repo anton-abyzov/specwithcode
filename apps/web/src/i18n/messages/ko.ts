@@ -289,6 +289,7 @@ export const ko: Messages = {
   "limitSettings.action.wait": "초기화 기다리기",
   "limitSettings.action.switch": "자동으로 전환",
   "limitSettings.switchAtOption": "{percent}% 남았을 때",
+  "limitSettings.switchAtOptionDefault": "{percent}% 남았을 때 (기본값)",
   "limitSettings.waitOption.never": "기다리지 않음",
   "limitSettings.waitOption.hour": "1시간 미만",
   "limitSettings.waitOption.twoHours": "2시간 미만",
@@ -325,6 +326,10 @@ export const ko: Messages = {
   "limitSettings.switchAt.description":
     "자동으로 전환을 사용하면 제공업체의 가장 적게 남은 사용량 구간이 이만큼 남았을 때 다음 턴이 대체 모델에서 시작됩니다. 대체 모델 제안을 사용하면 이 시점에 스레드가 전환을 제안합니다. 턴 중간에는 전환하지 않으며, 더 많이 남은 제공업체로만 전환합니다.",
   "limitSettings.switchAt.off": "중단될 때만",
+  "limitSettings.switchAt.custom": "사용자 지정…",
+  "limitSettings.switchAt.customLabel": "전환할 남은 비율(%)",
+  "limitSettings.switchAt.customUnit": "% 남음",
+  "limitSettings.switchAt.customError": "{min}에서 {max} 사이의 정수를 입력하세요.",
   "limitSettings.waitUnder.title": "초기화가 가까우면 기다리기",
   "limitSettings.waitUnder.description":
     "한도나 임계값에 도달한 사용량이 이 시간 안에 초기화되면 전환, 초기화 사용, 결제를 하지 않습니다. 스레드는 기다렸다가 초기화 시 같은 제공업체에서 다시 시작합니다. 주간 구간도 소진된 경우에는 기다리지 않습니다.",

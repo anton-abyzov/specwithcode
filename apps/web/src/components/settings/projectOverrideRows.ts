@@ -48,7 +48,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   providerLimitFallbackModels: { label: "Fallback order", page: "Providers" },
   providerLimitFallbackListOnly: { label: "Only the fallback order", page: "Providers" },
   providerLimitExcludedModels: { label: "Excluded fallback models", page: "Providers" },
-  providerLimitSwitchAtPercent: { label: "Switch at usage", page: "Providers" },
+  providerLimitSwitchAtPercent: { label: "Switch before the limit", page: "Providers" },
   providerLimitWaitUnderMinutes: { label: "Wait when reset is under", page: "Providers" },
   providerLimitRedeemResets: { label: "Redeem resets", page: "Providers" },
   autoApproveSubscriptionChange: { label: "Approve subscription changes", page: "Providers" },

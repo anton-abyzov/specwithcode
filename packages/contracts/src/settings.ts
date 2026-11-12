@@ -1492,10 +1492,15 @@ export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
  */
 export const ProviderLimitAction = Schema.Literals(["ask", "wait", "switch"]);
 export type ProviderLimitAction = typeof ProviderLimitAction.Type;
-export const DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT = 98;
+export const DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT = 99;
+export const PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN = 50;
+export const PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX = 100;
 /** Usage at which `switch` moves the next turn to the fallback, before the provider refuses work. */
 export const ProviderLimitSwitchAtPercent = Schema.Number.check(
-  Schema.isBetween({ minimum: 50, maximum: 100 }),
+  Schema.isBetween({
+    minimum: PROVIDER_LIMIT_SWITCH_AT_PERCENT_MIN,
+    maximum: PROVIDER_LIMIT_SWITCH_AT_PERCENT_MAX,
+  }),
 );
 export type ProviderLimitSwitchAtPercent = typeof ProviderLimitSwitchAtPercent.Type;
 export const DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES = 30;

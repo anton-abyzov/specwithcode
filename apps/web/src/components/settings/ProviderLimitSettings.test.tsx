@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   settings: {} as typeof DEFAULT_SERVER_SETTINGS,
   update: vi.fn(),
   providers: [] as unknown[],
+  mixed: [] as string[],
+  search: {} as { machine?: string; project?: string; checkout?: string },
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
@@ -20,11 +22,16 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
 vi.mock("./SettingsScopeContext", () => ({
-  useSettingsScope: () => ({ scope: { kind: "project" }, target: { environmentId: "mac" } }),
+  useSettingsScope: () => ({
+    scope: { kind: "project" },
+    search: state.search,
+    target: { environmentId: "mac" },
+  }),
 }));
 vi.mock("./useScopedSettings", () => ({
   useScopedSettings: () => state.settings,
-  useScopedSettingsMixed: () => false,
+  useScopedSettingsMixed: (keys: readonly string[]) =>
+    keys.some((key) => state.mixed.includes(key)),
   useUpdateScopedSettings: () => state.update,
 }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
@@ -56,6 +63,7 @@ vi.mock("../ui/button", () => ({
     <button onClick={onClick}>{children}</button>
   ),
 }));
+vi.mock("../ui/input", () => ({ Input: (props: object) => <input {...props} /> }));
 vi.mock("../ui/alert-dialog", () => ({
   AlertDialog: ({ children, open }: { children: ReactNode; open: boolean }) =>
     open ? <div role="alertdialog">{children}</div> : null,
@@ -73,16 +81,21 @@ vi.mock("./settingsLayout", () => ({
     title,
     control,
     status,
+    resetAction,
   }: {
     title: string;
     control: ReactNode;
     status?: string;
+    resetAction?: ReactNode;
   }) => (
     <section aria-label={title} data-status={status}>
       {control}
+      {resetAction}
     </section>
   ),
-  SettingResetButton: () => null,
+  SettingResetButton: ({ onClick }: { onClick: () => void }) => (
+    <button data-reset="" onClick={onClick} />
+  ),
 }));
 vi.mock("../ui/select", () => ({
   Select: ({
@@ -123,6 +136,8 @@ beforeEach(() => {
   ).settings;
   state.update.mockReset();
   state.providers = [];
+  state.mixed = [];
+  state.search = { project: "p" };
   act(() => {
     renderer = create(<ProviderLimitSettings />);
   });
@@ -131,9 +146,10 @@ afterEach(() => {
   act(() => renderer?.unmount());
   vi.unstubAllGlobals();
 });
-it("defaults to switching automatically at 98 percent and waiting for a reset under 30 minutes", () => {
+it("defaults to switching automatically at 99 percent and waiting for a reset under 30 minutes", () => {
+  expect(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT).toBe(99);
   expect(row("When a provider runs out").props.value).toBe("switch");
-  expect(row("Switch before the limit").props.value).toBe("98");
+  expect(row("Switch before the limit").props.value).toBe("99");
   expect(row("Wait when the reset is close").props.value).toBe("30");
 });
 it("writes the reset wait", () => {
@@ -150,15 +166,28 @@ it("writes the rule and the threshold", () => {
   act(() => row("Switch before the limit").props.onChange({ target: { value: "85" } }));
   expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 85 });
 });
-it("offers thresholds from 50 to 99 percent used", () => {
+it("offers thresholds from 50 to 99 percent used, marks the default, and a custom value", () => {
   const options = row("Switch before the limit")
     .findAllByType("option")
     .map((option) => option.props.value);
-  expect(options).toEqual(["off", "50", "60", "70", "75", "80", "85", "90", "95", "98", "99"]);
+  expect(options).toEqual([
+    "off",
+    "50",
+    "60",
+    "70",
+    "75",
+    "80",
+    "85",
+    "90",
+    "95",
+    "98",
+    "99",
+    "custom",
+  ]);
   const labels = row("Switch before the limit")
     .findAllByType("option")
     .map((option) => option.children.join(""));
-  expect(labels.slice(-3)).toEqual(["At 5% left", "At 2% left", "At 1% left"]);
+  expect(labels.slice(-4)).toEqual(["At 5% left", "At 2% left", "At 1% left (default)", "Custom…"]);
   expect(options).toContain(String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT));
   act(() => row("Switch before the limit").props.onChange({ target: { value: "50" } }));
   expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 50 });
@@ -279,4 +308,142 @@ it("follows the model tiers when no fallback order is set, and offers Only these
   act(() => renderer!.update(<ProviderLimitSettings />));
   expect(section("Fallback order")[0]!.props["data-status"]).toBe("Uses your model tiers");
   expect(section("Only these models")).toHaveLength(1);
+});
+
+const switchAtSection = () =>
+  renderer!.root.find(
+    (node) => node.type === "section" && node.props["aria-label"] === "Switch before the limit",
+  );
+const customField = () =>
+  switchAtSection().findAll(
+    (node) =>
+      node.type === "input" && node.props["aria-label"] === "Share left to switch at, in percent",
+  );
+const switchAtAlert = () =>
+  switchAtSection().findAll((node) => node.type === "p" && node.props.role === "alert");
+const switchAtReset = () =>
+  switchAtSection().findAll((node) => node.type === "button" && node.props["data-reset"] === "");
+function rerender() {
+  act(() => renderer!.update(<ProviderLimitSettings />));
+}
+function typeCustom(text: string, commit: "enter" | "blur" = "enter") {
+  act(() => customField()[0]!.props.onChange({ currentTarget: { value: text } }));
+  act(() =>
+    commit === "enter"
+      ? customField()[0]!.props.onKeyDown({ key: "Enter", preventDefault: () => {} })
+      : customField()[0]!.props.onBlur(),
+  );
+}
+it("takes the share left with Custom…, like the presets, and saves the share used", () => {
+  expect(customField()).toHaveLength(0);
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "custom" } }));
+  expect(state.update).not.toHaveBeenCalled();
+  expect(row("Switch before the limit").props.value).toBe("custom");
+  // The default 99% used reads as 1% left, the unit the presets beside it use.
+  expect(customField()[0]!.props.value).toBe("1");
+  expect(customField()[0]!.props.placeholder).toBe("1");
+  expect(switchAtSection().findByType("label").children.join("")).toContain("% left");
+  typeCustom("7");
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 93 });
+  typeCustom(" 0 ", "blur");
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 100 });
+  typeCustom("50");
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 50 });
+  expect(switchAtAlert()).toHaveLength(0);
+});
+it("never reads a typed 99 as 99% used", () => {
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "custom" } }));
+  typeCustom("99");
+  expect(state.update).not.toHaveBeenCalled();
+  expect(switchAtAlert().map((node) => node.children.join(""))).toEqual([
+    "Enter a whole number from 0 to 50.",
+  ]);
+});
+it("shows a stored custom value as the share left after a reload", () => {
+  state.settings = { ...state.settings, providerLimitSwitchAtPercent: 93 };
+  act(() => renderer!.unmount());
+  act(() => {
+    renderer = create(<ProviderLimitSettings />);
+  });
+  expect(row("Switch before the limit").props.value).toBe("custom");
+  expect(customField()[0]!.props.value).toBe("7");
+  // Picking a preset closes the field again.
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "95" } }));
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 95 });
+  state.settings = { ...state.settings, providerLimitSwitchAtPercent: 95 };
+  rerender();
+  expect(row("Switch before the limit").props.value).toBe("95");
+  expect(customField()).toHaveLength(0);
+});
+it("refuses a typed value that is not a whole number from 0 to 50 percent left", () => {
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "custom" } }));
+  for (const text of ["abc", "51", "99", "2.5", "-1", ""]) {
+    typeCustom(text);
+    expect(switchAtAlert().map((node) => node.children.join(""))).toEqual([
+      "Enter a whole number from 0 to 50.",
+    ]);
+    expect(customField()[0]!.props["aria-invalid"]).toBe(true);
+    expect(customField()[0]!.props.value).toBe(text);
+  }
+  expect(state.update).not.toHaveBeenCalled();
+  typeCustom("3");
+  expect(switchAtAlert()).toHaveLength(0);
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 97 });
+});
+it("starts a custom value empty while the early switch is off", () => {
+  state.settings = { ...state.settings, providerLimitSwitchAtPercent: null };
+  rerender();
+  expect(row("Switch before the limit").props.value).toBe("off");
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "custom" } }));
+  expect(customField()[0]!.props.value).toBe("");
+  act(() => customField()[0]!.props.onBlur());
+  expect(state.update).not.toHaveBeenCalled();
+  typeCustom("20");
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 80 });
+});
+it("keeps the mixed state until a custom value is typed for every target", () => {
+  state.mixed = ["providerLimitSwitchAtPercent"];
+  rerender();
+  expect(row("Switch before the limit").props.value).toBe("mixed");
+  expect(customField()).toHaveLength(0);
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "custom" } }));
+  expect(customField()[0]!.props.value).toBe("");
+  expect(state.update).not.toHaveBeenCalled();
+  typeCustom("1");
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 99 });
+});
+it("offers the reset while targets differ, even when the shown value is the default", () => {
+  expect(switchAtReset()).toHaveLength(0);
+  state.mixed = ["providerLimitSwitchAtPercent"];
+  rerender();
+  expect(switchAtReset()).toHaveLength(1);
+  act(() => switchAtReset()[0]!.props.onClick());
+  expect(state.update).toHaveBeenCalledWith({
+    providerLimitSwitchAtPercent: DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
+  });
+});
+it("starts the custom field over when the scope changes", () => {
+  state.search = { machine: "mac" };
+  rerender();
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "custom" } }));
+  act(() => customField()[0]!.props.onChange({ currentTarget: { value: "abc" } }));
+  act(() => customField()[0]!.props.onKeyDown({ key: "Enter", preventDefault: () => {} }));
+  expect(switchAtAlert()).toHaveLength(1);
+  // Same mounted panel, now a project: the draft, the error and Custom… do not follow.
+  state.search = { project: "p" };
+  rerender();
+  expect(row("Switch before the limit").props.value).toBe("99");
+  expect(customField()).toHaveLength(0);
+  expect(switchAtAlert()).toHaveLength(0);
+  expect(state.update).not.toHaveBeenCalled();
+});
+it("starts the custom field over when the stored value changes elsewhere", () => {
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "custom" } }));
+  act(() => customField()[0]!.props.onChange({ currentTarget: { value: "12" } }));
+  // Another window saves 90; a later blur must not write the stale draft over it.
+  state.settings = { ...state.settings, providerLimitSwitchAtPercent: 90 };
+  rerender();
+  expect(row("Switch before the limit").props.value).toBe("90");
+  expect(customField()).toHaveLength(0);
+  expect(state.update).not.toHaveBeenCalled();
 });

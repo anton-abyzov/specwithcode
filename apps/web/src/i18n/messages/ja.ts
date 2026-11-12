@@ -293,6 +293,7 @@ export const ja: Messages = {
   "limitSettings.action.wait": "リセットを待つ",
   "limitSettings.action.switch": "自動で切り替える",
   "limitSettings.switchAtOption": "残り {percent}% で",
+  "limitSettings.switchAtOptionDefault": "残り {percent}% で（既定）",
   "limitSettings.waitOption.never": "待たない",
   "limitSettings.waitOption.hour": "1 時間未満",
   "limitSettings.waitOption.twoHours": "2 時間未満",
@@ -329,6 +330,10 @@ export const ja: Messages = {
   "limitSettings.switchAt.description":
     "「自動で切り替える」の場合、プロバイダーの最も少ない使用量ウィンドウの残りがこの値になると、次のターンはフォールバックで始まります。「フォールバックを提案」の場合は、この時点でスレッドが切り替えを提案します。ターンの途中では切り替えず、残りの多いプロバイダーにのみ切り替えます。",
   "limitSettings.switchAt.off": "止まったときのみ",
+  "limitSettings.switchAt.custom": "カスタム…",
+  "limitSettings.switchAt.customLabel": "切り替える残りの割合（%）",
+  "limitSettings.switchAt.customUnit": "% 残り",
+  "limitSettings.switchAt.customError": "{min} から {max} までの整数を入力してください。",
   "limitSettings.waitUnder.title": "リセットが近いときは待つ",
   "limitSettings.waitUnder.description":
     "上限またはしきい値に達した使用量がこの時間内にリセットされる場合、切り替え、リセットの使用、課金はいずれも行いません。スレッドは待機し、リセット時に同じプロバイダーで再開します。週ごとのウィンドウも上限に達している場合、この待機は適用されません。",
