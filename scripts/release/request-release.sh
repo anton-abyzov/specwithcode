@@ -134,15 +134,33 @@ request() {
 # $head_sha holds. A release whose pull request was squashed is not an ancestor of main, so equal
 # trees count too.
 compare_with_newest() {
-  newest="$(release_tags | tail -1)"
-  [ -n "$newest" ] || die "run $run finished, but the v1.x.y tags of $REPO could not be read; check with --released"
+  local tags ours theirs
+  tags="$(release_tags 2> /dev/null)" && [ -n "$tags" ] ||
+    die "run $run finished, but the v1.x.y tags of $REPO could not be read; check with --released"
+  newest="$(printf '%s\n' "$tags" | tail -1)"
   left="$(gh api "repos/$REPO/compare/v$newest...$head_sha" --jq '.files | length' 2> /dev/null)" ||
     die "run $run finished, but $head_sha could not be compared with v$newest; check with --released"
   [ "$left" != 0 ] || return 0
-  local ours theirs
-  ours="$(gh api "repos/$REPO/commits/$head_sha" --jq .commit.tree.sha 2> /dev/null)" || return 0
-  theirs="$(gh api "repos/$REPO/commits/v$newest" --jq .commit.tree.sha 2> /dev/null)" || return 0
+  ours="$(gh api "repos/$REPO/commits/$head_sha" --jq .commit.tree.sha 2> /dev/null)" &&
+    theirs="$(gh api "repos/$REPO/commits/v$newest" --jq .commit.tree.sha 2> /dev/null)" ||
+    die "run $run finished, but $head_sha could not be compared with v$newest; check with --released"
   [ "$ours" != "$theirs" ] || left=0
+}
+
+# Returns when $run ended green, and stops when it ended any other way. gh run watch also fails when
+# GitHub does not answer in between, which says nothing about the run, so the run itself is asked.
+wait_for_run() {
+  local state tries=0
+  while ! gh run watch "$run" -R "$REPO" --exit-status --interval 30 > /dev/null 2>&1; do
+    state="$(gh run view "$run" -R "$REPO" --json status,conclusion --jq '"\(.status) \(.conclusion)"' 2> /dev/null)" || state=""
+    case "$state" in
+      "completed success") return 0 ;;
+      completed*) die "run $run did not succeed: gh run view $run -R $REPO --log-failed" ;;
+    esac
+    tries=$((tries + 1))
+    [ "$tries" -lt 20 ] || die "run $run could not be watched and may still be running: gh run view $run -R $REPO"
+    sleep "${REQUEST_RETRY_SECONDS:-30}"
+  done
 }
 
 # What this request must see released: the head of the branch before the request was made.
@@ -158,8 +176,7 @@ if [ "$WAIT" -eq 1 ]; then
   # finished an older release first. Ask again then, a few times at most.
   rounds=1
   while :; do
-    gh run watch "$run" -R "$REPO" --exit-status --interval 30 > /dev/null ||
-      die "run $run did not succeed: gh run view $run -R $REPO --log-failed"
+    wait_for_run
     compare_with_newest
     [ "$left" != 0 ] || break
     [ "$rounds" -lt 3 ] ||

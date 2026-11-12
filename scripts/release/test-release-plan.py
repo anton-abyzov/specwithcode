@@ -496,10 +496,10 @@ printf '%s\n' "$*" >> "$GH_LOG"
 # The answer to the nth call of a kind: $1 holds the answers, separated by $2; the last one repeats.
 nth() { printf '%s' "$1" | awk -v RS="$2" -v n="$(grep -c -e "$3" "$GH_LOG")" '{ last = $0 } NR == n { print; found = 1 } END { if (!found) print last }'; }
 case "$1 $2" in
-  "api --paginate") for patch in $(seq 20 -1 1); do echo "refs/tags/v1.0.$patch"; done; echo refs/tags/v1.0.5-rc1 ;;
+  "api --paginate") [ "${GH_TAGS:-}" != broken ] || { echo "HTTP 502" >&2; exit 1; }; for patch in $(seq 20 -1 1); do echo "refs/tags/v1.0.$patch"; done; echo refs/tags/v1.0.5-rc1 ;;
   "api repos/"*/commits/*)
     case "$*" in
-      *tree.sha*) if [ "${GH_TREES:-}" = same ]; then echo tree; else echo "tree of ${2##*/}"; fi ;;
+      *tree.sha*) [ "${GH_TREES:-}" != broken ] || exit 1; if [ "${GH_TREES:-}" = same ]; then echo tree; else echo "tree of ${2##*/}"; fi ;;
       *) echo sha ;;
     esac ;;
   "api repos/"*...sha)
@@ -521,8 +521,12 @@ case "$1 $2" in
       *) label="$(sed -n 's/.*requested_by=//p' "$GH_LOG" | tail -1)"
          case "$*" in *"endswith(\"$label\")"*) echo 777 ;; esac ;;
     esac ;;
-  "run view") [ "${GH_STATE:-}" != broken ] || exit 1; echo "${GH_STATE:-pending 1 0}" ;;
-  "run watch") exit "${GH_WATCH:-0}" ;;
+  "run view")
+    case "$*" in
+      *status,conclusion*) [ "${GH_RESULT:-}" != broken ] || exit 1; echo "${GH_RESULT:-completed failure}" ;;
+      *) [ "${GH_STATE:-}" != broken ] || exit 1; echo "${GH_STATE:-pending 1 0}" ;;
+    esac ;;
+  "run watch") exit "$(nth "${GH_WATCH:-0}" , '^run watch')" ;;
   *) exit 1 ;;
 esac
 '''
@@ -550,7 +554,7 @@ class RequestHelper(unittest.TestCase):
             log.touch()
             env = dict(os.environ, PATH=f"{tmp}{os.pathsep}{os.environ['PATH']}", GH_LOG=str(log),
                        GH_FIRST=str(first), GH_BROKEN=broken, RELEASE_REPO='o/r',
-                       REQUEST_POLL_SECONDS='0', **{f'GH_{name.upper()}': value for name, value in gh.items()})
+                       REQUEST_POLL_SECONDS='0', REQUEST_RETRY_SECONDS='0', **{f'GH_{name.upper()}': value for name, value in gh.items()})
             done = subprocess.run(['bash', str(HERE / 'request-release.sh'), *args],
                                   capture_output=True, text=True, env=env, check=False)
             return done.returncode, done.stdout + done.stderr, log.read_text().splitlines()
@@ -652,9 +656,25 @@ class RequestHelper(unittest.TestCase):
         code, said, _ = self.run_helper('--wait', watch='1')
         self.assertEqual(code, 1)
         self.assertIn('run 777 did not succeed', said)
-        code, said, _ = self.run_helper('--wait', left='broken')
-        self.assertEqual(code, 1)
-        self.assertIn('could not be compared with v1.0.20; check with --released', said)
+        for gh in ({'left': 'broken'}, {'left': '2', 'trees': 'broken'}):
+            code, said, calls = self.run_helper('--wait', **gh)
+            self.assertEqual((code, self.dispatched(calls)), (1, 1), said)
+            self.assertIn('could not be compared with v1.0.20; check with --released', said)
+        code, said, calls = self.run_helper('--wait', tags='broken')
+        self.assertEqual((code, self.dispatched(calls)), (1, 1), said)
+        self.assertIn('run 777 finished, but the v1.x.y tags of o/r could not be read', said)
+
+    def test_a_watch_github_broke_off_is_not_a_failed_run(self):
+        # The watch failed, the run goes on: watch again. It ended green meanwhile: done.
+        for gh in ({'watch': '1,0', 'result': 'in_progress '}, {'watch': '1', 'result': 'completed success'},
+                   {'watch': '1,1,0', 'result': 'broken'}):
+            code, said, calls = self.run_helper('--wait', **gh)
+            self.assertEqual(code, 0, said)
+            self.assertIn('Run 777 finished; sha is released', said)
+            self.assertEqual((self.dispatched(calls), len(self.watched(calls))), (1, gh['watch'].count(',') + 1), gh)
+        code, said, calls = self.run_helper('--wait', watch='1', result='in_progress ')
+        self.assertEqual((code, len(self.watched(calls))), (1, 20), said)
+        self.assertIn('run 777 could not be watched and may still be running', said)
 
     def test_help_prints_only_the_header(self):
         code, said, calls = self.run_helper('--help')
