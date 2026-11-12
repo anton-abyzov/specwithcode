@@ -1234,35 +1234,37 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
 });
 
 describe("makeSensitivePathGuard", () => {
+  // Not under /home: on macOS that is the auto_home automount, and building a guard
+  // resolves every protected path through it, seconds per guard on a loaded host.
   const roots = {
     baseDir: "/srv/app",
     stateDir: "/srv/app/userdata",
     secretsDir: "/srv/app/userdata/secrets",
     settingsPath: "/srv/app/userdata/settings.json",
     dbPath: "/srv/app/userdata/statev2.sqlite",
-    homeDir: "/home/owner",
+    homeDir: "/srv/home/owner",
   };
 
   it("matches case-insensitively where the file system does", () => {
     const mac = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "darwin");
     const linux = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "linux");
-    expect(mac.isDenied("/home/owner/.SSH/id_rsa")).toBe(true);
-    expect(linux.isDenied("/home/owner/.SSH/id_rsa")).toBe(false);
-    expect(linux.isDenied("/home/owner/.ssh/id_rsa")).toBe(true);
+    expect(mac.isDenied("/srv/home/owner/.SSH/id_rsa")).toBe(true);
+    expect(linux.isDenied("/srv/home/owner/.SSH/id_rsa")).toBe(false);
+    expect(linux.isDenied("/srv/home/owner/.ssh/id_rsa")).toBe(true);
     // APFS folds U+017F (long s) to `s`; toLowerCase() alone keeps it.
-    expect(mac.isDenied("/home/owner/.\u017fsh/id_rsa")).toBe(true);
+    expect(mac.isDenied("/srv/home/owner/.\u017fsh/id_rsa")).toBe(true);
     expect(mac.isDenied("/srv/app/userdata/\u017fecrets/key.bin")).toBe(true);
     expect(mac.isDenied("/work/x/.\u017fpecwithcode/userdata/settings.json")).toBe(true);
     expect(mac.isDenied("/srv/app/USERDATA/\u017fettings.json")).toBe(true);
-    expect(mac.isDenied("/home/owner/.z\u017fhenv", "write")).toBe(true);
-    expect(mac.isDenied("/home/owner/.Z\u017fHENV", "write")).toBe(true);
-    expect(linux.isDenied("/home/owner/.\u017fsh/id_rsa")).toBe(false);
+    expect(mac.isDenied("/srv/home/owner/.z\u017fhenv", "write")).toBe(true);
+    expect(mac.isDenied("/srv/home/owner/.Z\u017fHENV", "write")).toBe(true);
+    expect(linux.isDenied("/srv/home/owner/.\u017fsh/id_rsa")).toBe(false);
   });
 
   // The macOS data-volume firmlink is a POSIX path; a Windows host resolves it onto a drive.
   it.skipIf(process.platform === "win32")("sees through the macOS data-volume firmlink", () => {
     const mac = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "darwin");
-    expect(mac.isDenied("/System/Volumes/Data/home/owner/.ssh/id_rsa")).toBe(true);
+    expect(mac.isDenied("/System/Volumes/Data/srv/home/owner/.ssh/id_rsa")).toBe(true);
     expect(mac.isDenied("/System/Volumes/Data/srv/app/userdata/settings.json")).toBe(true);
   });
 
@@ -1335,10 +1337,10 @@ describe("makeSensitivePathGuard", () => {
       "Library/Application Support/tea/config.yml",
       ".tea/tea.yml",
     ]) {
-      expect(guard.isDenied(`/home/owner/${relative}`)).toBe(true);
+      expect(guard.isDenied(`/srv/home/owner/${relative}`)).toBe(true);
     }
     expect(guard.isDenied("/work/app/.wrangler/state/v3/d1.sqlite")).toBe(false);
-    expect(guard.isDenied("/home/owner/.cargo/config.toml")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/.cargo/config.toml")).toBe(false);
   });
 
   it("refuses source-control CLI tokens where the environment moves them", () => {
@@ -1360,8 +1362,8 @@ describe("makeSensitivePathGuard", () => {
       "/cfg/gh/hosts.yml",
       "/cfg/glab-cli/config.yml",
       "/cfg/tea/config.yml",
-      "/home/owner/data/forgejo-cli/keys.json",
-      "/home/owner/data/opencode/auth.json",
+      "/srv/home/owner/data/forgejo-cli/keys.json",
+      "/srv/home/owner/data/opencode/auth.json",
       "/win/roaming/forgejo-cli/forgejo-cli/data/keys.json",
       "/win/roaming/Cyborus/forgejo-cli/data/keys.json",
       "/win/roaming/glab-cli/config.yml",
@@ -1373,7 +1375,7 @@ describe("makeSensitivePathGuard", () => {
       expect(guard.isDenied(target)).toBe(true);
     }
     expect(guard.isDenied("/cfg/glab-cli/aliases.yml")).toBe(false);
-    expect(guard.isDenied("/home/owner/data/forgejo-cli/README.md")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/data/forgejo-cli/README.md")).toBe(false);
   });
 
   it("refuses writes to common shell start-up files and folders", () => {
@@ -1390,33 +1392,33 @@ describe("makeSensitivePathGuard", () => {
       ".config/fish/functions/ls.fish",
       ".config/environment.d/10-path.conf",
     ]) {
-      expect(guard.isDenied(`/home/owner/${relative}`, "write")).toBe(true);
-      expect(guard.isDenied(`/home/owner/${relative}`)).toBe(false);
+      expect(guard.isDenied(`/srv/home/owner/${relative}`, "write")).toBe(true);
+      expect(guard.isDenied(`/srv/home/owner/${relative}`)).toBe(false);
     }
-    expect(guard.isDenied("/home/owner/.config/fishing/notes.md", "write")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/.config/fishing/notes.md", "write")).toBe(false);
   });
 
   it("keeps the home's own folders when the base folder is the home", () => {
     const guard = WorkspaceSensitivePaths.makeSensitivePathGuard(
       {
         ...roots,
-        baseDir: "/home/owner",
-        stateDir: "/home/owner/userdata",
-        secretsDir: "/home/owner/userdata/secrets",
-        settingsPath: "/home/owner/userdata/settings.json",
-        dbPath: "/home/owner/userdata/statev2.sqlite",
+        baseDir: "/srv/home/owner",
+        stateDir: "/srv/home/owner/userdata",
+        secretsDir: "/srv/home/owner/userdata/secrets",
+        settingsPath: "/srv/home/owner/userdata/settings.json",
+        dbPath: "/srv/home/owner/userdata/statev2.sqlite",
       },
       "linux",
     );
-    expect(guard.isDenied("/home/owner/dev/project/notes.md")).toBe(false);
-    expect(guard.isDenied("/home/owner/dev/project/notes.md", "write")).toBe(false);
-    expect(guard.isDenied("/home/owner/backups/photos.zip")).toBe(false);
-    expect(guard.isDenied("/home/owner/runtime/notes.md", "write")).toBe(false);
-    expect(guard.isDenied("/home/owner/userdata/settings.json")).toBe(true);
-    expect(guard.isDenied("/home/owner/userdata/secrets/k.bin")).toBe(true);
-    expect(guard.isDenied("/home/owner/studio-fleet.json")).toBe(true);
+    expect(guard.isDenied("/srv/home/owner/dev/project/notes.md")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/dev/project/notes.md", "write")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/backups/photos.zip")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/runtime/notes.md", "write")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/userdata/settings.json")).toBe(true);
+    expect(guard.isDenied("/srv/home/owner/userdata/secrets/k.bin")).toBe(true);
+    expect(guard.isDenied("/srv/home/owner/studio-fleet.json")).toBe(true);
     // App homes under it keep their rules.
-    expect(guard.isDenied("/home/owner/.specwithcode/m4/backups/x")).toBe(true);
+    expect(guard.isDenied("/srv/home/owner/.specwithcode/m4/backups/x")).toBe(true);
   });
 
   it("reads built-in browser downloads but not its profiles", () => {
@@ -1428,7 +1430,7 @@ describe("makeSensitivePathGuard", () => {
     expect(guard.isDenied(`${browser}/profiles/Default/Cookies`)).toBe(true);
     expect(guard.isDenied(`${browser}/state.json`)).toBe(true);
     expect(
-      guard.isDenied("/home/owner/.specwithcode/m4/userdata/server-browser/downloads/a.png"),
+      guard.isDenied("/srv/home/owner/.specwithcode/m4/userdata/server-browser/downloads/a.png"),
     ).toBe(false);
   });
 
@@ -1488,10 +1490,10 @@ describe("makeSensitivePathGuard", () => {
     const mac = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "darwin");
     const linux = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "linux");
     for (const access of ["read", "write"] as const) {
-      expect(mac.isDenied("/.vol/16777230/2/home/owner/notes.txt", access)).toBe(true);
-      expect(mac.isDenied("/.VOL/16777230/2/home/owner/.zshrc", access)).toBe(true);
+      expect(mac.isDenied("/.vol/16777230/2/srv/home/owner/notes.txt", access)).toBe(true);
+      expect(mac.isDenied("/.VOL/16777230/2/srv/home/owner/.zshrc", access)).toBe(true);
       expect(mac.isDenied("/System/Volumes/Data/.vol/1/2/x", access)).toBe(true);
-      expect(linux.isDenied("/.vol/16777230/2/home/owner/notes.txt", access)).toBe(false);
+      expect(linux.isDenied("/.vol/16777230/2/srv/home/owner/notes.txt", access)).toBe(false);
     }
     expect(mac.isDenied("/.volume/notes.txt")).toBe(false);
     expect(mac.isInsideDeniedFolder("/.vol/16777230/2")).toBe(true);
@@ -1499,7 +1501,7 @@ describe("makeSensitivePathGuard", () => {
 
   it("treats a configured worktree folder in an app home as projects", () => {
     const guard = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "linux");
-    const repoDev = "/home/owner/.specwithcode/wt/dev/src/a.ts";
+    const repoDev = "/srv/home/owner/.specwithcode/wt/dev/src/a.ts";
     const repoBackups = "/srv/app/wt/backups/notes.md";
     expect(guard.isDenied(repoDev)).toBe(true);
     expect(guard.isDenied(repoBackups)).toBe(true);
@@ -1510,13 +1512,13 @@ describe("makeSensitivePathGuard", () => {
     }
     // App homes inside a checkout there, and everything outside it, still count.
     expect(
-      guard.isDenied("/home/owner/.specwithcode/wt/repo/.specwithcode/dev/settings.json"),
+      guard.isDenied("/srv/home/owner/.specwithcode/wt/repo/.specwithcode/dev/settings.json"),
     ).toBe(true);
-    expect(guard.isDenied("/home/owner/.specwithcode/m3/userdata/settings.json")).toBe(true);
+    expect(guard.isDenied("/srv/home/owner/.specwithcode/m3/userdata/settings.json")).toBe(true);
     expect(guard.isDenied("/srv/app/backups/statev2.sqlite")).toBe(true);
     // A worktree setting naming an app home, or a folder holding the base, is ignored.
-    guard.setWorktreesDirectories(["/home/owner/.specwithcode", "/srv"]);
-    expect(guard.isDenied("/home/owner/.specwithcode/m3/userdata/settings.json")).toBe(true);
+    guard.setWorktreesDirectories(["/srv/home/owner/.specwithcode", "/srv"]);
+    expect(guard.isDenied("/srv/home/owner/.specwithcode/m3/userdata/settings.json")).toBe(true);
     expect(guard.isDenied(repoBackups)).toBe(true);
     expect(
       WorkspaceSensitivePaths.worktreesDirectoriesFromSettings({
@@ -1558,7 +1560,7 @@ describe("makeSensitivePathGuard", () => {
 
   it("does not treat a sibling with a shared prefix as inside a denied folder", () => {
     const guard = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "linux");
-    expect(guard.isDenied("/home/owner/.ssh-notes/readme.md")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/.ssh-notes/readme.md")).toBe(false);
     expect(guard.isDenied("/srv/app/userdata-export/notes.txt")).toBe(false);
     expect(guard.isDenied("/srv/app/userdata/secrets/key.bin")).toBe(true);
     expect(guard.isDenied("/srv/app/worktrees/dev/userdata/settings.json")).toBe(false);
@@ -1566,11 +1568,11 @@ describe("makeSensitivePathGuard", () => {
 
   it("does not treat projects as app homes when the base folder holds the home", () => {
     const guard = WorkspaceSensitivePaths.makeSensitivePathGuard(
-      { ...roots, baseDir: "/home", stateDir: "/home/userdata" },
+      { ...roots, baseDir: "/srv/home", stateDir: "/srv/home/userdata" },
       "linux",
     );
-    expect(guard.isDenied("/home/owner/project/dev/notes.md")).toBe(false);
-    expect(guard.isDenied("/home/userdata/settings.json")).toBe(true);
+    expect(guard.isDenied("/srv/home/owner/project/dev/notes.md")).toBe(false);
+    expect(guard.isDenied("/srv/home/userdata/settings.json")).toBe(true);
   });
 
   it("refuses the credential files of provider homes named in settings", () => {
@@ -1591,9 +1593,9 @@ describe("makeSensitivePathGuard", () => {
       "/data/claude-work",
       "/data/codex-env",
     ]);
-    expect(guard.isDenied("/home/owner/.codex-work/auth.json")).toBe(false);
+    expect(guard.isDenied("/srv/home/owner/.codex-work/auth.json")).toBe(false);
     guard.setProviderHomes(homes);
-    expect(guard.isDenied("/home/owner/.codex-work/auth.json")).toBe(true);
+    expect(guard.isDenied("/srv/home/owner/.codex-work/auth.json")).toBe(true);
     expect(guard.isDenied("/opt/codex-shadow/auth.json")).toBe(true);
     expect(guard.isDenied("/data/claude-work/.credentials.json")).toBe(true);
     expect(guard.isDenied("/data/codex-env/auth.json")).toBe(true);
