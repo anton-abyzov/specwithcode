@@ -33,6 +33,13 @@ import {
   workerFinderBackend,
 } from "./WorkspaceSearchFinder.ts";
 import {
+  type SearchRefreshOptions,
+  type SearchRootWatch,
+  hasNativeRecursiveWatch,
+  makeSearchRefresh,
+  watchSearchRoot,
+} from "./WorkspaceSearchRefresh.ts";
+import {
   type SearchRootGuardOptions,
   unsafeSearchRootReasonResolved,
 } from "./WorkspaceSearchRoots.ts";
@@ -316,6 +323,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
   backend: SearchFinderBackend,
+  disableWatch: boolean,
 ) {
   const result = yield* Effect.tryPromise({
     try: () =>
@@ -327,6 +335,8 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
         // composer path search, file picker) keep the lightweight index.
         disableContentIndexing: variant !== "content",
         aiMode: false,
+        // The service refreshes the index itself (see WorkspaceSearchRefresh).
+        disableWatch,
         // fff's own refusal backs up the root guard in `make`.
         enableFsRootScanning: false,
         enableHomeDirScanning: false,
@@ -372,6 +382,13 @@ const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(fu
 export interface WorkspaceSearchIndexOptions extends Partial<SearchRootGuardOptions> {
   /** Where fff runs; the worker thread unless a test runs it in-process. */
   readonly backend?: SearchFinderBackend;
+  /**
+   * How the root is watched for changes. Defaults to one shared recursive
+   * watch where the platform has a native one; `false` leaves watching to fff.
+   */
+  readonly watch?: SearchRootWatch | false;
+  /** Debounce timing and clock of the refresh; tests pass a clock they move by hand. */
+  readonly refresh?: Pick<SearchRefreshOptions, "clock" | "debounceMs" | "floorMs">;
 }
 
 export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
@@ -390,14 +407,38 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     });
   }
   const backend = options.backend ?? workerFinderBackend;
+  const watch =
+    options.watch ?? (hasNativeRecursiveWatch(platform) ? watchSearchRoot : (false as const));
   // Destroy is synchronous only for the in-process (test) backend; the worker
   // backend posts it and returns, so releasing an index never waits on fff.
-  const finder = yield* Effect.acquireRelease(createFinder(cwd, variant, backend), (finder) =>
-    Effect.try({
-      try: () => finder.destroy(),
-      catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
-    }).pipe(Effect.orDie),
+  const finder = yield* Effect.acquireRelease(
+    createFinder(cwd, variant, backend, watch !== false),
+    (finder) =>
+      Effect.try({
+        try: () => finder.destroy(),
+        catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
+      }).pipe(Effect.orDie),
   );
+  if (watch !== false) {
+    // Released before the finder, so a rescan is never started on a destroyed one.
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const searchRefresh = makeSearchRefresh({
+          ...options.refresh,
+          rescan: async () => {
+            const scan = await finder.scanFiles();
+            if (scan.ok) await finder.waitForIndexReady(WORKSPACE_INDEX_SCAN_TIMEOUT_MS);
+          },
+        });
+        const stopWatching = watch(cwd, searchRefresh.notify);
+        return () => {
+          stopWatching();
+          searchRefresh.dispose();
+        };
+      }),
+      (stop) => Effect.sync(stop),
+    );
+  }
   let initialScanTimedOut = false;
   yield* waitForIndexReady(
     cwd,
