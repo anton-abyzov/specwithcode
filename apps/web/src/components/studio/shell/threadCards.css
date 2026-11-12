@@ -248,3 +248,38 @@
 .sws-access-wait-line .sws-thread-link {
   vertical-align: baseline;
 }
+
+/* A worker on another machine is one row whatever its title: the title shrinks to an
+   ellipsis before the machine, state or action ever wrap onto a second line. */
+.sws-thread-card[data-remote-worker] {
+  display: flex;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.sws-thread-card[data-remote-worker] .sws-thread-card-head {
+  flex: 1 1 auto;
+}
+.sws-thread-card[data-remote-worker] .sws-thread-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-thread-card[data-remote-worker] .sws-machine-chip,
+.sws-thread-card[data-remote-worker] .sws-thread-card-status {
+  flex: none;
+  white-space: nowrap;
+}
+.sws-thread-card[data-remote-worker] .sws-thread-card-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+/* In the Threads pane the cards line up edge to edge, as the rows below them do. */
+.sws-thread-cards[data-placement="pane"] {
+  justify-items: stretch;
+}
+.sws-thread-cards[data-placement="pane"] > li,
+.sws-thread-cards[data-placement="pane"] .sws-thread-card {
+  width: 100%;
+}
