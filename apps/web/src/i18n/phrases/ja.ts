@@ -1729,10 +1729,6 @@ export const ja: PhraseCatalog = {
   Never: "しない",
   "{input} days": "{input} 日",
   "Archive after days": "アーカイブまでの日数",
-  "Allow another machine to run work here": "別のマシンがここで作業を実行できるようにする",
-  "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.":
-    "このマシンに作業を送るマシンを選んでください。シークレットへの自動アクセスは許可されません。シークレットを渡すたびに承認が必要です。",
-  "Machine sending work{select}": "作業を送るマシン{select}",
   "Machine sending work": "作業を送るマシン",
   "Choose a machine": "マシンを選択",
   "Most access for this work{select}": "この作業の最大アクセス{select}",

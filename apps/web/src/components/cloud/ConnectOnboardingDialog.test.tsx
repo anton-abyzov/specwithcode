@@ -18,9 +18,17 @@ const runtime = vi.hoisted(() => ({
   reconcile: vi.fn(async (_desired: object) => true),
   toast: vi.fn(),
   storage: {} as Record<string, unknown>,
+  /** Keys whose stored value is there but does not decode. */
+  corrupt: new Set<string>(),
+  authOptions: null as unknown,
 }));
 
-vi.mock("@clerk/react", () => ({ useAuth: () => runtime.auth }));
+vi.mock("@clerk/react", () => ({
+  useAuth: (options: unknown) => {
+    runtime.authOptions = options;
+    return runtime.auth;
+  },
+}));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({ _tag: "Success" }) }));
 vi.mock("~/cloud/publicConfig", () => ({ hasCloudPublicConfig: () => true }));
 vi.mock("~/cloud/useCloudLinkController", () => ({
@@ -31,9 +39,20 @@ vi.mock("~/cloud/useCloudLinkController", () => ({
   }),
 }));
 vi.mock("~/hooks/useLocalStorage", () => ({
+  // As the real store: a value that does not decode throws on a direct read,
+  // reads as the initial value through the hook, and is never written over.
+  getLocalStorageItem: (key: string) => {
+    if (runtime.corrupt.has(key)) throw new Error(`Failed to decode local storage item ${key}.`);
+    return runtime.storage[key] ?? null;
+  },
+  setLocalStorageItem: (key: string, value: unknown) => {
+    runtime.corrupt.delete(key);
+    runtime.storage[key] = value;
+  },
   useLocalStorage: (key: string, initial: unknown) => [
-    runtime.storage[key] ?? initial,
+    runtime.corrupt.has(key) ? initial : (runtime.storage[key] ?? initial),
     (next: unknown) => {
+      if (runtime.corrupt.has(key)) return;
       runtime.storage[key] =
         typeof next === "function"
           ? (next as (state: unknown) => unknown)(runtime.storage[key] ?? initial)
@@ -113,6 +132,7 @@ vi.mock("../ui/switch", () => ({
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: runtime.toast } }));
 
+import { CONNECT_ACCOUNT_AUTH } from "~/cloud/connectOnboarding";
 import { ConnectOnboardingDialog } from "./ConnectOnboardingDialog";
 
 const TURNED_ON =
@@ -166,6 +186,7 @@ beforeEach(() => {
   runtime.reconcile.mockResolvedValue(true);
   runtime.toast.mockReset();
   runtime.storage = {};
+  runtime.corrupt = new Set();
 });
 afterEach(async () => {
   if (renderer) await act(async () => renderer!.unmount());
@@ -299,6 +320,92 @@ describe("SpecWithCode Connect after sign-in", () => {
     expect(publishSwitch()?.props.checked).toBe(true);
     expect(button("Continue")?.props.disabled).toBe(false);
     expect(runtime.storage[OFF_KEY]).toBeUndefined();
+  });
+  it("waits for this machine's Team rules, then turns it on once they are read", async () => {
+    // The server's configuration, which carries the Team rules, has not arrived.
+    runtime.serverConfig = null;
+    await signIn();
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    expect(runtime.toast).not.toHaveBeenCalled();
+    await rerender();
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    runtime.serverConfig = {};
+    await rerender();
+    await rerender();
+    expect(runtime.reconcile).toHaveBeenCalledExactlyOnceWith({
+      managedTunnel: true,
+      publish: true,
+    });
+  });
+  it("never turns it on when the Team rules that arrive forbid Connect", async () => {
+    runtime.serverConfig = null;
+    await signIn();
+    runtime.connectLock = { message: "Set by Acme", setBy: "Acme" };
+    runtime.serverConfig = {};
+    await rerender();
+    await rerender();
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+  });
+  it("leaves it to the phone card when that card is about to turn Connect on", async () => {
+    const getItem = vi.fn((key: string) =>
+      key === "specwithcode.phone-connect.pending" ? "1" : null,
+    );
+    vi.stubGlobal("window", { desktopBridge: {}, sessionStorage: { getItem } });
+    await signIn();
+    expect(getItem).toHaveBeenCalledWith("specwithcode.phone-connect.pending");
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    expect(runtime.toast).not.toHaveBeenCalled();
+    expect(texts()).not.toContain(TURNED_ON);
+  });
+  it("acts as usual when the phone card's marker cannot be read", async () => {
+    vi.stubGlobal("window", {
+      desktopBridge: {},
+      sessionStorage: {
+        getItem: () => {
+          throw new Error("storage is blocked");
+        },
+      },
+    });
+    await signIn();
+    expect(runtime.reconcile).toHaveBeenCalledOnce();
+  });
+  it("does not turn it on when the saved off choices cannot be read, and leaves them alone", async () => {
+    runtime.storage[OFF_KEY] = "{not json";
+    runtime.corrupt.add(OFF_KEY);
+    await signIn();
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    expect(runtime.toast).not.toHaveBeenCalled();
+    // The wizard proposes nothing either: the unreadable value may be an off choice.
+    expect(publishSwitch()?.props.checked).toBe(false);
+    expect(texts()).not.toContain(TURNED_ON);
+    expect(runtime.storage[OFF_KEY]).toBe("{not json");
+    // Another account is held back too: whose choice it was cannot be told.
+    await signIn("user_b");
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    expect(runtime.storage[OFF_KEY]).toBe("{not json");
+  });
+  it("replaces unreadable saved choices once the owner makes the choice in the wizard", async () => {
+    runtime.storage[OFF_KEY] = "{not json";
+    runtime.corrupt.add(OFF_KEY);
+    await signIn();
+    expect(runtime.reconcile).not.toHaveBeenCalled();
+    // The owner ticks the switch and continues: that is a choice, not a guess.
+    await act(async () => publishSwitch()!.props.onChange({ target: { checked: true } }));
+    await act(async () => button("Continue")!.props.onClick());
+    expect(runtime.reconcile).toHaveBeenCalledExactlyOnceWith({
+      managedTunnel: true,
+      publish: true,
+    });
+    expect(runtime.storage[OFF_KEY]).toEqual({ accounts: [] });
+    // Readable again, so the next sign-in on an unlinked machine turns it on as usual.
+    runtime.reconcile.mockClear();
+    await signIn("user_b");
+    expect(runtime.reconcile).toHaveBeenCalledOnce();
+  });
+  it("reads the account under the option the Settings switch saves its choice with", async () => {
+    await signIn();
+    expect(runtime.authOptions).toBe(CONNECT_ACCOUNT_AUTH);
+    expect(CONNECT_ACCOUNT_AUTH).toEqual({ treatPendingAsSignedOut: false });
   });
   it("holds back when Not now is pressed before the link state is known", async () => {
     runtime.linkState = { ...runtime.linkState, data: null, isPending: true };

@@ -1,20 +1,27 @@
 import { defineConfig } from "vite-plus";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { fileURLToPath } from "node:url";
-import { resolve, dirname } from "node:path";
-const fixture = fileURLToPath(new URL(".", import.meta.url));
-const appSource = resolve(fixture, "../../src");
-const mocks = resolve(fixture, "mocks.tsx");
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+const fixture = NodeURL.fileURLToPath(new URL(".", import.meta.url));
+const appSource = NodePath.resolve(fixture, "../../src");
+const mocks = NodePath.resolve(fixture, "mocks.tsx");
 const stubs = new Set(
   [
     "state/environments",
     "state/session",
+    "state/relay",
+    "state/use-atom-command",
+    "connection/catalog",
     "studio/machineNickname",
     "studio/fleet",
+    "cloud/publicConfig",
+    "cloud/primaryCloudLinkState",
+    "components/clerk/useStudioConnectAuthPrompt",
+    "components/settings/settingsLayout",
     "env",
     "confirmDialog",
-  ].map((path) => resolve(appSource, path)),
+  ].map((path) => NodePath.resolve(appSource, path)),
 );
 export default defineConfig({
   root: fixture,
@@ -23,11 +30,12 @@ export default defineConfig({
       name: "isolated-incoming-worker-access",
       enforce: "pre",
       resolveId(source, importer) {
+        if (source === "@clerk/react") return mocks;
         if (!importer) return;
         const target = source.startsWith("~/")
-          ? resolve(appSource, source.slice(2))
+          ? NodePath.resolve(appSource, source.slice(2))
           : source.startsWith(".")
-            ? resolve(dirname(importer), source)
+            ? NodePath.resolve(NodePath.dirname(importer), source)
             : source;
         if (stubs.has(target.replace(/\.(tsx?|jsx?)$/, ""))) return mocks;
       },
@@ -36,5 +44,9 @@ export default defineConfig({
     tailwindcss(),
   ],
   resolve: { alias: { "~": appSource } },
-  build: { outDir: "../../../../.artifacts/incoming-worker-access/site", emptyOutDir: true },
+  build: {
+    target: "esnext",
+    outDir: "../../../../.artifacts/incoming-worker-access/site",
+    emptyOutDir: true,
+  },
 });

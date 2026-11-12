@@ -10,6 +10,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  CONNECT_ACCOUNT_AUTH,
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
   CONNECT_TURNED_OFF_STORAGE_KEY,
   ConnectOnboardingOptOutSchema,
@@ -17,6 +18,8 @@ import {
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
   EMPTY_CONNECT_TURNED_OFF_STATE,
   connectAtSignIn,
+  connectTurnedOffReadable,
+  replaceUnreadableConnectChoices,
   withConnectChoice,
 } from "~/cloud/connectOnboarding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -75,7 +78,7 @@ const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>
 function ConfiguredConnectOnboardingDialog() {
   // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
   // signed-out, or its later activation would look like a fresh sign-in.
-  const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const { isLoaded, isSignedIn, userId } = useAuth(CONNECT_ACCOUNT_AUTH);
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
     EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
@@ -155,6 +158,7 @@ function ConfiguredConnectOnboardingDialog() {
         linkStatePending: controller.linkState.isPending,
         linkStateFailed: controller.linkState.error !== null,
         turnedOffAccounts,
+        turnedOffUnreadable: !connectTurnedOffReadable(),
         wizardOptOutAccounts: optOutAccounts,
         phoneCardPending: phoneCardPending(),
       }),
@@ -208,8 +212,11 @@ function ConfiguredConnectOnboardingDialog() {
     if (!sessionScopesKnown || !publishStepDecided) return;
     setRequestedAccount(null);
     prefilledFromLinkStateRef.current = false;
-    // An owner who turned Connect off here is not asked to turn it back on.
-    setExposeEnvironment(!turnedOffAccounts.includes(requestedAccount));
+    // An owner who turned Connect off here is not asked to turn it back on. Saved
+    // choices that cannot be read may hold exactly that, so they propose nothing.
+    setExposeEnvironment(
+      connectTurnedOffReadable() && !turnedOffAccounts.includes(requestedAccount),
+    );
     setPublishAgentActivity(true);
     setDontShowAgain(false);
     setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
@@ -284,6 +291,8 @@ function ConfiguredConnectOnboardingDialog() {
     // sign-in must not turn it back on. Ticking it forgets that choice.
     const rememberChoice = () => {
       if (account !== null) {
+        // The owner's own choice also replaces saved choices that cannot be read.
+        replaceUnreadableConnectChoices(account, exposeEnvironment);
         setTurnedOffState((state) => withConnectChoice(state, account, exposeEnvironment));
       }
     };
