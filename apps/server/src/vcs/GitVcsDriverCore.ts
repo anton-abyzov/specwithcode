@@ -4360,13 +4360,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ["worktree", "list", "--porcelain", "-z"],
         { allowNonZeroExit: true, timeoutMs: 15_000 },
       );
-      if (listed.exitCode !== 0) return false;
+      if (listed.exitCode !== 0) return "unknown" as const;
       const real = yield* fileSystem
         .realPath(input.path)
         .pipe(Effect.orElseSucceed(() => input.path));
-      return isRegisteredWorktree(listed.stdout, [input.path, real], platform);
-    }).pipe(Effect.orElseSucceed(() => false));
-    const wasRegistered = yield* registered;
+      return isRegisteredWorktree(listed.stdout, [input.path, real], platform)
+        ? ("yes" as const)
+        : ("no" as const);
+      // A list that fails or times out says nothing: only a list that ran and
+      // does not name the path counts as unregistered.
+    }).pipe(Effect.orElseSucceed(() => "unknown" as const));
+    const wasRegistered = (yield* registered) === "yes";
     const result = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.removeWorktree",
       input.cwd,
@@ -4399,7 +4403,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (
       wasRegistered &&
       !isSameOrInside(input.cwd, input.path, platform) &&
-      !(yield* registered) &&
+      (yield* registered) === "no" &&
       (yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)))
     ) {
       const finished = yield* fileSystem.remove(input.path, { recursive: true, force: true }).pipe(

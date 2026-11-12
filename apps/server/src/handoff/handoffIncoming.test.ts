@@ -382,6 +382,8 @@ const receiving = (
     readonly beforeCheckpoint?: (root: string) => void;
     /** Changes the project folder after the checkpoint is written. */
     readonly afterCheckpoint?: (root: string) => void;
+    /** The project folder is the parent of the repository, as in a folder of several clones. */
+    readonly repositoryBelowProject?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -409,7 +411,7 @@ const receiving = (
     const project = {
       id: localProject,
       title: "App",
-      workspaceRoot: root,
+      workspaceRoot: options.repositoryBelowProject === true ? base : root,
       deletedAt: null,
       workspaceSettings: {
         logicalProject: { members: [{ environmentId: m4, projectId: sourceProject }] },
@@ -494,6 +496,7 @@ const receiving = (
         caller,
         {
           ...meta(1),
+          repositoryPath: options.repositoryBelowProject === true ? "repo" : "",
           modelSelection,
           runtimeMode: options.runtimeMode ?? "full-access",
           checkpoint: {
@@ -719,8 +722,6 @@ describe("takeover and the project's Use worktrees switch", () => {
       expect(response.notice).toBe(
         "Use worktrees is off for this project, so the work is in the project folder as uncommitted changes.",
       );
-      // The retry marker goes once the takeover is on record.
-      expect(git(root, "for-each-ref", "refs/specwithcode/applied/")).toBe("");
     }),
   );
 
@@ -832,6 +833,62 @@ describe("takeover and the project's Use worktrees switch", () => {
       expect(read(root, "notes.txt")).toBe("mine\n");
       expect(read(root, "app.ts")).toBe("export const a = 1;\n");
       expect(response.notice).toContain("the project folder has files in the way");
+    }),
+  );
+
+  it.effect("off: a folder in the middle of a merge is left alone", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: (folder) => {
+          discard(folder);
+          NodeFS.writeFileSync(
+            NodePath.join(folder, ".git", "MERGE_HEAD"),
+            `${git(folder, "rev-parse", "HEAD")}\n`,
+          );
+        },
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy.type).toBe("existing_worktree");
+      expect(read(root, "app.ts")).toBe("export const a = 1;\n");
+      expect(response.notice).toContain("the project folder is in the middle of a merge or rebase");
+    }),
+  );
+
+  it.effect("off: work for a repository below the project folder keeps its worktree", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, root } = yield* receiving({
+        usesWorktrees: false,
+        repositoryBelowProject: true,
+        afterCheckpoint: discard,
+      });
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      // A thread in the project folder would not run git in that repository.
+      expect(launches[0]?.workspaceStrategy.type).toBe("existing_worktree");
+      expect(read(root, "app.ts")).toBe("export const a = 1;\n");
+      expect(git(root, "status", "--porcelain")).toBe("");
+      expect(response.notice).toContain(
+        "the project folder is not the repository this work belongs to",
+      );
+    }),
+  );
+
+  it.effect("off: a retry after the work was thrown away puts it back, not a false success", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, launchState, root } = yield* receiving({
+        usesWorktrees: false,
+        afterCheckpoint: discard,
+      });
+      yield* replicate(peer(), claude);
+      launchState.fail = true;
+      yield* takeOver(peer()).pipe(Effect.flip);
+      discard(root);
+      launchState.fail = false;
+      yield* takeOver(peer());
+      expect(launches[0]?.workspaceStrategy).toEqual({ type: "root" });
+      expect(read(root, "app.ts")).toBe("export const a = 2;\n");
     }),
   );
 

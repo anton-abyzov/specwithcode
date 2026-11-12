@@ -36,7 +36,7 @@ Use the current checkout for one writer working sequentially. Use separate workt
 
 ## Where handed-off work lands
 
-Work that arrives from another machine, or moves to another sign-in on the same machine, follows the same switch. With **Use worktrees** on, it gets its own worktree at the commit it started from, with the unfinished changes applied. With it off, the changes go into the project folder as uncommitted changes, on whatever branch is checked out there. The folder takes them only when that is safe: it is at the commit the work started from, and it is clean or already holds the same changes. A file Git ignores is never overwritten. When the folder cannot take the work (it has other uncommitted changes, it is at a different commit, or a file is in the way), the work still gets its own worktree and the handoff says why.
+Work that arrives from another machine, or moves to another sign-in on the same machine, follows the same switch. With **Use worktrees** on, it gets its own worktree at the commit it started from, with the unfinished changes applied. With it off, the changes go into the project folder as uncommitted changes, on whatever branch is checked out there. The folder takes them only when that is safe: it is at the commit the work started from, and it is clean or already holds the same changes. A file Git ignores is never overwritten. When the folder cannot take the work (it has other uncommitted changes, it is at a different commit, it is in the middle of a merge or rebase, a file is in the way, or the work belongs to a repository inside the project folder rather than the folder itself), the work still gets its own worktree and the handoff says why.
 
 ## What consumes space
 

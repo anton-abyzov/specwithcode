@@ -66,7 +66,6 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {
-  appliedRef,
   applyBundle,
   applyCheckpointInPlace,
   applyCheckpointToWorktree,
@@ -172,10 +171,12 @@ const noticeOf = (parts: ReadonlyArray<string | null>) => {
 };
 
 /** Why a project with Use worktrees off still got a worktree for arriving work. */
-const IN_PLACE_REFUSAL: Readonly<Record<InPlaceRefusal, string>> = {
+const IN_PLACE_REFUSAL: Readonly<Record<InPlaceRefusal | "nested", string>> = {
   dirty: "has uncommitted changes",
   moved: "is at a different commit than the work started from",
   blocked: "has files in the way",
+  midway: "is in the middle of a merge or rebase",
+  nested: "is not the repository this work belongs to",
 };
 
 const EXECUTION_REASON: Readonly<Record<TakeoverReason, ThreadExecutionReason>> = {
@@ -627,23 +628,29 @@ export const make = Effect.gen(function* () {
       const usesWorktrees = projectUsesWorktrees(
         resolveProjectSettings(settings, project.id, project),
       );
-      const applied = appliedRef(caller.sourceEnvironmentId, request.sourceThreadId, request.epoch);
       const placement = yield* Effect.exit(placed);
       // A worktree already made for this takeover wins: a retry never moves the work.
       const retriedInWorktree = Exit.isSuccess(placement) && placement.value.existing;
+      // A thread started in the project folder runs git in the repository that
+      // holds the folder. Work for a repository nested below it would sit where
+      // the thread's own checkpoints never look, so that keeps its worktree.
+      const nested = detail.repositoryPath
+        .split("/")
+        .some((segment) => segment.length > 0 && segment !== "." && segment !== "..");
       const inPlace =
         usesWorktrees || retriedInWorktree
           ? null
-          : yield* Effect.tryPromise({
-              try: () =>
-                applyCheckpointInPlace({
-                  root,
-                  baseCommit: checkpoint.baseCommit,
-                  checkpointCommit: checkpoint.commit,
-                  marker: applied,
-                }),
-              catch: (cause) => fromBundleError(label, cause),
-            });
+          : nested
+            ? ({ applied: false, reason: "nested" } as const)
+            : yield* Effect.tryPromise({
+                try: () =>
+                  applyCheckpointInPlace({
+                    root,
+                    baseCommit: checkpoint.baseCommit,
+                    checkpointCommit: checkpoint.commit,
+                  }),
+                catch: (cause) => fromBundleError(label, cause),
+              });
       const workspace =
         inPlace?.applied === true
           ? null
@@ -869,12 +876,6 @@ export const make = Effect.gen(function* () {
         const next = markContinued(current, request, response, now);
         return [next, next] as const;
       });
-      if (workspace === null) {
-        // The takeover is on record, so a repeat is answered from there.
-        yield* Effect.promise(() =>
-          runGit(root, ["update-ref", "-d", applied], { allowFailure: true }),
-        );
-      }
       return response;
     });
 

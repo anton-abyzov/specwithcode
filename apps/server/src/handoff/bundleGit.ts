@@ -32,21 +32,6 @@ export function isCommitSha(value: string): boolean {
   return SHA.test(value);
 }
 
-export const HANDOFF_APPLIED_REF_PREFIX = "refs/specwithcode/applied/";
-
-/**
- * `refs/specwithcode/applied/<sourceEnvironmentId>/<sourceThreadId>/e<epoch>`:
- * the checkpoint a takeover put straight into the project's own checkout, kept
- * until that takeover finishes so a retry does not apply it twice.
- */
-export function appliedRef(
-  sourceEnvironmentId: string,
-  sourceThreadId: string,
-  epoch: number,
-): string {
-  return `${HANDOFF_APPLIED_REF_PREFIX}${refComponent(sourceEnvironmentId)}/${refComponent(sourceThreadId)}/e${epoch}`;
-}
-
 /** `refs/specwithcode/incoming/<sourceEnvironmentId>/<sourceThreadId>` */
 export function incomingRef(sourceEnvironmentId: string, sourceThreadId: string): string {
   return `${HANDOFF_INCOMING_REF_PREFIX}${refComponent(sourceEnvironmentId)}/${refComponent(sourceThreadId)}`;
@@ -329,22 +314,39 @@ async function holdsCheckpoint(
 }
 
 /** Why a checkout in use could not take a checkpoint; nothing in it changed. */
-export type InPlaceRefusal = "dirty" | "moved" | "blocked";
+export type InPlaceRefusal = "dirty" | "moved" | "blocked" | "midway";
+
+/** What Git leaves in its folder while a merge, rebase, cherry-pick, revert or bisect is unfinished. */
+const UNFINISHED_OPERATION_MARKS = [
+  "MERGE_HEAD",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "BISECT_LOG",
+  "rebase-merge",
+  "rebase-apply",
+];
+
+async function operationUnfinished(root: string): Promise<boolean> {
+  const gitDir = (await runGit(root, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+  for (const mark of UNFINISHED_OPERATION_MARKS) {
+    if ((await NodeFSP.lstat(NodePath.join(gitDir, mark)).catch(() => null)) !== null) return true;
+  }
+  return false;
+}
 
 /**
  * Puts the checkpoint's files into a checkout that is already in use, the
  * project's own folder, as uncommitted changes. Only a checkout whose HEAD is
  * the checkpoint's base commit takes it, and only when it is clean or already
- * holds the same changes; the branch checked out there stays as it is. A file Git ignores there is never overwritten: one where
- * the checkpoint adds a path refuses the whole apply. `marker` records the
- * applied checkpoint, so a retried takeover finds its first attempt instead of
- * a dirty folder.
+ * holds the same changes; the branch checked out there stays as it is. A file
+ * Git ignores there is never overwritten: one where the checkpoint adds a path
+ * refuses the whole apply. A retried takeover finds the folder already holding
+ * the work, so nothing is applied twice.
  */
 export async function applyCheckpointInPlace(input: {
   readonly root: string;
   readonly baseCommit: string;
   readonly checkpointCommit: string;
-  readonly marker: string;
 }): Promise<
   | { readonly applied: true; readonly branch: string | null }
   | { readonly applied: false; readonly reason: InPlaceRefusal }
@@ -356,16 +358,17 @@ export async function applyCheckpointInPlace(input: {
     const branch = result.stdout.trim();
     return result.code === 0 && branch.length > 0 ? branch : null;
   };
-  if ((await refCommit(input.root, input.marker)) === input.checkpointCommit) {
-    return { applied: true, branch: await currentBranch() };
-  }
   if ((await refCommit(input.root, "HEAD")) !== input.baseCommit) {
     return { applied: false, reason: "moved" };
   }
+  if (await operationUnfinished(input.root)) return { applied: false, reason: "midway" };
+  // Stale file times would make the merge below refuse files that did not change.
+  await runGit(input.root, ["update-index", "-q", "--refresh"], { allowFailure: true });
   const status = await runGit(input.root, ["status", "--porcelain"]);
   if (status.stdout.trim().length > 0) {
     // The source worked in this very folder (a move between sign-ins on one
-    // machine), or the same changes are already here: nothing to apply.
+    // machine), an earlier attempt already put the work here, or the same
+    // changes were made here: nothing to apply.
     return (await holdsCheckpoint(input.root, input.baseCommit, input.checkpointCommit))
       ? { applied: true, branch: await currentBranch() }
       : { applied: false, reason: "dirty" };
@@ -392,7 +395,6 @@ export async function applyCheckpointInPlace(input: {
     { allowFailure: true },
   );
   if (merged.code !== 0) return { applied: false, reason: "blocked" };
-  await runGit(input.root, ["update-ref", input.marker, input.checkpointCommit]);
   // Back to HEAD's index: the checkpoint's files stay as uncommitted changes.
   await runGit(input.root, ["reset", "-q"]);
   return { applied: true, branch: await currentBranch() };
