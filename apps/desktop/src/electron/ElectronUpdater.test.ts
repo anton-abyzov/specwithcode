@@ -1,4 +1,3 @@
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
@@ -38,6 +37,7 @@ vi.mock("electron-updater", () => ({
 }));
 
 import * as ElectronUpdater from "./ElectronUpdater.ts";
+import type { unattendedDebInstallReadiness } from "../updates/signedDebInstall.ts";
 
 describe("ElectronUpdater", () => {
   beforeEach(() => {
@@ -268,4 +268,27 @@ describe("ElectronUpdater", () => {
       assert.deepEqual(autoUpdaterMock.quitAndInstall.mock.calls, [[true, false]]);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
+});
+
+describe("silentDebInstallReady", () => {
+  it("is ready only when the helper readiness of the downloaded .deb is ready", () => {
+    const updater = { downloadedUpdateHelper: { file: "/cache/studio_1.2.4_amd64.deb" } };
+    const seen: Array<string> = [];
+    const answer = (value: ReturnType<typeof unattendedDebInstallReadiness>) => (file: string) => {
+      seen.push(file);
+      return value;
+    };
+    assert.isTrue(ElectronUpdater.silentDebInstallReady(updater, answer("ready")));
+    assert.deepEqual(seen, ["/cache/studio_1.2.4_amd64.deb"]);
+    for (const refusal of ["no-helper", "no-signature", "needs-authentication"] as const) {
+      assert.isFalse(ElectronUpdater.silentDebInstallReady(updater, answer(refusal)));
+    }
+    assert.isFalse(ElectronUpdater.silentDebInstallReady({}, answer("ready")));
+    assert.isFalse(
+      ElectronUpdater.silentDebInstallReady(
+        { downloadedUpdateHelper: { file: null } },
+        answer("ready"),
+      ),
+    );
+  });
 });

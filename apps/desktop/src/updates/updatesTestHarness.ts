@@ -44,6 +44,8 @@ export interface UpdatesHarnessOptions {
   readonly isPackaged?: boolean;
   /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
+  /** A .deb install whose download the signed pkexec helper installs with no prompt. */
+  readonly silentDebInstall?: boolean;
   /**
    * Models electron-updater's MacUpdater: Squirrel.Mac stages a download only
    * when it finishes with install-on-quit set, and quitAndInstall on an
@@ -144,6 +146,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           }),
         ),
         installReady: Effect.sync(() => !options.squirrel || squirrelStaged()),
+        silentInstallReady: Effect.sync(() => options.silentDebInstall === true),
         quitAndInstall: () =>
           Effect.suspend(() => {
             quitAndInstallCount += 1;

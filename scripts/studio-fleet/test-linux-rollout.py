@@ -282,9 +282,22 @@ class Main(unittest.TestCase):
     def write(self, hosts):
         self.inventory.write_text(json.dumps(hosts))
 
-    def main(self, argv, run=None):
+    def main(self, argv, run=None, app=None):
         out = io.StringIO()
-        code = linux_rollout.main(argv, home=self.dir, run=run or FakeWorker(), sleep=lambda s: None, stdout=out)
+        self.apps = []
+        answer = app or {'result': 'already-current', 'before': NEW, 'after': NEW, 'relaunched': 'no'}
+
+        class Desktop(object):
+            def __init__(desktop, version):
+                desktop.version = version
+
+            def __call__(desktop, identity, ssh, say):
+                self.apps.append((desktop.version, identity, ssh))
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
+        code = linux_rollout.main(argv, home=self.dir, run=run or FakeWorker(), sleep=lambda s: None, stdout=out,
+                                  desktop_app=Desktop)
         return code, out.getvalue()
 
     def test_no_linux_workers_is_success(self):
@@ -321,6 +334,40 @@ class Main(unittest.TestCase):
         code, out = self.main(['--version', NEW])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.splitlines()[-1])['hosts'][0]['result'], 'installed')
+
+    def test_the_desktop_app_follows_a_service_on_the_version(self):
+        self.write({'lx1': dict(ENTRY)})
+        app = {'result': 'helper', 'before': '1.0.94', 'after': NEW, 'relaunched': 'yes'}
+        code, out = self.main(['--version', NEW], app=app)
+        self.assertEqual(code, 0)
+        self.assertEqual([(version, identity) for version, identity, _ssh in self.apps], [(NEW, 'lx1')])
+        self.assertEqual(json.loads(out.splitlines()[-1])['hosts'][0]['desktopApp'], app)
+
+    def test_a_desktop_app_that_cannot_update_makes_the_run_incomplete(self):
+        self.write({'lx1': dict(ENTRY)})
+        from desktop_app_rollout import DesktopAppError
+        code, out = self.main(['--version', NEW], app=DesktopAppError('the signed update helper is missing'))
+        self.assertEqual(code, 1)
+        summary = json.loads(out.splitlines()[-1])
+        self.assertEqual(summary['result'], 'incomplete')
+        self.assertEqual(summary['hosts'][0]['result'], 'installed')
+        self.assertEqual(summary['hosts'][0]['desktopApp'],
+                         {'result': 'failed', 'reason': 'the signed update helper is missing'})
+        self.assertIn('desktop app not updated to %s: the signed update helper is missing' % NEW, out)
+        self.assertIn('--host lx1', out)
+
+    def test_a_skipped_service_leaves_its_desktop_app_alone(self):
+        self.write({'lx1': dict(ENTRY)})
+        code, out = self.main(['--version', NEW], run=FakeWorker(idle=False))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.apps, [])
+
+    def test_no_desktop_apps_skips_the_step(self):
+        self.write({'lx1': dict(ENTRY)})
+        code, out = self.main(['--version', NEW, '--no-desktop-apps'])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.apps, [])
+        self.assertNotIn('desktopApp', json.loads(out.splitlines()[-1])['hosts'][0])
 
     def test_bad_inventory_entries_are_refused(self):
         for entry in ({'os': 'linux', 'host': 'h', 'studioHome': '/s'},  # no user, no sshConfig
@@ -429,6 +476,171 @@ class RemoteScript(unittest.TestCase):
             # A process outside the unit's cgroup is not the service's server.
             fields = self.remote(home, studio, ['status'], systemctl.replace(cgroup, '/elsewhere.service'))
             self.assertEqual(fields['running'], '')
+
+
+
+OLD_APP, NEW_APP = '1.0.267', '1.0.268'
+DEB = b'deb bytes for ' + NEW_APP.encode()
+DEB_SHA = __import__('hashlib').sha256(DEB).hexdigest()
+
+
+def tool(path, body):
+    path.write_text('#!/bin/sh\n' + body)
+    path.chmod(0o755)
+    return str(path)
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'reads /proc, as on a Linux worker')
+class LinuxDesktopScript(unittest.TestCase):
+    """desktop_app_update_linux.sh against fake dpkg, polkit, pkexec, systemd-run and helper tools."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        d = self.dir = pathlib.Path(folder.name)
+        (d / 'bin').mkdir()
+        self.state = d / 'installed'
+        self.state.write_text(OLD_APP)
+        self.log = d / 'log'
+        self.log.write_text('')
+        self.pids = d / 'pids'
+        self.pids.write_text('')
+        (d / 'release.deb').write_bytes(DEB)
+        policy = d / 'update.policy'
+        policy.write_text('<policyconfig/>')
+        keyring = d / 'key.gpg'
+        keyring.write_text('key')
+        b = d / 'bin'
+        self.env = {
+            'PATH': '%s:/usr/bin:/bin' % b, 'HOME': str(d), 'XDG_RUNTIME_DIR': str(d), 'SWC_POLL': '1',
+            'SWC_QUIT_WAIT': '5', 'SWC_INSTALL_WAIT': '5', 'SWC_CACHE_DIR': str(d / 'cache'), 'SWC_ARCH': 'amd64',
+            'SWC_APP_EXE': '/opt/SpecWithCode/specweave-studio-desktop', 'SWC_POLICY': str(policy),
+            'SWC_KEYRING': str(keyring), 'LOG': str(self.log), 'STATE': str(self.state),
+            'SWC_DPKG_QUERY': tool(b / 'dpkg-query', '[ -s "$STATE" ] || exit 1\ncat "$STATE"\n'),
+            # --compare-versions A ge B, as dpkg orders these plain versions.
+            'SWC_DPKG': tool(b / 'dpkg', '[ "$1" = --print-architecture ] && { echo amd64; exit 0; }\n'
+                                         '[ "$(printf "%s\\n%s\\n" "$2" "$4" | sort -V | head -n 1)" = "$4" ]\n'),
+            'SWC_PGREP': tool(b / 'pgrep', 'case "$*" in *update-helper*) exit 1 ;; esac\ncat "%s"\n' % self.pids),
+            'SWC_PKCHECK': tool(b / 'pkcheck', 'echo "pkcheck $*" >> "$LOG"\nexit "${PKCHECK_RC:-0}"\n'),
+            # systemd-run turns $$ into $, as the real one expands its arguments.
+            'SWC_SYSTEMD_RUN': tool(b / 'systemd-run', 'echo "systemd-run $*" >> "$LOG"\n'
+                                    'while [ "$1" != -- ]; do shift; done; shift\n'
+                                    'case "$1" in /opt/*) exit 0 ;; esac\n'
+                                    'if [ "$1" = /bin/sh ]; then exec /bin/sh -c "$(printf %s "$3" | sed "s/\\$\\$/\\$/g")"; fi\n'
+                                    'exec "$@"\n'),
+            'SWC_PKEXEC': tool(b / 'pkexec', '[ "$1" = --disable-internal-agent ] && shift\nexec "$@"\n'),
+            'SWC_HELPER': tool(b / 'update-helper', 'echo "helper $*" >> "$LOG"\nrc=${HELPER_RC:-0}\n'
+                                                    '[ "$rc" = 0 ] && [ -z "${HELPER_NOOP:-}" ] && echo %s > "$STATE"\n'
+                                                    '[ "$rc" = 0 ] || echo "SpecWithCode update refused: apt-get could not install" >&2\n'
+                                                    'exit "$rc"\n' % NEW_APP),
+            'SWC_GPGV': tool(b / 'gpgv', 'exit "${GPGV_RC:-0}"\n'),
+            'SWC_CURL': tool(b / 'curl', 'while [ "$1" != -o ]; do shift; done\necho "curl $3" >> "$LOG"\n'
+                                         'case "$3" in *.asc) echo sig > "$2" ;; *) cat "%s" > "$2" ;; esac\n'
+                                         % (d / 'release.deb')),
+        }
+
+    def run_script(self, sha=DEB_SHA, **extra):
+        env = dict(self.env, V=NEW_APP, SHA_AMD64=sha, SHA_ARM64='0' * 64, **extra)
+        result = subprocess.run(['sh', '-s'], input=(HERE / 'desktop_app_update_linux.sh').read_text(), env=env,
+                                capture_output=True, text=True, timeout=60)
+        lines = result.stdout.splitlines()
+        return result.returncode, lines[-1] if lines else '', self.log.read_text()
+
+    def app(self):
+        process = subprocess.Popen(['sleep', '60'])
+        self.addCleanup(process.kill)
+        self.pids.write_text('%d\n' % process.pid)
+        return process
+
+    def test_no_studio_package_is_nothing_to_do(self):
+        self.state.write_text('')
+        code, last, log = self.run_script()
+        self.assertEqual((code, last), (0, 'RESULT before=none after=none how=no-desktop-app relaunched=no'))
+        self.assertEqual(log, '')
+
+    def test_already_on_the_version_or_newer_changes_nothing(self):
+        for installed in (NEW_APP, '1.0.300'):
+            self.state.write_text(installed)
+            code, last, log = self.run_script()
+            self.assertEqual(code, 0)
+            self.assertIn('how=already-current', last)
+            self.assertIn('after=%s' % installed, last)
+            self.assertNotIn('helper', log)
+
+    def test_a_missing_helper_is_named_before_anything_is_downloaded(self):
+        code, last, log = self.run_script(SWC_HELPER=str(self.dir / 'nope'))
+        self.assertEqual(code, 7)
+        self.assertTrue(last.startswith('FAIL the signed update helper %s is missing' % (self.dir / 'nope')), last)
+        self.assertNotIn('curl', log)
+
+    def test_polkit_wanting_a_password_is_named_and_nothing_is_quit(self):
+        app = self.app()
+        code, last, log = self.run_script(PKCHECK_RC='1')
+        self.assertEqual(code, 7)
+        self.assertIn('polkit does not allow com.specwithcode.studio.update without a password', last)
+        self.assertIsNone(app.poll())
+        self.assertNotIn('curl', log)
+        # pkcheck asks about a shell in the user's manager, never this SSH session.
+        self.assertRegex(log, r'pkcheck --action-id com.specwithcode.studio.update --process [0-9]+')
+
+    def test_installs_through_the_helper_and_reads_the_version_back(self):
+        code, last, log = self.run_script()
+        self.assertEqual((code, last), (0, 'RESULT before=%s after=%s how=helper relaunched=no' % (OLD_APP, NEW_APP)))
+        deb = self.dir / 'cache' / ('SpecWithCode-%s-amd64.deb' % NEW_APP)
+        self.assertIn('helper %s %s.asc' % (deb, deb), log)
+        self.assertFalse(deb.exists())  # The cache is emptied once the version is read back.
+
+    def test_a_running_app_is_quit_installed_under_and_reopened(self):
+        app = self.app()
+        code, last, log = self.run_script()
+        self.assertEqual(code, 0)
+        self.assertEqual(last, 'RESULT before=%s after=%s how=helper relaunched=yes' % (OLD_APP, NEW_APP))
+        self.assertIsNotNone(app.poll())
+        self.assertIn('systemd-run --user --quiet --collect -- /opt/SpecWithCode/specweave-studio-desktop', log)
+
+    def test_a_dry_run_checks_everything_and_changes_nothing(self):
+        app = self.app()
+        code, last, log = self.run_script(DRY_RUN='1')
+        self.assertEqual((code, last), (0, 'RESULT before=%s after=%s how=dry-run relaunched=no' % (OLD_APP, OLD_APP)))
+        self.assertIsNone(app.poll())
+        self.assertIn('curl', log)
+        self.assertNotIn('helper', log)
+        self.assertEqual(self.state.read_text().strip(), OLD_APP)
+
+    def test_a_wrong_sha256_or_signature_installs_nothing(self):
+        app = self.app()
+        for extra, reason in (({'sha': 'f' * 64}, "the downloaded .deb's sha256 is %s" % DEB_SHA),
+                              ({'GPGV_RC': '1'}, 'signature does not verify')):
+            code, last, log = self.run_script(**extra)
+            self.assertEqual(code, 3)
+            self.assertIn(reason, last)
+            self.assertNotIn('helper', log)
+            self.assertIsNone(app.poll())
+
+    def test_a_refused_install_or_wrong_read_back_fails_and_reopens_the_app(self):
+        for extra, reason in (({'HELPER_RC': '67'}, 'the update helper refused'),
+                              ({'HELPER_NOOP': '1'}, 'dpkg reads back %s after the install, not %s' % (OLD_APP, NEW_APP))):
+            self.log.write_text('')
+            self.app()
+            code, last, log = self.run_script(**extra)
+            self.assertEqual(code, 5, last)
+            self.assertIn(reason, last)
+            self.assertIn('/opt/SpecWithCode/specweave-studio-desktop', log)
+
+    def test_rollout_reads_the_result_and_refuses_a_wrong_version(self):
+        import desktop_app_rollout
+        said = []
+        desktop = desktop_app_rollout.LinuxDesktopApp(NEW_APP, repo='o/r', sums=lambda: ({'amd64': DEB_SHA}, 'sums'),
+                                                      env=dict(self.env), timeout=60)
+        result = desktop('lx1', ['/bin/sh', '-c'], said.append)
+        self.assertEqual(result, {'result': 'helper', 'before': OLD_APP, 'after': NEW_APP, 'relaunched': 'no'})
+        self.assertIn('lx1: desktop app %s -> %s: installed through the signed update helper' % (OLD_APP, NEW_APP),
+                      said)
+        self.state.write_text(OLD_APP)
+        desktop.env = dict(self.env, SWC_HELPER=str(self.dir / 'nope'))
+        with self.assertRaises(desktop_app_rollout.DesktopAppError) as caught:
+            desktop('lx1', ['/bin/sh', '-c'], said.append)
+        self.assertIn('the signed update helper', str(caught.exception))
 
 
 if __name__ == '__main__':

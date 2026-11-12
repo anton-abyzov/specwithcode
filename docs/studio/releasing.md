@@ -42,6 +42,16 @@ A release ships in three waves, so macOS is never held back by the slower platfo
    until updated by hand once (docs/user/linux-worker.md). The release is already done and the stage
    never fails it. Retry with `python3 -B scripts/studio-fleet/linux_rollout.py --version <v>` once
    the worker is idle; `--dry-run` prints the SSH commands.
+   Once a worker's service runs the version, its `.deb` desktop app follows
+   (`desktop_app_update_linux.sh`, skipped with `--no-desktop-apps`): it downloads
+   `SpecWithCode-<v>-<arch>.deb` and its `.asc` from the public release, checks the sha256 from
+   `SHA256SUMS-windows-linux` and the signature, quits the app only if it runs, installs through
+   the signed update helper the `.deb` ships (`pkexec /usr/lib/specwithcode/update-helper`, no
+   password in the user's active session), reads the version back from dpkg and reopens the app.
+   A worker without the helper (an app older than the helper) or where polkit wants a password is
+   reported with that reason and is updated by hand once. The `.deb` is attached by Release
+   Windows and Linux after publish, so a run before that reports it missing; the app's own
+   updater also installs it through the helper once the app is idle.
 3. **Windows and Linux desktop apps** (Release Windows and Linux, below): one real run is
    dispatched per release once it is published, and a daily catch-up run at 07:23 UTC builds them
    for the newest release if it still lacks them. Until they are attached, Windows and Linux

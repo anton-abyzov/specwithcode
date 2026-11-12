@@ -13,6 +13,9 @@ finds its zip: in this Mac's staging folder for the version, the assets of the c
 publish-public checked byte for byte against both releases). A rollout run on its own for a release with no
 staging folder here (a --ci release, or one pruned) reads SHA256SUMS from the public release instead.
 
+Linux workers (linux_rollout.py) take LinuxDesktopApp instead: desktop_app_update_linux.sh installs the
+release's .deb through the signed update helper the .deb ships, and reads the version back from dpkg.
+
 The version, sha256 and repository are checked here before any of them reaches a shell (digits and dots,
 64 hex digits, owner/name) and checked again by the remote script.
 """
@@ -300,3 +303,113 @@ class DesktopApps(object):
             writer.join(5)
             process.stdout.close()
         return process.returncode, lines, stopped.is_set()
+
+
+LINUX_SCRIPT = HERE / 'desktop_app_update_linux.sh'
+LINUX_COMMAND = 'sh -s'
+LINUX_SUMS = 'SHA256SUMS-windows-linux'
+LINUX_ARCHES = ('amd64', 'arm64')
+LINUX_HOWS = ('no-desktop-app', 'already-current', 'updater-on-quit', 'helper', 'dry-run')
+LINUX_SAID = {'no-desktop-app': 'none installed (no studio package); nothing to update',
+              'already-current': 'already on %(after)s',
+              'updater-on-quit': '%(before)s -> %(after)s: its own updater installed it through the helper as the '
+                                 'app quit',
+              'helper': '%(before)s -> %(after)s: installed through the signed update helper',
+              'dry-run': 'dry run on %(before)s; nothing changed'}
+
+
+def deb_name(version, arch):
+    return 'SpecWithCode-%s-%s.deb' % (version, arch)
+
+
+def linux_sha256s(version, repo, fetch=fetch_url):
+    """({arch: sha256 of SpecWithCode-<v>-<arch>.deb}, source) from the public release's
+    SHA256SUMS-windows-linux, which release-windows-linux.yml attaches with the .debs."""
+    version, repo = checked_version(version), checked_repo(repo)
+    source = 'https://github.com/%s/releases/download/v%s/%s' % (repo, version, LINUX_SUMS)
+    try:
+        data = fetch(source)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            raise DesktopAppError('v%s has no %s on %s yet; release-windows-linux attaches the .debs after the '
+                                  'release' % (version, LINUX_SUMS, repo)) from None
+        raise DesktopAppError('could not download %s (HTTP %d)' % (source, error.code)) from None
+    except DesktopAppError:
+        raise
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise DesktopAppError('could not download %s (%s)' % (source, type(error).__name__)) from None
+    if len(data) > SUMS_LIMIT:
+        raise DesktopAppError('%s is larger than %d KiB' % (source, SUMS_LIMIT >> 10))
+    sums = parse_sums(data, source)
+    found = {arch: sums[deb_name(version, arch)] for arch in LINUX_ARCHES if deb_name(version, arch) in sums}
+    if not found:
+        raise DesktopAppError('%s lists no SpecWithCode .deb for %s' % (source, version))
+    return found, source
+
+
+class LinuxDesktopApp(object):
+    """linux_rollout's desktop step: installs a Linux worker's .deb app through the signed update helper
+    (desktop_app_update_linux.sh over that worker's SSH, `sh -s`). Calling it with (identity, ssh argv, say)
+    returns {'result', 'before', 'after', 'relaunched'} once the version is read back from dpkg, and raises
+    DesktopAppError naming the reason otherwise. Tests pass `sums` (a resolver), `env` and `timeout`."""
+
+    def __init__(self, version, repo=None, sums=None, dry_run=False, timeout=TIMEOUT, env=None, script=LINUX_SCRIPT):
+        self.version = checked_version(version)
+        self.repo = checked_repo(repo) if repo is not None else public_repo()
+        self.resolve = sums or (lambda: linux_sha256s(self.version, self.repo))
+        self.dry_run = bool(dry_run)
+        self.timeout = timeout
+        self.env = env
+        self.script = pathlib.Path(script)
+        self.found = None
+
+    def expected(self, say):
+        if self.found is None:
+            shas, source = self.resolve()
+            for arch, sha in shas.items():
+                if arch not in LINUX_ARCHES or not isinstance(sha, str) or not HEX64.fullmatch(sha):
+                    raise DesktopAppError('%s gives no usable sha256 for %s' % (source, deb_name(self.version, arch)))
+            self.found = shas
+            say('linux desktop apps: %s from %s' % (', '.join('%s %s' % (deb_name(self.version, arch), sha[:12])
+                                                              for arch, sha in sorted(shas.items())), source))
+        return self.found
+
+    def program(self, shas):
+        preamble = ''.join('%s=%s\n' % (name, shlex.quote(value)) for name, value in (
+            ('V', self.version), ('SHA_AMD64', shas.get('amd64', '')), ('SHA_ARM64', shas.get('arm64', '')),
+            ('REPO', self.repo), ('DRY_RUN', '1' if self.dry_run else '0')))
+        return preamble + self.script.read_text()
+
+    def __call__(self, identity, ssh, say):
+        program = self.program(self.expected(say))
+        runner = DesktopApps(self.version, {}, repo=self.repo, sums=lambda: None, timeout=self.timeout, env=self.env)
+        code, lines, timed_out = runner.run(list(ssh) + [LINUX_COMMAND], program,
+                                            lambda line: say('%s: app: %s' % (identity, line)))
+        if timed_out:
+            raise DesktopAppError('did not finish within %d min, so its ssh session was stopped' % (self.timeout // 60))
+        last = [line for line in lines if line.startswith('RESULT ') or line.startswith('FAIL ')]
+        if code == 0 and last and last[-1].startswith('RESULT '):
+            fields = parse_result(last[-1])
+            how, before, after = fields.get('how'), fields.get('before'), fields.get('after')
+            if how in ('dry-run', 'no-desktop-app'):
+                expected_after = before
+            elif how == 'already-current':
+                expected_after = after if after and VERSION.fullmatch(after) else None
+            else:
+                expected_after = self.version
+            if how not in LINUX_HOWS or expected_after is None or after != expected_after:
+                raise DesktopAppError('gave an unexpected answer: %s' % last[-1])
+            result = {'result': how, 'before': before, 'after': after, 'relaunched': fields.get('relaunched')}
+            line = LINUX_SAID[how] % result
+            if result['relaunched'] == 'yes':
+                line += '; reopened, as it was running'
+            elif result['relaunched'] == 'failed':
+                line += '; WARNING: it was running and could not be opened again'
+            say('%s: desktop app %s' % (identity, line))
+            return result
+        if last and last[-1].startswith('FAIL '):
+            raise DesktopAppError(last[-1][len('FAIL '):])
+        tail = lines[-1] if lines else 'no output'
+        if code == 255 and SSH_CONNECT_FAILURE.fullmatch(tail):
+            raise DesktopSshUnavailable('could not be reached over ssh: %s' % tail)
+        raise DesktopAppError('exit %d: %s' % (code, tail))

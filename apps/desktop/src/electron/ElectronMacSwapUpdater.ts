@@ -398,6 +398,7 @@ export function makeMacSwapUpdater(
     }),
     // The swap installs from its own staged copy, and refuses loudly without one.
     installReady: Effect.succeed(true),
+    silentInstallReady: Effect.succeed(false),
     quitAndInstall: ({ isSilent, isForceRunAfter }) =>
       Effect.try({
         try: () => {
