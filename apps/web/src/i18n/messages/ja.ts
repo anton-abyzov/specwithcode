@@ -27,7 +27,7 @@ export const ja: Messages = {
 
   "wizard.connection.title": "コンピューターを接続",
   "wizard.connection.description":
-    "1 台以上のコンピューターを選んでください。それぞれにエージェントとプロジェクトを設定します。",
+    "エージェントはここで選んだコンピューターで動くため、作業したいものをすべて選んでください。",
   "wizard.connection.legend": "セットアップするコンピューター",
   "wizard.connection.connected": "接続済み",
   "wizard.connection.connecting": "接続中…",
@@ -54,7 +54,7 @@ export const ja: Messages = {
 
   "wizard.agents.title": "エージェントを接続",
   "wizard.agents.description":
-    "コーディングを始めるエージェントを選んでください。Cursor、OpenCode、Grok などはセットアップ後に 設定 > プロバイダー で追加できます。",
+    "コードを書くのはエージェントなので、最初のチャットの前に少なくとも 1 つにサインインしておく必要があります。Cursor、OpenCode、Grok などはセットアップ後に 設定 > プロバイダー で追加できます。",
   "wizard.agents.noTerminal": "この接続ではターミナルを操作できません。",
   "wizard.agents.anotherChatGpt": "別の ChatGPT アカウントを接続",
   "wizard.agents.readyToCode": "コーディングの準備ができました。",
@@ -80,7 +80,8 @@ export const ja: Messages = {
   "wizard.import.lookingInAgents": "Claude Code と Codex のプロジェクトを探しています…",
   "wizard.import.skip": "プロジェクトをインポートしない",
   "wizard.import.title": "プロジェクトを選択",
-  "wizard.import.description": "選んだコンピューターからプロジェクトと会話をインポートします。",
+  "wizard.import.description":
+    "プロジェクトはエージェントが作業するフォルダなので、会話と一緒に取り込むものを選んでください。",
   "wizard.import.selectedCount": "{total} 件中 {selected} 件を選択",
   "wizard.import.selectAll": "すべて選択",
   "wizard.import.selectNone": "選択を解除",

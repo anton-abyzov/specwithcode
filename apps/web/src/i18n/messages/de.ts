@@ -34,7 +34,7 @@ export const de: Messages = {
 
   "wizard.connection.title": "Verbinde deine Computer",
   "wizard.connection.description":
-    "Wähle einen oder mehrere Computer. Wir richten auf jedem Agenten und Projekte ein.",
+    "Agenten laufen auf den Computern, die du hier auswählst, also wähle jeden, auf dem du arbeiten willst.",
   "wizard.connection.legend": "Einzurichtende Computer",
   "wizard.connection.connected": "Verbunden",
   "wizard.connection.connecting": "Verbinde…",
@@ -61,7 +61,7 @@ export const de: Messages = {
 
   "wizard.agents.title": "Verbinde deine Agenten",
   "wizard.agents.description":
-    "Wähle einen Agenten, um mit dem Programmieren zu beginnen. Cursor, OpenCode, Grok und weitere kannst du nach der Einrichtung unter Einstellungen > Anbieter hinzufügen.",
+    "Ein Agent schreibt den Code, deshalb muss vor deinem ersten Chat mindestens einer angemeldet sein. Cursor, OpenCode, Grok und weitere kannst du nach der Einrichtung unter Einstellungen > Anbieter hinzufügen.",
   "wizard.agents.noTerminal": "Diese Verbindung kann keine Terminals steuern.",
   "wizard.agents.anotherChatGpt": "Weiteres ChatGPT-Konto verbinden",
   "wizard.agents.readyToCode": "Bereit zum Programmieren.",
@@ -95,7 +95,7 @@ export const de: Messages = {
   "wizard.import.skip": "Keine Projekte importieren",
   "wizard.import.title": "Wähle deine Projekte",
   "wizard.import.description":
-    "Importiere Projekte und Unterhaltungen von den ausgewählten Computern.",
+    "Ein Projekt ist ein Ordner, in dem deine Agenten arbeiten, also wähle die aus, die du samt ihren Unterhaltungen übernehmen willst.",
   "wizard.import.selectedCount": "{selected} von {total} ausgewählt",
   "wizard.import.selectAll": "Alle auswählen",
   "wizard.import.selectNone": "Keine auswählen",

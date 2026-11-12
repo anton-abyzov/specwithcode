@@ -32,7 +32,7 @@ export const ru: Messages = {
 
   "wizard.connection.title": "Подключите компьютеры",
   "wizard.connection.description":
-    "Выберите один или несколько компьютеров. Мы настроим агентов и проекты на каждом из них.",
+    "Агенты работают на выбранных здесь компьютерах, поэтому отметьте каждый, на котором хотите работать.",
   "wizard.connection.legend": "Компьютеры для настройки",
   "wizard.connection.connected": "Подключён",
   "wizard.connection.connecting": "Подключение…",
@@ -59,7 +59,7 @@ export const ru: Messages = {
 
   "wizard.agents.title": "Подключите агентов",
   "wizard.agents.description":
-    "Выберите агента, чтобы начать писать код. Cursor, OpenCode, Grok и других можно добавить после настройки в Настройки > Провайдеры.",
+    "Код пишет агент, поэтому до первого чата нужно войти хотя бы в одного. Cursor, OpenCode, Grok и других можно добавить после настройки в Настройки > Провайдеры.",
   "wizard.agents.noTerminal": "Это подключение не может управлять терминалами.",
   "wizard.agents.anotherChatGpt": "Подключить ещё один аккаунт ChatGPT",
   "wizard.agents.readyToCode": "Готов к работе.",
@@ -95,7 +95,8 @@ export const ru: Messages = {
   "wizard.import.lookingInAgents": "Ищем проекты Claude Code и Codex…",
   "wizard.import.skip": "Не импортировать проекты",
   "wizard.import.title": "Выберите проекты",
-  "wizard.import.description": "Импортируйте проекты и разговоры с выбранных компьютеров.",
+  "wizard.import.description":
+    "Проектом называется папка, в которой работают ваши агенты, поэтому выберите те, что хотите перенести вместе с их разговорами.",
   "wizard.import.selectedCount": "Выбрано {selected} из {total}",
   "wizard.import.selectAll": "Выбрать все",
   "wizard.import.selectNone": "Снять выбор",

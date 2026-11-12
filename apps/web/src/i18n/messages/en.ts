@@ -38,7 +38,7 @@ export const en = {
 
   "wizard.connection.title": "Connect your computers",
   "wizard.connection.description":
-    "Choose one or more computers. We’ll set up agents and projects on each.",
+    "Agents run on the computers you choose here, so pick each one you want to work on.",
   "wizard.connection.legend": "Computers to set up",
   "wizard.connection.connected": "Connected",
   "wizard.connection.connecting": "Connecting…",
@@ -65,7 +65,7 @@ export const en = {
 
   "wizard.agents.title": "Connect your agents",
   "wizard.agents.description":
-    "Choose an agent to start coding. Cursor, OpenCode, Grok and others can be added after setup in Settings > Providers.",
+    "An agent writes the code, so at least one has to be signed in before your first chat. Cursor, OpenCode, Grok and others can be added after setup in Settings > Providers.",
   "wizard.agents.noTerminal": "This connection cannot control terminals.",
   "wizard.agents.anotherChatGpt": "Connect another ChatGPT account",
   "wizard.agents.readyToCode": "Ready to code.",
@@ -96,7 +96,8 @@ export const en = {
   "wizard.import.lookingInAgents": "Looking for projects from Claude Code and Codex…",
   "wizard.import.skip": "Do not import projects",
   "wizard.import.title": "Choose your projects",
-  "wizard.import.description": "Import projects and conversations from your selected computers.",
+  "wizard.import.description":
+    "A project is a folder your agents work in, so choose the ones to bring in along with their conversations.",
   "wizard.import.selectedCount": "{selected} of {total} selected",
   "wizard.import.selectAll": "Select all",
   "wizard.import.selectNone": "Select none",
