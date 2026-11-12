@@ -21,7 +21,7 @@ import { TestClock } from "effect/testing";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
+import { makeManagedServerProvider, withLastKnownAuth } from "./makeManagedServerProvider.ts";
 import type { RememberedSubscription, SubscriptionMemory } from "./subscriptionIdentity.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
@@ -102,7 +102,11 @@ const refreshedSnapshotSecond: ServerProvider = {
   message: "Refreshed provider availability again.",
 };
 
-function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
+function layerBackgroundPolicy(
+  shouldRunScopeWork: boolean,
+  /** Whether a window shows the agent's row right now; the fixed answer unless given. */
+  rowShown: () => boolean = () => shouldRunScopeWork,
+) {
   return Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     reportClientActivity: () => Effect.void,
     removeRpcClient: () => Effect.void,
@@ -128,7 +132,7 @@ function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
     }),
     streamChanges: Stream.empty,
     hasDemand: () => Effect.succeed(shouldRunScopeWork),
-    shouldRunScopeWork: () => Effect.succeed(shouldRunScopeWork),
+    shouldRunScopeWork: () => Effect.sync(rowShown),
     shouldRunOpportunisticWork: Effect.succeed(shouldRunScopeWork),
     notificationTarget: () => Effect.succeed(null),
   });
@@ -1236,6 +1240,32 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
     );
 
+    it.effect("remembers nothing when the agent answered and reports no sign-in", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Several agents report "unknown" as their normal state, and one signed out does too.
+          const answeredUnknown: ServerProvider = {
+            ...refreshedSnapshot,
+            status: "warning",
+            auth: { status: "unknown" },
+          };
+          const provider = yield* providerWith([signedIn, answeredUnknown]);
+          assert.strictEqual("lastKnownAuth" in (yield* provider.refresh), false);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+
+    it("remembers through a sign-in read that failed, and forgets when the settings changed", () => {
+      const unreadable: ServerProvider = {
+        ...refreshedSnapshot,
+        status: "warning",
+        auth: { status: "unknown", type: "status-check-failed" },
+      };
+      assert.deepStrictEqual(withLastKnownAuth(signedIn, unreadable).lastKnownAuth, signedIn.auth);
+      assert.strictEqual("lastKnownAuth" in withLastKnownAuth(signedIn, unreadable, true), false);
+      assert.strictEqual("lastKnownAuth" in withLastKnownAuth(signedIn, noAnswer, true), false);
+    });
+
     it.effect("has nothing to remember before the first answer", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -1322,6 +1352,74 @@ describe("makeManagedServerProvider", () => {
           assert.deepStrictEqual([state.probes, state.checks], [0, 1]);
         }),
       ).pipe(Effect.provide(Layer.mergeAll(layerNeverRunTest, TestClock.layer()))),
+    );
+
+    it.effect("is not checked in full again when its window comes back to the same sign-in", () => {
+      let shown = true;
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const { state } = yield* watched({ account: signedOut, mark: "out" });
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [1, 2, 1]);
+          // The window loses focus: nothing is asked.
+          shown = false;
+          yield* tick;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [1, 2]);
+          // It comes back and nothing changed: the cheap question only.
+          shown = true;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [2, 2, 1]);
+          // A sign-in done while it was away shows on the first look back.
+          shown = false;
+          yield* tick;
+          state.account = signedIn;
+          state.mark = "in";
+          shown = true;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [3, 3, 2]);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerBackgroundPolicy(true, () => shown),
+            layerServerSettingsTest,
+            TestClock.layer(),
+          ),
+        ),
+      );
+    });
+
+    it.effect("counts a question that never ends as no answer and asks again", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = { probes: 0, checks: 0 };
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.sync(() => {
+              state.checks += 1;
+              return signedOut;
+            }),
+            refreshInterval: 0,
+            signInProbe: {
+              mark: Effect.sync(() => {
+                state.probes += 1;
+              }).pipe(Effect.andThen(Effect.never)),
+            },
+          });
+          yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [1, 1]);
+          // The limit passes, then the next look asks again.
+          yield* TestClock.adjust("12 seconds").pipe(Effect.andThen(Effect.yieldNow));
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [2, 1]);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
     );
 
     it.effect("does not run the full check on a question that got no answer", () =>

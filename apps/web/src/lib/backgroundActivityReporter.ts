@@ -182,9 +182,13 @@ function scopeForSubscription(
   if (observation.method === WS_METHODS.providerAuthSubscribe) {
     // An agent's sign-in state is on screen: its machine may look again sooner.
     const instanceId = (observation.input as { readonly instanceId?: unknown }).instanceId;
-    return typeof instanceId === "string" && instanceId.trim().length > 0
-      ? { type: "provider-status", instanceId: ProviderInstanceId.make(instanceId) }
-      : null;
+    if (typeof instanceId !== "string" || instanceId.trim().length === 0) return null;
+    try {
+      return { type: "provider-status", instanceId: ProviderInstanceId.make(instanceId) };
+    } catch {
+      // Not an agent id this app can name: nothing to hold a scope for.
+      return null;
+    }
   }
   if (observation.method !== WS_METHODS.subscribeVcsStatus) {
     return null;

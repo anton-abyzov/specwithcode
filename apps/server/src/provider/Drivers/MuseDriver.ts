@@ -100,6 +100,16 @@ export const museAdapterFlavor = (
 });
 /** How long Muse Code's host gets to answer its handshake or a request (`MuseConnection.ts`). */
 const MUSE_ANSWER_LIMIT_MS = 10_000;
+/** What the connection throws when the handshake or a request ran out of time. */
+const MUSE_NO_ANSWER = /^Muse Code (?:handshake|control request) timed out$/;
+
+/**
+ * Whether a failed check is the host giving no answer in time: one of the two
+ * limits the connection itself reports. A launcher's own last line that happens
+ * to say "timed out" (a download, say) is a reason to show, not a silence.
+ */
+export const museGaveNoAnswer = (cause: unknown): boolean =>
+  cause instanceof Error && MUSE_NO_ANSWER.test(cause.message);
 
 export type MuseDriverEnv =
   | Crypto.Crypto
@@ -217,7 +227,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
           }),
         );
         let probed = yield* probe;
-        const silent = () => probed._tag === "Failure" && /timed out/i.test(probed.failure.detail);
+        const silent = () => probed._tag === "Failure" && museGaveNoAnswer(probed.failure.cause);
         // A host that gave no answer is asked once more before anything is shown.
         if (silent()) probed = yield* probe;
         if (probed._tag === "Failure") {

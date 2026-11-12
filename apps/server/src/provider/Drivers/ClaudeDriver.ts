@@ -298,8 +298,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.map(stampIdentity),
           ),
         checkProvider,
-        // A sign-in done in a terminal, also one to the same account, shows on a
-        // row that is on screen without waiting for the next timed check.
+        // A sign-in done in a terminal shows on a row that is on screen without
+        // waiting for the next timed check. The mark is who is signed in, so it
+        // does not see the same account signing in again.
         signInProbe: {
           mark: readClaudeSignInMark(effectiveConfig, processEnv, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

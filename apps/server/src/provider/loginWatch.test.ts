@@ -116,6 +116,13 @@ describe("loginFileMark", () => {
 
         yield* fs.remove(filePath);
         assert.strictEqual(yield* loginFileMark(filePath), "none");
+
+        // A folder at that path is not a login file, and a huge file is not read.
+        yield* fs.makeDirectory(filePath);
+        assert.strictEqual(yield* loginFileMark(filePath), "none");
+        yield* fs.remove(filePath, { recursive: true });
+        yield* fs.writeFileString(filePath, "x".repeat(1_048_577));
+        assert.strictEqual(yield* loginFileMark(filePath), "1048577:unread");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

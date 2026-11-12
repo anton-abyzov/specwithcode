@@ -128,15 +128,24 @@ function textHash(value: string): string {
  * A mark of the whole login file. Unlike an identity it also changes when the
  * same account signs in again, which is what an expired sign-in needs. It is a
  * short hash and a length: nothing in the file can be read back from it. Never
- * fails: a missing or unreadable file is its own mark.
+ * fails: a missing or unreadable file is its own mark. Only a regular file of
+ * a login file's size is read; anything else is marked by its size alone.
  */
 export const loginFileMark = (
   filePath: string,
 ): Effect.Effect<string, never, FileSystem.FileSystem> =>
-  Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(filePath)).pipe(
-    Effect.map((contents) => `${contents.length}:${textHash(contents)}`),
-    Effect.orElseSucceed(() => "none"),
-  );
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const info = yield* fs.stat(filePath);
+    if (info.type !== "File") return "none";
+    const size = Number(info.size);
+    if (size > LOGIN_FILE_MARK_MAX_BYTES) return `${size}:unread`;
+    const contents = yield* fs.readFileString(filePath);
+    return `${contents.length}:${textHash(contents)}`;
+  }).pipe(Effect.orElseSucceed(() => "none"));
+
+/** Login files are a few kilobytes; a larger file at that path is not read. */
+const LOGIN_FILE_MARK_MAX_BYTES = 1_048_576;
 
 /**
  * Runs `onChange` whenever the account in `filePath` differs from the one
