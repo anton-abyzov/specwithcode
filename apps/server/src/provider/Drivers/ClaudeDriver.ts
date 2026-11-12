@@ -46,6 +46,7 @@ import {
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
 } from "../ClaudeProvider.ts";
+import { makeClaudeCliAuth } from "../ClaudeCliLogin.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeSubscriptionMemory } from "../subscriptionIdentity.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -324,6 +325,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         ),
       );
 
+      // Sign-in that the app runs: Claude Code's own `auth login`, in this
+      // instance's config folder. The account is then read past the cache.
+      const auth = yield* makeClaudeCliAuth({
+        instanceId,
+        binaryPath: effectiveConfig.binaryPath,
+        environment: skillsEnvironment,
+        cwd,
+        configDir,
+        checkAccount: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+          Effect.andThen(snapshot.refresh),
+        ),
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+
       // A `/login` in a terminal switches the account under this instance; drop
       // the cached probe so the meter shows the new account, not the old one.
       if (enabled) {
@@ -352,6 +370,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        auth,
         invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
         readUsageLimitsNow: Cache.invalidateAll(capabilitiesProbeCache).pipe(
           Effect.andThen(checkProvider),

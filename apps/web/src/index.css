@@ -2564,6 +2564,34 @@ video.artifact-viewer-media {
 .machine-chip[data-machine-color]:hover {
   background: color-mix(in srgb, var(--machine) 20%, transparent);
 }
+/* A machine chip out of room: the icon and name step aside, keeping their width so the
+   row's fit stays the same, and the short label ("M4", "LM") shows in the same tint.
+   The chip never shrinks to the icon alone; its tooltip and accessible name stay full. */
+[data-machine-short] {
+  display: none;
+}
+/* Room for the short label: about 0.95em a character (wide bold capitals) plus the padding. */
+[data-machine-short-chars] {
+  min-width: calc(var(--machine-short-chars) * 0.95em + 1.25rem);
+}
+[data-machine-short-chars] [data-machine-name-slot] {
+  min-width: calc(var(--machine-short-chars) * 0.95em - 1.25rem);
+}
+[data-machine-compact] {
+  position: relative;
+}
+[data-machine-compact] [data-machine-full] {
+  visibility: hidden;
+}
+[data-machine-compact] [data-machine-short] {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  display: flex;
+  align-items: center;
+  padding-inline-start: inherit;
+  white-space: nowrap;
+}
 /* A machine's name in its color where a chip would be too much (thread and sidebar rows). */
 .machine-mark[data-machine-color] {
   color: var(--machine-text);
@@ -2641,13 +2669,14 @@ video.artifact-viewer-media {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* Narrow, the machine's short label stays beside the arrow, never the arrow alone. */
 @media (max-width: 520px) {
   .sws-send.sws-send-target {
-    width: 32px;
-    padding: 0;
+    gap: 3px;
+    padding: 0 9px 0 7px;
   }
   .sws-send.sws-send-target::after {
-    content: none;
+    content: attr(data-send-short);
   }
 }
 /* The machine doing the work in the view on screen (windowMachine.ts), always on:

@@ -61,6 +61,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { machineShortCharsProps, useMachineNameFit } from "../machineNameFit";
 import { RenameMachineDialog } from "../settings/RenameMachineDialog";
 import { platformName } from "../settings/AccountJoinCard.logic";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "../studio/ProjectLinkDialog";
@@ -715,6 +716,8 @@ export function DraftMachinePicker(props: Props) {
     activeEnvironment?.environmentId ?? null,
     activeEnvironment?.label,
   );
+  // Out of room, the icon, "Run on" and the name give way to the short label, never the icon alone.
+  const fit = useMachineNameFit<HTMLSpanElement>(activeLabel);
 
   return (
     <div className="min-w-0 px-3 pt-2" data-draft-machine-picker="">
@@ -735,6 +738,8 @@ export function DraftMachinePicker(props: Props) {
           data-composer-context-control
           disabled={locked}
           {...machineColorProps(activeIdentity)}
+          {...(fit.compact && activeIdentity ? { "data-machine-compact": "" } : {})}
+          {...(activeIdentity ? machineShortCharsProps(activeIdentity.short) : {})}
           className={cn("max-w-full justify-start", activeIdentity && "machine-chip font-semibold")}
           {...(activeEnvironment && activeLabel !== activeEnvironment.label
             ? { title: activeEnvironment.label }
@@ -742,11 +747,26 @@ export function DraftMachinePicker(props: Props) {
         >
           <EnvironmentMachineIcon
             aria-hidden
+            data-machine-full=""
             kind={activeIdentity?.icon ?? activeKind}
             className="size-4 shrink-0"
           />
-          <span className="shrink-0 font-normal">{tx("Run on")}</span>
-          <span className="min-w-0 truncate">{activeLabel}</span>
+          <span className="shrink-0 font-normal" data-machine-full="">
+            {tx("Run on")}
+          </span>
+          <span
+            ref={fit.ref}
+            className="min-w-0 truncate"
+            data-machine-full=""
+            data-machine-name-slot=""
+          >
+            {activeLabel}
+          </span>
+          {activeIdentity ? (
+            <span aria-hidden data-machine-short="" data-draft-machine-short="">
+              {activeIdentity.short}
+            </span>
+          ) : null}
           {activeUnreachable && (
             <span
               className={`shrink-0 text-xs ${activeBusy ? "text-muted-foreground" : "text-warning-foreground"}`}
