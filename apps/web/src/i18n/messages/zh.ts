@@ -53,7 +53,7 @@ export const zh: Messages = {
 
   "wizard.agents.title": "连接你的智能体",
   "wizard.agents.description":
-    "代码由智能体编写，所以在第一次对话前至少要登录一个。Cursor、OpenCode、Grok 等可以在设置完成后于 设置 > 提供商 中添加。",
+    "代码由智能体编写，所以在第一次对话前至少要登录一个。在你的电脑上找到的智能体会列在这里。其他智能体可以稍后在 设置 > 提供商 中添加。",
   "wizard.agents.noTerminal": "此连接无法控制终端。",
   "wizard.agents.anotherChatGpt": "连接另一个 ChatGPT 账号",
   "wizard.agents.readyToCode": "可以开始编程。",

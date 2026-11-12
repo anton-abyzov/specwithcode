@@ -55,7 +55,7 @@ export const ko: Messages = {
 
   "wizard.agents.title": "에이전트 연결",
   "wizard.agents.description":
-    "코드는 에이전트가 작성하므로, 첫 채팅 전에 하나 이상 로그인되어 있어야 합니다. Cursor, OpenCode, Grok 등은 설정 후 설정 > 공급자에서 추가할 수 있습니다.",
+    "코드는 에이전트가 작성하므로, 첫 채팅 전에 하나 이상 로그인되어 있어야 합니다. 컴퓨터에서 찾은 에이전트가 여기에 표시됩니다. 다른 에이전트는 나중에 설정 > 공급자에서 추가할 수 있습니다.",
   "wizard.agents.noTerminal": "이 연결로는 터미널을 제어할 수 없습니다.",
   "wizard.agents.anotherChatGpt": "다른 ChatGPT 계정 연결",
   "wizard.agents.readyToCode": "코딩할 준비가 되었습니다.",

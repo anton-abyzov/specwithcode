@@ -167,6 +167,14 @@ vi.mock("../settings/CodexSetupSection", () => ({
   CodexSetupSection: () => null,
   AddManagedCodexAccountDialog: () => null,
 }));
+// Each agent's row and the search for agents have their own tests.
+vi.mock("./AgentRows", () => ({ FoundAgentRow: () => null, ProviderAgentRow: () => null }));
+vi.mock("../settings/FoundAgents", () => ({
+  agentName: (agent: string) => agent,
+  defaultAgentInstance: () => ({}),
+  foundAgentsView: () => ({ rows: [] }),
+  useAgentSearch: () => ({ search: null, searching: false, find: () => {} }),
+}));
 vi.mock("../settings/providerDriverMeta", () => ({ getDriverOption: () => ({ label: "Agent" }) }));
 vi.mock("../settings/providerStatus", () => ({
   getProviderSummary: () => ({ headline: "Checking", detail: null }),
