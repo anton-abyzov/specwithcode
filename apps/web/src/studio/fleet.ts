@@ -3,6 +3,7 @@ import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type EnvironmentId,
   type ProjectId,
@@ -39,6 +40,7 @@ import {
   requestFleetTailscaleSignIn,
   requestFleetPairing,
   requestFleetRemove,
+  requestFleetWorkersAccountJoin,
   requestFleetWorkersAllow,
   requestFleetWorkersIncoming,
   requestFleetWorkersStop,
@@ -326,6 +328,56 @@ export async function allowIncomingStudioFleetWorkers(
         "StudioFleetInviteError",
       ]) ?? "Could not let that machine run work here. Refresh, then retry.",
     );
+  return result.value;
+}
+
+/**
+ * Lets `coordinator`, another machine of the same SpecWithCode Connect
+ * account, run workers on `here` with nothing to copy: this machine makes its
+ * line and this app hands it over through its Connect sign-in there. That
+ * machine adds this one and answers with its grant. A line it refuses is
+ * revoked here.
+ */
+export async function joinAccountMachineForWorkers(input: {
+  readonly here: EnvironmentId;
+  readonly coordinator: EnvironmentId;
+  readonly coordinatorLabel: string;
+  readonly access: StudioFleetWorkerAccess;
+}): Promise<StudioFleetWorkersResult> {
+  const prepared = readPreparedConnection(input.coordinator);
+  if (
+    !prepared ||
+    !readEnvironmentScope(input.coordinator, AuthOrchestrationOperateScope) ||
+    appAtomRegistry.get(environmentPresentations.presentationAtom(input.coordinator))?.connection
+      .phase !== "connected"
+  )
+    throw new Error(`Connect to ${input.coordinatorLabel} first.`);
+  // No label: the line carries the name this machine reports for itself.
+  const invitation = await inviteStudioFleetMachine(input.here, {
+    coordinatorEnvironmentId: input.coordinator,
+    via: "connect",
+  });
+  const action = connectionAtomRuntime.atom(
+    requestFleetWorkersAccountJoin(prepared, { invitation: invitation.code, access: input.access }),
+  );
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  appAtomRegistry.refresh(fleetAtom(input.coordinator));
+  if (result._tag === "Failure") {
+    // Unspent, the line would stay valid for an hour; spent, this is a no-op.
+    await revokeStudioFleetInvitation(invitation).catch(() => undefined);
+    // That machine words what to do, such as a team rule or an address it cannot reach.
+    throw new Error(
+      messageOfDeclared(result.cause, [
+        "EnvironmentHttpBadRequestError",
+        "EnvironmentHttpForbiddenError",
+        "EnvironmentHttpInternalServerError",
+      ]) ??
+        `${input.coordinatorLabel} did not answer in time. Check that it is online, then retry; a retry is safe if it added this machine anyway. Afterwards, under Settings > Machines > Authorized clients on this machine, revoke a setup session it no longer uses.`,
+    );
+  }
   return result.value;
 }
 

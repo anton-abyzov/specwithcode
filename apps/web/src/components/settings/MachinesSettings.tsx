@@ -120,6 +120,13 @@ export function MachinesSettingsPanel() {
   const hostBlocks = useHostLimitBlocks(null, now);
   const [pending, setPending] = useState<EnvironmentId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // While no machine may run work here, allowing one is this page's first step. Decided
+  // once per visit, so the section does not jump away the moment a machine is allowed.
+  const [allowFirst, setAllowFirst] = useState<boolean | null>(null);
+  if (allowFirst === null && grants.snapshot && !grants.loading && !grants.failed)
+    setAllowFirst(grants.snapshot.grants.length === 0);
+  // Until the first read says where it goes, the section waits instead of jumping.
+  const grantsPlacementPending = allowFirst === null && grants.loading && !grants.snapshot;
 
   const rows = useMemo(
     () =>
@@ -196,6 +203,9 @@ export function MachinesSettingsPanel() {
       details={details}
     />
   );
+  const workGrants = fleet.primaryEnvironmentId ? (
+    <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
+  ) : null;
   // The page container is the scroll area: without it Settings > Machines cannot scroll.
   return (
     <SettingsPageContainer width="wide">
@@ -209,6 +219,7 @@ export function MachinesSettingsPanel() {
           {error}
         </p>
       ) : null}
+      {allowFirst === true ? workGrants : null}
       <ConnectionsSettings
         additionalMachines={rows
           .filter(
@@ -233,9 +244,7 @@ export function MachinesSettingsPanel() {
         }}
       />
       <AwayAccessRequestsAll />
-      {fleet.primaryEnvironmentId ? (
-        <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
-      ) : null}
+      {allowFirst === true || grantsPlacementPending ? null : workGrants}
       {fleet.primaryEnvironmentId ? (
         <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
       ) : null}
@@ -858,6 +867,10 @@ export function AllowBack({
         coordinatorLabel={coordinatorLabel}
         connected={row.seen.state === "connected"}
         coordinatorFleetId={row.fleetMachine?.id}
+        accountJoin={
+          environments.find((environment) => environment.environmentId === row.environmentId)
+            ?.serverConfig?.environment.capabilities.fleetAccountJoinWorkers === true
+        }
         actionLabel={tx("Allow {coordinatorLabel}", { coordinatorLabel })}
         onGranted={onGranted}
       />

@@ -18,6 +18,7 @@ const runtime = vi.hoisted(() => ({
   projects: [] as unknown[],
   blocks: [] as unknown[],
   grants: null as unknown,
+  discovered: new Map<string, unknown>(),
   nicknames: {} as Record<string, string>,
   connect: vi.fn(async () => {}),
   createCredential: vi.fn(),
@@ -78,7 +79,15 @@ vi.mock("../away/AwayAccessRequests", () => ({ AwayAccessRequestsAll: () => null
 vi.mock("./usePrimaryFleet", () => ({ usePrimaryFleet: () => runtime.fleet }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
+  useRelayEnvironmentDiscovery: () => ({
+    environments: runtime.discovered,
+    refreshing: false,
+    offline: false,
+  }),
 }));
+vi.mock("../../connection/catalog", () => ({ environmentCatalog: {} }));
+vi.mock("../../state/relay", () => ({ relayEnvironmentDiscovery: {} }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => runtime.projects,
   useThreadShells: () => [],
@@ -407,6 +416,54 @@ describe("Settings > Machines", () => {
     expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
     expect(html.match(/>Agents on MacBook Pro can start work on M4MAX</g)).toHaveLength(1);
     expect(html).not.toContain("use this machine too");
+  });
+
+  it("puts allowing a machine first while none may run work here, with the account's machines", () => {
+    setUp();
+    runtime.grants = { grants: [], projects: [], accounts: [] };
+    const m5 = EnvironmentId.make("env-m5");
+    runtime.discovered = new Map([
+      [m5, { environment: { environmentId: m5, label: "MacBook Pro (2)" } }],
+    ]);
+    try {
+      const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+      const section = html.indexOf('aria-label="Who can run work here"');
+      expect(section).toBeGreaterThan(-1);
+      expect(section).toBeLessThan(html.indexOf("<ul>"));
+      // A machine of the same Connect account this app never opened is offered by name.
+      expect(html).toMatch(/<option value="env-m5">MacBook Pro \(2\)<\/option>/);
+    } finally {
+      runtime.discovered = new Map();
+    }
+  });
+
+  it("keeps who can run work here below the machines once a machine may", () => {
+    setUp();
+    runtime.grants = {
+      grants: [
+        {
+          coordinatorEnvironmentId: m3,
+          machineLabel: "MacBook Pro",
+          projects: { kind: "all" },
+          accounts: { kind: "all" },
+          owner: "self",
+          hopLimit: 2,
+          runtimeCap: "auto",
+          expiresAt: null,
+          status: "active",
+          revokedAt: null,
+          interruptAt: null,
+          runningThreads: 0,
+          legacy: false,
+        },
+      ],
+      projects: [],
+      accounts: [],
+    };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html.indexOf('aria-label="Who can run work here"')).toBeGreaterThan(
+      html.indexOf("<ul>"),
+    );
   });
 
   it("offers letting a connected machine without a grant here use this machine too", () => {

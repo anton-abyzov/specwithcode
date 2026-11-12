@@ -150,6 +150,10 @@ async function api(
     readonly noManagementToken?: boolean;
     /** This machine's SpecWithCode Connect origin, as a linked machine stores it. */
     readonly connectOrigin?: string;
+    /** What made the session; a sign-in through SpecWithCode Connect is `cloud-connect`. */
+    readonly subject?: string;
+    /** The device the session's client says it is. */
+    readonly deviceType?: string;
   } = {},
 ) {
   const secrets: Record<string, string> =
@@ -296,7 +300,8 @@ async function api(
           request.headers.authorization === "Bearer synthetic-session"
             ? Effect.succeed({
                 sessionId: AuthSessionId.make("synthetic-session"),
-                subject: "fixture",
+                subject: options.subject ?? "fixture",
+                ...(options.deviceType ? { clientDeviceType: options.deviceType } : {}),
                 ...(coordinatorEnvironmentId
                   ? {
                       principal: {
@@ -360,7 +365,7 @@ async function api(
   );
   const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
   const workers = (
-    path: "allow" | "stop" | "self-allow" | "incoming",
+    path: "allow" | "stop" | "self-allow" | "incoming" | "account-join",
     body: object,
     headers?: Record<string, string>,
   ) =>
@@ -875,6 +880,114 @@ describe("allowing a main machine's workers from that machine", () => {
     }
   });
 });
+describe("a machine of this Connect account handing over its line", () => {
+  const CONNECT = { subject: "cloud-connect" };
+  const M2_ORIGIN = "https://m2.example.ts.net";
+  const m2Line = encodeFleetJoinCode({
+    url: M2_ORIGIN,
+    environmentId: "env-m2",
+    label: "M2",
+    managementToken: "management-secret",
+  });
+  const join = { invitation: m2Line, access: "auto" };
+  // A Connect sign-in is a bearer request: no origin, and no access management.
+  const bearer = { authorization: "Bearer synthetic-session" };
+  const connectApi = (scopes: ReadonlyArray<AuthEnvironmentScope>, coordinator?: EnvironmentId) =>
+    api(scopes, false, ORIGIN, coordinator, undefined, undefined, undefined, CONNECT);
+  it("adds the machine and allows its workers for a Connect sign-in without access management", async () => {
+    const machine = fakeMachine({ environmentId: "env-m2", origins: [M2_ORIGIN] });
+    vi.stubGlobal("fetch", machine.fetcher);
+    const main = await connectApi(AuthStandardClientScopes);
+    try {
+      const response = await main.workers("account-join", join, bearer);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const body = await response.text();
+      expect(body).not.toContain("management-secret");
+      expect(JSON.parse(body)).toMatchObject({
+        id: "m2",
+        workers: { status: "allowed", access: "auto" },
+      });
+      const fleet = (await (await main.request()).json()) as {
+        machines: Array<{ id: string; label: string }>;
+      };
+      // Listed under the name the line carries, which the machine reports for itself.
+      expect(fleet.machines).toContainEqual(expect.objectContaining({ id: "m2", label: "M2" }));
+    } finally {
+      await main.dispose();
+    }
+  });
+  it("takes back the machine when allowing its workers fails", async () => {
+    const machine = fakeMachine({ environmentId: "env-m2", origins: [M2_ORIGIN] });
+    vi.stubGlobal("fetch", machine.fetcher);
+    const main = await connectApi(AuthStandardClientScopes);
+    try {
+      expect((await main.workers("account-join", join, bearer)).status).toBe(200);
+      await main.forget("m2");
+      // Within a minute allowing is refused, after the line was spent adding m2 again.
+      expect((await main.workers("account-join", join, bearer)).status).toBe(400);
+      const fleet = (await (await main.request()).json()) as { machines: Array<{ id: string }> };
+      expect(fleet.machines.map((entry) => entry.id)).not.toContain("m2");
+      expect(
+        machine.calls.some((call) => call.method === "POST" && call.url.includes("revoke")),
+      ).toBe(true);
+    } finally {
+      await main.dispose();
+    }
+  });
+  it("refuses every other sign-in before anything is sent", async () => {
+    const outbound = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", outbound);
+    // The owner's own app, with access management: it uses Add a machine and Allow.
+    const owner = await api([...AuthStandardClientScopes, AuthAccessWriteScope], false, ORIGIN);
+    // A main machine's management token that came through Connect.
+    const coordinator = await connectApi(
+      [...AuthStandardClientScopes, AuthAccessWriteScope],
+      EnvironmentId.make("env-m2"),
+    );
+    // A Connect sign-in that may only read.
+    const reader = await connectApi([AuthOrchestrationReadScope]);
+    // A phone signs in through the same Connect account.
+    const phone = await api(
+      AuthStandardClientScopes,
+      false,
+      ORIGIN,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { ...CONNECT, deviceType: "mobile" },
+    );
+    try {
+      const refused = await owner.workers("account-join", join);
+      expect(refused.status).toBe(403);
+      expect(await refused.text()).toContain("SpecWithCode Connect account");
+      expect((await coordinator.workers("account-join", join, bearer)).status).toBe(403);
+      expect((await reader.workers("account-join", join, bearer)).status).toBe(403);
+      expect((await reader.workers("account-join", join, {})).status).toBe(401);
+      const fromPhone = await phone.workers("account-join", join, bearer);
+      expect(fromPhone.status).toBe(403);
+      expect(await fromPhone.text()).toContain("A phone cannot add a machine");
+      // The owner-only routes still refuse the Connect sign-in.
+      const connect = await connectApi(AuthStandardClientScopes);
+      try {
+        expect((await connect.add({ invitation: m2Line }, bearer)).status).toBe(403);
+        expect((await connect.workers("allow", { id: "m1", access: "auto" }, bearer)).status).toBe(
+          403,
+        );
+      } finally {
+        await connect.dispose();
+      }
+      expect(outbound).not.toHaveBeenCalled();
+    } finally {
+      await owner.dispose();
+      await coordinator.dispose();
+      await reader.dispose();
+      await phone.dispose();
+    }
+  });
+});
+
 describe("letting a fleet machine run workers here, from here", () => {
   const OWNER_SCOPES = [...AuthStandardClientScopes, AuthAccessWriteScope];
   const HERE_CONNECT = "https://prod-fedcba9876543210.spec-weave.com";
