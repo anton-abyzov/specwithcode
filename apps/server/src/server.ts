@@ -888,7 +888,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Quota over time for burn rates and run-out estimates on the pooled limits view.
   UsageLimitHistory.layer,
   layerProviderInstallationRefresh,
-  // Turns on default-off providers whose CLI is already installed and signed in.
+  // Looks for installed agents once at start, and turns on the signed-in ones nobody decided on.
   ProviderDiscovery.layer,
   ReplayMarkers.layer,
 ).pipe(
@@ -921,6 +921,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(ProviderRegistry.layer),
+  // The search for installed agents: the registry answers clients from it.
+  Layer.provideMerge(ProviderDiscovery.layerSearch.pipe(Layer.provide(layerServerSettings))),
   // The instance registry is the new routing keystone — text generation,
   // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;

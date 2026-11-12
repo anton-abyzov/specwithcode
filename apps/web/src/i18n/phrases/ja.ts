@@ -4429,4 +4429,22 @@ export const ja: PhraseCatalog = {
     "ドロップしたファイルのあるフォルダを使用しました。",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "このマシンのフォルダは WSL 内にあります。パスを入力するか貼り付けてください。",
+  "Agents found on {machine}": "{machine} で見つかったエージェント",
+  "Looking for {agents}…": "{agents} を探しています…",
+  "{found} of {count} agents found on {machine}.":
+    "{machine} で {count} 個中 {found} 個のエージェントが見つかりました。",
+  "Find agents": "エージェントを探す",
+  "Installed, not added.": "インストール済み、未追加。",
+  "Signed in, not turned on.": "サインイン済み、オフ。",
+  "Installed, not signed in.": "インストール済み、未サインイン。",
+  "Installed, not turned on.": "インストール済み、オフ。",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "Muse Code は Contributor モードがオンのとき、コードを Meta と共有することがあります。オンにする前にその設定を確認してください。",
+  "Add agent": "エージェントを追加",
+  "Not found: {agents}.": "見つかりません: {agents}。",
+  "No answer from: {agents}.": "応答なし: {agents}。",
+  "Where it looked": "探した場所",
+  "{names} and {count} more": "{names} ほか {count} 件",
+  "Turn on {agent}": "{agent} をオンにする",
+  "Add {agent}": "{agent} を追加",
 };

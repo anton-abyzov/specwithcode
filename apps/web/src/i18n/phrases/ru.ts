@@ -4425,4 +4425,22 @@ export const ru: PhraseCatalog = {
     "Использована папка, в которой лежит перетащенный файл.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "Папки этого компьютера находятся внутри WSL. Введите или вставьте путь.",
+  "Agents found on {machine}": "Агенты, найденные на {machine}",
+  "Looking for {agents}…": "Ищем {agents}…",
+  "{found} of {count} agents found on {machine}.":
+    "Найдено агентов на {machine}: {found} из {count}.",
+  "Find agents": "Найти агентов",
+  "Installed, not added.": "Установлен, не добавлен.",
+  "Signed in, not turned on.": "Вход выполнен, не включён.",
+  "Installed, not signed in.": "Установлен, вход не выполнен.",
+  "Installed, not turned on.": "Установлен, не включён.",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "Muse Code может передавать ваш код в Meta, когда включён режим Contributor. Проверьте эту настройку, прежде чем включать.",
+  "Add agent": "Добавить агента",
+  "Not found: {agents}.": "Не найдены: {agents}.",
+  "No answer from: {agents}.": "Нет ответа от: {agents}.",
+  "Where it looked": "Где искали",
+  "{names} and {count} more": "{names} и ещё {count}",
+  "Turn on {agent}": "Включить {agent}",
+  "Add {agent}": "Добавить {agent}",
 };

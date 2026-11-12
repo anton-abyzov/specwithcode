@@ -4436,4 +4436,22 @@ export const pt: PhraseCatalog = {
   "Used the folder that holds the dropped file.": "Foi usada a pasta que contém o arquivo solto.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "Este computador mantém suas pastas dentro do WSL. Digite ou cole o caminho.",
+  "Agents found on {machine}": "Agentes encontrados em {machine}",
+  "Looking for {agents}…": "Procurando {agents}…",
+  "{found} of {count} agents found on {machine}.":
+    "{found} de {count} agentes encontrados em {machine}.",
+  "Find agents": "Procurar agentes",
+  "Installed, not added.": "Instalado, não adicionado.",
+  "Signed in, not turned on.": "Com sessão iniciada, desligado.",
+  "Installed, not signed in.": "Instalado, sem sessão iniciada.",
+  "Installed, not turned on.": "Instalado, desligado.",
+  "Muse Code can share your code with Meta when its Contributor mode is on. Check that setting before you turn it on.":
+    "O Muse Code pode compartilhar seu código com a Meta quando o modo Contributor está ligado. Confira essa configuração antes de ligá-lo.",
+  "Add agent": "Adicionar agente",
+  "Not found: {agents}.": "Não encontrados: {agents}.",
+  "No answer from: {agents}.": "Sem resposta de: {agents}.",
+  "Where it looked": "Onde foi procurado",
+  "{names} and {count} more": "{names} e mais {count}",
+  "Turn on {agent}": "Ligar {agent}",
+  "Add {agent}": "Adicionar {agent}",
 };
