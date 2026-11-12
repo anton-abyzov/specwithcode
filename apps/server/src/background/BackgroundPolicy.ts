@@ -4,7 +4,9 @@ import {
   type BackgroundScope,
   type ClientActivityLease,
   type ClientActivityReportInput,
+  type EnvironmentId,
   type HostPowerSnapshot,
+  type NotificationTarget,
   type RpcClientId,
 } from "@specweave-studio/contracts";
 import {
@@ -53,6 +55,10 @@ export class BackgroundPolicy extends Context.Service<
     readonly hasDemand: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
+    /** The one client that shows desktop notifications for this server's threads. */
+    readonly notificationTarget: (
+      selfEnvironmentId: EnvironmentId | null,
+    ) => Effect.Effect<NotificationTarget | null>;
   }
 >()("specweave-studio/background/BackgroundPolicy") {}
 
@@ -128,6 +134,106 @@ function upsertClientActivityLease(
 
 function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
   return isLeaseActive(lease, now) && lease.visible && (lease.focused || lease.recentlyInteracted);
+}
+
+/** How long a client's last interaction is remembered after its last report. */
+export const RETAINED_INTERACTION_MS = 8 * 60 * 60_000;
+export const MAX_RETAINED_INTERACTIONS = 64;
+
+/** The latest interaction a client reported, kept in memory after its lease ends. */
+export interface RetainedInteraction {
+  readonly lastInteractionAtMs: number;
+  /** When the client last reported; the entry is dropped 8 hours after it. */
+  readonly seenAtMs: number;
+}
+
+/** Records a report's interaction time, keeping the latest per client and at most 64 clients. */
+export function retainInteraction(
+  retained: ReadonlyMap<string, RetainedInteraction>,
+  clientId: string,
+  lastInteractionAtMs: number | undefined,
+  nowMs: number,
+): Map<string, RetainedInteraction> {
+  const next = new Map<string, RetainedInteraction>();
+  for (const [key, entry] of retained) {
+    if (nowMs - entry.seenAtMs <= RETAINED_INTERACTION_MS) next.set(key, entry);
+  }
+  const previous = next.get(clientId);
+  const latest = Math.max(
+    previous?.lastInteractionAtMs ?? -Infinity,
+    lastInteractionAtMs ?? -Infinity,
+  );
+  if (!Number.isFinite(latest)) return next;
+  next.delete(clientId);
+  next.set(clientId, { lastInteractionAtMs: Math.min(latest, nowMs), seenAtMs: nowMs });
+  while (next.size > MAX_RETAINED_INTERACTIONS) {
+    let oldest: string | undefined;
+    let oldestSeen = Infinity;
+    for (const [key, entry] of next) {
+      if (entry.seenAtMs < oldestSeen) {
+        oldest = key;
+        oldestSeen = entry.seenAtMs;
+      }
+    }
+    if (oldest === undefined) break;
+    next.delete(oldest);
+  }
+  return next;
+}
+
+const isPhoneLease = (lease: ClientActivityLease) => lease.clientKind === "mobile";
+
+/**
+ * Picks the one client that shows desktop notifications, in this order:
+ * the desktop or web app in use now that was touched last; a phone in use now
+ * (so no desktop pops up while the person is on the phone); the desktop or web
+ * app touched last; the app on this server's own machine; otherwise nobody.
+ * Only a client that is still connected can show a notification, so only a
+ * live lease is elected; the retained map supplies its interaction time when
+ * the lease itself has none (a reload, an older report). Ties go to the newer
+ * report, then to the lower client id.
+ */
+export function electNotificationTarget(input: {
+  readonly leases: Iterable<ClientActivityLease>;
+  readonly retained: ReadonlyMap<string, RetainedInteraction>;
+  readonly selfEnvironmentId: EnvironmentId | null;
+  readonly now: DateTime.Utc;
+}): NotificationTarget | null {
+  const live = [...input.leases].filter((lease) => isLeaseActive(lease, input.now));
+  const interactionMs = (lease: ClientActivityLease): number => {
+    const own =
+      lease.lastInteractionAt === undefined
+        ? -Infinity
+        : DateTime.toEpochMillis(lease.lastInteractionAt);
+    return Math.max(own, input.retained.get(lease.clientId)?.lastInteractionAtMs ?? -Infinity);
+  };
+  const newer = (a: ClientActivityLease, b: ClientActivityLease): number =>
+    DateTime.toEpochMillis(b.updatedAt) - DateTime.toEpochMillis(a.updatedAt) ||
+    (a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0);
+  const byInteraction = (a: ClientActivityLease, b: ClientActivityLease): number => {
+    const left = interactionMs(a);
+    const right = interactionMs(b);
+    return left === right ? newer(a, b) : right > left ? 1 : -1;
+  };
+  const desktops = live.filter((lease) => !isPhoneLease(lease));
+  const foreground = desktops.filter((lease) => isForegroundLease(lease, input.now));
+  const [inUse] = foreground.toSorted(byInteraction);
+  if (inUse) return { clientId: inUse.clientId, reason: "foreground" };
+  const [phone] = live
+    .filter((lease) => isPhoneLease(lease) && isForegroundLease(lease, input.now))
+    .toSorted(newer);
+  if (phone) return { clientId: phone.clientId, reason: "phone" };
+  const [recent] = desktops
+    .filter((lease) => Number.isFinite(interactionMs(lease)))
+    .toSorted(byInteraction);
+  if (recent) return { clientId: recent.clientId, reason: "recent" };
+  if (input.selfEnvironmentId !== null) {
+    const [owner] = desktops
+      .filter((lease) => lease.hostEnvironmentId === input.selfEnvironmentId)
+      .toSorted(newer);
+    if (owner) return { clientId: owner.clientId, reason: "owner" };
+  }
+  return null;
 }
 
 function leaseHasScope(lease: ClientActivityLease, scope: BackgroundScope): boolean {
@@ -214,6 +320,8 @@ export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
+  // Memory only: a restart forgets it, and the owner rule decides until someone interacts.
+  const retainedRef = yield* Ref.make(new Map<string, RetainedInteraction>());
   const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
   const publishMutex = yield* Semaphore.make(1);
 
@@ -293,10 +401,36 @@ export const make = Effect.fn("background.policy.make")(function* () {
           ...(input.batteryState !== undefined ? { batteryState: input.batteryState } : {}),
           ...(input.networkType !== undefined ? { networkType: input.networkType } : {}),
           scopes: input.scopes,
+          // Kept as its age at the report, on this server's clock: two devices'
+          // clocks never have to agree to compare who was used last.
+          ...(input.lastInteractionAt !== undefined
+            ? {
+                lastInteractionAt: DateTime.subtract(now, {
+                  milliseconds: Math.max(
+                    0,
+                    DateTime.toEpochMillis(input.observedAt) -
+                      DateTime.toEpochMillis(input.lastInteractionAt),
+                  ),
+                }),
+              }
+            : {}),
+          ...(input.hostEnvironmentId !== undefined
+            ? { hostEnvironmentId: input.hostEnvironmentId }
+            : {}),
           updatedAt: now,
           expiresAt,
         };
         yield* Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now));
+        yield* Ref.update(retainedRef, (retained) =>
+          retainInteraction(
+            retained,
+            lease.clientId,
+            lease.lastInteractionAt === undefined
+              ? undefined
+              : DateTime.toEpochMillis(lease.lastInteractionAt),
+            DateTime.toEpochMillis(now),
+          ),
+        );
         yield* publishSnapshotUnlocked;
       }),
     );
@@ -335,6 +469,23 @@ export const make = Effect.fn("background.policy.make")(function* () {
     snapshot,
     (current) => current.shouldRunOpportunisticWork,
   );
+
+  const notificationTarget: BackgroundPolicy["Service"]["notificationTarget"] = (
+    selfEnvironmentId,
+  ) =>
+    Effect.gen(function* () {
+      const [leases, retained, now] = yield* Effect.all([
+        Ref.get(leasesRef),
+        Ref.get(retainedRef),
+        DateTime.now,
+      ]);
+      return electNotificationTarget({
+        leases: leases.values(),
+        retained,
+        selfEnvironmentId,
+        now,
+      });
+    });
 
   yield* Stream.runForEach(hostPowerMonitor.streamChanges, () => publishSnapshot).pipe(
     Effect.forkScoped,
@@ -381,6 +532,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     hasDemand,
     shouldRunScopeWork,
     shouldRunOpportunisticWork,
+    notificationTarget,
   });
 });
 

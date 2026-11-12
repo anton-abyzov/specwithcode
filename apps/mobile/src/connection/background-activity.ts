@@ -53,11 +53,15 @@ export const layerReporter = Layer.effectDiscard(
     );
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
+    const clock = yield* Clock.Clock;
     let appState = AppState.currentState;
+    // The last time the app was in use; null until it has been.
+    let lastActiveAtMs: number | null = null;
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
       const active = appState === "active";
+      if (active) lastActiveAtMs = observedAtMs;
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -79,6 +83,9 @@ export const layerReporter = Layer.effectDiscard(
                 ],
                 ttlMs: LEASE_TTL_MS,
                 observedAt: DateTime.makeUnsafe(observedAtMs),
+                ...(lastActiveAtMs === null
+                  ? {}
+                  : { lastInteractionAt: DateTime.makeUnsafe(lastActiveAtMs) }),
               }),
             )
             .pipe(Effect.ignore),
@@ -90,6 +97,9 @@ export const layerReporter = Layer.effectDiscard(
       Effect.sync(() => {
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
+          // Leaving the foreground ends a stretch of use: remember when.
+          if (appState === "active" && nextState !== "active")
+            lastActiveAtMs = clock.currentTimeMillisUnsafe();
           appState = nextState;
           requestReport();
         });

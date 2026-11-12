@@ -29,6 +29,16 @@ vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
+  usePrimaryEnvironmentId: () => null,
+  useUnreachableEnvironmentIds: () => new Set(),
+}));
+vi.mock("../notificationTarget", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../notificationTarget")>()),
+  readNotificationTarget: () => Promise.resolve({ status: "unknown", ownerAppConnected: false }),
+}));
+vi.mock("../lib/backgroundActivityReporter", () => ({
+  backgroundActivityClientId: () => "client-self",
+  appClientId: (clientId: string) => clientId.split(":")[0],
 }));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (

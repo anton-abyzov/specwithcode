@@ -4436,4 +4436,7 @@ export const pt: PhraseCatalog = {
   "Used the folder that holds the dropped file.": "Foi usada a pasta que contém o arquivo solto.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "Este computador mantém suas pastas dentro do WSL. Digite ou cole o caminho.",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "Mostrado no dispositivo que você está usando. Seus outros computadores mostram um selo.",
+  "{count} more on {machine}, in use there": "Mais {count} em {machine}, em uso lá",
 };

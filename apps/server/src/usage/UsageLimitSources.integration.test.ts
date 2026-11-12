@@ -57,6 +57,7 @@ const makeFixture = Effect.gen(function* () {
     subscribe: Effect.die("Unused host subscription"),
     hasDemand: () => Effect.succeed(false),
     shouldRunOpportunisticWork: Effect.succeed(false),
+    notificationTarget: () => Effect.succeed(null),
     shouldRunScopeWork: (scope) =>
       Effect.sync(() => {
         expect(scope).toEqual({ type: "provider-status" });

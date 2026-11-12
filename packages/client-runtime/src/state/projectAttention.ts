@@ -13,6 +13,14 @@ import {
   threadRuntimeIsActive,
   type EnvironmentThreadShell,
 } from "./models.ts";
+import { attentionOwnerMachine, remoteWorkerLaunchers } from "./attentionOwner.ts";
+
+export {
+  attentionOwnerMachine,
+  raisesAttention,
+  remoteWorkerLaunchers,
+  type AttentionLauncher,
+} from "./attentionOwner.ts";
 
 /** Request ids of the cards an update records to ask a closed question again. */
 const REOPENED_REQUEST_PREFIX = "update-reopen";
@@ -214,10 +222,17 @@ export interface AttentionRoot {
   readonly actions: readonly ProjectAction[];
   readonly working: boolean;
   readonly waits?: readonly string[];
+  /** The machine this item belongs to; see attentionOwnerMachine. */
+  readonly ownerMachineId?: string;
+  /** False when another app raises this item: it is listed here, not counted. */
+  readonly raised?: boolean;
 }
 export interface ProjectAttention {
   readonly roots: readonly AttentionRoot[];
+  /** Items this app raises. */
   readonly count: number;
+  /** Items that need the person but are raised by the app on another machine. */
+  readonly elsewhere?: number;
   readonly working: number;
   readonly complete: boolean;
   readonly staleCount: number;
@@ -284,6 +299,13 @@ export function aggregateProjectAttention(input: {
   readonly members: readonly AttentionMember[];
   readonly roots: readonly EnvironmentThreadShell[];
   readonly threads: readonly EnvironmentThreadShell[];
+  /**
+   * Whether this app raises an item owned by `ownerMachineId`. Without it
+   * every item counts, as before.
+   */
+  readonly raises?:
+    | ((thread: EnvironmentThreadShell, ownerMachineId: string) => boolean)
+    | undefined;
 }): ProjectAttention {
   const members = new Map(input.members.map((m) => [memberKey(m.environmentId, m.projectId), m]));
   const keyOf = (t: EnvironmentThreadShell) => keysOf(t).identity;
@@ -389,12 +411,19 @@ export function aggregateProjectAttention(input: {
         complete = false;
     }
   }
-  const result = [...roots.values()];
+  const launchers = input.raises ? remoteWorkerLaunchers(input.members) : null;
+  const result = [...roots.values()].map((root): AttentionRoot => {
+    if (!input.raises || launchers === null) return root;
+    const ownerMachineId = attentionOwnerMachine(root.thread, launchers);
+    return { ...root, ownerMachineId, raised: input.raises(root.thread, ownerMachineId) };
+  });
   const everyMemberLive = input.members.every((m) => m.freshness === "live");
-  const count = result.filter((root) => root.actions.length > 0).length;
+  const needing = result.filter((root) => root.actions.length > 0);
+  const count = needing.filter((root) => root.raised !== false).length;
   return {
     roots: result,
     count,
+    elsewhere: needing.length - count,
     complete,
     staleCount: staleRoots.size,
     working: result.filter((root) => !root.coordinator && root.working && root.actions.length === 0)

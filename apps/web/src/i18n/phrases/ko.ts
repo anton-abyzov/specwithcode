@@ -4378,4 +4378,7 @@ export const ko: PhraseCatalog = {
   "Used the folder that holds the dropped file.": "놓은 파일이 들어 있는 폴더를 사용했습니다.",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "이 컴퓨터의 폴더는 WSL 안에 있습니다. 경로를 입력하거나 붙여넣으세요.",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "사용 중인 기기에 표시됩니다. 다른 컴퓨터에는 배지가 표시됩니다.",
+  "{count} more on {machine}, in use there": "{machine}에 {count}개 더 있음, 그곳에서 사용 중",
 };

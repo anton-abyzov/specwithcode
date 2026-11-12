@@ -92,13 +92,16 @@ export function NotificationSettings() {
       <SettingsRow
         {...searchableSetting("thread-notifications")}
         description={
-          native
-            ? tx(
-                "Alerts on this device from connected machines while a SpecWithCode window is open or minimized. No mobile app needed.",
-              )
-            : tx(
-                "Alerts on this device from connected machines while this browser page is open. Closing it stops delivery.",
-              )
+          <>
+            {native
+              ? tx(
+                  "Alerts on this device from connected machines while a SpecWithCode window is open or minimized. No mobile app needed.",
+                )
+              : tx(
+                  "Alerts on this device from connected machines while this browser page is open. Closing it stops delivery.",
+                )}{" "}
+            {tx("Shown on the device you are using. Your other computers show a badge.")}
+          </>
         }
         control={
           <div className="flex flex-wrap justify-end gap-2">

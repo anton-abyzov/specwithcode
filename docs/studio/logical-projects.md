@@ -168,6 +168,12 @@ History labels identify the recorded execution host and requested run model. The
 
 Older projects remain readable. Their unrelated histories are not merged automatically by title or repository. Product implementation does not itself migrate live stores, publish a release, or prove acceptance on a physical three-machine fleet.
 
+## Notifications across machines
+
+Every app reports its activity to every machine it is connected to, so a thread's own server hears from every app that could alert for it. That server elects one notification client, in this order: the desktop or web app in use now and touched last; a phone in use now (no desktop pops up; the phone gets its push as before); the desktop or web app touched last; the app on the server's own machine; nobody. A client that is no longer connected is never elected. Interaction times are kept in memory for 8 hours (64 clients at most), so a server restart falls back to the own-machine rule until someone interacts.
+
+Out of focus, only the elected app posts the system notification and plays the sound. The app on the item's owner machine still badges it and counts it in the sidebar, the project page and Overview; other apps neither badge nor count it, and Overview says "N more on <machine>, in use there". Rows keep their status everywhere. The owner is the machine of the coordinator that launched a remote worker, else the thread's owner machine, else the serving machine. A handed-off copy (`executionState: "fenced"`, or running on another machine) raises nothing. A server too old to elect, one that does not answer within 1.5 s, or one that names nobody leaves alerts with the app on the serving machine, or with every app when that app is not connected; counts and badges then show everywhere, as before. A focused window still shows its in-app toast. Phone pushes do not change.
+
 ## Verification
 
 Focused contract, admission, handoff, grouping, scoped-thread, federation, and request-provenance tests cover the domain behavior. `scripts/studio-logical-projects/verify.mjs` starts three isolated servers with synthetic project history and disabled providers, then verifies the built UI using headless Chrome. It writes screenshots and a receipt, and stops only its own process IDs. This verifies real application transport/rendering with fixtures; it is not a live-provider or physical-machine acceptance claim.
@@ -184,6 +190,12 @@ PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node scripts/studio-logical-projects/verify
 
 ```sh
 STUDIO_TEST_CHROMIUM=<chrome-headless-shell> PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node scripts/studio-logical-projects/two-orchestrators.mjs /tmp/two-orchestrators
+```
+
+`scripts/studio-logical-projects/notify-active.mjs` starts two isolated servers with providers off and two apps, each holding a socket to both servers and reporting activity as a desktop window does. For one question it checks that exactly one app pops up and which ones count it: the own-machine app before anyone interacts, the app touched last, a focused window, and the other app once the first machine's lease ends. Build apps/server first; it opens no browser.
+
+```sh
+node scripts/studio-logical-projects/notify-active.mjs /tmp/notify-active
 ```
 
 The browser check resolves Playwright from the project or the bundled Codex runtime. `STUDIO_TEST_PLAYWRIGHT_MODULE` may name an installed Playwright module path, and `STUDIO_TEST_CHROMIUM` may select an installed Chrome executable. It always launches a separate headless context, keeps ephemeral credentials out of artifacts, verifies that no provider turns occurred, and removes its temporary server stores after stopping them.

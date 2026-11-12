@@ -106,6 +106,15 @@ export function backgroundActivityClientId(): string {
   return `${storedClientId.slice(0, CLIENT_ID_MAX_LENGTH - suffix.length)}${suffix}`;
 }
 
+/**
+ * The app a client id belongs to: a project window's id without its window
+ * suffix, so any window of one app counts as that app.
+ */
+export function appClientId(clientId: string): string {
+  const separator = clientId.indexOf(":");
+  return separator === -1 ? clientId : clientId.slice(0, separator);
+}
+
 function resolveClientKind(): ClientActivityReportInput["clientKind"] {
   return window.desktopBridge ? "desktop-renderer" : "web";
 }
@@ -117,10 +126,25 @@ export function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs:
   );
 }
 
-function createActivityReport(
+/** This app's own machine: the primary entry, when the catalog has one. */
+export function hostEnvironmentIdOf(
+  entries: ReadonlyMap<EnvironmentId, { readonly target: { readonly _tag: string } }>,
+): EnvironmentId | null {
+  for (const [environmentId, entry] of entries) {
+    if (entry.target._tag === "PrimaryConnectionTarget") return environmentId;
+  }
+  return null;
+}
+
+export function createActivityReport(
   environmentId: EnvironmentId,
   lastInteractionAtMs: number,
   observedAtMs: number,
+  presence: {
+    /** The last real pointer, key, wheel or touch event; null before the first one. */
+    readonly lastUserInteractionAtMs: number | null;
+    readonly hostEnvironmentId: EnvironmentId | null;
+  } = { lastUserInteractionAtMs: null, hostEnvironmentId: null },
 ): ClientActivityReportInput {
   const scopes = [...BASELINE_SCOPES];
   for (const entry of retainedScopes.values()) {
@@ -139,6 +163,12 @@ function createActivityReport(
     scopes,
     ttlMs: LEASE_TTL_MS,
     observedAt: DateTime.makeUnsafe(observedAtMs),
+    ...(presence.lastUserInteractionAtMs === null
+      ? {}
+      : { lastInteractionAt: DateTime.makeUnsafe(presence.lastUserInteractionAtMs) }),
+    ...(presence.hostEnvironmentId === null
+      ? {}
+      : { hostEnvironmentId: presence.hostEnvironmentId }),
   };
 }
 
@@ -216,10 +246,14 @@ export const layer = Layer.effectDiscard(
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let lastInteractionAtMs = clock.currentTimeMillisUnsafe();
+    // Opening the app is not an interaction: the server elects the notification
+    // device from real input only.
+    let lastUserInteractionAtMs: number | null = null;
     const recordInteraction = () => {
       const observedAtMs = clock.currentTimeMillisUnsafe();
       const wasRecent = wasRecentlyInteracted(lastInteractionAtMs, observedAtMs);
       lastInteractionAtMs = observedAtMs;
+      lastUserInteractionAtMs = observedAtMs;
       if (!wasRecent) {
         requestReport();
       }
@@ -229,6 +263,7 @@ export const layer = Layer.effectDiscard(
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
       const entries = yield* SubscriptionRef.get(registry.entries);
+      const hostEnvironmentId = hostEnvironmentIdOf(entries);
       yield* Effect.forEach(
         entries.keys(),
         (environmentId) =>
@@ -237,7 +272,10 @@ export const layer = Layer.effectDiscard(
               environmentId,
               request(
                 WS_METHODS.serverReportClientActivity,
-                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
+                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs, {
+                  lastUserInteractionAtMs,
+                  hostEnvironmentId,
+                }),
               ),
             )
             .pipe(Effect.ignore),

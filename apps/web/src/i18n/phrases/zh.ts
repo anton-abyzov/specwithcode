@@ -4254,4 +4254,7 @@ export const zh: PhraseCatalog = {
   "Used the folder that holds the dropped file.": "已使用拖入文件所在的文件夹。",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "这台电脑的文件夹位于 WSL 中。请输入或粘贴路径。",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "显示在你正在使用的设备上。你的其他电脑会显示角标。",
+  "{count} more on {machine}, in use there": "{machine} 上还有 {count} 项，正在那里使用",
 };

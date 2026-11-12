@@ -130,6 +130,7 @@ function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
     hasDemand: () => Effect.succeed(shouldRunScopeWork),
     shouldRunScopeWork: () => Effect.succeed(shouldRunScopeWork),
     shouldRunOpportunisticWork: Effect.succeed(shouldRunScopeWork),
+    notificationTarget: () => Effect.succeed(null),
   });
 }
 

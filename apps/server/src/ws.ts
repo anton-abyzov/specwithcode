@@ -2661,7 +2661,14 @@ const layerWsRpc = (
           ),
         [WS_METHODS.serverReportHostPowerState]: (input) =>
           backgroundPolicy.reportHostPowerState(input),
-        [WS_METHODS.serverGetBackgroundPolicy]: (_input) => backgroundPolicy.snapshot,
+        [WS_METHODS.serverGetBackgroundPolicy]: (_input) =>
+          Effect.all([backgroundPolicy.snapshot, serverEnvironment.getEnvironmentId]).pipe(
+            Effect.flatMap(([snapshot, environmentId]) =>
+              backgroundPolicy
+                .notificationTarget(environmentId)
+                .pipe(Effect.map((notificationTarget) => ({ ...snapshot, notificationTarget }))),
+            ),
+          ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,
         [WS_METHODS.cloudInstallRelayClient]: (_input) =>
           Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>((queue) =>

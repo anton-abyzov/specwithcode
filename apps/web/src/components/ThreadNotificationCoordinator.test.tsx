@@ -53,6 +53,15 @@ const state = vi.hoisted(() => ({
   notification: vi.fn(function (_title: string, options: NotificationOptions) {
     return Object.assign(new EventTarget(), { tag: options.tag, close: vi.fn() });
   }),
+  environmentIds: ["env-1"],
+  primary: null as string | null,
+  clientId: "client-self",
+  targetReads: [] as string[],
+  targetRead: (): Promise<unknown> =>
+    Promise.resolve({ status: "unknown", ownerAppConnected: false }),
+  executionState: undefined as "running" | "fenced" | undefined,
+  executionMachineId: undefined as string | undefined,
+  ownerMachineId: undefined as string | undefined,
 }));
 
 const SHELL_NOW = DateTime.makeUnsafe("2026-09-13T09:00:00.000Z");
@@ -123,6 +132,11 @@ function mockThreadShell() {
     settledAt: state.settled ? SHELL_NOW : null,
     lastVisitedAt: null,
     deletedAt: state.deleted ? SHELL_NOW : null,
+    ...(state.executionState === undefined ? {} : { executionState: state.executionState }),
+    ...(state.executionMachineId === undefined
+      ? {}
+      : { executionMachineId: state.executionMachineId }),
+    ...(state.ownerMachineId === undefined ? {} : { ownerMachineId: state.ownerMachineId }),
   };
 }
 
@@ -175,7 +189,20 @@ vi.mock("../hooks/useSettings", () => ({
   getClientSettings: () => ({ notificationMode: state.mode }),
 }));
 vi.mock("../state/environments", () => ({
-  useEnvironmentIds: () => ["env-1"],
+  useEnvironmentIds: () => state.environmentIds,
+  usePrimaryEnvironmentId: () => state.primary,
+  useUnreachableEnvironmentIds: () => new Set<string>(),
+}));
+vi.mock("../notificationTarget", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../notificationTarget")>()),
+  readNotificationTarget: (environmentId: string) => {
+    state.targetReads.push(environmentId);
+    return state.targetRead();
+  },
+}));
+vi.mock("../lib/backgroundActivityReporter", () => ({
+  backgroundActivityClientId: () => state.clientId,
+  appClientId: (clientId: string) => clientId.split(":")[0],
 }));
 vi.mock("../state/shell", () => ({
   environmentShell: { stateValueAtom: vi.fn() },
@@ -189,7 +216,7 @@ vi.mock("./ui/toast", () => ({
   toastManager: { add: state.add, close: state.close },
 }));
 
-import { __resetNotificationOwnerForTests } from "../threadNotifications";
+import { __resetNotificationOwnerForTests, setNotificationBadge } from "../threadNotifications";
 import { setNotificationsConnected } from "../notificationConnection";
 import { __resetNotificationHistoryForTests } from "../notificationHistory";
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
@@ -249,6 +276,14 @@ beforeEach(() => {
     creationSource: "web",
     createdBy: "user",
     background: [],
+    environmentIds: ["env-1"],
+    primary: null,
+    clientId: "client-self",
+    targetReads: [],
+    targetRead: () => Promise.resolve({ status: "unknown", ownerAppConnected: false }),
+    executionState: undefined,
+    executionMachineId: undefined,
+    ownerMachineId: undefined,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -583,6 +618,120 @@ describe("thread notifications", () => {
       tag: "env-1:thread-1",
       silent: true,
     });
+  });
+});
+
+describe("only the device in use pops up", () => {
+  const target = (clientId: string | null) => () =>
+    Promise.resolve({
+      status: "known",
+      target: clientId === null ? null : { clientId, reason: "foreground" },
+      // A server names nobody only when no app on its machine reports to it.
+      ownerAppConnected: clientId !== null,
+    });
+
+  async function askInBackground() {
+    state.mode = "notifications-and-sound";
+    state.focused = false;
+    await render();
+    state.input = true;
+    await render();
+  }
+
+  it("pops up and plays the sound on the elected app, read from the thread's server", async () => {
+    state.targetRead = target("client-self");
+    await askInBackground();
+    expect(state.targetReads).toEqual(["env-1"]);
+    expect(state.notification).toHaveBeenCalledTimes(1);
+    expect(state.sound).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts any window of the elected app as elected", async () => {
+    state.clientId = "client-self:project-window";
+    state.targetRead = target("client-self");
+    await askInBackground();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+  });
+
+  it("badges without a popup or sound on the owner machine's app when another app is elected", async () => {
+    state.primary = "env-1";
+    state.targetRead = target("client-other");
+    await askInBackground();
+    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(vi.mocked(setNotificationBadge)).toHaveBeenLastCalledWith(1);
+  });
+
+  it("stays silent and adds no badge on an app that is neither elected nor the owner", async () => {
+    state.primary = "env-2";
+    state.targetRead = target("client-other");
+    await askInBackground();
+    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(vi.mocked(setNotificationBadge)).not.toHaveBeenCalledWith(1);
+  });
+
+  it("on an older server or a timeout, pops up only on the thread's own machine", async () => {
+    state.targetRead = () => Promise.resolve({ status: "unknown", ownerAppConnected: true });
+    state.primary = "env-2";
+    await askInBackground();
+    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(vi.mocked(setNotificationBadge)).toHaveBeenLastCalledWith(1);
+
+    await act(() => renderer?.unmount());
+    renderer = undefined;
+    vi.clearAllMocks();
+    __resetNotificationHistoryForTests();
+    state.input = false;
+    state.requestId = "request-2";
+    state.primary = "env-1";
+    await askInBackground();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no app on the thread's machine, or no target at all, every app pops up as before", async () => {
+    state.primary = "env-2";
+    state.targetRead = () => Promise.resolve({ status: "unknown", ownerAppConnected: false });
+    await askInBackground();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+
+    await act(() => renderer?.unmount());
+    renderer = undefined;
+    vi.clearAllMocks();
+    __resetNotificationHistoryForTests();
+    state.input = false;
+    state.requestId = "request-2";
+    state.targetRead = target(null);
+    await askInBackground();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["handed off", { executionState: "fenced" as const }],
+    ["running elsewhere", { executionMachineId: "env-2" }],
+  ])("raises nothing for a copy %s, not even a toast", async (_name, copy) => {
+    Object.assign(state, copy);
+    state.mode = "notifications-and-sound";
+    await render();
+    state.input = true;
+    await render();
+    state.focused = false;
+    await complete();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.targetReads).toEqual([]);
+  });
+
+  it("keeps the toast in a focused window without asking the server", async () => {
+    state.targetRead = target("client-other");
+    state.mode = "notifications-and-sound";
+    await render();
+    state.input = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.targetReads).toEqual([]);
   });
 });
 

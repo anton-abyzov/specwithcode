@@ -4429,4 +4429,7 @@ export const ja: PhraseCatalog = {
     "ドロップしたファイルのあるフォルダを使用しました。",
   "This machine keeps its folders inside WSL. Type or paste the path instead.":
     "このマシンのフォルダは WSL 内にあります。パスを入力するか貼り付けてください。",
+  "Shown on the device you are using. Your other computers show a badge.":
+    "使用中のデバイスに表示されます。ほかのコンピューターにはバッジが表示されます。",
+  "{count} more on {machine}, in use there": "{machine} にあと {count} 件、そちらで使用中",
 };
