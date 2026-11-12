@@ -6,7 +6,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 
-import { claudeLoginIdentity, codexLoginIdentity, watchLoginChanges } from "./loginWatch.ts";
+import {
+  claudeLoginIdentity,
+  codexLoginIdentity,
+  loginFileMark,
+  museLoginIdentity,
+  watchLoginChanges,
+} from "./loginWatch.ts";
 
 function claudeConfig(account: { accountUuid: string; emailAddress: string } | null, startups = 1) {
   return JSON.stringify({
@@ -58,6 +64,68 @@ describe("login identities", () => {
     assert.notStrictEqual(first, other);
     assert.notStrictEqual(first, sameWorkspaceOtherPerson);
   });
+});
+
+function museAuth(email: string | null, subscribed = true) {
+  return JSON.stringify({
+    schema_version: 1,
+    providers: email
+      ? {
+          meta: {
+            mechanism: "oauth",
+            storage: "keychain",
+            subs_active: subscribed,
+            user_full_name: "A Person",
+            user_email: email,
+          },
+        }
+      : {},
+  });
+}
+
+describe("the Muse Code account", () => {
+  it("is told apart by who is signed in, not by how the file is written", () => {
+    const first = museLoginIdentity(museAuth("A@x.dev"));
+    assert.strictEqual(first, museLoginIdentity(museAuth("a@x.dev")));
+    assert.notStrictEqual(first, museLoginIdentity(museAuth("b@x.dev")));
+    assert.notStrictEqual(first, museLoginIdentity(museAuth(null)));
+    assert.notStrictEqual(first, museLoginIdentity(museAuth("a@x.dev", false)));
+    assert.strictEqual(museLoginIdentity("{not json"), undefined);
+  });
+});
+
+describe("loginFileMark", () => {
+  it.live("changes with any rewrite, also by the same account, and never fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped();
+        const filePath = path.join(dir, "auth.json");
+        assert.strictEqual(yield* loginFileMark(filePath), "none");
+
+        yield* fs.writeFileString(filePath, codexAuth("acct-1", "a@x.dev", "t1"));
+        const first = yield* loginFileMark(filePath);
+        assert.strictEqual(yield* loginFileMark(filePath), first);
+        // The same account signs in again: new tokens, same identity.
+        yield* fs.writeFileString(filePath, codexAuth("acct-1", "a@x.dev", "t2"));
+        const again = yield* loginFileMark(filePath);
+        assert.notStrictEqual(again, first);
+        // A short hash and a length: no part of the file can be read from the mark.
+        assert.match(again, /^\d+:[0-9a-f]{1,14}$/);
+
+        yield* fs.remove(filePath);
+        assert.strictEqual(yield* loginFileMark(filePath), "none");
+
+        // A folder at that path is not a login file, and a huge file is not read.
+        yield* fs.makeDirectory(filePath);
+        assert.strictEqual(yield* loginFileMark(filePath), "none");
+        yield* fs.remove(filePath, { recursive: true });
+        yield* fs.writeFileString(filePath, "x".repeat(1_048_577));
+        assert.strictEqual(yield* loginFileMark(filePath), "1048577:unread");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("watchLoginChanges", () => {

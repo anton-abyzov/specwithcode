@@ -63,6 +63,30 @@ describe("wasRecentlyInteracted", () => {
     }),
   );
 
+  it.effect("tells the machine which agent's sign-in state is on screen", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-sign-in-test");
+      const release = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: WS_METHODS.providerAuthSubscribe,
+        input: { instanceId: "claudeAgent_work" },
+      });
+      const again = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: WS_METHODS.providerAuthSubscribe,
+        input: { instanceId: "claudeAgent_work" },
+      });
+      expect(retainedBackgroundScopes(environmentId)).toEqual([
+        { type: "provider-status", instanceId: "claudeAgent_work" },
+      ]);
+      // Two rows for one agent: the signal lasts until the last one is gone.
+      yield* release;
+      expect(retainedBackgroundScopes(environmentId)).toHaveLength(1);
+      yield* again;
+      expect(retainedBackgroundScopes(environmentId)).toEqual([]);
+    }),
+  );
+
   it.effect("keeps delimiter-containing environment and scope values distinct", () =>
     Effect.gen(function* () {
       const firstEnvironmentId = EnvironmentId.make("a");

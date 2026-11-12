@@ -145,10 +145,13 @@ describe("fresh Codex account status with optional discovery", () => {
           Effect.provide(Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({})),
           Effect.forkChild,
         );
+        // Silent for its usual budget, then for the one longer second try.
         yield* TestClock.adjust("14 seconds");
+        yield* TestClock.adjust("15 seconds");
         const status = yield* Fiber.join(checked);
         expect(status.status).toBe("error");
         expect(status.auth.status).toBe("unknown");
+        expect(status.message).toBe("Could not check Codex: no answer in 15 seconds.");
       }).pipe(Effect.scoped),
   );
 });

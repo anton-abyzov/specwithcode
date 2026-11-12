@@ -3,14 +3,19 @@ import type { ModelCapabilities } from "@specweave-studio/contracts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { createModelCapabilities } from "@specweave-studio/shared/model";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
+  answerOrRetry,
   isCommandMissingCause,
+  noAnswerMessage,
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
@@ -178,4 +183,50 @@ describe("ProviderCommandNotFoundError", () => {
       expect(error.message).not.toContain("secret-token-value");
     });
   });
+});
+
+describe("a check that gives no answer", () => {
+  /** A check that stays silent for its first `silent` runs, then answers. */
+  const check = (silent: number) => {
+    let runs = 0;
+    const effect = Effect.suspend(() => {
+      runs += 1;
+      return runs <= silent ? Effect.never : Effect.succeed(`answer ${runs}`);
+    });
+    return { effect, runs: () => runs };
+  };
+
+  it.effect("is not run twice when it answers in time", () =>
+    Effect.gen(function* () {
+      const quick = check(0);
+      expect(yield* answerOrRetry(quick.effect, 4_000)).toEqual(Option.some("answer 1"));
+      expect(quick.runs()).toBe(1);
+    }),
+  );
+
+  it.effect("runs once more with the longer limit before anything is shown", () =>
+    Effect.gen(function* () {
+      const slow = check(1);
+      const fiber = yield* answerOrRetry(slow.effect, 4_000).pipe(Effect.forkChild);
+      yield* TestClock.adjust("4 seconds");
+      expect(yield* Fiber.join(fiber)).toEqual(Option.some("answer 2"));
+      expect(slow.runs()).toBe(2);
+    }),
+  );
+
+  it.effect("gives up after the second silence, and says how long it waited", () =>
+    Effect.gen(function* () {
+      const silent = check(5);
+      const fiber = yield* answerOrRetry(silent.effect, 4_000).pipe(Effect.forkChild);
+      yield* TestClock.adjust("4 seconds");
+      yield* TestClock.adjust("14 seconds");
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(fiber)).toEqual(Option.none());
+      expect(silent.runs()).toBe(2);
+      expect(noAnswerMessage("Claude Code")).toBe(
+        "Could not check Claude Code: no answer in 15 seconds.",
+      );
+    }),
+  );
 });

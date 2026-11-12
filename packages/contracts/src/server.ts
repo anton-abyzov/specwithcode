@@ -326,6 +326,12 @@ export const ServerProvider = Schema.Struct({
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
   auth: ServerProviderAuth,
+  /**
+   * The last sign-in a check did read, kept while `auth` is "unknown" because
+   * a later check gave no answer. For display only: what may run is decided by
+   * `auth`, never by this.
+   */
+  lastKnownAuth: Schema.optionalKey(ServerProviderAuth),
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   // Optional for back-compat: every legacy producer omits this field and

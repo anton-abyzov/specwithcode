@@ -21,7 +21,7 @@ import { TestClock } from "effect/testing";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
+import { makeManagedServerProvider, withLastKnownAuth } from "./makeManagedServerProvider.ts";
 import type { RememberedSubscription, SubscriptionMemory } from "./subscriptionIdentity.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
@@ -102,7 +102,11 @@ const refreshedSnapshotSecond: ServerProvider = {
   message: "Refreshed provider availability again.",
 };
 
-function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
+function layerBackgroundPolicy(
+  shouldRunScopeWork: boolean,
+  /** Whether a window shows the agent's row right now; the fixed answer unless given. */
+  rowShown: () => boolean = () => shouldRunScopeWork,
+) {
   return Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     reportClientActivity: () => Effect.void,
     removeRpcClient: () => Effect.void,
@@ -128,7 +132,7 @@ function layerBackgroundPolicy(shouldRunScopeWork: boolean) {
     }),
     streamChanges: Stream.empty,
     hasDemand: () => Effect.succeed(shouldRunScopeWork),
-    shouldRunScopeWork: () => Effect.succeed(shouldRunScopeWork),
+    shouldRunScopeWork: () => Effect.sync(rowShown),
     shouldRunOpportunisticWork: Effect.succeed(shouldRunScopeWork),
     notificationTarget: () => Effect.succeed(null),
   });
@@ -1163,4 +1167,283 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+
+  describe("a check that cannot read the sign-in", () => {
+    const signedIn: ServerProvider = {
+      ...refreshedSnapshot,
+      auth: { status: "authenticated", email: "a@x.dev", label: "Max" },
+    };
+    const noAnswer: ServerProvider = {
+      ...refreshedSnapshot,
+      status: "error",
+      auth: { status: "unknown" },
+      message: "Could not check Codex: no answer in 15 seconds.",
+    };
+
+    /** A provider whose checks give `answers` in turn; the last one repeats. */
+    const providerWith = (answers: ReadonlyArray<ServerProvider>) =>
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.getAndUpdate(checkCalls, (count) => count + 1).pipe(
+            Effect.map((count) => answers[Math.min(count, answers.length - 1)]!),
+          ),
+          refreshInterval: 0,
+        });
+        // The check the provider runs by itself when it is made.
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        return provider;
+      });
+
+    it.effect("keeps the last sign-in it did read, for the row to show", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const provider = yield* providerWith([signedIn, noAnswer, noAnswer, signedIn]);
+          const silent = yield* provider.refresh;
+          // What may run is still decided by what was read: nothing.
+          assert.deepStrictEqual(silent.auth, { status: "unknown" });
+          assert.deepStrictEqual(silent.lastKnownAuth, signedIn.auth);
+          assert.strictEqual(silent.message, noAnswer.message);
+          // A second silent check still remembers.
+          assert.deepStrictEqual((yield* provider.refresh).lastKnownAuth, signedIn.auth);
+          // An answer replaces the memory.
+          const answered = yield* provider.refresh;
+          assert.strictEqual(answered.auth.status, "authenticated");
+          assert.strictEqual("lastKnownAuth" in answered, false);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+
+    it.effect("remembers a sign-out too, and nothing for an agent that is off or gone", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const signedOut: ServerProvider = {
+            ...refreshedSnapshot,
+            status: "error",
+            auth: { status: "unauthenticated" },
+          };
+          const provider = yield* providerWith([
+            signedOut,
+            noAnswer,
+            { ...noAnswer, installed: false },
+            { ...noAnswer, enabled: false },
+          ]);
+          assert.deepStrictEqual((yield* provider.refresh).lastKnownAuth, signedOut.auth);
+          assert.strictEqual("lastKnownAuth" in (yield* provider.refresh), false);
+          assert.strictEqual("lastKnownAuth" in (yield* provider.refresh), false);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+
+    it.effect("remembers nothing when the agent answered and reports no sign-in", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Several agents report "unknown" as their normal state, and one signed out does too.
+          const answeredUnknown: ServerProvider = {
+            ...refreshedSnapshot,
+            status: "warning",
+            auth: { status: "unknown" },
+          };
+          const provider = yield* providerWith([signedIn, answeredUnknown]);
+          assert.strictEqual("lastKnownAuth" in (yield* provider.refresh), false);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+
+    it("remembers through a sign-in read that failed, and forgets when the settings changed", () => {
+      const unreadable: ServerProvider = {
+        ...refreshedSnapshot,
+        status: "warning",
+        auth: { status: "unknown", type: "status-check-failed" },
+      };
+      assert.deepStrictEqual(withLastKnownAuth(signedIn, unreadable).lastKnownAuth, signedIn.auth);
+      assert.strictEqual("lastKnownAuth" in withLastKnownAuth(signedIn, unreadable, true), false);
+      assert.strictEqual("lastKnownAuth" in withLastKnownAuth(signedIn, noAnswer, true), false);
+    });
+
+    it.effect("has nothing to remember before the first answer", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const provider = yield* providerWith([noAnswer]);
+          assert.strictEqual("lastKnownAuth" in (yield* provider.getSnapshot), false);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+  });
+
+  describe("a row that is not signed in", () => {
+    const signedOut: ServerProvider = {
+      ...refreshedSnapshot,
+      status: "error",
+      auth: { status: "unauthenticated" },
+    };
+    const signedIn: ServerProvider = { ...refreshedSnapshot, auth: { status: "authenticated" } };
+
+    /** A provider whose sign-in is read from `account`, with a probe that reads `mark`. */
+    const watched = (start: {
+      readonly account: ServerProvider;
+      readonly mark: string | undefined;
+    }) =>
+      Effect.gen(function* () {
+        const state = { ...start, checks: 0, probes: 0, dropped: 0 };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.sync(() => {
+            state.checks += 1;
+            return state.account;
+          }),
+          refreshInterval: 0,
+          signInProbe: {
+            mark: Effect.sync(() => {
+              state.probes += 1;
+              return state.mark;
+            }),
+            beforeCheck: Effect.sync(() => {
+              state.dropped += 1;
+            }),
+          },
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        return { provider, state };
+      });
+    const tick = TestClock.adjust("5 seconds").pipe(Effect.andThen(Effect.yieldNow));
+
+    it.effect("is checked again when a sign-in done elsewhere shows, within two looks", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { provider, state } = yield* watched({ account: signedOut, mark: "out" });
+          assert.strictEqual(state.checks, 1);
+          // The row appeared: one full check, so what it shows is current.
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [1, 2, 1]);
+          // Nothing changed: the cheap question only.
+          yield* tick;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [3, 2]);
+          // Signed in from a terminal, also with the account that was there before.
+          state.account = signedIn;
+          state.mark = "in";
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [4, 3, 2]);
+          assert.strictEqual((yield* provider.getSnapshot).auth.status, "authenticated");
+          // Signed in: nothing is asked any more.
+          yield* tick;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [4, 3]);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+    );
+
+    it.effect("is left alone while no window shows it", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { state } = yield* watched({ account: signedOut, mark: "out" });
+          yield* tick;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [0, 1]);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerNeverRunTest, TestClock.layer()))),
+    );
+
+    it.effect("is not checked in full again when its window comes back to the same sign-in", () => {
+      let shown = true;
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const { state } = yield* watched({ account: signedOut, mark: "out" });
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [1, 2, 1]);
+          // The window loses focus: nothing is asked.
+          shown = false;
+          yield* tick;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [1, 2]);
+          // It comes back and nothing changed: the cheap question only.
+          shown = true;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [2, 2, 1]);
+          // A sign-in done while it was away shows on the first look back.
+          shown = false;
+          yield* tick;
+          state.account = signedIn;
+          state.mark = "in";
+          shown = true;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks, state.dropped], [3, 3, 2]);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerBackgroundPolicy(true, () => shown),
+            layerServerSettingsTest,
+            TestClock.layer(),
+          ),
+        ),
+      );
+    });
+
+    it.effect("counts a question that never ends as no answer and asks again", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = { probes: 0, checks: 0 };
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.sync(() => {
+              state.checks += 1;
+              return signedOut;
+            }),
+            refreshInterval: 0,
+            signInProbe: {
+              mark: Effect.sync(() => {
+                state.probes += 1;
+              }).pipe(Effect.andThen(Effect.never)),
+            },
+          });
+          yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [1, 1]);
+          // The limit passes, then the next look asks again.
+          yield* TestClock.adjust("12 seconds").pipe(Effect.andThen(Effect.yieldNow));
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [2, 1]);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+    );
+
+    it.effect("does not run the full check on a question that got no answer", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { state } = yield* watched({ account: signedOut, mark: undefined });
+          yield* tick;
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [2, 1]);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+    );
+
+    it.effect("is not asked about for an agent that is not installed", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { state } = yield* watched({
+            account: { ...signedOut, installed: false, auth: { status: "unknown" } },
+            mark: "out",
+          });
+          yield* tick;
+          assert.deepStrictEqual([state.probes, state.checks], [0, 1]);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+    );
+  });
 });
