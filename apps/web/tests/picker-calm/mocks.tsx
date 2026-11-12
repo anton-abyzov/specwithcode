@@ -50,6 +50,11 @@ export const mergeEnvironmentSettings = <A extends object, B extends object>(
 export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<never> = [];
 export const updateOutdatedServer = { label: "updateOutdatedServer" };
 export const usePrimaryEnvironmentId = () => "env-m4";
+export const useEnvironments = () => ({ environments: [] });
+export const persistClientSettingsPatch = (patch: Partial<typeof settings>) => {
+  settings = { ...settings, ...patch };
+  for (const notify of listeners) notify();
+};
 export const primaryServerKeybindingsAtom = Atom.make({ bindings: [], warnings: [] });
 export const ChatGptSharingControl = () => null;
 export const serverEnvironment = { refreshProviders: { label: "refreshProviders" } };
