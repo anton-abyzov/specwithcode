@@ -124,7 +124,13 @@ function MachineRow({
           {tx(state.phrase)}
         </Badge>
         {machine.unlinkedAt === null ? (
-          <Button className="ml-auto" size="xs" variant="outline" onClick={onUnlink}>
+          <Button
+            className="ml-auto"
+            size="xs"
+            variant="outline"
+            aria-label={tx("Unlink {machine}", { machine: machine.label })}
+            onClick={onUnlink}
+          >
             {tx("Unlink")}
           </Button>
         ) : null}
@@ -164,7 +170,13 @@ function PhoneRow({
         <span className="min-w-0 text-sm font-medium break-words text-foreground">
           {phone.label}
         </span>
-        <Button className="ml-auto" size="xs" variant="outline" onClick={onRemove}>
+        <Button
+          className="ml-auto"
+          size="xs"
+          variant="outline"
+          aria-label={tx("Remove {phone}", { phone: phone.label })}
+          onClick={onRemove}
+        >
           {tx("Remove")}
         </Button>
       </div>
@@ -209,6 +221,9 @@ function AccountDetail({
           className="ml-auto"
           size="xs"
           variant="outline"
+          aria-label={tx("Change the machine limit for {account}", {
+            account: accountTitle(account),
+          })}
           onClick={() => onChange({ kind: "limit", account })}
         >
           {tx("Change limit")}

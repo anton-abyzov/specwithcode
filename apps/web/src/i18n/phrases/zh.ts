@@ -4130,6 +4130,9 @@ export const zh: PhraseCatalog = {
   "Check this computer's connection, then try again.": "请检查这台电脑的网络连接，然后重试。",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect 返回了此页面无法读取的响应",
+  "Unlink {machine}": "取消关联 {machine}",
+  "Remove {phone}": "移除 {phone}",
+  "Change the machine limit for {account}": "更改 {account} 的电脑数量上限",
   "Change limit": "更改上限",
   "Machine limit": "电脑数量上限",
   "Machine limit for {account}": "{account} 的电脑数量上限",

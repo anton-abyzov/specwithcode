@@ -189,13 +189,20 @@ export function failureCopy(failure: ConnectAdminFailure): {
 
 /**
  * Title and next step for a failed change. A read that got no answer changed
- * nothing; a change that got no answer may have been made, and says so.
+ * nothing; a change that got no answer may have been made, and says so. The
+ * relay's "could not read its data" counts as no answer: it can come from the
+ * read after the change was written.
  */
 export function changeFailureCopy(failure: ConnectAdminFailure): {
   readonly title: string;
   readonly description: string;
 } {
-  if (failure.kind === "timeout" || failure.kind === "network" || failure.kind === "failed") {
+  if (
+    failure.kind === "timeout" ||
+    failure.kind === "network" ||
+    failure.kind === "failed" ||
+    failure.kind === "unavailable"
+  ) {
     return {
       title: "No clear answer from SpecWithCode Connect",
       description: "The change may or may not have been made. Close this and check the account.",

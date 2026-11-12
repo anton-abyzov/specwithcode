@@ -4294,6 +4294,9 @@ export const ja: PhraseCatalog = {
     "このコンピューターの接続を確認して、もう一度お試しください。",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect から、このページで読み取れない応答が返されました",
+  "Unlink {machine}": "{machine} のリンクを解除",
+  "Remove {phone}": "{phone} を削除",
+  "Change the machine limit for {account}": "{account} のマシン数の上限を変更",
   "Change limit": "上限を変更",
   "Machine limit": "マシン数の上限",
   "Machine limit for {account}": "{account} のマシン数の上限",

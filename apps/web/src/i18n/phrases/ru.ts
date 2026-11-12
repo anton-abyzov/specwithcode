@@ -4290,6 +4290,9 @@ export const ru: PhraseCatalog = {
     "Проверьте подключение этого компьютера и повторите.",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect прислал ответ, который страница не смогла прочитать",
+  "Unlink {machine}": "Отвязать {machine}",
+  "Remove {phone}": "Удалить {phone}",
+  "Change the machine limit for {account}": "Изменить лимит машин для {account}",
   "Change limit": "Изменить лимит",
   "Machine limit": "Лимит машин",
   "Machine limit for {account}": "Лимит машин для {account}",

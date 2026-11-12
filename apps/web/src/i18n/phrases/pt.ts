@@ -4304,6 +4304,9 @@ export const pt: PhraseCatalog = {
     "Verifique a conexão deste computador e tente de novo.",
   "SpecWithCode Connect sent an answer this page could not read":
     "O SpecWithCode Connect enviou uma resposta que esta página não conseguiu ler",
+  "Unlink {machine}": "Desvincular {machine}",
+  "Remove {phone}": "Remover {phone}",
+  "Change the machine limit for {account}": "Alterar o limite de máquinas de {account}",
   "Change limit": "Alterar limite",
   "Machine limit": "Limite de máquinas",
   "Machine limit for {account}": "Limite de máquinas de {account}",

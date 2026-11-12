@@ -359,6 +359,25 @@ describe("Connect admin changes", () => {
     expect(dialogText()).not.toContain("Nothing was changed");
   });
 
+  it("does not say nothing was changed when Connect could not read its data", async () => {
+    await openAccount();
+    await press("Change limit");
+    // The relay reads the account again after writing the limit; that read can fail.
+    changeAnswer = () => fail("unavailable", 503);
+    await press("Save", dialog());
+    expect(dialogText()).toContain("The change may or may not have been made.");
+    expect(dialogText()).not.toContain("Nothing was changed");
+  });
+
+  it("names the machine, the phone and the account on each row's button", async () => {
+    await openAccount();
+    expect(buttons("Unlink")[0]!.props["aria-label"]).toBe("Unlink Studio Mac");
+    expect(buttons("Remove")[0]!.props["aria-label"]).toBe("Remove Pocket");
+    expect(buttons("Change limit")[0]!.props["aria-label"]).toBe(
+      "Change the machine limit for Person A",
+    );
+  });
+
   it("says nothing was changed when the change could not be recorded", async () => {
     await openAccount();
     await press("Remove");
@@ -483,9 +502,12 @@ describe("Connect admin change helpers", () => {
   });
 
   it("uses the read copy for failures that changed nothing", () => {
-    expect(changeFailureCopy({ kind: "unavailable", status: 503, traceId: null }).title).toBe(
-      "SpecWithCode Connect could not read its data",
+    expect(changeFailureCopy({ kind: "not_recorded", status: 503, traceId: null }).title).toBe(
+      "SpecWithCode Connect could not record the change",
     );
+    expect(
+      changeFailureCopy({ kind: "unavailable", status: 503, traceId: null }).description,
+    ).toContain("may or may not");
     expect(changeFailureCopy({ kind: "target_not_found", status: 404, traceId: null }).title).toBe(
       "That machine or phone is no longer on this account",
     );

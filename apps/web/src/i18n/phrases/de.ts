@@ -4317,6 +4317,9 @@ export const de: PhraseCatalog = {
     "Prüfen Sie die Verbindung dieses Computers und versuchen Sie es erneut.",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect hat eine Antwort gesendet, die diese Seite nicht lesen konnte",
+  "Unlink {machine}": "{machine} lösen",
+  "Remove {phone}": "{phone} entfernen",
+  "Change the machine limit for {account}": "Rechnerlimit für {account} ändern",
   "Change limit": "Limit ändern",
   "Machine limit": "Rechnerlimit",
   "Machine limit for {account}": "Rechnerlimit für {account}",
@@ -4329,7 +4332,7 @@ export const de: PhraseCatalog = {
   "Enter a whole number from 0 to {max}.": "Eine ganze Zahl von 0 bis {max} eingeben.",
   "Account id: {id}": "Konto-ID: {id}",
   "The change is recorded with your account id.":
-    "Die Änderung wird mit Ihrer Konto-ID aufgezeichnet.",
+    "Die Änderung wird mit deiner Konto-ID aufgezeichnet.",
   "Unlink “{machine}” from {account}?": "Verknüpfung von „{machine}“ mit {account} lösen?",
   "The machine loses its Connect link, its credentials and its tunnel. The account can link it again from that machine.":
     "Der Rechner verliert seine Connect-Verknüpfung, seine Zugangsdaten und seinen Tunnel. Das Konto kann ihn von diesem Rechner aus erneut verknüpfen.",

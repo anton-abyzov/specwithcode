@@ -4249,6 +4249,9 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터의 연결을 확인한 뒤 다시 시도하세요.",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect가 이 페이지에서 읽을 수 없는 응답을 보냈습니다",
+  "Unlink {machine}": "{machine} 연결 해제",
+  "Remove {phone}": "{phone} 제거",
+  "Change the machine limit for {account}": "{account}의 컴퓨터 한도 변경",
   "Change limit": "한도 변경",
   "Machine limit": "컴퓨터 한도",
   "Machine limit for {account}": "{account}의 컴퓨터 한도",

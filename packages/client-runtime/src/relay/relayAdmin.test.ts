@@ -337,6 +337,27 @@ describe("RelayAdminClient", () => {
     });
   });
 
+  it.effect("reads the empty 404 on a change as no longer an owner", () => {
+    const test = relayAdminTest(() => new Response(null, { status: 404 }));
+    return Effect.gen(function* () {
+      const error = yield* run(test, (client) =>
+        client.removePhone({ clerkToken: "t", userId: "user_a", deviceId: "phone-9" }),
+      ).pipe(Effect.flip);
+      expect(error.kind).toBe("not_owner");
+      expect(error.status).toBe(404);
+    });
+  });
+
+  it.effect("does not read an answer it cannot decode as a change that was made", () => {
+    const test = relayAdminTest(() => Response.json({ unexpected: true }, { status: 200 }));
+    return Effect.gen(function* () {
+      const error = yield* run(test, (client) =>
+        client.setMachineLimit({ clerkToken: "t", userId: "user_a", limit: { kind: "default" } }),
+      ).pipe(Effect.flip);
+      expect(error.kind).toBe("failed");
+    });
+  });
+
   it.effect("gives up after 20 seconds and says it timed out", () => {
     const test = relayAdminTest(() => new Promise<Response>(() => undefined));
     return Effect.gen(function* () {
