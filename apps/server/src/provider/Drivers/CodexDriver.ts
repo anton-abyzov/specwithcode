@@ -51,7 +51,7 @@ import {
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
-import { codexLoginIdentity, watchLoginChanges } from "../loginWatch.ts";
+import { codexLoginIdentity, loginFileMark, watchLoginChanges } from "../loginWatch.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeSubscriptionMemory, subscriptionKeyOf } from "../subscriptionIdentity.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -266,6 +266,16 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
           ),
         checkProvider,
+        // `codex login` rewrites auth.json, also for the account that was signed
+        // in before, so a changed file is the cue to check a signed-out row again.
+        signInProbe: {
+          mark: loginFileMark(
+            pathService.join(
+              homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath,
+              "auth.json",
+            ),
+          ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem)),
+        },
         subscriptionMemory: makeSubscriptionMemory({
           cacheDir: providerStatusCacheDir,
           instanceId,

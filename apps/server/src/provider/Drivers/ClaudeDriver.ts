@@ -45,6 +45,7 @@ import {
   keepClaudeCapabilitiesProbe,
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
+  readClaudeSignInMark,
 } from "../ClaudeProvider.ts";
 import { makeClaudeCliAuth } from "../ClaudeCliLogin.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -297,6 +298,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.map(stampIdentity),
           ),
         checkProvider,
+        // A sign-in done in a terminal shows on a row that is on screen without
+        // waiting for the next timed check. The mark is who is signed in, so it
+        // does not see the same account signing in again.
+        signInProbe: {
+          mark: readClaudeSignInMark(effectiveConfig, processEnv, cwd).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+          beforeCheck: Cache.invalidateAll(capabilitiesProbeCache),
+        },
         subscriptionMemory: makeSubscriptionMemory({
           cacheDir: providerStatusCacheDir,
           instanceId,

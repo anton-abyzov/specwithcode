@@ -34,7 +34,9 @@ import {
   AUTH_PROBE_TIMEOUT_MS,
   CLAUDE_STATUS_CHECK_FAILED,
   DEFAULT_TIMEOUT_MS,
+  answerOrRetry,
   isCommandMissingCause,
+  noAnswerMessage,
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
@@ -606,6 +608,43 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+const decodeAuthStatusMark = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      loggedIn: Schema.Boolean,
+      authMethod: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      email: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  ),
+);
+
+/** What `claude auth status` printed, reduced to who is signed in and how. */
+export function claudeSignInMark(stdout: string): string | undefined {
+  const status = decodeAuthStatusMark(stdout);
+  if (Option.isNone(status)) return undefined;
+  const { loggedIn, authMethod, email } = status.value;
+  return JSON.stringify([loggedIn, authMethod ?? null, email?.trim().toLowerCase() ?? null]);
+}
+
+/**
+ * A mark that changes when this Claude home's sign-in changes, by the CLI's own
+ * short answer: one command and no model list, so it can be asked again every
+ * few seconds while a row that is not signed in is on screen. Undefined when the
+ * command gave no answer.
+ */
+export const readClaudeSignInMark = (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+) =>
+  runClaudeCommand(claudeSettings, ["auth", "status"], environment, cwd).pipe(
+    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+    Effect.map((answer) =>
+      Option.isSome(answer) ? claudeSignInMark(answer.value.stdout) : undefined,
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 /** Read commands from the same cwd Claude uses for a workspace session. */
 export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnapshot")(function* (
   claudeSettings: ClaudeSettings,
@@ -673,7 +712,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings,
     ["--version"],
     resolvedEnvironment,
-  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  ).pipe((check) => answerOrRetry(check, DEFAULT_TIMEOUT_MS), Effect.result);
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
@@ -708,8 +747,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message:
-          "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+        message: noAnswerMessage("Claude Code"),
       },
     });
   }
@@ -784,6 +822,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     capabilities.apiKeySource !== "none";
   let authMethod = billedToApiKey ? "apiKey" : capabilities.tokenSource;
   let authStatusCheckFailed = false;
+  // The status command stayed silent, also on its second run with a longer limit.
+  let authStatusSilent = false;
   // The CLI's own answer that this home has no login. It exits nonzero on Windows.
   let signedOut = false;
   // Native Claude subscription initialization intentionally omits tokenSource
@@ -799,10 +839,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ["auth", "status"],
       resolvedEnvironment,
       cwd,
-    ).pipe(Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS), Effect.result);
+    ).pipe((check) => answerOrRetry(check, AUTH_PROBE_TIMEOUT_MS), Effect.result);
     // A spawn failure or timeout never read the sign-in. A completed command,
     // even a nonzero exit, is an answer and keeps the unverified verdict.
     authStatusCheckFailed = Result.isFailure(nativeAuth) || Option.isNone(nativeAuth.success);
+    authStatusSilent = Result.isSuccess(nativeAuth) && Option.isNone(nativeAuth.success);
     if (Result.isSuccess(nativeAuth) && Option.isSome(nativeAuth.success)) {
       const result = nativeAuth.success.value;
       const decoded = decodeNativeSubscriptionAuthStatus(result.stdout);
@@ -832,11 +873,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ) {
     const readStatus = (args: ReadonlyArray<string>) =>
       runClaudeCommand(claudeSettings, args, resolvedEnvironment, cwd).pipe(
-        Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+        (check) => answerOrRetry(check, AUTH_PROBE_TIMEOUT_MS),
         Effect.result,
       );
     const json = yield* readStatus(["auth", "status"]);
     authStatusCheckFailed = Result.isFailure(json) || Option.isNone(json.success);
+    authStatusSilent = Result.isSuccess(json) && Option.isNone(json.success);
     signedOut =
       Result.isSuccess(json) &&
       Option.isSome(json.success) &&
@@ -849,6 +891,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ) {
       const text = yield* readStatus(["auth", "status", "--text"]);
       authStatusCheckFailed = Result.isFailure(text) || Option.isNone(text.success);
+      authStatusSilent = Result.isSuccess(text) && Option.isNone(text.success);
       consoleBilling =
         Result.isSuccess(text) &&
         Option.isSome(text.success) &&
@@ -965,7 +1008,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         // Turns go straight to Anthropic's API and draw the organization's credits.
         ...(consoleBilling ? { apiKeyBilling: true } : {}),
       },
-      ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      // A check that stayed silent is what the row has to say first.
+      ...(authStatusSilent && authMetadata?.type === CLAUDE_STATUS_CHECK_FAILED
+        ? { message: noAnswerMessage("Claude Code") }
+        : versionUpgradeMessage
+          ? { message: versionUpgradeMessage }
+          : {}),
       usageLimits: resetCredits ? { ...keyedUsageLimits, resetCredits } : keyedUsageLimits,
     },
   });

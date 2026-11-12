@@ -36,7 +36,9 @@ import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
+  answerOrRetry,
   buildServerProvider,
+  noAnswerMessage,
   COMPACT_SLASH_COMMAND,
   type ServerProviderDraft,
 } from "./providerSnapshot.ts";
@@ -830,7 +832,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS + RATE_LIMITS_PROBE_TIMEOUT_MS)),
+    (check) => answerOrRetry(check, AUTH_PROBE_TIMEOUT_MS + RATE_LIMITS_PROBE_TIMEOUT_MS),
     Effect.result,
   );
 
@@ -872,7 +874,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Timed out while checking Codex app-server provider status.",
+        message: noAnswerMessage("Codex"),
       },
     });
   }

@@ -18,9 +18,15 @@ import {
 import { defaultProviderContinuationIdentity, type ProviderDriver } from "../ProviderDriver.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import {
+  loginFileMark,
+  museAccountConfigPath,
+  museLoginIdentity,
+  watchLoginChanges,
+} from "../loginWatch.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import { buildServerProvider } from "../providerSnapshot.ts";
+import { buildServerProvider, noAnswerMessage } from "../providerSnapshot.ts";
 import { MuseSettings } from "@specweave-studio/contracts";
 import {
   connectMuse,
@@ -92,6 +98,19 @@ export const museAdapterFlavor = (
       return modelSelection.model;
     }),
 });
+/** How long Muse Code's host gets to answer its handshake or a request (`MuseConnection.ts`). */
+const MUSE_ANSWER_LIMIT_MS = 10_000;
+/** What the connection throws when the handshake or a request ran out of time. */
+const MUSE_NO_ANSWER = /^Muse Code (?:handshake|control request) timed out$/;
+
+/**
+ * Whether a failed check is the host giving no answer in time: one of the two
+ * limits the connection itself reports. A launcher's own last line that happens
+ * to say "timed out" (a download, say) is a reason to show, not a silence.
+ */
+export const museGaveNoAnswer = (cause: unknown): boolean =>
+  cause instanceof Error && MUSE_NO_ANSWER.test(cause.message);
+
 export type MuseDriverEnv =
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner
@@ -183,7 +202,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       );
       const checkProvider = Effect.gen(function* () {
         if (!input.enabled) return initial();
-        const probed = yield* Effect.result(
+        const probe = Effect.result(
           Effect.tryPromise({
             try: async () => {
               const { host, client } = await connectMuse(settings, environment, serverConfig.cwd);
@@ -207,12 +226,21 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
               }),
           }),
         );
+        let probed = yield* probe;
+        const silent = () => probed._tag === "Failure" && museGaveNoAnswer(probed.failure.cause);
+        // A host that gave no answer is asked once more before anything is shown.
+        if (silent()) probed = yield* probe;
         if (probed._tag === "Failure") {
-          const failed: ServerProvider = {
-            ...initial(),
-            status: "error" as const,
-            message: probed.failure.detail,
-          };
+          const failed: ServerProvider = silent()
+            ? {
+                ...initial(),
+                // It started and then said nothing: it is here, and what was
+                // known about its sign-in stays on the row.
+                installed: true,
+                status: "error" as const,
+                message: noAnswerMessage("Muse Code", MUSE_ANSWER_LIMIT_MS),
+              }
+            : { ...initial(), status: "error" as const, message: probed.failure.detail };
           return failed;
         }
         const { catalog, usage, version } = probed.success;
@@ -247,12 +275,19 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         };
         return ready;
       });
+      const accountConfigPath = yield* museAccountConfigPath({ ...process.env, ...environment });
       const snapshot = yield* makeManagedServerProvider({
         getSettings: Effect.succeed(settings),
         streamSettings: Stream.empty,
         haveSettingsChanged: () => false,
         initialSnapshot: () => Effect.succeed(initial()),
         checkProvider,
+        // `muse login` in a terminal shows on a row that is on screen.
+        signInProbe: {
+          mark: loginFileMark(accountConfigPath).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          ),
+        },
         resolveMaintenance: () =>
           Effect.succeed(
             makeManualOnlyProviderMaintenanceCapabilities({
@@ -271,6 +306,15 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
             }),
         ),
       );
+      // `muse login` and `muse logout` in a terminal change the account under
+      // this instance; the row follows without a manual refresh.
+      if (input.enabled) {
+        yield* watchLoginChanges({
+          filePath: accountConfigPath,
+          readIdentity: museLoginIdentity,
+          onChange: snapshot.refresh.pipe(Effect.ignoreCause({ log: true })),
+        }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+      }
       const orchestrationAdapter = makeAcpAdapterV2({
         instanceId: input.instanceId,
         crypto,

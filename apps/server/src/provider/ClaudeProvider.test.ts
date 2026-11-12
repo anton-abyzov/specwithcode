@@ -18,6 +18,7 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import {
   checkClaudeProviderStatus,
   claudeAuthMetadata,
+  claudeSignInMark,
   keepClaudeCapabilitiesProbe,
 } from "./ClaudeProvider.ts";
 import { mergeClaudeNativeModels } from "./ClaudeNativeModels.ts";
@@ -98,6 +99,10 @@ const checkNative = (
     environment?: NodeJS.ProcessEnv;
     code?: number;
     failure?: "spawn" | "timeout";
+    /** The first runs of the status command that never answer; later ones do. */
+    silentRuns?: number;
+    /** The version command never answers. */
+    versionSilent?: boolean;
     started?: Deferred.Deferred<void>;
     capabilities?: Partial<typeof nativeCapabilities> | null;
     lastKnownCatalog?: ClaudeModelCatalog;
@@ -116,6 +121,7 @@ const checkNative = (
       yield* fs.writeFileString(path.join(configDir, ".claude.json"), input.claudeJson);
     }
     const encoder = new TextEncoder();
+    let statusRuns = 0;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         const cmd = command as unknown as Command;
@@ -123,8 +129,11 @@ const checkNative = (
         const isText = cmd.args.join(" ") === "auth status --text";
         const isAuth = isText || cmd.args.join(" ") === "auth status";
         expect(isAuth || cmd.args.join(" ") === "--version").toBe(true);
-        if (isAuth && input.started) yield* Deferred.succeed(input.started, undefined);
+        if ((isAuth || input.versionSilent) && input.started)
+          yield* Deferred.succeed(input.started, undefined);
+        if (!isAuth && input.versionSilent) return yield* Effect.never;
         if (isAuth && input.failure === "timeout") return yield* Effect.never;
+        if (isAuth && (statusRuns += 1) <= (input.silentRuns ?? 0)) return yield* Effect.never;
         if (isAuth && input.failure === "spawn")
           return yield* PlatformError.systemError({
             _tag: "NotFound",
@@ -374,11 +383,79 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
       const started = yield* Deferred.make<void>();
       const fiber = yield* checkNative({ failure: "timeout", started }).pipe(Effect.forkChild);
       yield* Deferred.await(started);
-      yield* TestClock.adjust("11 seconds");
+      // Silent for its usual 10 seconds, then for the longer second limit.
+      yield* TestClock.adjust("10 seconds");
+      yield* TestClock.adjust("15 seconds");
       const status = yield* Fiber.join(fiber);
       expect(status.auth).toMatchObject({ status: "unknown", type: "status-check-failed" });
+      expect(status.message).toBe("Could not check Claude Code: no answer in 15 seconds.");
     }),
   );
+
+  it.effect("asks the status once more before it reports a silent check", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const commands: Command[] = [];
+      const fiber = yield* checkNative({
+        silentRuns: 1,
+        started,
+        record: (command) => commands.push(command),
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("10 seconds");
+      const status = yield* Fiber.join(fiber);
+      expect(commands.map((command) => command.args.join(" "))).toEqual([
+        "--version",
+        "auth status",
+        "auth status",
+      ]);
+      expect(status.status).toBe("ready");
+      expect(status.auth.status).toBe("authenticated");
+      expect(status.message ?? "").not.toContain("Could not check");
+    }),
+  );
+
+  it.effect("says how long it waited when Claude Code itself gives no answer", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const commands: Command[] = [];
+      const fiber = yield* checkNative({
+        versionSilent: true,
+        started,
+        record: (command) => commands.push(command),
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("4 seconds");
+      yield* TestClock.adjust("15 seconds");
+      const status = yield* Fiber.join(fiber);
+      expect(commands.map((command) => command.args.join(" "))).toEqual(["--version", "--version"]);
+      expect(status).toMatchObject({
+        installed: true,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Could not check Claude Code: no answer in 15 seconds.",
+      });
+    }),
+  );
+
+  it("reduces the status command's answer to who is signed in and how", () => {
+    const signedIn = claudeSignInMark(
+      JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: "A@x.dev", extra: 1 }),
+    );
+    expect(signedIn).toBe(
+      claudeSignInMark(
+        JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: "a@x.dev" }),
+      ),
+    );
+    expect(signedIn).not.toBe(claudeSignInMark(JSON.stringify({ loggedIn: false })));
+    expect(signedIn).not.toBe(
+      claudeSignInMark(
+        JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: "b@x.dev" }),
+      ),
+    );
+    expect(claudeSignInMark("Not logged in")).toBeUndefined();
+    expect(claudeSignInMark("")).toBeUndefined();
+  });
 
   it.effect.each([
     ["ANTHROPIC_AUTH_TOKEN", "firstParty", "apiKey", "ready"],

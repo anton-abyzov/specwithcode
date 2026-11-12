@@ -8,6 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -17,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { CLAUDE_STATUS_CHECK_FAILED } from "./providerSnapshot.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
 import type { ServerProviderShape } from "./ServerProvider.ts";
 import {
@@ -63,6 +65,35 @@ function loginChanged(published: ServerProvider, probed: ServerProvider): boolea
 }
 
 /**
+ * A check that failed to read the sign-in keeps the last answer that did, for
+ * the row to show instead of "Not reported". `auth` itself stays "unknown":
+ * what may run is decided by what was read, never by what was remembered.
+ *
+ * Only a failed check remembers. An agent that answers and reports no sign-in
+ * ("unknown" is the normal state of several agents, and of one signed out) has
+ * said what there is to know. `forget` drops the memory when the settings the
+ * check runs with changed: another home or command is another account.
+ */
+export function withLastKnownAuth(
+  published: ServerProvider,
+  probed: ServerProvider,
+  forget = false,
+): ServerProvider {
+  const { lastKnownAuth: _reported, ...rest } = probed;
+  const checkFailed = probed.status === "error" || probed.auth.type === CLAUDE_STATUS_CHECK_FAILED;
+  if (forget || !probed.enabled || !probed.installed) return rest;
+  if (probed.auth.status !== "unknown" || !checkFailed) return rest;
+  const lastKnownAuth =
+    published.auth.status === "unknown" ? published.lastKnownAuth : published.auth;
+  return lastKnownAuth ? { ...rest, lastKnownAuth } : rest;
+}
+
+/** How often a row that is not signed in is asked about again while it is on screen. */
+const SIGN_IN_PROBE_INTERVAL: Duration.Input = "5 seconds";
+/** How long one such question may take before it counts as no answer. */
+const SIGN_IN_MARK_LIMIT: Duration.Input = "12 seconds";
+
+/**
  * The usage a probe publishes, marked with when this server first saw the
  * account it belongs to (see `ProviderSnapshotState.accountChangedAt`).
  */
@@ -96,6 +127,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
   /** Keeps the signed-in subscription across restarts, so a change during one is noticed. */
   readonly subscriptionMemory?: SubscriptionMemory;
+  /**
+   * A cheap question asked every few seconds while this agent's row is on
+   * screen and not signed in, so a sign-in done in a terminal shows without a
+   * manual refresh. `mark` is any text that changes when the sign-in may have
+   * changed (undefined: no answer this time). A changed mark runs the full
+   * check; so does the first mark after the row appears. `beforeCheck` drops
+   * whatever the full check would otherwise answer from memory.
+   */
+  readonly signInProbe?: {
+    readonly mark: Effect.Effect<string | undefined>;
+    readonly beforeCheck?: Effect.Effect<void>;
+    readonly interval?: Duration.Input;
+  };
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
@@ -175,7 +219,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
-    if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
+    const settingsChanged = input.haveSettingsChanged(previousSettings, nextSettings);
+    if (!forceRefresh && !settingsChanged) {
       yield* Ref.set(settingsRef, nextSettings);
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
@@ -219,7 +264,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         ? (probedSnapshot.usageLimits?.checkedAt ?? probedSnapshot.checkedAt)
         : state.accountChangedAt;
       const snapshot = withUsageLimits(
-        probedSnapshot,
+        withLastKnownAuth(state.snapshot, probedSnapshot, settingsChanged),
         withAccountChange(
           switched || loginChanged(state.snapshot, probedSnapshot)
             ? probedSnapshot.usageLimits
@@ -361,6 +406,43 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       Effect.ignoreCause({ log: true }),
     ),
   ).pipe(Effect.forkScoped);
+
+  const signInProbe = input.signInProbe;
+  if (signInProbe) {
+    // The mark the last full check here went with; null until the row is first
+    // looked at. It is kept while nobody looks: a window that comes back to an
+    // unchanged sign-in asks the cheap question again and nothing more.
+    let checkedMark: string | null = null;
+    yield* Effect.sleep(signInProbe.interval ?? SIGN_IN_PROBE_INTERVAL).pipe(
+      Effect.andThen(
+        Effect.gen(function* () {
+          const { snapshot } = yield* Ref.get(snapshotStateRef);
+          const watching =
+            snapshot.enabled &&
+            snapshot.installed &&
+            snapshot.auth.status !== "authenticated" &&
+            (yield* backgroundPolicy.shouldRunScopeWork({
+              type: "provider-status",
+              instanceId: snapshot.instanceId,
+            }));
+          if (!watching) return;
+          // A question that hangs (a stalled disk, a command that never ends)
+          // counts as no answer, and the next look asks again.
+          const mark = yield* signInProbe.mark.pipe(
+            Effect.timeoutOption(SIGN_IN_MARK_LIMIT),
+            Effect.map(Option.getOrUndefined),
+          );
+          if (mark === undefined || mark === checkedMark) return;
+          checkedMark = mark;
+          if (signInProbe.beforeCheck) yield* signInProbe.beforeCheck;
+          yield* refreshSnapshot();
+        }),
+      ),
+      Effect.ignoreCause({ log: true }),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+  }
 
   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
     Effect.ignoreCause({ log: true }),
