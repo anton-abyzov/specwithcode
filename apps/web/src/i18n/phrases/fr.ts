@@ -4172,8 +4172,6 @@ export const fr: PhraseCatalog = {
   "Usage limit reached": "Limite d’utilisation atteinte",
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "Chaque nouveau fil reçoit sa propre branche et son worktree, donc les fils parallèles ne partagent jamais un checkout. Désactivé : les fils travaillent dans le dossier du projet.",
-  "Recommended here: on": "Recommandé ici : activé",
-  "Recommended here: off": "Recommandé ici : désactivé",
   "Adding a machine to this one?": "Ajouter une machine à celle-ci ?",
   "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "Les agents de {here} lancent déjà du travail sur {machines}. Une ligne créée ici permet à la machine choisie de lancer du travail sur {here}. Pour ajouter plutôt une nouvelle machine à {here}, ouvrez SpecWithCode sur la nouvelle machine, choisissez-y « Rejoindre une machine principale » et collez sa ligne ici, sous « Ajouter une machine ».",

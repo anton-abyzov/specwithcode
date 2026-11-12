@@ -4096,8 +4096,6 @@ export const ko: PhraseCatalog = {
   "Usage limit reached": "사용 한도 도달",
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "새 스레드마다 자체 브랜치와 worktree가 생기므로 병렬 스레드가 체크아웃을 공유하지 않습니다. 끄기: 스레드가 프로젝트 폴더에서 작업합니다.",
-  "Recommended here: on": "여기서 권장: 켜기",
-  "Recommended here: off": "여기서 권장: 끄기",
   "Adding a machine to this one?": "이 컴퓨터에 다른 컴퓨터를 추가하려는 건가요?",
   "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "{here}의 에이전트는 이미 {machines}에서 작업을 시작합니다. 여기서 만든 줄은 선택한 컴퓨터가 {here}에서 작업을 시작할 수 있게 합니다. 새 컴퓨터를 {here}에 추가하려면 새 컴퓨터에서 SpecWithCode를 열고 거기서 ‘메인 컴퓨터에 참여’를 선택한 다음, 그 줄을 여기 ‘컴퓨터 추가’에 붙여넣으세요.",
