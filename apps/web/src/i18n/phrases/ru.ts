@@ -4246,6 +4246,7 @@ export const ru: PhraseCatalog = {
   "Nothing was changed. Try again in a moment.": "Ничего не изменилось. Повторите через минуту.",
   "SpecWithCode Connect did not answer in time": "SpecWithCode Connect не ответил вовремя",
   "Could not reach SpecWithCode Connect": "Не удалось связаться с SpecWithCode Connect",
+  "Could not read this window's Connect session": "Не удалось прочитать сеанс Connect в этом окне",
   "Check this computer's connection, then try again.":
     "Проверьте подключение этого компьютера и повторите.",
   "SpecWithCode Connect sent an answer this page could not read":

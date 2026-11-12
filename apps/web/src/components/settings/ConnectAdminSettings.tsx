@@ -387,7 +387,7 @@ function ConnectAdminView(props: ConnectAdminViewProps) {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={more === "loading"}
+                  disabled={more === "loading" || props.refreshing}
                   onClick={props.onLoadMore}
                 >
                   {more === "loading" ? <Spinner size="sm" /> : null}
@@ -489,6 +489,8 @@ function ConnectAdminPage() {
   }, [fetchList, fetchOverview]);
 
   const loadMore = () => {
+    // Not during a refresh: its first page would be joined to a page of the old list.
+    if (refreshing) return;
     if (list.status !== "ready" || list.value.nextCursor === null || more === "loading") return;
     const request = listRequest.current;
     const cursor = list.value.nextCursor;

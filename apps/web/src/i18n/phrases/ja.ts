@@ -4249,6 +4249,8 @@ export const ja: PhraseCatalog = {
   "SpecWithCode Connect did not answer in time":
     "SpecWithCode Connect が時間内に応答しませんでした",
   "Could not reach SpecWithCode Connect": "SpecWithCode Connect に接続できませんでした",
+  "Could not read this window's Connect session":
+    "このウィンドウの Connect セッションを読み取れませんでした",
   "Check this computer's connection, then try again.":
     "このコンピューターの接続を確認して、もう一度お試しください。",
   "SpecWithCode Connect sent an answer this page could not read":

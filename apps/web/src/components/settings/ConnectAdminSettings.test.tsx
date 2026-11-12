@@ -412,6 +412,7 @@ describe("Connect admin page logic", () => {
   it("has copy for every failure and retries only what a retry can fix", () => {
     const kinds = [
       "signed_out",
+      "session_unread",
       "not_owner",
       "account_not_found",
       "unavailable",

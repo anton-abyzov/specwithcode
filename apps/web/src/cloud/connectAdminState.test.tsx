@@ -222,7 +222,7 @@ describe("reading through the Connect admin client", () => {
       signIn("user_owner_h", "unreadable");
       expect(yield* connectAdminRead(overview)).toEqual({
         ok: false,
-        failure: { kind: "failed", status: null, traceId: null },
+        failure: { kind: "session_unread", status: null, traceId: null },
       });
     }).pipe(Effect.provide(layer)),
   );

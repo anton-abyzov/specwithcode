@@ -4090,6 +4090,7 @@ export const zh: PhraseCatalog = {
   "Nothing was changed. Try again in a moment.": "未做任何更改。请稍后重试。",
   "SpecWithCode Connect did not answer in time": "SpecWithCode Connect 未及时响应",
   "Could not reach SpecWithCode Connect": "无法连接 SpecWithCode Connect",
+  "Could not read this window's Connect session": "无法读取此窗口的 Connect 会话",
   "Check this computer's connection, then try again.": "请检查这台电脑的网络连接，然后重试。",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect 返回了此页面无法读取的响应",

@@ -41,11 +41,15 @@ export type RelayAdminFailureKind =
   | "network"
   | "failed";
 
+/**
+ * Carries no cause on purpose: the HTTP client's error names the request URL,
+ * an account read has another person's id in it, and a failed span exports its
+ * error with every cause.
+ */
 export class RelayAdminRequestError extends Data.TaggedError("RelayAdminRequestError")<{
   readonly kind: RelayAdminFailureKind;
   readonly status: number | null;
   readonly traceId: string | null;
-  readonly cause?: unknown;
 }> {
   override get message(): string {
     return this.status === null
@@ -111,24 +115,23 @@ function relayAdminRequestError(cause: unknown): RelayAdminRequestError {
   const traceId = traceIdOf(cause);
   const tag = tagOf(cause);
   if (tag === "RelayAdminUnavailableError") {
-    return new RelayAdminRequestError({ kind: "unavailable", status: 503, traceId, cause });
+    return new RelayAdminRequestError({ kind: "unavailable", status: 503, traceId });
   }
   if (tag === "RelayAdminAccountNotFoundError") {
-    return new RelayAdminRequestError({ kind: "account_not_found", status: 404, traceId, cause });
+    return new RelayAdminRequestError({ kind: "account_not_found", status: 404, traceId });
   }
   if (HttpClientError.isHttpClientError(cause)) {
     if (cause.reason._tag === "TransportError") {
-      return new RelayAdminRequestError({ kind: "network", status: null, traceId, cause });
+      return new RelayAdminRequestError({ kind: "network", status: null, traceId });
     }
     const status = cause.response?.status ?? null;
     return new RelayAdminRequestError({
       kind: status === 404 ? "not_owner" : status === 503 ? "unavailable" : "failed",
       status,
       traceId,
-      cause,
     });
   }
-  return new RelayAdminRequestError({ kind: "failed", status: null, traceId, cause });
+  return new RelayAdminRequestError({ kind: "failed", status: null, traceId });
 }
 
 const withinTime = <A, E, R>(

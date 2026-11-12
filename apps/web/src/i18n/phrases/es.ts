@@ -4274,6 +4274,8 @@ export const es: PhraseCatalog = {
     "No se cambió nada. Inténtalo de nuevo en un momento.",
   "SpecWithCode Connect did not answer in time": "SpecWithCode Connect no respondió a tiempo",
   "Could not reach SpecWithCode Connect": "No se pudo conectar con SpecWithCode Connect",
+  "Could not read this window's Connect session":
+    "No se pudo leer la sesión de Connect de esta ventana",
   "Check this computer's connection, then try again.":
     "Comprueba la conexión de este ordenador y vuelve a intentarlo.",
   "SpecWithCode Connect sent an answer this page could not read":

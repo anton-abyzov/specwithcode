@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
@@ -60,6 +62,18 @@ const run = <A, E>(
     const client = yield* RelayAdmin.RelayAdminClient;
     return yield* use(client);
   }).pipe(Effect.provide(test.layer));
+
+const FAILED_READS = {
+  "a missing account": () =>
+    Response.json(
+      { _tag: "RelayAdminAccountNotFoundError", code: "account_not_found" },
+      { status: 404 },
+    ),
+  "the empty 404 a non-owner gets": () => new Response(null, { status: 404 }),
+  "a server error": () => new Response("boom", { status: 500 }),
+  "a request that never arrives": () =>
+    Promise.reject(new TypeError("fetch failed: relay.example.test")),
+} satisfies Record<string, () => Response | Promise<Response>>;
 
 describe("RelayAdminClient", () => {
   it.effect("reads 200 from /v1/admin/me as an owner and sends the Clerk token as bearer", () => {
@@ -201,36 +215,50 @@ describe("RelayAdminClient", () => {
     });
   });
 
-  it.effect("puts no URL and no account id into any tracing span", () => {
-    const spans: Array<Tracer.NativeSpan> = [];
-    const tracer = Tracer.make({
-      span: (options) => {
-        const span = new Tracer.NativeSpan(options);
-        spans.push(span);
-        return span;
-      },
-    });
-    const test = relayAdminTest(() =>
-      Response.json(
-        { _tag: "RelayAdminAccountNotFoundError", code: "account_not_found" },
-        { status: 404 },
-      ),
-    );
-    return Effect.gen(function* () {
-      yield* run(test, (client) =>
-        client.account({ clerkToken: "clerk-token", userId: "user_someone_else" }),
-      ).pipe(Effect.flip, Effect.provideService(Tracer.Tracer, tracer));
-      expect(test.seen).toHaveLength(1);
-      expect(spans.map((span) => span.name)).toContain("clientRuntime.relayAdmin.account");
-      const recorded = spans
-        .flatMap((span) => [span.name, ...span.attributes.keys(), ...span.attributes.values()])
-        .map(String)
-        .join("\n");
-      expect(recorded).not.toContain("user_someone_else");
-      expect(recorded).not.toContain("/v1/admin");
-      expect(recorded).not.toContain("clerk-token");
-    });
-  });
+  // A failed span is exported with its error and every cause, so the error
+  // itself must not name the request either.
+  it.effect.each(Object.keys(FAILED_READS) as Array<keyof typeof FAILED_READS>)(
+    "puts no URL and no account id into any tracing span for %s",
+    (failure) => {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const test = relayAdminTest(FAILED_READS[failure]);
+      return Effect.gen(function* () {
+        const error = yield* run(test, (client) =>
+          client.account({ clerkToken: "clerk-token", userId: "user_someone_else" }),
+        ).pipe(Effect.flip, Effect.provideService(Tracer.Tracer, tracer));
+        expect(test.seen).toHaveLength(1);
+        expect(spans.map((span) => span.name)).toContain("clientRuntime.relayAdmin.account");
+        const recorded = [
+          ...spans.flatMap((span) => [
+            span.name,
+            ...span.attributes.keys(),
+            ...span.attributes.values(),
+            ...(span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
+              ? Cause.prettyErrors(span.status.exit.cause, { includeCauseInStack: true }).flatMap(
+                  (pretty) => [pretty.message, pretty.stack ?? ""],
+                )
+              : []),
+          ]),
+          error.message,
+          Object.keys(error).join(","),
+        ]
+          .map(String)
+          .join("\n");
+        expect(recorded).not.toContain("user_someone_else");
+        expect(recorded).not.toContain("/v1/admin");
+        expect(recorded).not.toContain("relay.example.test");
+        expect(recorded).not.toContain("clerk-token");
+        expect("cause" in error).toBe(false);
+      });
+    },
+  );
 
   it.effect("gives up after 20 seconds and says it timed out", () => {
     const test = relayAdminTest(() => new Promise<Response>(() => undefined));

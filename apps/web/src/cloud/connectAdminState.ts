@@ -14,9 +14,13 @@ import { useCallback } from "react";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
-/** Why a read failed; "signed_out" when this window has no Connect session. */
+/**
+ * Why a read failed. "signed_out": this window has no Connect session.
+ * "session_unread": the session is there but its token could not be read, so
+ * nothing was asked of Connect.
+ */
 export interface ConnectAdminFailure {
-  readonly kind: RelayAdmin.RelayAdminFailureKind | "signed_out";
+  readonly kind: RelayAdmin.RelayAdminFailureKind | "signed_out" | "session_unread";
   readonly status: number | null;
   readonly traceId: string | null;
 }
@@ -26,7 +30,12 @@ export type ConnectAdminRead<A> =
   | { readonly ok: false; readonly failure: ConnectAdminFailure };
 
 const SIGNED_OUT: ConnectAdminFailure = { kind: "signed_out", status: null, traceId: null };
-const TOKEN_UNREAD: ConnectAdminFailure = { kind: "failed", status: null, traceId: null };
+const SESSION_UNREAD: ConnectAdminFailure = {
+  kind: "session_unread",
+  status: null,
+  traceId: null,
+};
+const READ_FAILED: ConnectAdminFailure = { kind: "failed", status: null, traceId: null };
 
 const failureOf = (error: RelayAdmin.RelayAdminRequestError): ConnectAdminFailure => ({
   kind: error.kind,
@@ -113,7 +122,7 @@ export const connectAdminRead = <A>(
       Effect.map((value) => ({ read: true as const, value })),
       Effect.orElseSucceed(() => ({ read: false as const, value: null })),
     );
-    if (!token.read) return { ok: false, failure: TOKEN_UNREAD };
+    if (!token.read) return { ok: false, failure: SESSION_UNREAD };
     const clerkToken = token.value;
     if (!clerkToken) return { ok: false, failure: SIGNED_OUT };
     const client = yield* RelayAdmin.RelayAdminClient;
@@ -132,8 +141,9 @@ export function readConnectAdmin<A>(
     clerkToken: string,
   ) => Effect.Effect<A, RelayAdmin.RelayAdminRequestError>,
 ): Promise<ConnectAdminRead<A>> {
-  return runtime.runPromise(connectAdminRead(read)).catch((cause: unknown): ConnectAdminRead<A> => {
-    console.error("[studio-connect] Connect admin read failed", cause);
-    return { ok: false, failure: TOKEN_UNREAD };
+  return runtime.runPromise(connectAdminRead(read)).catch((): ConnectAdminRead<A> => {
+    // The cause is not logged: it could name the request, and with it an account.
+    console.error("[studio-connect] Connect admin read failed");
+    return { ok: false, failure: READ_FAILED };
   });
 }

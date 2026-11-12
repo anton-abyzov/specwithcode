@@ -4205,6 +4205,7 @@ export const ko: PhraseCatalog = {
     "아무것도 변경되지 않았습니다. 잠시 후 다시 시도하세요.",
   "SpecWithCode Connect did not answer in time": "SpecWithCode Connect가 제때 응답하지 않았습니다",
   "Could not reach SpecWithCode Connect": "SpecWithCode Connect에 연결하지 못했습니다",
+  "Could not read this window's Connect session": "이 창의 Connect 세션을 읽지 못했습니다",
   "Check this computer's connection, then try again.":
     "이 컴퓨터의 연결을 확인한 뒤 다시 시도하세요.",
   "SpecWithCode Connect sent an answer this page could not read":

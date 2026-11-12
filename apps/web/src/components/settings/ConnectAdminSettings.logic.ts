@@ -121,6 +121,11 @@ export function failureCopy(failure: ConnectAdminFailure): {
         title: "Sign in to SpecWithCode Connect",
         description: "This page needs a Connect session in this window.",
       };
+    case "session_unread":
+      return {
+        title: "Could not read this window's Connect session",
+        description: "Nothing was changed. Try again in a moment.",
+      };
     case "not_owner":
       return {
         title: "This account is not a Connect owner",
