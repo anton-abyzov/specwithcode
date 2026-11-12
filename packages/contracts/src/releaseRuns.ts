@@ -98,9 +98,148 @@ export const ReleaseRun = Schema.Struct({
 });
 export type ReleaseRun = typeof ReleaseRun.Type;
 
-/** The newest release runs on this machine, newest first; `skipped` counts files it could not read. */
+/** How long one stage of a run took, in whole seconds; null when it never ran. */
+export const ReleaseRunStageTiming = Schema.Struct({
+  id: Schema.String,
+  state: ReleaseRunStageState,
+  seconds: Schema.NullOr(Schema.Number),
+});
+export type ReleaseRunStageTiming = typeof ReleaseRunStageTiming.Type;
+
+/**
+ * One release run's timings, without its steps and machines: what the Speed by
+ * version section compares. `totalSeconds` is the time any stage ran, overlaps
+ * counted once (`releaseRunSeconds`), so a pause before a resume is not in it.
+ */
+export const ReleaseRunTiming = Schema.Struct({
+  runId: Schema.String,
+  version: Schema.String,
+  channel: Schema.String,
+  state: ReleaseRunState,
+  createdBy: Schema.String,
+  startedAt: Schema.String,
+  endedAt: Time,
+  totalSeconds: Schema.NullOr(Schema.Number),
+  stages: Schema.Array(ReleaseRunStageTiming),
+});
+export type ReleaseRunTiming = typeof ReleaseRunTiming.Type;
+
+/**
+ * One verified update install on this machine (update.py's receipt,
+ * `updates/receipts/update-<version>-<stamp>.json`): its `timings.total` and
+ * per-phase milliseconds.
+ */
+export const ReleaseInstallTiming = Schema.Struct({
+  version: Schema.String,
+  installedAt: Schema.String,
+  totalMs: Schema.Number,
+  phases: Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
+});
+export type ReleaseInstallTiming = typeof ReleaseInstallTiming.Type;
+
+/**
+ * The newest release runs on this machine, newest first; `skipped` counts files it could not read.
+ * `timings` (newest first, more runs than `runs`) and `installs` (newest first) are optional: a
+ * server from before them sends neither, and the view derives timings from `runs` instead.
+ */
 export const ReleaseRunsSnapshot = Schema.Struct({
   runs: Schema.Array(ReleaseRun),
   skipped: Schema.Number,
+  timings: Schema.optionalKey(Schema.Array(ReleaseRunTiming)),
+  installs: Schema.optionalKey(Schema.Array(ReleaseInstallTiming)),
 });
 export type ReleaseRunsSnapshot = typeof ReleaseRunsSnapshot.Type;
+
+const parseTime = (value: string | null | undefined): number | null => {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+};
+
+/**
+ * The intervals, in epoch milliseconds, a stage ran: its steps' (a step that
+ * started but never recorded its end ran until the stage ended, or until now
+ * while it runs), else the stage's own start and end. Empty before it started.
+ */
+export function releaseStageIntervals(
+  stage: ReleaseRunStage,
+  nowMs: number,
+): ReadonlyArray<readonly [number, number]> {
+  const intervals: Array<[number, number]> = [];
+  for (const step of stage.steps) {
+    const started = parseTime(step.startedAt);
+    if (started === null) continue;
+    // A finished stage never counts on.
+    const ended =
+      parseTime(step.endedAt) ??
+      (stage.state === "running"
+        ? nowMs
+        : (parseTime(stage.endedAt) ?? (step.state === "running" ? nowMs : null)));
+    if (ended !== null && ended >= started) intervals.push([started, ended]);
+  }
+  // A running stage between two steps (one passed, the next not started) keeps counting.
+  if (
+    stage.state === "running" &&
+    intervals.length > 0 &&
+    !stage.steps.some((step) => step.state === "running")
+  ) {
+    const last = Math.max(...intervals.map(([, end]) => end));
+    if (nowMs > last) intervals.push([last, nowMs]);
+  }
+  if (intervals.length > 0) return intervals;
+  const started = parseTime(stage.startedAt);
+  if (started === null) return [];
+  const ended = parseTime(stage.endedAt) ?? (stage.state === "running" ? nowMs : null);
+  return ended === null ? [] : [[started, Math.max(started, ended)]];
+}
+
+/** Whole seconds the intervals cover, overlaps counted once; null for none. */
+export function coveredSeconds(intervals: ReadonlyArray<readonly [number, number]>): number | null {
+  if (intervals.length === 0) return null;
+  const sorted = [...intervals].sort((left, right) => left[0] - right[0]);
+  let total = 0;
+  let [from, to] = sorted[0]!;
+  for (const [start, end] of sorted.slice(1)) {
+    if (start > to) {
+      total += to - from;
+      [from, to] = [start, end];
+    } else {
+      to = Math.max(to, end);
+    }
+  }
+  return Math.max(0, Math.round((total + (to - from)) / 1000));
+}
+
+/**
+ * How long a stage took, or has run so far while running; null before it
+ * started. With step times it is the time its steps ran: a stage's first and
+ * last step can be far apart (a resume reruns one half an hour later), and
+ * that gap is no time the stage took.
+ */
+export function releaseStageSeconds(stage: ReleaseRunStage, nowMs: number): number | null {
+  return coveredSeconds(releaseStageIntervals(stage, nowMs));
+}
+
+/** The time any stage of the run ran, overlaps counted once; null before any started. */
+export function releaseRunSeconds(run: Pick<ReleaseRun, "stages">, nowMs: number): number | null {
+  return coveredSeconds(run.stages.flatMap((stage) => releaseStageIntervals(stage, nowMs)));
+}
+
+/** A run's timings for the Speed by version section. */
+export function releaseRunTiming(run: ReleaseRun, nowMs: number): ReleaseRunTiming {
+  return {
+    runId: run.runId,
+    version: run.version,
+    channel: run.channel,
+    state: run.state,
+    createdBy: run.createdBy,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt,
+    totalSeconds: releaseRunSeconds(run, nowMs),
+    stages: run.stages.map((stage) => ({
+      id: stage.id,
+      state: stage.state,
+      seconds: releaseStageSeconds(stage, nowMs),
+    })),
+  };
+}
