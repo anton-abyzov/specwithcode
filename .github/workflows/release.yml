@@ -53,6 +53,8 @@ permissions:
 concurrency:
   group: ${{ inputs.dry_run && format('release-dry-run-{0}', github.run_id) || 'release-macos' }}
   cancel-in-progress: false
+  # As in release-macos.yml: every waiting run is kept, oldest first.
+  queue: max
 
 jobs:
   resolve:

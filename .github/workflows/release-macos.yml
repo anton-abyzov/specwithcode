@@ -1,4 +1,5 @@
 name: Release macOS
+run-name: Release macOS ${{ inputs.version || 'next' }}${{ inputs.resume && ' (resume)' || '' }}${{ inputs.requested_by && format(' · {0}', inputs.requested_by) || '' }}
 
 # One-button SpecWithCode release on a Mac runner: scripts/release/release.sh --ci, the same
 # stages the M4 runs (stage 1, server suite, signed and notarized build, bundle, plan, drafts,
@@ -10,6 +11,19 @@ name: Release macOS
 # variable RELEASE_MACOS_RUNNER may name a replacement self-hosted Mac deliberately; it is not a
 # silent fallback to a GitHub-hosted runner or to building on M4. The M1 staging folder survives,
 # so a failed run continues with `resume`.
+#
+# Who releases what: dispatch it with no version. Any number of people and agent sessions may do
+# that at any time, and none of them picks the version. Runs wait their turn in one queue (the
+# concurrency group below, every pending run kept), and each run's first job, `plan`
+# (scripts/release/release_plan.py, on a hosted runner), decides inside that queue: the next patch
+# after the highest v1.x.y tag when main has changes since it, nothing when main is already
+# released (the run ends green without touching the release Mac), or the newest release again
+# when it is published but not merged. A version whose staging folder is still on the release Mac
+# is continued, not started again. So one run cuts each version, and a green run means everything
+# main held when it was dispatched is released; the plan job's notice names the version.
+# Set `version` only to continue a release (`resume`) or to jump to a version on purpose; a
+# version that is already tagged, or below the newest one, is refused in seconds.
+# scripts/release/request-release.sh dispatches it and tells whether a commit is released.
 #
 # Secrets (names only; values never leave the `release` environment's secret store):
 #   RELEASE_GH_TOKEN   fine-grained token with contents, pull requests and workflows write on
@@ -29,8 +43,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version to release (1.x.y)
-        required: true
+        description: Leave empty to release what main holds. Set only with resume, or to jump to a version (1.x.y)
+        required: false
         type: string
       previous:
         description: Previous release, when it cannot be found on its own (optional)
@@ -45,27 +59,73 @@ on:
         required: false
         type: boolean
         default: false
+      requested_by:
+        description: Who asks, shown in the run title (scripts/release/request-release.sh sets it)
+        required: false
+        type: string
 
 permissions:
   contents: read
 
+# One release at a time, for the whole run: plan decides and release acts with nothing between
+# them. queue: max keeps every waiting run, oldest first; the default would keep only the newest
+# and cancel the others. release.yml shares the group.
 concurrency:
   group: release-macos
   cancel-in-progress: false
+  queue: max
 
 jobs:
+  # The one place a version is chosen. Inside the concurrency group, so it sees the tags and main
+  # as the run before it left them.
+  plan:
+    name: Plan the release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      version: ${{ steps.plan.outputs.version }}
+      resume: ${{ steps.plan.outputs.resume }}
+      mode: ${{ steps.plan.outputs.mode }}
+    steps:
+      - name: Checkout the release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+
+      - name: Decide what this run releases
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_RESUME: ${{ inputs.resume }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(plan --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME" --version "$INPUT_VERSION")
+          if [ "$INPUT_RESUME" = true ]; then args+=(--resume); fi
+          python3 -B scripts/release/release_plan.py "${args[@]}"
+
   release:
-    name: Release SpecWithCode ${{ inputs.version }}
+    name: Release SpecWithCode ${{ needs.plan.outputs.version }}
+    needs: [plan]
+    if: ${{ needs.plan.outputs.action == 'release' }}
     runs-on: ${{ vars.RELEASE_MACOS_RUNNER || 'swc-release' }}
     environment: release
     timeout-minutes: 240
+    outputs:
+      resumed: ${{ steps.attempt.outputs.resumed }}
     # RELEASE_GH_TOKEN goes only to the steps that call gh or git against GitHub (Check secrets,
     # Checkout, Release), not to the toolchain installs and third-party actions between them.
     env:
       GIT_TERMINAL_PROMPT: "0"
       PWDEBUG: "0"
       PLAYWRIGHT_HTML_OPEN: never
-      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - name: Check secrets
         env:
@@ -108,6 +168,23 @@ jobs:
           git fetch -q --no-tags origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
           git sparse-checkout set --no-cone '/*' '!/.repos/'
           git -c checkout.workers=0 checkout -q --detach "origin/${GITHUB_REF_NAME}"
+
+      # Before the toolchain steps, so a refusal costs seconds. A version whose staging folder is
+      # on this Mac was started before and did not finish (release_plan.py attempt): it is
+      # continued when it already published, holds a fix or main has not moved since (a flaky
+      # failure, once); started over from main when main moved; refused when it was stopped on
+      # purpose or keeps failing unchanged. Started again without this it would only stop in
+      # release.sh ("a release of X is under way"), as second dispatches of a failed version did.
+      - name: Continue an earlier attempt or start over
+        id: attempt
+        env:
+          PLAN_RESUME: ${{ needs.plan.outputs.resume }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(attempt --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME" --version "$RELEASE_VERSION")
+          if [ "$PLAN_RESUME" = true ]; then args+=(--resume); fi
+          python3 -B scripts/release/release_plan.py "${args[@]}"
 
       # The desktop app's voice helper (native/voice) uses SpeechAnalyzer from the macOS 26 SDK,
       # which Xcode 16 lacks. Keep the runner's Xcode when it is already 26 or later, otherwise
@@ -217,7 +294,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
           INPUT_PREVIOUS: ${{ inputs.previous }}
           INPUT_STOP_AFTER: ${{ inputs.stop_after }}
-          INPUT_RESUME: ${{ inputs.resume }}
+          RESUMED: ${{ steps.attempt.outputs.resumed }}
         shell: bash
         run: |
           set -euo pipefail
@@ -227,22 +304,26 @@ jobs:
           args=("$RELEASE_VERSION" --ci --jobs "$(( $(sysctl -n hw.ncpu) > 4 ? 4 : 2 ))")
           if [ -n "$INPUT_PREVIOUS" ]; then args+=(--previous "$INPUT_PREVIOUS"); fi
           if [ -n "$INPUT_STOP_AFTER" ]; then args+=(--stop-after "$INPUT_STOP_AFTER"); fi
-          if [ "$INPUT_RESUME" = true ]; then args+=(--resume); fi
+          if [ "$RESUMED" = true ]; then args+=(--resume); fi
           bash scripts/release/release.sh "${args[@]}"
+          # Stopped on purpose: only a run that names this version with resume continues it.
+          # A run that went past the stop clears the mark.
+          python3 -B scripts/release/release_plan.py hold --version "$RELEASE_VERSION" \
+            --after "$INPUT_STOP_AFTER" --note "run $GITHUB_RUN_ID"
 
       - name: Upload logs and timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-${{ inputs.version }}-logs
+          name: release-${{ needs.plan.outputs.version }}-logs
           path: |
-            ~/.specwithcode/release-staging/${{ inputs.version }}/logs
-            ~/.specwithcode/release-staging/${{ inputs.version }}/timings
-            ~/.specwithcode/release-staging/${{ inputs.version }}/release.json
-            ~/.specwithcode/release-staging/${{ inputs.version }}/google-verify-*
-            ~/.specwithcode/release-staging/${{ inputs.version }}/server/*/shards.json
-            ~/.specwithcode/release-staging/${{ inputs.version }}/server/*/server-*.json
-            ~/.specwithcode/release-staging/${{ inputs.version }}/stage1/*/*.secs
+            ~/.specwithcode/release-staging/${{ needs.plan.outputs.version }}/logs
+            ~/.specwithcode/release-staging/${{ needs.plan.outputs.version }}/timings
+            ~/.specwithcode/release-staging/${{ needs.plan.outputs.version }}/release.json
+            ~/.specwithcode/release-staging/${{ needs.plan.outputs.version }}/google-verify-*
+            ~/.specwithcode/release-staging/${{ needs.plan.outputs.version }}/server/*/shards.json
+            ~/.specwithcode/release-staging/${{ needs.plan.outputs.version }}/server/*/server-*.json
+            ~/.specwithcode/release-staging/${{ needs.plan.outputs.version }}/stage1/*/*.secs
           if-no-files-found: ignore
           retention-days: 30
 
@@ -255,7 +336,7 @@ jobs:
   # Actions write (v1.0.207: HTTP 403). This run's own token may dispatch it, so start it here
   # unless release.sh already did.
   windows_linux:
-    needs: [release]
+    needs: [plan, release]
     if: ${{ inputs.stop_after == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -266,11 +347,14 @@ jobs:
       - name: Start the Windows and Linux build
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          since="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)"
+          # Since the release job started, not since the run was dispatched: a run that waited
+          # its turn would count the build the release before it started.
+          since="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+            --jq '[.jobs[] | select(.name | startswith("Release SpecWithCode")) | .started_at][0]')"
           started="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-windows-linux.yml \
             --event workflow_dispatch --limit 20 --json createdAt \
             --jq "[.[] | select(.createdAt >= \"$since\")] | length")"
@@ -284,7 +368,7 @@ jobs:
 
   # Provenance for the published macOS files, while the repository is public.
   attest_macos:
-    needs: [release]
+    needs: [plan, release]
     # A run stopped before publishing (stop_after) has nothing published to attest.
     if: ${{ inputs.stop_after == '' }}
     uses: ./.github/workflows/attest-macos.yml
@@ -293,4 +377,33 @@ jobs:
       id-token: write
       attestations: write
     with:
-      version: ${{ inputs.version }}
+      version: ${{ needs.plan.outputs.version }}
+
+  # A run with no version that continued an earlier attempt released that attempt's candidate,
+  # which was cut before whatever merged since. Ask for one more run then, so a green run still
+  # means main as it was at dispatch is released. A fresh release needs none: whoever merges
+  # during its build dispatches for their own change.
+  follow_up:
+    name: Request the next release when main moved on
+    needs: [plan, release]
+    if: ${{ inputs.version == '' && inputs.stop_after == '' && needs.release.outputs.resumed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Request another release when main differs from the one just made
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq .commit.tree.sha; }
+          if [ "$(tree "$GITHUB_REF_NAME")" = "$(tree "v$VERSION")" ]; then
+            echo "$GITHUB_REF_NAME is released as v$VERSION; nothing more to request"
+            exit 0
+          fi
+          gh workflow run release-macos.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+          echo "::notice::$GITHUB_REF_NAME has changes that v$VERSION does not hold; requested the next release"

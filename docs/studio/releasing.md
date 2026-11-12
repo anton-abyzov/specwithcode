@@ -82,9 +82,58 @@ defaults to `studio.service`.
 
 ### From GitHub Actions
 
-The **Release macOS** workflow (`.github/workflows/release-macos.yml`, run by hand with the
-version) runs `release.sh --ci` on the self-hosted **M1** release Mac, so a release needs neither
-the M4 nor anyone at it. `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
+The **Release macOS** workflow (`.github/workflows/release-macos.yml`) runs `release.sh --ci` on
+the self-hosted **M1** release Mac, so a release needs neither the M4 nor anyone at it. This is
+how releases are made; ask for one with:
+
+```bash
+bash scripts/release/request-release.sh --by "<who asks>"   # dispatches it with no version
+bash scripts/release/request-release.sh --released <commit>   # exit 0 once a release holds the commit
+bash scripts/release/request-release.sh --dry-run             # what a run would decide now; dispatches nothing
+```
+
+`--wait` after `--by` stays until the run ends and exits with its result; a release takes about 25
+minutes, so run it in the background.
+
+Nobody who dispatches it picks the version, and nobody needs to check whether a release is
+running. Several people and agent sessions release from this repository, and each used to compute
+"newest tag plus one" itself, so two of them dispatched the same version (1.0.260 twice, 1.0.261
+three times). Now:
+
+- Every run waits its turn in one queue (the `release-macos` concurrency group with `queue: max`:
+  every waiting run is kept, oldest first).
+- The run's first job, `plan` (`scripts/release/release_plan.py plan`, on a hosted runner, a few
+  seconds), decides inside that queue. With no version it releases the next patch after the
+  highest `v1.x.y` tag when main has changes since that tag; it ends green without using the M1
+  when main is already released; and when the newest release is published but its
+  `release/<version>` pull request is not merged, it finishes that release first, or refuses when
+  that pull request conflicts with main (resolve and merge it, then dispatch again). A newest
+  release counts as owing its merge while that pull request is open, or was never opened and the
+  `release/<version>` branch exists; one closed without merging, or a tag made by hand, owes
+  nothing. While a merge is owed, a dispatch that names a new version is refused too.
+- So ten requests during one release make one more release, not ten: the first one in the queue
+  cuts it and the rest find main released.
+- On the M1, before the toolchain steps, `release_plan.py attempt` looks for a staging folder of
+  the planned version, which an attempt that did not finish leaves behind. It continues that
+  attempt (`--resume`) when it already published, when its release branch holds a fix commit, or
+  when main has not moved since its candidate was cut (a flaky failure; once per candidate). When
+  main has moved and the attempt holds only the bump, it retires the staging folder and starts the
+  version over from main, so a fix merged to main reaches the release. It refuses a candidate that
+  failed, was continued once and has not changed, and a release stopped on purpose with
+  `stop_after`: both wait for a dispatch that names the version with `resume` (the stop mark is
+  cleared by the continued run that works, not by one that fails). Before it retires a staging
+  folder it stops the server suite that attempt left running. A `resume` with no staging folder
+  of that version on the M1 is refused with what to do: merge `release/<version>` by pull request.
+- A run with no version that continued an older candidate asks for one more run at the end when
+  main holds changes that candidate does not, so a green run means main as it was at dispatch is
+  released. `--released <commit>` is the check that a given change shipped.
+
+Set `version` only with `resume`, to continue a release by name, or to jump to a version on
+purpose (1.1.0). A version that is already tagged, or below the newest tag, is refused by `plan`
+in seconds. `release.sh <version>` on a Mac, the section above, is the fallback when Actions
+cannot run: start it only when nothing is queued or running in Release macOS.
+
+`--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
 and `fleet-linux`: each Mac's update agent installs the release from the public feed on its next hourly
 check, and `fleet_rollout.py --version <v>` on the M4 asks them at once over SpecWithCode Connect
 (add `--ssh-fallback` to also update the M1 and M3 apps, [desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)); `linux_rollout.py
@@ -104,8 +153,10 @@ job per stage of the release graph (`release.sh <v> --stage <id> --resume` on th
 owns the ship from end to end: its last job, `verify.release`, runs the checks `release.sh ship
 studio` runs after the release script (`v<v>` published on both repositories, the private one with
 `studio-update.json`, `SHA256SUMS` and the dmg, and the tagged commit on main) and records them in
-the run record. Both workflows share one concurrency group; Release macOS stays the fallback until
-the staged workflow has shipped a release. Check it first with `dry_run`:
+the run record. Both workflows share one concurrency group and its queue, but the staged workflow
+has no `plan` job: it still takes the version from whoever dispatches it, so two dispatches of it
+can name the same version. Until it has shipped a release and takes its version the same way,
+Release macOS is the way to release and the staged workflow is for trying it out. Check it first with `dry_run`:
 
 ```bash
 gh workflow run release.yml -R anton-abyzov/specwithcode --ref main -f version=<v> -f dry_run=true

@@ -1436,6 +1436,9 @@ tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }
 . "$HERE/release-self-test-canary.sh"
 
 check 'release_tools.py unit tests' tools_ok
+plan_ok() { python3 -B "$HERE/test-release-plan.py" > "$LAST_OUT" 2>&1; }
+# Which version a Release macOS run cuts, and how an earlier attempt of it continues.
+check 'release_plan.py unit tests' plan_ok
 
 # The run record, --stage and release.yml (increment 1239).
 # shellcheck source=release-self-test-record.sh
