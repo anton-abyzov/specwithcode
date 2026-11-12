@@ -6,7 +6,8 @@
 #   candidate  publish-candidate fleet-m4 desktop canary-soak fleet-workers, then finalize:
 #              publish-private publish-public promote-stable merge, then fleet-linux.
 #              The hosts install from the R2 candidate feed (fleet_rollout.py --channel candidate);
-#              nothing reaches GitHub or stable.json before M4, M1 and M3 are verified (D-03).
+#              nothing reaches GitHub or stable.json before M4, M1 and M3 are verified (D-03),
+#              so a worker left for later (fleet_rollout.py --require-all) stops it before finalize.
 #   github     the earlier order: publish-private publish-public fleet-m4 desktop fleet-workers merge
 #              fleet-linux, the hosts reading the public GitHub feed. Always with --ci, and the
 #              default while RELEASE_R2_BUCKET is unset: the first release with channel feeds in its
@@ -33,7 +34,9 @@ channel_init() {  # After load_env.
   if [ "$CI_MODE" -eq 1 ]; then RELEASE_CHANNEL=github; fi
   CHANNEL_ARGS=()
   if [ "$RELEASE_CHANNEL" = candidate ]; then
-    CHANNEL_ARGS=(--channel candidate --channel-since "${RELEASE_CHANNEL_SINCE:-}")
+    # --require-all: a required host left for later (its "Pause running work for updates" is off
+    # and it is busy) exits non-zero, so its stage is not done and finalize_ready holds.
+    CHANNEL_ARGS=(--channel candidate --channel-since "${RELEASE_CHANNEL_SINCE:-}" --require-all)
     RELEASE_R2_STORE="${RELEASE_R2_STORE:-r2://${RELEASE_R2_BUCKET:-}}"
   fi
 }
@@ -122,8 +125,10 @@ stage_canary_soak() {
     die "the canary failed its soak on M4 (above): M4 keeps candidate $VERSION; GitHub and stable.json are untouched"
 }
 
-# D-03: finalize runs only once M4 (canary), its soak and M1 and M3 (fleet) are verified. fleet_rollout.py
-# exits non-zero unless every required host verified, so these markers stand for that.
+# D-03: finalize runs only once M4 (canary), its soak and M1 and M3 (fleet) are verified. With
+# --require-all (CHANNEL_ARGS) fleet_rollout.py exits non-zero unless every required host verified,
+# a host left for later included, so these markers stand for that. Such a host keeps its request
+# and installs once it is quiet; --resume then finds it on the version and goes on.
 finalize_ready() {
   local stage
   for stage in fleet-m4 desktop canary-soak fleet-workers; do

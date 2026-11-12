@@ -63,6 +63,8 @@ interface Fakes {
 interface Machine {
   folderCopies: number;
   runs: number;
+  /** Another update holds the service: nothing runs, and no hold is granted. */
+  otherHold?: boolean;
 }
 
 function worker(
@@ -81,6 +83,12 @@ function worker(
     readonly quietWait?: FleetUpdateWorkerDeps["quietWait"];
     /** Runs after an if-idle hold is granted, before its answer arrives. */
     readonly heldBeforeAnswer?: Effect.Effect<void>;
+    /**
+     * This machine's "Pause running work for updates", off by default as on a real
+     * machine. Only the tests of a forced request turn it on: with it off, a forced
+     * request is refused before anything runs (fleetUpdatePause.test.ts).
+     */
+    readonly pausesWork?: boolean;
   } = {},
 ) {
   const fakes: Fakes = { agentCalls: [], prepareCalls: [], selfUpdates: [], switched: [] };
@@ -129,8 +137,8 @@ function worker(
                       projectTitle: null,
                     },
                   ],
-            held: idle,
-            ...(idle ? { holdToken: "lease-1" } : {}),
+            held: idle && machine.otherHold !== true,
+            ...(idle && machine.otherHold !== true ? { holdToken: "lease-1" } : {}),
             openTerminals: 0,
             folderCopies: machine.folderCopies,
           };
@@ -145,6 +153,7 @@ function worker(
         };
         return result;
       }),
+    pausesWork: Effect.succeed(options.pausesWork ?? false),
     releasePublished: () => Effect.succeed(options.published ?? true),
     selfUpdate: (version, report) =>
       Effect.gen(function* () {
@@ -175,7 +184,7 @@ async function settled(service: ReturnType<typeof worker>["service"]) {
 
 describe("a fleet machine taking its primary's update request", () => {
   it("makes the forced, held install Update now makes on a macOS service", async () => {
-    const { fakes, service } = worker();
+    const { fakes, service } = worker({ pausesWork: true });
     const answer = await Effect.runPromise(
       service.request({ version: "1.0.110", mode: "force", holdMinutes: 10 }),
     );
@@ -202,7 +211,7 @@ describe("a fleet machine taking its primary's update request", () => {
   });
 
   it("writes nothing when the service would not hold, and says why", async () => {
-    const { fakes, service } = worker({ held: false });
+    const { fakes, service } = worker({ held: false, pausesWork: true });
     await Effect.runPromise(service.request({ version: "1.0.110", mode: "force" }));
     const status = await settled(service);
     expect(status).toMatchObject({ phase: "failed", lastErrorReason: "not-held" });
@@ -210,7 +219,10 @@ describe("a fleet machine taking its primary's update request", () => {
   });
 
   it("releases the hold when the request could not be written", async () => {
-    const { fakes, service } = worker({ requestAnswer: { error: "no update agent folder" } });
+    const { fakes, service } = worker({
+      pausesWork: true,
+      requestAnswer: { error: "no update agent folder" },
+    });
     await Effect.runPromise(service.request({ version: "1.0.110", mode: "force" }));
     const status = await settled(service);
     expect(status).toMatchObject({ phase: "failed", lastError: "no update agent folder" });
@@ -218,7 +230,7 @@ describe("a fleet machine taking its primary's update request", () => {
   });
 
   it("asks the agent to look first when it does not offer the version yet", async () => {
-    const { fakes, service } = worker({ status: offering("1.0.109") });
+    const { fakes, service } = worker({ pausesWork: true, status: offering("1.0.109") });
     const answer = await Effect.runPromise(service.request({ version: "1.0.110", mode: "force" }));
     expect(answer).toMatchObject({ result: "checking", phase: "checking" });
     expect(fakes.agentCalls).toContainEqual(["check", "--kickstart"]);
@@ -238,12 +250,12 @@ describe("a fleet machine taking its primary's update request", () => {
     expect(
       await refusal(downgrade.service.request({ version: "1.0.108", mode: "force" })),
     ).toMatchObject({ reason: "downgrade" });
-    const older = worker({ status: offering("1.0.111") });
+    const older = worker({ pausesWork: true, status: offering("1.0.111") });
     expect(
       await refusal(older.service.request({ version: "1.0.110", mode: "force" })),
     ).toMatchObject({ reason: "not-offered" });
     expect(older.fakes.prepareCalls).toEqual([]);
-    const unknown = worker({ method: "boot-service", published: false });
+    const unknown = worker({ pausesWork: true, method: "boot-service", published: false });
     expect(
       await refusal(unknown.service.request({ version: "1.0.999", mode: "force" })),
     ).toMatchObject({ reason: "unknown-version" });
@@ -265,7 +277,11 @@ describe("a fleet machine taking its primary's update request", () => {
   });
 
   it("updates a Linux boot service through its self-update and reports each stage", async () => {
-    const { fakes, service } = worker({ method: "boot-service", serverVersion: "1.0.105" });
+    const { fakes, service } = worker({
+      pausesWork: true,
+      method: "boot-service",
+      serverVersion: "1.0.105",
+    });
     const answer = await Effect.runPromise(service.request({ version: "1.0.109", mode: "force" }));
     expect(answer).toMatchObject({ method: "boot-service", result: "accepted" });
     const status = await settled(service);
@@ -276,6 +292,7 @@ describe("a fleet machine taking its primary's update request", () => {
 
   it("reports a failed self-update by its reason", async () => {
     const { service } = worker({
+      pausesWork: true,
       method: "boot-service",
       serverVersion: "1.0.105",
       selfUpdate: Effect.fail({ reason: "preflight blocked" }),
@@ -289,6 +306,7 @@ describe("a fleet machine taking its primary's update request", () => {
 
   it("refuses a second request while one is under way", async () => {
     const { service } = worker({
+      pausesWork: true,
       method: "boot-service",
       serverVersion: "1.0.105",
       selfUpdate: Effect.never,
@@ -307,7 +325,7 @@ describe("a fleet machine taking its primary's update request", () => {
   });
 
   it("cancels the request it wrote and lets work start again", async () => {
-    const { fakes, service } = worker();
+    const { fakes, service } = worker({ pausesWork: true });
     await Effect.runPromise(service.request({ version: "1.0.110", mode: "force" }));
     await settled(service);
     const answer = await Effect.runPromise(service.request({ cancel: "2026-10-28T13:10:00.000Z" }));
@@ -337,7 +355,7 @@ describe("a fleet machine taking its primary's update request", () => {
   });
 
   it("refuses a second request that arrives while the first still reads the agent", async () => {
-    const { fakes, service } = worker({ statusDelayMs: 50 });
+    const { fakes, service } = worker({ pausesWork: true, statusDelayMs: 50 });
     const first = Effect.runPromise(service.request({ version: "1.0.110", mode: "force" }));
     expect(await refusal(service.request({ version: "1.0.110", mode: "force" }))).toMatchObject({
       reason: "busy",
@@ -365,8 +383,9 @@ async function until(
 // 2026-10-29, 1.0.123 to 1.0.125: the fleet primary asked ministorm (a Linux boot service) for a
 // normal update while it copied a folder from the M4; it restarted within seconds and the copy failed.
 describe("a normal update on a Linux boot service", () => {
-  const boot = (machine: Machine, maxMs = 5_000) =>
+  const boot = (machine: Machine, maxMs = 5_000, pausesWork = false) =>
     worker({
+      pausesWork,
       method: "boot-service",
       serverVersion: "1.0.123",
       machine,
@@ -414,6 +433,24 @@ describe("a normal update on a Linux boot service", () => {
     expect(fakes.switched).toEqual([]);
   });
 
+  it("fails, and is not left for later, when no running work kept it waiting", async () => {
+    // Setting off: only running work is the owner's reason to stay on a version.
+    const off = boot({ folderCopies: 0, runs: 0, otherHold: true }, 60);
+    await Effect.runPromise(off.service.request({ version: "1.0.125", mode: "normal" }));
+    const failed = await until(off.service, (status) => status.phase === "failed");
+    expect(failed).toMatchObject({ phase: "failed", lastErrorReason: "failed" });
+    expect(failed.lastError).toContain("No running work here is what kept it waiting");
+    expect(failed.lastError).not.toContain("Pause running work for updates");
+    expect(off.fakes.switched).toEqual([]);
+    // Setting on: nothing to pause either, reported as busy as before.
+    const on = boot({ folderCopies: 0, runs: 0, otherHold: true }, 60, true);
+    await Effect.runPromise(on.service.request({ version: "1.0.125", mode: "normal" }));
+    expect(await until(on.service, (status) => status.phase === "failed")).toMatchObject({
+      lastErrorReason: "busy",
+    });
+    expect(on.fakes.prepareCalls.every((call) => call.stopWork === false)).toBe(true);
+  });
+
   it("is withdrawn by a cancel while it waits, and releases any hold it took", async () => {
     const machine = { folderCopies: 1, runs: 0 };
     const { fakes, service } = boot(machine);
@@ -449,7 +486,7 @@ describe("a normal update on a Linux boot service", () => {
   });
 
   it("goes ahead when forced, replacing a normal request that waits", async () => {
-    const { fakes, service } = boot({ folderCopies: 1, runs: 0 });
+    const { fakes, service } = boot({ folderCopies: 1, runs: 0 }, 5_000, true);
     await Effect.runPromise(service.request({ version: "1.0.125", mode: "normal" }));
     await until(service, (status) => status.phase === "requested");
     await Effect.runPromise(service.request({ version: "1.0.125", mode: "force" }));
@@ -459,9 +496,12 @@ describe("a normal update on a Linux boot service", () => {
       phase: "handed-off",
       targetVersion: "1.0.125",
     });
-    // The forced install looks for no quiet moment, and the waiting one never switched over.
+    // The forced install looks for no quiet moment: it stops the work as Update now does
+    // (a forced update spares no copy), and the waiting one never switched over.
     expect(fakes.switched).toEqual(["1.0.125"]);
-    expect(fakes.prepareCalls).toHaveLength(asked);
+    expect(fakes.prepareCalls.slice(asked)).toEqual([
+      { stopWork: true, hold: true, reason: "install" },
+    ]);
   });
 
   it("releases the hold it was granted when a forced request replaces it before the switch-over", async () => {
@@ -470,6 +510,7 @@ describe("a normal update on a Linux boot service", () => {
     const grantedNow = new Promise<void>((resolve) => (granted = resolve));
     const answered = new Promise<void>((resolve) => (answer = resolve));
     const { fakes, service } = worker({
+      pausesWork: true,
       method: "boot-service",
       serverVersion: "1.0.123",
       machine: { folderCopies: 0, runs: 0 },

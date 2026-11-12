@@ -11,10 +11,16 @@ const mocks = vi.hoisted(() => ({
     waitedLong: false,
     starting: false,
   },
+  // This machine's server settings; the pause wait only applies with the pause setting on.
+  primarySettings: {} as Record<string, unknown>,
 }));
 
 vi.mock("../../state/environments", () => ({ usePrimaryEnvironment: () => null }));
 vi.mock("./ManagedUpdatesSection", () => ({ ManagedUpdatesSection: () => null }));
+vi.mock("../../hooks/useSettings", () => ({
+  usePrimarySettings: (select: (settings: Record<string, unknown>) => unknown) =>
+    select(mocks.primarySettings),
+}));
 
 vi.mock("../serviceUpdateFlow", () => ({
   startServiceUpdateNow: mocks.startServiceUpdateNow,
@@ -105,6 +111,7 @@ function installButton() {
 beforeEach(() => {
   mocks.startServiceUpdateNow.mockClear();
   mocks.flow = { progress: null, waitedLong: false, starting: false };
+  mocks.primarySettings = { pauseWorkForUpdates: false, continueThreadsAfterServerUpdate: true };
   bridge.installServiceUpdate.mockClear();
   (globalThis as { window?: unknown }).window = globalThis;
   (globalThis as { desktopBridge?: unknown }).desktopBridge = bridge;
@@ -166,6 +173,7 @@ describe("UpdatePreferencesSection", () => {
   });
 
   it("saves the automatic pause wait chosen under Pause running work after", async () => {
+    mocks.primarySettings = { pauseWorkForUpdates: true, continueThreadsAfterServerUpdate: true };
     bridge.setUpdatePreferences.mockImplementation(async (patch: object) => ({
       checkAutomatically: true,
       downloadAutomatically: true,
@@ -187,6 +195,30 @@ describe("UpdatePreferencesSection", () => {
       select!.props.onValueChange("30");
     });
     expect(bridge.setUpdatePreferences).toHaveBeenCalledWith({ pauseWorkAfterMinutes: 30 });
+  });
+
+  it("disables Pause running work after while updates may not pause work here", async () => {
+    const preferences = async () => ({
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      installAutomatically: true,
+    });
+    const pauseWait = () =>
+      renderer!.root.findAll(
+        (node) => typeof node.props.onValueChange === "function" && node.props.value === "10",
+      )[0]!;
+    for (const settings of [
+      {},
+      { pauseWorkForUpdates: false, continueThreadsAfterServerUpdate: true },
+      { pauseWorkForUpdates: true, continueThreadsAfterServerUpdate: false },
+    ]) {
+      mocks.primarySettings = settings;
+      bridge.getUpdatePreferences.mockImplementationOnce(preferences);
+      await render();
+      expect(pauseWait().props.disabled, JSON.stringify(settings)).toBe(true);
+      act(() => renderer?.unmount());
+      renderer = null;
+    }
   });
 
   it("offers no Install now while an Update now run goes on", async () => {

@@ -6,7 +6,10 @@ import type {
   DesktopUpdatePreferencesPatch,
   StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
+import { updatesMayPauseWork } from "@specweave-studio/shared/updatePause";
 import { useCallback, useEffect, useState } from "react";
+
+import { usePrimarySettings } from "../../hooks/useSettings";
 
 import { startServiceUpdateNow, useServiceUpdateFlow } from "../serviceUpdateFlow";
 import { liveServiceUpdateRun } from "../serviceUpdateRunView";
@@ -48,6 +51,9 @@ export function UpdatePreferencesSection() {
   const [serviceState, setServiceState] = useState<StudioServiceUpdateState | null>(null);
   const [servicePending, setServicePending] = useState(false);
   const serviceUpdate = useServiceUpdateFlow(serviceState);
+  // This machine's own choice, on its server: the wait below only matters once
+  // updates may pause running work here.
+  const mayPauseWork = usePrimarySettings(updatesMayPauseWork);
 
   useEffect(() => {
     if (!supported || !bridge) return;
@@ -183,7 +189,7 @@ export function UpdatePreferencesSection() {
       />
       <SettingsRow
         title="Install automatically"
-        description="The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here."
+        description="The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here."
         control={
           <Switch
             checked={preferences.installAutomatically}
@@ -239,12 +245,15 @@ export function UpdatePreferencesSection() {
       />
       <SettingsRow
         title="Pause running work after"
-        description="How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour."
+        description="Applies once “Pause running work for updates” is on: how long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour."
         control={
           <Select
             value={String(pauseWorkAfterMinutes(preferences))}
             disabled={
-              locked || !preferences.checkAutomatically || !preferences.installAutomatically
+              locked ||
+              !preferences.checkAutomatically ||
+              !preferences.installAutomatically ||
+              !mayPauseWork
             }
             onValueChange={(value) => {
               if (value === null) return;

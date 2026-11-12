@@ -435,8 +435,6 @@ export const ja: PhraseCatalog = {
   "Hold mode also quits on two quick presses.": "長押しモードでも、すばやく 2 回押すと終了します。",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "セッションの実行中はアイドルスリープを防ぎ、このマシンのターンが続くようにします。蓋を閉じるとスリープします。",
-  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
-    "SpecWithCode サービスの自動アップデートが実行中の作業を待つ時間です。その後、実行中のターンは一時停止し、サービスが更新され、中断したところから再開します。サイドバーの「あとで」はさらに 1 時間待ちます。",
   "Include text and controls when the app makes them available.":
     "アプリが提供している場合、テキストとコントロールを含めます。",
   "Install and manage Antigravity.": "Antigravity をインストールして管理します。",
@@ -581,8 +579,6 @@ export const ja: PhraseCatalog = {
     "あなたとエージェントが使うタブのサイズです。「フィット」はパネルに合わせ、ほかのサイズではデバイスツールバーを表示します。",
   "Terminal output, independent from code blocks and diffs.":
     "ターミナルの出力です。コードブロックや差分とは別です。",
-  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
-    "下で有効にしていればアプリはアイドル時に更新され、そうでなければ次に終了したときに更新されます。サービスは作業中のセッションがないときに更新され、実行中の作業は下の待ち時間の後に一時停止し、更新後に再開します。「オフ」はここからインストールすることを意味します。",
   "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
     "タスクの種類ごとに使える最も安いティアです。コード、レビュー、デザイン、最終的なアニメーションは Standard より下になりません。そのほかの作業は Frontier のままです。不明確なタスクはいつものモデルを使います。",
   "The color scheme pages are told to prefer. System follows your OS setting.":
@@ -4133,4 +4129,32 @@ export const ja: PhraseCatalog = {
   "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "このマシンのエージェントは、すでに {machines} で作業を開始できます。ここで作成した行を使うと、選んだマシンがこのマシンで作業を開始できるようになります。新しいマシンをこのマシンに追加する場合は、新しいマシンで SpecWithCode を開き、そこで「メインマシンに参加」を選んで、その行をここの「マシンを追加」に貼り付けてください。",
   "{count} more": "ほか {count} 台",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "下で有効にしていればアプリはアイドル時に更新され、そうでなければ次に終了したときに更新されます。サービスは作業中のセッションがないときに更新されます。「更新のために実行中の作業を一時停止」がオンなら、実行中の作業は下の待ち時間の後に一時停止し、更新後に再開します。「オフ」はここからインストールすることを意味します。",
+  "Applies once “Pause running work for updates” is on: how long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "「更新のために実行中の作業を一時停止」がオンのときに使われます。SpecWithCode サービスの自動アップデートが実行中の作業を待つ時間です。その後、実行中のターンは一時停止し、サービスが更新され、中断したところから再開します。サイドバーの「あとで」はさらに 1 時間待ちます。",
+  "Pause running work for updates": "更新のために実行中の作業を一時停止",
+  "After the wait set in “Pause running work after”, running turns pause, the update installs, and they continue where they left off.":
+    "「実行中の作業を一時停止するまでの時間」の待ち時間が過ぎると、実行中のターンは一時停止し、更新がインストールされ、中断したところから再開します。",
+  "After 30 minutes of waiting, running turns pause, the update installs, and they continue where they left off.":
+    "30 分待った後、実行中のターンは一時停止し、更新がインストールされ、中断したところから再開します。",
+  "After the wait, running turns pause, the update installs, and they continue where they left off. On a Mac the wait is “Pause running work after”; on Linux it is 30 minutes.":
+    "待ち時間が過ぎると、実行中のターンは一時停止し、更新がインストールされ、中断したところから再開します。Mac では待ち時間は「実行中の作業を一時停止するまでの時間」、Linux では 30 分です。",
+  "An update waits until {machine} has no running work, however long that takes. Update now still installs right away.":
+    "更新は {machine} で実行中の作業がなくなるまで、どれだけかかっても待ちます。「今すぐ更新」は引き続きすぐにインストールします。",
+  "An update waits up to 30 minutes for {machine} to have no running work. If it is still busy then, {machine} stays on its version until the next update. Update now still installs right away.":
+    "更新は {machine} で実行中の作業がなくなるまで最大 30 分待ちます。それでも作業中なら、{machine} は次の更新まで今のバージョンのままです。「今すぐ更新」は引き続きすぐにインストールします。",
+  "An update waits for {machine} to have no running work. A Mac keeps waiting as long as that takes; a Linux machine waits up to 30 minutes and, if still busy, stays on its version until the next update. Update now still installs right away.":
+    "更新は {machine} で実行中の作業がなくなるまで待ちます。Mac は必要なだけ待ち、Linux マシンは最大 30 分待って、それでも作業中なら次の更新まで今のバージョンのままです。「今すぐ更新」は引き続きすぐにインストールします。",
+  "Has no effect on {machine} while “Continue threads after restarts” is off there: paused turns would not continue, so updates wait for quiet. Turn that on in Settings > General.":
+    "{machine} で「再起動後にスレッドを続行」がオフの間は効果がありません。一時停止したターンが再開しないため、更新は作業がなくなるまで待ちます。設定 > 一般 でオンにしてください。",
+  "{machine} is unreachable, so this setting cannot be changed now.":
+    "{machine} に接続できないため、今はこの設定を変更できません。",
+  "This connection cannot change settings on {machine}.":
+    "この接続では {machine} の設定を変更できません。",
+  "Could not save update settings": "アップデート設定を保存できませんでした",
+  "The change could not be confirmed on {machine}. The switch shows what {machine} reports.":
+    "{machine} で変更を確認できませんでした。スイッチは {machine} が報告する状態を表示しています。",
+  "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
+    "{machine} の SpecWithCode にはこの設定がありません。先に {machine} を更新してください。",
 };

@@ -33,6 +33,12 @@ class HoldUnsupported(HoldUnavailable):
     """The installed service CLI predates `service prepare-update` (PREPARE_UPDATE_SINCE)."""
 
 
+def copies_in(answer):
+    """The folder copies a prepare answer counts; 0 for none or a service too old to count them."""
+    copies = answer.get('folderCopies') if isinstance(answer, dict) else None
+    return copies if type(copies) is int and copies > 0 else 0
+
+
 def _tuple(version):
     match = _VERSION.fullmatch(version) if isinstance(version, str) else None
     return tuple(int(part) for part in match.groups()) if match else None
@@ -127,15 +133,20 @@ class ServiceHold(object):
     def prepare_flags(self):
         return (['--hold', '--if-idle'] if self.wait_for_idle else ['--stop-work', '--hold']) + ['--reason', 'install']
 
-    def counted_copies(self):
-        """The folder copies the service counts now (its prepareServiceUpdate answer without --stop-work
-        or --hold, which stops and holds nothing), seen even when its updates/folder-work.json cannot be
-        written. 0 from a service too old to count them."""
+    def look(self):
+        """The service's prepareServiceUpdate answer without --stop-work or --hold, which stops and
+        holds nothing: its work, its folder copies and, since the setting exists, pauseWorkForUpdates
+        (update_policy). Raises HoldUnsupported, without running anything, for a release older than
+        the command."""
         supported, reason = self.support()
         if not supported:
             raise HoldUnsupported(reason)
-        copies = self._call([], RELEASE_TIMEOUT).get('folderCopies')
-        return copies if type(copies) is int and copies > 0 else 0
+        return self._call([], RELEASE_TIMEOUT)
+
+    def counted_copies(self):
+        """The folder copies the service counts now (look's answer), seen even when its
+        updates/folder-work.json cannot be written. 0 from a service too old to count them."""
+        return copies_in(self.look())
 
     def release(self):
         """Releases the hold, as Cancel update does, so work can start again."""
