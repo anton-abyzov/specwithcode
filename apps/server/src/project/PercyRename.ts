@@ -1,5 +1,5 @@
 /**
- * The assistant's default name changed from "Aide" to "Percy". Migration 074
+ * The assistant's default name changed from "Aide" to "Percy". Migration 075
  * lists, once, the personal assistants still titled exactly "Aide"; this
  * renames each through `project.meta.update`, so the change is an ordinary
  * event every client sees, and removes its row. A name the person chose is
