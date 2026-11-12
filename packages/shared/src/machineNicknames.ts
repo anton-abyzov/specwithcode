@@ -8,14 +8,25 @@ import {
 } from "@specweave-studio/contracts";
 import { DateTime } from "effect";
 
+import { graphemes } from "./machineShortLabel.ts";
+
 /** Trims, collapses inner whitespace and caps a typed name at 16 characters. */
 export function normalizeMachineNickname(name: string): string {
   return name.trim().replace(/\s+/g, " ").slice(0, MACHINE_NICKNAME_MAX_LENGTH).trim();
 }
 
-/** A typed short label: no spaces, at most 3 characters. Empty means "derive one". */
+/**
+ * A typed short label: no spaces, whole visible characters only, and within the
+ * stored limit of 3 code units (an accent or emoji is never cut in half). Empty
+ * means "derive one".
+ */
 export function normalizeMachineShortName(short: string): string {
-  return [...short.replace(/\s+/g, "")].slice(0, MACHINE_SHORT_NAME_MAX_LENGTH).join("");
+  let out = "";
+  for (const part of graphemes(short.replace(/\s+/g, "").normalize("NFC"))) {
+    if (out.length + part.length > MACHINE_SHORT_NAME_MAX_LENGTH) break;
+    out += part;
+  }
+  return out;
 }
 
 const stamp = (entry: MachineNickname): number => {

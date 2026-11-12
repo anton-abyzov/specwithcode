@@ -10,7 +10,10 @@ import {
   normalizeMachineNickname,
   normalizeMachineShortName,
 } from "@specweave-studio/shared/machineNicknames";
-import { MACHINE_SHORT_LABEL_MIN_LENGTH } from "@specweave-studio/shared/machineShortLabel";
+import {
+  graphemeLength,
+  MACHINE_SHORT_LABEL_MIN_LENGTH,
+} from "@specweave-studio/shared/machineShortLabel";
 import { useEffect, useId, useState } from "react";
 
 import {
@@ -92,7 +95,8 @@ export function RenameMachineDialog({
   const next = normalizeMachineNickname(value);
   const lockText = renameMachineLockText(lock);
   const nextShort = normalizeMachineShortName(shortValue);
-  const shortValid = nextShort === "" || [...nextShort].length >= MACHINE_SHORT_LABEL_MIN_LENGTH;
+  const shortValid =
+    nextShort === "" || graphemeLength(nextShort) >= MACHINE_SHORT_LABEL_MIN_LENGTH;
   const looksChanged =
     identity !== null &&
     (color !== identity.color || icon !== identity.icon || nextShort !== storedShort);

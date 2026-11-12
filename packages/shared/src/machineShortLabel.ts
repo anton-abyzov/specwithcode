@@ -27,11 +27,18 @@ export const MACHINE_SHORT_LABEL_MIN_LENGTH = 2;
 // Locale-free, so every device folds a name the same way.
 const fold = (value: string) => value.toUpperCase();
 
-/** Visible characters, so "é" written as e plus an accent counts once. */
-export function graphemeLength(value: string): number {
+/** A string's visible characters, so "é" written as e plus an accent is one. */
+export function graphemes(value: string): ReadonlyArray<string> {
   const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
-  if (Segmenter === undefined) return [...value.normalize("NFC")].length;
-  return Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(value)).length;
+  if (Segmenter === undefined) return [...value.normalize("NFC")];
+  return Array.from(
+    new Segmenter(undefined, { granularity: "grapheme" }).segment(value),
+    (part) => part.segment,
+  );
+}
+
+export function graphemeLength(value: string): number {
+  return graphemes(value).length;
 }
 
 function ownLabel(name: string): string | null {

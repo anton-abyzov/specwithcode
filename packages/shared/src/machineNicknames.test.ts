@@ -9,6 +9,7 @@ import {
   newerMachineNickname,
   nextMachineNicknameStamp,
   normalizeMachineNickname,
+  normalizeMachineShortName,
   sameMachineNicknames,
 } from "./machineNicknames.ts";
 
@@ -104,6 +105,13 @@ describe("machine nicknames", () => {
     it("compares maps by color and icon too", () => {
       expect(sameMachineNicknames({ m4: colored }, { m4: at("M4", stamp) })).toBe(false);
       expect(sameMachineNicknames({ m4: colored }, { m4: { ...colored } })).toBe(true);
+    });
+
+    it("trims a typed short label by whole characters within the stored limit", () => {
+      expect(normalizeMachineShortName(" l m ")).toBe("lm");
+      expect(normalizeMachineShortName("e\u0301xyz")).toBe("\u00e9xy");
+      // An emoji takes two code units: a third would pass the limit, so it stops before.
+      expect(normalizeMachineShortName("A\u{1F680}B")).toBe("A\u{1F680}");
     });
 
     it("keeps a short label through a merge with an entry that states none", () => {
