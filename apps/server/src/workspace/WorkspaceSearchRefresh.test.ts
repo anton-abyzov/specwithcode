@@ -7,7 +7,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type SearchRefreshClock,
-  hasNativeRecursiveWatch,
   isIgnoredSearchEvent,
   makeSearchRefresh,
   watchSearchRoot,
@@ -231,15 +230,12 @@ describe("watchSearchRoot", () => {
       const stopSecond = watchSearchRoot(root, () => undefined);
       expect(watchedSearchRootCount()).toBe(before + 1);
 
-      if (hasNativeRecursiveWatch(NodeOS.platform())) {
-        NodeFS.mkdirSync(NodePath.join(root, "src"));
-        NodeFS.writeFileSync(NodePath.join(root, "src", "new-file.ts"), "export {};\n");
-        const deadline = Date.now() + 10_000;
-        while (!seen.some((path) => path?.endsWith("new-file.ts")) && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        expect(seen.some((path) => path?.endsWith("new-file.ts"))).toBe(true);
+      NodeFS.writeFileSync(NodePath.join(root, "new-file.ts"), "export {};\n");
+      const deadline = Date.now() + 10_000;
+      while (!seen.some((path) => path?.endsWith("new-file.ts")) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
+      expect(seen.some((path) => path?.endsWith("new-file.ts"))).toBe(true);
 
       stopFirst();
       expect(watchedSearchRootCount()).toBe(before + 1);
