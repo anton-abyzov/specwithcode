@@ -1705,6 +1705,8 @@ export interface ChatComposerProps {
   /** The project's fallback models, best first, for the picker's limits view. */
   limitFallbackOrder?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
   modelStateHeader?: ModelStateHeader | null;
+  /** Background work the thread's process still runs; the picker says a pick waits for it. */
+  pickerBackgroundWork?: string | null;
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
@@ -5917,6 +5919,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         triggerState={pickerTriggerState}
         triggerStateDetail={props.modelStateHeader?.detail ?? null}
         stateHeader={props.modelStateHeader ?? null}
+        backgroundWork={props.pickerBackgroundWork ?? null}
         triggerClassName={cn(
           composerControlsCollapsed ? "shrink text-xs!" : "-ms-2.5",
           // A chip keeps its parts within the toolbar by its fit; a plain label, as

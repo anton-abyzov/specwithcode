@@ -226,6 +226,46 @@ describe("ThreadErrorBanner", () => {
     ).not.toContain("Switch model");
   });
 
+  describe("a start that background work refused", () => {
+    const error =
+      'Claude is still running subagent "Build redesigned Machines join card", and this folder or permission change would end that work. Stop the background work to continue now, or wait until it finishes and press Continue.';
+
+    it("offers one action while the work runs: stop it and continue", () => {
+      const markup = renderToStaticMarkup(
+        <ThreadErrorBanner
+          error={error}
+          errorClass="provider_error"
+          errorCode="background_work_blocks_change"
+          onContinue={() => {}}
+          onSwitchModel={() => {}}
+          backgroundWorkBlockRecovery={{ onStopAndContinue: () => {}, busy: false }}
+        />,
+      );
+      expect(markup).toContain("Background work is still running");
+      expect(markup).not.toContain("Provider error");
+      expect(markup).toContain("Build redesigned Machines join card");
+      expect(markup).toContain("Stop background work and continue</button>");
+      expect(markup).not.toContain(">Continue</button>");
+      expect(markup).not.toContain("Switch model");
+    });
+
+    it("offers Continue, never another model, once the work has ended", () => {
+      const markup = renderToStaticMarkup(
+        <ThreadErrorBanner
+          error={error}
+          errorClass="provider_error"
+          errorCode="background_work_blocks_change"
+          onContinue={() => {}}
+          onSwitchModel={() => {}}
+        />,
+      );
+      expect(markup).toContain("Background work is still running");
+      expect(markup).toContain(">Continue</button>");
+      expect(markup).not.toContain("Stop background work");
+      expect(markup).not.toContain("Switch model");
+    });
+  });
+
   describe("a missing thread folder", () => {
     const error =
       "This thread's workspace folder no longer exists or is not a directory: /w/studio/fix-design. Restore the folder at this path before retrying; switching models will fail the same way.";

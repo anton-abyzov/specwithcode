@@ -88,6 +88,16 @@ function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind
   }
 }
 
+/**
+ * The background work the provider's own process runs. A pull request watch
+ * is SpecWithCode's, so it never holds that process or its settings.
+ */
+export function providerHostedBackgroundWork<
+  Task extends Pick<PendingBackgroundWorkTask, "taskId">,
+>(tasks: ReadonlyArray<Task>): ReadonlyArray<Task> {
+  return tasks.filter((task) => !task.taskId.startsWith("pull-request-watch:"));
+}
+
 type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
 
 type PendingBackgroundWorkPullRequest = Pick<

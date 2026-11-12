@@ -83,6 +83,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /** How much of the chip shows, from a host that fits it with its other controls. */
   fit?: ModelChipFit | null;
   stateHeader?: ModelStateHeader | null;
+  /** Background work the thread's process still runs; a pick waits for it. */
+  backgroundWork?: string | null;
   /** Nothing is chosen yet, so `activeInstanceId` only says where the list opens. */
   unset?: boolean;
   triggerAriaLabel?: string;
@@ -558,6 +560,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         ) : (
           <ModelPickerContent
             stateHeader={props.stateHeader ?? null}
+            backgroundWork={props.backgroundWork ?? null}
             activeInstanceId={activeInstanceId}
             model={props.model}
             {...(props.selectedModels !== undefined

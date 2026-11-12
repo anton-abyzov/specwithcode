@@ -7937,13 +7937,15 @@ export function makeClaudeAdapterV2(
         const liveProcessBackgroundWork = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
         ) {
-          const work: Array<{ readonly kind: string; readonly description?: string | null }> =
-            Array.from(
-              rosterForNativeThread(
-                yield* Ref.get(pendingBackgroundTasksByNativeThread),
-                live.nativeThreadId,
-              ).values(),
-            );
+          const work: Array<{
+            readonly kind: string;
+            readonly description?: string | null | undefined;
+          }> = Array.from(
+            rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              live.nativeThreadId,
+            ).values(),
+          );
           const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
           for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
             if (
@@ -8664,7 +8666,7 @@ export function makeClaudeAdapterV2(
               adapterOptions.modelCatalog?.(),
             ).promptEffort;
             const makeUserMessage = Effect.fnUntraced(function* (
-              uuid: string,
+              uuid: NonNullable<typeof promptUuid>,
               promptEffort: string | undefined,
             ) {
               return yield* makeClaudeUserMessageWithAttachments({

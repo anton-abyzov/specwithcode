@@ -536,7 +536,12 @@ export function makeProviderFailureTurnItem(input: {
     parentItemId: null,
     ordinal: input.itemOrdinal,
     status: "failed",
-    title: input.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error",
+    title:
+      input.failure.class === "usage_limit"
+        ? "Usage limit reached"
+        : input.failure.code === BACKGROUND_WORK_BLOCKS_CHANGE_FAILURE_CODE
+          ? "Background work is still running"
+          : "Provider error",
     startedAt: input.retryStartedAt ?? input.occurredAt,
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,
