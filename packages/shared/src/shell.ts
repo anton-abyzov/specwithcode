@@ -800,6 +800,73 @@ export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArra
   ];
 }
 
+/** Lists a directory's entries, or nothing when it cannot be read. */
+export type DirectoryLister = (directory: string) => ReadonlyArray<string>;
+
+const listDirectorySafely: DirectoryLister = (directory) => {
+  try {
+    return NodeFS.readdirSync(directory);
+  } catch {
+    return [];
+  }
+};
+
+const compareNodeVersionsDescending = (left: string, right: string): number => {
+  const parts = (value: string) => value.replace(/^v/, "").split(".").map(Number);
+  const [a, b] = [parts(left), parts(right)];
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (b[index] || 0) - (a[index] || 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+};
+
+/**
+ * Per-user folders that installers on macOS and Linux put CLIs in. An app
+ * started from the Dock or a desktop launcher does not get the login shell's
+ * PATH, and that shell may not answer in time, so these fill the gaps.
+ */
+export function resolveKnownPosixCliDirs(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  listDirectory: DirectoryLister = listDirectorySafely,
+): ReadonlyArray<string> {
+  if (platform !== "darwin" && platform !== "linux") return [];
+  const home = env.HOME?.trim();
+  const set = (name: string) => env[name]?.trim() || undefined;
+  const nvmDir = set("NVM_DIR") ?? (home ? `${home}/.nvm` : undefined);
+  const npmPrefix = set("NPM_CONFIG_PREFIX") ?? set("npm_config_prefix");
+  const voltaHome = set("VOLTA_HOME") ?? (home ? `${home}/.volta` : undefined);
+  const bunHome = set("BUN_INSTALL") ?? (home ? `${home}/.bun` : undefined);
+  const pnpmHome =
+    set("PNPM_HOME") ??
+    (home
+      ? platform === "darwin"
+        ? `${home}/Library/pnpm`
+        : `${home}/.local/share/pnpm`
+      : undefined);
+  const nodeBins = nvmDir
+    ? [...listDirectory(`${nvmDir}/versions/node`)]
+        .filter((entry) => /^v\d+\.\d+\.\d+$/.test(entry))
+        .sort(compareNodeVersionsDescending)
+        .map((entry) => `${nvmDir}/versions/node/${entry}/bin`)
+    : [];
+  const dirs = [
+    home && `${home}/.local/bin`,
+    npmPrefix && `${npmPrefix}/bin`,
+    home && `${home}/.npm-global/bin`,
+    ...nodeBins,
+    voltaHome && `${voltaHome}/bin`,
+    bunHome && `${bunHome}/bin`,
+    pnpmHome,
+    home && `${home}/.opencode/bin`,
+    ...(platform === "darwin"
+      ? ["/opt/homebrew/bin", "/usr/local/bin"]
+      : ["/home/linuxbrew/.linuxbrew/bin", "/usr/local/bin"]),
+  ].filter((dir): dir is string => Boolean(dir));
+  return [...new Set(dirs)];
+}
+
 function readWindowsEnvironmentSafely(
   readEnvironment: WindowsShellEnvironmentReader,
   names: ReadonlyArray<string>,

@@ -4,7 +4,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ProviderInstanceId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  resolveProviderInstanceEnabled,
+} from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -20,12 +25,20 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 import {
+  DISCOVERED_AGENTS,
+  discoverAgents,
   discoveryEnvironment,
   parseOpenCodeAuthList,
+  parsePiListModels,
+  probeCursor,
   probeGrok,
+  probeMuse,
   probeOpenCode,
+  probePi,
   runProviderDiscovery,
+  searchedFolders,
 } from "./providerDiscovery.ts";
+import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 
 const fakeCliDirectory = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "discovery-"));
 
@@ -66,6 +79,35 @@ const OPENCODE_NONE = "┌  Credentials ~/.local/share/opencode/auth.json\n│\n
 // OpenCode 2 prints one row per integration.
 const OPENCODE_TWO_STORED = "OpenRouter  API key                     stored\n";
 const OPENCODE_TWO_NONE = "No authenticated integrations\n";
+
+/**
+ * A PATH with `node` and the system tools and nothing else, so a test never
+ * runs an agent CLI that happens to be installed on the machine.
+ */
+const isolatedPath = () => {
+  const directory = fakeCliDirectory();
+  if (HostProcessPlatform.defaultValue() === "win32") {
+    NodeFS.writeFileSync(
+      NodePath.join(directory, "node.cmd"),
+      `@"${process.execPath}" %*\r\n`,
+      "utf8",
+    );
+    return [directory, NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32")].join(
+      ";",
+    );
+  }
+  const node = NodePath.join(directory, "node");
+  NodeFS.writeFileSync(node, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, "utf8");
+  NodeFS.chmodSync(node, 0o755);
+  return [directory, "/usr/bin", "/bin"].join(":");
+};
+
+const PI_MODELS = [
+  "provider   model            context  max-out  thinking  images",
+  "anthropic  claude-sonnet-5  200K     64K      yes       yes",
+  "",
+].join("\n");
+const PI_NO_MODELS = "No models available. Set API keys in environment variables.\n";
 
 const cleanEnvironment = () =>
   discoveryEnvironment({ PATH: process.env.PATH }, HostProcessPlatform.defaultValue());
@@ -282,7 +324,7 @@ it.layer(NodeServices.layer)("provider discovery settings", (it) => {
       yield* writeSettingsFile("{}");
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       const candidates = yield* settings.providerDiscoveryCandidates!;
-      assert.deepEqual([...candidates].sort(), ["grok", "opencode"]);
+      assert.deepEqual([...candidates].sort(), ["cursor", "grok", "opencode", "pi"]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -292,7 +334,7 @@ it.layer(NodeServices.layer)("provider discovery settings", (it) => {
       yield* recordProviderUsage("opencode");
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       const candidates = yield* settings.providerDiscoveryCandidates!;
-      assert.deepEqual([...candidates], []);
+      assert.deepEqual([...candidates], ["pi", "cursor"]);
       assert.deepEqual(yield* settings.autoEnableDiscoveredProviders!(["grok"], AT), []);
       assert.isFalse((yield* settings.getSettings).providers.grok.enabled);
     }).pipe(Effect.provide(layerServerSettings())),
@@ -304,7 +346,10 @@ it.layer(NodeServices.layer)("provider discovery settings", (it) => {
         '{"providerInstances":{"opencode":{"driver":"opencode","enabled":false,"config":{}}}}',
       );
       const settings = yield* ServerSettingsModule.ServerSettingsService;
-      assert.deepEqual([...(yield* settings.providerDiscoveryCandidates!)], ["grok"]);
+      assert.deepEqual(
+        [...(yield* settings.providerDiscoveryCandidates!)],
+        ["grok", "pi", "cursor"],
+      );
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -314,7 +359,10 @@ it.layer(NodeServices.layer)("provider discovery settings", (it) => {
         '{"providerInstances":{"grok":{"driver":"grok","config":{"binaryPath":"/opt/grok"}}}}',
       );
       const settings = yield* ServerSettingsModule.ServerSettingsService;
-      assert.deepEqual([...(yield* settings.providerDiscoveryCandidates!)], ["opencode"]);
+      assert.deepEqual(
+        [...(yield* settings.providerDiscoveryCandidates!)],
+        ["opencode", "pi", "cursor"],
+      );
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -351,7 +399,10 @@ it.layer(NodeServices.layer)("provider discovery settings", (it) => {
       assert.isTrue(file.providers.grok.enabled);
       assert.deepEqual(file.providerDiscovery, { autoEnabled: { grok: AT } });
       // Decided now: a second run changes nothing.
-      assert.deepEqual([...(yield* settings.providerDiscoveryCandidates!)], ["opencode"]);
+      assert.deepEqual(
+        [...(yield* settings.providerDiscoveryCandidates!)],
+        ["opencode", "pi", "cursor"],
+      );
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -361,8 +412,10 @@ it.layer(NodeServices.layer)("provider discovery settings", (it) => {
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       yield* settings.updateSettings({ responseStreamingMode: "turn" });
       assert.deepEqual([...(yield* settings.providerDiscoveryCandidates!)].sort(), [
+        "cursor",
         "grok",
         "opencode",
+        "pi",
       ]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
@@ -430,7 +483,7 @@ describe("provider discovery at startup", () => {
         yield* writeSettingsFile("{}");
         const settings = yield* ServerSettingsModule.ServerSettingsService;
         yield* settings.start;
-        assert.equal((yield* settings.providerDiscoveryCandidates!).size, 2);
+        assert.equal((yield* settings.providerDiscoveryCandidates!).size, 4);
         yield* writeUntilReloaded(settings, "{broken");
         assert.deepEqual(yield* settings.autoEnableDiscoveredProviders!(["grok"], AT), []);
         assert.equal(yield* readSettingsFile, "{broken");
@@ -463,13 +516,152 @@ describe("provider discovery at startup", () => {
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       yield* settings.start;
       const enabled = yield* runProviderDiscovery.pipe(
-        Effect.provideService(HostProcessEnvironment, { PATH: process.env.PATH }),
+        Effect.provideService(HostProcessEnvironment, { PATH: isolatedPath() }),
         Effect.provideService(HostProcessPlatform, HostProcessPlatform.defaultValue()),
       );
       assert.deepEqual(enabled, ["grok"]);
       const current = yield* settings.getSettings;
       assert.isTrue(current.providers.grok.enabled);
       assert.isFalse(current.providers.opencode.enabled);
+    }).pipe(Effect.provide(Layer.provideMerge(layerServerSettings(), NodeServices.layer))),
+  );
+});
+
+describe("finding every agent", () => {
+  it("reads Pi's model list as the sign-in", () => {
+    expect(parsePiListModels(PI_MODELS)).toBe(true);
+    expect(parsePiListModels(PI_NO_MODELS)).toBe(false);
+    expect(parsePiListModels("")).toBe(null);
+  });
+
+  it.live("reports Pi with models as ready, and without as signed out", () =>
+    Effect.gen(function* () {
+      const ready = fakeCli("pi", ["--list-models"], PI_MODELS);
+      const signedOut = fakeCli("pi", ["--list-models"], PI_NO_MODELS);
+      assert.equal(yield* probePi(ready, cleanEnvironment()), "ready");
+      assert.equal(yield* probePi(signedOut, cleanEnvironment()), "signed-out");
+      assert.equal(
+        yield* probePi("pi-not-installed-anywhere", cleanEnvironment()),
+        "not-installed",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("takes a Cursor key as the sign-in, and the CLI alone as installed", () =>
+    Effect.gen(function* () {
+      const cli = fakeCli("cursor-agent", ["never"], "");
+      assert.equal(yield* probeCursor(cli, cleanEnvironment()), "installed");
+      assert.equal(
+        yield* probeCursor("cursor-agent-not-installed-anywhere", {
+          ...cleanEnvironment(),
+          CURSOR_API_KEY: "test-key",
+        }),
+        "ready",
+      );
+      assert.equal(
+        yield* probeCursor("cursor-agent-not-installed-anywhere", cleanEnvironment()),
+        "not-installed",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reports a signed-in Muse Code as ready, and a signed-out one as installed", () =>
+    Effect.gen(function* () {
+      const signedIn = fakeCli("muse", ["usage", "--json"], "{}", "Muse Code 1.4.15");
+      const signedOut = fakeCli("muse", ["never"], "", "Muse Code 1.4.15");
+      assert.equal(yield* probeMuse(signedIn, cleanEnvironment()), "ready");
+      assert.equal(yield* probeMuse(signedOut, cleanEnvironment()), "installed");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("lists the folders it looked in, once each", () => {
+    expect(searchedFolders({ PATH: "/a:/b::/a" }, "linux")).toEqual(["/a", "/b"]);
+    expect(searchedFolders({ Path: "C:\\a;C:\\b" }, "win32")).toEqual(["C:\\a", "C:\\b"]);
+  });
+
+  it("gives Muse Code a default row that is off until someone turns it on", () => {
+    const fresh = DEFAULT_SERVER_SETTINGS;
+    assert.deepEqual(deriveProviderInstanceConfigMap(fresh)[ProviderInstanceId.make("muse")], {
+      driver: ProviderDriverKind.make("muse"),
+      enabled: false,
+      config: {},
+    });
+    assert.isFalse(
+      resolveProviderInstanceEnabled(
+        deriveProviderInstanceConfigMap(fresh)[ProviderInstanceId.make("muse")]!,
+      ),
+    );
+    const chosen = {
+      driver: ProviderDriverKind.make("muse"),
+      enabled: true,
+      config: { binaryPath: "/opt/muse" },
+    };
+    assert.deepEqual(
+      deriveProviderInstanceConfigMap({
+        ...fresh,
+        providerInstances: { [ProviderInstanceId.make("muse")]: chosen },
+      })[ProviderInstanceId.make("muse")],
+      chosen,
+    );
+  });
+
+  it.live("finds each agent by its command and never turns on Muse Code or a registry agent", () =>
+    Effect.gen(function* () {
+      const directory = fakeCliDirectory();
+      const cli = (name: string, statusArgs: ReadonlyArray<string>, statusOutput: string) =>
+        writeFakeCli({
+          directory,
+          name,
+          source: `
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("${name} 1.0.0"); process.exit(0); }
+if (JSON.stringify(args) === ${JSON.stringify(JSON.stringify(statusArgs))}) {
+  process.stdout.write(${JSON.stringify(statusOutput)});
+  process.exit(0);
+}
+process.exit(2);
+`,
+        });
+      cli("muse", ["usage", "--json"], "{}");
+      cli("pi", ["--list-models"], PI_MODELS);
+      cli("gemini", ["never"], "");
+      cli("claude", ["never"], "");
+      const path = [directory, isolatedPath()].join(NodePath.delimiter);
+      yield* writeSettingsFile("{}");
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* settings.start;
+
+      const report = yield* discoverAgents(yield* settings.getSettings).pipe(
+        Effect.provideService(HostProcessEnvironment, { PATH: path }),
+        Effect.provideService(HostProcessPlatform, HostProcessPlatform.defaultValue()),
+      );
+      assert.deepEqual(
+        Object.fromEntries(report.results.map(({ agent, state }) => [agent, state])),
+        {
+          codex: "not-installed",
+          claudeAgent: "installed",
+          cursor: "not-installed",
+          grok: "not-installed",
+          muse: "ready",
+          opencode: "not-installed",
+          pi: "ready",
+          antigravity: "not-installed",
+          gemini: "installed",
+          "github-copilot-cli": "not-installed",
+        },
+      );
+      assert.equal(report.results.length, DISCOVERED_AGENTS.length);
+      assert.equal(report.searched[0], directory);
+
+      const enabled = yield* runProviderDiscovery.pipe(
+        Effect.provideService(HostProcessEnvironment, { PATH: path }),
+        Effect.provideService(HostProcessPlatform, HostProcessPlatform.defaultValue()),
+      );
+      assert.deepEqual(enabled, ["pi"]);
+      const current = yield* settings.getSettings;
+      assert.isTrue(current.providers.pi.enabled);
+      assert.deepEqual(Object.keys(current.providerDiscovery.autoEnabled), ["pi"]);
+      assert.deepEqual(current.providerInstances, {});
     }).pipe(Effect.provide(Layer.provideMerge(layerServerSettings(), NodeServices.layer))),
   );
 });

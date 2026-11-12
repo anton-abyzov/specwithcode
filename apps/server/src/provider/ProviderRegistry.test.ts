@@ -3097,9 +3097,15 @@ it.layer(
               "codex",
               "cursor",
               "grok",
+              "muse",
               "opencode",
               "pi",
             ]);
+            assert.strictEqual(
+              providers.find((provider) => provider.instanceId === ProviderInstanceId.make("muse"))
+                ?.enabled,
+              false,
+            );
             assert.strictEqual(cursorProvider?.enabled, false);
             assert.strictEqual(cursorProvider?.status, "disabled");
             assert.strictEqual(

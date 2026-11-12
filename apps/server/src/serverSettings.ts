@@ -946,6 +946,7 @@ const PersistedOptionalProviderSettings = Schema.Struct({
     Schema.Struct({
       cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      pi: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
     }),
   ),
@@ -1002,8 +1003,12 @@ function restoreUsedProviders(
   };
 }
 
-/** Default-off drivers that startup discovery may turn on when their CLI is signed in. */
-export const DISCOVERABLE_PROVIDER_DRIVERS = ["grok", "opencode"] as const;
+/**
+ * Default-off drivers that discovery may turn on when they are signed in. Muse
+ * Code is found but never turned on here: its CLI can share code with its
+ * maker by a setting, so a person chooses that.
+ */
+export const DISCOVERABLE_PROVIDER_DRIVERS = ["grok", "opencode", "pi", "cursor"] as const;
 export type DiscoverableProviderDriver = (typeof DISCOVERABLE_PROVIDER_DRIVERS)[number];
 
 /**
@@ -1131,6 +1136,7 @@ const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
     ...DEFAULT_SERVER_SETTINGS.providers,
     cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
     grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
+    pi: { ...DEFAULT_SERVER_SETTINGS.providers.pi, enabled: undefined },
     opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
   },
   // Always written, so a user's choice survives a change of its default.
@@ -2623,12 +2629,12 @@ const make = Effect.gen(function* () {
               ...current,
               providers: {
                 ...current.providers,
-                ...(enabled.includes("grok")
-                  ? { grok: { ...current.providers.grok, enabled: true } }
-                  : {}),
-                ...(enabled.includes("opencode")
-                  ? { opencode: { ...current.providers.opencode, enabled: true } }
-                  : {}),
+                ...Object.fromEntries(
+                  enabled.map((driver) => [
+                    driver,
+                    { ...current.providers[driver], enabled: true },
+                  ]),
+                ),
               },
               providerDiscovery: { ...current.providerDiscovery, autoEnabled },
             };

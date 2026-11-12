@@ -5,6 +5,7 @@ import {
   mergePathEntries,
   readPathFromLoginShell,
   readPathFromLaunchctl,
+  resolveKnownPosixCliDirs,
   resolveWindowsEnvironment,
 } from "@specweave-studio/shared/shell";
 import * as Effect from "effect/Effect";
@@ -31,7 +32,13 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
   }
 
   const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
-  const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
+  // The user's own order comes first. The installer folders fill the gaps left
+  // when the login shell did not answer, as the known folders do on Windows.
+  const mergedPath = mergePathEntries(
+    mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform),
+    resolveKnownPosixCliDirs(env, platform).join(":"),
+    platform,
+  );
   if (mergedPath) {
     env.PATH = mergedPath;
   }
