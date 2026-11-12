@@ -107,6 +107,8 @@ interface HarnessOptions {
   readonly pathSemantics?: "win32" | "posix";
   readonly createWorktreeFails?: boolean;
   readonly fetchRemoteFails?: boolean;
+  /** The repository has no remote named origin. */
+  readonly noOrigin?: boolean;
   readonly resolveRemoteFails?: boolean;
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
@@ -212,6 +214,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const fetchRemote = vi.fn((_: unknown) =>
     options.fetchRemoteFails ? (Effect.fail("simulated fetch failure") as never) : Effect.void,
   );
+  const remoteExists = vi.fn((_: unknown) => Effect.succeed(options.noOrigin !== true));
   const resolveRemoteTrackingCommit = vi.fn((_: unknown) =>
     options.resolveRemoteFails
       ? (Effect.fail("simulated remote resolve failure") as never)
@@ -328,6 +331,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           listLocalBranchNames,
           localStatus,
           fetchRemote,
+          remoteExists,
           resolveRemoteTrackingCommit,
           createWorktree,
           removeWorktree,
@@ -350,6 +354,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     dispatch,
     sendToThread,
     fetchRemote,
+    remoteExists,
     resolveRemoteTrackingCommit,
     createWorktree,
     removeWorktree,
@@ -552,6 +557,32 @@ describe("studio_worktree_handoff", () => {
       const result = yield* runHandoff(harness, { branch: "feature/settings-origin" });
       expect(result.startedFromOrigin).toBe(true);
       expect(harness.fetchRemote).toHaveBeenCalled();
+    });
+  });
+
+  it.effect("branches from the local base when there is no origin and none was asked for", () => {
+    const harness = makeHarness({ newWorktreesStartFromOrigin: true, noOrigin: true });
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, { branch: "feature/no-origin" });
+      expect(result.startedFromOrigin).toBe(false);
+      expect(harness.fetchRemote).not.toHaveBeenCalled();
+      expect(harness.createWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({ refName: "dev", baseRefName: "dev" }),
+      );
+    });
+  });
+
+  it.effect("names the missing origin when startFromOrigin:true was passed", () => {
+    const harness = makeHarness({ noOrigin: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runHandoff(harness, { branch: "feature/asked-origin", startFromOrigin: true }),
+      );
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "invalid_request" });
+      expect(JSON.stringify(exit)).toContain("no remote named origin");
+      expect(JSON.stringify(exit)).toContain("Drop startFromOrigin");
+      expect(harness.fetchRemote).not.toHaveBeenCalled();
+      expect(harness.createWorktree).not.toHaveBeenCalled();
     });
   });
 
