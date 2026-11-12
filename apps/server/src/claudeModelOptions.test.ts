@@ -2,7 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { ProviderInstanceId, type ModelSelection } from "@specweave-studio/contracts";
 
-import { compileClaudeModelSelection } from "./claudeModelOptions.ts";
+import {
+  compileClaudeModelSelection,
+  describeDeferredClaudeSelection,
+} from "./claudeModelOptions.ts";
 
 const selection = (
   model: string,
@@ -60,6 +63,30 @@ describe("compileClaudeModelSelection", () => {
     expect(identity([...unset, { id: "ultracode", value: true }])).toBe(identity(unset));
     expect(identity([...unset, { id: "ultracode", value: false }])).toBe(identity(unset));
     expect(identity([{ id: "effort", value: "high" }])).not.toBe(identity(unset));
+  });
+
+  it("names what waits for background work", () => {
+    const identity = (model: string, options: NonNullable<ModelSelection["options"]>) =>
+      compileClaudeModelSelection(selection(model, options)).queryIdentity;
+    const high = identity("claude-opus-5-5", [{ id: "effort", value: "high" }]);
+    expect(
+      describeDeferredClaudeSelection(
+        high,
+        identity("claude-opus-5-5", [{ id: "effort", value: "xhigh" }]),
+      ),
+    ).toBe("Effort xhigh applies when background work finishes.");
+    expect(
+      describeDeferredClaudeSelection(
+        high,
+        identity("claude-opus-5-5", [
+          { id: "effort", value: "xhigh" },
+          { id: "fastMode", value: true },
+        ]),
+      ),
+    ).toBe("Effort xhigh and fast mode on apply when background work finishes.");
+    expect(describeDeferredClaudeSelection(high, high)).toBe(
+      "The new model options apply when background work finishes.",
+    );
   });
 
   it("keeps an explicit toggle over a legacy Ultracode effort", () => {
