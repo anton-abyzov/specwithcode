@@ -161,8 +161,7 @@ import {
   type NewProjectKind,
 } from "../studio/projectCreation";
 import {
-  EXISTING_FOLDER_PUBLISH_NOTE,
-  newProjectGitHubUnavailableReason,
+  newProjectGitHubRowNote,
   projectMachineUnavailableReason,
 } from "../studio/newProjectAvailability";
 import {
@@ -3638,16 +3637,13 @@ function OpenCommandPaletteDialog(props: {
         target: newProjectGitHubTarget,
         pathPreview: newProjectPathPreview,
         name: newProjectName,
-        unavailable:
-          newProjectGitHubTarget === null
-            ? newProjectGitHubUnavailableReason({
-                discovery: sourceControlDiscovery.data ?? null,
-                pending: sourceControlDiscovery.isPending,
-                machine: newProjectEnvironmentLabel ?? "this machine",
-              })
-            : folderChoice.outcome?.kind === "use"
-              ? EXISTING_FOLDER_PUBLISH_NOTE
-              : null,
+        unavailable: newProjectGitHubRowNote({
+          hasTarget: newProjectGitHubTarget !== null,
+          usesExistingFolder: folderChoice.outcome?.kind === "use",
+          discovery: sourceControlDiscovery.data ?? null,
+          pending: sourceControlDiscovery.isPending,
+          machine: newProjectEnvironmentLabel ?? "this machine",
+        }),
         checked: newProjectPublishesToGitHub,
         toggle: () => setNewProjectPublishesToGitHub((value) => !value),
       }),

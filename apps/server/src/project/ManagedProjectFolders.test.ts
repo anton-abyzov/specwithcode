@@ -1195,6 +1195,12 @@ const createFailure = (input: { readonly name: string; readonly parentPath?: str
     };
   });
 
+const previewFor = (input: { readonly name: string; readonly parentPath: string }) =>
+  Effect.gen(function* () {
+    const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+    return yield* folders.previewNamedProject(input);
+  });
+
 it.effect("says the parent folder is missing, naming it", () =>
   withScratch(({ baseDir }) =>
     Effect.gen(function* () {
@@ -1327,12 +1333,15 @@ it.effect("refuses denied parents with New folder's words, links to them include
         const { failure, wire } = yield* createFailure({ name: "Example", parentPath });
         assert.deepEqual(wire, { reason: "refused", folder: parentPath });
         assert.equal(failure.message, `SpecWithCode does not make folders in '${parentPath}'.`);
+        // The picker's footer agrees: no "Creates" for a parent the create refuses.
+        assert.isTrue(Option.isNone(yield* previewFor({ name: "Example", parentPath })));
       }
       // A link to the state folder is refused by where it leads.
       const link = path.join(baseDir, "shortcut");
       yield* fs.symlink(config.stateDir, link);
       const { wire } = yield* createFailure({ name: "Example", parentPath: link });
       assert.deepEqual(wire, { reason: "refused", folder: link });
+      assert.isTrue(Option.isNone(yield* previewFor({ name: "Example", parentPath: link })));
       assert.isFalse(yield* fs.exists(path.join(config.stateDir, "example")));
     }),
   ),

@@ -50,9 +50,17 @@ export function classifyCreateRepositoryFailure(input: {
     case "GitHubCliCommandError": {
       const status = fieldOf(cause, "httpStatus");
       if (status === 422) {
+        // 422 also covers invalid names and account policy, so say "already
+        // exists" outright only when GitHub's own words say so. Those words are
+        // matched, never repeated.
+        const providerText = fieldOf(cause, "message");
+        const nameExists =
+          typeof providerText === "string" && /name already exists/i.test(providerText);
         return {
           reason: "name_taken",
-          detail: `A repository named ${input.repository} already exists in ${account}. Rename the project folder or publish under another name.`,
+          detail: nameExists
+            ? `A repository named ${input.repository} already exists in ${account}. Rename the project folder or publish under another name.`
+            : `GitHub refused the name ${input.repository} in ${account}: a repository by that name likely already exists, or the name is not allowed. Rename the project folder or publish under another name.`,
         };
       }
       if (status === 403 || status === 401) {

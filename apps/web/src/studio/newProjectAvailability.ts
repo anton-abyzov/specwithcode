@@ -53,3 +53,19 @@ export function newProjectGitHubUnavailableReason(input: {
 /** Said in the GitHub row when the chosen folder is used as it is. */
 export const EXISTING_FOLDER_PUBLISH_NOTE =
   "Publishing applies to new repositories only. This folder keeps its own remotes; publish it from the Git menu.";
+
+/**
+ * What the GitHub row says when it is off, or null when it is offered: the
+ * machine's GitHub state when there is no target, else the note for a folder
+ * that is used as it is.
+ */
+export function newProjectGitHubRowNote(input: {
+  readonly hasTarget: boolean;
+  readonly usesExistingFolder: boolean;
+  readonly discovery: SourceControlDiscoveryResult | null;
+  readonly pending: boolean;
+  readonly machine: string;
+}): string | null {
+  if (!input.hasTarget) return newProjectGitHubUnavailableReason(input);
+  return input.usesExistingFolder ? EXISTING_FOLDER_PUBLISH_NOTE : null;
+}

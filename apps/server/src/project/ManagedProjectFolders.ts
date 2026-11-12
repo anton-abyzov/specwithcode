@@ -151,6 +151,28 @@ export function projectCreateFailureOf(error: NamedProjectError): {
   };
 }
 
+/**
+ * A folder listing with what creating `projectName` in it does, by the
+ * create's own rules. Without a name, or for an unreadable folder, the listing
+ * is returned as it is.
+ */
+export const withCreateOutcome = <
+  R extends { readonly parentPath: string; readonly unreadable?: boolean | undefined },
+>(
+  folders: ManagedProjectFolders["Service"],
+  projectName: string | undefined,
+  result: R,
+) =>
+  projectName === undefined || result.unreadable === true
+    ? Effect.succeed(result)
+    : folders
+        .previewNamedProject({ name: projectName, parentPath: result.parentPath })
+        .pipe(
+          Effect.map((outcome) =>
+            Option.isSome(outcome) ? { ...result, outcome: outcome.value } : result,
+          ),
+        );
+
 const SCRATCH_FOLDER = "scratch";
 
 /**
@@ -966,6 +988,15 @@ const make = Effect.gen(function* () {
       (Option.isSome(info) && info.value.type !== "Directory")
     )
       return Option.none();
+    // A parent the create would refuse gets no outcome, so the footer never says "Creates".
+    if (parent !== namedProjectsRoot) {
+      const childOf = (folder: string) => path.join(folder, newProjectFolderName(input.name));
+      if (refusedParent(childOf(parent))) return Option.none();
+      const realParent = Option.isSome(info)
+        ? yield* fileSystem.realPath(parent).pipe(Effect.orElseSucceed(() => parent))
+        : parent;
+      if (refusedParent(childOf(realParent))) return Option.none();
+    }
     // Sent as no parent by clients, so it never binds to an existing folder.
     if (parent !== namedProjectsRoot) {
       const existing = yield* existingProjectFolder(input.name, parent);

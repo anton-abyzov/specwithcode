@@ -8,6 +8,7 @@ import {
 } from "./ProjectCreation";
 import {
   EXISTING_FOLDER_PUBLISH_NOTE,
+  newProjectGitHubRowNote,
   newProjectGitHubUnavailableReason,
   projectMachineUnavailableReason,
 } from "../../studio/newProjectAvailability";
@@ -91,6 +92,19 @@ describe("the GitHub option when it cannot be offered", () => {
         machine: "M1Max",
       }),
     ).toBeNull();
+  });
+  it("picks the machine's GitHub state without a target, else the existing-folder note", () => {
+    const note = (hasTarget: boolean, usesExistingFolder: boolean) =>
+      newProjectGitHubRowNote({
+        hasTarget,
+        usesExistingFolder,
+        discovery: github("available", "unauthenticated"),
+        pending: false,
+        machine: "M1Max",
+      });
+    expect(note(false, true)).toBe("Sign in to GitHub on M1Max: gh auth login");
+    expect(note(true, true)).toBe(EXISTING_FOLDER_PUBLISH_NOTE);
+    expect(note(true, false)).toBeNull();
   });
   it("shows the row disabled with the reason, and never toggles it", () => {
     const toggle = vi.fn();

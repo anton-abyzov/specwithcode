@@ -2923,15 +2923,7 @@ const layerWsRpc = (
           workspaceEntries.browse(input).pipe(
             // With a project name, say what creating it here does, by the create's own rules.
             Effect.flatMap((result) =>
-              input.projectName === undefined || result.unreadable === true
-                ? Effect.succeed(result)
-                : managedFolders
-                    .previewNamedProject({ name: input.projectName, parentPath: result.parentPath })
-                    .pipe(
-                      Effect.map((outcome) =>
-                        Option.isSome(outcome) ? { ...result, outcome: outcome.value } : result,
-                      ),
-                    ),
+              ManagedProjectFolders.withCreateOutcome(managedFolders, input.projectName, result),
             ),
             Effect.mapError(
               (cause) =>

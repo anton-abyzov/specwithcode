@@ -1087,6 +1087,20 @@ it.effect("says why GitHub refused to create the repository, without its raw tex
       [{ _tag: "GitHubCliAuthenticationError" }, "not_signed_in", "gh auth login"],
       [{ _tag: "GitHubCliUnavailableError" }, "not_signed_in", "gh auth login"],
       [{ _tag: "GitHubCliCommandError", httpStatus: 422 }, "name_taken", "already exists"],
+      [
+        { _tag: "GitHubCliCommandError", httpStatus: 422 },
+        "name_taken",
+        "or the name is not allowed",
+      ],
+      [
+        {
+          _tag: "GitHubCliCommandError",
+          httpStatus: 422,
+          message: "name already exists on this account",
+        },
+        "name_taken",
+        "already exists in the octocat account. Rename",
+      ],
       [{ _tag: "GitHubCliCommandError", httpStatus: 403 }, "no_permission", "may not create"],
       [{ _tag: "GitHubPullRequestNotFoundError" }, "no_permission", "the octocat account"],
       [
