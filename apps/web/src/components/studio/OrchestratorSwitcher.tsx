@@ -231,7 +231,9 @@ export function OrchestratorSwitcher({
                   closeOnClick
                 >
                   <span className="flex w-full items-center gap-2">
-                    <span className="min-w-0 truncate">{row.name}</span>
+                    <span className="min-w-0 truncate" title={row.name}>
+                      {row.name}
+                    </span>
                     {row.note ? (
                       <span className="shrink-0 text-muted-foreground text-xs">{tx(row.note)}</span>
                     ) : null}
