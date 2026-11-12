@@ -548,8 +548,10 @@ How it runs:
   between fails with the `replace` dispatch that repairs it. Versions released in between are
   skipped, since the feeds only need the newest. The repository variable
   `RELEASE_WINDOWS_LINUX_CATCH_UP` set to `false` turns it off.
-- **On publish** (repository variable `RELEASE_WINDOWS_LINUX_ON_PUBLISH` set to `true`) is off:
-  the dispatch above already covers every release.
+- **On publish** (repository variable `RELEASE_WINDOWS_LINUX_ON_PUBLISH` set to `true`): the
+  published release starts the real run itself, about 2.5 minutes sooner than the release-macos
+  post-job can, and `release.sh` then skips its own dispatch. The post-job still dispatches when
+  that run failed or was cancelled.
 
 Until it has run, Windows and Linux desktop installs find no `latest.yml` or `latest-linux.yml` on
 the new Latest release, report a failed update check and stay on their version. The slowest leg

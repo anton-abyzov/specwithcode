@@ -334,7 +334,7 @@ jobs:
 
   # release.sh dispatches the Windows and Linux build with RELEASE_GH_TOKEN, which may lack
   # Actions write (v1.0.207: HTTP 403). This run's own token may dispatch it, so start it here
-  # unless release.sh already did.
+  # unless release.sh or, with RELEASE_WINDOWS_LINUX_ON_PUBLISH on, the release event already did.
   # Runs after a failed release job too: release.sh publishes macOS before its later stages (fleet,
   # merge), and 1.0.261 failed at merge after publishing, which skipped this job and left that
   # version with macOS files only. The step below dispatches only when the release is published.
@@ -351,6 +351,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.plan.outputs.version }}
+          ON_PUBLISH: ${{ vars.RELEASE_WINDOWS_LINUX_ON_PUBLISH == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -368,11 +369,13 @@ jobs:
           fi
           # Match this version's own run by title (release-windows-linux.yml's run-name), not by
           # time: release runs overlap, and a build dispatched for another version while this one
-          # ran made 1.0.265 skip its own. Only a run still going or one that succeeded counts; a failed,
-          # cancelled, timed-out or never-started one leaves the version to build again.
+          # ran made 1.0.265 skip its own. With RELEASE_WINDOWS_LINUX_ON_PUBLISH on, the release
+          # event's run (titled with the release name, "SpecWithCode X.Y.Z") counts too. Only a run
+          # still going or one that succeeded counts; a failed, cancelled, timed-out, skipped or
+          # never-started one leaves the version to build again.
           started="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-windows-linux.yml \
-            --event workflow_dispatch --limit 50 --json displayTitle,conclusion \
-            --jq "[.[] | select(.displayTitle == \"Release Windows and Linux $VERSION\" and (.conclusion == \"\" or .conclusion == \"success\"))] | length")"
+            --limit 50 --json displayTitle,event,conclusion \
+            --jq "[.[] | select((.conclusion == \"\" or .conclusion == \"success\") and (.displayTitle == \"Release Windows and Linux $VERSION\" or (.event == \"release\" and \"${ON_PUBLISH:-false}\" == \"true\" and (.displayTitle | endswith(\" $VERSION\")))))] | length")"
           if [ "$started" -gt 0 ]; then
             echo "The Windows and Linux build for $VERSION was already started"
             exit 0

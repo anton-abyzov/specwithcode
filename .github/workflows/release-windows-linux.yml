@@ -104,8 +104,9 @@ on:
   release:
     types: [published]
   schedule:
-    # Daily catch-up at 07:23 UTC, away from minute zero. Every release dispatches its own run;
-    # this one only builds when the newest release still lacks its Windows and Linux apps.
+    # Daily catch-up at 07:23 UTC, away from minute zero. Every release starts its own run (on
+    # publish, or dispatched); this one only builds when the newest release still lacks its
+    # Windows and Linux apps.
     - cron: "23 7 * * *"
 
 permissions:
