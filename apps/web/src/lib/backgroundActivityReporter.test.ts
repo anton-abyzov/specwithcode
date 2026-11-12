@@ -11,6 +11,8 @@ import {
   backgroundActivityClientId,
   createActivityReport,
   hostEnvironmentIdOf,
+  interactedRecentlyHere,
+  noteRealInteraction,
   observeBackgroundActivitySubscription,
   retainedBackgroundScopes,
   wasRecentlyInteracted,
@@ -24,6 +26,15 @@ describe("wasRecentlyInteracted", () => {
 
   it("rejects future timestamps", () => {
     expect(wasRecentlyInteracted(10_001, 10_000)).toBe(false);
+  });
+
+  it("reads a window as in use only after real input a moment ago", () => {
+    noteRealInteraction(null);
+    expect(interactedRecentlyHere(10_000)).toBe(false);
+    noteRealInteraction(10_000);
+    expect(interactedRecentlyHere(55_000)).toBe(true);
+    expect(interactedRecentlyHere(55_001)).toBe(false);
+    noteRealInteraction(null);
   });
 
   it.effect("retains an observed subscription until its returned finalizer runs", () =>

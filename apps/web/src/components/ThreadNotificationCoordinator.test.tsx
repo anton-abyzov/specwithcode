@@ -56,6 +56,7 @@ const state = vi.hoisted(() => ({
   environmentIds: ["env-1"],
   primary: null as string | null,
   clientId: "client-self",
+  recentInput: false,
   targetReads: [] as string[],
   targetRead: (): Promise<unknown> =>
     Promise.resolve({ status: "unknown", ownerAppConnected: false }),
@@ -202,6 +203,7 @@ vi.mock("../notificationTarget", async (importOriginal) => ({
 }));
 vi.mock("../lib/backgroundActivityReporter", () => ({
   backgroundActivityClientId: () => state.clientId,
+  interactedRecentlyHere: () => state.recentInput,
   appClientId: (clientId: string) => clientId.split(":")[0],
 }));
 vi.mock("../state/shell", () => ({
@@ -279,6 +281,7 @@ beforeEach(() => {
     environmentIds: ["env-1"],
     primary: null,
     clientId: "client-self",
+    recentInput: false,
     targetReads: [],
     targetRead: () => Promise.resolve({ status: "unknown", ownerAppConnected: false }),
     executionState: undefined,
@@ -646,23 +649,20 @@ describe("only the device in use pops up", () => {
     expect(state.sound).toHaveBeenCalledTimes(1);
   });
 
-  it("posts nothing when the question is answered while the target is being read", async () => {
+  /** A target read that stays open until the returned function names the app. */
+  function heldRead() {
     let answer: (value: unknown) => void = () => undefined;
-    state.targetRead = () =>
-      new Promise((resolve) => {
-        answer = resolve;
-      });
+    state.targetRead = () => new Promise((resolve) => (answer = resolve));
+    return (clientId: string) => act(async () => answer(await target(clientId)()));
+  }
+
+  it("posts nothing when the question is answered while the target is being read", async () => {
+    const answer = heldRead();
     await askInBackground();
     expect(state.targetReads).toEqual(["env-1"]);
     state.input = false;
     await render();
-    await act(async () => {
-      answer({
-        status: "known",
-        target: { clientId: "client-self", reason: "recent" },
-        ownerAppConnected: true,
-      });
-    });
+    await answer("client-self");
     expect(state.notification).not.toHaveBeenCalled();
     expect(state.sound).not.toHaveBeenCalled();
   });
@@ -745,14 +745,65 @@ describe("only the device in use pops up", () => {
     expect(state.targetReads).toEqual([]);
   });
 
-  it("keeps the toast in a focused window without asking the server", async () => {
-    state.targetRead = target("client-other");
-    state.mode = "notifications-and-sound";
+  async function askInFocus(mode: typeof state.mode = "notifications-and-sound") {
+    state.mode = mode;
     await render();
     state.input = true;
     await render();
+  }
+
+  it("keeps the toast in a focused window and stays silent when another app is in use", async () => {
+    state.targetRead = target("client-other");
+    await askInFocus();
+    expect(state.targetReads).toEqual(["env-1"]);
     expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["this app is the one in use", () => target("client-self")],
+    ["the server names nobody", () => target(null)],
+    ["the server is too old or does not answer", () => state.targetRead],
+  ])("plays the sound in a focused window when %s", async (_name, read) => {
+    state.targetRead = read();
+    await askInFocus();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.sound).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["with sound off", "notifications" as const, false, 0],
+    ["that was used a moment ago", "notifications-and-sound" as const, true, 1],
+  ])("does not ask the server for a focused window %s", async (_name, mode, recent, sounds) => {
+    state.targetRead = target("client-other");
+    state.recentInput = recent;
+    await askInFocus(mode);
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.sound).toHaveBeenCalledTimes(sounds);
     expect(state.targetReads).toEqual([]);
+  });
+
+  it("drops a focused window's alert answered while the server is asked", async () => {
+    const answer = heldRead();
+    await askInFocus();
+    state.input = false;
+    await render();
+    await answer("client-self");
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+  });
+
+  it("follows the unfocused rules when focus is lost while the server is asked", async () => {
+    const answer = heldRead();
+    state.primary = "env-2";
+    await askInFocus();
+    state.focused = false;
+    state.targetRead = target("client-other");
+    await answer("client-other");
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
   });
 });
 

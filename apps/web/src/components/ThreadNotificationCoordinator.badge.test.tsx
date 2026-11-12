@@ -45,6 +45,7 @@ vi.mock("../notificationTarget", async (importOriginal) => ({
 }));
 vi.mock("../lib/backgroundActivityReporter", () => ({
   backgroundActivityClientId: () => "client-self",
+  interactedRecentlyHere: () => false,
   appClientId: (clientId: string) => clientId.split(":")[0],
 }));
 vi.mock("../hooks/useSettings", () => ({

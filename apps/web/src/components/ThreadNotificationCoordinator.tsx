@@ -55,10 +55,14 @@ import { notificationsConnected, useNotificationsConnected } from "../notificati
 import { deliverNotificationOnce } from "../notificationHistory";
 import {
   decideNotificationDelivery,
+  isNotificationTarget,
   ownerMachineReachable,
   readNotificationTarget,
 } from "../notificationTarget";
-import { backgroundActivityClientId } from "../lib/backgroundActivityReporter";
+import {
+  backgroundActivityClientId,
+  interactedRecentlyHere,
+} from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
 import { isAccessWait } from "../studio/accessWait";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
@@ -510,10 +514,25 @@ function EnvironmentNotifications({
                               : "Input needed";
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
-            const inApp = document.visibilityState === "visible" && document.hasFocus();
-            // A focused window is the device in use, so it toasts as before. Out of
-            // focus, the serving machine says which one app pops up and plays the
-            // sound; the owner machine's app badges, the rest stay quiet.
+            const focusedNow = () => document.visibilityState === "visible" && document.hasFocus();
+            let inApp = focusedNow();
+            // A focused window toasts as before: the toast makes no noise and is
+            // seen only by someone in front of it. Its sound is another matter. An
+            // app left in front on a computer nobody is at is focused too, so a
+            // focused window nobody touched a moment ago asks the serving machine
+            // as well and stays silent when that names another app. A window in
+            // use never asks, and with no answer the sound plays, as before.
+            let soundElsewhere = false;
+            if (inApp && hasNotificationSound(mode) && soundChanged && !interactedRecentlyHere()) {
+              const read = await readNotificationTarget(environmentId);
+              if (!mounted.current || !isNotificationOwner() || stillCurrent() === null)
+                return false;
+              soundElsewhere = isNotificationTarget(read, backgroundActivityClientId()) === false;
+              // The window may have lost focus while the server answered.
+              inApp = focusedNow();
+            }
+            // Out of focus, the serving machine says which one app pops up and plays
+            // the sound; the owner machine's app badges, the rest stay quiet.
             if (!inApp) {
               const { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds } =
                 presence.current;
@@ -560,7 +579,7 @@ function EnvironmentNotifications({
                 return true;
               }
             }
-            if (hasNotificationSound(mode) && soundChanged) {
+            if (hasNotificationSound(mode) && soundChanged && !soundElsewhere) {
               void playNotificationSound(kind === "completion" ? "completion" : "input", () =>
                 hasNotificationSound(getClientSettings().notificationMode),
               );
