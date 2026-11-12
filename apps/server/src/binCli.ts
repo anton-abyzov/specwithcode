@@ -12,6 +12,7 @@ import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { checksCommand } from "./cli/checks.ts";
+import { clonesCommand } from "./cli/clones.ts";
 import { connectCommand } from "./cli/connect.ts";
 import { dbCommand } from "./cli/db.ts";
 import { rulesCommand } from "./cli/rules.ts";
@@ -112,6 +113,7 @@ export const makeCli = <const Name extends StudioCliName = "specweave-studio">({
       worktreeCommand,
       scratchCommand,
       checksCommand,
+      clonesCommand,
       provisionCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),

@@ -94,6 +94,7 @@ describe("storage cleanup settings", () => {
       browserArtifactsAfterDays: null,
       logsAfterDays: 14,
       scratchAfterDays: null,
+      removeMergedClones: true,
       homeSizeWarningGb: 50,
       deletedThreadHistoryAfterDays: 7,
       archivedThreadHistoryAfterDays: 2,
