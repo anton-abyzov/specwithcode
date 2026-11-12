@@ -232,7 +232,26 @@ const setup = (input: {
         sendToThread: (_scope, input) => reach(input.threadId),
         interruptThread: (_scope, input) => reach(input.threadId),
       }),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        suggestedProjectsRoot: "/projects",
+        // A parent that already is a project here, and one that is not.
+        previewNamedProject: ({ parentPath }) =>
+          Effect.succeed(
+            Option.some({
+              kind: parentPath === "/fictional/existing" ? ("uses" as const) : ("creates" as const),
+              path: parentPath === "/fictional/existing" ? parentPath : `${parentPath}/widgets`,
+            }),
+          ),
+        createNamedProject: ({ parentPath }) =>
+          Effect.sync(() => reached.push(`create:${parentPath}`)).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new OrchestratorMcpFailure({ code: "invalid_request", message: "reached" }),
+              ),
+            ),
+          ) as never,
+      }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       Layer.succeed(RemoteWorkers.RemoteWorkers, {
@@ -575,15 +594,22 @@ describe("work started here by another machine", () => {
         expect(refused, JSON.stringify(extra)).toMatchObject({ code: "outside_grant_scope" });
         expect(String(refused.message)).toContain("only its user does it");
       }
-      // The parent folder passes the grant check and reaches the folder service
-      // (not provided in this world), which applies its own folder checks.
-      const reached = yield* Effect.exit(
-        world.call("studio_project_create", world.clientScope(M4), {
-          title: "Widgets",
-          parentPath: "/fictional/parent",
-        }),
-      );
-      expect(String(reached)).toContain("createNamedProject");
+      // A new folder under the parent reaches the create, which applies its own
+      // denied-folder checks (ManagedProjectFolders.test.ts).
+      const created = yield* world.call("studio_project_create", world.clientScope(M4), {
+        title: "Widgets",
+        parentPath: "/fictional/parent",
+      });
+      expect(created).toMatchObject({ message: "reached" });
+      expect(world.reached).toContain("create:/fictional/parent");
+      // A parent that already is a project here is not handed over.
+      const existing = yield* world.call("studio_project_create", world.clientScope(M4), {
+        title: "Widgets",
+        parentPath: "/fictional/existing",
+      });
+      expect(existing).toMatchObject({ code: "outside_grant_scope" });
+      expect(String(existing.message)).toContain("workspaceRoot");
+      expect(world.reached).not.toContain("create:/fictional/existing");
     }).pipe(Effect.provide(world.layer));
   });
 

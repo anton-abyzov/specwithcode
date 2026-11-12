@@ -976,6 +976,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               : input.kind === "personal"
                 ? undefined
                 : folders.suggestedProjectsRoot;
+          // Another machine's work starts new folders only: a parentPath that is,
+          // or holds, a project here would hand that project over, so it goes
+          // through workspaceRoot and its grant check instead.
+          if (work !== undefined && parent !== undefined) {
+            const outcome = yield* folders.previewNamedProject({
+              name: input.title,
+              parentPath: parent,
+            });
+            if (Option.isSome(outcome) && outcome.value.kind === "uses")
+              return yield* new OrchestratorMcpFailure({
+                code: "outside_grant_scope",
+                message: `${outcome.value.path} is already a folder of its own here, so ${work.coordinatorLabel}'s work cannot start a project in it. Pass a parent folder that holds no project of this name, or register an existing project with workspaceRoot.`,
+              });
+          }
           const created = yield* folders
             .createNamedProject({
               name: input.title,

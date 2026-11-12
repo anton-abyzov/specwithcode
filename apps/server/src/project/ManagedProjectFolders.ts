@@ -868,6 +868,17 @@ const make = Effect.gen(function* () {
     if (input.kind !== "personal" && input.parentPath !== undefined) {
       const existing = yield* existingProjectFolder(input.name, input.parentPath);
       if (Option.isSome(existing)) {
+        // A folder New folder refuses is never bound as a project either, by
+        // the path asked for or the real one.
+        const realExisting = yield* fileSystem
+          .realPath(existing.value)
+          .pipe(Effect.orElseSucceed(() => existing.value));
+        if (refusedParent(existing.value) || refusedParent(realExisting))
+          return yield* new NamedProjectFolderError({
+            folder: existing.value,
+            reason: "refused",
+            cause: "refused",
+          });
         if (yield* isUnclaimedEmptyFolder(existing.value)) emptyFolder = existing.value;
         else {
           return yield* bindExistingFolder(input.name, existing.value, input.specweave === true);

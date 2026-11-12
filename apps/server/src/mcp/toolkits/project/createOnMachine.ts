@@ -33,13 +33,13 @@ const SupportsCreateOptions = Schema.Struct({
 });
 const decodeSupport = Schema.decodeUnknownOption(SupportsCreateOptions);
 
-/** The words for a machine whose SpecWithCode predates these options. */
 /** Publishing uses that machine's own GitHub sign-in, which a work grant does not cover. */
 export const GRANT_GITHUB_MESSAGE =
   "Publishing to GitHub uses this machine's own GitHub sign-in, so only its user does it. Create the project without github, then ask the user on this machine to publish it.";
 
+/** The words for a machine whose SpecWithCode predates these options. */
 export const olderMachineMessage = (label: string) =>
-  `${label} runs an older SpecWithCode that cannot create a project with a machine, parent folder or GitHub. Update SpecWithCode on ${label}, then try again.`;
+  `${label} runs an older SpecWithCode that cannot create a project with a machine or parent folder. Update SpecWithCode on ${label}, then try again.`;
 
 /** Which machine `machine` names: this one ("local", its own id or label) or another. */
 export const resolveCreateMachine = Effect.fn("mcp.createOnMachine.resolve")(function* (
