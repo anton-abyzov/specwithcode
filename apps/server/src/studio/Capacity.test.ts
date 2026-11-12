@@ -1394,7 +1394,17 @@ describe("native session admission", () => {
       const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
       const late = now + Capacity.FORCED_RECHECK_MAX_AGE_MS + 1;
       const taken = await Effect.runPromise(
-        Capacity.requestCapacityRecheck(["shared", "late"]).pipe(
+        // Stamp the request at `now` itself: on the real clock it lands a few
+        // milliseconds later on a loaded runner, and "late" is then still live.
+        Clock.clockWith((clock) =>
+          Capacity.requestCapacityRecheck(["shared", "late"]).pipe(
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              currentTimeMillis: Effect.succeed(now),
+              currentTimeMillisUnsafe: () => now,
+            }),
+          ),
+        ).pipe(
           Effect.andThen(
             Effect.all([
               Capacity.takeCapacityRecheck("shared", now),
