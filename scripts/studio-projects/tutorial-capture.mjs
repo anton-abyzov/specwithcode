@@ -307,6 +307,9 @@ async function observedRoute(page, project) {
     if (await next.isVisible().catch(() => false)) await next.click();
     else break;
   }
+  // The access step: keep what the machine has, so the checks after setup run as before.
+  const keepAccess = page.getByRole("button", { name: /^Keep (Supervised|current access)$/ });
+  if (await keepAccess.isVisible().catch(() => false)) await keepAccess.click();
   const skip = page.getByRole("button", { name: "Do not import projects", exact: true });
   if (await skip.isVisible().catch(() => false)) await skip.click();
   await page.locator('a[href*="/projects/"]').filter({ hasText: project.title }).first().click();

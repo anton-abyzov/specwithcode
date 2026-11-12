@@ -40,7 +40,9 @@ try{
   await page.goto(origin+'/',{waitUntil:'networkidle'});
   for(let i=0;i<40;i++){
     const next=page.getByRole('button',{name:'Continue',exact:true}),skip=page.getByRole('button',{name:'Do not import projects',exact:true});
-    if(await next.isVisible())await next.click();else if(await skip.isVisible())await skip.click();
+    // The access step: keep what the machine has, so the checks after setup run as before.
+    const keepAccess=page.getByRole('button',{name:/^Keep (Supervised|current access)$/});
+    if(await next.isVisible())await next.click();else if(await keepAccess.isVisible())await keepAccess.click();else if(await skip.isVisible())await skip.click();
     if(await page.locator('.studio-desk').isVisible())break;
     await page.waitForTimeout(500);
   }

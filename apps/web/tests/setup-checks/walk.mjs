@@ -61,10 +61,14 @@ for (const [label, width, height, mobile] of [
   await capture("3-agents");
   await click(/^Continue( without an agent)?$/);
   await page.waitForTimeout(3_000);
-  await capture("4-projects");
+  await capture("4-access");
+  // Keep what the machine has, so the walk changes no setting.
+  await click(/^Keep (Supervised|current access)$/);
+  await page.waitForTimeout(3_000);
+  await capture("5-projects");
   await click(/Do not import/);
   await page.waitForTimeout(4_000);
-  await capture("5-overview");
+  await capture("6-overview");
   await context.close();
 }
 await browser.close();

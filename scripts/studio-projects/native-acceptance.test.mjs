@@ -41,20 +41,21 @@ test('runtime root is explicit, absolute and checkout-bound; tooling keeps separ
   assert.equal(identity.entrypointSha256, identity.files.find(file => file.path.endsWith('/native-acceptance.mjs')).sha256);
   assert.equal(identity.sha256, createHash('sha256').update(JSON.stringify(identity.files)).digest('hex'));
 });
-function routePage({ onboarding = 0, skip = false, href = '/projects/folder%3Aworkspace', heading = 'Owned title' } = {}) {
-  const calls = [], state = { onboarding, skip, url: NATIVE_ORIGIN };
-  const visible = kind => kind === 'continue' ? state.onboarding > 0 : kind === 'skip' ? state.onboarding === 0 && state.skip : state.onboarding === 0 && !state.skip;
+function routePage({ onboarding = 0, access = false, skip = false, href = '/projects/folder%3Aworkspace', heading = 'Owned title' } = {}) {
+  const calls = [], state = { onboarding, access, skip, url: NATIVE_ORIGIN };
+  // Setup shows its steps in order: the Continue steps, the access step, the import step, then the project.
+  const visible = kind => kind === 'continue' ? state.onboarding > 0 : state.onboarding > 0 ? false : kind === 'access' ? state.access : state.access ? false : kind === 'skip' ? state.skip : !state.skip;
   const control = kind => ({
     waitFor: async options => { calls.push(['wait', kind, options]); if (!visible(kind)) throw new Error('not visible'); },
     isVisible: async () => visible(kind),
-    click: async () => { calls.push(['click', kind]); assert.ok(visible(kind)); if (kind === 'continue') state.onboarding--; else if (kind === 'skip') state.skip = false; else state.url = new URL(href, NATIVE_ORIGIN).href; },
+    click: async () => { calls.push(['click', kind]); assert.ok(visible(kind)); if (kind === 'continue') state.onboarding--; else if (kind === 'access') state.access = false; else if (kind === 'skip') state.skip = false; else state.url = new URL(href, NATIVE_ORIGIN).href; },
     getAttribute: async name => { assert.equal(name, 'href'); return href; },
   });
   const link = control('project');
   const page = {
     goto: async url => { calls.push(['goto', url]); state.url = url; },
     locator: selector => { assert.equal(selector, 'a[href*="/projects/"]'); return { filter: filter => { assert.equal(filter.hasText, 'Owned title'); return { first: () => link }; } }; },
-    getByRole: (role, options) => role === 'region' || role === 'heading' ? { waitFor: async () => { calls.push([role, options.name]); assert.equal(state.url, new URL(href, NATIVE_ORIGIN).href); if (role === 'heading') assert.equal(options.name, heading); } } : control(options.name === 'Continue' ? 'continue' : 'skip'),
+    getByRole: (role, options) => role === 'region' || role === 'heading' ? { waitFor: async () => { calls.push([role, options.name]); assert.equal(state.url, new URL(href, NATIVE_ORIGIN).href); if (role === 'heading') assert.equal(options.name, heading); } } : control(options.name === 'Continue' ? 'continue' : options.name instanceof RegExp ? (assert.ok(options.name.test('Keep Supervised') && options.name.test('Keep current access')), 'access') : 'skip'),
     url: () => state.url,
   };
   return { page, calls };
@@ -67,6 +68,12 @@ test('project navigation waits for rendered controls, handles bounded onboarding
   assert.deepEqual(calls.filter(call => call[0] === 'click').map(call => call[1]), ['continue', 'continue', 'continue', 'skip', 'project']);
   assert.ok(calls.some(call => call[0] === 'wait' && call[1] === 'project' && call[2].state === 'visible' && call[2].timeout === 30000));
   assert.ok(calls.some(call => call[0] === 'heading' && call[1] === 'Owned title'));
+});
+test('project navigation keeps the current access on the access step, between the agents and the import step', async () => {
+  const { page, calls } = routePage({ onboarding: 2, access: true, skip: true });
+  const result = await openOwnedProject(page, { id: 'owned-project', title: 'Owned title' });
+  assert.deepEqual(result, { url: NATIVE_ORIGIN + '/projects/folder%3Aworkspace', continues: 2, skippedImport: true });
+  assert.deepEqual(calls.filter(call => call[0] === 'click').map(call => call[1]), ['continue', 'continue', 'access', 'skip', 'project']);
 });
 test('project navigation rejects extra onboarding or foreign rendered destinations without following them', async () => {
   for (const input of [{ onboarding: 4 }, { href: 'https://foreign.example/projects/owned-project' }, { href: '/settings/projects' }, { href: null }]) {

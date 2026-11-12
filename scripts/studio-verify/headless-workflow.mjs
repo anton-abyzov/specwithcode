@@ -133,6 +133,9 @@ try {
     buttons: await page.getByRole('button').allTextContents(), pageErrors });
   if (args.includes('--onboard')) {
     for (let i = 0; i < 2; i++) { const next = page.getByRole('button', { name: 'Continue', exact: true }); if (await next.count()) { await next.click(); await page.waitForTimeout(400); } }
+    // The access step: keep what the machine has, so the checks after setup run as before.
+    const keepAccess = page.getByRole('button', { name: /^Keep (Supervised|current access)$/ });
+    if (await keepAccess.count()) { await keepAccess.click(); await page.waitForTimeout(400); }
     const skip = page.getByRole('button', { name: 'Do not import projects', exact: true });
     if (await skip.count()) { await skip.click(); await page.waitForTimeout(1200); }
     step('onboarding', { path: new URL(page.url()).pathname, headings: await page.locator('h1,h2').allTextContents(),
