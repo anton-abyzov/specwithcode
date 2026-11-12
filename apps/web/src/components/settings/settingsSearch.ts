@@ -34,6 +34,7 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/machines"
   | "/settings/chrome"
+  | "/settings/connect-admin"
   | "/settings/archived";
 
 /**
@@ -121,6 +122,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/integrations": "Integrations",
   "/settings/messaging": "Messaging",
   "/settings/google": "Google account",
+  // Owners of SpecWithCode Connect only; the sidebar hides it from everyone else.
+  "/settings/connect-admin": "Connect admin",
 };
 
 /**
@@ -167,9 +170,23 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     label: "Accounts & integrations",
-    paths: ["/settings/integrations", "/settings/messaging", "/settings/google"],
+    paths: [
+      "/settings/integrations",
+      "/settings/messaging",
+      "/settings/google",
+      "/settings/connect-admin",
+    ],
   },
 ];
+
+/**
+ * Pages only the owners of SpecWithCode Connect may find. A search lists one
+ * only when its caller names it, as the sidebar does once the relay confirmed
+ * the account; the command palette never does.
+ */
+export const SETTINGS_OWNER_ONLY_PATHS: ReadonlySet<SettingsPath> = new Set([
+  "/settings/connect-admin",
+]);
 
 /** Anchor id of the first row bound to `command` on the Keybindings page. */
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
@@ -1374,6 +1391,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/machines": null,
   "/settings/chrome": null,
+  "/settings/connect-admin": null,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
@@ -1547,7 +1565,9 @@ export type SettingsSearchResult = GroupedSettingsSearchResult<SettingsPath, Set
 export function searchSettingsBySection(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
-  sections: ReadonlyArray<SettingsPath> = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths),
+  sections: ReadonlyArray<SettingsPath> = SETTINGS_NAV_GROUPS.flatMap((group) =>
+    group.paths.filter((path) => !SETTINGS_OWNER_ONLY_PATHS.has(path)),
+  ),
   translate?: (english: string) => string,
 ): SettingsSearchResult[] {
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;

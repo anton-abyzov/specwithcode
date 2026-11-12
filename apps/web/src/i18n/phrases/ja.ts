@@ -4219,4 +4219,79 @@ export const ja: PhraseCatalog = {
   "Linking…": "リンク中…",
   "Signed in here. This links the machine without leaving this window.":
     "ここでサインイン済みです。このウィンドウを離れずにマシンをリンクします。",
+  "Connect admin": "Connect 管理",
+  Totals: "合計",
+  "Tunnel address": "トンネルのアドレス",
+  "No tunnel address": "トンネルのアドレスなし",
+  "Machine id": "マシン ID",
+  Linked: "リンク日時",
+  "Last update": "最終更新",
+  Unlinked: "リンク解除済み",
+  "Connection last changed": "接続の最終変化",
+  "App {version}": "アプリ {version}",
+  "Last seen {time}": "最終アクセス: {time}",
+  "Never seen": "アクセスなし",
+  "Loading machines and phones…": "マシンと電話を読み込んでいます…",
+  "No machine has been linked to this account.": "このアカウントにリンクされたマシンはありません。",
+  Phones: "電話",
+  "No phone is signed in to this account.": "このアカウントにサインインしている電話はありません。",
+  "Founder #{number}": "ファウンダー #{number}",
+  "Machines: {count}": "マシン: {count}",
+  "Phones: {count}": "電話: {count}",
+  "First seen {time}": "初回アクセス: {time}",
+  "Loading totals…": "合計を読み込んでいます…",
+  "Search accounts": "アカウントを検索",
+  "Email, name or account id": "メール、名前、アカウント ID",
+  "Loading accounts…": "アカウントを読み込んでいます…",
+  "Names and emails could not be read from Clerk. Account ids are shown instead.":
+    "Clerk から名前とメールを読み取れませんでした。代わりにアカウント ID を表示しています。",
+  "More accounts match than are shown. Narrow the search.":
+    "表示されている以上のアカウントが一致します。検索を絞り込んでください。",
+  "No account matches that search.": "この検索に一致するアカウントはありません。",
+  "No one has signed in to SpecWithCode Connect yet.":
+    "まだ誰も SpecWithCode Connect にサインインしていません。",
+  "Checking this account…": "このアカウントを確認しています…",
+  "Could not check whether this account is an owner.":
+    "このアカウントがオーナーかどうかを確認できませんでした。",
+  "This page is only for the owners of SpecWithCode Connect.":
+    "このページは SpecWithCode Connect のオーナー専用です。",
+  "No machine limit, set by an owner": "マシン数の上限なし（オーナーが設定）",
+  "No machine limit": "マシン数の上限なし",
+  "Machine limit: {count}, set by an owner": "マシン数の上限: {count}（オーナーが設定）",
+  "Machine limit: {count}, founder": "マシン数の上限: {count}（ファウンダー）",
+  "Machine limit: {count}, free plan": "マシン数の上限: {count}（無料プラン）",
+  "Linked machines": "リンク済みのマシン",
+  "Tunnels ready / allocated": "トンネル: 準備済み / 割り当て済み",
+  "Founder seats taken": "使用済みのファウンダー枠",
+  "Machine limit on the free plan": "無料プランのマシン数の上限",
+  "Tunnel cap for all accounts": "全アカウントのトンネル上限",
+  "No cap": "上限なし",
+  "Linked without a Connect tunnel": "Connect トンネルなしでリンク",
+  "Tunnel is being set up": "トンネルを準備中",
+  "Offline: the machine gave its tunnel back": "オフライン: マシンがトンネルを返却しました",
+  "Online, connection degraded": "オンライン（接続が不安定）",
+  "Offline: the tunnel is down": "オフライン: トンネルが停止しています",
+  "Offline: the tunnel never connected": "オフライン: トンネルは一度も接続されていません",
+  "Tunnel ready, live status not read": "トンネル準備済み、現在の状態は未取得",
+  "This page needs a Connect session in this window.":
+    "このページには、このウィンドウでの Connect セッションが必要です。",
+  "This account is not a Connect owner": "このアカウントは Connect のオーナーではありません",
+  "SpecWithCode Connect does not list this account as an owner.":
+    "SpecWithCode Connect はこのアカウントをオーナーとして登録していません。",
+  "No Connect account has that id": "その ID の Connect アカウントはありません",
+  "It may have been deleted since the list was read.":
+    "一覧の読み込み後に削除された可能性があります。",
+  "SpecWithCode Connect could not read its data":
+    "SpecWithCode Connect がデータを読み取れませんでした",
+  "Nothing was changed. Try again in a moment.":
+    "何も変更されていません。少ししてからもう一度お試しください。",
+  "SpecWithCode Connect did not answer in time":
+    "SpecWithCode Connect が時間内に応答しませんでした",
+  "Could not reach SpecWithCode Connect": "SpecWithCode Connect に接続できませんでした",
+  "Could not read this window's Connect session":
+    "このウィンドウの Connect セッションを読み取れませんでした",
+  "Check this computer's connection, then try again.":
+    "このコンピューターの接続を確認して、もう一度お試しください。",
+  "SpecWithCode Connect sent an answer this page could not read":
+    "SpecWithCode Connect から、このページで読み取れない応答が返されました",
 };

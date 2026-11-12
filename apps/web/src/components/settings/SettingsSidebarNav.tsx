@@ -29,10 +29,12 @@ import {
   ShieldCheckIcon,
   SparklesIcon,
   SwatchBookIcon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
+import { useIsConnectAdmin } from "~/cloud/connectAdminState";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -50,6 +52,7 @@ import {
   isSettingsOverviewVisible,
   settingsSearchDestination,
   SETTINGS_NAV_GROUPS,
+  SETTINGS_OWNER_ONLY_PATHS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchResult,
@@ -93,6 +96,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/connections": Link2Icon,
   "/settings/machines": LaptopIcon,
   "/settings/chrome": ChromeIcon,
+  "/settings/connect-admin": UsersIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -121,6 +125,21 @@ export function groupSettingsNavItems<Item extends { to: SettingsPath }>(items: 
   return grouped.filter((group) => group.items.length > 0);
 }
 
+/**
+ * Whether the sidebar lists a section. Connections opens from Machines.
+ * Skills also has a machine-wide view, so it shows without a project; the
+ * Project page does not. An owner-only page shows only once SpecWithCode
+ * Connect confirmed that this account is an owner.
+ */
+export function isSettingsNavItemShown(
+  to: SettingsPath,
+  state: { readonly isConnectAdmin: boolean; readonly overviewVisible: boolean },
+) {
+  if (to === "/settings/connections") return false;
+  if (SETTINGS_OWNER_ONLY_PATHS.has(to)) return state.isConnectAdmin;
+  return to !== "/settings/projects" || state.overviewVisible;
+}
+
 /** The clicked section wins until navigation settles, then the location decides. */
 export function isSettingsNavItemActive(
   to: SettingsPath,
@@ -144,11 +163,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
-  const navItems = SETTINGS_NAV_ITEMS.filter(
-    // Skills also has a machine-wide view, so it shows without a project.
-    (item) =>
-      item.to !== "/settings/connections" &&
-      (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)),
+  const isConnectAdmin = useIsConnectAdmin();
+  const navItems = SETTINGS_NAV_ITEMS.filter((item) =>
+    isSettingsNavItemShown(item.to, {
+      isConnectAdmin,
+      overviewVisible: isSettingsOverviewVisible(scopeSearch),
+    }),
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");

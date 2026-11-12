@@ -4231,4 +4231,77 @@ export const pt: PhraseCatalog = {
   "Linking…": "Vinculando…",
   "Signed in here. This links the machine without leaving this window.":
     "Conectado aqui. Isso vincula a máquina sem sair desta janela.",
+  "Connect admin": "Administração do Connect",
+  Totals: "Totais",
+  "Tunnel address": "Endereço do túnel",
+  "No tunnel address": "Sem endereço de túnel",
+  "Machine id": "ID da máquina",
+  Linked: "Vinculada",
+  "Last update": "Última atualização",
+  Unlinked: "Desvinculada",
+  "Connection last changed": "Última mudança de conexão",
+  "App {version}": "App {version}",
+  "Last seen {time}": "Última atividade: {time}",
+  "Never seen": "Nunca visto",
+  "Loading machines and phones…": "Carregando máquinas e celulares…",
+  "No machine has been linked to this account.": "Nenhuma máquina foi vinculada a esta conta.",
+  Phones: "Celulares",
+  "No phone is signed in to this account.": "Nenhum celular entrou nesta conta.",
+  "Founder #{number}": "Fundador nº {number}",
+  "Machines: {count}": "Máquinas: {count}",
+  "Phones: {count}": "Celulares: {count}",
+  "First seen {time}": "Primeira atividade: {time}",
+  "Loading totals…": "Carregando totais…",
+  "Search accounts": "Buscar contas",
+  "Email, name or account id": "E-mail, nome ou ID da conta",
+  "Loading accounts…": "Carregando contas…",
+  "Names and emails could not be read from Clerk. Account ids are shown instead.":
+    "Não foi possível ler nomes e e-mails do Clerk. Os IDs das contas são mostrados no lugar.",
+  "More accounts match than are shown. Narrow the search.":
+    "Há mais contas correspondentes do que as mostradas. Refine a busca.",
+  "No account matches that search.": "Nenhuma conta corresponde a essa busca.",
+  "No one has signed in to SpecWithCode Connect yet.":
+    "Ninguém entrou no SpecWithCode Connect ainda.",
+  "Checking this account…": "Verificando esta conta…",
+  "Could not check whether this account is an owner.":
+    "Não foi possível verificar se esta conta é de um dono.",
+  "This page is only for the owners of SpecWithCode Connect.":
+    "Esta página é apenas para os donos do SpecWithCode Connect.",
+  "No machine limit, set by an owner": "Sem limite de máquinas, definido por um dono",
+  "No machine limit": "Sem limite de máquinas",
+  "Machine limit: {count}, set by an owner": "Limite de máquinas: {count}, definido por um dono",
+  "Machine limit: {count}, founder": "Limite de máquinas: {count}, fundador",
+  "Machine limit: {count}, free plan": "Limite de máquinas: {count}, plano gratuito",
+  "Linked machines": "Máquinas vinculadas",
+  "Tunnels ready / allocated": "Túneis prontos / alocados",
+  "Founder seats taken": "Vagas de fundador ocupadas",
+  "Machine limit on the free plan": "Limite de máquinas do plano gratuito",
+  "Tunnel cap for all accounts": "Teto de túneis para todas as contas",
+  "No cap": "Sem teto",
+  "Linked without a Connect tunnel": "Vinculada sem túnel do Connect",
+  "Tunnel is being set up": "O túnel está sendo configurado",
+  "Offline: the machine gave its tunnel back": "Offline: a máquina devolveu o túnel",
+  "Online, connection degraded": "Online, conexão degradada",
+  "Offline: the tunnel is down": "Offline: o túnel está fora do ar",
+  "Offline: the tunnel never connected": "Offline: o túnel nunca se conectou",
+  "Tunnel ready, live status not read": "Túnel pronto, status ao vivo não lido",
+  "This page needs a Connect session in this window.":
+    "Esta página precisa de uma sessão do Connect nesta janela.",
+  "This account is not a Connect owner": "Esta conta não é de um dono do Connect",
+  "SpecWithCode Connect does not list this account as an owner.":
+    "O SpecWithCode Connect não lista esta conta entre os donos.",
+  "No Connect account has that id": "Nenhuma conta do Connect tem esse ID",
+  "It may have been deleted since the list was read.":
+    "Ela pode ter sido excluída depois que a lista foi lida.",
+  "SpecWithCode Connect could not read its data":
+    "O SpecWithCode Connect não conseguiu ler seus dados",
+  "Nothing was changed. Try again in a moment.": "Nada foi alterado. Tente de novo em instantes.",
+  "SpecWithCode Connect did not answer in time": "O SpecWithCode Connect não respondeu a tempo",
+  "Could not reach SpecWithCode Connect": "Não foi possível acessar o SpecWithCode Connect",
+  "Could not read this window's Connect session":
+    "Não foi possível ler a sessão do Connect desta janela",
+  "Check this computer's connection, then try again.":
+    "Verifique a conexão deste computador e tente de novo.",
+  "SpecWithCode Connect sent an answer this page could not read":
+    "O SpecWithCode Connect enviou uma resposta que esta página não conseguiu ler",
 };

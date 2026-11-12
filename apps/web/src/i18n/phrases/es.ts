@@ -4245,4 +4245,78 @@ export const es: PhraseCatalog = {
   "Linking…": "Vinculando…",
   "Signed in here. This links the machine without leaving this window.":
     "Sesión iniciada aquí. Esto vincula el equipo sin salir de esta ventana.",
+  "Connect admin": "Administración de Connect",
+  Totals: "Totales",
+  "Tunnel address": "Dirección del túnel",
+  "No tunnel address": "Sin dirección de túnel",
+  "Machine id": "ID del equipo",
+  Linked: "Vinculado",
+  "Last update": "Última actualización",
+  Unlinked: "Desvinculado",
+  "Connection last changed": "Último cambio de conexión",
+  "App {version}": "App {version}",
+  "Last seen {time}": "Última actividad: {time}",
+  "Never seen": "Sin actividad",
+  "Loading machines and phones…": "Cargando equipos y teléfonos…",
+  "No machine has been linked to this account.": "No se ha vinculado ningún equipo a esta cuenta.",
+  Phones: "Teléfonos",
+  "No phone is signed in to this account.": "Ningún teléfono ha iniciado sesión en esta cuenta.",
+  "Founder #{number}": "Fundador n.º {number}",
+  "Machines: {count}": "Equipos: {count}",
+  "Phones: {count}": "Teléfonos: {count}",
+  "First seen {time}": "Primera actividad: {time}",
+  "Loading totals…": "Cargando totales…",
+  "Search accounts": "Buscar cuentas",
+  "Email, name or account id": "Correo, nombre o ID de cuenta",
+  "Loading accounts…": "Cargando cuentas…",
+  "Names and emails could not be read from Clerk. Account ids are shown instead.":
+    "No se pudieron leer los nombres y correos de Clerk. Se muestran los ID de cuenta.",
+  "More accounts match than are shown. Narrow the search.":
+    "Hay más coincidencias de las que se muestran. Afina la búsqueda.",
+  "No account matches that search.": "Ninguna cuenta coincide con esa búsqueda.",
+  "No one has signed in to SpecWithCode Connect yet.":
+    "Nadie ha iniciado sesión en SpecWithCode Connect todavía.",
+  "Checking this account…": "Comprobando esta cuenta…",
+  "Could not check whether this account is an owner.":
+    "No se pudo comprobar si esta cuenta es propietaria.",
+  "This page is only for the owners of SpecWithCode Connect.":
+    "Esta página es solo para los propietarios de SpecWithCode Connect.",
+  "No machine limit, set by an owner": "Sin límite de equipos, fijado por un propietario",
+  "No machine limit": "Sin límite de equipos",
+  "Machine limit: {count}, set by an owner":
+    "Límite de equipos: {count}, fijado por un propietario",
+  "Machine limit: {count}, founder": "Límite de equipos: {count}, fundador",
+  "Machine limit: {count}, free plan": "Límite de equipos: {count}, plan gratuito",
+  "Linked machines": "Equipos vinculados",
+  "Tunnels ready / allocated": "Túneles listos / asignados",
+  "Founder seats taken": "Plazas de fundador ocupadas",
+  "Machine limit on the free plan": "Límite de equipos del plan gratuito",
+  "Tunnel cap for all accounts": "Tope de túneles para todas las cuentas",
+  "No cap": "Sin tope",
+  "Linked without a Connect tunnel": "Vinculado sin túnel de Connect",
+  "Tunnel is being set up": "El túnel se está configurando",
+  "Offline: the machine gave its tunnel back": "Sin conexión: el equipo devolvió su túnel",
+  "Online, connection degraded": "En línea, conexión degradada",
+  "Offline: the tunnel is down": "Sin conexión: el túnel está caído",
+  "Offline: the tunnel never connected": "Sin conexión: el túnel nunca se conectó",
+  "Tunnel ready, live status not read": "Túnel listo, estado en vivo no leído",
+  "This page needs a Connect session in this window.":
+    "Esta página necesita una sesión de Connect en esta ventana.",
+  "This account is not a Connect owner": "Esta cuenta no es propietaria de Connect",
+  "SpecWithCode Connect does not list this account as an owner.":
+    "SpecWithCode Connect no tiene esta cuenta como propietaria.",
+  "No Connect account has that id": "Ninguna cuenta de Connect tiene ese ID",
+  "It may have been deleted since the list was read.":
+    "Puede que se haya eliminado después de leer la lista.",
+  "SpecWithCode Connect could not read its data": "SpecWithCode Connect no pudo leer sus datos",
+  "Nothing was changed. Try again in a moment.":
+    "No se cambió nada. Inténtalo de nuevo en un momento.",
+  "SpecWithCode Connect did not answer in time": "SpecWithCode Connect no respondió a tiempo",
+  "Could not reach SpecWithCode Connect": "No se pudo conectar con SpecWithCode Connect",
+  "Could not read this window's Connect session":
+    "No se pudo leer la sesión de Connect de esta ventana",
+  "Check this computer's connection, then try again.":
+    "Comprueba la conexión de este ordenador y vuelve a intentarlo.",
+  "SpecWithCode Connect sent an answer this page could not read":
+    "SpecWithCode Connect envió una respuesta que esta página no pudo leer",
 };

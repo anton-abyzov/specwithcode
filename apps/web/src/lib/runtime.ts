@@ -3,6 +3,7 @@ import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
 
+import { RelayAdmin } from "@specweave-studio/client-runtime/relay";
 import { layerRemoteHttpClient } from "@specweave-studio/client-runtime/rpc";
 import * as RelayTracing from "@specweave-studio/shared/relayTracing";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
@@ -31,7 +32,8 @@ type RuntimeLayerSource =
   | typeof Socket.layerWebSocketConstructorGlobal
   | typeof layerRelayTracing
   | typeof ClientTracer.layer
-  | ReturnType<typeof ManagedRelayLayer.layer>;
+  | ReturnType<typeof ManagedRelayLayer.layer>
+  | ReturnType<typeof RelayAdmin.layer>;
 
 const primaryHttpRuntime = ManagedRuntime.make(
   PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(PrimaryEnvironmentHttpLayer.layer)),
@@ -63,6 +65,7 @@ const layerRuntime = Layer.mergeAll(
   ManagedRelayLayer.layer(configuredRelayUrl()).pipe(
     Layer.provide(Layer.mergeAll(layerHttpClient, Dpop.layer)),
   ),
+  RelayAdmin.layer({ relayUrl: configuredRelayUrl() }).pipe(Layer.provide(layerHttpClient)),
 );
 
 export const runtime: ManagedRuntime.ManagedRuntime<

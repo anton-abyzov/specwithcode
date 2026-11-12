@@ -10,7 +10,9 @@ import {
   isSettingsSearchScopeAvailable,
   searchableSetting,
   searchSettings,
+  searchSettingsBySection,
   SETTINGS_NAV_GROUPS,
+  SETTINGS_OWNER_ONLY_PATHS,
   SETTINGS_SEARCH_ITEMS,
   SETTINGS_SECTION_LABELS,
   settingsSearchDestination,
@@ -637,4 +639,30 @@ it("routes external MCP connections to Integrations", () => {
   expect(searchSettings("mcp").find((item) => item.id === "mcp-connections")?.to).toBe(
     "/settings/integrations",
   );
+});
+
+describe("owner-only settings pages", () => {
+  const everySection = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
+  const sectionsFound = (query: string, sections?: typeof everySection) =>
+    searchSettingsBySection(query, undefined, sections).flatMap((result) =>
+      result.kind === "section" ? [result.section] : [],
+    );
+
+  it("are not found by a search that does not name them, as in the command palette", () => {
+    expect([...SETTINGS_OWNER_ONLY_PATHS]).toEqual(["/settings/connect-admin"]);
+    for (const query of ["connect admin", "Connect", "admin"]) {
+      expect(sectionsFound(query), query).not.toContain("/settings/connect-admin");
+    }
+    // Other sections are still found the same way.
+    expect(sectionsFound("machines")).toContain("/settings/machines");
+  });
+
+  it("are found once the caller lists them, as the sidebar does for an owner", () => {
+    expect(sectionsFound("connect admin", everySection)).toContain("/settings/connect-admin");
+  });
+
+  it("have no search rows that would open them", () => {
+    const owned: ReadonlySet<string> = SETTINGS_OWNER_ONLY_PATHS;
+    expect(SETTINGS_SEARCH_ITEMS.filter((item) => owned.has(item.to))).toEqual([]);
+  });
 });
