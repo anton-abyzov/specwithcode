@@ -23,6 +23,10 @@ The relay currently owns:
 - Registering mobile notification preferences and APNs or FCM tokens.
 - Receiving published agent activity and delivering notifications or Live Activity updates.
 - Persisting relay state and logging to Cloudflare Workers Logs for diagnostics.
+- Owner-only admin routes (`/v1/admin/...`, in [`src/admin`](./src/admin)): every account's
+  machines, phones and machine limit, read-only. They answer 404 for everyone unless
+  `RELAY_ADMIN_USER_IDS` lists the caller's Clerk user id, and they never return a key, credential
+  or session.
 
 The environment server and relay have separate credentials and trust boundaries. Read
 [Environment Authentication Profile](../../docs/internals/environment-auth.md) before changing token,

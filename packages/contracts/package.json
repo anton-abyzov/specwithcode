@@ -1,6 +1,6 @@
 {
   "name": "@specweave-studio/contracts",
-  "version": "1.0.247",
+  "version": "1.0.246",
   "private": true,
   "license": "MIT",
   "files": [
@@ -31,6 +31,10 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
+    },
+    "./relayAdmin": {
+      "types": "./src/relayAdmin.ts",
+      "import": "./src/relayAdmin.ts"
     }
   },
   "scripts": {

@@ -15,6 +15,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { RelayAdminGroup } from "./relayAdmin.ts";
 import { RelayReportsGroup } from "./relayReports.ts";
 
 export const RelayAgentAwarenessPlatform = Schema.Literals(["ios", "android"]);
@@ -1485,6 +1486,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayServerGroup,
     RelayHooksGroup,
     RelayReportsGroup,
+    RelayAdminGroup,
   )
   .annotate(OpenApi.Title, "SpecWithCode Relay API")
   .annotate(OpenApi.Version, "1.0.0")
