@@ -178,6 +178,44 @@ it.layer(layer, { excludeTestServices: true })("project environment real Git", (
         );
       }),
   );
+  it.effect("lists the repositories found in the project folder only when asked", () =>
+    Effect.gen(function* () {
+      const x = yield* setup;
+      const path = yield* Path.Path;
+      const nested = path.join(x.main, "repositories", "synthetic", "nested");
+      yield* x.fs.makeDirectory(nested, { recursive: true });
+      yield* x.fixture(["init", "-b", "trunk"], nested);
+      yield* x.fixture(["remote", "add", "origin", url], nested);
+      yield* x.seed({
+        additionalFolders: [],
+        repositories: [{ id: "saved", url, localPath: nested }],
+      });
+      // An older client never asks, and gets what it always got.
+      assert.isUndefined((yield* x.service.read({ projectId: x.projectId })).found);
+      const read = yield* x.service.read({ projectId: x.projectId, discover: true, refresh: true });
+      assert.deepEqual(read.found, [
+        {
+          relativePath: "repositories/synthetic/nested",
+          path: nested,
+          name: "nested",
+          origin: "synthetic/project",
+          branch: "trunk",
+          defaultBranch: null,
+          inSpecweave: false,
+          state: "available",
+          noRemote: false,
+          threadWorktrees: 0,
+          repositoryId: "saved",
+        },
+      ]);
+      assert.isTrue(read.rootIsRepository);
+      assert.equal(read.foundMore, 0);
+      assert.deepEqual(read.skippedLinks, []);
+      // Its folder is a found clone, so the saved entry is no longer needed; it is still saved.
+      assert.deepEqual(read.redundantEntries, [{ repositoryId: "saved", reason: "found_clone" }]);
+      assert.equal(read.repositories[0]?.id, "saved");
+    }),
+  );
   it.effect(
     "never overwrites an existing folder, retries failed commands, or matches the wrong origin",
     () =>

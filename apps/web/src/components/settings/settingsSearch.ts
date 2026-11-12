@@ -1143,17 +1143,21 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "environment-icon",
-    title: "Environment icon",
+    title: "Machine icon",
     to: "/settings/machines",
     targetId: "connections-environment",
-    searchTerms: ["machine glyph sidebar mac mini studio laptop desktop server cloud vm"],
+    searchTerms: [
+      "environment machine glyph sidebar mac mini studio laptop desktop server cloud vm",
+    ],
   },
   {
     id: "local-environment",
-    title: "Local environment",
+    title: "Run agents on this machine",
     to: "/settings/machines",
     targetId: "connections-environment",
-    searchTerms: ["turn off on disable enable local server agents remote only restart"],
+    searchTerms: [
+      "local environment turn off on disable enable local server agents remote only restart",
+    ],
     desktopOnly: true,
   },
   {
@@ -1273,10 +1277,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "publish-agent-activity",
     localEnvironmentOnly: true,
-    title: "Publish agent activity",
+    title: "Activity for phone notifications",
     to: "/settings/machines",
     targetId: "connections-environment",
-    searchTerms: ["mobile push notifications live activities cloud tunnel"],
+    searchTerms: ["publish agent activity mobile push notifications live activities cloud tunnel"],
     cloudOnly: true,
   },
   {
@@ -1297,10 +1301,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remote-environments",
-    title: "Environments",
+    title: "Saved connections",
     to: "/settings/machines",
     searchTerms: [
-      "add pair backend host code ssh config agent tunnel saved specweave-studio connect",
+      "environments remote add pair backend host code ssh config agent tunnel saved specweave-studio connect",
     ],
   },
   {

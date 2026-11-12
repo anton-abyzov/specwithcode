@@ -188,9 +188,9 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
   },
   {
     id: "project-additional-folders",
-    title: "Approved additional folders",
+    title: "Other folders agents can use",
     tab: "environment",
-    anchors: ["Approved additional folders"],
+    anchors: ["Other folders agents can use"],
     searchTerms: ["directories paths"],
   },
   {

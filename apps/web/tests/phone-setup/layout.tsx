@@ -27,3 +27,9 @@ export function SettingsDisclosure({ title, children }: { title: string; childre
     </details>
   );
 }
+export function SettingsSearchTarget({ children }: { children: ReactNode }) {
+  return <>{children}</>;
+}
+export function TeamRulesLabel({ children }: { children: ReactNode }) {
+  return <span className="text-xs text-muted-foreground">{children}</span>;
+}

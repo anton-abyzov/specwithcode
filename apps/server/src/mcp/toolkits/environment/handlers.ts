@@ -1,8 +1,15 @@
 import { OrchestratorMcpFailure, type ServerSettings } from "@specweave-studio/contracts";
 import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import {
+  availableRepositories,
+  discoverProjectRepositories,
+} from "../../../project/ProjectRepositoryDiscovery.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -49,12 +56,54 @@ const access = Effect.gen(function* () {
     });
   return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
 });
+/**
+ * The repositories found in the calling thread's project folder, so an agent
+ * sees what it can name without scanning. Null for a caller with no thread or
+ * project, and where the project service is not part of this server.
+ */
+const callerRepositories = Effect.gen(function* () {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+  if (scope.thread === undefined || Option.isNone(projects)) return null;
+  const management = yield* ThreadManagement.ThreadManagementService;
+  const shell = yield* management
+    .getThreadShell(scope.thread.threadId)
+    .pipe(Effect.orElseSucceed(() => null));
+  if (shell === null || shell.projectId === null) return null;
+  const project = yield* projects.value.getById(shell.projectId).pipe(
+    Effect.map(Option.getOrNull),
+    Effect.orElseSucceed(() => null),
+  );
+  if (project === null) return null;
+  const discovery = yield* Effect.promise(() =>
+    discoverProjectRepositories({
+      projectId: project.id,
+      workspaceRoot: project.workspaceRoot,
+      saved: project.workspaceSettings?.environment?.repositories,
+    }),
+  );
+  const found = availableRepositories(discovery);
+  if (found.length === 0) return null;
+  return {
+    projectFolder: project.workspaceRoot,
+    found: found.map(({ name, relativePath, origin, branch }) => ({
+      name,
+      relativePath,
+      origin,
+      branch,
+    })),
+    more: discovery?.foundMore ?? 0,
+    note: "Name a repository by relativePath in a launch's repository or repositories, or in studio_worktree_add_repository. Nothing needs registering.",
+  };
+});
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   studio_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+      const repositories = yield* callerRepositories;
       return {
+        ...(repositories === null ? {} : { repositories }),
         environmentId: descriptor.environmentId,
         label: machineLabel(descriptor, current),
         serverVersion: descriptor.serverVersion,

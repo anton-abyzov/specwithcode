@@ -12,10 +12,15 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { readWorktreeSet, worktreeSetManifestPath } from "../worktreeSet.ts";
+import {
+  readWorktreeSet,
+  worktreeSetManifestPath,
+  type WorktreeSetMember,
+} from "../worktreeSet.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import {
+  addThreadRepository,
   addWorktreeSetMember,
   createWorktreeSet,
   removeWorktreeSetMembers,
@@ -93,6 +98,27 @@ const fixture = Effect.gen(function* () {
 
 describe("worktree sets", () => {
   it.layer(testLayer)("as one unit", (it) => {
+    it.effect("creates a thread folder with no member, and removes it with its manifest", () =>
+      Effect.gen(function* () {
+        const { fs, path, base, project } = yield* fixture;
+        const folder = path.join(base, "worktrees", "project", "empty");
+        yield* createWorktreeSet({
+          folder,
+          members: [],
+          branch: "thread/empty",
+          projectRoot: project,
+          baseRef: "HEAD",
+          startFromOrigin: false,
+          submodules: null,
+        });
+        expect(yield* fs.readDirectory(folder)).toEqual([]);
+        // A manifest with no members marks the folder as the thread's own, not a plain worktree.
+        expect((yield* readWorktreeSet(folder))?.members).toEqual([]);
+        expect(yield* removeWorktreeSetMembers({ folder, members: [] })).toEqual([]);
+        expect(yield* fs.exists(folder)).toBe(false);
+        expect(yield* readWorktreeSet(folder)).toBeNull();
+      }),
+    );
     it.effect("creates one folder with a worktree of each repository on one branch", () =>
       Effect.gen(function* () {
         const { fs, path, run, base, project, api, web } = yield* fixture;
@@ -216,6 +242,105 @@ describe("worktree sets", () => {
         expect((yield* readWorktreeSet(folder))?.members).toHaveLength(3);
         void api;
         void fs;
+      }),
+    );
+
+    it.effect("adds repositories to a thread's empty folder, each from the right base", () =>
+      Effect.gen(function* () {
+        const { fs, path, run, base, project, api, web } = yield* fixture;
+        const folder = path.join(base, "worktrees", "project", "thread-empty");
+        yield* createWorktreeSet({
+          folder,
+          members: [],
+          branch: "thread/add",
+          projectRoot: project,
+          baseRef: "HEAD",
+          startFromOrigin: false,
+          submodules: null,
+        });
+        const add = (
+          entry: string,
+          existing: ReadonlyArray<WorktreeSetMember>,
+          extra: { limit?: number; refuseNew?: string } = {},
+        ) =>
+          addThreadRepository({
+            folder,
+            existing,
+            plain: false,
+            entry,
+            checkouts: [{ id: "web", path: web }],
+            projectRoot: project,
+            branch: "thread/add",
+            startFromOrigin: false,
+            submodules: null,
+            addedBy: "agent",
+            addedAt: "2026-11-12T00:00:00.000Z",
+            ...extra,
+          });
+        // api has an origin and no branch checked out: cut from its default branch on origin.
+        const origin = path.join(base, "api-origin.git");
+        yield* run(base, ["clone", "--bare", api, origin]);
+        yield* run(api, ["remote", "add", "origin", origin]);
+        yield* run(api, ["fetch", "origin"]);
+        yield* run(api, ["checkout", "--detach"]);
+        const first = yield* add("repositories/acme/api", []);
+        expect(first).toMatchObject({ alreadyMember: false, baseRef: "origin/main" });
+        expect(first.members).toHaveLength(1);
+        // No root member was invented: the folder holds only what was added.
+        expect(first.member).toMatchObject({
+          relativePath: path.join("repositories", "acme", "api"),
+          baseRef: "origin/main",
+          addedBy: "agent",
+        });
+        const apiWorktree = path.join(folder, "repositories", "acme", "api");
+        expect((yield* run(apiWorktree, ["symbolic-ref", "--short", "HEAD"])).stdout.trim()).toBe(
+          "thread/add",
+        );
+        expect(yield* fs.exists(path.join(folder, "file.txt"))).toBe(false);
+        // web has a branch checked out: cut from it. Named by its saved checkout path.
+        const second = yield* add(web, first.members);
+        expect(second).toMatchObject({ alreadyMember: false, baseRef: "main" });
+        // Adding one the thread has returns it, even at the cap or on a low disk.
+        const again = yield* add("repositories/acme/api", second.members, {
+          limit: 2,
+          refuseNew: "Only 1.0 GB is free",
+        });
+        expect(again).toMatchObject({ alreadyMember: true, baseRef: "origin/main" });
+        expect(again.members).toHaveLength(2);
+        expect((yield* readWorktreeSet(folder))?.members.map((member) => member.baseRef)).toEqual([
+          "origin/main",
+          "main",
+        ]);
+        // A third repository is refused at the cap, and on a low disk, changing nothing.
+        const extra = path.join(project, "repositories", "acme", "extra");
+        yield* fs.makeDirectory(extra, { recursive: true });
+        yield* run(extra, ["init", "-b", "main"]);
+        expect(
+          yield* add("repositories/acme/extra", second.members, { limit: 2 }).pipe(Effect.flip),
+        ).toContain("the most a thread can hold (2)");
+        expect(
+          yield* add("repositories/acme/extra", second.members, {
+            refuseNew: "Only 1.0 GB is free",
+          }).pipe(Effect.flip),
+        ).toBe("Only 1.0 GB is free");
+        // No branch checked out and no origin: refused with the cause, the set kept.
+        yield* fs.writeFileString(path.join(extra, "a.txt"), "a\n");
+        yield* run(extra, ["add", "a.txt"]);
+        yield* run(extra, [
+          "-c",
+          "user.name=T",
+          "-c",
+          "user.email=t@example.invalid",
+          "commit",
+          "-m",
+          "a",
+        ]);
+        yield* run(extra, ["checkout", "--detach"]);
+        expect(yield* add("repositories/acme/extra", second.members).pipe(Effect.flip)).toContain(
+          "no branch checked out and its default branch on origin could not be found",
+        );
+        expect((yield* readWorktreeSet(folder))?.members).toHaveLength(2);
+        expect(yield* fs.exists(path.join(folder, "repositories", "acme", "extra"))).toBe(false);
       }),
     );
 

@@ -25,16 +25,15 @@ import {
 import { PhoneSetupDialog, type PhoneSetupCode } from "./PhoneSetupDialog";
 import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import {
-  SettingsDisclosure,
   SettingsRow,
+  SettingsSearchTarget,
   SettingsSection,
   TeamRulesLabel,
-  scrollToSettingsTarget,
 } from "./settingsLayout";
 import { TeamRulesInert } from "./TeamRulesLock";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 
-const PHONE_LINK_LABEL = "iPhone";
+const PHONE_LINK_LABEL = "Phone";
 const PAIR_PHONE_SETTING: SettingsSearchItemId = "pair-phone";
 
 /** The server this window talks to, which is not always the page's own origin. */
@@ -66,15 +65,21 @@ type PairPhoneSettingsProps = {
   readonly hasAccessControls: boolean;
   /** Scrolls to the section with Network access and Tailscale HTTPS. */
   readonly onShowAccessSettings: () => void;
-  /** Connect is the main way to reach the phone here, so fold direct pairing away. */
+  /** Turns Network access on, where this window can. The dialog offers it as a button. */
+  readonly onTurnOnNetworkAccess?: (() => void) | undefined;
+  /**
+   * Connect is the way to add a phone here, so this is one quiet row,
+   * "Cannot use Connect? Pair over your own network", never a primary button.
+   */
   readonly folded?: boolean;
   /** Set when this machine's rules refuse new phones. */
   readonly teamRulesLock?: TeamRulesLock | null;
 };
 
 /**
- * The private QR alternative to SpecWithCode Connect sign-in: prepare the
- * phone route before minting a short-lived pairing credential.
+ * Pairing a phone over the person's own network, the alternative to
+ * SpecWithCode Connect: prepare the phone's route to this computer, then mint
+ * a short-lived pairing credential. Its dialog opens straight at those steps.
  */
 export const PairPhoneSettings = memo(function PairPhoneSettings({
   endpoint,
@@ -84,6 +89,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
   onPairingLinkCreated,
   hasAccessControls,
   onShowAccessSettings,
+  onTurnOnNetworkAccess,
   folded = false,
   teamRulesLock = null,
 }: PairPhoneSettingsProps) {
@@ -182,46 +188,62 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
     }
   };
 
+  const cannotPair = tx(
+    "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer.",
+  );
   const description = !canPair
-    ? tx(
-        "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer.",
-      )
+    ? cannotPair
     : address === null
       ? hasAccessControls
         ? tx(
-            "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead.",
+            "To pair over your own network, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first.",
           )
         : tx(
-            "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`.",
+            "To pair over your own network, open these settings in the SpecWithCode desktop app on this computer and turn on Network access or Tailscale HTTPS.",
           )
-      : folded
-        ? tx(
-            "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code.",
-          )
-        : tx(
-            "Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to {url}.",
-            { url: address.httpBaseUrl.replace(/\/$/u, "") },
-          );
+      : tx("Scan a one-time code with the SpecWithCode app on your phone. It connects to {url}.", {
+          url: address.httpBaseUrl.replace(/\/$/u, ""),
+        });
 
   const content = (
     <>
-      <SettingsRow
-        title={tx("Pair a phone")}
-        description={teamRulesLock?.message ?? description}
-        status={teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : undefined}
-        control={
+      {folded ? (
+        <div
+          data-pair-phone-row
+          className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 sm:px-4"
+        >
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+            {teamRulesLock?.message ??
+              (canPair ? tx("Cannot use Connect? Pair over your own network.") : cannotPair)}
+          </p>
+          {teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : null}
           <TeamRulesInert lock={teamRulesLock}>
-            <Button
-              size="sm"
-              variant={folded ? "outline" : "default"}
-              disabled={!canPair}
-              onClick={() => changeOpen(true)}
-            >
-              {tx("Pair a phone")}
+            <Button size="xs" variant="ghost" disabled={!canPair} onClick={() => changeOpen(true)}>
+              {tx("Pair with a private QR code")}
             </Button>
           </TeamRulesInert>
-        }
-      />
+        </div>
+      ) : (
+        <SettingsRow
+          title={tx("Pair a phone")}
+          description={teamRulesLock?.message ?? description}
+          status={
+            teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : undefined
+          }
+          control={
+            <TeamRulesInert lock={teamRulesLock}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canPair}
+                onClick={() => changeOpen(true)}
+              >
+                {tx("Pair a phone")}
+              </Button>
+            </TeamRulesInert>
+          }
+        />
+      )}
       <PhoneSetupDialog
         open={open && teamRulesLock === null}
         onOpenChange={changeOpen}
@@ -235,14 +257,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
           changeOpen(false);
           onShowAccessSettings();
         }}
-        {...(folded
-          ? {
-              onUseConnect: () => {
-                changeOpen(false);
-                scrollToSettingsTarget("phone-connect");
-              },
-            }
-          : {})}
+        onTurnOnNetworkAccess={onTurnOnNetworkAccess}
         onGenerate={() => void handlePair()}
         onCopyAddress={() => {
           if (address !== null) void copy(address.httpBaseUrl, "Computer address copied");
@@ -268,15 +283,11 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
     </>
   );
 
-  // A lock folded away would hide why the row is off, so it opens out.
-  if (folded && teamRulesLock === null) {
+  if (folded) {
     return (
-      <SettingsDisclosure
-        {...searchableSetting(PAIR_PHONE_SETTING)}
-        title={tx("Or pair with a private QR code")}
-      >
+      <SettingsSearchTarget id={searchableSetting(PAIR_PHONE_SETTING).id}>
         {content}
-      </SettingsDisclosure>
+      </SettingsSearchTarget>
     );
   }
 

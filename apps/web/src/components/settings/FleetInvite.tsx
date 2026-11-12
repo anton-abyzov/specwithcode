@@ -232,7 +232,7 @@ function MainMachineIdField({
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-medium text-foreground">
-        {tx("Main machine environment ID")}
+        {tx("Main machine ID")}
       </span>
       <Input
         value={controller.coordinatorEnvironmentId}
@@ -417,7 +417,7 @@ export function FleetInvitePanel({
       ) : null}
       {controller.ownEnvironmentId ? (
         <p className="text-xs text-muted-foreground">
-          {renderRich(tx("This machine’s environment ID: {code}"), {
+          {renderRich(tx("This machine’s ID: {code}"), {
             code: <code className="select-all">{controller.ownEnvironmentId}</code>,
           })}
         </p>

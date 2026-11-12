@@ -16,7 +16,6 @@ export const ja: PhraseCatalog = {
   "Add project starts in": "プロジェクト追加時の開始フォルダー",
   Advanced: "詳細",
   "Advanced connections": "詳細な接続",
-  "Advanced routes and saved connections": "詳細なルートと保存済みの接続",
   "Adversarial review": "敵対的レビュー",
   "Agent browser access": "エージェントのブラウザーアクセス",
   "Agent computer access": "エージェントのコンピューターアクセス",
@@ -65,7 +64,6 @@ export const ja: PhraseCatalog = {
   "Chat width": "チャットの幅",
   "ChatGPT account": "ChatGPT アカウント",
   "Check for updates automatically": "アップデートを自動で確認",
-  "Checking SpecWithCode Connect": "SpecWithCode Connect を確認中",
   Checkouts: "チェックアウト",
   Chrome: "Chrome",
   "Chrome for agents": "エージェント用 Chrome",
@@ -122,7 +120,6 @@ export const ja: PhraseCatalog = {
   "Display name": "表示名",
   "Download in the background": "バックグラウンドでダウンロード",
   Driver: "ドライバー",
-  "Environment icon": "環境のアイコン",
   "Environment identification": "環境の識別",
   "Environment-wide setting. Select an environment to change it.":
     "環境全体の設定です。変更するには環境を選んでください。",
@@ -166,8 +163,6 @@ export const ja: PhraseCatalog = {
   "Live Processes": "実行中のプロセス",
   "Live process tree": "実行中のプロセスツリー",
   "Load balancing": "負荷分散",
-  "Loading your phones": "スマートフォンを読み込み中",
-  "Local environment": "ローカル環境",
   "MCP connections": "MCP 接続",
   Machines: "マシン",
   Messaging: "メッセージ",
@@ -186,10 +181,8 @@ export const ja: PhraseCatalog = {
   "Network access": "ネットワークアクセス",
   "New keybinding": "新しいキーバインド",
   "New threads": "新しいスレッド",
-  "No environment selected": "環境が選択されていません",
   "No hubs configured.": "ハブが設定されていません。",
   "No matching routines": "一致するルーティンはありません",
-  "No phones yet": "スマートフォンはまだありません",
   "No routines": "ルーティンはありません",
   "No routines for active projects": "アクティブなプロジェクトのルーティンはありません",
   "No routines match these filters": "このフィルターに一致するルーティンはありません",
@@ -293,8 +286,6 @@ export const ja: PhraseCatalog = {
   "This connection does not have permission to change environment settings.":
     "この接続には環境設定を変更する権限がありません。",
   "This machine": "このマシン",
-  "This window cannot turn on SpecWithCode Connect":
-    "このウィンドウでは SpecWithCode Connect をオンにできません",
   "Thread notifications": "スレッドの通知",
   "Time format": "時刻の形式",
   "Timeline detail": "タイムラインの詳細度",
@@ -330,7 +321,6 @@ export const ja: PhraseCatalog = {
   "Worktree storage": "ワークツリーの保存場所",
   Worktrees: "ワークツリー",
   "Your data": "あなたのデータ",
-  "Your phones": "あなたのスマートフォン",
   "specweave-studio.json is invalid": "specweave-studio.json が無効です",
   "Clear settings search": "設定の検索をクリア",
   "No settings found": "設定が見つかりません",
@@ -396,8 +386,6 @@ export const ja: PhraseCatalog = {
     "このプロジェクトのチェックアウトまたはワークツリーで実行するコマンドです。ショートカットも設定できます。",
   "Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way.":
     "簡潔なエージェントは、結果をいくつかの平易な文で先に伝え、手順を繰り返す代わりに、結果とそれを裏付けるパスやリンクをコーディネーターに送ります。詳細なエージェントは手順を説明します。どちらの場合も、エラー、失敗したテスト、セキュリティ警告はすべて表示されます。",
-  "Connect an environment to view its settings and access.":
-    "環境を接続すると、その設定とアクセスを表示できます。",
   "Couldn't load the WSL backend state.": "WSL バックエンドの状態を読み込めませんでした。",
   "Creates the worktree from the latest matching branch on origin instead of your local branch.":
     "ローカルブランチではなく、origin 上の一致する最新ブランチからワークツリーを作成します。",
@@ -485,7 +473,6 @@ export const ja: PhraseCatalog = {
   "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.":
     "リンクされたプルリクエストを先に開きます。ない場合は、3 ファイル以上または 50 行以上の編集で「変更」を開きます。",
   "Optional marker shown in the picker.": "選択リストに表示される任意のマークです。",
-  "Or pair with a private QR code": "またはプライベート QR コードでペアリング",
   "Order of projects in the sidebar project picker and command palette.":
     "サイドバーのプロジェクト選択とコマンドパレットでのプロジェクトの順序です。",
   "Page zoom applied to new browser tabs.": "新しいブラウザータブに適用するページのズームです。",
@@ -534,8 +521,6 @@ export const ja: PhraseCatalog = {
     "エージェントが所有する会話を SpecWithCode のスレッドとして再開します。",
   "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
     "使用量の上限で止まったスレッドを、報告されたリセット時刻に再開します。各スレッドで予定された続行を取り消せます。",
-  "Run only the WSL backend. SpecWithCode restarts when this changes.":
-    "WSL バックエンドだけを実行します。変更すると SpecWithCode が再起動します。",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "選択した WSL ディストリビューションを Windows と並行して実行します。プロジェクトは現在のファイルシステムに残ります。",
   "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
@@ -591,8 +576,6 @@ export const ja: PhraseCatalog = {
     "通常モデルは日常の作業を行い、最先端モデルは最も強いモデルが求められたとき（最先端の深さでのレビューなど）に動きます。",
   "Then running work is stopped for the update, the app restarts, and running and queued threads continue after it.":
     "その後、実行中の作業はアップデートのために停止し、アプリが再起動して、実行中とキュー内のスレッドは再起動後に続行します。",
-  "Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports.":
-    "その後、使っている各 iPhone の iPhone アプリで同じアカウントにサインインします。Tailscale、VPN、ポートの開放は不要です。",
   "This routine no longer exists or is outside the selected project scope.":
     "このルーティンはもう存在しないか、選択したプロジェクトの範囲外です。",
   "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
@@ -1358,11 +1341,6 @@ export const ja: PhraseCatalog = {
   "Copy trace ID": "トレース ID をコピー",
   "Remove from this device…": "このデバイスから削除…",
   "Sign in": "サインイン",
-  "No saved remote environments": "保存済みのリモート環境はありません",
-  "Click “Add environment” to pair another environment, or connect one from SpecWithCode Connect.":
-    "「環境を追加」をクリックして別の環境をペアリングするか、SpecWithCode Connect から接続してください。",
-  "Click “Add environment” to pair another environment.":
-    "「環境を追加」をクリックして別の環境をペアリングしてください。",
   Host: "ホスト",
   "Paste a full pairing URL here to fill both fields automatically.":
     "完全なペアリング URL をここに貼り付けると、両方の欄が自動で入力されます。",
@@ -1370,7 +1348,6 @@ export const ja: PhraseCatalog = {
     "このマシンは SpecWithCode Connect アカウントに登録されています。予備のルートとして使えます。",
   "Add SpecWithCode Connect": "SpecWithCode Connect を追加",
   "Add route": "ルートを追加",
-  "Add environment": "環境を追加",
   "SSH host or alias": "SSH ホストまたはエイリアス",
   "Search hosts or type devbox": "ホストを検索、または devbox と入力",
   "Loading hosts…": "ホストを読み込んでいます…",
@@ -1386,8 +1363,6 @@ export const ja: PhraseCatalog = {
   "Default distro": "既定のディストリビューション",
   "Run WSL only": "WSL のみ実行",
   "Enable Tailscale HTTPS": "Tailscale HTTPS を有効にする",
-  "Not encrypted: anyone on the same network can capture the sign-in. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
-    "暗号化されていません。同じネットワーク上の誰でもサインイン情報を取得できます。リモートアクセスには SpecWithCode Connect か Tailscale HTTPS を使ってください。",
   "More actions for this machine": "このマシンのその他の操作",
   "Up to date": "最新です",
   "This connection can create access links but cannot view authorized clients.":
@@ -1439,10 +1414,8 @@ export const ja: PhraseCatalog = {
   "HTTPS endpoint": "HTTPS のアドレス",
   "Pending MagicDNS endpoint": "保留中の MagicDNS アドレス",
   Enable: "有効にする",
-  "Add Environment": "環境を追加",
   "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine.":
     "このマシンを、Tailscale 名など別のアドレスで再度ペアリングします。2 台目のマシンとして追加するのではなく、既存のルートに加わります。",
-  "Pair another environment to this client.": "別の環境をこのクライアントとペアリングします。",
   value: "値",
   "Choice value": "選択肢の値",
   "Choice label": "選択肢のラベル",
@@ -1588,10 +1561,8 @@ export const ja: PhraseCatalog = {
   Manage: "管理",
   "Add an agent, complete its sign-in, then choose its models in chat. Registry agents work in the project folder; projects with additional approved folders currently require Codex, Claude or Muse Code.":
     "エージェントを追加してサインインを完了し、チャットでモデルを選んでください。レジストリのエージェントはプロジェクトのフォルダーで作業します。承認済みの追加フォルダーがあるプロジェクトでは、現在 Codex、Claude、Muse Code のいずれかが必要です。",
-  "Main machine environment ID": "メインマシンの環境 ID",
   "Main machine": "メインマシン",
   "Another machine": "別のマシン",
-  "This machine’s environment ID: {code}": "このマシンの環境 ID: {code}",
   "Invitation line for the main machine": "メインマシン用の招待行",
   " Use it within an hour; it works once.":
     " 1 時間以内に使ってください。使えるのは 1 回だけです。",
@@ -1830,10 +1801,6 @@ export const ja: PhraseCatalog = {
   "Automatically balance load": "負荷を自動で分散",
   "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.":
     "共有プロジェクトの新しいスレッドは、各マシンの優先度で重み付けしたうえで、空き CPU とメモリが最も多いマシンで開始されます。",
-  "Turn off local environment?": "ローカル環境をオフにしますか？",
-  "Turn on local environment?": "ローカル環境をオンにしますか？",
-  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.":
-    "SpecWithCode はこのコンピューターでサーバーを実行せずに再起動します。ここで実行中のエージェントとターミナルは停止し、他のデバイスはこのコンピューターに接続できなくなります。プロジェクト、履歴、リモート環境には影響しません。",
   "SpecWithCode will restart and start running a server on this computer again.":
     "SpecWithCode は再起動し、このコンピューターで再びサーバーを実行します。",
   "Restart and turn off": "再起動してオフにする",
@@ -1900,8 +1867,6 @@ export const ja: PhraseCatalog = {
     "取り消すと新しい作業はすぐに拒否されます。ここで開始したスレッドは 2 分間続いてから停止します。ワークツリーと変更は残ります。{value}",
   "Checking your machines…": "マシンを確認しています…",
   "No machines yet.": "マシンはまだありません。",
-  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
-    "{link}でマシンを追加し、ルートを管理し、ワーカーを許可または停止します。ここで作業を実行できるマシンは「ここで作業を実行できるユーザー」にあります。切断するには、そこにあるカードを使います。「マシンを削除」はここのエージェントがそのマシンを使うのを止め、「環境」の「削除」はこのアプリにそのマシンを表示しなくします。",
   "Advanced connection settings": "接続の詳細設定",
   "also on {value}": "{value} にもあり",
   "also on": "ほかにもあり:",
@@ -2023,50 +1988,21 @@ export const ja: PhraseCatalog = {
   "Turning on…": "オンにしています…",
   "This phone": "このスマートフォン",
   "Remove phone": "スマートフォンを削除",
-  "The simplest way to reach this computer from your iPhone is to sign in to SpecWithCode Connect in the desktop app. No Tailscale is needed. To pair with a private QR code instead, this computer needs a private HTTPS address: set up Tailscale on this computer and your iPhone, sign in to the same tailnet, then enable Tailscale HTTPS in Connections.":
-    "iPhone からこのコンピューターに接続する最も簡単な方法は、デスクトップアプリで SpecWithCode Connect にサインインすることです。Tailscale は不要です。代わりに非公開の QR コードでペアリングするには、このコンピューターに非公開の HTTPS アドレスが必要です。このコンピューターと iPhone に Tailscale を設定し、同じ tailnet にサインインしてから、「接続」で Tailscale HTTPS を有効にしてください。",
-  "Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn the VPN on.":
-    "iPhone に Tailscale をインストールします。このコンピューターと同じ tailnet にサインインし、VPN をオンにしてください。",
-  "Copy the computer address below and open it in Safari on your iPhone. If it cannot load, check Tailscale on both devices before making a code.":
-    "下のコンピューターのアドレスをコピーし、iPhone の Safari で開いてください。読み込めない場合は、コードを作成する前に両方のデバイスの Tailscale を確認してください。",
-  "Open SpecWithCode on your iPhone, tap Pair a machine, then Scan QR code.":
-    "iPhone で SpecWithCode を開き、「マシンをペアリング」、「QR コードをスキャン」の順にタップします。",
-  "Open the computer address in Safari on your iPhone. Once it loads, open SpecWithCode and tap Pair a machine, then Scan QR code.":
-    "iPhone の Safari でコンピューターのアドレスを開きます。読み込めたら SpecWithCode を開き、「マシンをペアリング」、「QR コードをスキャン」の順にタップします。",
-  "Scan with your iPhone": "iPhone でスキャン",
   "Pair with a private QR code": "非公開の QR コードでペアリング",
-  "A fallback for when you can't use SpecWithCode Connect. Your iPhone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
-    "SpecWithCode Connect を使えない場合の代替手段です。iPhone から同じネットワークまたは Tailscale 経由でこのコンピューターに直接接続できる必要があります。先に接続を準備してから、1 回限りのコードを作成してください。",
   "Computer address · no pairing code": "コンピューターのアドレス · ペアリングコードなし",
   "Copy computer address": "コンピューターのアドレスをコピー",
   "This window cannot create pairing codes. Reopen SpecWithCode with access to this computer.":
     "このウィンドウではペアリングコードを作成できません。このコンピューターにアクセスできる状態で SpecWithCode を開き直してください。",
-  "Pairing code for the SpecWithCode iPhone app": "SpecWithCode iPhone アプリ用のペアリングコード",
   "Ready to scan. The phone has not confirmed a connection yet.":
     "スキャンの準備ができました。スマートフォンはまだ接続を確認していません。",
   "This code expired. Generate a new code when your phone is ready.":
     "このコードの期限が切れました。スマートフォンの準備ができたら新しいコードを生成してください。",
   "The computer address changed. Generate a new code for this address.":
     "コンピューターのアドレスが変わりました。このアドレス用に新しいコードを生成してください。",
-  "If scanning fails, check the address in Safari, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
-    "スキャンに失敗する場合は、Safari でのアドレス、VPN 接続、コードの有効期限を確認してください。このコンピューターでアドレスが使えても、スマートフォンから接続できるとは限りません。",
   "Set up Tailscale HTTPS": "Tailscale HTTPS を設定",
   "Copy pairing link": "ペアリングリンクをコピー",
   "Generate pairing code": "ペアリングコードを生成",
   "Generate new code": "新しいコードを生成",
-  "Add your iPhone with SpecWithCode Connect": "SpecWithCode Connect で iPhone を追加",
-  "Sign in with the same account on this computer and on the iPhone. It works from anywhere, with no Tailscale, VPN or QR code.":
-    "このコンピューターと iPhone で同じアカウントにサインインします。Tailscale、VPN、QR コードなしで、どこからでも使えます。",
-  "On this computer, check Your phones. If it does not say this computer is ready for your iPhone yet, sign in there and turn it on.":
-    "このコンピューターで「スマートフォン」を確認してください。このコンピューターが iPhone 用に準備できていると表示されない場合は、そこでサインインしてオンにしてください。",
-  "On the iPhone, open SpecWithCode and sign in with the same account.":
-    "iPhone で SpecWithCode を開き、同じアカウントでサインインします。",
-  "This computer appears in the iPhone's list. Tap it to start.":
-    "iPhone の一覧にこのコンピューターが表示されます。タップして開始します。",
-  "For a second iPhone, repeat the last two steps on it. Each iPhone signs in on its own; phones do not count toward your Connect machines.":
-    "2 台目の iPhone では、最後の 2 つの手順を繰り返してください。各 iPhone はそれぞれサインインします。スマートフォンは Connect のマシン数に含まれません。",
-  "Use a private QR code instead": "代わりに非公開の QR コードを使う",
-  "Go to SpecWithCode Connect": "SpecWithCode Connect に移動",
   "This is the entire report. It contains versions, diagnostic counts, and failure categories. Conversation content, raw logs, files, credentials, paths, and identifiers are excluded.":
     "これがレポートのすべてです。バージョン、診断の件数、失敗の分類が含まれます。会話の内容、生のログ、ファイル、認証情報、パス、識別子は除外されます。",
   "Diagnostics report preview": "診断レポートのプレビュー",
@@ -2764,7 +2700,6 @@ export const ja: PhraseCatalog = {
   "Change access": "アクセスを変更",
   "Private machines could not be checked. Refresh to retry.":
     "プライベートマシンを確認できませんでした。更新して再試行してください。",
-  "Current environment": "現在の環境",
   "Saved for the machine picker": "マシン選択用に保存済み",
   "Approve again": "もう一度承認",
   "Connect machine": "マシンを接続",
@@ -2794,8 +2729,6 @@ export const ja: PhraseCatalog = {
   "Link SpecWithCode Connect here first, then make a line to paste on your main machine.":
     "まずここで SpecWithCode Connect をリンクし、メインのマシンに貼り付ける行を作成してください。",
   "Make a join line": "参加用の行を作成",
-  "To connect one, open a pairing link from this server’s owner with {value}, or use Add environment with that machine’s own link.":
-    "接続するには、このサーバーの所有者から届いたペアリングリンクを {value} で開くか、そのマシン自身のリンクで「環境を追加」を使ってください。",
   "Turn Auto off": "Auto をオフにする",
   "Long audio is transcribed first (speech to text), the transcript is split into chunks that fit the model's context, and the cheaper model works through the chunks. Auto never sends audio to a model that cannot hear it.":
     "長い音声はまず文字起こしされ（音声からテキスト）、文字起こしはモデルのコンテキストに収まるチャンクに分割され、より安いモデルが順に処理します。Auto は音声を聞けないモデルに音声を送ることはありません。",
@@ -3662,10 +3595,6 @@ export const ja: PhraseCatalog = {
   "Name the profile, for example Work or Marketing.":
     "プロファイルに名前を付けます（例: 仕事、マーケティング）。",
   "Click Pair.": "「ペアリング」をクリックします。",
-  "Send activity to mobile notifications and Live Activities without SpecWithCode Connect.":
-    "SpecWithCode Connect なしで、アクティビティをモバイル通知とライブアクティビティに送信します。",
-  "Publish agent activity to mobile clients":
-    "エージェントのアクティビティをモバイルクライアントに公開",
   "Ask Google for {service}": "Google に依頼: {service}",
   "Edit shortcut for {command}: {shortcut}": "{command} のショートカットを編集: {shortcut}",
   "Edit when clause for {command}": "{command} の条件を編集",
@@ -3701,14 +3630,6 @@ export const ja: PhraseCatalog = {
     "このブラウザページが開いている間、接続中のマシンからの通知をこのデバイスに表示します。閉じると配信が止まります。",
   "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer.":
     "このウィンドウではペアリングコードを作成できません。SpecWithCode を終了して開き直し、このコンピューターへのフルアクセスでサインインさせてください。",
-  "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
-    "プライベート QR コードでペアリングするには、スマートフォンがこのコンピューターのアドレスを必要とします。先にネットワークアクセスか Tailscale HTTPS をオンにしてください。どこからでもアクセスするには、代わりに SpecWithCode Connect にサインインしてください。",
-  "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`.":
-    "スマートフォンからこのコンピューターにアクセスするには、SpecWithCode デスクトップアプリでこの設定を開き、SpecWithCode Connect にサインインしてください。代わりにプライベート QR コードでペアリングするには、`specweave-studio pair --tailscale` で Tailscale Serve を設定してください。",
-  "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code.":
-    "SpecWithCode Connect を使えない場合のみ: iPhone が同じネットワーク上または Tailscale 経由でこのコンピューターに直接アクセスし、ワンタイムコードを読み取ります。",
-  "Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to {url}.":
-    "iPhone の SpecWithCode アプリでプライベートペアリングコードを読み取ります。接続先は {url} です。",
   "Selected environment: local tracing on; external diagnostic export configured.":
     "選択した環境: ローカルトレースはオン、外部診断エクスポートは設定済みです。",
   "Selected environment: local tracing on; external diagnostic export off.":
@@ -4134,8 +4055,6 @@ export const ja: PhraseCatalog = {
   "Usage limit reached": "利用上限に到達",
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "新しいスレッドはそれぞれ専用のブランチと worktree を持つため、並行するスレッドがチェックアウトを共有することはありません。オフ：スレッドはプロジェクトフォルダで作業します。",
-  "Recommended here: on": "ここでの推奨：オン",
-  "Recommended here: off": "ここでの推奨：オフ",
   "Adding a machine to this one?": "このマシンに別のマシンを追加しますか？",
   "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "{here} のエージェントは、すでに {machines} で作業を開始できます。ここで作成した行を使うと、選んだマシンが {here} で作業を開始できるようになります。新しいマシンを {here} に追加する場合は、新しいマシンで SpecWithCode を開き、そこで「メインマシンに参加」を選んで、その行をここの「マシンを追加」に貼り付けてください。",
@@ -4294,6 +4213,161 @@ export const ja: PhraseCatalog = {
     "このコンピューターの接続を確認して、もう一度お試しください。",
   "SpecWithCode Connect sent an answer this page could not read":
     "SpecWithCode Connect から、このページで読み取れない応答が返されました",
+  "Get SpecWithCode on your phone": "SpecWithCode をスマートフォンで使う",
+  "It gets a private address that only your account can use.":
+    "あなたのアカウントだけが使えるプライベートなアドレスが割り当てられます。",
+  "It links {machine} to your account in the same click. No VPN, open ports or terminal.":
+    "同じ操作で {machine} をアカウントにリンクします。VPN、ポートの開放、ターミナルは不要です。",
+  "Linked as {account}. Reachable from anywhere, by your account only.":
+    "{account} としてリンク済み。どこからでもアクセスでき、使えるのはあなたのアカウントだけです。",
+  "Pair over your own network instead.": "代わりに自分のネットワークでペアリングする。",
+  "Reachable from anywhere, by its account only.":
+    "どこからでもアクセスでき、使えるのはそのアカウントだけです。",
+  "Scan this with the phone's camera. It opens the App Store on an iPhone and Google Play on Android. Or search the store for “SpecWithCode”.":
+    "スマートフォンのカメラでスキャンしてください。iPhone では App Store、Android では Google Play が開きます。ストアで「SpecWithCode」を検索しても入手できます。",
+  "Sign in on the phone as {account}": "スマートフォンで {account} としてサインイン",
+  "Sign in on the phone with the same account": "スマートフォンで同じアカウントにサインイン",
+  "Signed in as {account}. It gets a private address that only your account can use.":
+    "{account} としてサインイン済み。あなたのアカウントだけが使えるプライベートなアドレスが割り当てられます。",
+  "SpecWithCode Connect is not in this build":
+    "このビルドには SpecWithCode Connect が含まれていません",
+  "To add another phone, scan this with its camera. It opens the App Store on an iPhone and Google Play on Android.":
+    "別のスマートフォンを追加するには、そのカメラでこれをスキャンしてください。iPhone では App Store、Android では Google Play が開きます。",
+  "Turn on SpecWithCode Connect for {machine}": "{machine} で SpecWithCode Connect をオンにする",
+  "Your phone": "あなたのスマートフォン",
+  "iPhone or Android. The store code shows here once this machine is on SpecWithCode Connect.":
+    "iPhone または Android。このマシンが SpecWithCode Connect を使うようになると、ストア用のコードがここに表示されます。",
+  "{machine} is on SpecWithCode Connect": "{machine} は SpecWithCode Connect を使っています",
+  "{machine} shows up on the phone by itself, and the phone shows up here. Nothing to scan or type.":
+    "{machine} は自動でスマートフォンに表示され、スマートフォンもここに表示されます。スキャンも入力も不要です。",
+  "{machine} shows up there by itself.": "{machine} は自動でそこに表示されます。",
+  "Next step": "次のステップ",
+  "Open SpecWithCode on {machine} to do this.":
+    "これを行うには、{machine} で SpecWithCode を開いてください。",
+  "Waiting for your phone…": "スマートフォンを待っています…",
+  "You are set": "設定完了です",
+  "Agents run on this machine. Turn off and they run only on your other machines.":
+    "エージェントはこのマシンで実行されます。オフにすると、ほかのマシンでのみ実行されます。",
+  "Run agents on this machine": "このマシンでエージェントを実行",
+  "Run agents on this machine again?": "このマシンでエージェントを再び実行しますか？",
+  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history and other machines are unaffected.":
+    "SpecWithCode は、このコンピューターでサーバーを実行しない状態で再起動します。ここで実行中のエージェントとターミナルはすべて停止し、ほかのデバイスはこのコンピューターに接続できなくなります。プロジェクト、履歴、ほかのマシンには影響しません。",
+  "Stop running agents on this machine?": "このマシンでのエージェントの実行を停止しますか？",
+  "Turned off. Agents run only on your other machines.":
+    "オフにしました。エージェントはほかのマシンでのみ実行されます。",
+  "App Store · Google Play": "App Store · Google Play",
+  "Code that opens the App Store or Google Play": "App Store または Google Play を開くコード",
+  "Main machine ID": "メインマシンの ID",
+  "This machine’s ID: {code}": "このマシンの ID：{code}",
+  "Copy the computer address below and open it in the phone's browser. If it does not load, check Tailscale on both devices before making a code.":
+    "下のコンピューターのアドレスをコピーして、スマートフォンのブラウザーで開いてください。読み込めない場合は、コードを作る前に両方のデバイスで Tailscale を確認してください。",
+  "For when you cannot use SpecWithCode Connect. Your phone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
+    "SpecWithCode Connect を使えない場合のためのものです。スマートフォンから同じネットワークまたは Tailscale 経由でこのコンピューターに直接接続できる必要があります。先に接続を準備してから、1 回限りのコードを作成してください。",
+  "If scanning fails, check the address in the phone's browser, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
+    "スキャンに失敗する場合は、スマートフォンのブラウザーでのアドレス、VPN 接続、コードの有効期限を確認してください。このコンピューターでアドレスが使えても、スマートフォンから接続できるとは限りません。",
+  "Install Tailscale on your phone. Sign in to the same Tailscale network as this computer and turn the VPN on.":
+    "スマートフォンに Tailscale をインストールします。このコンピューターと同じ Tailscale ネットワークにサインインし、VPN をオンにしてください。",
+  "Network access, for a phone on the same Wi-Fi or network.":
+    "ネットワークアクセス。同じ Wi-Fi またはネットワークにあるスマートフォン向けです。",
+  "Open SpecWithCode on your phone, choose Pair a machine, then Scan QR code.":
+    "スマートフォンで SpecWithCode を開き、「マシンをペアリング」、「QR コードをスキャン」の順に選びます。",
+  "Open the computer address in the phone's browser. Once it loads, open SpecWithCode and choose Pair a machine, then Scan QR code.":
+    "スマートフォンのブラウザーでコンピューターのアドレスを開きます。読み込めたら SpecWithCode を開き、「マシンをペアリング」、「QR コードをスキャン」の順に選びます。",
+  "Pair over your own network": "自分のネットワークでペアリング",
+  "Pairing code for the SpecWithCode phone app":
+    "SpecWithCode スマートフォンアプリ用のペアリングコード",
+  "Scan with your phone": "スマートフォンでスキャン",
+  "Show Network access and Tailscale HTTPS": "ネットワークアクセスと Tailscale HTTPS を表示",
+  "Tailscale HTTPS, for a phone on your Tailscale network, anywhere.":
+    "Tailscale HTTPS。どこにいても、Tailscale ネットワークのスマートフォン向けです。",
+  "This window cannot change how this computer is reached. Open SpecWithCode on this computer and turn on Network access or Tailscale HTTPS there, or sign in to SpecWithCode Connect, which needs neither.":
+    "このウィンドウでは、このコンピューターへの接続方法を変更できません。このコンピューターで SpecWithCode を開いてネットワークアクセスまたは Tailscale HTTPS をオンにするか、どちらも不要な SpecWithCode Connect にサインインしてください。",
+  "Turn on Network access": "ネットワークアクセスをオンにする",
+  "Your phone needs an address for this computer. Turn on one of these first:":
+    "スマートフォンにはこのコンピューターのアドレスが必要です。先にどちらかをオンにしてください：",
+  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Saved connections stops this app seeing it.":
+    "マシンの追加、ルートの管理、ワーカーの許可と停止は {link} で行えます。ここで作業を実行できるマシンは「ここで作業を実行できるユーザー」にあります。接続を解除するには、そこにあるカードを使います。「マシンを削除」を選ぶと、ここのエージェントがそのマシンを使えなくなり、「保存済みの接続」の「削除」を選ぶと、このアプリからそのマシンが見えなくなります。",
+  "Projects and accounts on this machine": "このマシンのプロジェクトとアカウント",
+  "Activity for phone notifications": "スマートフォン通知用のアクティビティ",
+  "Machine icon": "マシンのアイコン",
+  "Saved connections": "保存済みの接続",
+  "Advanced: run agents on this machine, network access, Tailscale, signed-in browsers and apps, saved connections":
+    "詳細：このマシンでのエージェント実行、ネットワークアクセス、Tailscale、サインイン済みのブラウザーとアプリ、保存済みの接続",
+  "Keep webhook requests for up to 24 hours while this machine is offline, then deliver them. Turn off and SpecWithCode Connect only forwards requests and stores nothing.":
+    "このマシンがオフラインの間、Webhook リクエストを最大 24 時間保留し、オンラインになったら配信します。オフにすると、SpecWithCode Connect はリクエストを転送するだけで、何も保存しません。",
+  "Optional. Sign in to reach your machines from anywhere and to change the settings below.":
+    "任意。どこからでもマシンにアクセスし、下の設定を変更するにはサインインします。",
+  "Send activity for phone notifications": "スマートフォン通知用にアクティビティを送信",
+  "Send agent activity to your phone's notifications and Live Activities, even while SpecWithCode Connect is off for this machine. Turn off and your phone shows no activity from this machine.":
+    "このマシンで SpecWithCode Connect がオフでも、エージェントのアクティビティをスマートフォンの通知とライブアクティビティに送信します。オフにすると、スマートフォンにこのマシンのアクティビティは表示されません。",
+  "Sign in to SpecWithCode Connect to change this. Notifications go to the phones signed in to your account.":
+    "これを変更するには SpecWithCode Connect にサインインしてください。通知は、アカウントにサインインしているスマートフォンに届きます。",
+  "Turn on to reach this machine from your phone and your other machines, from anywhere.":
+    "オンにすると、スマートフォンやほかのマシンから、どこからでもこのマシンにアクセスできます。",
+  "Your phone and your other machines reach this machine from anywhere. Turn off and they can no longer reach it this way.":
+    "スマートフォンやほかのマシンから、どこからでもこのマシンにアクセスできます。オフにすると、この方法ではアクセスできなくなります。",
+  "Current machine": "現在のマシン",
+  "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
+    "接続するには、このサーバーの所有者から {value} 付きのペアリングリンクを開くか、そのマシン自身のリンクで「接続を追加」を使ってください。",
+  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
+    "このアプリを開いたとき、応答するマシンに自動で接続し、そのプロジェクトをここに表示します。オフにすると、「マシンを接続」で 1 台ずつ自分で接続します。エージェントの権限は変わりません。このデバイスに保存されます。",
+  "Cannot use Connect? Pair over your own network":
+    "Connect を使えない場合は、自分のネットワークでペアリング",
+  "Cannot use Connect? Pair over your own network.":
+    "Connect を使えない場合は、自分のネットワークでペアリングします。",
+  "Scan a one-time code with the SpecWithCode app on your phone. It connects to {url}.":
+    "スマートフォンの SpecWithCode アプリで 1 回限りのコードをスキャンします。{url} に接続します。",
+  "To pair over your own network, open these settings in the SpecWithCode desktop app on this computer and turn on Network access or Tailscale HTTPS.":
+    "自分のネットワークでペアリングするには、このコンピューターの SpecWithCode デスクトップアプリでこれらの設定を開き、ネットワークアクセスまたは Tailscale HTTPS をオンにしてください。",
+  "To pair over your own network, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first.":
+    "自分のネットワークでペアリングするには、スマートフォンにこのコンピューターのアドレスが必要です。先にネットワークアクセスまたは Tailscale HTTPS をオンにしてください。",
+  "Your phone must be able to open this address. Keep this computer awake and online.":
+    "スマートフォンでこのアドレスを開ける必要があります。このコンピューターをスリープさせず、オンラインのままにしてください。",
+  "Your phone needs the Tailscale app, signed in to the same Tailscale network as this computer.":
+    "スマートフォンには Tailscale アプリが必要です。このコンピューターと同じ Tailscale ネットワークにサインインしてください。",
+  "Your phone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
+    "スマートフォンをこのコンピューターと同じ Wi-Fi に接続する必要があります。どこからでもアクセスするには、代わりに SpecWithCode Connect にサインインしてください。",
+  "Add a connection": "接続を追加",
+  "Add connection": "接続を追加",
+  "Click “Add connection” to pair another machine, or connect one from SpecWithCode Connect.":
+    "「接続を追加」をクリックして別のマシンをペアリングするか、SpecWithCode Connect から接続します。",
+  "Click “Add connection” to pair another machine.":
+    "「接続を追加」をクリックして別のマシンをペアリングします。",
+  "Connect a machine to see its settings and access.":
+    "マシンを接続すると、その設定とアクセスを確認できます。",
+  "No machine connected": "接続されたマシンはありません",
+  "No saved connections": "保存済みの接続はありません",
+  "Not encrypted: anyone on the same network can capture the sign-in. Turn off and only this machine can open the app. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
+    "暗号化されていません。同じネットワークにいる人なら誰でもサインインを読み取れます。オフにすると、このマシンだけがアプリを開けます。リモートアクセスには SpecWithCode Connect または Tailscale HTTPS を使ってください。",
+  "Pair another machine with this app.": "このアプリで別のマシンをペアリングします。",
+  "Run only the WSL backend. Turn off and the Windows backend runs beside it again. SpecWithCode restarts when this changes.":
+    "WSL バックエンドだけを実行します。オフにすると、Windows バックエンドが再び並行して実行されます。変更すると SpecWithCode が再起動します。",
+  "Turn on to reach this machine at an HTTPS address on your tailnet, through Tailscale Serve.":
+    "オンにすると、Tailscale Serve を使って、tailnet 上の HTTPS アドレスでこのマシンにアクセスできます。",
+  "Add your phone": "スマートフォンを追加",
+  "Connect: checking…": "Connect：確認中…",
+  "Connect: could not check": "Connect：確認できませんでした",
+  "Connect: linked as {account}": "Connect：{account} としてリンク済み",
+  "Connect: not in this build": "Connect：このビルドには含まれていません",
+  "Connect: not signed in": "Connect：サインインしていません",
+  "Connect: off by your team's rules": "Connect：チームのルールによりオフ",
+  "Connect: off for this machine": "Connect：このマシンではオフ",
+  "Connect: on": "Connect：オン",
+  "Helper for {machine}": "{machine} のヘルパー",
+  "Helper for {machine} and {count} more": "{machine} ほか {count} 台のヘルパー",
+  "Not set up": "未設定",
+  "Other machines: none": "ほかのマシン：なし",
+  "Other machines: {count}": "ほかのマシン：{count} 台",
+  "Phone: 1 linked": "スマートフォン：1 台リンク済み",
+  "Phone: checking…": "スマートフォン：確認中…",
+  "Phone: none yet": "スマートフォン：まだありません",
+  "Phone: sign in to see": "スマートフォン：サインインして確認",
+  "Phones: {count} linked": "スマートフォン：{count} 台リンク済み",
+  "Turn on SpecWithCode Connect for this machine": "このマシンで SpecWithCode Connect をオンにする",
+  "{version}, up to date": "{version}、最新です",
+  "{version}, update to {next} available": "{version}、{next} へのアップデートがあります",
+  "{url}. Turn off and this address stops answering.":
+    "{url}。オフにすると、このアドレスは応答しなくなります。",
   "Unlink {machine}": "{machine} のリンクを解除",
   "Remove {phone}": "{phone} を削除",
   "Change the machine limit for {account}": "{account} のマシン数の上限を変更",

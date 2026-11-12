@@ -69,9 +69,11 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   /**
    * The thread works in the project's own checkout rather than a SpecWithCode
    * worktree, so its agents get a git that refuses to add worktrees (see
-   * ManualWorktreeGuard.ts). Absent means no guard.
+   * ManualWorktreeGuard.ts). A string is the project folder of a thread that
+   * has its own folder: its agents get a git that refuses commits and branch
+   * switches in that folder's clones instead. Absent means no guard.
    */
-  manualWorktreesBlocked: Schema.optional(Schema.Boolean),
+  manualWorktreesBlocked: Schema.optional(Schema.Union([Schema.Boolean, Schema.String])),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

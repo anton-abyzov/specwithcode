@@ -33,7 +33,11 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ProjectHandlers from "./handlers.ts";
-import { holdsSeparateClones, launchWorkspaceDefault } from "./launchWorkspace.ts";
+import {
+  emptyThreadFolderLaunch,
+  holdsSeparateClones,
+  launchWorkspaceDefault,
+} from "./launchWorkspace.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const projectId = ProjectId.make("project");
@@ -192,15 +196,23 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
     expect(launched[2]?.workspaceStrategy).toEqual({ type: "root" });
     expect(statusReads).toHaveLength(1);
 
-    // An umbrella folder keeps its threads in the folder and says why.
+    // A folder of separate clones: the thread starts in its own folder with no repository yet.
     settings = withProjectMode("worktree");
     workspaceRoot = makeFolder({ "repositories/acme/api/.git": "dir" });
     const umbrella = yield* handle(base);
-    expect(launched[3]?.workspaceStrategy).toEqual({ type: "root" });
+    expect(launched[3]?.workspaceStrategy).toEqual({
+      type: "worktree",
+      baseRef: "HEAD",
+      startFromOrigin: true,
+      repositories: [],
+    });
     expect(umbrella.at(-1)?.result).toMatchObject({
-      workspaceNotice: expect.stringContaining("holds separate clones"),
+      workspaceNotice: expect.stringContaining("its own folder on its own branch"),
     });
     expect(statusReads).toHaveLength(1);
+    // An explicit root still wins there.
+    yield* handle({ ...base, workspaceStrategy: { type: "root" } });
+    expect(launched.pop()?.workspaceStrategy).toEqual({ type: "root" });
 
     // An increment that changes the umbrella's child gets a worktree set of it.
     const incrementFolder = NodePath.join(workspaceRoot, ".specweave/increments/0007-multi");
@@ -284,4 +296,31 @@ it("counts separate clones but not submodules or worktrees", async () => {
     ),
   ).toBe(true);
   expect(await holdsSeparateClones("/does/not/exist")).toBe(false);
+});
+
+it("gives an empty thread folder only to a folder of separate clones", async () => {
+  const umbrella = makeFolder({ ".git": "dir", "repositories/acme/api/.git": "dir" });
+  const single = makeFolder({ ".git": "dir" });
+  const worktree = { type: "worktree", baseRef: "main" } as const;
+  const project = (workspaceRoot: string) => ({ id: workspaceRoot, workspaceRoot });
+  const empty = await emptyThreadFolderLaunch(worktree, project(umbrella));
+  expect(empty.workspaceStrategy).toEqual({ ...worktree, repositories: [] });
+  expect(empty.notice).toContain("studio_worktree_add_repository");
+  expect(empty.notice).toContain("Do not edit or commit in the project folder's clones");
+  expect(empty.notice).toContain("- api: repositories/acme/api (no remote, no branch checked out)");
+  expect(empty.notice).toContain(umbrella);
+  // One repository with no clones inside keeps its single worktree, even with an empty list.
+  expect(await emptyThreadFolderLaunch({ ...worktree, repositories: [] }, project(single))).toEqual(
+    { workspaceStrategy: worktree, notice: null },
+  );
+  // A named repository, a named set and root are left as they came.
+  for (const strategy of [
+    { ...worktree, repository: "repositories/acme/api" },
+    { ...worktree, repositories: ["."] },
+    { type: "root" },
+  ] as const)
+    expect(await emptyThreadFolderLaunch(strategy, project(umbrella))).toEqual({
+      workspaceStrategy: strategy,
+      notice: null,
+    });
 });

@@ -26,6 +26,10 @@ const runtime = vi.hoisted(() => ({
   // What the fleet roster hands a composed card: its controls and its own extras.
   controls: null as ReactNode,
   card: undefined as { actions: ReactNode; gone: ReactNode } | undefined,
+  // The one next step the page read for this machine, and whether this build has Connect.
+  step: "add-phone" as "sign-in" | "turn-on" | "add-phone" | "done" | "loading",
+  connectKind: "on" as "on" | "unknown" | "unavailable",
+  phoneCard: true,
 }));
 
 vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => [] }));
@@ -153,16 +157,43 @@ vi.mock("../../environments/primary", () => ({
 }));
 
 vi.mock("./ConnectionsSettings", () => ({
-  ConnectionsSettings: ({ additionalMachines, renderMachine }: any) => (
-    <>
-      <ul>
-        {additionalMachines}
-        {(runtime.fleet as { snapshot?: StudioFleetSnapshot })?.snapshot?.machines?.map(
-          (machine: any) =>
-            renderMachine(machine.environmentId, runtime.controls, null, runtime.card),
-        )}
-      </ul>
-    </>
+  ConnectionsSettings: ({ additionalMachines, renderMachine, renderLayout }: any) =>
+    renderLayout({
+      otherMachines: (
+        <ul data-part="other-machines">
+          {additionalMachines}
+          {(runtime.fleet as { snapshot?: StudioFleetSnapshot })?.snapshot?.machines?.map(
+            (machine: any) =>
+              renderMachine(machine.environmentId, runtime.controls, null, runtime.card),
+          )}
+        </ul>
+      ),
+      pairPhone: <div data-part="pair-phone" />,
+      thisMachine: <div data-part="this-machine-rows" />,
+      savedConnections: <div data-part="saved-connections" />,
+      routing: <div data-part="routing" />,
+    }),
+}));
+// The summary, the next step and the phone card read SpecWithCode Connect; they have their own tests.
+vi.mock("./MachineSummary", () => ({
+  MachineSetupState: ({ children }: { children: (setup: unknown) => ReactNode }) =>
+    children({ step: { kind: runtime.step }, connect: { kind: runtime.connectKind } }),
+  MachineSummary: ({ rows }: { rows: readonly unknown[] }) => (
+    <header data-part="summary" data-rows={rows.length} />
+  ),
+  MachineNextStepCard: () => <p data-part="you-are-set" />,
+}));
+vi.mock("./PhoneConnectSettings", () => ({
+  isPhoneConnectShown: () => runtime.phoneCard,
+  PhoneConnectSettings: ({ setup, pairRow }: { setup?: unknown; pairRow?: ReactNode }) => (
+    <section data-part="your-phone" data-has-setup={setup ? "yes" : "no"}>
+      {pairRow}
+    </section>
+  ),
+}));
+vi.mock("./ThisMachineAdvanced", () => ({
+  ThisMachineAdvanced: ({ children }: { children: ReactNode }) => (
+    <details data-part="advanced">{children}</details>
   ),
 }));
 import { AddForAgentsView, ConnectBothWaysView, MachinesSettingsPanel } from "./MachinesSettings";
@@ -213,6 +244,9 @@ const member = (environmentId: EnvironmentId, projectId: string) => ({
 function setUp() {
   runtime.grants = null;
   runtime.nicknames = {};
+  runtime.step = "add-phone";
+  runtime.connectKind = "on";
+  runtime.phoneCard = true;
   runtime.fleet = {
     primaryEnvironmentId: m4,
     snapshot,
@@ -414,7 +448,10 @@ describe("Settings > Machines", () => {
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     // One machine's card, up to the end of its closed disclosure.
-    const start = html.indexOf('<li class="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"');
+    const start = html.indexOf(
+      '<li class="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"',
+      html.indexOf('data-part="other-machines"'),
+    );
     const card = html.slice(start, html.indexOf("</details>", start));
     const details = card.indexOf("<details");
     expect(details).toBeGreaterThan(-1);
@@ -518,7 +555,7 @@ describe("Settings > Machines", () => {
     expect(html).not.toContain("use this machine too");
   });
 
-  it("puts allowing a machine first while none may run work here, with the account's machines", () => {
+  it("keeps one order: this machine, your phone, other machines, who can run work here, Advanced", () => {
     setUp();
     runtime.grants = { grants: [], projects: [], accounts: [] };
     const m5 = EnvironmentId.make("env-m5");
@@ -534,13 +571,29 @@ describe("Settings > Machines", () => {
     ]);
     try {
       const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-      // The one card comes first, then who can run work here, then the machines.
-      const card = html.indexOf('id="machines-join-card"');
-      const section = html.indexOf('aria-label="Who can run work here"');
-      expect(card).toBeGreaterThan(-1);
-      expect(card).toBeLessThan(section);
-      expect(section).toBeLessThan(html.indexOf("<ul>"));
-      expect(html.match(/id="machines-join-card"/g)).toHaveLength(1);
+      const at = (mark: string) => {
+        expect(html.split(mark)).toHaveLength(2);
+        return html.indexOf(mark);
+      };
+      const order = [
+        at('data-part="summary"'),
+        at("data-machine-here-details"),
+        at('data-part="your-phone"'),
+        at('data-part="other-machines"'),
+        at('id="machines-join-card"'),
+        at('aria-label="Who can run work here"'),
+        at('data-part="routing"'),
+        at('data-part="advanced"'),
+      ];
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+      // The private QR row sits in the phone card; this machine's rows and saved connections are folded.
+      expect(html).toMatch(/data-part="your-phone"[^>]*><div data-part="pair-phone">/);
+      expect(html).toMatch(
+        /<details data-part="advanced"><div data-part="this-machine-rows"><\/div><div data-part="saved-connections">/,
+      );
+      // A pending step is the head of the phone card, so the page adds no second step.
+      expect(html).not.toContain('data-part="you-are-set"');
+      expect(html).toContain('data-has-setup="yes"');
       expect(html).toContain("Let another of your machines run work here");
       // A machine of the same Connect account this app never opened is offered by name.
       expect(html).toMatch(/<input type="radio"[^>]* value="env-m5"/);
@@ -551,7 +604,7 @@ describe("Settings > Machines", () => {
     }
   });
 
-  it("keeps who can run work here below the machines once a machine may", () => {
+  it("keeps the same order once a machine may run work here", () => {
     setUp();
     runtime.grants = {
       grants: [
@@ -575,11 +628,63 @@ describe("Settings > Machines", () => {
       accounts: [],
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    const machines = html.indexOf('data-part="other-machines"');
+    const card = html.indexOf('id="machines-join-card"');
     const section = html.indexOf('aria-label="Who can run work here"');
-    expect(section).toBeGreaterThan(html.indexOf("<ul>"));
-    // Allowing one more machine then follows the list instead of leading the page.
-    expect(html.indexOf('id="machines-join-card"')).toBeGreaterThan(section);
+    expect(machines).toBeGreaterThan(-1);
+    expect(machines).toBeLessThan(card);
+    expect(card).toBeLessThan(section);
     expect(html.match(/id="machines-join-card"/g)).toHaveLength(1);
+  });
+
+  it("lists this machine under its summary, without a second name line, and not among the others", () => {
+    setUp();
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    const here = html.slice(
+      html.indexOf("data-machine-here-details"),
+      html.indexOf('data-part="your-phone"'),
+    );
+    expect(here).toContain("Projects and accounts on this machine");
+    expect(here).toContain('aria-label="M4MAX"');
+    // Its name and Rename are the summary's; the card keeps its projects and accounts.
+    expect(here).toMatch(/<div class="hidden"><svg/);
+    expect(here).toContain(">Projects<");
+    const others = html.slice(html.indexOf('data-part="other-machines"'));
+    expect(others).not.toContain('aria-label="M4MAX"');
+    expect(others).toContain('aria-label="MacBook Pro"');
+  });
+
+  it("draws this machine once when the fleet list names it too", () => {
+    setUp();
+    runtime.fleet = {
+      ...(runtime.fleet as object),
+      snapshot: { ...snapshot, machines: [machine(m4, "M4MAX"), ...snapshot.machines] },
+    };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html.match(/aria-label="M4MAX"/g)).toHaveLength(1);
+    const others = html.slice(html.indexOf('data-part="other-machines"'));
+    expect(others).not.toContain('aria-label="M4MAX"');
+    expect(others).toContain('aria-label="MacBook Pro"');
+  });
+
+  it("says You are set once no step is left, and nothing in a build without Connect", () => {
+    setUp();
+    runtime.step = "done";
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).toContain('data-part="you-are-set"');
+    // A link that could not be read is not a finished setup; the phone card says so.
+    runtime.connectKind = "unknown";
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain(
+      'data-part="you-are-set"',
+    );
+    runtime.connectKind = "unavailable";
+    runtime.phoneCard = false;
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).not.toContain('data-part="you-are-set"');
+    // Without the phone card, pairing over the person's own network stands where the card would.
+    expect(html).not.toContain('data-part="your-phone"');
+    expect(html.indexOf('data-part="pair-phone"')).toBeLessThan(
+      html.indexOf('data-part="other-machines"'),
+    );
   });
 
   it("offers letting a connected machine without a grant here use this machine too", () => {
@@ -678,7 +783,7 @@ describe("Settings > Machines", () => {
     const input = rendered!.root.findByType("input");
     expect(input.props.value).toBe("https://m4max.tailnet.ts.net/pair#token=pairing-secret");
     expect(JSON.stringify(rendered!.toJSON())).toContain(
-      "On MacBook Pro, open Settings > Machines > Advanced routes and saved connections > Add environment > Remote link and paste this link.",
+      "On MacBook Pro, open Settings > Machines > Advanced > Saved connections > Add connection > Remote link and paste this link.",
     );
   });
 

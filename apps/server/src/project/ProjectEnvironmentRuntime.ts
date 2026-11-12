@@ -24,6 +24,7 @@ import {
   type ProjectEnvironmentProblem,
   resolveProjectEnvironmentForRun,
 } from "./ProjectEnvironmentPaths.ts";
+import { worktreeSetManifestPath } from "../worktreeSet.ts";
 
 /** Capture filesystem services once; dispatch effects run after layer construction. */
 export const makeEnvironmentRuntime = Effect.gen(function* () {
@@ -50,8 +51,31 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
         if (projectExecutionIsFenced(project.workspaceSettings, project.id, input.threadId))
           return yield* new ProjectWorkspaceError({ projectId: project.id, code: "transferred" });
         const environment = project.workspaceSettings?.environment ?? DEFAULT_PROJECT_ENVIRONMENT;
+        const emptyEnvironment =
+          environment.additionalFolders.length === 0 && environment.repositories.length === 0;
+        // A thread in a folder of its own (worktreeSet.ts) reads the project folder: its
+        // repositories and instruction files are there, not in the thread's folder.
+        const cwd = input.runtimePolicy.cwd;
+        const ownFolder =
+          emptyEnvironment &&
+          typeof cwd === "string" &&
+          cwd !== project.workspaceRoot &&
+          (yield* fs
+            .exists(worktreeSetManifestPath(cwd, path))
+            .pipe(Effect.orElseSucceed(() => false))) &&
+          // Only where the provider can take a folder; otherwise the turn runs as it did.
+          (providerEnforcesProjectFolders(session.driver) ||
+            (session.driver === "acpRegistry" &&
+              fullAccessAcpProjectFolders(input.runtimePolicy))) &&
+          !(
+            session.driver === "codex" &&
+            typeof input.runtimePolicy.sandboxPolicy === "object" &&
+            input.runtimePolicy.sandboxPolicy !== null &&
+            "type" in input.runtimePolicy.sandboxPolicy &&
+            input.runtimePolicy.sandboxPolicy.type === "externalSandbox"
+          );
         // Empty legacy environments retain existing provider behavior and need no filesystem probe.
-        if (environment.additionalFolders.length === 0 && environment.repositories.length === 0)
+        if (emptyEnvironment && !ownFolder)
           return yield* prepare
             ? session.prepareTurn!(input)
             : compact && session.compactThread

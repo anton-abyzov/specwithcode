@@ -650,6 +650,8 @@ import {
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  composerRepositoryLaunch,
+  composerRepositoryPicks,
 } from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
@@ -13854,6 +13856,7 @@ export default function ChatView(props: ChatViewProps) {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...composerRepositoryLaunch(composerRepositoryPicks.get(threadIdForSend)),
                     },
                     runSetupScript: true,
                   }

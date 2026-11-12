@@ -66,9 +66,27 @@ const within = (root: string, candidate: string) => {
 };
 
 export async function readFolderLayout(folder: string): Promise<FolderLayout | null> {
+  return (await readFolderLayoutWithLinks(folder))?.layout ?? null;
+}
+
+/** A link the walk left out: it leads to a checkout already listed, or to one outside the folder. */
+export interface SkippedFolderLink {
+  /** The link, POSIX-relative to the folder. */
+  readonly path: string;
+  /** The listed checkout it leads to, POSIX-relative, or null when it leads outside the folder. */
+  readonly target: string | null;
+}
+
+/** The layout with the links it skipped, for the list that names them. */
+export async function readFolderLayoutWithLinks(folder: string): Promise<{
+  readonly layout: FolderLayout;
+  readonly skippedLinks: ReadonlyArray<SkippedFolderLink>;
+} | null> {
   const root = await NodeFSP.realpath(folder).catch(() => null);
   if (root === null) return null;
   const rootIsRepository = (await checkoutKind(root)) !== null;
+  const posix = (child: string) => NodePath.relative(root, child).split(NodePath.sep).join("/");
+  const links: Array<{ readonly path: string; readonly real: string | null }> = [];
   const found = new Map<string, { readonly path: string; readonly link: boolean }>();
   let separateClones = false;
   const queue: Array<{ path: string; depth: number; link: boolean }> = [
@@ -89,7 +107,11 @@ export async function readFolderLayout(folder: string): Promise<FolderLayout | n
       if (entry.isSymbolicLink()) {
         const target = await NodeFSP.realpath(child).catch(() => null);
         const stat = target === null ? null : await NodeFSP.stat(target).catch(() => null);
-        if (target === null || !stat?.isDirectory() || !within(root, target)) continue;
+        if (target === null || !stat?.isDirectory()) continue;
+        if (!within(root, target)) {
+          if ((await checkoutKind(target)) !== null) links.push({ path: posix(child), real: null });
+          continue;
+        }
       } else if (!entry.isDirectory()) continue;
       // Key by real path: a folder under a symlinked parent is the same checkout as its target.
       const real = await NodeFSP.realpath(child).catch(() => null);
@@ -100,12 +122,11 @@ export async function readFolderLayout(folder: string): Promise<FolderLayout | n
         if (kind === "clone") separateClones = true;
         // A checkout reached directly wins over a symlink to it, as in the CLI.
         const seen = found.get(real);
-        if (seen === undefined || (seen.link && !link))
+        if (seen === undefined || (seen.link && !link)) {
+          if (seen !== undefined) links.push({ path: seen.path, real });
           // Shown and stored, so always POSIX-relative, as in the CLI.
-          found.set(real, {
-            path: NodePath.relative(root, child).split(NodePath.sep).join("/"),
-            link,
-          });
+          found.set(real, { path: posix(child), link });
+        } else links.push({ path: posix(child), real });
         continue;
       }
       if (next.depth + 1 < NESTED_DEPTH) queue.push({ path: child, depth: next.depth + 1, link });
@@ -121,12 +142,20 @@ export async function readFolderLayout(folder: string): Promise<FolderLayout | n
         ? "umbrella"
         : "nested";
   return {
-    kind,
-    rootIsRepository,
-    repositories: repositories.slice(0, LISTED_REPOSITORIES),
-    repositoryCount: repositories.length,
-    truncated,
-    separateClones,
+    layout: {
+      kind,
+      rootIsRepository,
+      repositories: repositories.slice(0, LISTED_REPOSITORIES),
+      repositoryCount: repositories.length,
+      truncated,
+      separateClones,
+    },
+    skippedLinks: links
+      .map((link) => ({
+        path: link.path,
+        target: link.real === null ? null : (found.get(link.real)?.path ?? null),
+      }))
+      .toSorted((left, right) => (left.path < right.path ? -1 : 1)),
   };
 }
 

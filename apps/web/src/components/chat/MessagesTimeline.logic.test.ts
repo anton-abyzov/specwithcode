@@ -5880,3 +5880,38 @@ describe("timelineMovedDown", () => {
     expect(timelineMovedDown(5003, undefined)).toBe(false);
   });
 });
+
+describe("thread repository rows", () => {
+  it("sit under the first message and stay out when there is nothing to say", () => {
+    const base = {
+      timelineEntries: [
+        {
+          id: "user-1",
+          kind: "message" as const,
+          createdAt: "2026-11-12T10:00:00.000Z",
+          message: {
+            id: MessageId.make("user-1"),
+            role: "user" as const,
+            text: "Fix it",
+            createdAt: "2026-11-12T10:00:00.000Z",
+            streaming: false,
+          },
+        },
+      ] as unknown as TimelineEntry[],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const events = [
+      { kind: "started-empty", id: "thread-repositories:started", at: null },
+    ] as const;
+    const rows = deriveMessagesTimelineRows({ ...base, threadRepositoryEvents: events });
+    const index = rows.findIndex((row) => row.kind === "thread-repositories");
+    expect(rows[index - 1]).toMatchObject({ kind: "message" });
+    expect(rows[index]).toMatchObject({ events });
+    expect(deriveMessagesTimelineRows(base).some((row) => row.kind === "thread-repositories")).toBe(
+      false,
+    );
+  });
+});

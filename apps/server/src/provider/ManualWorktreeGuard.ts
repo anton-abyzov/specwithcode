@@ -27,9 +27,15 @@ export const GIT_GLOBAL_OPTIONS_WITH_VALUE = [
   "--attr-source",
 ] as const;
 
+/** What a thread with its own folder reads when it commits or switches branch in a project clone. */
+export const PROJECT_CLONE_REFUSAL =
+  "This checkout is a clone in the project folder, and this thread has its own folder, so it cannot commit or switch branches here. Add the repository to the thread with studio_worktree_add_repository, then work in its worktree at the same relative path inside the thread's folder.";
+
 export interface ManualWorktreeGuard {
   /** Holds the shim; never on the server's own PATH. */
   readonly directory: string;
+  /** The git the shims run; absent only in guards built by hand. */
+  readonly realGit?: string | undefined;
   readonly platform: NodeJS.Platform;
   /** The server's environment, whose PATH a child without its own builds on. */
   readonly serverEnvironment: NodeJS.ProcessEnv;
@@ -52,6 +58,24 @@ export function isGitWorktreeAdd(args: ReadonlyArray<string>): boolean {
     }
     if (arg.startsWith("-")) continue;
     return arg === "worktree" && args[index + 1] === "add";
+  }
+  return false;
+}
+
+/**
+ * Whether git `args` commit or switch branch: `commit`, `switch`, and a
+ * `checkout` that is not restoring paths after `--`.
+ */
+export function isGitCommitOrSwitch(args: ReadonlyArray<string>): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if ((GIT_GLOBAL_OPTIONS_WITH_VALUE as ReadonlyArray<string>).includes(arg)) {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    if (arg === "commit" || arg === "switch") return true;
+    return arg === "checkout" && !args.slice(index + 1).includes("--");
   }
   return false;
 }
@@ -156,6 +180,114 @@ for arg do
 done
 exec "$real_git" "$@"
 `;
+}
+
+/**
+ * The sh shim for a thread that has its own folder: it refuses `git commit`
+ * and a branch switch run inside a clone of its own (a `.git` folder) below
+ * `projectRoot`, and runs the real git for everything else. The project
+ * folder's own repository is exempt, because SpecWeave planning is committed
+ * there, and so is everything outside the project folder, the thread's own
+ * worktrees included. isGitCommitOrSwitch is the same parse in TypeScript.
+ */
+export function posixCloneGuardShim(realGit: string, projectRoot: string): string {
+  const refusal = shSingleQuoted(`fatal: ${PROJECT_CLONE_REFUSAL}`);
+  return `#!/bin/sh
+# Written by SpecWithCode for threads that work in a folder of their own.
+real_git=${shSingleQuoted(realGit)}
+project_root=${shSingleQuoted(projectRoot.replace(/[\\/]+$/u, ""))}
+# Exit 0 when the command runs in a clone inside the project folder.
+in_project_clone() (
+  unset CDPATH
+  skip=
+  for arg do
+    if [ -n "$skip" ]; then
+      if [ "$skip" = -C ] && [ "$arg" != - ]; then cd -- "$arg" 2>/dev/null || exit 1; fi
+      skip=
+      continue
+    fi
+    case $arg in
+      ${GIT_GLOBAL_OPTIONS_WITH_VALUE.join("|")}) skip=$arg ;;
+      -*) ;;
+      *) break ;;
+    esac
+  done
+  top=$("$real_git" rev-parse --show-toplevel 2>/dev/null) || exit 1
+  [ -d "$top/.git" ] || exit 1
+  case "$top" in "$project_root"/*) exit 0 ;; esac
+  exit 1
+)
+skip=
+sub=
+restore=
+for arg do
+  if [ -n "$skip" ]; then skip=; continue; fi
+  if [ -n "$sub" ]; then
+    [ "$arg" = -- ] && restore=1
+    continue
+  fi
+  case $arg in
+    ${GIT_GLOBAL_OPTIONS_WITH_VALUE.join("|")}) skip=1 ;;
+    -*) ;;
+    *) sub=$arg ;;
+  esac
+done
+case $sub in
+  commit|switch) ;;
+  checkout) [ -z "$restore" ] || exec "$real_git" "$@" ;;
+  *) exec "$real_git" "$@" ;;
+esac
+if in_project_clone "$@"; then
+  printf '%s\n' ${refusal} >&2
+  exit 128
+fi
+exec "$real_git" "$@"
+`;
+}
+
+/** A short stable name for a project folder's shim directory. */
+function cloneGuardName(projectRoot: string): string {
+  let hash = 5381;
+  for (let index = 0; index < projectRoot.length; index += 1)
+    hash = ((hash << 5) + hash + projectRoot.charCodeAt(index)) >>> 0;
+  return `clones-${hash.toString(36)}`;
+}
+
+/**
+ * The directory holding the clone guard for `projectRoot`, written on first
+ * use and rewritten when the git or the folder changes. The folder is baked
+ * into the shim, so no variable an agent could unset turns it off. Windows
+ * gets the sh shim Git Bash finds and a `.cmd` that only runs git: cmd.exe
+ * cannot resolve the checkout it runs in. Null when it cannot be written.
+ */
+export function cloneGuardDirectory(
+  guard: ManualWorktreeGuard,
+  projectRoot: string,
+): string | null {
+  if (guard.realGit === undefined) return null;
+  try {
+    const windows = guard.platform === "win32";
+    const root = windows ? projectRoot.replaceAll("\\", "/") : NodeFS.realpathSync(projectRoot);
+    const directory = NodePath.join(guard.directory, cloneGuardName(root));
+    const files: ReadonlyArray<readonly [string, string]> = windows
+      ? [
+          ["git", posixCloneGuardShim(msysPath(guard.realGit), root)],
+          ["git.cmd", `@echo off\r\n"${guard.realGit}" %*\r\nexit /b %errorlevel%\r\n`],
+        ]
+      : [["git", posixCloneGuardShim(guard.realGit, root)]];
+    NodeFS.mkdirSync(directory, { recursive: true });
+    for (const [name, content] of files) {
+      const target = NodePath.join(directory, name);
+      const current = NodeFS.existsSync(target) ? NodeFS.readFileSync(target, "utf8") : null;
+      if (current === content) continue;
+      const temporary = `${target}.${process.pid}.tmp`;
+      NodeFS.writeFileSync(temporary, content, { mode: 0o755 });
+      NodeFS.renameSync(temporary, target);
+    }
+    return directory;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -274,7 +406,7 @@ export function installManualWorktreeGuard(input: {
     NodeFS.writeFileSync(temporary, content, { mode: 0o755 });
     NodeFS.renameSync(temporary, target);
   }
-  return { directory, platform, serverEnvironment };
+  return { directory, platform, serverEnvironment, realGit };
 }
 
 function pathKey(environment: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
@@ -288,22 +420,28 @@ function pathKey(environment: NodeJS.ProcessEnv, platform: NodeJS.Platform): str
  */
 export function manualWorktreeGuardPath(
   environment: NodeJS.ProcessEnv | undefined,
-  blocked: boolean | undefined,
+  /** True for a thread in the project's own checkout; the project folder for one with its own folder. */
+  blocked: boolean | string | undefined,
   guard: ManualWorktreeGuard | null = installedGuard,
 ): Record<string, string> {
-  if (blocked !== true || guard === null) return {};
-  const { directory, platform, serverEnvironment } = guard;
+  if ((blocked !== true && typeof blocked !== "string") || guard === null) return {};
+  const { platform, serverEnvironment } = guard;
+  const directory = blocked === true ? guard.directory : cloneGuardDirectory(guard, blocked);
+  if (directory === null) return {};
   const delimiter = platform === "win32" ? ";" : ":";
   const key = pathKey(environment ?? {}, platform);
   const base = environment?.[key] ?? serverEnvironment[pathKey(serverEnvironment, platform)] ?? "";
-  const rest = base.split(delimiter).filter((entry) => entry.length > 0 && entry !== directory);
+  // Either guard replaces the other: a thread has one or the other, never both.
+  const rest = base
+    .split(delimiter)
+    .filter((entry) => entry.length > 0 && !entry.startsWith(guard.directory));
   return { [key]: [directory, ...rest].join(delimiter) };
 }
 
 /** `environment` with the shim first on its PATH when `blocked`. */
 export function withManualWorktreeGuard(
   environment: NodeJS.ProcessEnv,
-  blocked: boolean | undefined,
+  blocked: boolean | string | undefined,
 ): NodeJS.ProcessEnv {
   const guardPath = manualWorktreeGuardPath(environment, blocked);
   return Object.keys(guardPath).length === 0 ? environment : { ...environment, ...guardPath };

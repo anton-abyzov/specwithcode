@@ -198,7 +198,7 @@ async function choose(title: string) {
 /** Joining requires explicitly approving the main machine by its environment ID. */
 async function approveMainMachine(id = "approved-main") {
   const input = [...document.querySelectorAll("label")]
-    .find((element) => element.textContent?.includes("Main machine environment ID"))
+    .find((element) => element.textContent?.includes("Main machine ID"))
     ?.querySelector("input");
   expect(input, "main machine environment ID input").toBeDefined();
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;

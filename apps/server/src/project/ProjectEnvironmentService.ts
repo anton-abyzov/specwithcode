@@ -4,8 +4,6 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   ProjectEnvironmentError,
   ProjectEnvironmentPrepareInput,
-  ProjectEnvironmentImportPreviewInput,
-  type ProjectEnvironmentImportPreview,
   projectRepositoryIdentity,
   type ProjectEnvironmentReadResult,
   type ProjectId,
@@ -27,17 +25,16 @@ import {
   resolveCanonicalProjectEnvironment,
   resolveProjectEnvironmentForRun,
 } from "./ProjectEnvironmentPaths.ts";
-import { previewWorkspaceImport } from "./ProjectEnvironmentImport.ts";
+import { discoverProjectRepositories } from "./ProjectRepositoryDiscovery.ts";
 import { repositoryInspectionEnv } from "./ProjectRepositoryInspection.ts";
 
 export class ProjectEnvironmentService extends Context.Service<
   ProjectEnvironmentService,
   {
-    readonly previewImport: (
-      input: ProjectEnvironmentImportPreviewInput,
-    ) => Effect.Effect<ProjectEnvironmentImportPreview, ProjectEnvironmentError>;
     readonly read: (input: {
       projectId: ProjectId;
+      discover?: boolean | undefined;
+      refresh?: boolean | undefined;
     }) => Effect.Effect<ProjectEnvironmentReadResult, ProjectEnvironmentError>;
     readonly prepare: (
       input: ProjectEnvironmentPrepareInput,
@@ -142,7 +139,11 @@ export const make = Effect.gen(function* () {
    * whole read, so the page can name them and offer a fix. A moved entry is offered an
    * update only when its new real path is a checkout of the same saved repository.
    */
-  const read: ProjectEnvironmentService["Service"]["read"] = Effect.fn(function* ({ projectId }) {
+  const read: ProjectEnvironmentService["Service"]["read"] = Effect.fn(function* ({
+    projectId,
+    discover,
+    refresh,
+  }) {
     const found = yield* projects
       .get(projectId)
       .pipe(Effect.mapError(() => fail(projectId, "not_found")));
@@ -209,7 +210,29 @@ export const make = Effect.gen(function* () {
         return { problem, updatePath };
       }),
     );
+    // Read from the folder at use and never saved, so a folder that gains a clone needs no migration.
+    const discovery =
+      discover === true
+        ? yield* Effect.promise(() =>
+            discoverProjectRepositories({
+              projectId,
+              workspaceRoot: resolved.workspaceRoot,
+              saved: environment.repositories,
+              refresh,
+            }),
+          )
+        : null;
     return {
+      ...(discovery === null
+        ? {}
+        : {
+            found: discovery.found.filter((repository) => isSafePath(repository.path)),
+            foundMore: discovery.foundMore,
+            foundTruncated: discovery.truncated,
+            rootIsRepository: discovery.rootIsRepository,
+            skippedLinks: discovery.skippedLinks,
+            redundantEntries: discovery.redundantEntries,
+          }),
       revision: settings.revision,
       workspaceRoot: resolved.workspaceRoot,
       additionalFolders: resolved.additionalFolders,
@@ -334,35 +357,7 @@ export const make = Effect.gen(function* () {
             : fail(input.projectId, "preparation_failed"),
         ),
       );
-  const previewImport: ProjectEnvironmentService["Service"]["previewImport"] = (input) =>
-    admission
-      .withLock(
-        input.projectId,
-        Effect.gen(function* () {
-          const { projectId } = input;
-          if (!Schema.is(ProjectEnvironmentImportPreviewInput)(input))
-            return yield* fail(projectId, "invalid");
-          const found = yield* projects.get(input.projectId);
-          if (Option.isNone(found)) return yield* fail(input.projectId, "not_found");
-          const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
-          return yield* previewWorkspaceImport({
-            ...input,
-            workspaceRoot: found.value.workspaceRoot,
-            revision: settings.revision,
-            environment: settings.environment,
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(ProcessRunner.ProcessRunner, runner),
-          );
-        }),
-      )
-      .pipe(
-        Effect.mapError((error) =>
-          error instanceof ProjectEnvironmentError ? error : fail(input.projectId, "invalid"),
-        ),
-      );
-  return ProjectEnvironmentService.of({ read, prepare, previewImport });
+  return ProjectEnvironmentService.of({ read, prepare });
 });
 export const layer = Layer.effect(ProjectEnvironmentService, make).pipe(
   Layer.provide(ProjectAdmission.layer),

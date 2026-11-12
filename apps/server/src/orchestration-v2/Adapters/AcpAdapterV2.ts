@@ -806,7 +806,7 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
 function acpAgentEnvironment(
   threadId: ThreadId | null,
   flavor: Pick<AcpAdapterV2Flavor, "driver" | "specweaveTool">,
-  manualWorktreesBlocked: boolean | undefined,
+  manualWorktreesBlocked: boolean | string | undefined,
 ): Readonly<Record<string, string>> | undefined {
   // The guard's PATH builds on the server's, which ACP agents inherit.
   return threadId === null
@@ -822,7 +822,7 @@ function acpTerminalEnvironment(
   threadId: ThreadId | null,
   self: SelfInvocation,
   flavor: Pick<AcpAdapterV2Flavor, "driver" | "specweaveTool">,
-  manualWorktreesBlocked: boolean | undefined,
+  manualWorktreesBlocked: boolean | string | undefined,
 ): NodeJS.ProcessEnv | undefined {
   const processEnvironment = acpMcpContext(threadId, self).processEnvironment;
   const agentEnvironment = acpAgentEnvironment(threadId, flavor, manualWorktreesBlocked);

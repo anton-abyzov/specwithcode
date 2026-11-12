@@ -4,6 +4,8 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { createServer } from "vite";
 
+import { checkMachinesPage } from "./page-checks.mjs";
+
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
 const { chromium } = NodeModule.createRequire(import.meta.url)(
@@ -98,6 +100,8 @@ for (const position of ["off", "on", "old"]) {
   });
   await page.close();
 }
+// The whole page in its order: every setup state, three systems, light and dark, 390 px.
+failures.push(...(await checkMachinesPage({ browser, url, out })));
 await browser.close();
 await server.close();
 if (failures.length > 0) {

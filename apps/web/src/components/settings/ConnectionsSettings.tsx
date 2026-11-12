@@ -98,9 +98,7 @@ import {
   type UnusedClientCandidate,
 } from "./ConnectionsSettings.logic";
 import {
-  SettingsDisclosure,
   SettingsRow,
-  TeamRulesLabel,
   SettingsSection,
   scrollToSettingsTarget,
   useRelativeTimeTick,
@@ -120,12 +118,11 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import { isPhoneConnectShown, PhoneConnectSettings } from "./PhoneConnectSettings";
+import { isPhoneConnectShown } from "./PhoneConnectSettings";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
-import { TeamRulesInert } from "./TeamRulesLock";
 import { teamRulesReachLock } from "../../teamRules/teamRulesView";
-import { useTeamRules } from "../../teamRules/useTeamRules";
 import { PairPhoneSettings } from "./PairPhoneSettings";
+import { CloudLinkRow, MACHINES_ADVANCED_ID, type MachinesPageParts } from "./ThisMachineAdvanced";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -196,9 +193,6 @@ import {
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { RemoveStudioConnectEnvironmentDialog } from "../clerk/RemoveStudioConnectEnvironmentDialog";
-import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
-import { useCloudLinkController } from "~/cloud/useCloudLinkController";
-import { useRememberConnectChoice } from "~/cloud/useRememberConnectChoice";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
 import {
@@ -273,7 +267,7 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
 }> = [
   {
     scope: AuthOrchestrationReadScope,
-    title: "View environment",
+    title: "View this machine",
     description: "Read threads, status, checkpoints, and configuration.",
   },
   {
@@ -283,8 +277,8 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   },
   {
     scope: AuthSettingsWriteScope,
-    title: "Change environment settings",
-    description: "Edit environment preferences and keybindings.",
+    title: "Change settings",
+    description: "Edit this machine's preferences and keybindings.",
   },
   {
     scope: AuthProvidersManageScope,
@@ -293,8 +287,8 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   },
   {
     scope: AuthEnvironmentMaintainScope,
-    title: "Maintain environment",
-    description: "Update the server and control environment processes.",
+    title: "Maintain this machine",
+    description: "Update the server and control its processes.",
   },
   {
     scope: AuthPreviewOperateScope,
@@ -343,13 +337,13 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   },
   {
     scope: AuthRelayReadScope,
-    title: "View relay",
-    description: "Inspect managed relay connectivity.",
+    title: "View Connect",
+    description: "See whether SpecWithCode Connect reaches this machine.",
   },
   {
     scope: AuthRelayWriteScope,
-    title: "Manage relay",
-    description: "Change managed tunnel connectivity.",
+    title: "Manage Connect",
+    description: "Turn SpecWithCode Connect on or off for this machine.",
   },
 ];
 
@@ -714,7 +708,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           kind === "hosted-link"
             ? "Open it in the browser on the device you want to connect."
             : kind === "link"
-              ? "Open it in the client you want to pair to this environment."
+              ? "Open it in the app you want to pair with this machine."
               : "Paste it into another client to finish pairing.",
       });
     },
@@ -1581,7 +1575,7 @@ function SavedBackendListRow({
       toastManager.add({
         type: "success",
         title: "MCP URL copied",
-        description: `Add it to an agent, e.g. claude mcp add --transport http specweave-studio ${url}`,
+        description: `Add it to an agent, e.g. claude mcp add --transport http specwithcode ${url}`,
       });
     },
     onError: (error) => {
@@ -1854,263 +1848,6 @@ function SavedBackendListRow({
   );
 }
 
-function CloudLinkSwitch({
-  checked,
-  disabled,
-  disabledReason,
-  onCheckedChange,
-  ariaLabel = "Enable SpecWithCode Connect",
-}: {
-  readonly checked: boolean;
-  readonly disabled: boolean;
-  readonly disabledReason: string | null;
-  readonly onCheckedChange?: (enabled: boolean) => void;
-  readonly ariaLabel?: string;
-}) {
-  const control = (
-    <Switch
-      aria-label={ariaLabel}
-      checked={checked}
-      disabled={disabled}
-      {...(onCheckedChange ? { onCheckedChange } : {})}
-    />
-  );
-  return disabledReason ? (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex">{control}</span>} />
-      <TooltipPopup side="top">{disabledReason}</TooltipPopup>
-    </Tooltip>
-  ) : (
-    control
-  );
-}
-
-function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
-  const tx = useTx();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { summary: teamRules } = useTeamRules(primaryEnvironmentId);
-  const connectLock = teamRulesReachLock(teamRules, "connect");
-  const webhooksLock = teamRulesReachLock(teamRules, "webhooks");
-  const connectLockLabel = connectLock ? (
-    <TeamRulesLabel>{connectLock.setBy}</TeamRulesLabel>
-  ) : null;
-  const {
-    isSignedIn,
-    linkState: primaryCloudLinkState,
-    managedTunnelActive,
-    publishAgentActivity,
-    holdWebhooksWhileOffline,
-    operationError,
-    reconcileCloudState,
-  } = useCloudLinkController();
-  const { openAuthPrompt } = useStudioConnectAuthPrompt();
-  const rememberConnectChoice = useRememberConnectChoice();
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
-
-  const disabledReason = !isSignedIn
-    ? "Sign in to SpecWithCode Connect to manage this environment."
-    : !canManageRelay
-      ? "Your session does not have permission to manage SpecWithCode Connect access."
-      : null;
-  const isBusy = isUpdating || isUpdatingPreference;
-
-  const updateManagedTunnel = async (enabled: boolean) => {
-    if (
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-    )
-      return;
-    setIsUpdating(true);
-    const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
-    if (ok) {
-      // Off here is the owner's choice: a later sign-in does not turn it back on.
-      rememberConnectChoice(enabled);
-      // Turning the tunnel off while publishing stays on downgrades the link
-      // rather than removing it — say so instead of claiming an unlink.
-      toastManager.add({
-        type: "success",
-        title: enabled
-          ? "SpecWithCode Connect linked"
-          : publishAgentActivity
-            ? "SpecWithCode Connect tunnel disabled"
-            : "SpecWithCode Connect unlinked",
-        description: enabled
-          ? "This environment is available through SpecWithCode Connect."
-          : publishAgentActivity
-            ? "The managed tunnel was removed. Agent activity publishing stays on."
-            : "This environment is no longer available through SpecWithCode Connect.",
-      });
-    }
-    setIsUpdating(false);
-  };
-
-  const updatePublishAgentActivity = async (enabled: boolean) => {
-    if (
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope)
-    )
-      return;
-    setIsUpdatingPreference(true);
-    const ok = await reconcileCloudState({ managedTunnel: managedTunnelActive, publish: enabled });
-    if (ok) {
-      toastManager.add({
-        type: "success",
-        title: enabled ? "Agent activity enabled" : "Agent activity disabled",
-        description: enabled
-          ? "This environment publishes agent activity to your mobile clients."
-          : "This environment will stop publishing agent activity.",
-      });
-    }
-    setIsUpdatingPreference(false);
-  };
-
-  const updateHoldWebhooks = async (enabled: boolean) => {
-    setIsUpdatingPreference(true);
-    const ok = await reconcileCloudState({
-      managedTunnel: managedTunnelActive,
-      publish: publishAgentActivity,
-      holdWebhooksWhileOffline: enabled,
-    });
-    if (ok) {
-      toastManager.add({
-        type: "success",
-        title: enabled ? "Webhooks held while offline" : "Webhooks no longer held",
-        description: enabled
-          ? "SpecWithCode Connect keeps webhook requests for up to 24 hours while this environment is offline."
-          : "Requests to an offline environment now fail. Anything already held is still delivered.",
-      });
-    }
-    setIsUpdatingPreference(false);
-  };
-
-  return (
-    <>
-      {/* On desktop, the phone card signs in and links this machine in one step. */}
-      {isSignedIn === false && !isPhoneConnectShown() ? (
-        <SettingsRow
-          title="SpecWithCode Connect account"
-          description={
-            connectLock?.message ??
-            "Optional. Sign in to reach your machines from anywhere and to change the settings below."
-          }
-          status={connectLockLabel ?? undefined}
-          control={
-            <TeamRulesInert lock={connectLock}>
-              <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-                {tx("Sign in")}
-              </Button>
-            </TeamRulesInert>
-          }
-        />
-      ) : null}
-      {window.desktopBridge ? (
-        <SettingsRow
-          title={searchableSetting("studio-connect").title}
-          description={
-            connectLock?.message ??
-            (managedTunnelActive
-              ? "This environment is available to your other devices through SpecWithCode Connect."
-              : "Make this environment available to your other devices through SpecWithCode Connect.")
-          }
-          status={connectLockLabel ?? operationError ?? primaryCloudLinkState.error}
-          control={
-            <TeamRulesInert lock={connectLock}>
-              <CloudLinkSwitch
-                checked={managedTunnelActive}
-                disabled={
-                  !canManageRelay ||
-                  !isSignedIn ||
-                  primaryCloudLinkState.data === null ||
-                  primaryCloudLinkState.isPending ||
-                  isBusy
-                }
-                disabledReason={disabledReason}
-                onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
-              />
-            </TeamRulesInert>
-          }
-        />
-      ) : null}
-      <SettingsRow
-        title={searchableSetting("publish-agent-activity").title}
-        description={
-          connectLock?.message ??
-          tx(
-            "Send activity to mobile notifications and Live Activities without SpecWithCode Connect.",
-          )
-        }
-        status={connectLockLabel ?? undefined}
-        control={
-          <TeamRulesInert lock={connectLock}>
-            <CloudLinkSwitch
-              ariaLabel={tx("Publish agent activity to mobile clients")}
-              checked={publishAgentActivity}
-              disabled={
-                !canManageRelay ||
-                !isSignedIn ||
-                primaryCloudLinkState.data === null ||
-                primaryCloudLinkState.isPending ||
-                isBusy
-              }
-              disabledReason={disabledReason}
-              onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
-            />
-          </TeamRulesInert>
-        }
-      />
-      {managedTunnelActive ? (
-        <SettingsRow
-          title={searchableSetting("hold-webhooks-while-offline").title}
-          description={
-            webhooksLock?.message ??
-            "Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: SpecWithCode Connect only forwards requests and stores nothing."
-          }
-          status={webhooksLock ? <TeamRulesLabel>{webhooksLock.setBy}</TeamRulesLabel> : undefined}
-          control={
-            <TeamRulesInert lock={webhooksLock}>
-              <CloudLinkSwitch
-                ariaLabel="Hold webhook requests while this environment is offline"
-                checked={holdWebhooksWhileOffline}
-                disabled={
-                  !canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy
-                }
-                disabledReason={disabledReason}
-                onCheckedChange={(enabled) => void updateHoldWebhooks(enabled)}
-              />
-            </TeamRulesInert>
-          }
-        />
-      ) : null}
-    </>
-  );
-}
-
-function CloudLinkRow({
-  canReadRelay,
-  canManageRelay,
-}: {
-  readonly canReadRelay: boolean;
-  readonly canManageRelay: boolean;
-}) {
-  const { summary: teamRules } = useTeamRules(usePrimaryEnvironmentId());
-  if (!hasCloudPublicConfig()) return null;
-  if (!canReadRelay) {
-    const lock = teamRulesReachLock(teamRules, "connect");
-    return (
-      <SettingsRow
-        title="SpecWithCode Connect"
-        description={
-          lock?.message ??
-          "To edit these settings, pair this connection with both View relay and Manage relay permissions."
-        }
-        status={lock ? <TeamRulesLabel>{lock.setBy}</TeamRulesLabel> : undefined}
-      />
-    );
-  }
-  return <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />;
-}
-
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
   const tx = useTx();
   return (
@@ -2119,13 +1856,13 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>{tx("No saved remote environments")}</EmptyTitle>
+        <EmptyTitle>{tx("No saved connections")}</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
             ? tx(
-                "Click “Add environment” to pair another environment, or connect one from SpecWithCode Connect.",
+                "Click “Add connection” to pair another machine, or connect one from SpecWithCode Connect.",
               )
-            : tx("Click “Add environment” to pair another environment.")}
+            : tx("Click “Add connection” to pair another machine.")}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -2150,10 +1887,17 @@ function CloudRemoteEnvironmentRows({
   ) : null;
 }
 
+/**
+ * Builds the parts of Settings > Machines that share this machine's network and
+ * access state, and hands them to `renderLayout`, which sets the page's order.
+ */
 export function ConnectionsSettings({
   renderMachine,
   additionalMachines,
-}: import("./StudioFleetConnections").FleetInventoryComposition = {}) {
+  renderLayout,
+}: import("./StudioFleetConnections").FleetInventoryComposition & {
+  readonly renderLayout: (parts: MachinesPageParts) => ReactNode;
+}) {
   const tx = useTx();
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2737,7 +2481,7 @@ export function ConnectionsSettings({
       setAddBackendDialogOpen(false);
       toastManager.add({
         type: "success",
-        title: routeTarget ? "Route added" : "Environment connected",
+        title: routeTarget ? "Route added" : "Machine connected",
         description: routeTarget
           ? `${machineNickname(routeTarget.environmentId, routeTarget.label)} can now be reached over SSH ${target.alias}.`
           : `${target.alias} is ready over an SSH-managed tunnel.`,
@@ -2823,8 +2567,8 @@ export function ConnectionsSettings({
           }
         : {
             type: "success",
-            title: "Backend added",
-            description: "The environment is saved and will reconnect on app startup.",
+            title: "Connection added",
+            description: "It is saved and reconnects when the app starts.",
           },
     );
     setIsAddingSavedBackend(false);
@@ -3194,7 +2938,7 @@ export function ConnectionsSettings({
           ? tx("Adding…")
           : routeTarget
             ? tx("Add route")
-            : tx("Add environment")}
+            : tx("Add connection")}
       </Button>
     </div>
   );
@@ -3325,7 +3069,7 @@ export function ConnectionsSettings({
             ? tx("Adding…")
             : routeTarget
               ? tx("Add route")
-              : tx("Add environment")}
+              : tx("Add connection")}
         </Button>
       </div>
     </div>
@@ -3670,7 +3414,7 @@ export function ConnectionsSettings({
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"
-            description="Run only the WSL backend. SpecWithCode restarts when this changes."
+            description="Run only the WSL backend. Turn off and the Windows backend runs beside it again. SpecWithCode restarts when this changes."
             className="bg-muted/20 pl-7 sm:pl-8"
             control={
               <Switch
@@ -3744,8 +3488,8 @@ export function ConnectionsSettings({
         const endpoint = rowState.endpoint;
         description =
           rowState.kind === "on"
-            ? endpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL.";
+            ? tx("{url}. Turn off and this address stops answering.", { url: endpoint.httpBaseUrl })
+            : "Turn on to reach this machine at an HTTPS address on your tailnet, through Tailscale Serve.";
         control = (
           <Switch
             checked={rowState.kind === "on"}
@@ -3827,7 +3571,7 @@ export function ConnectionsSettings({
         ) : isLocalBackendNetworkAccessible ? (
           <span className="block text-warning-foreground">
             {tx(
-              "Not encrypted: anyone on the same network can capture the sign-in. For remote access, use SpecWithCode Connect or Tailscale HTTPS.",
+              "Not encrypted: anyone on the same network can capture the sign-in. Turn off and only this machine can open the app. For remote access, use SpecWithCode Connect or Tailscale HTTPS.",
             )}
           </span>
         ) : null
@@ -3842,7 +3586,7 @@ export function ConnectionsSettings({
         <>
           <SettingsSection
             {...searchableSetting("connections-environment")}
-            title={primaryNickname || (desktopBridge ? "This machine" : "Primary environment")}
+            title={primaryNickname || (desktopBridge ? "This machine" : "Connected machine")}
             literal
             icon={
               <EnvironmentMachineIcon
@@ -4310,8 +4054,8 @@ export function ConnectionsSettings({
       ) : (
         <SettingsSection {...searchableSetting("connections-environment")}>
           <SettingsRow
-            title="No environment selected"
-            description="Connect an environment to view its settings and access."
+            title="No machine connected"
+            description="Connect a machine to see its settings and access."
           />
           {canReadRelay || canManageRelay ? (
             <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
@@ -4321,139 +4065,164 @@ export function ConnectionsSettings({
     </>
   );
 
-  // Settings > Machines owns the page's scroll container; this renders its sections only.
+  // Settings > Machines owns the page's scroll container and the order; this builds the parts.
   return (
     <>
-      {primaryEnvironmentId ? (
-        <StudioFleetConnections
-          {...(renderMachine ? { renderMachine } : {})}
-          additionalMachines={additionalMachines}
-          environmentId={primaryEnvironmentId}
-          savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
-        />
-      ) : additionalMachines ? (
-        <SettingsSection id="machines" title="Machines">
-          <ul>{additionalMachines}</ul>
-        </SettingsSection>
-      ) : null}
-      {primaryEnvironmentId !== null ? <PhoneConnectSettings /> : null}
-      {primaryEnvironmentId !== null ? (
-        <PairPhoneSettings
-          endpoint={defaultDesktopAdvertisedEndpoint}
-          serverEndpoints={primaryServerConfig?.directEndpoints}
-          canCreateLinks={canWriteAccess}
-          delegatableScopes={currentSessionScopes ?? []}
-          onPairingLinkCreated={handlePairingLinkCreated}
-          hasAccessControls={canManageLocalBackend && desktopBridge !== undefined}
-          onShowAccessSettings={() => scrollToSettingsTarget("connections-environment")}
-          folded={isPhoneConnectShown()}
-          teamRulesLock={teamRulesReachLock(primaryServerConfig?.teamRules, "phones")}
-        />
-      ) : null}
-      {primarySettings}
-      <SettingsDisclosure title={tx("Advanced routes and saved connections")}>
-        <SettingsSection
-          {...searchableSetting("remote-environments")}
-          title="Advanced routes and saved connections"
-          headerAction={
-            <div className="flex items-center gap-1">
-              {savedServerUpdateTargets.length > 0 ? (
-                <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
-              ) : null}
-              <Dialog
-                open={addBackendDialogOpen}
-                onOpenChange={(open) => {
-                  setAddBackendDialogOpen(open);
-                  if (open) {
-                    setRouteTarget(null);
-                  } else {
-                    setSavedBackendError(null);
-                  }
-                }}
-              >
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <DialogTrigger
+      {renderLayout({
+        otherMachines: primaryEnvironmentId ? (
+          <StudioFleetConnections
+            {...(renderMachine ? { renderMachine } : {})}
+            additionalMachines={additionalMachines}
+            environmentId={primaryEnvironmentId}
+            savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
+          />
+        ) : additionalMachines ? (
+          <SettingsSection id="machines" title="Other machines">
+            <ul>{additionalMachines}</ul>
+          </SettingsSection>
+        ) : null,
+        pairPhone:
+          primaryEnvironmentId !== null ? (
+            <PairPhoneSettings
+              endpoint={defaultDesktopAdvertisedEndpoint}
+              serverEndpoints={primaryServerConfig?.directEndpoints}
+              canCreateLinks={canWriteAccess}
+              delegatableScopes={currentSessionScopes ?? []}
+              onPairingLinkCreated={handlePairingLinkCreated}
+              hasAccessControls={canManageLocalBackend && desktopBridge !== undefined}
+              onShowAccessSettings={() => scrollToSettingsTarget(MACHINES_ADVANCED_ID)}
+              onTurnOnNetworkAccess={
+                canManageLocalBackend &&
+                desktopBridge !== undefined &&
+                desktopServerExposureState != null &&
+                desktopServerExposureState.localServiceAttached !== true
+                  ? () => {
+                      setPendingDesktopServerExposureMode("network-accessible");
+                      setIsDesktopServerExposureDialogOpen(true);
+                    }
+                  : undefined
+              }
+              folded={isPhoneConnectShown()}
+              teamRulesLock={teamRulesReachLock(primaryServerConfig?.teamRules, "phones")}
+            />
+          ) : null,
+        thisMachine: primarySettings,
+        savedConnections: (
+          <>
+            <SettingsSection
+              {...searchableSetting("remote-environments")}
+              title="Saved connections"
+              headerAction={
+                <div className="flex items-center gap-1">
+                  {savedServerUpdateTargets.length > 0 ? (
+                    <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
+                  ) : null}
+                  <Dialog
+                    open={addBackendDialogOpen}
+                    onOpenChange={(open) => {
+                      setAddBackendDialogOpen(open);
+                      if (open) {
+                        setRouteTarget(null);
+                      } else {
+                        setSavedBackendError(null);
+                      }
+                    }}
+                  >
+                    <Tooltip>
+                      <TooltipTrigger
                         render={
-                          <Button
-                            size="xs"
-                            variant="ghost-muted"
-                            aria-label={tx("Add environment")}
-                          >
-                            <PlusIcon className="size-3" />
-                            <span>{tx("Add environment")}</span>
-                          </Button>
+                          <DialogTrigger
+                            render={
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                aria-label={tx("Add connection")}
+                              >
+                                <PlusIcon className="size-3" />
+                                <span>{tx("Add connection")}</span>
+                              </Button>
+                            }
+                          />
                         }
                       />
-                    }
-                  />
-                  <TooltipPopup side="top">{tx("Add environment")}</TooltipPopup>
-                </Tooltip>
-                <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
-                  <DialogHeader>
-                    <DialogTitle>
-                      {routeTarget
-                        ? `Add a route to ${machineNickname(routeTarget.environmentId, routeTarget.label)}`
-                        : tx("Add Environment")}
-                    </DialogTitle>
-                    <DialogDescription>
-                      {routeTarget
-                        ? tx(
-                            "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine.",
-                          )
-                        : tx("Pair another environment to this client.")}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <DialogPanel>
-                    <div className="space-y-4">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {renderConnectionModeCard({
-                          mode: "remote",
-                          title: "Remote link",
-                          description: "Enter a backend host and pairing code.",
-                          icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
-                        })}
-                        {desktopBridge
-                          ? renderConnectionModeCard({
-                              mode: "ssh",
-                              title: "SSH",
-                              description:
-                                "Use local SSH config, agent, and tunnels for the backend.",
-                              icon: <TerminalIcon aria-hidden className="size-4" />,
-                            })
-                          : null}
-                      </div>
-                      <AnimatedHeight>
-                        {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
-                      </AnimatedHeight>
-                    </div>
-                  </DialogPanel>
-                </DialogPopup>
-              </Dialog>
-            </div>
-          }
-        >
-          {listedEnvironments.map((environment) => (
-            <SavedBackendListRow
-              key={environment.environmentId}
-              environment={environment}
-              removingEnvironmentId={removingSavedEnvironmentId}
-              onSetEnabled={handleSetSavedBackendEnabled}
-              onRemove={handleRemoveSavedBackend}
-              onAddRoute={(target) => {
-                setRouteTarget(target);
-                setSavedBackendError(null);
-                setAddBackendDialogOpen(true);
-              }}
-            />
-          ))}
-          <CloudRemoteEnvironmentRows
-            primaryEnvironmentId={primaryEnvironmentId}
-            savedEnvironments={savedEnvironments}
-          />
-        </SettingsSection>
-      </SettingsDisclosure>
+                      <TooltipPopup side="top">{tx("Add connection")}</TooltipPopup>
+                    </Tooltip>
+                    <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
+                      <DialogHeader>
+                        <DialogTitle>
+                          {routeTarget
+                            ? `Add a route to ${machineNickname(routeTarget.environmentId, routeTarget.label)}`
+                            : tx("Add a connection")}
+                        </DialogTitle>
+                        <DialogDescription>
+                          {routeTarget
+                            ? tx(
+                                "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine.",
+                              )
+                            : tx("Pair another machine with this app.")}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <DialogPanel>
+                        <div className="space-y-4">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {renderConnectionModeCard({
+                              mode: "remote",
+                              title: "Remote link",
+                              description: "Enter a backend host and pairing code.",
+                              icon: (
+                                <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />
+                              ),
+                            })}
+                            {desktopBridge
+                              ? renderConnectionModeCard({
+                                  mode: "ssh",
+                                  title: "SSH",
+                                  description:
+                                    "Use local SSH config, agent, and tunnels for the backend.",
+                                  icon: <TerminalIcon aria-hidden className="size-4" />,
+                                })
+                              : null}
+                          </div>
+                          <AnimatedHeight>
+                            {savedBackendMode === "ssh"
+                              ? renderSshFields()
+                              : renderRemoteModeBody()}
+                          </AnimatedHeight>
+                        </div>
+                      </DialogPanel>
+                    </DialogPopup>
+                  </Dialog>
+                </div>
+              }
+            >
+              {listedEnvironments.map((environment) => (
+                <SavedBackendListRow
+                  key={environment.environmentId}
+                  environment={environment}
+                  removingEnvironmentId={removingSavedEnvironmentId}
+                  onSetEnabled={handleSetSavedBackendEnabled}
+                  onRemove={handleRemoveSavedBackend}
+                  onAddRoute={(target) => {
+                    setRouteTarget(target);
+                    setSavedBackendError(null);
+                    setAddBackendDialogOpen(true);
+                  }}
+                />
+              ))}
+              <CloudRemoteEnvironmentRows
+                primaryEnvironmentId={primaryEnvironmentId}
+                savedEnvironments={savedEnvironments}
+              />
+            </SettingsSection>
+          </>
+        ),
+        routing: (
+          <>
+            <LoadBalancingSettings environments={loadBalancingEnvironments} />
+            <GitHubRoutingSettings environments={loadBalancingEnvironments} />
+          </>
+        ),
+      })}
       {hasCloudPublicConfig() ? (
         <RemoveStudioConnectEnvironmentDialog
           environmentLabel={pendingStudioConnectRemoval?.label ?? null}
@@ -4465,8 +4234,6 @@ export function ConnectionsSettings({
           }}
         />
       ) : null}
-      <LoadBalancingSettings environments={loadBalancingEnvironments} />
-      <GitHubRoutingSettings environments={loadBalancingEnvironments} />
     </>
   );
 }

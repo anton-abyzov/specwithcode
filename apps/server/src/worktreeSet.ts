@@ -24,6 +24,11 @@ export interface WorktreeSetMember {
   readonly relativePath: string;
   /** The project environment repository id, when the member is one. */
   readonly id?: string | undefined;
+  /** The branch or ref its worktree was cut from, when the app recorded it. */
+  readonly baseRef?: string | undefined;
+  /** Who added it to a running thread; absent for a member made at launch. */
+  readonly addedBy?: "agent" | "user" | undefined;
+  readonly addedAt?: string | undefined;
 }
 
 const WorktreeSetManifest = Schema.Struct({
@@ -33,6 +38,9 @@ const WorktreeSetManifest = Schema.Struct({
       repository: Schema.String,
       relativePath: Schema.String,
       id: Schema.optional(Schema.String),
+      baseRef: Schema.optional(Schema.String),
+      addedBy: Schema.optional(Schema.Literals(["agent", "user"])),
+      addedAt: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -136,6 +144,9 @@ export const writeWorktreeSet = Effect.fn("worktreeSet.write")(function* (
       repository: member.repository,
       relativePath: member.relativePath,
       ...(member.id ? { id: member.id } : {}),
+      ...(member.baseRef ? { baseRef: member.baseRef } : {}),
+      ...(member.addedBy ? { addedBy: member.addedBy } : {}),
+      ...(member.addedAt ? { addedAt: member.addedAt } : {}),
     })),
   });
   const temporary = `${file}.tmp`;

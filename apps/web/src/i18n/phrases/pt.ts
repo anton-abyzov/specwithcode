@@ -16,7 +16,6 @@ export const pt: PhraseCatalog = {
   "Add project starts in": "Pasta inicial ao adicionar projeto",
   Advanced: "Avançado",
   "Advanced connections": "Conexões avançadas",
-  "Advanced routes and saved connections": "Rotas avançadas e conexões salvas",
   "Adversarial review": "Revisão adversarial",
   "Agent browser access": "Acesso dos agentes ao navegador",
   "Agent computer access": "Acesso dos agentes ao computador",
@@ -67,7 +66,6 @@ export const pt: PhraseCatalog = {
   "Chat width": "Largura do chat",
   "ChatGPT account": "Conta do ChatGPT",
   "Check for updates automatically": "Verificar atualizações automaticamente",
-  "Checking SpecWithCode Connect": "Verificando o SpecWithCode Connect",
   Checkouts: "Cópias de trabalho",
   Chrome: "Chrome",
   "Chrome for agents": "Chrome para agentes",
@@ -125,7 +123,6 @@ export const pt: PhraseCatalog = {
   "Display name": "Nome de exibição",
   "Download in the background": "Baixar em segundo plano",
   Driver: "Driver",
-  "Environment icon": "Ícone do ambiente",
   "Environment identification": "Identificação do ambiente",
   "Environment-wide setting. Select an environment to change it.":
     "Configuração de todo o ambiente. Selecione um ambiente para alterá-la.",
@@ -168,8 +165,6 @@ export const pt: PhraseCatalog = {
   "Live Processes": "Processos ativos",
   "Live process tree": "Árvore de processos ativos",
   "Load balancing": "Balanceamento de carga",
-  "Loading your phones": "Carregando seus celulares",
-  "Local environment": "Ambiente local",
   "MCP connections": "Conexões MCP",
   Machines: "Máquinas",
   Messaging: "Mensagens",
@@ -188,10 +183,8 @@ export const pt: PhraseCatalog = {
   "Network access": "Acesso à rede",
   "New keybinding": "Novo atalho",
   "New threads": "Novas threads",
-  "No environment selected": "Nenhum ambiente selecionado",
   "No hubs configured.": "Nenhuma central configurada.",
   "No matching routines": "Nenhuma rotina correspondente",
-  "No phones yet": "Nenhum celular ainda",
   "No routines": "Nenhuma rotina",
   "No routines for active projects": "Nenhuma rotina para projetos ativos",
   "No routines match these filters": "Nenhuma rotina corresponde a estes filtros",
@@ -295,8 +288,6 @@ export const pt: PhraseCatalog = {
   "This connection does not have permission to change environment settings.":
     "Esta conexão não tem permissão para alterar as configurações do ambiente.",
   "This machine": "Esta máquina",
-  "This window cannot turn on SpecWithCode Connect":
-    "Esta janela não pode ativar o SpecWithCode Connect",
   "Thread notifications": "Notificações de threads",
   "Time format": "Formato de hora",
   "Timeline detail": "Detalhe da linha do tempo",
@@ -332,7 +323,6 @@ export const pt: PhraseCatalog = {
   "Worktree storage": "Armazenamento de worktrees",
   Worktrees: "Worktrees",
   "Your data": "Seus dados",
-  "Your phones": "Seus celulares",
   "specweave-studio.json is invalid": "specweave-studio.json é inválido",
   "Clear settings search": "Limpar a pesquisa de configurações",
   "No settings found": "Nenhuma configuração encontrada",
@@ -397,8 +387,6 @@ export const pt: PhraseCatalog = {
     "Comandos que rodam na cópia de trabalho deste projeto ou na worktree dele, com atalhos opcionais.",
   "Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way.":
     "Agentes concisos começam pelo resultado em poucas frases simples e enviam aos coordenadores o resultado e o caminho ou link que o comprova, em vez de repetir seus passos. Agentes detalhados explicam os passos. Erros, testes com falha e avisos de segurança aparecem completos nos dois casos.",
-  "Connect an environment to view its settings and access.":
-    "Conecte um ambiente para ver as configurações e os acessos dele.",
   "Couldn't load the WSL backend state.": "Não foi possível carregar o estado do backend do WSL.",
   "Creates the worktree from the latest matching branch on origin instead of your local branch.":
     "Cria a worktree a partir da branch correspondente mais recente no origin, em vez da sua branch local.",
@@ -489,7 +477,6 @@ export const pt: PhraseCatalog = {
   "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.":
     "Abrir primeiro os pull requests vinculados. Senão, abrir Mudanças quando houver edições em pelo menos 3 arquivos ou 50 linhas.",
   "Optional marker shown in the picker.": "Marcação opcional exibida no seletor.",
-  "Or pair with a private QR code": "Ou pareie com um QR code privado",
   "Order of projects in the sidebar project picker and command palette.":
     "Ordem dos projetos no seletor de projetos da barra lateral e na paleta de comandos.",
   "Page zoom applied to new browser tabs.": "Zoom da página aplicado às novas abas do navegador.",
@@ -538,8 +525,6 @@ export const pt: PhraseCatalog = {
     "Retomar as conversas dos agentes como threads do SpecWithCode.",
   "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
     "Retomar paradas por limite de uso no horário de reinício informado. Cada thread pode cancelar a continuação agendada.",
-  "Run only the WSL backend. SpecWithCode restarts when this changes.":
-    "Executar só o backend do WSL. O SpecWithCode reinicia quando isso muda.",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "Executar a distribuição do WSL selecionada junto com o Windows. Os projetos continuam no sistema de arquivos atual.",
   "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
@@ -596,8 +581,6 @@ export const pt: PhraseCatalog = {
     "O modelo comum faz o trabalho do dia a dia; o modelo de fronteira roda quando o mais forte é pedido, como numa revisão em profundidade de fronteira.",
   "Then running work is stopped for the update, the app restarts, and running and queued threads continue after it.":
     "Depois, o trabalho em andamento é interrompido para a atualização, o app reinicia, e as threads em andamento e na fila continuam depois dela.",
-  "Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports.":
-    "Depois entre com a mesma conta no app para iPhone, em cada iPhone que você usa. Sem Tailscale, VPN ou portas abertas.",
   "This routine no longer exists or is outside the selected project scope.":
     "Esta rotina não existe mais ou está fora dos projetos selecionados.",
   "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
@@ -1366,11 +1349,6 @@ export const pt: PhraseCatalog = {
   "Copy trace ID": "Copiar ID do trace",
   "Remove from this device…": "Remover deste dispositivo…",
   "Sign in": "Entrar",
-  "No saved remote environments": "Nenhum ambiente remoto salvo",
-  "Click “Add environment” to pair another environment, or connect one from SpecWithCode Connect.":
-    "Clique em “Adicionar ambiente” para parear outro ambiente ou conecte um pelo SpecWithCode Connect.",
-  "Click “Add environment” to pair another environment.":
-    "Clique em “Adicionar ambiente” para parear outro ambiente.",
   Host: "Host",
   "Paste a full pairing URL here to fill both fields automatically.":
     "Cole aqui uma URL de pareamento completa para preencher os dois campos automaticamente.",
@@ -1378,7 +1356,6 @@ export const pt: PhraseCatalog = {
     "Esta máquina está na sua conta do SpecWithCode Connect. Use-a como rota de fallback.",
   "Add SpecWithCode Connect": "Adicionar SpecWithCode Connect",
   "Add route": "Adicionar rota",
-  "Add environment": "Adicionar ambiente",
   "SSH host or alias": "Host ou alias SSH",
   "Search hosts or type devbox": "Pesquise hosts ou digite devbox",
   "Loading hosts…": "Carregando hosts…",
@@ -1394,8 +1371,6 @@ export const pt: PhraseCatalog = {
   "Default distro": "Distribuição padrão",
   "Run WSL only": "Executar só o WSL",
   "Enable Tailscale HTTPS": "Ativar Tailscale HTTPS",
-  "Not encrypted: anyone on the same network can capture the sign-in. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
-    "Sem criptografia: qualquer pessoa na mesma rede pode capturar o login. Para acesso remoto, use o SpecWithCode Connect ou o Tailscale HTTPS.",
   "More actions for this machine": "Mais ações para esta máquina",
   "Up to date": "Atualizado",
   "This connection can create access links but cannot view authorized clients.":
@@ -1447,10 +1422,8 @@ export const pt: PhraseCatalog = {
   "HTTPS endpoint": "Endereço HTTPS",
   "Pending MagicDNS endpoint": "Endereço MagicDNS pendente",
   Enable: "Ativar",
-  "Add Environment": "Adicionar ambiente",
   "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine.":
     "Pareie esta máquina de novo por outro endereço, como o nome dela no Tailscale. Ela entra nas rotas existentes em vez de virar uma segunda máquina.",
-  "Pair another environment to this client.": "Pareie outro ambiente com este cliente.",
   value: "valor",
   "Choice value": "Valor da opção",
   "Choice label": "Rótulo da opção",
@@ -1596,10 +1569,8 @@ export const pt: PhraseCatalog = {
   Manage: "Gerenciar",
   "Add an agent, complete its sign-in, then choose its models in chat. Registry agents work in the project folder; projects with additional approved folders currently require Codex, Claude or Muse Code.":
     "Adicione um agente, conclua o login e depois escolha os modelos dele no chat. Agentes do registro trabalham na pasta do projeto; projetos com pastas aprovadas adicionais exigem, por enquanto, Codex, Claude ou Muse Code.",
-  "Main machine environment ID": "ID de ambiente da máquina principal",
   "Main machine": "Máquina principal",
   "Another machine": "Outra máquina",
-  "This machine’s environment ID: {code}": "ID de ambiente desta máquina: {code}",
   "Invitation line for the main machine": "Linha de convite para a máquina principal",
   " Use it within an hour; it works once.": " Use em até uma hora; funciona uma vez.",
   "Revoke this line": "Revogar esta linha",
@@ -1835,10 +1806,6 @@ export const pt: PhraseCatalog = {
   "Automatically balance load": "Equilibrar a carga automaticamente",
   "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.":
     "Novas threads em projetos compartilhados começam na máquina com mais CPU e memória livres, ponderado pela preferência de cada máquina.",
-  "Turn off local environment?": "Desligar o ambiente local?",
-  "Turn on local environment?": "Ligar o ambiente local?",
-  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.":
-    "O SpecWithCode vai reiniciar sem executar um servidor neste computador. Agentes e terminais em execução aqui vão parar, e outros dispositivos não poderão mais se conectar a este computador. Seus projetos, histórico e ambientes remotos não são afetados.",
   "SpecWithCode will restart and start running a server on this computer again.":
     "O SpecWithCode vai reiniciar e voltar a executar um servidor neste computador.",
   "Restart and turn off": "Reiniciar e desligar",
@@ -1905,8 +1872,6 @@ export const pt: PhraseCatalog = {
     "Revogar recusa trabalho novo na hora. As threads que ela iniciou aqui continuam por 2 minutos e depois param; os worktrees e as alterações ficam.{value}",
   "Checking your machines…": "Verificando suas máquinas…",
   "No machines yet.": "Nenhuma máquina ainda.",
-  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
-    "Adicione uma máquina, gerencie suas rotas e permita ou pare workers em {link}. As máquinas que podem executar trabalho aqui ficam em Quem pode executar trabalho aqui. Para desconectar uma, use o cartão dela lá: Remover máquina impede os agentes daqui de usá-la, e Remover em Ambientes faz o app deixar de vê-la.",
   "Advanced connection settings": "Configurações avançadas de conexão",
   "also on {value}": "também em {value}",
   "also on": "também em",
@@ -2025,51 +1990,21 @@ export const pt: PhraseCatalog = {
   "Turning on…": "Ligando…",
   "This phone": "Este celular",
   "Remove phone": "Remover celular",
-  "The simplest way to reach this computer from your iPhone is to sign in to SpecWithCode Connect in the desktop app. No Tailscale is needed. To pair with a private QR code instead, this computer needs a private HTTPS address: set up Tailscale on this computer and your iPhone, sign in to the same tailnet, then enable Tailscale HTTPS in Connections.":
-    "O jeito mais simples de alcançar este computador pelo iPhone é entrar no SpecWithCode Connect no app para desktop. Não precisa de Tailscale. Para parear com um QR code privado, este computador precisa de um endereço HTTPS privado: configure o Tailscale neste computador e no iPhone, entre na mesma tailnet e ative o Tailscale HTTPS em Conexões.",
-  "Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn the VPN on.":
-    "Instale o Tailscale no iPhone. Entre na mesma tailnet deste computador e ligue a VPN.",
-  "Copy the computer address below and open it in Safari on your iPhone. If it cannot load, check Tailscale on both devices before making a code.":
-    "Copie o endereço do computador abaixo e abra no Safari do iPhone. Se não carregar, verifique o Tailscale nos dois aparelhos antes de gerar um código.",
-  "Open SpecWithCode on your iPhone, tap Pair a machine, then Scan QR code.":
-    "Abra o SpecWithCode no iPhone, toque em Parear uma máquina e depois em Escanear QR code.",
-  "Open the computer address in Safari on your iPhone. Once it loads, open SpecWithCode and tap Pair a machine, then Scan QR code.":
-    "Abra o endereço do computador no Safari do iPhone. Quando carregar, abra o SpecWithCode e toque em Parear uma máquina e depois em Escanear QR code.",
-  "Scan with your iPhone": "Escaneie com o iPhone",
   "Pair with a private QR code": "Parear com um QR code privado",
-  "A fallback for when you can't use SpecWithCode Connect. Your iPhone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
-    "Uma alternativa para quando não dá para usar o SpecWithCode Connect. O iPhone precisa alcançar este computador diretamente, na mesma rede ou pelo Tailscale. Prepare a conexão primeiro e depois gere um código de uso único.",
   "Computer address · no pairing code": "Endereço do computador · sem código de pareamento",
   "Copy computer address": "Copiar endereço do computador",
   "This window cannot create pairing codes. Reopen SpecWithCode with access to this computer.":
     "Esta janela não pode criar códigos de pareamento. Reabra o SpecWithCode com acesso a este computador.",
-  "Pairing code for the SpecWithCode iPhone app":
-    "Código de pareamento para o app SpecWithCode no iPhone",
   "Ready to scan. The phone has not confirmed a connection yet.":
     "Pronto para escanear. O celular ainda não confirmou a conexão.",
   "This code expired. Generate a new code when your phone is ready.":
     "Este código expirou. Gere um novo quando o celular estiver pronto.",
   "The computer address changed. Generate a new code for this address.":
     "O endereço do computador mudou. Gere um novo código para este endereço.",
-  "If scanning fails, check the address in Safari, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
-    "Se o escaneamento falhar, verifique o endereço no Safari, a conexão VPN e a validade do código. Um endereço que funciona neste computador não prova que o celular consegue alcançá-lo.",
   "Set up Tailscale HTTPS": "Configurar Tailscale HTTPS",
   "Copy pairing link": "Copiar link de pareamento",
   "Generate pairing code": "Gerar código de pareamento",
   "Generate new code": "Gerar novo código",
-  "Add your iPhone with SpecWithCode Connect": "Adicione seu iPhone com o SpecWithCode Connect",
-  "Sign in with the same account on this computer and on the iPhone. It works from anywhere, with no Tailscale, VPN or QR code.":
-    "Entre com a mesma conta neste computador e no iPhone. Funciona de qualquer lugar, sem Tailscale, VPN ou QR code.",
-  "On this computer, check Your phones. If it does not say this computer is ready for your iPhone yet, sign in there and turn it on.":
-    "Neste computador, confira Seus celulares. Se ainda não disser que este computador está pronto para o iPhone, entre lá e ative.",
-  "On the iPhone, open SpecWithCode and sign in with the same account.":
-    "No iPhone, abra o SpecWithCode e entre com a mesma conta.",
-  "This computer appears in the iPhone's list. Tap it to start.":
-    "Este computador aparece na lista do iPhone. Toque nele para começar.",
-  "For a second iPhone, repeat the last two steps on it. Each iPhone signs in on its own; phones do not count toward your Connect machines.":
-    "Para um segundo iPhone, repita os dois últimos passos nele. Cada iPhone entra por conta própria; celulares não contam nas suas máquinas do Connect.",
-  "Use a private QR code instead": "Usar um QR code privado",
-  "Go to SpecWithCode Connect": "Ir para o SpecWithCode Connect",
   "This is the entire report. It contains versions, diagnostic counts, and failure categories. Conversation content, raw logs, files, credentials, paths, and identifiers are excluded.":
     "Este é o relatório completo. Ele contém versões, contagens de diagnóstico e categorias de falha. Conteúdo de conversas, logs brutos, arquivos, credenciais, caminhos e identificadores ficam de fora.",
   "Diagnostics report preview": "Prévia do relatório de diagnóstico",
@@ -2775,7 +2710,6 @@ export const pt: PhraseCatalog = {
   "Change access": "Alterar acesso",
   "Private machines could not be checked. Refresh to retry.":
     "Não foi possível verificar as máquinas privadas. Atualize para tentar de novo.",
-  "Current environment": "Ambiente atual",
   "Saved for the machine picker": "Salvo para o seletor de máquinas",
   "Approve again": "Aprovar de novo",
   "Connect machine": "Conectar máquina",
@@ -2805,8 +2739,6 @@ export const pt: PhraseCatalog = {
   "Link SpecWithCode Connect here first, then make a line to paste on your main machine.":
     "Vincule primeiro o SpecWithCode Connect aqui e depois gere uma linha para colar na sua máquina principal.",
   "Make a join line": "Gerar linha de entrada",
-  "To connect one, open a pairing link from this server’s owner with {value}, or use Add environment with that machine’s own link.":
-    "Para conectar uma, abra um link de pareamento do dono deste servidor com {value}, ou use Adicionar ambiente com o link da própria máquina.",
   "Turn Auto off": "Desligar o Auto",
   "Long audio is transcribed first (speech to text), the transcript is split into chunks that fit the model's context, and the cheaper model works through the chunks. Auto never sends audio to a model that cannot hear it.":
     "Áudio longo é transcrito primeiro (fala para texto), a transcrição é dividida em partes que cabem no contexto do modelo e o modelo mais barato processa as partes. O Auto nunca envia áudio para um modelo que não consegue ouvi-lo.",
@@ -3671,9 +3603,6 @@ export const pt: PhraseCatalog = {
   "Name the profile, for example Work or Marketing.":
     "Dê um nome ao perfil, por exemplo Trabalho ou Marketing.",
   "Click Pair.": "Clique em Parear.",
-  "Send activity to mobile notifications and Live Activities without SpecWithCode Connect.":
-    "Enviar a atividade para notificações móveis e Live Activities sem o SpecWithCode Connect.",
-  "Publish agent activity to mobile clients": "Publicar a atividade dos agentes em clientes móveis",
   "Ask Google for {service}": "Pedir ao Google: {service}",
   "Edit shortcut for {command}: {shortcut}": "Editar atalho de {command}: {shortcut}",
   "Edit when clause for {command}": "Editar condição de {command}",
@@ -3709,14 +3638,6 @@ export const pt: PhraseCatalog = {
     "Alertas de máquinas conectadas neste dispositivo enquanto esta página do navegador está aberta. Fechá-la interrompe a entrega.",
   "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer.":
     "Esta janela não pode criar códigos de pareamento. Feche e reabra o SpecWithCode para que ele entre com acesso total a este computador.",
-  "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
-    "Para parear com um QR code privado, seu celular precisa de um endereço deste computador. Ative primeiro o acesso à rede ou o Tailscale HTTPS. Para acessar de qualquer lugar, entre no SpecWithCode Connect.",
-  "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`.":
-    "Para acessar este computador pelo celular, abra estas configurações no app desktop do SpecWithCode e entre no SpecWithCode Connect. Para parear com um QR code privado, configure o Tailscale Serve com `specweave-studio pair --tailscale`.",
-  "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code.":
-    "Só se você não puder usar o SpecWithCode Connect: seu iPhone acessa este computador diretamente, na mesma rede ou pelo Tailscale, e lê um código de uso único.",
-  "Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to {url}.":
-    "Leia um código de pareamento privado com o app SpecWithCode no seu iPhone. Ele se conecta a {url}.",
   "Selected environment: local tracing on; external diagnostic export configured.":
     "Ambiente selecionado: rastreamento local ativado; exportação externa de diagnóstico configurada.",
   "Selected environment: local tracing on; external diagnostic export off.":
@@ -4146,8 +4067,6 @@ export const pt: PhraseCatalog = {
   "Usage limit reached": "Limite de uso atingido",
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "Cada nova thread recebe sua própria branch e worktree, então threads em paralelo nunca compartilham um checkout. Desativado: as threads trabalham na pasta do projeto.",
-  "Recommended here: on": "Recomendado aqui: ativado",
-  "Recommended here: off": "Recomendado aqui: desativado",
   "Adding a machine to this one?": "Vai adicionar uma máquina a esta?",
   "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
     "Os agentes de {here} já iniciam trabalho em {machines}. Uma linha gerada aqui permite que a máquina escolhida inicie trabalho em {here}. Para adicionar uma máquina nova a {here}, abra o SpecWithCode na máquina nova, escolha lá “Entrar em uma máquina principal” e cole a linha dela aqui, em “Adicionar máquina”.",
@@ -4304,6 +4223,159 @@ export const pt: PhraseCatalog = {
     "Verifique a conexão deste computador e tente de novo.",
   "SpecWithCode Connect sent an answer this page could not read":
     "O SpecWithCode Connect enviou uma resposta que esta página não conseguiu ler",
+  "Get SpecWithCode on your phone": "Instale o SpecWithCode no seu celular",
+  "It gets a private address that only your account can use.":
+    "Ele recebe um endereço privado que só a sua conta pode usar.",
+  "It links {machine} to your account in the same click. No VPN, open ports or terminal.":
+    "Ele vincula {machine} à sua conta no mesmo clique. Sem VPN, portas abertas nem terminal.",
+  "Linked as {account}. Reachable from anywhere, by your account only.":
+    "Vinculado como {account}. Acessível de qualquer lugar, só pela sua conta.",
+  "Pair over your own network instead.": "Em vez disso, pareie pela sua própria rede.",
+  "Reachable from anywhere, by its account only.":
+    "Acessível de qualquer lugar, só pela conta dele.",
+  "Scan this with the phone's camera. It opens the App Store on an iPhone and Google Play on Android. Or search the store for “SpecWithCode”.":
+    "Escaneie isto com a câmera do celular. Ele abre a App Store no iPhone e o Google Play no Android. Ou pesquise “SpecWithCode” na loja.",
+  "Sign in on the phone as {account}": "Entre no celular como {account}",
+  "Sign in on the phone with the same account": "Entre no celular com a mesma conta",
+  "Signed in as {account}. It gets a private address that only your account can use.":
+    "Conectado como {account}. Ele recebe um endereço privado que só a sua conta pode usar.",
+  "SpecWithCode Connect is not in this build": "O SpecWithCode Connect não está nesta versão",
+  "To add another phone, scan this with its camera. It opens the App Store on an iPhone and Google Play on Android.":
+    "Para adicionar outro celular, escaneie isto com a câmera dele. Ele abre a App Store no iPhone e o Google Play no Android.",
+  "Turn on SpecWithCode Connect for {machine}": "Ligar o SpecWithCode Connect para {machine}",
+  "Your phone": "Seu celular",
+  "iPhone or Android. The store code shows here once this machine is on SpecWithCode Connect.":
+    "iPhone ou Android. O código da loja aparece aqui quando esta máquina estiver no SpecWithCode Connect.",
+  "{machine} is on SpecWithCode Connect": "{machine} está no SpecWithCode Connect",
+  "{machine} shows up on the phone by itself, and the phone shows up here. Nothing to scan or type.":
+    "{machine} aparece no celular automaticamente, e o celular aparece aqui. Nada para escanear nem digitar.",
+  "{machine} shows up there by itself.": "{machine} aparece lá automaticamente.",
+  "Next step": "Próximo passo",
+  "Open SpecWithCode on {machine} to do this.": "Abra o SpecWithCode em {machine} para fazer isso.",
+  "Waiting for your phone…": "Aguardando seu celular…",
+  "You are set": "Tudo pronto",
+  "Agents run on this machine. Turn off and they run only on your other machines.":
+    "Os agentes rodam nesta máquina. Se você desligar, rodam só nas suas outras máquinas.",
+  "Run agents on this machine": "Executar agentes nesta máquina",
+  "Run agents on this machine again?": "Executar agentes nesta máquina de novo?",
+  "SpecWithCode will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history and other machines are unaffected.":
+    "O SpecWithCode vai reiniciar sem executar um servidor neste computador. Os agentes e terminais em execução aqui vão parar, e outros dispositivos não poderão mais se conectar a este computador. Seus projetos, seu histórico e suas outras máquinas não são afetados.",
+  "Stop running agents on this machine?": "Parar de executar agentes nesta máquina?",
+  "Turned off. Agents run only on your other machines.":
+    "Desligado. Os agentes rodam só nas suas outras máquinas.",
+  "App Store · Google Play": "App Store · Google Play",
+  "Code that opens the App Store or Google Play": "Código que abre a App Store ou o Google Play",
+  "Main machine ID": "ID da máquina principal",
+  "This machine’s ID: {code}": "ID desta máquina: {code}",
+  "Copy the computer address below and open it in the phone's browser. If it does not load, check Tailscale on both devices before making a code.":
+    "Copie o endereço do computador abaixo e abra no navegador do celular. Se não carregar, verifique o Tailscale nos dois aparelhos antes de gerar um código.",
+  "For when you cannot use SpecWithCode Connect. Your phone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.":
+    "Para quando não dá para usar o SpecWithCode Connect. O celular precisa alcançar este computador diretamente, na mesma rede ou pelo Tailscale. Prepare a conexão primeiro e depois gere um código de uso único.",
+  "If scanning fails, check the address in the phone's browser, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.":
+    "Se o escaneamento falhar, verifique o endereço no navegador do celular, a conexão VPN e a validade do código. Um endereço que funciona neste computador não prova que o celular consegue alcançá-lo.",
+  "Install Tailscale on your phone. Sign in to the same Tailscale network as this computer and turn the VPN on.":
+    "Instale o Tailscale no celular. Entre na mesma rede do Tailscale deste computador e ligue a VPN.",
+  "Network access, for a phone on the same Wi-Fi or network.":
+    "Acesso à rede, para um celular no mesmo Wi-Fi ou rede.",
+  "Open SpecWithCode on your phone, choose Pair a machine, then Scan QR code.":
+    "Abra o SpecWithCode no celular, escolha Parear uma máquina e depois Escanear QR code.",
+  "Open the computer address in the phone's browser. Once it loads, open SpecWithCode and choose Pair a machine, then Scan QR code.":
+    "Abra o endereço do computador no navegador do celular. Quando carregar, abra o SpecWithCode e escolha Parear uma máquina e depois Escanear QR code.",
+  "Pair over your own network": "Parear pela sua própria rede",
+  "Pairing code for the SpecWithCode phone app":
+    "Código de pareamento para o app SpecWithCode no celular",
+  "Scan with your phone": "Escaneie com o celular",
+  "Show Network access and Tailscale HTTPS": "Mostrar Acesso à rede e Tailscale HTTPS",
+  "Tailscale HTTPS, for a phone on your Tailscale network, anywhere.":
+    "Tailscale HTTPS, para um celular na sua rede do Tailscale, de qualquer lugar.",
+  "This window cannot change how this computer is reached. Open SpecWithCode on this computer and turn on Network access or Tailscale HTTPS there, or sign in to SpecWithCode Connect, which needs neither.":
+    "Esta janela não pode mudar como este computador é acessado. Abra o SpecWithCode neste computador e ligue lá o Acesso à rede ou o Tailscale HTTPS, ou entre no SpecWithCode Connect, que não precisa de nenhum dos dois.",
+  "Turn on Network access": "Ligar Acesso à rede",
+  "Your phone needs an address for this computer. Turn on one of these first:":
+    "O celular precisa de um endereço para este computador. Primeiro ligue uma destas opções:",
+  "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Saved connections stops this app seeing it.":
+    "Adicione uma máquina, gerencie suas rotas e permita ou pare workers em {link}. As máquinas que podem executar trabalho aqui ficam em Quem pode executar trabalho aqui. Para desconectar uma, use o cartão dela lá: Remover máquina impede os agentes daqui de usá-la, e Remover em Conexões salvas faz o app deixar de vê-la.",
+  "Projects and accounts on this machine": "Projetos e contas desta máquina",
+  "Activity for phone notifications": "Atividade para as notificações do celular",
+  "Machine icon": "Ícone da máquina",
+  "Saved connections": "Conexões salvas",
+  "Advanced: run agents on this machine, network access, Tailscale, signed-in browsers and apps, saved connections":
+    "Avançado: executar agentes nesta máquina, acesso à rede, Tailscale, navegadores e apps conectados, conexões salvas",
+  "Keep webhook requests for up to 24 hours while this machine is offline, then deliver them. Turn off and SpecWithCode Connect only forwards requests and stores nothing.":
+    "Guarda as solicitações de webhook por até 24 horas enquanto esta máquina está offline e depois as entrega. Se você desligar, o SpecWithCode Connect só encaminha as solicitações e não guarda nada.",
+  "Optional. Sign in to reach your machines from anywhere and to change the settings below.":
+    "Opcional. Entre para acessar suas máquinas de qualquer lugar e mudar as configurações abaixo.",
+  "Send activity for phone notifications": "Enviar atividade para as notificações do celular",
+  "Send agent activity to your phone's notifications and Live Activities, even while SpecWithCode Connect is off for this machine. Turn off and your phone shows no activity from this machine.":
+    "Envia a atividade dos agentes para as notificações e Live Activities do celular, mesmo com o SpecWithCode Connect desligado para esta máquina. Se você desligar, o celular não mostra atividade desta máquina.",
+  "Sign in to SpecWithCode Connect to change this. Notifications go to the phones signed in to your account.":
+    "Entre no SpecWithCode Connect para mudar isso. As notificações vão para os celulares conectados à sua conta.",
+  "Turn on to reach this machine from your phone and your other machines, from anywhere.":
+    "Ligue para acessar esta máquina pelo celular e pelas suas outras máquinas, de qualquer lugar.",
+  "Your phone and your other machines reach this machine from anywhere. Turn off and they can no longer reach it this way.":
+    "O celular e suas outras máquinas acessam esta máquina de qualquer lugar. Se você desligar, não poderão mais acessá-la assim.",
+  "Current machine": "Máquina atual",
+  "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
+    "Para conectar uma, abra um link de pareamento do dono deste servidor com {value}, ou use Adicionar conexão com o link da própria máquina.",
+  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
+    "Quando este app abrir, conecte-o às suas máquinas que responderem, para que os projetos delas apareçam aqui. Se você desligar, conecta cada uma por conta própria com Conectar máquina. Não muda nenhuma permissão dos agentes. Salvo neste dispositivo.",
+  "Cannot use Connect? Pair over your own network":
+    "Não dá para usar o Connect? Pareie pela sua própria rede",
+  "Cannot use Connect? Pair over your own network.":
+    "Não dá para usar o Connect? Pareie pela sua própria rede.",
+  "Scan a one-time code with the SpecWithCode app on your phone. It connects to {url}.":
+    "Escaneie um código de uso único com o app SpecWithCode no celular. Ele se conecta a {url}.",
+  "To pair over your own network, open these settings in the SpecWithCode desktop app on this computer and turn on Network access or Tailscale HTTPS.":
+    "Para parear pela sua própria rede, abra estas configurações no app para desktop do SpecWithCode neste computador e ligue o Acesso à rede ou o Tailscale HTTPS.",
+  "To pair over your own network, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first.":
+    "Para parear pela sua própria rede, o celular precisa de um endereço para este computador. Primeiro ligue o Acesso à rede ou o Tailscale HTTPS.",
+  "Your phone must be able to open this address. Keep this computer awake and online.":
+    "O celular precisa conseguir abrir este endereço. Mantenha este computador ativo e online.",
+  "Your phone needs the Tailscale app, signed in to the same Tailscale network as this computer.":
+    "O celular precisa do app Tailscale, conectado à mesma rede do Tailscale deste computador.",
+  "Your phone needs to be on the same Wi-Fi as this computer. To reach it from anywhere, sign in to SpecWithCode Connect instead.":
+    "O celular precisa estar no mesmo Wi-Fi deste computador. Para acessar de qualquer lugar, entre no SpecWithCode Connect.",
+  "Add a connection": "Adicionar uma conexão",
+  "Add connection": "Adicionar conexão",
+  "Click “Add connection” to pair another machine, or connect one from SpecWithCode Connect.":
+    "Clique em “Adicionar conexão” para parear outra máquina, ou conecte uma pelo SpecWithCode Connect.",
+  "Click “Add connection” to pair another machine.":
+    "Clique em “Adicionar conexão” para parear outra máquina.",
+  "Connect a machine to see its settings and access.":
+    "Conecte uma máquina para ver as configurações e o acesso dela.",
+  "No machine connected": "Nenhuma máquina conectada",
+  "No saved connections": "Nenhuma conexão salva",
+  "Not encrypted: anyone on the same network can capture the sign-in. Turn off and only this machine can open the app. For remote access, use SpecWithCode Connect or Tailscale HTTPS.":
+    "Sem criptografia: qualquer pessoa na mesma rede pode capturar o login. Se você desligar, só esta máquina pode abrir o app. Para acesso remoto, use o SpecWithCode Connect ou o Tailscale HTTPS.",
+  "Pair another machine with this app.": "Pareie outra máquina com este app.",
+  "Run only the WSL backend. Turn off and the Windows backend runs beside it again. SpecWithCode restarts when this changes.":
+    "Executa só o backend do WSL. Se você desligar, o backend do Windows volta a rodar ao lado dele. O SpecWithCode reinicia quando isso muda.",
+  "Turn on to reach this machine at an HTTPS address on your tailnet, through Tailscale Serve.":
+    "Ligue para acessar esta máquina em um endereço HTTPS da sua tailnet, pelo Tailscale Serve.",
+  "Add your phone": "Adicione seu celular",
+  "Connect: checking…": "Connect: verificando…",
+  "Connect: could not check": "Connect: não foi possível verificar",
+  "Connect: linked as {account}": "Connect: vinculado como {account}",
+  "Connect: not in this build": "Connect: não está nesta versão",
+  "Connect: not signed in": "Connect: sem login",
+  "Connect: off by your team's rules": "Connect: desligado pelas regras da sua equipe",
+  "Connect: off for this machine": "Connect: desligado para esta máquina",
+  "Connect: on": "Connect: ligado",
+  "Helper for {machine}": "Auxiliar de {machine}",
+  "Helper for {machine} and {count} more": "Auxiliar de {machine} e mais {count}",
+  "Not set up": "Não configurado",
+  "Other machines: none": "Outras máquinas: nenhuma",
+  "Other machines: {count}": "Outras máquinas: {count}",
+  "Phone: 1 linked": "Celular: 1 vinculado",
+  "Phone: checking…": "Celular: verificando…",
+  "Phone: none yet": "Celular: nenhum ainda",
+  "Phone: sign in to see": "Celular: entre para ver",
+  "Phones: {count} linked": "Celulares: {count} vinculados",
+  "Turn on SpecWithCode Connect for this machine": "Ligar o SpecWithCode Connect para esta máquina",
+  "{version}, up to date": "{version}, atualizado",
+  "{version}, update to {next} available": "{version}, atualização para {next} disponível",
+  "{url}. Turn off and this address stops answering.":
+    "{url}. Se você desligar, este endereço deixa de responder.",
   "Unlink {machine}": "Desvincular {machine}",
   "Remove {phone}": "Remover {phone}",
   "Change the machine limit for {account}": "Alterar o limite de máquinas de {account}",
