@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { FOLDER_COPY_ALL_CONFLICTS_PREFIX } from "@specweave-studio/contracts";
 import { applyPlan, ApplyRefusedError, bytesNeeded, type RepositoryCheck } from "./apply.ts";
 import { DEFAULT_SELECTION, FILE_CLASSES, type FileClass } from "./classify.ts";
+import * as Messages from "./copyMessages.ts";
 import { repositoryRelations, scanDestination } from "./destinationScan.ts";
 import { reachableOrigin } from "./git.ts";
 import { deviceOf, exists, freeBytes, privateDirectory, readJson, writeJson } from "./durable.ts";
@@ -108,6 +109,7 @@ export interface DestinationRecord {
   readonly targetFolder: string;
   readonly title: string;
   readonly selection: ReadonlyArray<FileClass>;
+  readonly purpose?: "add-to-machine";
   readonly decisions: Readonly<Record<string, Choice>>;
   readonly clone: ReadonlyArray<string>;
   /** Repository rows left out of the copy; missing on records from before it existed. */
@@ -155,6 +157,7 @@ export interface StartCopyInput {
   readonly title: string;
   readonly selection?: ReadonlyArray<FileClass>;
   readonly projectId?: string;
+  readonly purpose?: "add-to-machine";
 }
 
 export interface DestinationHooks {
@@ -439,6 +442,7 @@ export class DestinationCopies {
       targetFolder: target,
       title: input.title,
       selection,
+      ...(input.purpose ? { purpose: input.purpose } : {}),
       decisions: {},
       clone: [],
       mirror: false,
@@ -704,7 +708,7 @@ export class DestinationCopies {
         error: null,
       });
       this.background(operationId, "applied", () => this.finish(applied));
-      throw new CopyError("refused", alreadyCommittedMessage(record));
+      throw new CopyError("refused", Messages.alreadyCommittedMessage(record));
     }
     const paths = this.paths(operationId);
     const preview = await previewUndo({
@@ -754,7 +758,10 @@ export class DestinationCopies {
       state: "undone",
       undoIncomplete: false,
       error: sourceError
-        ? { code: sourceError.code, message: undoneButHeldMessage(record, sourceError.code) }
+        ? {
+            code: sourceError.code,
+            message: Messages.undoneButHeldMessage(record, sourceError.code),
+          }
         : null,
       ...(keptSecrets.length > 0
         ? {
@@ -976,7 +983,7 @@ export class DestinationCopies {
       !record.committed &&
       (step === "applying" || step === "applied")
     )
-      error = new CopyError("unauthorized", appliedButRefusedMessage(record));
+      error = new CopyError("unauthorized", Messages.appliedButRefusedMessage(record));
     if (aborted && BEFORE_APPLY.has(step)) return;
     await this.update(operationId, {
       state: "failed",
@@ -1111,6 +1118,7 @@ export class DestinationCopies {
         cloneOrigins: await this.cloneOrigins(record, manifest, signal),
         skip: record.skip ?? [],
         mirror: record.mirror,
+        protectDiverged: record.purpose === "add-to-machine",
       }),
       ...(destination.fingerprint !== undefined
         ? { destinationFingerprint: destination.fingerprint }
@@ -1390,28 +1398,6 @@ function checksFailedMessage(
     : `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Undo the copy, or retry to move it anyway.`;
 }
 
-/** The source machine as the person knows it, for "cancel it there" advice. */
-const sourceName = (record: DestinationRecord) => record.sourceMachine || "the source machine";
-
-function appliedButRefusedMessage(record: DestinationRecord) {
-  const name = sourceName(record);
-  return `${name} no longer accepts this copy, so it cannot be finished. The files are in place here. Undo the copy here, then cancel it on ${name}${record.mode === "copy-and-move" ? " to give the project back there" : ""}.`;
-}
-
-function alreadyCommittedMessage(record: DestinationRecord) {
-  const name = sourceName(record);
-  return record.mode === "copy-and-move"
-    ? `${name} had already finished this move, so the project now lives on this machine. Nothing was removed; the copy is being finished here.`
-    : `${name} had already finished this copy. Nothing was removed; the copy is being finished here.`;
-}
-
-function undoneButHeldMessage(record: DestinationRecord, code: CopyErrorCode) {
-  const name = sourceName(record);
-  const reason =
-    code === "unauthorized" ? `${name} no longer accepts this copy` : `${name} could not be told`;
-  return `The files here were restored, but ${reason}, so the copy is still open there. Cancel the copy on ${name}${record.mode === "copy-and-move" ? " to give the project back there" : " to end it"}.`;
-}
-
 /** Applied here (or mid-Apply) but not committed: the source still holds the copy open. */
 function holdsSource(record: DestinationRecord) {
   if (record.committed) return false;
@@ -1447,23 +1433,12 @@ function nothingHere(plan: Plan): boolean {
   );
 }
 
-/**
- * The source refused this copy's grant. It expired, was cancelled or replaced
- * there, or the source's saved offer was removed (a disk cleanup that moved the
- * app's data folder did this once). Starting again mints a fresh offer.
- */
-function staleOfferMessage(record: DestinationRecord) {
-  const name = sourceName(record);
-  const action = record.mode === "copy-and-move" ? "move" : "copy";
-  return `${name} no longer accepts this ${action} (prepared ${record.createdAt.slice(0, 10)}): its offer expired, was cancelled or replaced there, or was removed from ${name}. Start the ${action} again from ${name}.`;
-}
-
 /** Maps a failure to the copy error people see; with the record, a refusal names the source. */
 export function toCopyError(cause: unknown, record?: DestinationRecord): CopyError {
   if (cause instanceof CopyError) return cause;
   if (cause instanceof SourceClientError) {
     if (cause.code === "unauthorized" && record)
-      return new CopyError("unauthorized", staleOfferMessage(record));
+      return new CopyError("unauthorized", Messages.staleOfferMessage(record));
     const messages: Record<SourceClientError["code"], string> = {
       unsupported_url: "The source address is not a private tailnet address.",
       unreachable: "The source machine stopped answering.",

@@ -72,6 +72,11 @@ export interface PlanInput {
   /** "Mirror exactly": destination-only files outside repositories move to the backup. */
   readonly mirror?: boolean;
   readonly decisions?: Readonly<Record<string, Choice>>;
+  /**
+   * Add to machine: a diverged repository is never overwritten, so "take theirs"
+   * is not a choice there and a decision for it is refused, whatever was sent.
+   */
+  readonly protectDiverged?: boolean;
 }
 
 export interface FileConflict {
@@ -451,8 +456,14 @@ export function planReconcile(input: PlanInput): Plan {
       default:
         status = "diverged";
         detail = "Both machines have commits the other lacks. Nothing is lost either way.";
-        choices = ["keep-mine", "take-theirs", "leave-both"];
-        if (decision === "take-theirs") {
+        choices = input.protectDiverged
+          ? ["keep-mine", "leave-both"]
+          : ["keep-mine", "take-theirs", "leave-both"];
+        if (decision === "take-theirs" && input.protectDiverged)
+          warnings.push(
+            `${source.path}: "Take theirs" is not available for a diverged repository when adding a project to a machine; choose Keep mine or Leave both.`,
+          );
+        else if (decision === "take-theirs") {
           moveHead = "take-theirs";
           stash = destinationChanged;
         }

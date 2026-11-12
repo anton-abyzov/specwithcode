@@ -319,6 +319,8 @@ export const FolderCopyStartInput = Schema.Struct({
   selection: Schema.optional(Schema.Array(FolderCopyFileClass)),
   /** Copy-and-move: the project id the moving coordinator expects for this folder. */
   projectId: Schema.optional(ProjectId),
+  /** Add to machine: a diverged repository is never overwritten. Older destinations ignore it. */
+  purpose: Schema.optional(Schema.Literal("add-to-machine")),
 });
 export type FolderCopyStartInput = typeof FolderCopyStartInput.Type;
 
