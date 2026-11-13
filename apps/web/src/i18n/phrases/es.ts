@@ -4631,4 +4631,25 @@ export const es: PhraseCatalog = {
     "La instalación terminó con un error. Su registro está abajo. Pulsa Reintentar allí o ejecuta el comando en una terminal.",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "¿Quieres otro agente o un proveedor personalizado, como Muse Code? Añádelo cuando quieras después de la configuración en Ajustes > Proveedores.",
+  "Connect automatically is off.": "Conectar automáticamente está desactivado.",
+  "SpecWithCode Connect did not answer for it.":
+    "SpecWithCode Connect no respondió por esta máquina.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
+    "No aparecen: {names}. Para usar una aquí, abre en ella Ajustes > Máquinas y permite que esta máquina ejecute trabajo allí.",
+  "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
+    "No aparecen: {names}. Esta app aún no está conectada a ellas. Inicia sesión aquí en SpecWithCode Connect con la misma cuenta o conéctalas en",
+  "Settings > Machines": "Ajustes > Máquinas",
+  "Connecting over SpecWithCode Connect…": "Conectando a través de SpecWithCode Connect…",
+  "Not connected to this app yet.": "Aún no está conectada a esta app.",
+  "Removed from this app.": "Quitada de esta app.",
+  "SpecWithCode Connect cannot be reached right now.":
+    "No se puede acceder a SpecWithCode Connect en este momento.",
+  "Could not connect over SpecWithCode Connect.":
+    "No se pudo conectar a través de SpecWithCode Connect.",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect la aceptó, pero no se añadió aquí.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
+    "No aparecen: {names}. Para usar una aquí, abre Ajustes > Máquinas en ella y permite que {machine} ejecute trabajo allí.",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "Esta máquina solo se alcanza por SpecWithCode Connect, y la cuenta de Connect de esta app aún no la muestra. Inicia sesión aquí en SpecWithCode Connect con la misma cuenta, espera un momento y vuelve a pulsar Conectar.",
 };

@@ -4610,4 +4610,24 @@ export const ja: PhraseCatalog = {
     "インストールがエラーで終了しました。ログは下にあります。そこで「再試行」を押すか、ターミナルでコマンドを実行してください。",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "Muse Code など、別のエージェントやカスタムプロバイダーを使いたい場合は、セットアップ後にいつでも「設定 > プロバイダー」から追加できます。",
+  "Connect automatically is off.": "自動接続はオフです。",
+  "SpecWithCode Connect did not answer for it.":
+    "SpecWithCode Connect がこのマシンについて応答しませんでした。",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
+    "一覧にないマシン: {names}。ここで使うには、そのマシンで 設定 > マシン を開き、このマシンが作業を実行することを許可してください。",
+  "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
+    "一覧にないマシン: {names}。このアプリはまだ接続していません。ここで同じアカウントで SpecWithCode Connect にサインインするか、次の場所で接続してください:",
+  "Settings > Machines": "設定 > マシン",
+  "Connecting over SpecWithCode Connect…": "SpecWithCode Connect で接続しています…",
+  "Not connected to this app yet.": "このアプリにはまだ接続されていません。",
+  "Removed from this app.": "このアプリから削除済みです。",
+  "SpecWithCode Connect cannot be reached right now.":
+    "現在 SpecWithCode Connect に接続できません。",
+  "Could not connect over SpecWithCode Connect.": "SpecWithCode Connect で接続できませんでした。",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect は受け付けましたが、ここには追加されませんでした。",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
+    "一覧にないマシン: {names}。ここで使うには、そのマシンで 設定 > マシン を開き、{machine} が作業を実行することを許可してください。",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "このマシンには SpecWithCode Connect 経由でしか接続できず、このアプリの Connect アカウントにはまだ表示されていません。ここで同じアカウントで SpecWithCode Connect にサインインし、少し待ってからもう一度「接続」を押してください。",
 };

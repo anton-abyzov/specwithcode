@@ -83,6 +83,7 @@ import {
   useMachinesSettling,
 } from "../../studio/handoffMachineList";
 import { MoveDialogHold } from "../../studio/moveDialogHold";
+import { HandoffAccountMachines } from "./HandoffAccountMachines";
 import { HandoffBusyThreads } from "./HandoffBusyThreads";
 import { refusedBusyOf } from "./handoffCopySteps";
 
@@ -869,6 +870,9 @@ export function ProjectMachineHandoff({
         open={open}
         onOpenChange={changeOpen}
         machinesLoading={machinesLoading}
+        machinesExtra={
+          open ? <HandoffAccountMachines sourceEnvironmentId={project.environmentId} /> : null
+        }
         sourceLabel={source?.label ?? "This machine"}
         projectTitle={logicalProjectTitle(project)}
         workspaceContext={workspaceContext}

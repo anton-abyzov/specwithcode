@@ -4430,4 +4430,22 @@ export const zh: PhraseCatalog = {
     "安装出错结束。日志在下方。请在那里点击“重试”，或在终端中运行该命令。",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "想用其他智能体或自定义提供方（例如 Muse Code）？设置完成后可随时在 设置 > 提供方 中添加。",
+  "Connect automatically is off.": "自动连接已关闭。",
+  "SpecWithCode Connect did not answer for it.": "SpecWithCode Connect 未就这台机器作出响应。",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
+    "未列出：{names}。要在这里使用，请在那台机器上打开 设置 > 机器，并允许这台机器在那里运行工作。",
+  "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
+    "未列出：{names}。此应用尚未连接到它们。请在这里用同一账号登录 SpecWithCode Connect，或在以下位置连接：",
+  "Settings > Machines": "设置 > 机器",
+  "Connecting over SpecWithCode Connect…": "正在通过 SpecWithCode Connect 连接…",
+  "Not connected to this app yet.": "尚未连接到此应用。",
+  "Removed from this app.": "已从此应用中移除。",
+  "SpecWithCode Connect cannot be reached right now.": "目前无法访问 SpecWithCode Connect。",
+  "Could not connect over SpecWithCode Connect.": "无法通过 SpecWithCode Connect 连接。",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect 已接受，但未添加到这里。",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
+    "未列出：{names}。要在这里使用，请在该机器上打开 设置 > 机器，并允许 {machine} 在那里运行工作。",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "这台机器只能通过 SpecWithCode Connect 访问，而此应用的 Connect 账户还未列出它。请在这里用同一账户登录 SpecWithCode Connect，稍等片刻，然后再次点击“连接”。",
 };

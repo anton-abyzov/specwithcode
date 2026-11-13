@@ -29,13 +29,18 @@ import { displayFolder } from "../../lib/displayFolder";
 import { machineStatus } from "../../lib/machineStatus";
 import { desktopNetworkAccessStateAtom } from "../../state/desktopNetworkAccess";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   addVisibleMachineToStudioFleet,
   useMachineWorkGrants,
   useStudioFleet,
 } from "../../studio/fleet";
+import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
+import {
+  useAccountAutoConnectStates,
+  requestAccountMachineConnect,
+} from "../../studio/grantedAccountMachines";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
@@ -57,6 +62,7 @@ import {
   type MachineWorkerGrant,
   type MachineWorkHere,
   ACCOUNT_NOT_REPORTED,
+  withAccountConnectState,
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { AccountJoinCard } from "./AccountJoinCard";
@@ -142,7 +148,9 @@ export function MachinesSettingsPanel() {
   const [addingProject, setAddingProject] = useState<AddProjectTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const rows = useMemo(
+  const accountStates = useAccountAutoConnectStates();
+  const accountMachines = useRelayEnvironmentDiscovery().environments;
+  const builtRows = useMemo(
     () =>
       buildMachineRows({
         environments: environments.map((environment) => ({
@@ -168,9 +176,38 @@ export function MachinesSettingsPanel() {
       }),
     [environments, fleet, hostBlocks, projects, grants.snapshot, configs, machineName],
   );
+  const savedIds = useMemo(
+    () => new Set<string>(environments.map((environment) => environment.environmentId)),
+    [environments],
+  );
+  // Connect-only machines that allowed this one are saved over Connect, not paired.
+  const rows = useMemo(
+    () =>
+      builtRows.map((row) =>
+        withAccountConnectState(
+          row,
+          accountStates.get(row.environmentId),
+          // Also while the account list is read again and is empty for a moment.
+          accountMachines.has(row.environmentId) || accountStates.has(row.environmentId),
+          savedIds.has(row.environmentId),
+        ),
+      ),
+    [accountMachines, accountStates, builtRows, savedIds],
+  );
 
   async function connect(machine: StudioFleetMachine) {
     if (pending) return;
+    // A Connect-only machine of this account is saved over Connect, not paired.
+    if (
+      !fleetMachineHasTailnetAddress(machine) &&
+      // A saved machine's Connect updates its address through the pairing below.
+      !savedIds.has(machine.environmentId) &&
+      (accountMachines.has(machine.environmentId) || accountStates.has(machine.environmentId))
+    ) {
+      setError(null);
+      // Signed out of Connect, nothing saves it: the pairing below is tried.
+      if (requestAccountMachineConnect([machine.environmentId])) return;
+    }
     setPending(machine.environmentId);
     setError(null);
     try {
@@ -756,7 +793,10 @@ export function MachineRow({
               aria-hidden
               className={`size-1.5 shrink-0 rounded-full ${SEEN_DOT[row.seen.state]}`}
             />
-            <span className="break-words text-foreground/80 sm:truncate">{row.seen.text}</span>
+            <span className="break-words text-foreground/80 sm:truncate">
+              {tx(row.seen.text)}
+              {row.seen.detail ? ` (${row.seen.detail})` : null}
+            </span>
           </p>
         </div>
         <Button
@@ -789,7 +829,7 @@ export function MachineRow({
                     disabled={pending !== null || !row.connect.enabled}
                     onClick={() => row.fleetMachine && onConnect(row.fleetMachine)}
                   >
-                    {pending === row.environmentId ? tx("Connecting…") : row.connect.label}
+                    {pending === row.environmentId ? tx("Connecting…") : tx(row.connect.label)}
                   </Button>
                 </TeamRulesInert>
               </>

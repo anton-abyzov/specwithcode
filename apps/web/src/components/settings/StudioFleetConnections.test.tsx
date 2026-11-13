@@ -101,6 +101,7 @@ import { SettingHelp } from "./SettingHelp";
 import { ConnectDeregisterHint, ConnectDeregisterHintView } from "./ConnectDeregisterHint";
 import { OtherAccountJoinFold } from "./OtherAccountJoinFold";
 import {
+  CONNECT_ONLY_NOT_LISTED,
   type FleetMachineCardExtras,
   FleetWorkersRow,
   fleetConnectionReason,
@@ -435,6 +436,21 @@ describe("private machine roster", () => {
     expect(
       visitElements(tree, (element) => element.props.children === "Connected remote machine"),
     ).not.toBeNull();
+  });
+  it("says why a Connect-only machine this account does not list yet cannot be connected, without pairing", () => {
+    const viaConnect = {
+      ...snapshot.machines[1]!,
+      url: "https://m1.connect.example",
+      transport: "connect" as const,
+    };
+    runtime.snapshot = { ...snapshot, machines: [snapshot.machines[0]!, viaConnect] };
+    const connected = () => {
+      hooks.beginRender();
+      return StudioFleetConnections({ environmentId: m4, savedEnvironmentIds: [] });
+    };
+    connected().props.onPair(viaConnect);
+    expect(runtime.pair).not.toHaveBeenCalled();
+    expect(connected().props.error).toBe(CONNECT_ONLY_NOT_LISTED);
   });
   it("shows an unpaired M1 in a fresh browser and calls pairing only on an explicit click", () => {
     const onPair = vi.fn();

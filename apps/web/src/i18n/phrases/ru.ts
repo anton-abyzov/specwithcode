@@ -4606,4 +4606,23 @@ export const ru: PhraseCatalog = {
     "Установка завершилась с ошибкой. Лог ниже. Нажмите там «Повторить» или выполните команду в терминале.",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "Нужен другой агент или свой провайдер, например Muse Code? Добавьте его в любой момент после настройки в разделе Настройки > Провайдеры.",
+  "Connect automatically is off.": "Автоподключение выключено.",
+  "SpecWithCode Connect did not answer for it.": "SpecWithCode Connect не ответил за эту машину.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
+    "Нет в списке: {names}. Чтобы использовать машину здесь, откройте на ней Настройки > Машины и разрешите этой машине запускать там работу.",
+  "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
+    "Нет в списке: {names}. Это приложение к ним ещё не подключено. Войдите здесь в SpecWithCode Connect с тем же аккаунтом или подключите их в",
+  "Settings > Machines": "Настройки > Машины",
+  "Connecting over SpecWithCode Connect…": "Подключение через SpecWithCode Connect…",
+  "Not connected to this app yet.": "Ещё не подключена к этому приложению.",
+  "Removed from this app.": "Удалена из этого приложения.",
+  "SpecWithCode Connect cannot be reached right now.": "SpecWithCode Connect сейчас недоступен.",
+  "Could not connect over SpecWithCode Connect.":
+    "Не удалось подключиться через SpecWithCode Connect.",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect принял её, но здесь она не добавлена.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
+    "Нет в списке: {names}. Чтобы использовать машину здесь, откройте на ней Настройки > Машины и разрешите {machine} запускать там работу.",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "Эта машина доступна только через SpecWithCode Connect, а аккаунт Connect в этом приложении её пока не показывает. Войдите здесь в SpecWithCode Connect тем же аккаунтом, подождите немного и снова нажмите «Подключить».",
 };

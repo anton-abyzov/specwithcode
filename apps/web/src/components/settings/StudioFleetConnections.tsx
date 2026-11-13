@@ -89,6 +89,8 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
+import { requestAccountMachineConnect } from "../../studio/grantedAccountMachines";
 
 /** A listener's bind address does not describe Tailscale Serve or an SSH tunnel. */
 export function StudioListenerRow({
@@ -316,6 +318,9 @@ export interface FleetMachineCardExtras {
   readonly gone: ReactNode;
 }
 
+/** A Connect-only machine this account's list does not show (yet). */
+export const CONNECT_ONLY_NOT_LISTED =
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.";
 interface Props extends FleetInventoryComposition {
   environmentId: EnvironmentId;
   savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
@@ -496,9 +501,21 @@ export function StudioFleetConnections({
     }
   }
   async function pair(machine: StudioFleetMachine) {
-    if (pending || !canPair) return;
-    setPending(machine.id);
+    if (pending) return;
     setError(null);
+    // A Connect-only machine is saved over Connect, which needs no pairing
+    // permission; Tailscale pairing cannot reach it.
+    // A saved one is paired as before; an unsaved one this account's list does
+    // not show yet cannot be reached here, so the press says why.
+    if (!fleetMachineHasTailnetAddress(machine)) {
+      if (requestAccountMachineConnect([machine.environmentId])) return;
+      if (!savedEnvironmentIds.includes(machine.environmentId)) {
+        setError(CONNECT_ONLY_NOT_LISTED);
+        return;
+      }
+    }
+    if (!canPair) return;
+    setPending(machine.id);
     try {
       const credential = await pairStudioFleet(environmentId, machine.id);
       const result = await connect({
@@ -894,11 +911,14 @@ export function StudioFleetRoster({
             const canRemove = !current && onRemove !== undefined && canManageWorkers;
             const readinessOpen = readinessFor === machine.id;
             // Why pairing is not offered reads as a note, not as a button that does nothing.
-            const pairNote = !machine.pairingConfigured
-              ? "Pairing needs setup"
-              : !canPair
-                ? "Pairing permission required"
-                : null;
+            // A Connect-only machine is saved over Connect: no pairing to set up.
+            const pairNote = !fleetMachineHasTailnetAddress(machine)
+              ? null
+              : !machine.pairingConfigured
+                ? "Pairing needs setup"
+                : !canPair
+                  ? "Pairing permission required"
+                  : null;
             const reinvite = fleetMachineNeedsReinvite(machine);
             // Stop and Remove only take access away, so the rules leave them available.
             const machineLock = current
@@ -1384,7 +1404,7 @@ export function StudioFleetRoster({
           {removedLabel ? <ConnectDeregisterHint label={removedLabel} /> : null}
           {error ? (
             <p role="alert" className="text-destructive-foreground">
-              {error}
+              {tx(error)}
             </p>
           ) : null}
         </div>

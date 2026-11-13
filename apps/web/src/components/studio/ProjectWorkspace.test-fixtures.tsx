@@ -472,6 +472,8 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { update: {} } }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+// Reads the account list and fleet atoms, which these fixtures do not model.
+vi.mock("./HandoffAccountMachines", () => ({ HandoffAccountMachines: () => null }));
 vi.mock("../../hooks/useMediaQuery", () => ({
   // Width queries answer with the phone layout; a touch-pointer query answers with the
   // on-screen keyboard, at any width.

@@ -15,7 +15,13 @@ import type {
   StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
 
-import { fleetMachineSaved } from "../../studio/fleetAutoConnect";
+import { fleetMachineHasTailnetAddress, fleetMachineSaved } from "../../studio/fleetAutoConnect";
+import {
+  type AccountAutoConnectState,
+  accountConnectCanRetry,
+  fleetMachineGranted,
+} from "../../studio/grantedAccountMachines";
+import { CONNECTING_REASON } from "../../studio/handoffAccountMachines";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
 import type { HostLimitBlock } from "../../studio/hostLimitsModel";
 import {
@@ -107,7 +113,10 @@ export interface MachineProjectCopy {
 
 export interface MachineSeen {
   readonly state: MachineSeenState;
+  /** An English phrase, translated where shown. */
   readonly text: string;
+  /** The relay's own words for a failure, shown untranslated after the text. */
+  readonly detail?: string;
 }
 
 /** A machine's projects, split as the sidebar splits them. */
@@ -252,6 +261,51 @@ export function unopenedFleetMachineSeen(
         ? " via Tailscale"
         : "";
   return { state: "reachable", text: `Reachable${via} · not open in this window` };
+}
+
+/**
+ * A row for a Connect-only machine of this account that allowed this one:
+ * it is saved over SpecWithCode Connect on its own, so the row says how that
+ * stands instead of asking for a Tailscale pairing. Other rows are unchanged.
+ */
+export function withAccountConnectState(
+  row: MachineRowModel,
+  state: AccountAutoConnectState | undefined,
+  onAccount: boolean,
+  /** Saved here already: its Connect is about its address, not this. */
+  saved: boolean,
+): MachineRowModel {
+  if (
+    saved ||
+    row.connect === null ||
+    row.fleetMachine === null ||
+    row.fleetMachine.status === "identity-mismatch" ||
+    fleetMachineHasTailnetAddress(row.fleetMachine) ||
+    !onAccount ||
+    // Without a grant in force it is not saved for this; its row stays as built.
+    (state === undefined && !fleetMachineGranted(row.fleetMachine))
+  )
+    return row;
+  if (state?.phase === "connecting")
+    return {
+      ...row,
+      seen: { state: "reachable", text: CONNECTING_REASON },
+      connect: { enabled: false, label: "Connecting…" },
+    };
+  return {
+    ...row,
+    seen: state
+      ? {
+          state: row.seen.state,
+          text: state.reason,
+          ...(state.phase === "failed" && state.detail !== undefined
+            ? { detail: state.detail }
+            : {}),
+        }
+      : row.seen,
+    // Pressing it does nothing while Connect itself cannot be reached.
+    connect: { enabled: accountConnectCanRetry(state), label: "Connect" },
+  };
 }
 
 /** Connect for a private machine, or why it cannot be pressed yet. */

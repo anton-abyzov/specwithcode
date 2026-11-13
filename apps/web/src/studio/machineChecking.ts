@@ -12,6 +12,7 @@ import {
   rejectedSavedEnvironments,
   savedRouteOrigins,
 } from "./fleetAutoConnect";
+import { useAccountAutoConnectStates } from "./grantedAccountMachines";
 
 /*
  * Machines whose first automatic pairing has finished, won or lost, since the
@@ -28,6 +29,20 @@ export function markFleetAutoConnectSettled(environmentId: string): void {
   settledAutoConnects.add(environmentId);
   version += 1;
   for (const listener of listeners) listener();
+}
+
+/** Whether the automatic fleet pairing has finished with this machine since the page loaded. */
+export function fleetAutoConnectSettled(environmentId: string): boolean {
+  return settledAutoConnects.has(environmentId);
+}
+
+/** Re-renders when an automatic fleet pairing settles; returns a version to list as a dependency. */
+export function useFleetAutoConnectSettledVersion(): number {
+  return useSyncExternalStore(
+    subscribe,
+    () => version,
+    () => version,
+  );
 }
 
 function subscribe(listener: () => void) {
@@ -78,6 +93,8 @@ export function useMachineStillChecking(): (environmentId: string) => boolean {
     primaryEnvironmentId,
     snapshot?.connectPermission ?? AuthAccessWriteScope,
   );
+  // Connect-only machines that allowed this one, while they are being saved over Connect.
+  const accountStates = useAccountAutoConnectStates();
   const settled = useSyncExternalStore(
     subscribe,
     () => version,
@@ -115,14 +132,16 @@ export function useMachineStillChecking(): (environmentId: string) => boolean {
   const fleetPending =
     primaryEnvironmentId !== null && canPair && snapshot === null && fleet.loading;
   return useCallback(
-    (environmentId: string) =>
-      machineStillChecking({
+    (environmentId: string) => {
+      const savingOverConnect = accountStates.get(environmentId)?.phase === "connecting";
+      return machineStillChecking({
         catalogReady: isReady,
         phase: phases.get(environmentId) ?? null,
-        autoConnect,
+        autoConnect: autoConnect || savingOverConnect,
         fleetPending,
-        autoConnectWillTry: willTry.has(environmentId),
-      }),
-    [autoConnect, fleetPending, isReady, phases, willTry],
+        autoConnectWillTry: willTry.has(environmentId) || savingOverConnect,
+      });
+    },
+    [accountStates, autoConnect, fleetPending, isReady, phases, willTry],
   );
 }

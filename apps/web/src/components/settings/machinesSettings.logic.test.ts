@@ -18,6 +18,7 @@ import {
   pairingLinkBaseUrl,
   sharedProjectRole,
   unseenFleetMachines,
+  withAccountConnectState,
   type MachineProjectInput,
 } from "./machinesSettings.logic";
 
@@ -559,5 +560,64 @@ describe("buildMachineRows project lists", () => {
     const unseen = rows.find((row) => row.environmentId === m3);
     expect(unseen?.projects.own.map((entry) => entry.title)).toEqual(["EasyChamp"]);
     expect(unseen?.projects.archived).toEqual([]);
+  });
+});
+
+describe("withAccountConnectState", () => {
+  const m5 = EnvironmentId.make("env-m5");
+  const connectOnlyRow = () => {
+    const [row] = buildMachineRows({
+      environments: [],
+      primaryEnvironmentId: m4,
+      fleet: fleet([
+        fleetMachine(m5, "M5", {
+          url: "https://relay.specwithcode.com/e/env-m5",
+          transport: "connect",
+          pairingConfigured: false,
+          workers: {
+            status: "allowed",
+            access: "full-access",
+            expiresAt: null,
+            renewable: true,
+            problem: null,
+          },
+        }),
+      ]),
+      savedOrigins: new Map(),
+      canPair: true,
+      projects: [],
+      hostBlocks: [],
+      workGrants: null,
+      scratchRootFor: () => undefined,
+      displayName: (_id, label) => label,
+    }).filter((item) => item.environmentId === m5);
+    if (!row) throw new Error("no M5 row");
+    return row;
+  };
+
+  it("lets a Connect-only account machine connect over Connect, not Tailscale pairing", () => {
+    const row = connectOnlyRow();
+    expect(row.connect?.enabled).toBe(false);
+    expect(withAccountConnectState(row, undefined, true, false).connect).toEqual({
+      enabled: true,
+      label: "Connect",
+    });
+    expect(withAccountConnectState(row, undefined, false, false)).toBe(row);
+    expect(withAccountConnectState(row, undefined, true, true)).toBe(row);
+  });
+
+  it("says it is connecting while it is saved, and the reason once it failed", () => {
+    const row = connectOnlyRow();
+    const connecting = withAccountConnectState(row, { phase: "connecting" }, true, false);
+    expect(connecting.seen.text).toBe("Connecting over SpecWithCode Connect…");
+    expect(connecting.connect).toEqual({ enabled: false, label: "Connecting…" });
+    const failed = withAccountConnectState(
+      row,
+      { phase: "failed", reason: "Relay refused" },
+      true,
+      false,
+    );
+    expect(failed.seen.text).toBe("Relay refused");
+    expect(failed.connect?.enabled).toBe(true);
   });
 });

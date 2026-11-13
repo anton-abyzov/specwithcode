@@ -10,11 +10,24 @@ import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { useProjects } from "../state/entities";
-import { useEnvironments, useRelayEnvironmentDiscovery } from "../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
+import { usePrimaryFleetSnapshot } from "../studio/fleet";
 import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
+import {
+  connectRouteAddsInFlight,
+  onConnectRouteAddsChange,
+  useAccountAutoConnectStates,
+  grantedAccountMachinesToConnect,
+  setConnectRouteAddInFlight,
+} from "../studio/grantedAccountMachines";
 import { linkedMachinesToConnect } from "../studio/linkedMachines";
+import { GrantedAccountMachines } from "./GrantedAccountMachines";
 import {
   connectFirstRouteOrder,
   isConnectRouteRemoving,
@@ -29,7 +42,6 @@ const MAX_REORDER_ATTEMPTS = 3;
 const MAX_ADD_ATTEMPTS = 3;
 /** How often the Connect list is re-read while a saved machine can't be reached. */
 const UNREACHABLE_REFRESH_MS = 5 * 60_000;
-
 /**
  * While signed in to SpecWithCode Connect, keeps a Connect route on every
  * saved machine this account reaches, placed first when it is added so
@@ -37,13 +49,16 @@ const UNREACHABLE_REFRESH_MS = 5 * 60_000;
  * sign-out or a failed add comes back; only one the user removed from the
  * route list stays removed. A machine a shared project names but this device
  * never saved, such as the machine a handed-off project came from, is saved
- * with a Connect route, unless the user removed it here. The caller keys this
- * by account.
+ * with a Connect route, unless the user removed it here. Account machines
+ * that allowed this one to run work on them are saved by
+ * {@link GrantedAccountMachines}. The caller keys this by account.
  */
 export function ConnectRouteReconciler() {
   const { environments } = useEnvironments();
   const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const fleetSnapshot = usePrimaryFleetSnapshot(primaryEnvironmentId);
   const register = useAtomCommand(environmentCatalog.register, {
     label: "Add SpecWithCode Connect route",
     reportFailure: false,
@@ -72,6 +87,10 @@ export function ConnectRouteReconciler() {
   // Bumped when the user asks for Connect routes from the Connections banner,
   // so the add runs now and gets fresh attempts.
   const [requests, setRequests] = useState(0);
+  // The saver's published states and adds feed the linked path's skip list.
+  const saverStates = useAccountAutoConnectStates();
+  const [addsVersion, setAddsVersion] = useState(0);
+  useEffect(() => onConnectRouteAddsChange(() => setAddsVersion((current) => current + 1)), []);
   // Machines the user asked for: a failed add is reported, not retried silently.
   const requestedRef = useRef<Set<string>>(new Set());
   useEffect(
@@ -133,14 +152,32 @@ export function ConnectRouteReconciler() {
       });
     }
     // Linked machines this device has no entry for: Connect is their only route here.
+    const savedEnvironmentIds = new Set<string>(
+      environments.map((machine) => machine.environmentId),
+    );
+    // A linked machine that also allowed this one is saved by GrantedAccountMachines.
+    const granted = grantedAccountMachinesToConnect({
+      snapshot: fleetSnapshot,
+      currentEnvironmentId: primaryEnvironmentId,
+      savedEnvironmentIds,
+      discovered: discovery.environments,
+    }).map((machine) => machine.environmentId);
     const linked = linkedMachinesToConnect({
       projects,
-      savedEnvironmentIds: new Set(environments.map((machine) => machine.environmentId)),
+      savedEnvironmentIds,
       discovered: discovery.environments,
-      skip: new Set([...skip, ...readSkippedFleetEnvironments()]),
+      skip: new Set([
+        ...skip,
+        ...readSkippedFleetEnvironments(),
+        ...granted,
+        ...connectRouteAddsInFlight(),
+        // Machines the saver publishes a state for, a pressed tailnet one too.
+        ...saverStates.keys(),
+      ]),
     });
     for (const machine of linked) {
       inFlightRef.current.add(machine.environmentId);
+      setConnectRouteAddInFlight(machine.environmentId, true);
       addAttemptsRef.current.set(
         machine.environmentId,
         (addAttemptsRef.current.get(machine.environmentId) ?? 0) + 1,
@@ -152,9 +189,23 @@ export function ConnectRouteReconciler() {
             label: machine.label,
           }),
         }),
-      ).then(() => inFlightRef.current.delete(machine.environmentId));
+      ).then(() => {
+        inFlightRef.current.delete(machine.environmentId);
+        setConnectRouteAddInFlight(machine.environmentId, false);
+      });
     }
-  }, [discovery, environments, projects, register, registerRequested, requests]);
+  }, [
+    discovery,
+    environments,
+    fleetSnapshot,
+    primaryEnvironmentId,
+    projects,
+    register,
+    registerRequested,
+    requests,
+    saverStates,
+    addsVersion,
+  ]);
 
   // Reorder once the catalog shows the new route, so the order lists every route.
   useEffect(() => {
@@ -192,5 +243,5 @@ export function ConnectRouteReconciler() {
     return () => clearInterval(timer);
   }, [anyUnreachable, refreshDiscovery]);
 
-  return null;
+  return <GrantedAccountMachines snapshot={fleetSnapshot} />;
 }

@@ -4557,4 +4557,24 @@ export const ko: PhraseCatalog = {
     "설치가 오류로 끝났습니다. 로그는 아래에 있습니다. 거기서 다시 시도를 누르거나 터미널에서 명령을 실행하세요.",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "Muse Code 같은 다른 에이전트나 사용자 지정 제공업체가 필요한가요? 초기 설정을 마친 뒤 언제든지 설정 > 제공업체에서 추가하세요.",
+  "Connect automatically is off.": "자동 연결이 꺼져 있습니다.",
+  "SpecWithCode Connect did not answer for it.":
+    "SpecWithCode Connect가 이 컴퓨터에 대해 응답하지 않았습니다.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
+    "목록에 없음: {names}. 여기서 사용하려면 해당 컴퓨터에서 설정 > 머신을 열고 이 컴퓨터가 그곳에서 작업을 실행하도록 허용하세요.",
+  "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
+    "목록에 없음: {names}. 이 앱은 아직 연결되지 않았습니다. 여기서 같은 계정으로 SpecWithCode Connect에 로그인하거나 다음에서 연결하세요:",
+  "Settings > Machines": "설정 > 머신",
+  "Connecting over SpecWithCode Connect…": "SpecWithCode Connect로 연결하는 중…",
+  "Not connected to this app yet.": "아직 이 앱에 연결되지 않았습니다.",
+  "Removed from this app.": "이 앱에서 제거되었습니다.",
+  "SpecWithCode Connect cannot be reached right now.":
+    "지금은 SpecWithCode Connect에 연결할 수 없습니다.",
+  "Could not connect over SpecWithCode Connect.": "SpecWithCode Connect로 연결하지 못했습니다.",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect가 받아들였지만 여기에는 추가되지 않았습니다.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
+    "목록에 없음: {names}. 여기에서 사용하려면 해당 머신에서 설정 > 머신 을 열고 {machine}이(가) 그곳에서 작업을 실행하도록 허용하세요.",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "이 기기는 SpecWithCode Connect로만 연결되며, 이 앱의 Connect 계정에는 아직 표시되지 않습니다. 여기서 같은 계정으로 SpecWithCode Connect에 로그인하고 잠시 기다린 뒤 연결을 다시 누르세요.",
 };

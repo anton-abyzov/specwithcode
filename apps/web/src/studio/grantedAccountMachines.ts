@@ -1,0 +1,229 @@
+/**
+ * Machines of this SpecWithCode Connect account that let this machine run
+ * work on them and so joined its server's fleet, but have no Tailscale
+ * address. Fleet pairing needs a tailnet address and the linked-project rule
+ * needs a shared project, so without this a machine reachable over Connect
+ * only stayed unsaved until someone pressed Connect. Connect is its only
+ * route here, and the grant it gave is consent enough to save it.
+ *
+ * @module grantedAccountMachines
+ */
+import { useSyncExternalStore } from "react";
+import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
+import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/relay";
+
+import { fleetMachineHasTailnetAddress } from "./fleetAutoConnect";
+
+/**
+ * Whether a fleet machine's grant to run work here is in force. A machine
+ * listed with a revoked, expired or never-given grant is no consent to save
+ * it, nor is one from a server too old to report grants, as elsewhere.
+ */
+export function fleetMachineGranted(machine: {
+  readonly workers?: { readonly status: string } | undefined;
+}): boolean {
+  const status = machine.workers?.status;
+  return status === "allowed" || status === "expiring";
+}
+
+/** Account machines in the fleet that this app should save with a Connect route now. */
+export function grantedAccountMachinesToConnect(input: {
+  readonly snapshot: StudioFleetSnapshot | null;
+  readonly currentEnvironmentId: string | null;
+  /** Every machine this app saved, connected or not. */
+  readonly savedEnvironmentIds: ReadonlySet<string>;
+  /** This account's machines, from the SpecWithCode Connect list. */
+  readonly discovered: ReadonlyMap<string, { readonly environment: RelayClientEnvironmentRecord }>;
+  /** Left out: removed here, Connect route declined, in flight or out of attempts. */
+  readonly skip?: ReadonlySet<string>;
+  /** Asked for by hand: included even with a tailnet address, whose pairing may have failed. */
+  readonly requested?: ReadonlySet<string>;
+}): RelayClientEnvironmentRecord[] {
+  const seen = new Set<string>();
+  const machines: RelayClientEnvironmentRecord[] = [];
+  // The fleet says this one is not who it claims to be: never saved, pressed or not.
+  const mismatched = new Set<string>(
+    (input.snapshot?.machines ?? [])
+      .filter((machine) => machine.status === "identity-mismatch")
+      .map((machine) => machine.environmentId),
+  );
+  for (const machine of input.snapshot?.machines ?? []) {
+    const id = machine.environmentId;
+    if (
+      seen.has(id) ||
+      id === input.currentEnvironmentId ||
+      machine.status === "identity-mismatch" ||
+      // Saved on its own only while its grant holds; Connect by hand saves it in any case.
+      (!fleetMachineGranted(machine) && !input.requested?.has(id)) ||
+      // A machine with a tailnet address is paired by the fleet instead.
+      (fleetMachineHasTailnetAddress(machine) && !input.requested?.has(id)) ||
+      input.savedEnvironmentIds.has(id) ||
+      input.skip?.has(id)
+    )
+      continue;
+    seen.add(id);
+    const found = input.discovered.get(id);
+    if (found) machines.push(found.environment);
+  }
+  // Connect by hand for an account machine outside this fleet (one that
+  // allowed the project's machine, not this one): the press is the consent.
+  for (const id of input.requested ?? []) {
+    if (seen.has(id) || id === input.currentEnvironmentId || mismatched.has(id)) continue;
+    if (input.savedEnvironmentIds.has(id) || input.skip?.has(id)) continue;
+    const found = input.discovered.get(id);
+    if (found) machines.push(found.environment);
+  }
+  return machines;
+}
+
+/**
+ * Fleet machines reachable over Connect only that the account list does not
+ * show yet, such as a machine that signed in a moment ago: the list is read
+ * again for them.
+ */
+export function grantedMachinesMissingFromAccount(input: {
+  readonly snapshot: StudioFleetSnapshot | null;
+  readonly currentEnvironmentId: string | null;
+  readonly savedEnvironmentIds: ReadonlySet<string>;
+  readonly discovered: ReadonlyMap<string, unknown>;
+}): string[] {
+  return (input.snapshot?.machines ?? [])
+    .filter(
+      (machine) =>
+        machine.environmentId !== input.currentEnvironmentId &&
+        machine.status !== "identity-mismatch" &&
+        fleetMachineGranted(machine) &&
+        !fleetMachineHasTailnetAddress(machine) &&
+        !input.savedEnvironmentIds.has(machine.environmentId) &&
+        !input.discovered.has(machine.environmentId),
+    )
+    .map((machine) => machine.environmentId);
+}
+
+/**
+ * Where saving each such machine stands, published by the reconciler so the
+ * move dialog, Settings > Machines and the checking state all read one answer.
+ * A machine absent from the map is saved, not a candidate, or not tried yet.
+ */
+export type AccountAutoConnectState =
+  | { readonly phase: "connecting" }
+  /** The last automatic or requested save failed; Connect by hand retries. */
+  | { readonly phase: "failed"; readonly reason: string; readonly detail?: string }
+  /** Not tried on purpose: removed here, Connect automatically off, or Connect unreachable. */
+  | { readonly phase: "held"; readonly reason: string };
+
+export const AUTO_CONNECT_OFF_REASON = "Connect automatically is off.";
+export const REMOVED_HERE_REASON = "Removed from this app.";
+export const CONNECT_UNREACHABLE_REASON = "SpecWithCode Connect cannot be reached right now.";
+export const CONNECT_NO_ANSWER_REASON = "SpecWithCode Connect did not answer for it.";
+export const CONNECT_FAILED_REASON = "Could not connect over SpecWithCode Connect.";
+export const CONNECT_NOT_ADDED_REASON = "SpecWithCode Connect took it, but it was not added here.";
+
+const addsInFlight = new Set<string>();
+const addListeners = new Set<() => void>();
+
+/**
+ * Machines whose Connect route is being added right now, by the reconciler's
+ * linked path or GrantedAccountMachines: neither starts a second add for one.
+ */
+export function connectRouteAddsInFlight(): ReadonlySet<string> {
+  return addsInFlight;
+}
+
+export function setConnectRouteAddInFlight(environmentId: string, inFlight: boolean): void {
+  if (inFlight === addsInFlight.has(environmentId)) return;
+  if (inFlight) addsInFlight.add(environmentId);
+  else addsInFlight.delete(environmentId);
+  for (const listener of addListeners) listener();
+}
+
+/** Called when an add starts or ends, so the other side can act on its result. */
+export function onConnectRouteAddsChange(listener: () => void): () => void {
+  addListeners.add(listener);
+  return () => {
+    addListeners.delete(listener);
+  };
+}
+
+let states: ReadonlyMap<string, AccountAutoConnectState> = new Map();
+const listeners = new Set<() => void>();
+let version = 0;
+
+function sameStates(
+  a: ReadonlyMap<string, AccountAutoConnectState>,
+  b: ReadonlyMap<string, AccountAutoConnectState>,
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, state] of a) {
+    const other = b.get(id);
+    if (!other || other.phase !== state.phase) return false;
+    if ("reason" in state && "reason" in other && state.reason !== other.reason) return false;
+    if ("detail" in state || "detail" in other)
+      if ((state as { detail?: string }).detail !== (other as { detail?: string }).detail)
+        return false;
+  }
+  return true;
+}
+
+/** Replaces every machine's state; called by the reconciler after each pass. */
+export function publishAccountAutoConnectStates(
+  next: ReadonlyMap<string, AccountAutoConnectState>,
+): void {
+  if (sameStates(states, next)) return;
+  states = new Map(next);
+  version += 1;
+  for (const listener of listeners) listener();
+}
+
+export function subscribeAccountAutoConnectStates(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function accountAutoConnectStates(): ReadonlyMap<string, AccountAutoConnectState> {
+  return states;
+}
+
+const connectRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) => boolean>();
+
+/**
+ * Connect by hand for account machines that allowed this one: saves them over
+ * SpecWithCode Connect now, also while Connect automatically is off, and
+ * lifts an earlier removal here. Reads no list again, so other machine lists
+ * stay put.
+ */
+export function requestAccountMachineConnect(environmentIds: ReadonlyArray<string>): boolean {
+  // False when nothing will save them (signed out of Connect, or not in this
+  // app's fleet): the caller pairs instead.
+  let taken = false;
+  for (const listener of connectRequestListeners) taken = listener(environmentIds) || taken;
+  return taken;
+}
+
+/** The listener returns whether it will save the machines. */
+export function onAccountMachineConnectRequest(
+  listener: (environmentIds: ReadonlyArray<string>) => boolean,
+): () => void {
+  connectRequestListeners.add(listener);
+  return () => {
+    connectRequestListeners.delete(listener);
+  };
+}
+
+/** Whether Connect by hand can do anything now: not while Connect itself is unreachable. */
+export function accountConnectCanRetry(state: AccountAutoConnectState | undefined): boolean {
+  if (state === undefined) return true;
+  if (state.phase === "connecting") return false;
+  return !(state.phase === "held" && state.reason === CONNECT_UNREACHABLE_REASON);
+}
+
+/** {@link accountAutoConnectStates}, re-rendering when the reconciler publishes. */
+export function useAccountAutoConnectStates(): ReadonlyMap<string, AccountAutoConnectState> {
+  return useSyncExternalStore(
+    subscribeAccountAutoConnectStates,
+    accountAutoConnectStates,
+    accountAutoConnectStates,
+  );
+}
