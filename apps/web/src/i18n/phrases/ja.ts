@@ -4628,4 +4628,6 @@ export const ja: PhraseCatalog = {
     "SpecWithCode Connect は受け付けましたが、ここには追加されませんでした。",
   "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
     "一覧にないマシン: {names}。ここで使うには、そのマシンで 設定 > マシン を開き、{machine} が作業を実行することを許可してください。",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "このマシンには SpecWithCode Connect 経由でしか接続できず、このアプリの Connect アカウントにはまだ表示されていません。ここで同じアカウントで SpecWithCode Connect にサインインし、少し待ってからもう一度「接続」を押してください。",
 };

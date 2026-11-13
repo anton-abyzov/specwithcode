@@ -318,6 +318,9 @@ export interface FleetMachineCardExtras {
   readonly gone: ReactNode;
 }
 
+/** A Connect-only machine this account's list does not show (yet). */
+export const CONNECT_ONLY_NOT_LISTED =
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.";
 interface Props extends FleetInventoryComposition {
   environmentId: EnvironmentId;
   savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
@@ -502,12 +505,15 @@ export function StudioFleetConnections({
     setError(null);
     // A Connect-only machine is saved over Connect, which needs no pairing
     // permission; Tailscale pairing cannot reach it.
-    // A saved one, or one this account's list does not show, is paired as before.
-    if (
-      !fleetMachineHasTailnetAddress(machine) &&
-      requestAccountMachineConnect([machine.environmentId])
-    )
-      return;
+    // A saved one is paired as before; an unsaved one this account's list does
+    // not show yet cannot be reached here, so the press says why.
+    if (!fleetMachineHasTailnetAddress(machine)) {
+      if (requestAccountMachineConnect([machine.environmentId])) return;
+      if (!savedEnvironmentIds.includes(machine.environmentId)) {
+        setError(CONNECT_ONLY_NOT_LISTED);
+        return;
+      }
+    }
     if (!canPair) return;
     setPending(machine.id);
     try {
@@ -1398,7 +1404,7 @@ export function StudioFleetRoster({
           {removedLabel ? <ConnectDeregisterHint label={removedLabel} /> : null}
           {error ? (
             <p role="alert" className="text-destructive-foreground">
-              {error}
+              {tx(error)}
             </p>
           ) : null}
         </div>

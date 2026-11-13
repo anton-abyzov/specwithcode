@@ -4655,4 +4655,6 @@ export const de: PhraseCatalog = {
     "SpecWithCode Connect hat ihn angenommen, aber er wurde hier nicht hinzugefügt.",
   "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
     "Nicht aufgeführt: {names}. Um eines davon hier zu nutzen, öffne dort Einstellungen > Rechner und erlaube {machine}, dort Arbeit auszuführen.",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "Dieser Rechner ist nur über SpecWithCode Connect erreichbar, und das Connect-Konto dieser App listet ihn noch nicht. Melde dich hier mit demselben Konto bei SpecWithCode Connect an, warte kurz und drücke dann erneut auf Verbinden.",
 };

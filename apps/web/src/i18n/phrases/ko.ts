@@ -4575,4 +4575,6 @@ export const ko: PhraseCatalog = {
     "SpecWithCode Connect가 받아들였지만 여기에는 추가되지 않았습니다.",
   "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
     "목록에 없음: {names}. 여기에서 사용하려면 해당 머신에서 설정 > 머신 을 열고 {machine}이(가) 그곳에서 작업을 실행하도록 허용하세요.",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "이 기기는 SpecWithCode Connect로만 연결되며, 이 앱의 Connect 계정에는 아직 표시되지 않습니다. 여기서 같은 계정으로 SpecWithCode Connect에 로그인하고 잠시 기다린 뒤 연결을 다시 누르세요.",
 };

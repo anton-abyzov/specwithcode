@@ -4446,4 +4446,6 @@ export const zh: PhraseCatalog = {
     "SpecWithCode Connect 已接受，但未添加到这里。",
   "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
     "未列出：{names}。要在这里使用，请在该机器上打开 设置 > 机器，并允许 {machine} 在那里运行工作。",
+  "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
+    "这台机器只能通过 SpecWithCode Connect 访问，而此应用的 Connect 账户还未列出它。请在这里用同一账户登录 SpecWithCode Connect，稍等片刻，然后再次点击“连接”。",
 };
