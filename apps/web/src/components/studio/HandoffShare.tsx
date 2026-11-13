@@ -33,7 +33,9 @@ import { Checkbox } from "../ui/checkbox";
 import { HandoffCopyActions } from "./HandoffCopyActions";
 import { useCopyScope } from "./HandoffCopyScope";
 import { HandoffShareRepositories } from "./HandoffShareRepositories";
-import { MoreOptions, useProjectMoveDialog } from "./ProjectMoveOptions";
+import { useProjectMoveDialog } from "./ProjectMoveOptions";
+import { SettingHelp } from "../settings/SettingHelp";
+import { Radio, RadioGroup } from "../ui/radio-group";
 
 /** How long a finished clone waits for its link before Add is offered again. */
 const LINK_WAIT_MS = 120_000;
@@ -109,7 +111,8 @@ export function HandoffShare({
   const [error, setError] = useState<string | null>(null);
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
 
-  const scope = useCopyScope(project, !project.repositoryIdentity && !linked);
+  // Nested repositories decide which way leads, so every unlinked project checks for them.
+  const scope = useCopyScope(project, !linked);
   const nested = scope.selected.repositories.length > 0;
   const urls = project.repositoryIdentity ? cloneUrlsFor(project.repositoryIdentity) : null;
   const remoteUrl = urls ? cloneUrlFor(urls, urls.preferred) : null;
@@ -216,6 +219,42 @@ export function HandoffShare({
     }
   };
 
+  // Both ways stay in view. Copy leads where Git cannot carry the work: no remote to
+  // clone from, or nested repositories whose local work a clone of the root leaves out.
+  const cloneOff = remoteUrl === null || !canClone;
+  const copyFirst = cloneOff || nested;
+  const [choice, setChoice] = useState<"clone" | "copy" | null>(null);
+  const way = cloneOff ? "copy" : (choice ?? (copyFirst ? "copy" : "clone"));
+  const choosing = machineLabel !== null && !linked && !justAdded;
+  const repositoryCount = scope.selected.repositories.length;
+  const copyLine = nested
+    ? `${repositoryCount}${scope.selected.truncated ? "+" : ""} ${repositoryCount === 1 ? "repository" : "repositories"}, with local work`
+    : "Everything except secrets, with local changes";
+  const cloneLine = remoteUrl === null ? "No Git remote to clone from" : "Pushed work only";
+  const copyChoice = (
+    <ShareChoice
+      key="copy"
+      value="copy"
+      label={nested ? "Copy the whole folder" : "Copy files"}
+      line={copyLine}
+      help="Uncommitted and ignored files go too. Secret files such as .env stay here unless you pick them in the review."
+    />
+  );
+  const cloneChoice = (
+    <ShareChoice
+      key="clone"
+      value="clone"
+      disabled={remoteUrl === null || !canClone}
+      label="Clone from Git"
+      line={
+        remoteUrl !== null && !canClone
+          ? `Update ${machineLabel ?? "the machine"} first`
+          : cloneLine
+      }
+      help="The other machine clones the repository and links it, so the goal, instructions, notes and repository list stay shared. Uncommitted, ignored and secret files stay here unless you tick them below."
+    />
+  );
+
   return (
     <div className="space-y-4" data-slot="handoff-share">
       <fieldset className="min-w-0 space-y-2">
@@ -236,45 +275,47 @@ export function HandoffShare({
         )}
         {moveDialog?.machinesExtra}
       </fieldset>
-      {machineLabel && (
+      {machineLabel && (justAdded || linked) && (
         <p className="wrap-anywhere text-sm text-muted-foreground" data-slot="handoff-share-about">
           {justAdded
             ? joined
-              ? `${machineLabel} has this project. It shares the goal, instructions, notes and repository list.`
+              ? `${machineLabel} has this project.`
               : alsoMove
                 ? `${machineLabel} is cloning this project. Keep this open: the coordinator moves when the clone finishes.`
                 : `${machineLabel} is cloning this project. You can close this; it links when the clone finishes.`
-            : linked
-              ? `${machineLabel} already has this project. Its goal, instructions, notes and repository list stay in sync.`
-              : remoteUrl === null
-                ? `This project folder has no Git remote of its own.`
-                : `${machineLabel} clones this project from Git and shares its goal, instructions, notes and repository list. Other repositories clone when a task needs them.`}
+            : `${machineLabel} already has this project.`}
         </p>
       )}
-      {machineLabel && !linked && !justAdded && remoteUrl === null && (
+      {choosing && (
+        <fieldset className="min-w-0" data-slot="handoff-share-choices" disabled={busy}>
+          <legend className="mb-2 text-xs font-medium text-muted-foreground">How</legend>
+          <RadioGroup
+            value={way}
+            onValueChange={(value) => setChoice(value as "clone" | "copy")}
+            disabled={busy}
+            aria-label="How the project gets there"
+          >
+            {copyFirst ? [copyChoice, cloneChoice] : [cloneChoice, copyChoice]}
+          </RadioGroup>
+        </fieldset>
+      )}
+      {choosing && remoteUrl === null && (nested || scope.loading || scope.notice) && (
         <HandoffShareRepositories scope={scope} machineLabel={machineLabel} />
       )}
-      {machineLabel && !linked && !justAdded && uncommittedFiles > 0 && (
-        <p className="wrap-anywhere text-sm text-muted-foreground" data-slot="handoff-share-local">
+      {choosing && uncommittedFiles > 0 && way === "clone" && (
+        // Work Git does not carry: say so where it would be lost, never only in a hint.
+        <p
+          className="wrap-anywhere text-sm text-warning-foreground"
+          data-slot="handoff-share-local"
+        >
           {uncommittedFiles === 1
-            ? remoteUrl === null
-              ? "1 local change"
-              : "1 uncommitted file stays"
-            : remoteUrl === null
-              ? `${uncommittedFiles} local changes`
-              : `${uncommittedFiles} uncommitted files stay`}{" "}
-          on {sourceLabel}
-          {remoteUrl === null
-            ? ". The transfer review lets you copy local changes and files outside Git. Secret files need a separate selection."
-            : ". Commit and push to share them, or choose Copy files instead."}
+            ? "1 uncommitted file stays"
+            : `${uncommittedFiles} uncommitted files stay`}{" "}
+          on {sourceLabel}. Commit and push, or copy files.
         </p>
       )}
-      {machineLabel && !linked && remoteUrl !== null && !justAdded && (
+      {choosing && remoteUrl !== null && way === "clone" && (
         <div className="space-y-2" data-slot="handoff-share-extras">
-          <p className="wrap-anywhere text-sm text-muted-foreground">
-            Files Git ignores and secret files, such as .env, stay on {sourceLabel} unless you send
-            them.
-          </p>
           <ShareTick
             checked={copyIgnored}
             disabled={busy}
@@ -289,19 +330,17 @@ export function HandoffShare({
             label="Include secrets"
             note="Add opens the full review, where you pick the secret files and ignored files to send."
           />
+          <label className="flex items-start gap-2 text-sm" data-slot="handoff-share-move">
+            <span className="flex h-5 shrink-0 items-center">
+              <Checkbox
+                checked={alsoMove}
+                disabled={busy}
+                onCheckedChange={(checked) => setAlsoMove(checked === true)}
+              />
+            </span>
+            <span className="min-w-0 wrap-anywhere leading-5">Also move the coordinator there</span>
+          </label>
         </div>
-      )}
-      {machineLabel && !linked && remoteUrl !== null && !justAdded && (
-        <label className="flex items-start gap-2 text-sm" data-slot="handoff-share-move">
-          <span className="flex h-5 shrink-0 items-center">
-            <Checkbox
-              checked={alsoMove}
-              disabled={busy}
-              onCheckedChange={(checked) => setAlsoMove(checked === true)}
-            />
-          </span>
-          <span className="min-w-0 wrap-anywhere leading-5">Also move the coordinator there</span>
-        </label>
       )}
       {machineLabel && cloneStopped && !joined && (
         <p
@@ -312,26 +351,11 @@ export function HandoffShare({
           chat.
         </p>
       )}
-      {machineLabel && !linked && !justAdded && remoteUrl !== null && !canClone && (
-        <p className="wrap-anywhere text-sm text-muted-foreground">
-          Update {machineLabel} to add this project to it.
-        </p>
-      )}
       {error && (
         <p role="alert" className="wrap-anywhere text-sm text-destructive-foreground">
           {error}
         </p>
       )}
-      <MoreOptions disabled={busy}>
-        <div>
-          <Button size="sm" variant="outline" disabled={busy} onClick={onCopyInstead}>
-            Copy files instead
-          </Button>
-          <p className="mt-1 text-xs text-muted-foreground">
-            For a project with no remote, or local files you want to send.
-          </p>
-        </div>
-      </MoreOptions>
       <HandoffCopyActions>
         {justAdded ? null : linked ? (
           <Button disabled={busy || !machineLabel} onClick={onMove}>
@@ -341,15 +365,64 @@ export function HandoffShare({
           <Button disabled={busy || !machineLabel || scope.loading} onClick={onPrepareRepositories}>
             {nested ? "Review repositories and local files" : "Review files to transfer"}
           </Button>
+        ) : way === "copy" ? (
+          <Button disabled={busy || !machineLabel} onClick={onCopyInstead}>
+            Copy files…
+          </Button>
         ) : (
-          <Button disabled={busy || !machineLabel || !canClone} onClick={() => void add()}>
+          // Wait for the nested-repository check: it can make the copy the better way.
+          <Button
+            disabled={busy || !machineLabel || !canClone || scope.loading}
+            onClick={() => void add()}
+          >
             {busy ? "Adding…" : machineLabel ? `Add ${machineLabel}` : "Add"}
           </Button>
         )}
+        {!justAdded && (linked || !machineLabel) ? (
+          // A machine with the project can still take a copy without the coordinator moving.
+          <Button variant="outline" disabled={busy} onClick={onCopyInstead}>
+            Copy files…
+          </Button>
+        ) : null}
         <Button variant="outline" disabled={busy} onClick={onClose}>
           {justAdded ? "Close" : "Cancel"}
         </Button>
       </HandoffCopyActions>
+    </div>
+  );
+}
+
+/** One way to put the project there: a short line, and the rest in a hint. */
+function ShareChoice({
+  value,
+  label,
+  line,
+  help,
+  disabled = false,
+}: {
+  readonly value: "clone" | "copy";
+  readonly label: string;
+  readonly line: string;
+  readonly help: string;
+  readonly disabled?: boolean;
+}) {
+  return (
+    <div
+      className={`flex min-w-0 items-start gap-3 text-sm ${disabled ? "opacity-60" : ""}`}
+      data-share-choice={value}
+    >
+      <label
+        className={`flex min-w-0 flex-1 items-start gap-3 ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
+      >
+        <span className="flex h-5 items-center">
+          <Radio value={value} disabled={disabled} />
+        </span>
+        <span className="min-w-0 leading-5">
+          <span className="block wrap-anywhere">{label}</span>
+          <span className="block wrap-anywhere text-xs text-muted-foreground">{line}</span>
+        </span>
+      </label>
+      <SettingHelp label={label}>{help}</SettingHelp>
     </div>
   );
 }
@@ -376,10 +449,8 @@ function ShareTick({
           onCheckedChange={(value) => onChange(value === true)}
         />
       </span>
-      <span className="min-w-0 wrap-anywhere leading-5">
-        {label}
-        <span className="block text-xs text-muted-foreground">{note}</span>
-      </span>
+      <span className="min-w-0 wrap-anywhere leading-5">{label}</span>
+      <SettingHelp label={label}>{note}</SettingHelp>
     </label>
   );
 }

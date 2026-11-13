@@ -62,6 +62,7 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Radio, RadioGroup } from "../ui/radio-group";
+import { RemoteFolderBrowser } from "../studio/RemoteFolderBrowser";
 import { AddToMachineConsolidate } from "./AddToMachineConsolidate";
 
 const INSPECT_DEBOUNCE_MS = 300;
@@ -498,6 +499,8 @@ function AddToMachineBody({
           ) : (
             <SetupFields
               destName={destName}
+              destination={destination}
+              sourceFolder={source.workspaceRoot}
               sourceName={sourceName}
               urls={urls!}
               protocol={protocol}
@@ -594,6 +597,10 @@ function MachinePlace({
 
 function SetupFields(props: {
   readonly destName: string;
+  /** The machine the clone goes to: Browse lists its folders. */
+  readonly destination: EnvironmentId;
+  /** The project's folder here; its name ends the path a browsed parent gives. */
+  readonly sourceFolder: string;
   readonly sourceName: string;
   readonly urls: ReturnType<typeof cloneUrlsFor>;
   readonly protocol: CloneProtocol;
@@ -612,6 +619,15 @@ function SetupFields(props: {
   const tx = useTx();
   const folderId = useId();
   const { urls, plan, destName } = props;
+  const [browsing, setBrowsing] = useState(false);
+  const folderName =
+    props.sourceFolder
+      .replace(/[\\/]+$/u, "")
+      .split(/[\\/]/u)
+      .pop() || "project";
+  // The clone makes its own folder: a browsed folder is where it goes, under the project's name.
+  const browseStart =
+    props.folder.replace(/[\\/]+[^\\/]*$/u, "") || (props.folder.startsWith("/") ? "/" : "~/");
   return (
     <>
       <div className="space-y-1.5 text-sm" data-slot="add-url">
@@ -642,14 +658,37 @@ function SetupFields(props: {
         <Label htmlFor={folderId}>
           {renderRich(tx("Folder on {destName}"), { destName: destName })}
         </Label>
-        <Input
-          id={folderId}
-          value={props.folder}
-          autoComplete="off"
-          spellCheck={false}
-          disabled={props.disabled}
-          onChange={(event) => props.onFolderChange(event.target.value)}
-        />
+        <div className="flex gap-2">
+          <Input
+            id={folderId}
+            value={props.folder}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={props.disabled}
+            onChange={(event) => props.onFolderChange(event.target.value)}
+          />
+          <Button
+            variant="outline"
+            disabled={props.disabled}
+            aria-expanded={browsing}
+            data-slot="add-browse"
+            onClick={() => setBrowsing((value) => !value)}
+          >
+            {tx("Browse…")}
+          </Button>
+        </div>
+        {browsing && (
+          <RemoteFolderBrowser
+            machine={props.destination}
+            start={browseStart}
+            disabled={props.disabled}
+            onPick={(picked) =>
+              props.onFolderChange(
+                `${picked.replace(/[\\/]+$/u, "")}${picked.includes("\\") && !picked.includes("/") ? "\\" : "/"}${folderName}`,
+              )
+            }
+          />
+        )}
         {props.inspectionError && (
           <p role="alert" className="wrap-anywhere text-destructive-foreground text-xs">
             {props.inspectionError}

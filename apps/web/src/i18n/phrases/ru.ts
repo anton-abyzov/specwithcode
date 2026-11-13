@@ -4893,4 +4893,7 @@ export const ru: PhraseCatalog = {
     "Не установлен. Выполните эту команду в терминале на этом Mac, затем нажмите «Проверить снова».",
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "Не установлен. Скачайте его с официального сайта или попросите того, кто может обслуживать эту машину, установить его отсюда.",
+  "Browse…": "Обзор…",
+  "Add to this machine…": "Добавить на этот компьютер…",
+  "Runs on {machine}. No copy on this device.": "Работает на {machine}. На этом устройстве копии нет.",
 };

@@ -665,6 +665,46 @@
   }
 }
 
+/* The project's other copies under its own folder: machine, folder, state, Change…. */
+@utility project-folder-copies {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+@utility project-folder-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  & > .project-location {
+    flex: 1 1 10rem;
+    min-width: 0;
+  }
+}
+@utility project-folder-copy-machine {
+  flex-shrink: 0;
+  min-width: 4.5rem;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--desk-ink);
+}
+@utility project-folder-copy-missing {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--warning-foreground);
+  font-size: var(--text-2xs);
+}
+@utility project-folder-copy-change {
+  margin: 4px 0 4px 12px;
+  padding-left: 12px;
+  border-left: 2px solid var(--desk-line);
+}
+
 /* One check result: a status icon and its sentence. */
 @utility project-check-line {
   display: flex;

@@ -29,6 +29,22 @@ vi.mock("../../studio/projectLink", () => ({
   },
 }));
 vi.mock("../studio/ProjectLinkDialog", () => ({ ProjectLinkDialog: () => null }));
+vi.mock("../studio/RemoteFolderBrowser", () => ({
+  RemoteFolderBrowser: (props: {
+    machine: string;
+    start: string;
+    onPick: (path: string) => void;
+  }) => (
+    <button
+      type="button"
+      data-browser-machine={props.machine}
+      data-browser-start={props.start}
+      onClick={() => props.onPick("/Volumes/Work/code")}
+    >
+      browser
+    </button>
+  ),
+}));
 vi.mock("../studio/HandoffCopyPreview", () => ({
   CopyPlanPreview: () => null,
   CopyProgress: () => null,
@@ -187,6 +203,19 @@ it("shows the source, the destination folder and the clone URL", async () => {
   });
   expect(button("Cancel")).not.toBeNull();
   expect(button("Clone to Mini")?.disabled).toBe(false);
+});
+
+it("browses the destination machine for the folder, keeping the project's folder name", async () => {
+  await render();
+  await act(async () => button("Browse…")!.click());
+  const browser = document.body.querySelector<HTMLElement>("[data-browser-machine]");
+  expect(browser?.dataset.browserMachine).toBe("mini");
+  expect(browser?.dataset.browserStart).toBe("~/Projects");
+  await act(async () => browser!.click());
+  await settle();
+  expect(document.body.querySelector<HTMLInputElement>("input[autocomplete=off]")?.value).toBe(
+    "/Volumes/Work/code/app",
+  );
 });
 
 const includeSecrets = () =>

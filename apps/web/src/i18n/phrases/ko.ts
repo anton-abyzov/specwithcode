@@ -4838,4 +4838,7 @@ export const ko: PhraseCatalog = {
     "설치되어 있지 않습니다. 해당 Mac의 터미널에서 이 명령을 실행한 다음 다시 확인을 누르세요.",
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
+  "Browse…": "찾아보기…",
+  "Add to this machine…": "이 컴퓨터에 추가…",
+  "Runs on {machine}. No copy on this device.": "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
 };

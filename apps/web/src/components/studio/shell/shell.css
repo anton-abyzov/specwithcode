@@ -1114,6 +1114,18 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-project-row[data-archived] .sws-side-row > :first-child {
   opacity: 0.7;
 }
+/* No copy on this device: the project runs on its machine, named by the tag, so the
+   row reads quieter than the projects this device can run itself. It still opens. */
+.sws-project-row[data-elsewhere] .sws-side-row-label {
+  color: var(--sidebar-muted-foreground);
+}
+.sws-project-row[data-elsewhere] .sws-side-row > :first-child {
+  opacity: 0.6;
+}
+.sws-project-row .sws-row-machine.sws-project-elsewhere[data-machine-color] {
+  width: auto;
+  max-width: calc(9.5ch + 10px);
+}
 @media (hover: none) {
   .sws-side-row {
     height: 36px;

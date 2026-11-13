@@ -4928,4 +4928,7 @@ export const de: PhraseCatalog = {
     "Nicht installiert. Führe diesen Befehl in einem Terminal auf diesem Mac aus und klicke dann auf Erneut prüfen.",
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "Nicht installiert. Hol es von seiner eigenen Website oder bitte jemanden, der diesen Rechner verwalten darf, es hier zu installieren.",
+  "Browse…": "Durchsuchen…",
+  "Add to this machine…": "Zu diesem Rechner hinzufügen…",
+  "Runs on {machine}. No copy on this device.": "Läuft auf {machine}. Keine Kopie auf diesem Gerät.",
 };
