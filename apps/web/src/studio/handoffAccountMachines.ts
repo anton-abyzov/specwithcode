@@ -121,8 +121,18 @@ export function handoffAccountMachines(input: {
       continue;
     }
     const inFleet = fleetById.get(id);
-    if (!inFleet) continue;
     const state = input.states.get(id);
+    if (!inFleet) {
+      // Allowed by the project's machine, not by this one: this app saves it
+      // only when asked, over SpecWithCode Connect.
+      if (input.sourceFleet !== undefined && allowedIds !== null)
+        fallback.push(
+          state
+            ? withState(machine, state)
+            : { ...machine, reason: NOT_CONNECTED_REASON, connecting: false, canConnect: true },
+        );
+      continue;
+    }
     if (state) fallback.push(withState(machine, state));
     // A tailnet machine is paired by the fleet; once that has finished without
     // saving it, Connect over SpecWithCode Connect is the way left.
@@ -138,7 +148,8 @@ export function handoffAccountMachines(input: {
   // keeps its row, named from the fleet.
   const listed = new Set(fallback.map((machine) => machine.environmentId));
   for (const [id, state] of input.states) {
-    const inFleet = fleetById.get(id);
+    const inFleet =
+      fleetById.get(id) ?? allowedFleet?.find((machine) => machine.environmentId === id);
     if (!inFleet || listed.has(id) || discoveredIds.has(id)) continue;
     if (allowedIds !== null && !allowedIds.has(id)) continue;
     if (id === input.sourceEnvironmentId || input.savedEnvironmentIds.has(id)) continue;

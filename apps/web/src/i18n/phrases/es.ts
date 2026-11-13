@@ -4648,4 +4648,6 @@ export const es: PhraseCatalog = {
     "No se pudo conectar a través de SpecWithCode Connect.",
   "SpecWithCode Connect took it, but it was not added here.":
     "SpecWithCode Connect la aceptó, pero no se añadió aquí.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
+    "No aparecen: {names}. Para usar una aquí, abre Ajustes > Máquinas en ella y permite que {machine} ejecute trabajo allí.",
 };

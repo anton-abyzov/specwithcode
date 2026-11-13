@@ -49,6 +49,9 @@ export function HandoffAccountMachines({
   useFleetAutoConnectSettledVersion();
   const name = useMachineNicknames();
   const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
+  const sourceLabel =
+    environments.find((item) => item.environmentId === sourceEnvironmentId)?.label ??
+    sourceEnvironmentId;
   const fleetMachines = fleetSnapshot?.machines ?? null;
   const sourceMachines = sourceFleet?.machines ?? null;
   const { fallback, notAllowed: accountOnly } = handoffAccountMachines({
@@ -72,7 +75,8 @@ export function HandoffAccountMachines({
           fleet: fleetMachines,
           savedEnvironmentIds,
           sourceEnvironmentId,
-          accountEnvironmentIds: new Set(discovery.environments.keys()),
+          // Also those whose state is published while the list cannot be read.
+          accountEnvironmentIds: new Set([...discovery.environments.keys(), ...states.keys()]),
           removed: readSkippedFleetEnvironments(),
           fleetPairingSettled: fleetAutoConnectSettled,
           name,
@@ -107,10 +111,18 @@ export function HandoffAccountMachines({
       ))}
       {notAllowed.length > 0 ? (
         <p className="text-xs text-muted-foreground" data-slot="handoff-not-allowed-machines">
-          {tx(
-            "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.",
-            { names: notAllowed.map((machine) => machine.label).join(", ") },
-          )}
+          {sourceEnvironmentId === primaryEnvironmentId
+            ? tx(
+                "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.",
+                { names: notAllowed.map((machine) => machine.label).join(", ") },
+              )
+            : tx(
+                "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.",
+                {
+                  names: notAllowed.map((machine) => machine.label).join(", "),
+                  machine: name(sourceEnvironmentId, sourceLabel),
+                },
+              )}
         </p>
       ) : null}
       {fleetOnly.length > 0 ? (

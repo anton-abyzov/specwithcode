@@ -4621,4 +4621,6 @@ export const ru: PhraseCatalog = {
     "Не удалось подключиться через SpecWithCode Connect.",
   "SpecWithCode Connect took it, but it was not added here.":
     "SpecWithCode Connect принял её, но здесь она не добавлена.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow {machine} to run work there.":
+    "Нет в списке: {names}. Чтобы использовать машину здесь, откройте на ней Настройки > Машины и разрешите {machine} запускать там работу.",
 };

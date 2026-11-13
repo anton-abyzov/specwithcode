@@ -59,6 +59,14 @@ export function grantedAccountMachinesToConnect(input: {
     const found = input.discovered.get(id);
     if (found) machines.push(found.environment);
   }
+  // Connect by hand for an account machine outside this fleet (one that
+  // allowed the project's machine, not this one): the press is the consent.
+  for (const id of input.requested ?? []) {
+    if (seen.has(id) || id === input.currentEnvironmentId) continue;
+    if (input.savedEnvironmentIds.has(id) || input.skip?.has(id)) continue;
+    const found = input.discovered.get(id);
+    if (found) machines.push(found.environment);
+  }
   return machines;
 }
 
