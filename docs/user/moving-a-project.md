@@ -21,6 +21,9 @@ Both machines must be in your private fleet. If they are not yet, follow
 1. Open the project on the machine that has it now (the **source**).
 2. Choose **Handoff** in the project header, then pick the other machine (the
    **destination**).
+   The list holds the machines this app is connected to. A machine on your
+   SpecWithCode Connect account that this app has not connected yet is shown
+   under the list with **Connect**; choose it, and the machine joins the list.
 3. A machine that already has the project opens on **Use Git, no file copy**. Moving
    there pushes nothing and doesn't need a clean source. If any repository keeps work
    Git won't carry, the dialog lists it first: unpushed commits, uncommitted changes

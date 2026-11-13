@@ -106,6 +106,7 @@ export function HandoffCopySetup({
             onChange={(value) => onMachineChange(value as EnvironmentId)}
           />
         )}
+        {dialog?.machinesExtra}
       </fieldset>
       {/* The folder belongs to a machine: none is asked for before one is picked. */}
       {machine && (
