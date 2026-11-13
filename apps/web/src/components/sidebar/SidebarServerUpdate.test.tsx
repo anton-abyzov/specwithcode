@@ -243,7 +243,8 @@ describe("SidebarServerUpdate", () => {
   });
 
   it("still offers the newest release to a machine already on this app's version", () => {
-    state.desktopUpdate = { availableVersion: "1.0.68", downloadedVersion: "1.0.70" };
+    // A download that trails a newer listing does not hold the target back.
+    state.desktopUpdate = { availableVersion: "1.0.70", downloadedVersion: "1.0.68" };
     server("m5", { label: "m5", serverVersion: "1.0.66" });
     render();
 

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ServerConfig } from "@specweave-studio/contracts";
+import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -64,6 +65,13 @@ export function SidebarServerUpdate() {
   );
 }
 
+/** The newer of two versions the feed reported (a download can trail a newer listing). */
+function newestOf(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return parseSemver(a) && parseSemver(b) && compareSemverVersions(b, a) > 0 ? b : a;
+}
+
 function SidebarServerUpdateRow({
   environmentId,
   config,
@@ -89,7 +97,7 @@ function SidebarServerUpdateRow({
   const newestRelease =
     environmentId === primaryEnvironmentId
       ? null
-      : (desktopUpdate?.downloadedVersion ?? desktopUpdate?.availableVersion ?? null);
+      : newestOf(desktopUpdate?.downloadedVersion, desktopUpdate?.availableVersion);
   const mismatch = resolveServerConfigVersionMismatch(config, newestRelease);
   const selfUpdate = resolveServerSelfUpdateCapability(config);
   const desktopAppUpdate = supportsDesktopAppUpdate(config);
