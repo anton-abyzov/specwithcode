@@ -4610,4 +4610,15 @@ export const ja: PhraseCatalog = {
     "インストールがエラーで終了しました。ログは下にあります。そこで「再試行」を押すか、ターミナルでコマンドを実行してください。",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "Muse Code など、別のエージェントやカスタムプロバイダーを使いたい場合は、セットアップ後にいつでも「設定 > プロバイダー」から追加できます。",
+  "Could not connect to {name}. Check that SpecWithCode is open there, then try again.":
+    "{name} に接続できませんでした。そちらで SpecWithCode が開いているか確認して、もう一度お試しください。",
+  "Connect automatically is off.": "自動接続はオフです。",
+  "Not answering over SpecWithCode Connect.": "SpecWithCode Connect 経由で応答がありません。",
+  "SpecWithCode Connect did not answer for it.":
+    "SpecWithCode Connect がこのマシンについて応答しませんでした。",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
+    "一覧にないマシン: {names}。ここで使うには、そのマシンで 設定 > マシン を開き、このマシンが作業を実行することを許可してください。",
+  "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
+    "一覧にないマシン: {names}。このアプリはまだ接続していません。ここで同じアカウントで SpecWithCode Connect にサインインするか、次の場所で接続してください:",
+  "Settings > Machines": "設定 > マシン",
 };
