@@ -680,7 +680,7 @@ export async function readIncrementProgress(input: {
       acceptedSkips: ledgerFold?.acceptedSkips ?? [],
     }),
     verify,
-    review: await readIncrementReview({ incrementPath: folder, spec, ledger }),
+    review: await readIncrementReview({ incrementPath: folder, spec, ledger, tasks: tasksFile }),
   };
 }
 

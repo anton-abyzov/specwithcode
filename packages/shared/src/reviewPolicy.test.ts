@@ -242,13 +242,38 @@ describe("review policy evidence (Sol review, November 13, 2026)", () => {
       },
       "/work/umb",
     );
-    expect(registered).toEqual(["apps/web", "libs/core"]);
+    expect(registered).toEqual(["apps/web", "libs/core", "../outside"]);
     expect(
       incrementReviewRepos(
         "- AC: AC-01 | Files: apps/web/src/a.ts, libs/core/**/*.ts, repositories/x/*/a.ts, README.md | Test: t",
         registered,
       ),
     ).toEqual([".", "apps/web", "libs/core"]);
+  });
+
+  it("normalizes task paths and keeps registered sibling checkouts (Sol round 3)", () => {
+    const registered = registeredReviewRepos(
+      {
+        workspace: { repos: [{ path: "./libs/core/" }, { path: "/work/sibling" }] },
+        umbrella: { childRepos: [{ path: "../outside" }] },
+      },
+      "/work/umb",
+    );
+    expect(registered).toEqual(["libs/core", "../sibling", "../outside"]);
+    expect(
+      incrementReviewRepos(
+        "- AC: AC-01 | Files: ./libs/core/src/a.ts, ../outside/src/a.ts, ../sibling/x/../b.ts | Test: t",
+        registered,
+      ),
+    ).toEqual(["../outside", "../sibling", "libs/core"]);
+    // Unregistered paths outside the project, absolute paths and globs that
+    // hide a registered owner are left out, as specweave refuses them.
+    expect(
+      incrementReviewRepos(
+        "- AC: AC-01 | Files: ../elsewhere/a.ts, /tmp/a.ts, libs/*/a.ts, docs/./x.md | Test: t",
+        registered,
+      ),
+    ).toEqual(["."]);
   });
 
   it("narrows a review thread's limit rule to its reviewer's family", () => {

@@ -295,8 +295,38 @@ export function reviewRepoKey(repo: string | null | undefined): string {
 }
 
 /**
+ * A POSIX path with `.` segments and `x/..` pairs folded away, as
+ * `path.posix.normalize` does, without a trailing slash; `.` for empty.
+ * Leading `..` segments stay, so a sibling checkout keeps its name.
+ */
+export function normalizeReviewPath(value: string): string {
+  const slashed = value.trim().replace(/\\/gu, "/");
+  const absolute = slashed.startsWith("/");
+  const out: string[] = [];
+  for (const segment of slashed.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === ".." && out.length > 0 && out[out.length - 1] !== "..") out.pop();
+    else if (segment !== ".." || !absolute) out.push(segment);
+  }
+  const joined = out.join("/");
+  return absolute ? `/${joined}` : joined === "" ? "." : joined;
+}
+
+const isAbsoluteReviewPath = (value: string) => /^([a-z]:)?\//iu.test(value.replace(/\\/gu, "/"));
+
+/** `to` relative to `from`, both absolute, compared segment by segment. */
+function relativeReviewPath(from: string, to: string): string {
+  const a = normalizeReviewPath(from).split("/").filter(Boolean);
+  const b = normalizeReviewPath(to).split("/").filter(Boolean);
+  let common = 0;
+  while (common < a.length && common < b.length && a[common] === b[common]) common += 1;
+  return normalizeReviewPath([...a.slice(common).map(() => ".."), ...b.slice(common)].join("/"));
+}
+
+/**
  * Repository paths a project's `.specweave/config.json` registers
- * (`workspace.repos`, `umbrella.childRepos`), relative to the project root.
+ * (`workspace.repos`, `umbrella.childRepos`), relative to the project root
+ * as `specweave` reads them: a sibling checkout stays `../name`.
  */
 export function registeredReviewRepos(config: unknown, projectRoot: string): ReadonlyArray<string> {
   const lists =
@@ -306,17 +336,17 @@ export function registeredReviewRepos(config: unknown, projectRoot: string): Rea
           (config as { umbrella?: { childRepos?: unknown } }).umbrella?.childRepos,
         ]
       : [];
-  const root = projectRoot.replace(/\\/gu, "/").replace(/\/+$/u, "");
+  const root = projectRoot.replace(/\\/gu, "/");
   const repos = new Set<string>();
   for (const list of lists) {
     if (!Array.isArray(list)) continue;
     for (const entry of list) {
       const raw = (entry as { path?: unknown } | null)?.path;
       if (typeof raw !== "string" || raw.trim() === "") continue;
-      let rel = raw.trim().replace(/\\/gu, "/");
-      if (rel.startsWith(`${root}/`)) rel = rel.slice(root.length + 1);
-      rel = reviewRepoKey(rel);
-      if (rel !== "." && !rel.startsWith("../") && !/^([a-z]:)?\//iu.test(rel)) repos.add(rel);
+      const rel = isAbsoluteReviewPath(raw)
+        ? relativeReviewPath(root, raw.trim())
+        : normalizeReviewPath(raw);
+      if (rel !== "." && !isAbsoluteReviewPath(rel)) repos.add(rel);
     }
   }
   return [...repos];
@@ -326,26 +356,34 @@ export function registeredReviewRepos(config: unknown, projectRoot: string): Rea
  * The repositories an increment's task Files live in (`.` for the project
  * root), owned the way `specweave` owns them: the longest registered
  * repository path first, then `repositories/<organization>/<repository>`.
- * Increment bookkeeping and `none` do not count; a glob that hides its owner
- * is left out (closure refuses it).
+ * Pass the text that holds the tasks (a legacy tasks.md when there is one).
+ * Increment bookkeeping and `none` do not count; a path `specweave` cannot
+ * place (absolute, outside the project and unregistered, or a glob that
+ * hides its owner) is left out, as closure refuses it.
  */
 export function incrementReviewRepos(
-  spec: string | null,
+  tasks: string | null,
   registered: ReadonlyArray<string> = [],
 ): ReadonlyArray<string> {
-  if (spec === null) return [];
+  if (tasks === null) return [];
   const byLength = [...registered].sort((a, b) => b.length - a.length);
   const repos = new Set<string>();
-  for (const match of spec.matchAll(/\**Files\**\s*:\s*\**\s*([^|\n]+)/giu)) {
+  for (const match of tasks.matchAll(/\**Files\**\s*:\s*\**\s*([^|\n]+)/giu)) {
     for (const raw of (match[1] ?? "").split(",")) {
-      const file = raw.trim().replace(/`/gu, "").replace(/\\/gu, "/");
-      if (file === "" || /^(none|n\/a|-)$/iu.test(file) || /(^|\/)\.specweave(\/|$)/u.test(file))
-        continue;
+      const written = raw.trim().replace(/`/gu, "");
+      if (written === "" || /^(none|n\/a|-)$/iu.test(written)) continue;
+      if (isAbsoluteReviewPath(written)) continue;
+      const file = normalizeReviewPath(written);
+      if (/(^|\/)\.specweave(\/|$)/u.test(file)) continue;
       const owner = byLength.find((repo) => file === repo || file.startsWith(`${repo}/`));
       if (owner !== undefined) {
         repos.add(owner);
         continue;
       }
+      const glob = file.search(/[*?[\]{}]/u);
+      const literal = glob >= 0 ? file.slice(0, glob).replace(/[^/]*$/u, "") : "";
+      if (literal !== "" && byLength.some((repo) => repo.startsWith(literal))) continue;
+      if (file === ".." || file.startsWith("../")) continue;
       if (!file.startsWith("repositories/")) {
         repos.add(".");
         continue;

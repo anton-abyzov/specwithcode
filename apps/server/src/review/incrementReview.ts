@@ -148,6 +148,8 @@ export async function readIncrementReview(input: {
   readonly incrementPath: string;
   readonly spec: string | null;
   readonly ledger: string | null;
+  /** A legacy tasks.md; when present it holds the tasks, as in SpecWeave. */
+  readonly tasks?: string | null;
 }): Promise<ThreadIncrementReview | null> {
   const config = await readProjectConfig(input.incrementPath);
   const policy = resolveIncrementReviewPolicy({ spec: input.spec, config: reviewLayer(config) });
@@ -205,7 +207,10 @@ export async function readIncrementReview(input: {
       : reviewPolicySatisfied(
           policy,
           records,
-          incrementReviewRepos(input.spec, registeredReviewRepos(config, projectRoot)),
+          incrementReviewRepos(
+            input.tasks ?? input.spec,
+            registeredReviewRepos(config, projectRoot),
+          ),
           author,
         );
   return {

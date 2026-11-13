@@ -118,6 +118,30 @@ describe("readIncrementReview", () => {
     }
   });
 
+  it("takes the repositories from a legacy tasks.md when there is one (Sol round 3)", async () => {
+    report(
+      "reviews/review-gpt-6.1-sol-1.md",
+      "<!-- specweave review: reviewer=gpt-6.1-sol model=gpt-6.1-sol family=openai author=claude depth=deep repo=repositories/acme/api head=3f9a2c1d00 at=2026-11-13T21:00:00Z -->\n# Review: 1324\nVerdict: ship\n",
+      Date.parse("2026-11-13T21:00:00Z"),
+    );
+    const tasks =
+      "### T-01 API\n- AC: AC-01 | Files: repositories/acme/api/a.ts | Test: t\n\n### T-02 App\n- AC: AC-01 | Files: repositories/acme/app/b.ts | Test: t\n";
+    const withLegacy = await readIncrementReview({
+      incrementPath: folder,
+      spec: SPEC,
+      ledger: LEDGER,
+      tasks,
+    });
+    expect(withLegacy?.policySatisfied).toBe(false);
+    const apiOnly = await readIncrementReview({
+      incrementPath: folder,
+      spec: SPEC,
+      ledger: LEDGER,
+      tasks: "### T-01 API\n- AC: AC-01 | Files: repositories/acme/api/a.ts | Test: t\n",
+    });
+    expect(apiOnly?.policySatisfied).toBe(true);
+  });
+
   it("is null with no policy and no review, and reads the policy alone", async () => {
     expect(
       await readIncrementReview({ incrementPath: folder, spec: "# T\n", ledger: null }),
