@@ -586,8 +586,8 @@ export const de: PhraseCatalog = {
   "Try again in a moment.": "Versuche es gleich noch einmal.",
   "Update this environment to manage Antigravity.":
     "Aktualisiere diese Umgebung, um Antigravity zu verwalten.",
-  "Use stable releases or nightly builds. Switch back anytime.":
-    "Nutze stabile Versionen oder Nightly-Builds. Du kannst jederzeit zurückwechseln.",
+  "Stable gets builds that ran a day on Insiders. Insiders gets every build first.":
+    "Stable bekommt Builds, die einen Tag auf Insiders liefen. Insiders bekommt jeden Build zuerst.",
   "Use the repository's template for change request descriptions when available.":
     "Die Vorlage des Repositorys für Beschreibungen von Änderungsanfragen nutzen, wenn vorhanden.",
   "Use thinner grayscale text smoothing instead of the macOS default.":
@@ -2502,6 +2502,7 @@ export const de: PhraseCatalog = {
   "What's new": "Neuigkeiten",
   Nightly: "Nightly",
   Stable: "Stable",
+  Insiders: "Insiders",
   Latest: "Latest",
   "Background Activity": "Hintergrundaktivität",
   "Tune the shared power policy and the background intervals that feed it.":

@@ -1,0 +1,93 @@
+name: Release train
+run-name: Release train${{ inputs.hotfix_pr && format(' · hotfix #{0}', inputs.hotfix_pr) || '' }}${{ inputs.version && format(' · {0}', inputs.version) || '' }}
+
+# The daily stable train (docs/studio/release-train.md). Release macOS publishes every 1.1+ build as
+# an Insiders build (a GitHub prerelease, never Latest). Once a day at the cut time this promotes
+# the newest Insiders build that soaked 24 hours, has every platform's update manifest and is not
+# held, to stable: the same release, flipped to Latest, so stable users get the files the fleet ran.
+# Then it publishes that version to npm. Nothing else makes a 1.1+ release stable.
+#
+#   schedule          the cut, 15:00 UTC every day; a day with nothing soaked ends green
+#   version           promote this build; it still needs its soak, manifests and no hold
+#   hotfix_pr         promote the newest complete build that holds this merged pull request now,
+#                     without the soak; the pull request needs the `hotfix` label (Anton's yes)
+#   dry_run           print the decision only
+#
+# Hold a bad build: python3 -B scripts/release/release_train.py hold --repo <repo> --version X --reason "..."
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Promote this Insiders build (optional; it still needs its soak)
+        required: false
+        type: string
+      hotfix_pr:
+        description: Merged pull request with the hotfix label; promotes the newest build holding it, without the soak
+        required: false
+        type: string
+      dry_run:
+        description: Print the decision only
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-train
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote to stable
+    if: github.repository == 'anton-abyzov/specwithcode'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Checkout the release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+
+      - name: Decide and promote
+        id: train
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_HOTFIX: ${{ inputs.hotfix_pr }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(promote --repo "$GITHUB_REPOSITORY")
+          version="$(printf '%s' "${INPUT_VERSION:-}" | tr -d '[:space:]')"
+          hotfix="$(printf '%s' "${INPUT_HOTFIX:-}" | tr -d '[:space:]#')"
+          if [ -n "$version" ]; then args+=(--version "$version"); fi
+          if [ -n "$hotfix" ]; then
+            [[ $hotfix =~ ^[0-9]+$ ]] || { echo "::error::hotfix_pr must be a pull request number"; exit 1; }
+            args+=(--hotfix-pr "$hotfix")
+          fi
+          if [ "${INPUT_DRY_RUN:-false}" = true ]; then args+=(--dry-run); fi
+          python3 -B scripts/release/release_train.py "${args[@]}"
+
+      # A release flipped from prerelease sends no `published` event, so the npm package that
+      # release-npm.yml makes for stable releases is asked for here.
+      - name: Publish the stable version to npm
+        if: steps.train.outputs.action == 'promote' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.train.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run release-npm.yml -R "$GITHUB_REPOSITORY" --ref main -f version="$VERSION" -f dry_run=false
+          echo "Asked release-npm.yml to publish $VERSION." >> "$GITHUB_STEP_SUMMARY"

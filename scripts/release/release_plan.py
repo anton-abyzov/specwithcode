@@ -333,8 +333,12 @@ def announce(headline, refused):
 def emit(result, main_sha):
     write_output([(name, str(value).lower() if isinstance(value, bool) else value)
                   for name, value in result.items()] + [('main_sha', main_sha)])
+    track = ''
+    if result['action'] == 'release' and key(result['version']) >= (1, 1, 0):
+        track = (' Published as an Insiders build (a prerelease); the daily train promotes it to stable '
+                 'after its soak (docs/studio/release-train.md).')
     headline = {
-        'release': f"Release macOS: {result['version']} ({result['mode']}). {result['reason']}.",
+        'release': f"Release macOS: {result['version']} ({result['mode']}). {result['reason']}.{track}",
         'noop': f"Release macOS: nothing to do. {result['reason']}.",
         'refuse': f"Release macOS refused: {result['reason']}",
     }[result['action']]

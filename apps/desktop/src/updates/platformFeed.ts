@@ -64,6 +64,28 @@ export function selectFeedRelease(
   return newestWithFeed;
 }
 
+/**
+ * The Insiders track's release: the newest plain release, prerelease or not, that carries
+ * `manifestName`. electron-updater's github provider only finds prereleases by a version suffix,
+ * so Insiders always reads the chosen release through the generic provider.
+ */
+export function selectInsidersFeedRelease(
+  releases: ReadonlyArray<GitHubRelease>,
+  manifestName: string,
+): { readonly tagName: string; readonly version: string } | null {
+  let newest: { readonly tagName: string; readonly version: string } | null = null;
+  for (const release of releases) {
+    if (release.draft) continue;
+    const version = versionFromTag(release.tagName);
+    if (version === null || version.includes("-")) continue;
+    if (!release.assets.some((asset) => asset.name === manifestName)) continue;
+    if (newest === null || compareSemverVersions(version, newest.version) > 0) {
+      newest = { tagName: release.tagName, version };
+    }
+  }
+  return newest;
+}
+
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
@@ -98,9 +120,10 @@ export async function resolveUpdateFeed(input: {
     } as ElectronUpdaterFeedUrl,
     fallbackTag: null,
   };
-  // Nightly reads prereleases through the github provider; only the stable channel falls back.
-  if (input.channel !== "latest") return github;
-  const manifestName = platformManifestName(input.platform, input.arch, input.channel);
+  // Both tracks read electron-builder's `latest` manifests: Insiders builds are plain versions
+  // published as prereleases (docs/studio/release-train.md), not `nightly`-suffixed builds.
+  const insiders = input.channel === "nightly";
+  const manifestName = platformManifestName(input.platform, input.arch, "latest");
   if (manifestName === null) return github;
   const anonymous: GitHubFeed = { owner, repo, token: null };
   const releases = await fetchReleases(
@@ -108,7 +131,12 @@ export async function resolveUpdateFeed(input: {
     input.fetchImpl,
     input.cache ? { cache: input.cache } : {},
   ).catch(() => null);
-  const selected = releases === null ? null : selectFeedRelease(releases, manifestName);
+  const selected =
+    releases === null
+      ? null
+      : insiders
+        ? selectInsidersFeedRelease(releases, manifestName)
+        : selectFeedRelease(releases, manifestName);
   if (selected === null) return github;
   return {
     feed: {

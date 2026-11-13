@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { createReleaseFeedCache, type GitHubRelease } from "./githubReleaseFeed.ts";
-import { platformManifestName, resolveUpdateFeed, selectFeedRelease } from "./platformFeed.ts";
+import {
+  platformManifestName,
+  resolveUpdateFeed,
+  selectFeedRelease,
+  selectInsidersFeedRelease,
+} from "./platformFeed.ts";
 
 const release = (
   tagName: string,
@@ -16,10 +21,10 @@ const release = (
   assets: assets.map((name, index) => ({ id: index + 1, name, size: 1 })),
 });
 
-const apiRelease = (tag: string, assets: string[]) => ({
+const apiRelease = (tag: string, assets: string[], prerelease = false) => ({
   tag_name: tag,
   draft: false,
-  prerelease: false,
+  prerelease,
   assets: assets.map((name, index) => ({ id: index + 1, name, size: 1 })),
 });
 
@@ -135,20 +140,62 @@ describe("resolveUpdateFeed", () => {
 
   it("leaves the sign-in out of a .deb install's feed, on every channel", async () => {
     const { fetchImpl } = answering(200, [apiRelease("v1.0.116", ["latest-linux.yml"])]);
-    for (const channel of ["latest", "nightly"]) {
-      const result = await resolveUpdateFeed({
-        ...base,
-        token: "gho_secret",
-        channel,
-        isDebPackage: true,
-        fetchImpl,
-        cache: createReleaseFeedCache(),
-      });
-      expect(result).toEqual({
-        feed: { provider: "github", owner: "anton-abyzov", repo: "specwithcode" },
-        fallbackTag: null,
-      });
-    }
+    const stable = await resolveUpdateFeed({
+      ...base,
+      token: "gho_secret",
+      channel: "latest",
+      isDebPackage: true,
+      fetchImpl,
+      cache: createReleaseFeedCache(),
+    });
+    expect(stable).toEqual({
+      feed: { provider: "github", owner: "anton-abyzov", repo: "specwithcode" },
+      fallbackTag: null,
+    });
+    const insiders = await resolveUpdateFeed({
+      ...base,
+      token: "gho_secret",
+      channel: "nightly",
+      isDebPackage: true,
+      fetchImpl,
+      cache: createReleaseFeedCache(),
+    });
+    expect(insiders.feed).not.toHaveProperty("token");
+    expect(insiders.fallbackTag).toBe("v1.0.116");
+  });
+
+  it("points Insiders at the newest build, prerelease or not, and Stable past it", async () => {
+    const { fetchImpl } = answering(200, [
+      apiRelease("v1.1.3", ["latest-linux.yml"], true),
+      apiRelease("v1.1.0", ["latest-linux.yml"]),
+    ]);
+    const insiders = await resolveUpdateFeed({
+      ...base,
+      token: null,
+      channel: "nightly",
+      fetchImpl,
+      cache: createReleaseFeedCache(),
+    });
+    expect(insiders).toEqual({
+      feed: {
+        provider: "generic",
+        url: "https://github.com/anton-abyzov/specwithcode/releases/download/v1.1.3",
+        useMultipleRangeRequest: false,
+      },
+      fallbackTag: "v1.1.3",
+    });
+    const stable = await resolveUpdateFeed({
+      ...base,
+      token: null,
+      channel: "latest",
+      fetchImpl,
+      cache: createReleaseFeedCache(),
+    });
+    expect(stable.feed).toEqual({
+      provider: "github",
+      owner: "anton-abyzov",
+      repo: "specwithcode",
+    });
   });
 
   it("keeps the github provider when the list cannot be read anonymously", async () => {
@@ -168,16 +215,28 @@ describe("resolveUpdateFeed", () => {
     expect(result.fallbackTag).toBeNull();
   });
 
-  it("never asks on macOS or the nightly channel", async () => {
+  it("never asks on macOS, where the swap updater lists releases itself", async () => {
     const { calls, fetchImpl } = answering(200, []);
-    await resolveUpdateFeed({
-      ...base,
-      platform: "darwin",
-      token: null,
-      channel: "latest",
-      fetchImpl,
-    });
-    await resolveUpdateFeed({ ...base, token: null, channel: "nightly", fetchImpl });
+    for (const channel of ["latest", "nightly"]) {
+      await resolveUpdateFeed({ ...base, platform: "darwin", token: null, channel, fetchImpl });
+    }
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("selectInsidersFeedRelease", () => {
+  it("takes the newest plain release with the feed, prerelease or not, never a draft", () => {
+    const releases = [
+      release("v1.1.4", ["latest-linux.yml"], { draft: true }),
+      release("v1.1.3", ["latest-mac.yml"], { prerelease: true }),
+      release("v1.1.2", ["latest-linux.yml"], { prerelease: true }),
+      release("v1.1.0", ["latest-linux.yml"]),
+      release("v1.1.9-nightly.1", ["latest-linux.yml"], { prerelease: true }),
+    ];
+    expect(selectInsidersFeedRelease(releases, "latest-linux.yml")).toEqual({
+      tagName: "v1.1.2",
+      version: "1.1.2",
+    });
+    expect(selectInsidersFeedRelease(releases, "latest.yml")).toBeNull();
   });
 });

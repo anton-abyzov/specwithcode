@@ -562,8 +562,8 @@ export const zh: PhraseCatalog = {
     "处于交接模式的会话会在这段时间后在你选择的 Mac 上继续。“关闭”表示它们会等待你点击。协调者会话不会以这种方式迁移。",
   "Try again in a moment.": "请稍后再试。",
   "Update this environment to manage Antigravity.": "更新此环境以管理 Antigravity。",
-  "Use stable releases or nightly builds. Switch back anytime.":
-    "使用稳定版或每夜构建版。可随时切换回来。",
+  "Stable gets builds that ran a day on Insiders. Insiders gets every build first.":
+    "Stable 获得在 Insiders 上运行过一天的版本。Insiders 最先获得每个版本。",
   "Use the repository's template for change request descriptions when available.":
     "有可用模板时，使用仓库的模板撰写变更请求描述。",
   "Use thinner grayscale text smoothing instead of the macOS default.":
@@ -2402,6 +2402,7 @@ export const zh: PhraseCatalog = {
   "What's new": "新功能",
   Nightly: "Nightly",
   Stable: "Stable",
+  Insiders: "Insiders",
   Latest: "Latest",
   "Background Activity": "后台活动",
   "Tune the shared power policy and the background intervals that feed it.":

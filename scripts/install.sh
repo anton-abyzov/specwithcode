@@ -375,7 +375,12 @@ resolve_version() {
       *) fail "STUDIO_CHANNEL must be stable, nightly, or preview" ;;
     esac
     tmp_index="$(mktemp "${TMPDIR:-/tmp}/specwithcode-releases.XXXXXX")"
-    fetch "https://api.github.com/repos/${repo}/releases?per_page=100" "$tmp_index" ||
+    # Stable reads GitHub's Latest release: from 1.1.0 every build is first an Insiders build (a
+    # prerelease with a plain version), and only the daily train makes one Latest
+    # (docs/studio/release-train.md).
+    index_url="https://api.github.com/repos/${repo}/releases?per_page=100"
+    [ "$channel" != stable ] || index_url="https://api.github.com/repos/${repo}/releases/latest"
+    fetch "$index_url" "$tmp_index" ||
       { rm -f "$tmp_index"; fail "could not list the releases of ${repo}; pass --version"; }
     version="$(tr '{' ',' < "$tmp_index" | tr ',' '\n' | sed -n "s/^ *\"tag_name\": *\"${tag_pattern}\" *$/\1/p" | head -n 1)"
     rm -f "$tmp_index"

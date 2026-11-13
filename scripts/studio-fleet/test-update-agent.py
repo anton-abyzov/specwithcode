@@ -749,6 +749,20 @@ class PassBehaviour(AgentCase):
         self.run_agent()
         self.assertEqual(self.state()['availableVersion'], '0.2.0')
 
+    def insiders_after_stable(self, channel):
+        self.write_installation('1.0.276', OLD_COMMIT)
+        self.fake.add_release(version='1.1.0', prerelease=False)
+        self.fake.add_release(version='1.1.3', prerelease=True)
+        self.config(channel=channel)
+        self.run_agent()
+        return self.state()['availableVersion']
+
+    def test_from_1_1_0_stable_passes_insiders_builds_by(self):
+        self.assertEqual(self.insiders_after_stable('stable'), '1.1.0')
+
+    def test_from_1_1_0_preview_takes_insiders_builds(self):
+        self.assertEqual(self.insiders_after_stable('preview'), '1.1.3')
+
     def test_quiet_logic_baseline_reset_wait_and_apply(self):
         info = self.fake.add_release()
         self.config(quietMinutes=10)

@@ -115,6 +115,23 @@ def github_releases(agent):
     return releases
 
 
+TRAIN_SINCE = (1, 1, 0)
+
+
+def insiders_only(agent, release, version):
+    """True when the stable channel must pass this release by: from 1.1.0 on, GitHub's prerelease
+    flag marks an Insiders build that the daily train has not promoted yet
+    (docs/studio/release-train.md). The `preview` channel takes it, and so does an install request
+    bound to its exact version (a fleet rollout names it). Before 1.1.0 the version alone decides:
+    the 0.2.x alphas were published as prereleases and still count as stable."""
+    ua = _ua(agent)
+    if not release.get('prerelease') or ua.version_tuple(version) < TRAIN_SINCE:
+        return False
+    if agent.config.get('channel') == 'preview':
+        return False
+    return requested_version(agent) != version
+
+
 def check(agent):
     ua = _ua(agent)
     releases = feed_releases(agent)
@@ -127,6 +144,8 @@ def check(agent):
             continue
         version = ua.tag_version(release.get('tag_name'))
         if version is None or ua.version_tuple(version) < installed:
+            continue
+        if ua.version_tuple(version) > installed and insiders_only(agent, release, version):
             continue
         ua._refuse_if(version in seen, 'The release feed contains ambiguous duplicate versions')
         seen.add(version)

@@ -578,8 +578,8 @@ export const ko: PhraseCatalog = {
   "Try again in a moment.": "잠시 후 다시 시도하세요.",
   "Update this environment to manage Antigravity.":
     "Antigravity를 관리하려면 이 환경을 업데이트하세요.",
-  "Use stable releases or nightly builds. Switch back anytime.":
-    "안정 릴리스나 나이틀리 빌드를 사용합니다. 언제든 되돌릴 수 있습니다.",
+  "Stable gets builds that ran a day on Insiders. Insiders gets every build first.":
+    "Stable은 Insiders에서 하루 동안 실행된 빌드를 받습니다. Insiders는 모든 빌드를 가장 먼저 받습니다.",
   "Use the repository's template for change request descriptions when available.":
     "저장소에 템플릿이 있으면 변경 요청 설명에 사용합니다.",
   "Use thinner grayscale text smoothing instead of the macOS default.":
@@ -2465,6 +2465,7 @@ export const ko: PhraseCatalog = {
   "What's new": "새로운 기능",
   Nightly: "Nightly",
   Stable: "Stable",
+  Insiders: "Insiders",
   Latest: "Latest",
   "Background Activity": "백그라운드 활동",
   "Tune the shared power policy and the background intervals that feed it.":
