@@ -114,9 +114,16 @@ export function resolveLowDiskSpaceNotices(input: {
     const free = formatStorageFreeSpace(storage.freeBytes);
     const usage = storage.homeUsage;
     const oldAppVersionsBytes = canCleanOldAppVersions ? oldAppVersionsBytesOf(usage) : undefined;
+    const roomier = storage.roomierVolume;
     const message = `${subject} is almost out of disk space (${free} free). ${input.appName}${
       local ? "" : " on it"
-    } may stop responding until you free some space.`;
+    } may stop responding until you free some space.${
+      roomier === undefined
+        ? ""
+        : ` ${roomier.path} on ${local ? "this computer" : "it"} has ${formatStorageFreeSpace(
+            roomier.freeBytes,
+          )} free: keep the ${input.appName} folder there (Review storage shows how).`
+    }`;
     notices.push({
       key,
       environmentId,
@@ -124,7 +131,7 @@ export function resolveLowDiskSpaceNotices(input: {
       primary,
       title: storage.level === "critical" ? "Disk space critically low" : "Low disk space",
       ...(usage === undefined
-        ? { message }
+        ? { message, ...(roomier === undefined ? {} : { action: "review-storage" as const }) }
         : {
             message: `${message} ${describeHomeUsage(usage, input.appName)}`,
             action: "review-storage" as const,

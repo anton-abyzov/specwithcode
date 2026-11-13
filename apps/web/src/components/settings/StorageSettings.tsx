@@ -26,7 +26,11 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
-import { AppFolderSizeWarningControl, AppFolderUsage } from "./StorageUsageBreakdown";
+import {
+  AppFolderSizeWarningControl,
+  AppFolderUsage,
+  RoomierVolumeAdvice,
+} from "./StorageUsageBreakdown";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
@@ -507,6 +511,7 @@ export function StorageSettingsPanel() {
       {!isProjectScope && (
         <SettingsSection id="storage-app-folder" title="App folder">
           <AppFolderUsage />
+          <RoomierVolumeAdvice />
           <SettingsRow
             title={tx("Warn when the app folder is large")}
             status={ruleStatus("homeSizeWarningGb")}

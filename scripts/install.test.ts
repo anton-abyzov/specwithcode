@@ -278,6 +278,33 @@ describe.skipIf(
     ).toEqual([VERSION]);
   });
 
+  it("on a fresh Linux install, suggests a much larger volume for the app folder", async () => {
+    const fixture = await makeFixture({ platform: "linux", arch: hostArch });
+    // Ministorm: a 157 GB ext4 system volume with 4.4 GB free and a 1.5 TB XFS /srv.
+    await stub(
+      fixture,
+      "df",
+      [
+        'echo "Filesystem Type 1024-blocks Used Available Capacity Mounted on"',
+        'if [ "$#" -gt 3 ]; then echo "/dev/mapper/vg-root ext4 164000000 159000000 4400000 98% /"; exit 0; fi',
+        'echo "/dev/mapper/vg-root ext4 164000000 159000000 4400000 98% /"',
+        'echo "/dev/nvme0n1p6 ext4 2000000 200000 1600000 12% /boot"',
+        'echo "/dev/mapper/vg-work xfs 1560000000 47000000 1513000000 4% /srv"',
+        'echo "/dev/loop1 squashfs 430000 430000 0 100% /snap/blender/7998"',
+      ].join("\n"),
+    );
+    const fresh = await runInstaller(fixture, ["--dry-run"]);
+    expect(fresh.code, fresh.stderr).toBe(0);
+    expect(fresh.stderr).toContain(
+      "Tip: /srv (xfs) has 1513 GB free, far more than your home folder.",
+    );
+    expect(fresh.stderr).toContain("STUDIO_HOME=/srv/specwithcode <this install command>");
+    const chosen = await runInstaller(fixture, ["--dry-run"], {
+      STUDIO_HOME: NodePath.join(fixture.root, "chosen"),
+    });
+    expect(chosen.stderr).not.toContain("Tip:");
+  });
+
   it("on a Mac, installs and starts the service, then prints the fleet invitation", async () => {
     const fixture = await makeFixture({ platform: "darwin", arch: "arm64" });
     await stub(fixture, "uname", AS_MAC);
