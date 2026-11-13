@@ -120,7 +120,10 @@ fixture_worktree() (
         [ "$2" != - ] || exit 1
         cd -P -- "$2" || exit 1
         shift 2 ;;
-      --no-pager|-P) shift ;;
+      # Config values never change which repository Git finds; server Git
+      # helpers and test fixtures pass these before every command.
+      -c) [ "$#" -ge 2 ] || exit 1; shift 2 ;;
+      --no-pager|-P|--no-optional-locks) shift ;;
       worktree) shift; break ;;
       *) exit 1 ;;
     esac
