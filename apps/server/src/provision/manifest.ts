@@ -14,6 +14,11 @@ import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import { resolveCodexReleaseAsset } from "../provider/CodexInstallation.ts";
 
 export type ProvisionPlatformKey = "linux-x64" | "linux-arm64" | "darwin-arm64";
+/**
+ * Node.js and gh are also installed one at a time from first-run setup
+ * (machineTools), which runs on more machines than provisioning does.
+ */
+export type ToolPlatformKey = ProvisionPlatformKey | "darwin-x64" | "win32-x64" | "win32-arm64";
 
 export interface PinnedDownload {
   readonly url: string;
@@ -24,24 +29,33 @@ export interface PinnedDownload {
 
 /** The same Node.js build and checksums as scripts/install.sh. */
 export const NODE_VERSION = "22.20.0";
-const NODE_SHA256: Record<ProvisionPlatformKey, string> = {
+const NODE_SHA256: Record<ToolPlatformKey, string> = {
   "darwin-arm64": "cc04a76a09f79290194c0646f48fec40354d88969bec467789a5d55dd097f949",
+  "darwin-x64": "00df9c5df3e4ec6848c26b70fb47bf96492f342f4bed6b17f12d99b3a45eeecc",
   "linux-x64": "eeaccb0378b79406f2208e8b37a62479c70595e20be6b659125eb77dd1ab2a29",
   "linux-arm64": "4181609e03dcb9880e7e5bf956061ecc0503c77a480c6631d868cb1f65a2c7dd",
+  "win32-x64": "bb819d6eb8f5bfda294bbc83a7e4ec6539da67c4233d54b0d655b9248b15e29d",
+  "win32-arm64": "b12919e609b4fa1176ba8a155b49f761419a0c7cc97b42e6be09874a3f760ab6",
 };
-export const nodeDownload = (key: ProvisionPlatformKey): PinnedDownload & { stem: string } => {
+/** nodejs.org names Windows builds `win`, and ships them as zips with `node.exe` at the top. */
+export const nodeDownload = (
+  key: ToolPlatformKey,
+): PinnedDownload & { stem: string; file: string } => {
   const [platform, arch] = key.split("-") as [string, string];
-  const stem = `node-v${NODE_VERSION}-${platform}-${arch}`;
+  const windows = platform === "win32";
+  const stem = `node-v${NODE_VERSION}-${windows ? "win" : platform}-${arch}`;
+  const file = `${stem}.${windows ? "zip" : "tar.gz"}`;
   return {
     stem,
-    url: `https://nodejs.org/dist/v${NODE_VERSION}/${stem}.tar.gz`,
+    file,
+    url: `https://nodejs.org/dist/v${NODE_VERSION}/${file}`,
     sha256: NODE_SHA256[key],
     maxBytes: 80 * 1024 * 1024,
   };
 };
 
 export const GH_VERSION = "2.102.0";
-const GH_ASSETS: Record<ProvisionPlatformKey, { file: string; sha256: string }> = {
+const GH_ASSETS: Record<ToolPlatformKey, { file: string; sha256: string }> = {
   "linux-x64": {
     file: `gh_${GH_VERSION}_linux_amd64.tar.gz`,
     sha256: "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386",
@@ -54,8 +68,21 @@ const GH_ASSETS: Record<ProvisionPlatformKey, { file: string; sha256: string }> 
     file: `gh_${GH_VERSION}_macOS_arm64.zip`,
     sha256: "da922c20d1792e5b2cbf375593d7a658acf034c12c84e007e71c76ef959c337e",
   },
+  "darwin-x64": {
+    file: `gh_${GH_VERSION}_macOS_amd64.zip`,
+    sha256: "b245f24eb2bf5f75b426b4c26da3651a107f8d5b6f4fddfbfccc5679041378b3",
+  },
+  // The Windows zips hold `bin/gh.exe` at the top, with no folder around it.
+  "win32-x64": {
+    file: `gh_${GH_VERSION}_windows_amd64.zip`,
+    sha256: "ae64e556ecc240b200f7eba60d550e4bb60d78e860e69dd88c449405b86067f4",
+  },
+  "win32-arm64": {
+    file: `gh_${GH_VERSION}_windows_arm64.zip`,
+    sha256: "5dcf12aa8525eabd0c46ec414f323ab6cf65229fc2cd46543cc705001bbaf223",
+  },
 };
-export const ghDownload = (key: ProvisionPlatformKey): PinnedDownload & { file: string } => {
+export const ghDownload = (key: ToolPlatformKey): PinnedDownload & { file: string } => {
   const asset = GH_ASSETS[key];
   return {
     file: asset.file,

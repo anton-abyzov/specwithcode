@@ -15,6 +15,7 @@ import {
 } from "./auth.ts";
 import { WS_METHODS } from "./rpc.ts";
 import { PROVISION_RPC_METHODS } from "./provision.ts";
+import { MACHINE_TOOLS_RPC_METHODS } from "./machineTools.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -51,6 +52,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Provisioning reads the machine like Check readiness and installs like a server update.
   [PROVISION_RPC_METHODS.provisionPreview]: AuthFilesystemReadScope,
   [PROVISION_RPC_METHODS.provisionRun]: AuthEnvironmentMaintainScope,
+  // First-run setup's machine basics: read like Check readiness, install like provisioning.
+  [MACHINE_TOOLS_RPC_METHODS.machineToolsCheck]: AuthFilesystemReadScope,
+  [MACHINE_TOOLS_RPC_METHODS.machineToolsInstall]: AuthEnvironmentMaintainScope,
   // Reading a folder's repositories and a copy's notes before linking.
   [WS_METHODS.projectsFingerprint]: AuthFilesystemReadScope,
   [WS_METHODS.projectLinkPreview]: AuthOrchestrationReadScope,

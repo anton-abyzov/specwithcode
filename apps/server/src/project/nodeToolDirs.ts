@@ -9,6 +9,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { managedNodeDir, runsOnGlibc, toolPlatformKey } from "../machineTools/machineTools.ts";
+
 export interface NodeToolDirsInput {
   readonly home: string;
   readonly platform: NodeJS.Platform;
@@ -18,6 +20,12 @@ export interface NodeToolDirsInput {
   readonly nvmDir?: string | undefined;
   readonly voltaHome?: string | undefined;
   readonly xdgDataHome?: string | undefined;
+  /** The app's home, where first-run setup installs Node.js when the machine had none. */
+  readonly studioHome?: string | undefined;
+  /** The machine's CPU, for the folder of that install; the running process's by default. */
+  readonly arch?: string | undefined;
+  /** Linux only: whether its libc is glibc; the running process's by default. */
+  readonly glibc?: boolean | undefined;
 }
 
 const VERSION = /^v?(\d+)\.(\d+)\.(\d+)$/;
@@ -71,6 +79,17 @@ const NVM_ALIAS_HOPS = 4;
 /** An alias that names another alias file, such as `lts/*` or `lts/jod`. */
 const NVM_ALIAS_NAME = /^[\w*-]+(\/[\w*-]+)?$/;
 
+function managedNode(input: NodeToolDirsInput): ReadonlyArray<string> {
+  if (!input.studioHome) return [];
+  // oxlint-disable-next-line studio/no-global-process-runtime -- the running machine's own CPU.
+  const key = toolPlatformKey(
+    input.platform,
+    input.arch ?? process.arch,
+    input.glibc ?? runsOnGlibc(),
+  );
+  return key === null ? [] : [managedNodeDir(input.studioHome, key)];
+}
+
 /** Folders to search after PATH: version managers, then the service's own Node. Missing ones are harmless. */
 export const nodeToolDirs = Effect.fn("nodeToolDirs")(function* (input: NodeToolDirsInput) {
   const fs = yield* FileSystem.FileSystem;
@@ -117,6 +136,8 @@ export const nodeToolDirs = Effect.fn("nodeToolDirs")(function* (input: NodeTool
     path.join(home, ".npm-global", "bin"),
     path.join(home, ".asdf", "shims"),
     path.join(home, ".local", "share", "mise", "shims"),
+    // The Node.js first-run setup installed: after the person's own, before the service's.
+    ...managedNode(input),
     // Last: the person's own Node comes before the one this service runs on.
     ...(input.execPath && path.isAbsolute(input.execPath) ? [path.dirname(input.execPath)] : []),
   ];

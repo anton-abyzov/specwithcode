@@ -952,6 +952,8 @@ export const ProjectCreateNewResult = Schema.Struct({
   existing: Schema.optionalKey(Schema.Boolean),
   /** Why `specweave init` did not run or failed. The project exists either way. */
   specweaveError: Schema.optionalKey(TrimmedNonEmptyString),
+  /** `specweaveError` is that the machine has no Node.js. Absent from older servers. */
+  specweaveNeedsNode: Schema.optionalKey(Schema.Boolean),
   /** SpecWeave was set up in an existing folder that had none. Absent from older servers. */
   specweaveAdded: Schema.optionalKey(Schema.Boolean),
 });

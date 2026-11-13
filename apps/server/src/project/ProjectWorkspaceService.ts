@@ -627,8 +627,14 @@ const make = Effect.gen(function* () {
       const setupError = (
         reason: ProjectSpecweaveSetUpError["reason"],
         detail?: string,
+        needs?: "node",
       ): ProjectSpecweaveSetUpError =>
-        new ProjectSpecweaveSetUpError({ projectId, reason, ...(detail ? { detail } : {}) });
+        new ProjectSpecweaveSetUpError({
+          projectId,
+          reason,
+          ...(detail ? { detail } : {}),
+          ...(needs ? { needs } : {}),
+        });
       const project = yield* projects.get(projectId).pipe(
         Effect.orElseSucceed(() => Option.none()),
         Effect.flatMap((found) =>
@@ -645,7 +651,7 @@ const make = Effect.gen(function* () {
         );
       }
       const result = yield* specweaveSetup.value.setUp(project.workspaceRoot);
-      if (!result.ok) return yield* setupError(result.reason, result.detail);
+      if (!result.ok) return yield* setupError(result.reason, result.detail, result.needs);
       yield* knowledgeChanged(projectId);
       return { alreadySetUp: result.alreadySetUp };
     });

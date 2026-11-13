@@ -16,6 +16,7 @@ import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPla
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
 import { provisionRpcs } from "./provision.ts";
+import { machineToolsRpcs } from "./machineTools.ts";
 import { GITHUB_SIGN_IN_RPC_METHODS, gitHubSignInRpcs } from "./gitHubSignIn.ts";
 import { GITHUB_CREDENTIAL_RPC_METHODS, gitHubCredentialRpcs } from "./gitHubCredentialCopy.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
@@ -2454,6 +2455,11 @@ export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
   RpcScopeAuthorization,
 );
 
+/** Checking and installing a machine's basics (Git, Node.js, gh); its own group for the same depth reason. */
+export const WsMachineToolsRpcGroup = RpcGroup.make(...machineToolsRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Signing this machine's gh in from another device; its own group for the same depth reason. */
 export const WsGitHubSignInRpcGroup = RpcGroup.make(
   ...gitHubSignInRpcs,
@@ -2490,6 +2496,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsAwayRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
   .merge(WsProvisionRpcGroup)
+  .merge(WsMachineToolsRpcGroup)
   .merge(WsGitHubSignInRpcGroup)
   .merge(WsDesignRpcGroup)
   .merge(WsDesignSystemImportRpcGroup)

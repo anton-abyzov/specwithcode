@@ -234,6 +234,8 @@ export class ProjectSpecweaveSetUpError extends Schema.TaggedError<ProjectSpecwe
     reason: Schema.Literals(["not_found", "unavailable", "failed"]),
     /** What to tell the person: the CLI's own last lines when init failed. */
     detail: Schema.optional(Schema.String),
+    /** The machine has no Node.js, which first-run setup's machine basics can install. */
+    needs: Schema.optional(Schema.Literal("node")),
   },
 ) {
   override get message(): string {

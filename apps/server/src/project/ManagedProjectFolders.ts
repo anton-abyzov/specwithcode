@@ -239,6 +239,8 @@ export class ManagedProjectFolders extends Context.Service<
         readonly commitError?: string;
         readonly existing?: boolean;
         readonly specweaveError?: string;
+        /** `specweaveError` is that the machine has no Node.js, which the app can install. */
+        readonly specweaveNeedsNode?: boolean;
         /** SpecWeave was set up in a folder that already existed and had none. */
         readonly specweaveAdded?: boolean;
       },
@@ -647,12 +649,22 @@ const make = Effect.gen(function* () {
   });
 
   // `specweave init`, only when asked. Never fails: why it did not run comes back.
+  // Node.js missing is said apart, so the app can offer to install it.
+  const nodeMissing = new Set<string>();
   const setUpSpecweave = (cwd: string) =>
     Option.match(specweaveSetup, {
       onNone: () => Effect.succeed("SpecWeave setup is not available on this machine."),
       onSome: (setup) =>
-        setup.setUp(cwd).pipe(Effect.map((result) => (result.ok ? undefined : result.detail))),
+        setup.setUp(cwd).pipe(
+          Effect.map((result) => {
+            if (result.ok) return undefined;
+            if (result.needs === "node") nodeMissing.add(result.detail);
+            return result.detail;
+          }),
+        ),
     });
+  const needsNode = (error: string | undefined) =>
+    error !== undefined && nodeMissing.has(error) ? { specweaveNeedsNode: true } : {};
 
   // git init, the starter files, SpecWeave when asked, and the first commit.
   // Only SpecWeave and the commit may fail softly; everything else fails the create.
@@ -792,7 +804,9 @@ const make = Effect.gen(function* () {
         .pipe(Effect.orElseSucceed(() => false));
       if (present) return {};
       const error = yield* setUpSpecweave(workspaceRoot);
-      return error === undefined ? { specweaveAdded: true } : { specweaveError: error };
+      return error === undefined
+        ? { specweaveAdded: true }
+        : { specweaveError: error, ...needsNode(error) };
     },
   );
 
@@ -982,7 +996,7 @@ const make = Effect.gen(function* () {
       projectId: project.id,
       workspaceRoot,
       ...(commitError === undefined ? {} : { commitError }),
-      ...(specweaveError === undefined ? {} : { specweaveError }),
+      ...(specweaveError === undefined ? {} : { specweaveError, ...needsNode(specweaveError) }),
     };
   });
 
