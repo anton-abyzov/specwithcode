@@ -110,6 +110,11 @@ const makeHarness = (
     publicationFailure: false,
     publicationFenceStates: [] as string[],
     materializations: 0,
+    /** Every materialization input's update mode for an existing copy (1326). */
+    existingCopyMaterializations: 0,
+    existingCopyChecks: 0,
+    /** Why the destination's existing copy cannot reach the source heads; null updates it. */
+    existingCopyRefusal: null as HandoffGitError | null,
     starts: [] as Array<{ commandId: string; projectId: string; prompt: string }>,
     creations: [] as string[],
     sendAttempts: [] as string[],
@@ -424,6 +429,11 @@ const makeHarness = (
           );
         }),
       verifyRootIdentity: () => Effect.void,
+      checkExistingCopy: () =>
+        Effect.suspend(() => {
+          state.existingCopyChecks++;
+          return state.existingCopyRefusal ? Effect.fail(state.existingCopyRefusal) : Effect.void;
+        }),
       inspect: (input) =>
         Effect.sync(() => {
           state.inspects.push({ allowChanges: input.allowChanges });
@@ -453,17 +463,27 @@ const makeHarness = (
           return input.manifest;
         }),
       materialize: (input) =>
-        Effect.sync(() => {
-          state.materializations++;
-          return {
-            operationId: id,
-            workspaceRoot: input.useProjectFolder
-              ? input.workspaceRoot
-              : `/private/handoff/${id}/workspace`,
-            repositories: [],
-            manifestSha256: "b".repeat(64),
-          };
-        }),
+        Effect.suspend(() => {
+          if (input.existingCopy) {
+            state.existingCopyMaterializations++;
+            if (state.existingCopyRefusal) return Effect.fail(state.existingCopyRefusal);
+          }
+          return Effect.void;
+        }).pipe(
+          Effect.andThen(() =>
+            Effect.sync(() => {
+              state.materializations++;
+              return {
+                operationId: id,
+                workspaceRoot: input.useProjectFolder
+                  ? input.workspaceRoot
+                  : `/private/handoff/${id}/workspace`,
+                repositories: [],
+                manifestSha256: "b".repeat(64),
+              };
+            }),
+          ),
+        ),
     }),
   );
   // The real project access save, over a recording orchestrator: it moves the
