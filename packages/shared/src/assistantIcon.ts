@@ -17,8 +17,9 @@ type AnyIcon =
 
 /**
  * The icons setup offers, first one being the icon every assistant had before
- * icons were chosen. Each has its own glyph and its own colour, and each draws
- * as a different symbol in the iPhone and Android apps.
+ * icons were chosen. Each has its own glyph and its own colour, none of them a
+ * purple that reads as the bell's violet, and each draws as a different symbol
+ * in the iPhone and Android apps.
  */
 export const ASSISTANT_ICON_SUGGESTIONS: ReadonlyArray<AssistantIcon> = [
   { kind: "lucide", name: "concierge-bell", color: "violet" },
@@ -30,8 +31,8 @@ export const ASSISTANT_ICON_SUGGESTIONS: ReadonlyArray<AssistantIcon> = [
   { kind: "lucide", name: "lightbulb", color: "yellow" },
   { kind: "lucide", name: "rocket", color: "blue" },
   { kind: "lucide", name: "leaf", color: "green" },
-  { kind: "lucide", name: "gem", color: "fuchsia" },
-  { kind: "lucide", name: "crown", color: "indigo" },
+  { kind: "lucide", name: "gem", color: "cyan" },
+  { kind: "lucide", name: "crown", color: "red" },
   { kind: "lucide", name: "smile", color: "pink" },
 ];
 
