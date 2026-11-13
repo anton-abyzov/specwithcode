@@ -111,6 +111,8 @@ export class EnvironmentLinks extends Context.Service<
       readonly endpoint: RelayManagedEndpoint;
       /** Account-salted hardware identity; kept as stored when absent. */
       readonly hardwareIdentity?: string | undefined;
+      /** Carries the webhook-hold opt-in over from a replaced link of the same machine. */
+      readonly inheritHoldWebhooksWhileOffline?: boolean | undefined;
     }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
     /**
      * The user's other active links made from the same machine (same
@@ -121,7 +123,11 @@ export class EnvironmentLinks extends Context.Service<
       readonly hardwareIdentity: string;
       readonly excludeEnvironmentId: string;
     }) => Effect.Effect<
-      ReadonlyArray<{ readonly environmentId: string; readonly environmentPublicKey: string }>,
+      ReadonlyArray<{
+        readonly environmentId: string;
+        readonly environmentPublicKey: string;
+        readonly holdWebhooksWhileOffline: boolean;
+      }>,
       EnvironmentLinkLookupPersistenceError
     >;
     /** Active links proven by one environment key that have no hardware identity yet. */
@@ -223,7 +229,9 @@ const make = Effect.gen(function* () {
       // link carries it over from the environment's other active links. Only
       // links proven by the same key count; an environment id is public, so
       // anyone can link one and switch the opt-in on for their own link.
-      const inheritedHoldWebhooks = sql<boolean>`EXISTS (
+      const inheritedHoldWebhooks = input.inheritHoldWebhooksWhileOffline
+        ? sql<boolean>`1`
+        : sql<boolean>`EXISTS (
         SELECT 1 FROM ${relayEnvironmentLinks} AS other
         WHERE other.environment_id = ${environmentId}
           AND other.environment_public_key = ${proof.environmentPublicKey}
@@ -290,6 +298,7 @@ const make = Effect.gen(function* () {
           .select({
             environmentId: relayEnvironmentLinks.environmentId,
             environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+            holdWebhooksWhileOffline: relayEnvironmentLinks.holdWebhooksWhileOffline,
           })
           .from(relayEnvironmentLinks)
           .where(

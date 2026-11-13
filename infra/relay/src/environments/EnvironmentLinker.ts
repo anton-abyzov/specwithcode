@@ -90,10 +90,7 @@ export class EnvironmentLinker extends Context.Service<
           | ManagedEndpointProvider.ManagedEndpointProvisioningResult["runtime"]
           | null;
         readonly environmentCredential: string;
-        /**
-         * The user's older links from the same machine that this link
-         * replaced. Already revoked; the caller tears down their tunnels.
-         */
+        /** The user's older links from the same machine that this link replaced and removed. */
         readonly replacedEnvironmentIds: ReadonlyArray<string>;
       },
       EnvironmentLinkError
@@ -303,9 +300,12 @@ const make = Effect.gen(function* () {
       // A machine that lost its local state (reinstall, reset, wiped home)
       // comes back with a new environment id. Its signed hardware identity
       // says it is the same machine, so the account's older link for it is
-      // retired here instead of staying as a duplicate. Revoking before
-      // provisioning frees that link's account slot for the new tunnel. The
-      // identity is self-asserted, so it only ever matches this user's links.
+      // deregistered here instead of staying as a duplicate: link and
+      // credentials revoked, tunnel and DNS removed. Doing it before
+      // provisioning frees the old slot for the new tunnel, and doing all of
+      // it here means a later failure of this link leaves nothing behind that
+      // Deregister could no longer reach. The identity is self-asserted, so it
+      // only ever matches this user's links.
       // Without it the link still goes ahead, only without replacing.
       const hardwareIdentity =
         verified.hardwareIdentity === undefined
@@ -330,13 +330,33 @@ const make = Effect.gen(function* () {
             });
       const replacedEnvironmentIds: Array<string> = [];
       for (const previous of replaced) {
+        const key = { userId: input.userId, environmentId: previous.environmentId };
+        const target = yield* managedEndpointProvider
+          .prepareDeprovision(key)
+          .pipe(Effect.orElseSucceed(() => null));
         const revoked = yield* links.revokeForUser({
-          userId: input.userId,
-          environmentId: previous.environmentId,
+          ...key,
           environmentPublicKey: previous.environmentPublicKey,
         });
-        if (revoked) replacedEnvironmentIds.push(previous.environmentId);
+        if (!revoked) continue;
+        replacedEnvironmentIds.push(previous.environmentId);
+        // Best effort, as on publish-only links below: a failure leaves only
+        // an offline tunnel, which the idle-tunnel sweep removes.
+        yield* managedEndpointProvider.deprovision({ ...key, target }).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("could not remove the tunnel of a replaced machine link", {
+              environmentId: previous.environmentId,
+              errorTag: error._tag,
+            }),
+          ),
+          Effect.ignore,
+        );
       }
+      const inheritHoldWebhooksWhileOffline = replaced.some(
+        (previous) =>
+          previous.holdWebhooksWhileOffline &&
+          replacedEnvironmentIds.includes(previous.environmentId),
+      );
       if (replacedEnvironmentIds.length > 0) {
         yield* Effect.logInfo("environment link replaced an older link from the same machine", {
           environmentId: verified.environmentId,
@@ -384,7 +404,13 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      yield* links.upsert({ ...input, proof: verified, endpoint, hardwareIdentity });
+      yield* links.upsert({
+        ...input,
+        proof: verified,
+        endpoint,
+        hardwareIdentity,
+        inheritHoldWebhooksWhileOffline,
+      });
       // Only a managed link that succeeded creates the Connect account and,
       // while seats remain, grants its founder number. A link refused at a cap
       // or failing in provisioning never takes a seat. The limit resolved

@@ -15,10 +15,13 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { eq } from "drizzle-orm";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as RelayDb from "../db.ts";
+import { relayEnvironmentLinks } from "../persistence/schema.ts";
 import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
 import * as ConnectAccounts from "./ConnectAccounts.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
@@ -140,7 +143,7 @@ const activeIds = (userId: string) =>
     return rows.map((row) => row.environmentId as string).sort();
   });
 
-const layer = () =>
+const layer = (deprovisioned: Array<string> = []) =>
   EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer),
     Layer.provideMerge(
@@ -162,7 +165,11 @@ const layer = () =>
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           reconcileOrigin: () => Effect.succeed("ready"),
           prepareDeprovision: () => Effect.succeed(null),
-          deprovision: () => Effect.succeed(true),
+          deprovision: (input) =>
+            Effect.sync(() => {
+              deprovisioned.push(input.environmentId);
+              return true;
+            }),
           release: () => Effect.succeed(true),
           provision: () => Effect.die("managed tunnels are off in these tests"),
         }),
@@ -175,8 +182,9 @@ const ALICE = "user_alice";
 const M5 = machineHash("m5-platform-uuid\n/Users/anton/.specwithcode");
 
 describe("machine hardware identity on Connect links", () => {
-  it.effect("a reinstall with wiped local state replaces the machine's old record", () =>
-    Effect.gen(function* () {
+  it.effect("a reinstall with wiped local state replaces the machine's old record", () => {
+    const deprovisioned: Array<string> = [];
+    return Effect.gen(function* () {
       const before = newKeyPair();
       const first = yield* link({
         userId: ALICE,
@@ -204,6 +212,29 @@ describe("machine hardware identity on Connect links", () => {
       expect(Option.isSome(yield* credentials.authenticate(second.environmentCredential))).toBe(
         true,
       );
+      // The old record's tunnel goes with it, inside the link itself.
+      expect(deprovisioned).toContain("env-before-reset");
+    }).pipe(Effect.provide(layer(deprovisioned)));
+  });
+
+  it.effect("a replacing link keeps the machine's hold-webhooks opt-in", () =>
+    Effect.gen(function* () {
+      const before = newKeyPair();
+      yield* link({ userId: ALICE, environmentId: "env-1", keyPair: before, hardwareIdentity: M5 });
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      yield* links.setHoldWebhooksWhileOffline({
+        environmentId: "env-1",
+        environmentPublicKey: before.publicKey.trim(),
+        holdWebhooksWhileOffline: true,
+      });
+      const after = newKeyPair();
+      yield* link({ userId: ALICE, environmentId: "env-2", keyPair: after, hardwareIdentity: M5 });
+      const db = yield* RelayDb.RelayDb;
+      const rows = yield* db
+        .select({ hold: relayEnvironmentLinks.holdWebhooksWhileOffline })
+        .from(relayEnvironmentLinks)
+        .where(eq(relayEnvironmentLinks.environmentId, "env-2"));
+      expect(rows).toEqual([{ hold: true }]);
     }).pipe(Effect.provide(layer())),
   );
 

@@ -7,6 +7,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import { HttpClient } from "effect/http";
@@ -17,7 +18,12 @@ import { makeRelayEnvironmentHttpClient } from "../relay/relayEnvironmentClient.
 import { forkParked } from "../serverActivation.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as MachineHardwareIdentity from "./MachineHardwareIdentity.ts";
-import { readRelayConnection } from "./config.ts";
+import {
+  CLOUD_HARDWARE_IDENTITY_RECORDED,
+  CLOUD_LINKED_ENVIRONMENT_ID,
+  CLOUD_LINKED_USER_ID,
+  readRelayConnection,
+} from "./config.ts";
 
 const RELAY_REQUEST_TIMEOUT = "10 seconds";
 /** How often a linked machine asks whether it is still linked. */
@@ -64,10 +70,12 @@ export const checkLinkOnce: Effect.Effect<
 );
 
 /**
- * Records this machine's hardware identity on its existing link, for links made
- * by a version that did not send one, so a later reinstall replaces the record
- * instead of adding a second. `true` once recorded or when there is nothing
- * to record; `false` to try again later. Never fails.
+ * Brings a link made by an older version up to date, once the relay has just
+ * accepted it: keeps the linked environment id locally (so a lost
+ * environment-id file is restored, not replaced) and records this machine's
+ * hardware identity on the relay (so a later reinstall replaces the record
+ * instead of adding a second). `true` when done or nothing is left to do;
+ * `false` to try again later. Never fails.
  */
 export const recordHardwareIdentityOnce: Effect.Effect<
   boolean,
@@ -77,22 +85,34 @@ export const recordHardwareIdentityOnce: Effect.Effect<
   | MachineHardwareIdentity.MachineHardwareIdentity
   | HttpClient.HttpClient
 > = Effect.gen(function* () {
-  const identity = yield* MachineHardwareIdentity.MachineHardwareIdentity;
-  const hardwareIdentity = yield* identity.get;
-  if (hardwareIdentity === null) return true;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const connection = yield* readRelayConnection;
   if (connection === null) return false;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
+  if (Option.isNone(yield* secrets.get(CLOUD_LINKED_ENVIRONMENT_ID))) {
+    yield* secrets.set(CLOUD_LINKED_ENVIRONMENT_ID, new TextEncoder().encode(environmentId));
+  }
+  const identity = yield* MachineHardwareIdentity.MachineHardwareIdentity;
+  const userId = yield* secrets.get(CLOUD_LINKED_USER_ID);
+  if (Option.isNone(userId)) return true;
+  const hardwareIdentity = yield* identity.forAccount(new TextDecoder().decode(userId.value));
+  if (hardwareIdentity === null) return true;
+  const recorded = yield* secrets.get(CLOUD_HARDWARE_IDENTITY_RECORDED);
+  if (Option.isSome(recorded) && new TextDecoder().decode(recorded.value) === hardwareIdentity) {
+    return true;
+  }
   const client = yield* makeRelayEnvironmentHttpClient(connection);
-  return yield* client.server
+  yield* client.server
     .recordHardwareIdentity({ params: { environmentId }, payload: { hardwareIdentity } })
-    .pipe(Effect.as(true), Effect.timeout(RELAY_REQUEST_TIMEOUT));
+    .pipe(Effect.timeout(RELAY_REQUEST_TIMEOUT));
+  yield* secrets.set(CLOUD_HARDWARE_IDENTITY_RECORDED, new TextEncoder().encode(hardwareIdentity));
+  return true;
 }).pipe(
   Effect.catchCause((cause) =>
-    Effect.logDebug("Could not record this machine's identity with SpecWithCode Connect", {
-      cause,
-    }).pipe(Effect.as(false)),
+    Effect.logDebug("Could not bring this machine's Connect link up to date", { cause }).pipe(
+      Effect.as(false),
+    ),
   ),
 );
 

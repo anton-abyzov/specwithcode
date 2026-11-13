@@ -402,8 +402,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
       yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-        // Startup reads the three secrets once, plus the linked environment
-        // id a new home could restore (none here).
+        // Startup reads the three secrets once, plus the linked id a fresh
+        // home could restore.
         expect(reads).toBe(4);
         for (let index = 0; index < 5; index += 1) {
           const descriptor = yield* serverEnvironment.getDescriptor;

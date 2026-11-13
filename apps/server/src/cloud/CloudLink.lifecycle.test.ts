@@ -1248,6 +1248,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
       const requests: Array<HttpClientRequest.HttpClientRequest> = [];
       const cloudMintPublicKey = mintPublicKey();
       const hardwareIdentity = "c".repeat(64);
+      // The relay's challenge names the account; only its payload is read here.
+      const boundChallenge = [
+        Buffer.from(JSON.stringify({ alg: "EdDSA" })).toString("base64url"),
+        Buffer.from(JSON.stringify({ sub: "user-123" })).toString("base64url"),
+        "signature",
+      ].join(".");
       return Effect.gen(function* () {
         const link = yield* CloudLink.CloudLink;
         expect(yield* link.reconcileDesiredLink("http://127.0.0.1:8319")).toBe("managed");
@@ -1270,7 +1276,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           hardwareIdentity,
           respond: () =>
             requests.length === 1
-              ? Response.json({ challenge: "challenge", expiresAt: "2030-01-01T00:00:00Z" })
+              ? Response.json({ challenge: boundChallenge, expiresAt: "2030-01-01T00:00:00Z" })
               : Response.json({
                   ok: true,
                   cloudUserId: "user-123",

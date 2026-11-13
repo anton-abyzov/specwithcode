@@ -691,23 +691,6 @@ export const layerClientApi = HttpApiBuilder.group(
             yield* appendRelayCredentialResponseHeaders;
             const { userId } = yield* RelayClientPrincipal;
             const result = yield* linker.link({ userId, request: payload });
-            // The replaced links are already revoked; their tunnels and DNS go
-            // the way a Deregister takes them. Best effort: the new link stands
-            // either way, and a later Deregister retries a failed teardown.
-            for (const environmentId of result.replacedEnvironmentIds) {
-              yield* unlinkEnvironmentRecord({
-                userId,
-                environmentId,
-                managedEndpointNamespace: config.managedEndpointNamespace,
-              }).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Could not tear down a replaced machine link", {
-                    environmentId,
-                    cause,
-                  }),
-                ),
-              );
-            }
             return {
               ok: true,
               cloudUserId: userId,
