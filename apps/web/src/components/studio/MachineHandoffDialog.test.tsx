@@ -347,6 +347,16 @@ describe("machine handoff dialog", () => {
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
+  it("shows machines that can still be connected under the list, also when it is empty", async () => {
+    const extra = <p data-testid="more-machines">On your account: M5</p>;
+    await handoff({ machinesExtra: extra });
+    const list = document.querySelector('[data-slot="machine-options"]');
+    expect(list?.parentElement?.querySelector('[data-testid="more-machines"]')).not.toBeNull();
+    await handoff({ destinations: [], machines: [], machine: null, selected: "" });
+    expect(document.body.textContent).toContain("No other machine is connected.");
+    expect(document.querySelector('[data-testid="more-machines"]')).not.toBeNull();
+  });
+
   it("asks for a folder on a machine with none saved, and Browse… swaps in the picker", async () => {
     await handoff({
       selected: "",

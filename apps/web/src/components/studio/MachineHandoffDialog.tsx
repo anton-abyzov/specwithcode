@@ -16,6 +16,7 @@ import {
   MoreOptions,
   MoveIntentToggle,
   ProjectMoveDialog,
+  useProjectMoveDialog,
   type MoveIntent,
 } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
@@ -114,7 +115,10 @@ export function MachineHandoffDialog({
   copyLocked,
   copyDoneOn = null,
   machinesLoading = false,
+  machinesExtra,
 }: {
+  /** Shown under the machine list: machines that can be connected from here. */
+  readonly machinesExtra?: ReactNode;
   /** The other machines' first status read has not settled: their list shows a loading row. */
   readonly machinesLoading?: boolean;
   /** How the destination gets the files; the copy methods render `copyFlow` instead. */
@@ -199,6 +203,7 @@ export function MachineHandoffDialog({
             intent,
             close: locked ? null : close,
             machinesLoading,
+            machinesExtra,
           }}
         >
           <DialogHeader>
@@ -393,6 +398,7 @@ function GitWhere({
   const current = saved.find((item) => item.key === selected) ?? null;
   // Browse… swaps the saved folder for the picker until a folder is saved or kept.
   const [changing, setChanging] = useState<string | null>(null);
+  const machinesExtra = useProjectMoveDialog()?.machinesExtra;
   const picking = folderPicker != null && (saved.length === 0 || changing === selected);
   return (
     <div className="flex flex-col gap-4">
@@ -419,6 +425,7 @@ function GitWhere({
             onChange={(value) => onMachineChange?.(value)}
           />
         )}
+        {machinesExtra}
       </fieldset>
       {machine && machineLabel ? (
         picking ? (

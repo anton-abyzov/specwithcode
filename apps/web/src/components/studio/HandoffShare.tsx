@@ -33,7 +33,7 @@ import { Checkbox } from "../ui/checkbox";
 import { HandoffCopyActions } from "./HandoffCopyActions";
 import { useCopyScope } from "./HandoffCopyScope";
 import { HandoffShareRepositories } from "./HandoffShareRepositories";
-import { MoreOptions } from "./ProjectMoveOptions";
+import { MoreOptions, useProjectMoveDialog } from "./ProjectMoveOptions";
 
 /** How long a finished clone waits for its link before Add is offered again. */
 const LINK_WAIT_MS = 120_000;
@@ -99,6 +99,7 @@ export function HandoffShare({
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
+  const moveDialog = useProjectMoveDialog();
   const [alsoMove, setAlsoMove] = useState(false);
   // Git carries tracked files only; these two send the rest, and both start off.
   const [copyIgnored, setCopyIgnored] = useState(false);
@@ -233,6 +234,7 @@ export function HandoffShare({
             onChange={(value) => onMachineChange(value as EnvironmentId | null)}
           />
         )}
+        {moveDialog?.machinesExtra}
       </fieldset>
       {machineLabel && (
         <p className="wrap-anywhere text-sm text-muted-foreground" data-slot="handoff-share-about">

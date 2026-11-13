@@ -31,6 +31,8 @@ export interface ProjectMoveDialogContext {
   readonly close: (() => void) | null;
   /** True while the other machines' first status read has not settled. */
   readonly machinesLoading?: boolean;
+  /** Shown under every machine list: account machines this app has not saved. */
+  readonly machinesExtra?: ReactNode;
 }
 
 export const ProjectMoveDialog = createContext<ProjectMoveDialogContext | null>(null);
