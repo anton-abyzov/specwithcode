@@ -22,7 +22,11 @@ import * as Scope from "effect/Scope";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveServerInstallation } from "../cli/invocation.ts";
-import { readAgentActivityPublishingActive } from "../cloud/config.ts";
+import {
+  CLOUD_LINKED_ENVIRONMENT_ID,
+  readAgentActivityPublishingActive,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+} from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
@@ -160,6 +164,19 @@ const makeIdentity = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  const secrets = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
+
+  // The id a still-valid Connect link was made for. Restoring it keeps this
+  // machine one record on the relay when only the environment-id file was lost.
+  const readLinkedEnvironmentId = Effect.gen(function* () {
+    if (Option.isNone(secrets)) return null;
+    const linkedId = yield* secrets.value.get(CLOUD_LINKED_ENVIRONMENT_ID);
+    if (Option.isNone(linkedId)) return null;
+    const credential = yield* secrets.value.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
+    if (Option.isNone(credential)) return null;
+    const value = new TextDecoder().decode(linkedId.value).trim();
+    return /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : null;
+  }).pipe(Effect.orElseSucceed(() => null));
 
   const readPersistedEnvironmentId = Effect.gen(function* () {
     const exists = yield* fileSystem.exists(serverConfig.environmentIdPath).pipe(
@@ -233,7 +250,13 @@ const makeIdentity = Effect.gen(function* () {
       return persisted;
     }
 
-    const generated = yield* crypto.randomUUIDv4;
+    const linked = yield* readLinkedEnvironmentId;
+    if (linked !== null) {
+      yield* Effect.logWarning(
+        "The environment-id file was missing; restored the id this machine is linked with",
+      );
+    }
+    const generated = linked ?? (yield* crypto.randomUUIDv4);
     yield* persistEnvironmentId(generated, "create");
     let winner = yield* readPersistedEnvironmentId;
     if (winner === null) {

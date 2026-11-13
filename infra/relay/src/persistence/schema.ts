@@ -139,6 +139,11 @@ export const relayEnvironmentLinks = sqliteTable(
       .notNull()
       .default(false),
     createdByDeviceId: text("created_by_device_id"),
+    // Hash of the machine's hardware identity, salted with the user id. The
+    // machine sends only its own hash of the hardware id and home folder, so
+    // the raw hardware id never leaves it. A new link with the same value
+    // replaces the account's older link for that machine.
+    hardwareIdentity: text("hardware_identity"),
     revokedAt: text("revoked_at"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -146,6 +151,11 @@ export const relayEnvironmentLinks = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.userId, table.environmentId] }),
     index("idx_relay_environment_links_environment").on(table.environmentId, table.revokedAt),
+    index("idx_relay_environment_links_hardware").on(
+      table.userId,
+      table.hardwareIdentity,
+      table.revokedAt,
+    ),
   ],
 );
 

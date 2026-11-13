@@ -24,6 +24,7 @@ import * as OtelEnvironment from "@specweave-studio/shared/otelEnvironment";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
+  CLOUD_LINKED_ENVIRONMENT_ID,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
@@ -255,6 +256,61 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
+  it.effect("restores the linked id when only the environment-id file is lost", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-server-environment-test-",
+      });
+      const readId = Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getEnvironmentId;
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
+      const storeSecrets = (entries: ReadonlyArray<readonly [string, string]>) =>
+        Effect.gen(function* () {
+          const secrets = yield* ServerSecretStore.ServerSecretStore;
+          for (const [name, value] of entries) {
+            yield* secrets.set(name, new TextEncoder().encode(value));
+          }
+        }).pipe(
+          Effect.provide(
+            ServerSecretStore.layer.pipe(
+              Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+            ),
+          ),
+        );
+      const config = yield* makeServerConfig(baseDir);
+
+      const linkedId = yield* readId;
+      yield* storeSecrets([
+        [CLOUD_LINKED_ENVIRONMENT_ID, linkedId],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      yield* fileSystem.remove(config.environmentIdPath);
+
+      expect(yield* readId).toBe(linkedId);
+    }),
+  );
+
+  it.effect("mints a new id when the id file is lost and no link holds one", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-server-environment-test-",
+      });
+      const readId = Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getEnvironmentId;
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
+      const config = yield* makeServerConfig(baseDir);
+
+      const first = yield* readId;
+      yield* fileSystem.remove(config.environmentIdPath);
+
+      expect(yield* readId).not.toBe(first);
+    }),
+  );
+
   it.effect("reports agent activity publishing from the current secret state", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -346,13 +402,14 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
       yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-        // Startup reads the three secrets once.
-        expect(reads).toBe(3);
+        // Startup reads the three secrets once, plus the linked environment
+        // id a new home could restore (none here).
+        expect(reads).toBe(4);
         for (let index = 0; index < 5; index += 1) {
           const descriptor = yield* serverEnvironment.getDescriptor;
           expect(descriptor.capabilities.agentActivityPublishing).toBe(true);
         }
-        expect(reads).toBe(3);
+        expect(reads).toBe(4);
 
         // Once the window passes, a stalled store does not hold the request:
         // it answers from the last value after a short wait, and the shared
@@ -370,14 +427,14 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         const second = yield* serverEnvironment.getDescriptor.pipe(Effect.forkChild);
         yield* TestClock.adjust("250 millis");
         expect((yield* Fiber.join(second)).capabilities.agentActivityPublishing).toBe(true);
-        expect(reads).toBe(6);
+        expect(reads).toBe(7);
 
         yield* Deferred.succeed(stall, undefined);
         stall = undefined;
         // The next request joins the same in-flight refresh and sees its result.
         const refreshed = yield* serverEnvironment.getDescriptor;
         expect(refreshed.capabilities.agentActivityPublishing).toBe(false);
-        expect(reads).toBe(6);
+        expect(reads).toBe(7);
       }).pipe(
         Effect.provide(
           ServerEnvironment.layer.pipe(

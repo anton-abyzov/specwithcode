@@ -89,6 +89,7 @@ import {
   CLOUD_ENDPOINT_PUBLIC_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED_ELSEWHERE_AT,
+  CLOUD_LINKED_ENVIRONMENT_ID,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   decodeConfirmedOrigin,
@@ -105,6 +106,7 @@ import {
   RELAY_URL_SECRET,
 } from "./config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
+import * as MachineHardwareIdentity from "./MachineHardwareIdentity.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
@@ -645,6 +647,7 @@ const make = Effect.gen(function* () {
   const httpServer = yield* HttpServer.HttpServer;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const crypto = yield* Crypto.Crypto;
+  const machineHardwareIdentity = yield* MachineHardwareIdentity.MachineHardwareIdentity;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -713,6 +716,7 @@ const make = Effect.gen(function* () {
     const expiresAt = DateTime.add(now, { minutes: 5 });
     const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
     const descriptor = yield* environment.getDescriptor;
+    const hardwareIdentity = yield* machineHardwareIdentity.get;
     const payload = {
       iss: `studio-env:${descriptor.environmentId}`,
       aud: normalizeRelayIssuer(request.relayIssuer),
@@ -727,6 +731,8 @@ const make = Effect.gen(function* () {
       endpoint: request.endpoint,
       origin: request.origin,
       scopes: linkProofScopes(request),
+      // Lets the relay replace this account's older record for this machine.
+      ...(hardwareIdentity === null ? {} : { hardwareIdentity }),
     } satisfies RelayEnvironmentLinkProofPayload;
     return yield* signRelayJwt({
       privateKey: keyPair.privateKey,
@@ -905,6 +911,10 @@ const make = Effect.gen(function* () {
         stringToBytes(payload.environmentCredential),
       );
       yield* secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
+      yield* secrets.set(
+        CLOUD_LINKED_ENVIRONMENT_ID,
+        stringToBytes(yield* environment.getEnvironmentId),
+      );
       yield* awarenessRelay.requestCatchUp();
       if (payload.endpointRuntime) {
         const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
@@ -1456,6 +1466,7 @@ const make = Effect.gen(function* () {
     yield* Effect.all(
       [
         secrets.remove(CLOUD_LINKED_USER_ID),
+        secrets.remove(CLOUD_LINKED_ENVIRONMENT_ID),
         secrets.remove(RELAY_URL_SECRET),
         secrets.remove(RELAY_ISSUER_SECRET),
         secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),

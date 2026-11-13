@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or sign.
 import * as NodeCrypto from "node:crypto";
+
+import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import type {
   RelayEnvironmentLinkProofPayload,
   RelayEnvironmentLinkRequest,
@@ -121,6 +123,7 @@ function layerTest(input?: {
     Layer.provide(
       Layer.mergeAll(
         RelayConfiguration.layer(config),
+        NodeCryptoLayer.layer,
         Layer.succeed(ConnectAccounts.ConnectAccounts, {
           ensureAccount:
             input?.ensureAccount ??
@@ -145,6 +148,9 @@ function layerTest(input?: {
           getForUser: () => Effect.succeed(null),
           findActiveManagedForEnvironment: () => Effect.succeed([]),
           setHoldWebhooksWhileOffline: () => Effect.void,
+          findActiveForHardware: () => Effect.succeed([]),
+          listActiveWithoutHardware: () => Effect.succeed([]),
+          setHardwareIdentity: () => Effect.succeed(false),
           revokeForUser: () => Effect.succeed(false),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {

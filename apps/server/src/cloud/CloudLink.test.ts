@@ -18,6 +18,7 @@ import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";
+import * as MachineHardwareIdentity from "./MachineHardwareIdentity.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
@@ -113,6 +114,7 @@ const withService = <A, E>(
         HttpClient.make(() => Effect.die("unused")),
       ),
       NodeServices.layer,
+      MachineHardwareIdentity.layerTest(null),
     );
     return yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;

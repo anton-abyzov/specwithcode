@@ -360,6 +360,15 @@ export const RelayEnvironmentLinkScope = Schema.Literals([
 ]);
 export type RelayEnvironmentLinkScope = typeof RelayEnvironmentLinkScope.Type;
 
+/**
+ * A machine's own SHA-256 hex hash of its hardware id and home folder. The raw
+ * hardware id never leaves the machine; the relay salts this again per account.
+ */
+export const RelayEnvironmentHardwareIdentity = Schema.String.check(
+  Schema.isPattern(/^[0-9a-f]{64}$/),
+);
+export type RelayEnvironmentHardwareIdentity = typeof RelayEnvironmentHardwareIdentity.Type;
+
 export const RelayEnvironmentLinkProofPayload = Schema.Struct({
   ...RelaySignedJwtRegisteredClaims,
   challenge: TrimmedNonEmptyString,
@@ -369,6 +378,8 @@ export const RelayEnvironmentLinkProofPayload = Schema.Struct({
   endpoint: RelayManagedEndpoint,
   origin: RelayManagedEndpointOrigin,
   scopes: Schema.Array(RelayEnvironmentLinkScope),
+  /** Lets the relay replace this account's older link for the same machine. */
+  hardwareIdentity: Schema.optionalKey(RelayEnvironmentHardwareIdentity),
 });
 export type RelayEnvironmentLinkProofPayload = typeof RelayEnvironmentLinkProofPayload.Type;
 
@@ -1376,6 +1387,18 @@ export const RelayEnvironmentLinkPreferencesRequest = Schema.Struct({
 export type RelayEnvironmentLinkPreferencesRequest =
   typeof RelayEnvironmentLinkPreferencesRequest.Type;
 
+export const RelayEnvironmentHardwareIdentityRequest = Schema.Struct({
+  hardwareIdentity: RelayEnvironmentHardwareIdentity,
+});
+export type RelayEnvironmentHardwareIdentityRequest =
+  typeof RelayEnvironmentHardwareIdentityRequest.Type;
+
+export const RelayEnvironmentHardwareIdentityResponse = Schema.Struct({
+  recorded: Schema.Boolean,
+});
+export type RelayEnvironmentHardwareIdentityResponse =
+  typeof RelayEnvironmentHardwareIdentityResponse.Type;
+
 export const RelayWakeHeldHooksResponse = Schema.Struct({
   /** True when the relay was holding requests and has started delivering them. */
   pending: Schema.Boolean,
@@ -1427,6 +1450,16 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post(
+      "recordHardwareIdentity",
+      "/v1/environments/:environmentId/hardware-identity",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: RelayEnvironmentHardwareIdentityRequest,
+        success: RelayEnvironmentHardwareIdentityResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ).annotate(OpenApi.Summary, "Record the machine identity on links made before it was sent"),
     HttpApiEndpoint.post("removeClientKey", "/v1/environments/:environmentId/client-keys/remove", {
       params: Schema.Struct({ environmentId: EnvironmentId }),
       payload: RelayRemoveClientKeyRequest,

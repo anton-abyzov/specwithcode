@@ -40,6 +40,7 @@ import {
   CLOUD_ENDPOINT_PUBLIC_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED_ELSEWHERE_AT,
+  CLOUD_LINKED_ENVIRONMENT_ID,
   CLOUD_LINKED_USER_ID,
   decodeConfirmedOrigin,
   decodePublicOrigin,
@@ -49,6 +50,7 @@ import {
   RELAY_URL_SECRET,
 } from "./config.ts";
 import * as CloudLink from "./CloudLink.ts";
+import * as MachineHardwareIdentity from "./MachineHardwareIdentity.ts";
 import { consumeCloudReplayGuards } from "./CloudLink.ts";
 import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import {
@@ -160,7 +162,7 @@ describe("reconcileDesiredCloudLink", () => {
 
       expect(error._tag).toBe("CloudLinkAuthorizationMissingError");
     }).pipe(
-      Effect.provide(CloudLink.layer),
+      Effect.provide(CloudLink.layer.pipe(Layer.provide(MachineHardwareIdentity.layerTest(null)))),
       Effect.provideService(HttpServer.HttpServer, idleHttpServer),
       Effect.provideService(
         ServerConfigModule.ServerConfig,
@@ -248,6 +250,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly onRequest?: (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<void>;
     readonly respond?: () => Response;
     readonly respondEffect?: Effect.Effect<Response>;
+    readonly hardwareIdentity?: string;
   }
 
   // Writes the launcher's durable state file into this test's baseDir with
@@ -285,7 +288,11 @@ describe("releaseManagedTunnelOnShutdown", () => {
     (harness: ReleaseHarness) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.provide(CloudLink.layer),
+        Effect.provide(
+          CloudLink.layer.pipe(
+            Layer.provide(MachineHardwareIdentity.layerTest(harness.hardwareIdentity ?? null)),
+          ),
+        ),
         Effect.provideService(HttpServer.HttpServer, idleHttpServer),
         Effect.provideService(ServerSecretStore.ServerSecretStore, harness.store),
         Effect.provideService(AgentAwarenessRelay.AgentAwarenessRelay, idleAwarenessRelay),
@@ -1218,6 +1225,49 @@ describe("releaseManagedTunnelOnShutdown", () => {
           store,
           applyConfigCalls,
           requests,
+          respond: () =>
+            requests.length === 1
+              ? Response.json({ challenge: "challenge", expiresAt: "2030-01-01T00:00:00Z" })
+              : Response.json({
+                  ok: true,
+                  cloudUserId: "user-123",
+                  environmentId: "env_123",
+                  endpoint: endpointFor(ownHost),
+                  endpointRuntime: tunnelConfig,
+                  relayIssuer: "https://relay.spec-weave.com",
+                  environmentCredential: "environment-credential",
+                  cloudMintPublicKey,
+                }),
+        }),
+        relayEnv,
+      );
+    });
+
+    it.effect("a CLI link signs this machine's identity in and remembers the linked id", () => {
+      const { store, values } = makeMemorySecretStore([[CLOUD_CLI_DESIRED_LINK_SECRET, "managed"]]);
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      const cloudMintPublicKey = mintPublicKey();
+      const hardwareIdentity = "c".repeat(64);
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        expect(yield* link.reconcileDesiredLink("http://127.0.0.1:8319")).toBe("managed");
+        const linkRequest = requests[1];
+        const body =
+          linkRequest?.body._tag === "Uint8Array"
+            ? (JSON.parse(new TextDecoder().decode(linkRequest.body.body)) as { proof: string })
+            : null;
+        const claims = JSON.parse(
+          Buffer.from(body?.proof.split(".")[1] ?? "", "base64url").toString("utf8"),
+        ) as { hardwareIdentity?: string; environmentId: string };
+        expect(claims.hardwareIdentity).toBe(hardwareIdentity);
+        const linkedId = values.get(CLOUD_LINKED_ENVIRONMENT_ID);
+        expect(linkedId && new TextDecoder().decode(linkedId)).toBe(claims.environmentId);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls: [],
+          requests,
+          hardwareIdentity,
           respond: () =>
             requests.length === 1
               ? Response.json({ challenge: "challenge", expiresAt: "2030-01-01T00:00:00Z" })
