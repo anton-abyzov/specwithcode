@@ -590,13 +590,7 @@ function MachineChip({
  * folder with the home folder as "~" and the end kept. Pressing it lists every
  * copy with its machine, status, role and full folder.
  */
-function ProjectWhere({
-  project,
-  here,
-}: {
-  project: MachineProject;
-  here: MachineHere;
-}) {
+function ProjectWhere({ project, here }: { project: MachineProject; here: MachineHere }) {
   const tx = useTx();
   const identities = useMachineIdentities();
   const shown = project.elsewhere.slice(0, MAX_MACHINE_CHIPS);
@@ -609,6 +603,7 @@ function ProjectWhere({
       seen: here.seen,
       folder: project.folder,
       roleLabel: project.role ? project.roleLabel : null,
+      roleValues: project.roleValues,
     },
     ...project.elsewhere.map((copy) => ({ key: copy.environmentId, ...copy })),
   ];
@@ -673,9 +668,8 @@ function ProjectWhere({
                 <MachineDot identity={identities(copy.environmentId, copy.name)} />
                 <span className="truncate font-medium text-foreground">{copy.name}</span>
                 <span className="shrink-0 text-muted-foreground">
-                  {[copy.seen.text, copy.roleLabel]
+                  {[tx(copy.seen.text), copy.roleLabel ? tx(copy.roleLabel, copy.roleValues) : null]
                     .filter((part): part is string => Boolean(part))
-                    .map((part) => tx(part))
                     .join(" · ")}
                 </span>
               </p>
@@ -770,11 +764,11 @@ function ProjectList({
               render={<span className="inline-flex justify-self-start" />}
             >
               <Badge size="sm" variant={project.role ? ROLE_BADGE[project.role] : "secondary"}>
-                {tx(project.roleLabel)}
+                {tx(project.roleLabel, project.roleValues)}
               </Badge>
             </TooltipTrigger>
             <TooltipPopup side="top" className="max-w-72">
-              {tx(project.roleHelp)}
+              {tx(project.roleHelp, project.roleValues)}
             </TooltipPopup>
           </Tooltip>
           <ProjectWhere project={project} here={here} />

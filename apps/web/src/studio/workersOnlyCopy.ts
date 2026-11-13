@@ -1,6 +1,6 @@
 /**
- * A linked copy that only runs workers because its coordinator moved to
- * another machine: where its work is started, and what its composer says.
+ * A linked copy whose main moved to another machine (internally "workers only"):
+ * where its work is started, and what its badge and composer say.
  * Kept free of UI imports so routing hooks can use it.
  *
  * @module workersOnlyCopy
@@ -9,15 +9,62 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type { LogicalProjectMember } from "@specweave-studio/contracts";
 
 /**
- * The notice on a workers-only copy whose coordinator runs on `machine`. The
- * history wording is kept for a copy that ran a coordinator before; a copy that
- * never did has no conversation to keep.
+ * The notice on a copy whose main is on `machine` (internally a workers-only copy): it
+ * cannot start work itself. The history wording is added for a copy that ran a
+ * coordinator before; a copy that never did has no conversation to keep.
  */
 export function workersOnlyProblem(machine: string | null, hadConversation: boolean): string {
-  const there = machine ?? "another machine";
-  return hadConversation
-    ? `This project now runs on ${there}. The conversation here is kept as history. Start work for this copy from ${machine ?? "there"}.`
-    : `This copy runs workers only. Its coordinator is on ${there}. Start work for this copy from there.`;
+  const takesWork = machine
+    ? `Work starts on ${machine}. This copy takes work from there.`
+    : "Work starts on another machine. This copy takes work from there.";
+  return hadConversation ? `${takesWork} The conversation here is kept as history.` : takesWork;
+}
+
+/** A copy's role in words: an English phrase and its `{machine}` value, translated where shown. */
+export interface CopyRoleText {
+  readonly text: string;
+  readonly values?: { readonly machine: string };
+}
+
+/**
+ * The badge for a copy's role (`copyRoles`): "Main", "Copy · main on m4", "Moving main".
+ * `mainMachine` names where main is; without it a copy reads "Copy".
+ */
+export function copyRoleLabel(
+  role: "main" | "also-main" | "copy" | "moving",
+  mainMachine: string | null,
+): CopyRoleText {
+  if (role === "main") return { text: "Main" };
+  if (role === "moving") return { text: "Moving main" };
+  return mainMachine
+    ? { text: "Copy · main on {machine}", values: { machine: mainMachine } }
+    : { text: "Copy" };
+}
+
+/** The role in a sentence, for the badge's tooltip. */
+export function copyRoleHelp(
+  role: "main" | "also-main" | "copy" | "moving",
+  mainMachine: string | null,
+): CopyRoleText {
+  const machine = mainMachine ?? "another machine";
+  switch (role) {
+    case "main":
+      return {
+        text: "Work for this project starts here. Copies on other machines take work from it.",
+      };
+    case "also-main":
+      return {
+        text: "Main is on {machine}. This copy can also start work of its own.",
+        values: { machine },
+      };
+    case "copy":
+      return {
+        text: "Work starts on {machine}. This copy takes work from there.",
+        values: { machine },
+      };
+    case "moving":
+      return { text: "Main is moving between machines right now." };
+  }
 }
 
 /**

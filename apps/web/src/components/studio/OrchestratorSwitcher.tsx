@@ -40,13 +40,6 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 
-const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
-  coordinator: "",
-  workers: "workers only",
-  pending: "move pending",
-  independent: "separate project",
-};
-
 /** Runs the pending action once the popup holding this has left the DOM. */
 function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }) {
   useEffect(
@@ -209,14 +202,15 @@ export function OrchestratorSwitcher({
                 ...listed.map((copy) => ({
                   key: copy.key,
                   name: nameOf(copy),
-                  note: ROLE_NOTE[copy.role],
+                  // The same badge Settings > Machines shows for this copy.
+                  note: copy.label.text ? tx(copy.label.text, copy.label.values) : "",
                   hint: nameOf(copy),
                 })),
                 // Linked, but this app has no connection to it, so it has no copy to show.
                 ...unknown.map((ref) => ({
                   key: ref.key,
                   name: ref.machine,
-                  note: "not connected",
+                  note: tx("not connected"),
                   hint: tx(
                     "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.",
                     { machine: ref.machine },
@@ -233,7 +227,7 @@ export function OrchestratorSwitcher({
                   <span className="flex w-full items-center gap-2">
                     <span className="min-w-0 truncate">{row.name}</span>
                     {row.note ? (
-                      <span className="shrink-0 text-muted-foreground text-xs">{tx(row.note)}</span>
+                      <span className="shrink-0 text-muted-foreground text-xs">{row.note}</span>
                     ) : null}
                     <MenuRadioItemIndicator className="ms-auto ps-4" />
                   </span>

@@ -2351,19 +2351,7 @@ export const es: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "¿Quitar de este dispositivo el registro antiguo de {name} ({host})?\nLa máquina se unió de nuevo como una nueva y sigue funcionando; solo se van el registro muerto y sus hilos en caché aquí.",
   "Use 2 or 3 characters.": "Usa 2 o 3 caracteres.",
-  "Coordinator here": "Coordinador aquí",
-  "Coordinator here too": "También coordinador",
-  "Workers only": "Solo workers",
-  "Moving coordinator": "Coordinador en traslado",
   "Not shared": "No compartido",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "El coordinador del proyecto se ejecuta en esta copia, esté trabajando ahora o no. Las copias de otras máquinas reciben trabajo de él. Se refiere al coordinador, no a cómo se hizo la copia.",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "Esta copia también ejecuta un coordinador propio, como puede hacer cada máquina, pero el coordinador del proyecto es el de otra copia. Transferir mueve el coordinador y deja aquí solo workers.",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "El coordinador se trasladó a otra máquina. Esta copia solo ejecuta los workers que él envía aquí.",
-  "The project's coordinator is moving between machines right now.":
-    "El coordinador del proyecto se está trasladando entre máquinas ahora mismo.",
   "No other machine has a copy of this project.":
     "Ninguna otra máquina tiene una copia de este proyecto.",
   "Connect to see its role": "Conéctate para ver su rol",
@@ -4615,8 +4603,6 @@ export const es: PhraseCatalog = {
   "Machine access settings": "Ajustes de acceso entre equipos",
   "{machine} offline": "{machine} sin conexión",
   "workers only": "solo workers",
-  "move pending": "traslado pendiente",
-  "separate project": "proyecto aparte",
   "{value}Messages go to Percy. {value2}": "{value}Los mensajes van a Percy. {value2}",
   "Show only topics that need you in {project}":
     "Mostrar solo los temas que te necesitan en {project}",
@@ -5022,4 +5008,20 @@ export const es: PhraseCatalog = {
     "La copia de SpecWithCode es la versión {version}, anterior a la que usa esta versión.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "Las herramientas se quedan en cada equipo y no se copian. {machineName} aún necesita algunas antes de que los agentes puedan trabajar allí en este proyecto.",
+  "Main":
+    "Principal",
+  "Moving main":
+    "Moviendo la principal",
+  "Copy · main on {machine}":
+    "Copia · principal en {machine}",
+  "Separate project":
+    "Proyecto aparte",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "El trabajo de este proyecto empieza aquí. Las copias en otras máquinas reciben trabajo de esta.",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "La principal está en {machine}. Esta copia también puede empezar trabajo propio.",
+  "Work starts on {machine}. This copy takes work from there.":
+    "El trabajo empieza en {machine}. Esta copia recibe trabajo de allí.",
+  "Main is moving between machines right now.":
+    "La principal se está moviendo entre máquinas ahora mismo.",
 };

@@ -636,6 +636,10 @@
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
     },
+    "./existingCopy": {
+      "types": "./src/existingCopy.ts",
+      "import": "./src/existingCopy.ts"
+    },
     "./coordinatorReplySources": {
       "types": "./src/coordinatorReplySources.ts",
       "import": "./src/coordinatorReplySources.ts"

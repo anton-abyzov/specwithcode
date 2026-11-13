@@ -241,7 +241,7 @@ describe("a workers-only copy whose coordinator runs on another machine", () => 
       await viewCopy();
       expect(notice()?.dataset.workersOnly).toBe("m4:main");
       expect(notice()?.textContent).toContain(
-        "This copy runs workers only. Its coordinator is on m4. Start work for this copy from there.",
+        "Work starts on m4. This copy takes work from there.",
       );
       expect(container.textContent).not.toContain("kept as history");
       expect(sendButton().disabled).toBe(true);
@@ -257,7 +257,7 @@ describe("a workers-only copy whose coordinator runs on another machine", () => 
     try {
       await viewCopy();
       expect(notice()?.textContent).toContain(
-        "This project now runs on m4. The conversation here is kept as history.",
+        "Work starts on m4. This copy takes work from there. The conversation here is kept as history.",
       );
     } finally {
       delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
