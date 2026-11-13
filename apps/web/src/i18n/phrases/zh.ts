@@ -4335,7 +4335,6 @@ export const zh: PhraseCatalog = {
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "在终端中登录后，回到此窗口时应用会再次检查。",
   "Add another ChatGPT account": "添加另一个 ChatGPT 账户",
-  "Install one": "安装一个",
   "More for Codex": "Codex 的更多操作",
   "Not installed: {agents}.": "未安装：{agents}。",
   "Pi signs in from inside. Type /login once it has opened.": "Pi 在内部登录。打开后输入 /login。",
@@ -4400,4 +4399,32 @@ export const zh: PhraseCatalog = {
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
   "New topic in {title}": "在 {title} 中新建主题",
   Aide: "Aide",
+  "Ask again": "再次询问",
+  "Asking macOS to install its developer tools, which carry Git. This is its log.":
+    "正在请求 macOS 安装其开发者工具，其中包含 Git。以下是日志。",
+  "Install Git": "安装 Git",
+  "Install and sign in": "安装并登录",
+  "Install {agent} and sign in": "安装 {agent} 并登录",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "正在安装。请等待安装结束，或关闭其日志以停止安装。",
+  "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
+    "正在安装 {agent}。以下是日志。安装完成后会打开登录。",
+  "Installing. Its log is below, and its sign-in opens when the install is done.":
+    "正在安装。日志在下方，安装完成后会打开登录。",
+  "Not installed yet. One click installs it, then opens its sign-in.":
+    "尚未安装。点击一次即可安装，然后打开登录。",
+  "Not installed. Install Git, then press Check again.":
+    "未安装。请先安装 Git，然后点击“重新检查”。",
+  "Recommended. Agents use Git to track and undo their changes.":
+    "推荐。智能体使用 Git 来跟踪和撤销它们的更改。",
+  "The install of {agent} ended with an error (exit code {code}). Its log is below.":
+    "{agent} 的安装出错结束（退出码 {code}）。日志在下方。",
+  "The install of {agent} stopped before it was done. Its log is below.":
+    "{agent} 的安装在完成前停止了。日志在下方。",
+  "Not installed. On a Mac it comes with Apple's developer tools. Without them, macOS shows its own prompt the first time something runs Git.":
+    "未安装。在 Mac 上，Git 随 Apple 的开发者工具提供。没有这些工具时，第一次有程序运行 Git，macOS 会显示它自己的提示。",
+  "Confirm in the macOS window that opened. The download can take a few minutes, and this row updates when it is done.":
+    "请在打开的 macOS 窗口中确认。下载可能需要几分钟，完成后这一行会更新。",
+  "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
+    "安装出错结束。日志在下方。请在那里点击“重试”，或在终端中运行该命令。",
 };

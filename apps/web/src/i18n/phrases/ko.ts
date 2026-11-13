@@ -4461,7 +4461,6 @@ export const ko: PhraseCatalog = {
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "터미널에서 로그인한 뒤 이 창으로 돌아오면 앱이 다시 확인합니다.",
   "Add another ChatGPT account": "다른 ChatGPT 계정 추가",
-  "Install one": "하나 설치",
   "More for Codex": "Codex 더 보기",
   "Not installed: {agents}.": "설치되지 않음: {agents}.",
   "Pi signs in from inside. Type /login once it has opened.":
@@ -4528,4 +4527,32 @@ export const ko: PhraseCatalog = {
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",
   Aide: "Aide",
+  "Ask again": "다시 요청",
+  "Asking macOS to install its developer tools, which carry Git. This is its log.":
+    "macOS에 Git이 포함된 개발자 도구 설치를 요청하는 중입니다. 아래는 그 로그입니다.",
+  "Install Git": "Git 설치",
+  "Install and sign in": "설치하고 로그인",
+  "Install {agent} and sign in": "{agent} 설치하고 로그인",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "설치가 진행 중입니다. 끝날 때까지 기다리거나 로그를 닫아 중지하세요.",
+  "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
+    "{agent}을(를) 설치하는 중입니다. 아래는 그 로그입니다. 설치가 끝나면 로그인이 열립니다.",
+  "Installing. Its log is below, and its sign-in opens when the install is done.":
+    "설치하는 중입니다. 로그는 아래에 있고, 설치가 끝나면 로그인이 열립니다.",
+  "Not installed yet. One click installs it, then opens its sign-in.":
+    "아직 설치되지 않았어요. 한 번 클릭하면 설치하고 로그인을 엽니다.",
+  "Not installed. Install Git, then press Check again.":
+    "설치 안 됨. Git을 설치한 다음 다시 확인을 누르세요.",
+  "Recommended. Agents use Git to track and undo their changes.":
+    "권장. 에이전트는 Git으로 변경 사항을 추적하고 되돌립니다.",
+  "The install of {agent} ended with an error (exit code {code}). Its log is below.":
+    "{agent} 설치가 오류로 끝났습니다(종료 코드 {code}). 로그는 아래에 있습니다.",
+  "The install of {agent} stopped before it was done. Its log is below.":
+    "{agent} 설치가 끝나기 전에 중단되었습니다. 로그는 아래에 있습니다.",
+  "Not installed. On a Mac it comes with Apple's developer tools. Without them, macOS shows its own prompt the first time something runs Git.":
+    "설치 안 됨. Mac에서는 Apple의 개발자 도구에 포함되어 있습니다. 도구가 없으면 무언가 처음 Git을 실행할 때 macOS가 자체 안내를 표시합니다.",
+  "Confirm in the macOS window that opened. The download can take a few minutes, and this row updates when it is done.":
+    "열린 macOS 창에서 확인하세요. 다운로드에 몇 분 걸릴 수 있으며, 끝나면 이 행이 업데이트됩니다.",
+  "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
+    "설치가 오류로 끝났습니다. 로그는 아래에 있습니다. 거기서 다시 시도를 누르거나 터미널에서 명령을 실행하세요.",
 };

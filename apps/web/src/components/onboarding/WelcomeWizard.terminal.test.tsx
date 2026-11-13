@@ -48,7 +48,7 @@ const state = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   search: null as AgentSearch | null,
   find: vi.fn(),
-  viewport: null as { onSessionExited: () => void } | null,
+  viewport: null as { onSessionExited: (exitCode: number | null) => void } | null,
   codex: [] as Array<Record<string, unknown>>,
   claude: [] as Array<Record<string, unknown>>,
   pair: vi.fn(),
@@ -214,7 +214,7 @@ vi.mock("../cloud/CloudEnvironmentConnectList", () => ({
   CloudEnvironmentConnectRows: () => null,
 }));
 vi.mock("../ThreadTerminalDrawer", () => ({
-  TerminalViewport: (props: { onSessionExited: () => void }) => {
+  TerminalViewport: (props: { onSessionExited: (exitCode: number | null) => void }) => {
     state.viewport = props;
     return <div data-terminal-viewport />;
   },
@@ -404,17 +404,23 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const install = () => button("Claude Code");
+const INSTALL = "Install and sign in";
+const INSTALL_COMMAND = "curl -fsSL https://claude.ai/install.sh | bash";
+const install = () => button(INSTALL);
 const setProviders = (id: EnvironmentId, providers: ReadonlyArray<ServerProvider>) =>
   act(async () => {
     state.registry!.set(state.providers.get(id)!, providers);
   });
+const agentRows = () =>
+  renderer!.root
+    .findAll((node) => typeof node.type === "string" && node.props["data-agent-row"] !== undefined)
+    .map((node) => node.props["data-agent-row"] as string);
 
 describe("the agents step: install panel", () => {
   it("disables both setup actions for the paired read-only connection and preserves local completion", async () => {
     setAccess(remoteId, false);
     await enterRemoteAgents();
-    expect(button("Install one").props.disabled).toBe(true);
+    expect(install().props.disabled).toBe(true);
     expect(button("Sign in").props.disabled).toBe(true);
     expect(text(renderer!.root)).toContain("This connection cannot control terminals.");
     await act(async () => {
@@ -430,7 +436,7 @@ describe("the agents step: install panel", () => {
     expect(state.done).toHaveBeenCalledExactlyOnceWith(undefined);
   });
 
-  it("names agents that are not installed in one line, with Install one", async () => {
+  it("gives a missing Claude Code the first row with its install, and names the rest in one line", async () => {
     state.search = {
       agents: [
         { agent: "claudeAgent", kind: "builtIn", command: "claude", state: "not-installed" },
@@ -440,10 +446,14 @@ describe("the agents step: install panel", () => {
       searched: [],
     };
     await enterRemoteAgents();
-    expect(text(renderer!.root)).toContain("Not installed: Claude Code, cursor.");
-    // Only an agent with a known installer is offered.
+    expect(agentRows()[0]).toBe("claudeAgent");
+    expect(text(renderer!.root)).toContain(
+      "Not installed yet. One click installs it, then opens its sign-in.",
+    );
     expect(install()).toBeDefined();
-    expect(button("cursor")).toBeUndefined();
+    // Only an agent with a known installer gets a row; the rest are named.
+    expect(text(renderer!.root)).toContain("Not installed: cursor.");
+    expect(text(renderer!.root)).not.toContain("Not installed: Claude Code");
   });
 
   it("rejects a retained install action after revocation and allows a terminal-only regrant", async () => {
@@ -455,10 +465,11 @@ describe("the agents step: install panel", () => {
       start();
     });
     expect(state.open).not.toHaveBeenCalled();
-    expect(button("Install one").props.disabled).toBe(true);
+    expect(install().props.disabled).toBe(true);
     await act(async () => setAccess(remoteId, true));
-    expect(button("Install one").props.disabled).toBe(false);
+    expect(install().props.disabled).toBe(false);
     await act(async () => install().props.onClick());
+    // The install runs at once: it is the session's own command, with nothing to type.
     expect(state.open).toHaveBeenCalledExactlyOnceWith({
       environmentId: remoteId,
       input: {
@@ -466,18 +477,12 @@ describe("the agents step: install panel", () => {
         terminalId: expect.any(String),
         cwd: "/fixtures/paired-remote",
         providerInstanceId: missingClaude.instanceId,
+        command: INSTALL_COMMAND,
       },
     });
-    // An install is typed and waits for Enter, so the person reads what will run.
-    expect(state.write).toHaveBeenCalledExactlyOnceWith({
-      environmentId: remoteId,
-      input: {
-        threadId: "onboarding-agent-setup",
-        terminalId: state.open.mock.calls[0]![0].input.terminalId,
-        data: "curl -fsSL https://claude.ai/install.sh | bash",
-      },
-    });
-    expect(text(renderer!.root)).toContain("Review the command, then press Enter to run it.");
+    expect(state.write).not.toHaveBeenCalled();
+    expect(text(renderer!.root)).toContain("Installing Claude Code. This is its log.");
+    expect(text(renderer!.root)).toContain("Installing…");
     expect(hasViewport()).toBe(true);
     await click("Close");
     expect(state.close).toHaveBeenCalledExactlyOnceWith({
@@ -495,7 +500,7 @@ describe("the agents step: install panel", () => {
   it("checks access when a queued retry starts and recovers after regrant", async () => {
     state.open.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Could not open"))));
     await enterRemoteAgents();
-    await click("Claude Code");
+    await click(INSTALL);
     const closing = deferred<CommandResult>();
     state.close.mockReturnValueOnce(closing.promise);
     await click("Retry");
@@ -507,33 +512,31 @@ describe("the agents step: install panel", () => {
     });
     expect(state.open).toHaveBeenCalledOnce();
     expect(button("Retry").props.disabled).toBe(true);
-    expect(state.write).not.toHaveBeenCalled();
     await act(async () => setAccess(remoteId, true));
     await click("Retry");
     expect(state.open).toHaveBeenCalledTimes(2);
-    expect(state.write).toHaveBeenCalledOnce();
+    // A session that ended cannot run again: the retry is a new one.
+    expect(state.open.mock.calls[1]![0].input.terminalId).not.toBe(
+      state.open.mock.calls[0]![0].input.terminalId,
+    );
     expect(hasViewport()).toBe(true);
   });
 
-  it("keeps an accepted terminal visible without pretyping when access is revoked during open", async () => {
+  it("keeps an accepted install visible when access is revoked during open", async () => {
     const opening = deferred<CommandResult>();
     state.open.mockReturnValueOnce(opening.promise);
     await enterRemoteAgents();
-    await click("Claude Code");
+    await click(INSTALL);
     await act(async () => {
       setAccess(remoteId, false);
       opening.resolve(AsyncResult.success(undefined));
     });
-    expect(state.write).not.toHaveBeenCalled();
     expect(state.close).not.toHaveBeenCalled();
     expect(hasViewport()).toBe(true);
     expect(text(renderer!.root)).toContain("This connection cannot control terminals.");
     await act(async () => setAccess(remoteId, true));
     expect(state.open).toHaveBeenCalledOnce();
-    expect(state.write).not.toHaveBeenCalled();
-    expect(text(renderer!.root)).toContain(
-      "Run curl -fsSL https://claude.ai/install.sh | bash in this",
-    );
+    expect(text(renderer!.root)).toContain("Installing Claude Code. This is its log.");
     await act(async () => setAccess(remoteId, false));
     await click("Close");
     expect(hasViewport()).toBe(false);
@@ -542,40 +545,122 @@ describe("the agents step: install panel", () => {
     expect(text(renderer!.root)).toContain("Choose your projects");
   });
 
-  it("settles accepted pretyping locally after revocation without closing the PTY", async () => {
-    const writing = deferred<CommandResult>();
-    state.write.mockReturnValueOnce(writing.promise);
+  it("keeps the log on screen when the install ends with an error, and can try again", async () => {
     await enterRemoteAgents();
-    await click("Claude Code");
-    await act(async () => {
-      setAccess(remoteId, false);
-      writing.resolve(AsyncResult.success(undefined));
-    });
-    expect(state.open).toHaveBeenCalledOnce();
-    expect(state.write).toHaveBeenCalledOnce();
+    await click(INSTALL);
+    await act(async () => state.viewport!.onSessionExited(7));
     expect(hasViewport()).toBe(true);
-    await act(async () => setAccess(remoteId, true));
-    expect(text(renderer!.root)).toContain("Review the command, then press Enter to run it.");
-    expect(state.open).toHaveBeenCalledOnce();
-    expect(state.write).toHaveBeenCalledOnce();
-    await act(async () => setAccess(remoteId, false));
-    await click("Close");
-    expect(state.close).not.toHaveBeenCalled();
+    expect(text(renderer!.root)).toContain(
+      "The install of Claude Code ended with an error (exit code 7). Its log is below.",
+    );
+    expect(text(renderer!.root)).toContain("The install ended with an error. Its log is below.");
+    // The machine is read anyway: an install can fail late and still leave the agent in place.
+    expect(state.find).toHaveBeenCalledOnce();
+    await click("Retry");
+    expect(state.open).toHaveBeenCalledTimes(2);
+    expect(state.open.mock.calls[1]![0].input.command).toBe(INSTALL_COMMAND);
+    expect(text(renderer!.root)).toContain("Installing Claude Code. This is its log.");
+    expect(text(renderer!.root)).not.toContain("The install ended with an error.");
   });
 
-  it("rechecks the original environment when cleanup runs after pending pretyping", async () => {
-    const writing = deferred<CommandResult>();
-    state.write.mockReturnValueOnce(writing.promise);
+  it("closes the panel when the install worked and starts Claude's sign-in with no second click", async () => {
     await enterRemoteAgents();
-    await click("Claude Code");
-    await click("Back");
-    expect(state.close).not.toHaveBeenCalled();
-    await act(async () => {
-      setAccess(remoteId, false);
-      writing.resolve(AsyncResult.success(undefined));
+    await click(INSTALL);
+    await act(async () => state.viewport!.onSessionExited(0));
+    expect(hasViewport()).toBe(false);
+    expect(state.find).toHaveBeenCalledOnce();
+    expect(state.refresh).toHaveBeenCalledWith({ environmentId: remoteId, input: {} });
+    await setProviders(remoteId, [
+      { ...missingClaude, installed: true, auth: { status: "unauthenticated" } },
+    ]);
+    expect(agentRows()[0]).toBe("claudeAgent");
+    expect(state.claude.at(-1)).toMatchObject({ autoStart: true });
+  });
+
+  it("gives the row its button back, and starts no sign-in, once a failed install's log is closed", async () => {
+    await enterRemoteAgents();
+    await click(INSTALL);
+    await act(async () => state.viewport!.onSessionExited(7));
+    await click("Close");
+    expect(hasViewport()).toBe(false);
+    expect(button(INSTALL).props.disabled).toBeFalsy();
+    await setProviders(remoteId, [
+      { ...missingClaude, installed: true, auth: { status: "unauthenticated" } },
+    ]);
+    expect(state.claude.at(-1)).not.toMatchObject({ autoStart: true });
+  });
+
+  it("keeps Back and Continue off while an install runs, and gives them back when it ends", async () => {
+    await enterRemoteAgents();
+    await click(INSTALL);
+    expect(text(renderer!.root)).toContain("An install is running.");
+    expect(button("Continue without an agent").props.disabled).toBe(true);
+    await act(async () => state.viewport!.onSessionExited(7));
+    expect(text(renderer!.root)).not.toContain("An install is running.");
+    expect(button("Continue without an agent").props.disabled).toBeFalsy();
+  });
+});
+
+describe("the agents step: Git", () => {
+  const withGit = (git: "present" | "missing"): AgentSearch => ({
+    agents: [],
+    pending: [],
+    searched: [],
+    git,
+  });
+
+  it("says nothing about Git on a machine that has it or has not said", async () => {
+    state.search = withGit("present");
+    await enterRemoteAgents();
+    expect(agentRows()).not.toContain("git");
+  });
+
+  it("recommends Git when the machine has none, and asks macOS for it in one click", async () => {
+    state.search = withGit("missing");
+    await enterRemoteAgents();
+    expect(agentRows()).toContain("git");
+    expect(text(renderer!.root)).toContain(
+      "Recommended. Agents use Git to track and undo their changes.",
+    );
+    await click("Install Git");
+    expect(state.open).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: {
+        threadId: "onboarding-agent-setup",
+        terminalId: expect.any(String),
+        cwd: "/fixtures/paired-remote",
+        command: "xcode-select --install",
+      },
     });
-    expect(state.close).not.toHaveBeenCalled();
-    expect(text(renderer!.root)).toContain("Connect your computers");
+    expect(text(renderer!.root)).toContain("Confirm in the macOS window that opened.");
+    // Setup goes on without it: Git is a recommendation.
+    expect(button("Continue without an agent").props.disabled).not.toBe(true);
+  });
+
+  it("asks the machine again while macOS installs, and says Ready when Git is there", async () => {
+    vi.useFakeTimers();
+    try {
+      state.search = withGit("missing");
+      await enterRemoteAgents();
+      await click("Install Git");
+      await act(async () => state.viewport!.onSessionExited(0));
+      state.find.mockClear();
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(state.find).toHaveBeenCalledOnce();
+      state.search = withGit("present");
+      await setProviders(remoteId, [missingClaude]);
+      const row = renderer!.root.findByProps({ "data-agent-row": "git" });
+      expect(row.props["data-agent-state"]).toBe("present");
+      state.find.mockClear();
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+      expect(state.find).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -609,7 +694,7 @@ describe("the agents step: sign-in", () => {
     await click("Sign in");
     const reading = deferred<AsyncResult.AsyncResult<unknown, Error>>();
     state.refresh.mockClear().mockReturnValueOnce(reading.promise);
-    await act(async () => state.viewport!.onSessionExited());
+    await act(async () => state.viewport!.onSessionExited(0));
     expect(hasViewport()).toBe(false);
     expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
       environmentId: remoteId,
@@ -629,7 +714,7 @@ describe("the agents step: sign-in", () => {
   it("says so on the row when the sign-in ends and the agent is still signed out", async () => {
     await enterRemoteAgents();
     await click("Sign in");
-    await act(async () => state.viewport!.onSessionExited());
+    await act(async () => state.viewport!.onSessionExited(0));
     expect(hasViewport()).toBe(false);
     expect(text(renderer!.root)).toContain(
       "The sign-in ended before Grok was signed in. Try again.",
@@ -644,7 +729,7 @@ describe("the agents step: sign-in", () => {
     await enterRemoteAgents();
     await click("Sign in");
     state.refresh.mockClear();
-    await act(async () => state.viewport!.onSessionExited());
+    await act(async () => state.viewport!.onSessionExited(0));
     // The first read cannot join one that began before the sign-in saved the account.
     expect(state.refresh.mock.calls).toEqual([
       [{ environmentId: remoteId, input: { instanceId: signedOutGrok.instanceId, fresh: true } }],
@@ -657,7 +742,7 @@ describe("the agents step: sign-in", () => {
     await click("Sign in");
     state.refresh.mockClear();
     state.refresh.mockResolvedValueOnce(AsyncResult.success({ providers: [signedInGrok] }));
-    await act(async () => state.viewport!.onSessionExited());
+    await act(async () => state.viewport!.onSessionExited(0));
     expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
       environmentId: remoteId,
       input: { instanceId: signedOutGrok.instanceId, fresh: true },

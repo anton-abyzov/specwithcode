@@ -1123,6 +1123,12 @@ export const AgentSearch = Schema.Struct({
   searched: Schema.Array(Schema.String),
   /** When the last finished search ended. Absent until one has. */
   checkedAt: Schema.optionalKey(IsoDateTime),
+  /**
+   * Whether the machine has Git, which agents use to track and undo their
+   * changes. Absent from a server that does not look, and when the check gave
+   * no answer.
+   */
+  git: Schema.optionalKey(Schema.Literals(["present", "missing"])),
 });
 export type AgentSearch = typeof AgentSearch.Type;
 

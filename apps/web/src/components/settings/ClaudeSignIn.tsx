@@ -41,6 +41,8 @@ export function ClaudeSignIn({
   os,
   command,
   readOnly = false,
+  autoStart = false,
+  onAutoStartDone,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
@@ -50,6 +52,9 @@ export function ClaudeSignIn({
   /** The same sign-in as typed in a terminal, for those who want it. */
   readonly command: string;
   readonly readOnly?: boolean;
+  /** Start the sign-in once, with no click, as soon as the machine says where it stands. */
+  readonly autoStart?: boolean;
+  readonly onAutoStartDone?: (() => void) | undefined;
 }) {
   const tx = useTx();
   // A new account has no sign-in to ask about until the machine lists it.
@@ -186,6 +191,26 @@ export function ClaudeSignIn({
         void cancel({ environmentId, input: { instanceId, flowId: flow.id } });
     });
   };
+
+  // A sign-in asked for one step earlier (an install, or "Sign in" on an agent
+  // that was off) starts here with no second click.
+  const signInRef = useRef(signIn);
+  useEffect(() => {
+    signInRef.current = signIn;
+  });
+  const autoStarted = useRef(false);
+  const loaded = auth !== null && auth !== undefined;
+  useEffect(() => {
+    if (!autoStart || autoStarted.current) return;
+    if (!done && !commandOnly && !loaded) return;
+    autoStarted.current = true;
+    // A browser blocks a tab opened with no click, so the web app leaves it to the button.
+    const canOpenPage = here || window.desktopBridge !== undefined;
+    if (!done && !commandOnly && !active && provider?.installed !== false && canOpenPage) {
+      signInRef.current();
+    }
+    onAutoStartDone?.();
+  }, [autoStart, done, commandOnly, loaded, active, here, provider?.installed, onAutoStartDone]);
 
   const sendCode = () => {
     if (pending || flowId === null) return;

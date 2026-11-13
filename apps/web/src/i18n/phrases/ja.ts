@@ -4514,7 +4514,6 @@ export const ja: PhraseCatalog = {
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "ターミナルでサインインした後は、このウィンドウに戻ったときにアプリが再確認します。",
   "Add another ChatGPT account": "別の ChatGPT アカウントを追加",
-  "Install one": "インストールする",
   "More for Codex": "Codex のその他の操作",
   "Not installed: {agents}.": "未インストール: {agents}。",
   "Pi signs in from inside. Type /login once it has opened.":
@@ -4581,4 +4580,32 @@ export const ja: PhraseCatalog = {
   "Show only topics that need you in {project}": "{project} で対応が必要なトピックのみ表示",
   "New topic in {title}": "{title} で新しいトピック",
   Aide: "Aide",
+  "Ask again": "もう一度確認する",
+  "Asking macOS to install its developer tools, which carry Git. This is its log.":
+    "macOS に、Git を含む開発者ツールのインストールを依頼しています。これがそのログです。",
+  "Install Git": "Git をインストール",
+  "Install and sign in": "インストールしてサインイン",
+  "Install {agent} and sign in": "{agent} をインストールしてサインイン",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "インストールを実行中です。終わるまで待つか、ログを閉じて停止してください。",
+  "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
+    "{agent} をインストールしています。これがそのログです。インストールが終わるとサインインが開きます。",
+  "Installing. Its log is below, and its sign-in opens when the install is done.":
+    "インストールしています。ログは下にあります。インストールが終わるとサインインが開きます。",
+  "Not installed yet. One click installs it, then opens its sign-in.":
+    "まだインストールされていません。ワンクリックでインストールし、サインインを開きます。",
+  "Not installed. Install Git, then press Check again.":
+    "未インストールです。Git をインストールしてから「もう一度確認」を押してください。",
+  "Recommended. Agents use Git to track and undo their changes.":
+    "おすすめです。エージェントは Git で変更を記録し、元に戻します。",
+  "The install of {agent} ended with an error (exit code {code}). Its log is below.":
+    "{agent} のインストールがエラーで終了しました（終了コード {code}）。ログは下にあります。",
+  "The install of {agent} stopped before it was done. Its log is below.":
+    "{agent} のインストールが完了する前に停止しました。ログは下にあります。",
+  "Not installed. On a Mac it comes with Apple's developer tools. Without them, macOS shows its own prompt the first time something runs Git.":
+    "未インストールです。Mac では Apple の開発者ツールに含まれています。ツールがない場合、初めて何かが Git を実行したときに macOS が独自の案内を表示します。",
+  "Confirm in the macOS window that opened. The download can take a few minutes, and this row updates when it is done.":
+    "開いた macOS のウインドウで確認してください。ダウンロードには数分かかることがあり、完了するとこの行が更新されます。",
+  "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
+    "インストールがエラーで終了しました。ログは下にあります。そこで「再試行」を押すか、ターミナルでコマンドを実行してください。",
 };

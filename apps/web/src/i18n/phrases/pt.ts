@@ -4519,7 +4519,6 @@ export const pt: PhraseCatalog = {
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "Depois de um login em um terminal, o app verifica de novo quando você volta a esta janela.",
   "Add another ChatGPT account": "Adicionar outra conta do ChatGPT",
-  "Install one": "Instalar um",
   "More for Codex": "Mais para o Codex",
   "Not installed: {agents}.": "Não instalados: {agents}.",
   "Pi signs in from inside. Type /login once it has opened.":
@@ -4587,4 +4586,32 @@ export const pt: PhraseCatalog = {
     "Mostrar só os tópicos que precisam de você em {project}",
   "New topic in {title}": "Novo tópico em {title}",
   Aide: "Aide",
+  "Ask again": "Perguntar de novo",
+  "Asking macOS to install its developer tools, which carry Git. This is its log.":
+    "Pedindo ao macOS que instale suas ferramentas de desenvolvedor, que incluem o Git. Este é o log.",
+  "Install Git": "Instalar o Git",
+  "Install and sign in": "Instalar e entrar",
+  "Install {agent} and sign in": "Instalar {agent} e entrar",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "Há uma instalação em andamento. Aguarde o término ou feche o registro para interrompê-la.",
+  "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
+    "Instalando {agent}. Este é o log. O login abre quando a instalação terminar.",
+  "Installing. Its log is below, and its sign-in opens when the install is done.":
+    "Instalando. O log está abaixo, e o login abre quando a instalação terminar.",
+  "Not installed yet. One click installs it, then opens its sign-in.":
+    "Ainda não instalado. Um clique instala e depois abre o login.",
+  "Not installed. Install Git, then press Check again.":
+    "Não instalado. Instale o Git e depois pressione Verificar de novo.",
+  "Recommended. Agents use Git to track and undo their changes.":
+    "Recomendado. Os agentes usam o Git para acompanhar e desfazer suas alterações.",
+  "The install of {agent} ended with an error (exit code {code}). Its log is below.":
+    "A instalação de {agent} terminou com um erro (código de saída {code}). O log está abaixo.",
+  "The install of {agent} stopped before it was done. Its log is below.":
+    "A instalação de {agent} parou antes de terminar. O log está abaixo.",
+  "Not installed. On a Mac it comes with Apple's developer tools. Without them, macOS shows its own prompt the first time something runs Git.":
+    "Não instalado. No Mac, ele vem com as ferramentas de desenvolvedor da Apple. Sem elas, o macOS mostra um aviso próprio na primeira vez que algo executa o Git.",
+  "Confirm in the macOS window that opened. The download can take a few minutes, and this row updates when it is done.":
+    "Confirme na janela do macOS que abriu. O download pode levar alguns minutos, e esta linha é atualizada quando terminar.",
+  "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
+    "A instalação terminou com um erro. O log está abaixo. Pressione Tentar de novo ali ou execute o comando em um terminal.",
 };

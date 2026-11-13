@@ -253,6 +253,49 @@ export const probeMuse = (binary: string, environment: NodeJS.ProcessEnv) =>
 export const probeCommand = (binary: string, environment: NodeJS.ProcessEnv) =>
   probeInstalled(makeRun(binary, environment));
 
+export type GitDiscoveryState = "present" | "missing";
+
+/**
+ * Whether the machine has Git. On a Mac `/usr/bin/git` is always there, and
+ * without Apple's developer tools running it opens an install prompt, so the
+ * question goes to `xcode-select -p`, which never does. Undefined when the
+ * check gave no answer.
+ */
+export const probeGit = (environment: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
+  Effect.gen(function* () {
+    if (platform === "darwin") {
+      const tools = yield* makeRun("xcode-select", environment)(["-p"], VERSION_TIMEOUT_MS);
+      if (tools === "missing" || Option.isNone(tools)) return undefined;
+      if (tools.value.code === 0) {
+        // The answer can outlive the tools: a macOS upgrade removes them and keeps the path.
+        const folder = tools.value.stdout.trim();
+        const git = folder
+          ? yield* makeRun("/bin/test", environment)(
+              ["-x", `${folder}/usr/bin/git`],
+              VERSION_TIMEOUT_MS,
+            )
+          : ("missing" as const);
+        if (git !== "missing" && Option.isSome(git) && git.value.code === 0) {
+          return "present" as const;
+        }
+      }
+      // A Git from Homebrew or Nix works without the developer tools.
+      const withoutShim = {
+        ...environment,
+        PATH: searchedFolders(environment, platform)
+          .filter((folder) => folder !== "/usr/bin")
+          .join(":"),
+      };
+      const other = yield* makeRun("git", withoutShim)(["--version"], VERSION_TIMEOUT_MS);
+      return other !== "missing" && Option.isSome(other) && other.value.code === 0
+        ? ("present" as const)
+        : ("missing" as const);
+    }
+    const version = yield* makeRun("git", environment)(["--version"], VERSION_TIMEOUT_MS);
+    if (version === "missing") return "missing" as const;
+    return Option.isSome(version) && version.value.code === 0 ? ("present" as const) : undefined;
+  });
+
 type Probe = (
   binary: string,
   environment: NodeJS.ProcessEnv,
@@ -294,6 +337,8 @@ export interface AgentDiscoveryReport {
   readonly results: ReadonlyArray<AgentDiscoveryResult>;
   /** The folders a command name was looked up in, for a "not found" row. */
   readonly searched: ReadonlyArray<string>;
+  /** Undefined when the check for Git gave no answer. */
+  readonly git: GitDiscoveryState | undefined;
 }
 
 const configuredBinaryPath = (value: unknown): string | undefined => {
@@ -355,6 +400,7 @@ export const discoverAgents = Effect.fn("providerDiscovery.discoverAgents")(func
   return {
     results,
     searched: searchedFolders(environment, platform),
+    git: yield* probeGit(environment, platform),
   } satisfies AgentDiscoveryReport;
 });
 
@@ -471,6 +517,10 @@ export const makeAgentSearch = Effect.gen(function* () {
           pending: [],
           searched: report?.searched ?? current.snapshot.searched,
           checkedAt: DateTime.formatIso(now),
+          // A check with no answer keeps what the one before it said.
+          ...((report?.git ?? current.snapshot.git) !== undefined
+            ? { git: report?.git ?? current.snapshot.git }
+            : {}),
         },
       }));
     });

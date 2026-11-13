@@ -4509,7 +4509,6 @@ export const ru: PhraseCatalog = {
   "After a sign-in in a terminal, the app checks again when you come back to this window.":
     "После входа в терминале приложение проверит ещё раз, когда вы вернётесь в это окно.",
   "Add another ChatGPT account": "Добавить ещё один аккаунт ChatGPT",
-  "Install one": "Установить",
   "More for Codex": "Ещё для Codex",
   "Not installed: {agents}.": "Не установлены: {agents}.",
   "Pi signs in from inside. Type /login once it has opened.":
@@ -4577,4 +4576,32 @@ export const ru: PhraseCatalog = {
     "Показать только темы, которые ждут вас в {project}",
   "New topic in {title}": "Новая тема в {title}",
   Aide: "Aide",
+  "Ask again": "Спросить снова",
+  "Asking macOS to install its developer tools, which carry Git. This is its log.":
+    "macOS просят установить инструменты разработчика, в которые входит Git. Это лог установки.",
+  "Install Git": "Установить Git",
+  "Install and sign in": "Установить и войти",
+  "Install {agent} and sign in": "Установить {agent} и войти",
+  "An install is running. Wait for it to end, or close its log to stop it.":
+    "Идёт установка. Дождитесь её окончания или закройте журнал, чтобы остановить её.",
+  "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
+    "Устанавливается {agent}. Это лог установки. Вход откроется, когда установка завершится.",
+  "Installing. Its log is below, and its sign-in opens when the install is done.":
+    "Установка идёт. Лог ниже, а вход откроется, когда установка завершится.",
+  "Not installed yet. One click installs it, then opens its sign-in.":
+    "Ещё не установлено. Один клик устанавливает и открывает вход.",
+  "Not installed. Install Git, then press Check again.":
+    "Не установлено. Установите Git и нажмите «Проверить снова».",
+  "Recommended. Agents use Git to track and undo their changes.":
+    "Рекомендуется. Агенты используют Git, чтобы отслеживать и отменять свои изменения.",
+  "The install of {agent} ended with an error (exit code {code}). Its log is below.":
+    "Установка {agent} завершилась с ошибкой (код выхода {code}). Лог ниже.",
+  "The install of {agent} stopped before it was done. Its log is below.":
+    "Установка {agent} остановилась, не дойдя до конца. Лог ниже.",
+  "Not installed. On a Mac it comes with Apple's developer tools. Without them, macOS shows its own prompt the first time something runs Git.":
+    "Не установлено. На Mac Git входит в инструменты разработчика Apple. Без них macOS показывает собственный запрос, когда что-то впервые запускает Git.",
+  "Confirm in the macOS window that opened. The download can take a few minutes, and this row updates when it is done.":
+    "Подтвердите в открывшемся окне macOS. Загрузка может занять несколько минут, а эта строка обновится, когда всё будет готово.",
+  "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
+    "Установка завершилась с ошибкой. Лог ниже. Нажмите там «Повторить» или выполните команду в терминале.",
 };

@@ -188,6 +188,8 @@ describe("an agent that is on", () => {
       os: "windows",
       command: "claude auth login",
       readOnly: false,
+      autoStart: false,
+      onAutoStartDone: undefined,
     });
     // The row adds no button of its own to the sign-in's one.
     expect(buttons().map((element) => element.textContent)).toEqual(["Sign in with Claude"]);
@@ -347,9 +349,13 @@ describe("an agent that is on", () => {
     expect(onOpenPanel).not.toHaveBeenCalled();
   });
 
-  it("has nothing more to start for Claude, whose sign-in has its own button", async () => {
+  it("hands Claude's sign-in the start, since it runs its own", async () => {
     await show(agent("claudeAgent", signedOut), { autoSignIn: true, onAutoSignInDone });
-    expect(onAutoSignInDone).toHaveBeenCalledOnce();
+    expect(mocks.claude.mock.lastCall?.[0]).toMatchObject({
+      autoStart: true,
+      onAutoStartDone: onAutoSignInDone,
+    });
+    expect(onAutoSignInDone).not.toHaveBeenCalled();
     expect(mocks.start).not.toHaveBeenCalled();
     expect(onOpenPanel).not.toHaveBeenCalled();
   });

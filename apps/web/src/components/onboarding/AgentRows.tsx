@@ -6,6 +6,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import { GitBranchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useT, useTx } from "../../i18n";
@@ -151,17 +152,15 @@ export function ProviderAgentRow({
       return;
     }
     if (!showSignIn) return;
-    // An agent the app signs in itself starts from its own block below. Claude's
-    // block has its own button, so there is nothing more to start here.
-    if (inApp && !claude) return;
-    if (!inApp && command !== null && panelAvailable) onOpenPanel();
+    // An agent the app signs in itself starts from its own block below.
+    if (inApp) return;
+    if (command !== null && panelAvailable) onOpenPanel();
     onAutoSignInDone?.();
   }, [
     autoSignIn,
     state,
     showSignIn,
     inApp,
-    claude,
     command,
     panelAvailable,
     onOpenPanel,
@@ -240,6 +239,8 @@ export function ProviderAgentRow({
           os={os}
           command={command ?? "claude auth login"}
           readOnly={!canManage}
+          autoStart={autoSignIn}
+          onAutoStartDone={onAutoSignInDone}
         />
       ) : inApp ? (
         <>
@@ -353,6 +354,131 @@ export function FoundAgentRow({
             {tx("Turn on")}
           </Button>
         )
+      }
+    />
+  );
+}
+
+/**
+ * An agent that is not on the machine yet, in its own row: one button installs
+ * it and its sign-in follows. The install's log shows in the panel under the list.
+ */
+export function InstallAgentRow({
+  agent,
+  name,
+  command,
+  installing,
+  failed,
+  disabled,
+  onInstall,
+}: {
+  readonly agent: string;
+  readonly name: string;
+  /** What the button runs, for those who want to read or run it themselves. */
+  readonly command: string | null;
+  readonly installing: boolean;
+  /** The last install ended with an error. */
+  readonly failed: boolean;
+  readonly disabled: boolean;
+  readonly onInstall: () => void;
+}) {
+  const tx = useTx();
+  return (
+    <AgentRow
+      agent={agent}
+      state={installing ? "installing" : failed ? "install-failed" : "install"}
+      icon={<AgentIcon agent={agent} name={name} />}
+      name={name}
+      uses={tx(onboardingAgentUses(agent))}
+      detail={
+        installing ? (
+          tx("Installing. Its log is below, and its sign-in opens when the install is done.")
+        ) : failed ? (
+          <span className="text-warning-foreground">
+            {tx(
+              "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.",
+            )}
+          </span>
+        ) : (
+          tx("Not installed yet. One click installs it, then opens its sign-in.")
+        )
+      }
+      status={
+        installing ? (
+          <AgentRowStatus tone="checking">{tx("Installing…")}</AgentRowStatus>
+        ) : undefined
+      }
+      action={
+        installing || failed || command === null ? undefined : (
+          <Button
+            size="sm"
+            aria-label={tx("Install {agent} and sign in", { agent: name })}
+            disabled={disabled}
+            onClick={onInstall}
+          >
+            {tx("Install and sign in")}
+          </Button>
+        )
+      }
+    >
+      {command !== null ? <AgentCommand command={command} /> : null}
+    </AgentRow>
+  );
+}
+
+/**
+ * Git, which agents use to track and undo their changes. Shown when the machine
+ * has none: on a Mac one button asks macOS for its developer tools, which carry
+ * it, and the row follows that install.
+ */
+export function GitRow({
+  state,
+  os,
+  disabled,
+  onInstall,
+}: {
+  /** `requested`: macOS was asked, and its own window is doing the install. */
+  readonly state: "missing" | "requested" | "present";
+  readonly os: ExecutionEnvironmentPlatformOs | undefined;
+  readonly disabled: boolean;
+  readonly onInstall: () => void;
+}) {
+  const t = useT();
+  const tx = useTx();
+  const mac = os === "darwin";
+  return (
+    <AgentRow
+      agent="git"
+      state={state}
+      icon={<GitBranchIcon aria-hidden className="size-5 shrink-0 text-muted-foreground" />}
+      name="Git"
+      uses={tx("Recommended. Agents use Git to track and undo their changes.")}
+      detail={
+        state === "present"
+          ? null
+          : state === "requested"
+            ? tx(
+                "Confirm in the macOS window that opened. The download can take a few minutes, and this row updates when it is done.",
+              )
+            : mac
+              ? tx(
+                  "Not installed. On a Mac it comes with Apple's developer tools. Without them, macOS shows its own prompt the first time something runs Git.",
+                )
+              : tx("Not installed. Install Git, then press Check again.")
+      }
+      status={
+        state === "present" ? (
+          <AgentRowStatus tone="ready">{t("wizard.agents.ready")}</AgentRowStatus>
+        ) : state === "requested" ? (
+          <AgentRowStatus tone="checking">{tx("Installing…")}</AgentRowStatus>
+        ) : undefined
+      }
+      action={
+        mac && state !== "present" ? (
+          <Button size="sm" variant="outline" disabled={disabled} onClick={onInstall}>
+            {state === "requested" ? tx("Ask again") : tx("Install Git")}
+          </Button>
+        ) : undefined
       }
     />
   );
