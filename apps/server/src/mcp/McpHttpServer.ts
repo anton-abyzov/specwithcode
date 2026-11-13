@@ -51,6 +51,8 @@ import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import { ProjectKnowledgeToolkit } from "./toolkits/projectKnowledge/tools.ts";
 import * as ProjectKnowledgeHandlers from "./toolkits/projectKnowledge/handlers.ts";
+import { ReportToolkit } from "./toolkits/report/tools.ts";
+import * as ReportHandlers from "./toolkits/report/handlers.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import * as FileTransferHandlers from "./toolkits/fileTransfer/handlers.ts";
 import { FileTransferToolkit } from "./toolkits/fileTransfer/tools.ts";
@@ -1151,6 +1153,7 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(FileTransferToolkit, FileTransferHandlers.layer),
   toolkitRegistration(DecisionToolkit, DecisionHandlers.layer),
   layerProjectMemoryRegistration,
+  toolkitRegistration(ReportToolkit, ReportHandlers.layer),
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
   toolkitRegistration(GoogleToolkit, GoogleHandlers.layer),

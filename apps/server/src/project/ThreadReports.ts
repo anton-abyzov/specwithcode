@@ -9,12 +9,14 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeTimers from "node:timers/promises";
 
 import type {
   ProjectThreadReport,
   ProjectThreadReportsSnapshot,
 } from "@specweave-studio/contracts";
 import {
+  FRONTMATTER,
   MAX_SAVED_REPORT_BYTES,
   reportFileName,
   reportIncrementCandidates,
@@ -320,8 +322,329 @@ async function ensureDirectoryWithin(root: string, relative: string): Promise<st
   return current;
 }
 
+/**
+ * Every character a line-based reader takes as a line break. JavaScript's `m`
+ * flag breaks at U+2028 and U+2029 too, and `JSON.stringify` leaves them raw.
+ */
+const LINE_BREAKS = /[\r\n\u2028\u2029\u0085]+/g;
+
 function frontMatterValue(value: string): string {
-  return JSON.stringify(value.replace(/[\r\n]+/g, " "));
+  return JSON.stringify(value.replace(LINE_BREAKS, " "));
+}
+
+/** Where a document another tool made came from, kept as properties of the saved report. */
+export interface ReportProvenance {
+  /** The tool or app that made it: "Claude desktop", "Codex", "Cursor". */
+  readonly source: string;
+  /** Its https link there; the reply links the saved file, never this. */
+  readonly original?: string | undefined;
+}
+
+export interface SaveReportOptions {
+  /**
+   * Also match increment folders the report names. Off for a person's save,
+   * so the file lands where the card said it would.
+   */
+  readonly resolveFromText?: boolean;
+  /** The title to file it under; otherwise the report's own title or heading. */
+  readonly title?: string | undefined;
+  /** An increment number or folder to save in, or "none" for the project's thread reports. */
+  readonly increment?: string | undefined;
+  readonly provenance?: ReportProvenance | undefined;
+}
+
+export interface SavedReport {
+  readonly snapshot: ProjectThreadReportsSnapshot;
+  readonly report: ProjectThreadReport;
+  /** The title it is filed under, as its front matter says. */
+  readonly title: string;
+  /** The same text was saved before; `report` is that copy. */
+  readonly alreadySaved: boolean;
+  /** The saved file on this machine. */
+  readonly absolutePath: string;
+}
+
+/**
+ * The front-matter keys the app writes, lowercase; the same keys in the
+ * text's own block give way whatever their case or quotes.
+ */
+const SAVED_KEYS = new Set([
+  "title",
+  "thread",
+  "threadtitle",
+  "increment",
+  "savedat",
+  "source",
+  "original",
+]);
+
+/** A top-level `key:` line, the key bare or quoted. */
+const KEY_LINE = /^(["']?)([A-Za-z][\w-]*)\1\s*:(\s|$)/;
+/** A list item or an indented line: part of the value above it. */
+const CONTINUATION = /^(\s|-(\s|$))/;
+
+/**
+ * The text's own front matter (a report written with flat front matter) and
+ * the body after it. Lines for keys the app writes are dropped, with the list
+ * items under them, so the saved file has one front-matter block.
+ */
+function ownFrontMatter(text: string): { readonly lines: string[]; readonly body: string } {
+  const match = FRONTMATTER.exec(text);
+  if (!match) return { lines: [], body: text };
+  const block = match[1]!.split("\n").map((line) => line.replace(LINE_BREAKS, " "));
+  // A document that opens with a horizontal rule has prose between its rules,
+  // not properties; it stays whole.
+  // It must name at least one property, so a block of list items or links stays prose too.
+  const properties =
+    block.some((line) => KEY_LINE.test(line)) &&
+    block.every(
+      (line) => line.trim().length === 0 || KEY_LINE.test(line) || CONTINUATION.test(line),
+    );
+  if (!properties) return { lines: [], body: text };
+  const lines: string[] = [];
+  let dropping = false;
+  for (const line of block) {
+    const found = KEY_LINE.exec(line);
+    if (found !== null) dropping = SAVED_KEYS.has(found[2]!.toLowerCase());
+    // The viewer reads bare keys only, so a quoted key is written bare.
+    const kept =
+      found !== null && found[1] !== "" ? `${found[2]}${line.slice(line.indexOf(":"))}` : line;
+    if (!dropping && line.trim().length > 0) lines.push(kept);
+  }
+  return { lines, body: text.slice(match[0].length).trim() };
+}
+
+/** The title and body of a saved report, or null when it cannot be read. */
+async function readSavedReport(file: string): Promise<{
+  readonly title: string | null;
+  readonly hasSource: boolean;
+  readonly body: string;
+  readonly content: string;
+  readonly blockEnd: number;
+} | null> {
+  // Only a regular file is a saved report: never read or write through a link.
+  const stat = await NodeFSP.lstat(file).catch(() => null);
+  if (stat === null || !stat.isFile()) return null;
+  const content = await NodeFSP.readFile(file, "utf8").catch(() => null);
+  if (content === null) return null;
+  const match = FRONTMATTER.exec(content);
+  const block = match?.[1] ?? "";
+  let title: string | null = null;
+  try {
+    const value: unknown = JSON.parse(/^title: (.+)$/m.exec(block)?.[1] ?? "null");
+    title = typeof value === "string" ? value : null;
+  } catch {
+    title = null;
+  }
+  return {
+    title,
+    hasSource: /^source:/m.test(block),
+    body: match ? content.slice(match[0].length) : content,
+    content,
+    // Where the closing rule starts, for properties added later.
+    blockEnd: match && content.startsWith("---\n") ? 4 + block.length : -1,
+  };
+}
+
+/** Same words in the same order: whitespace and line endings aside. */
+function sameBody(left: string, right: string): boolean {
+  return left.replace(/\s+/g, " ").trim() === right.replace(/\s+/g, " ").trim();
+}
+
+/** The provenance as it is written: one-line source, normalized https link. */
+function checkedProvenance(provenance: ReportProvenance): ReportProvenance {
+  const source = provenance.source.trim();
+  if (source.length === 0 || source.length > 60 || /[\r\n\u2028\u2029\u0085]/.test(source)) {
+    throw new ProjectLibraryProblem(
+      "invalid",
+      "The source names the tool that made the document in at most 60 characters.",
+    );
+  }
+  if (provenance.original === undefined) return { source };
+  const refused = new ProjectLibraryProblem(
+    "invalid",
+    "The original link must be an https URL of at most 2048 characters.",
+  );
+  let url: URL;
+  try {
+    url = new URL(provenance.original);
+  } catch {
+    throw refused;
+  }
+  // href percent-encodes what the URL holds, so no character in it breaks a line.
+  if (url.protocol !== "https:" || url.username || url.password || url.href.length > 2048) {
+    throw refused;
+  }
+  return { source, original: url.href };
+}
+
+/** An increment named by number (`1314`) or folder, among the folders that exist here. */
+async function namedIncrement(root: string, name: string): Promise<string> {
+  const value = name.trim().toLowerCase();
+  const folders = await incrementFolders(root);
+  const match = /^\d{4,}[a-z]?$/.test(value)
+    ? folders.filter((folder) => folder.toLowerCase().startsWith(`${value}-`))
+    : folders.filter((folder) => folder.toLowerCase() === value);
+  // A number shared by two folders is ambiguous; never guess between them.
+  if (match.length !== 1) {
+    throw new ProjectLibraryProblem(
+      "invalid",
+      match.length === 0
+        ? `No increment ${name.trim()} in this project.`
+        : `Increment ${name.trim()} matches ${match.length} folders; name the folder.`,
+    );
+  }
+  return match[0]!;
+}
+
+/**
+ * Saves the report once and says where. Saving the same text again returns
+ * the copy that is already there, wherever it was saved.
+ */
+export async function saveReport(
+  workspaceRoot: string,
+  source: ThreadReportSource,
+  text: string,
+  now: Date = new Date(),
+  options: SaveReportOptions = {},
+): Promise<SavedReport> {
+  const root = NodePath.resolve(workspaceRoot);
+  const normalizedText = text.replace(/\r\n?/g, "\n").trim();
+  if (normalizedText.length === 0)
+    throw new ProjectLibraryProblem("invalid", "The report is empty.");
+  if (Buffer.byteLength(normalizedText, "utf8") > MAX_SAVED_REPORT_BYTES) {
+    throw new ProjectLibraryProblem("invalid", "The report is larger than 512 KiB.");
+  }
+  const named = options.title?.replace(/\s+/g, " ").trim();
+  if (
+    options.title !== undefined &&
+    (named === undefined || named.length === 0 || named.length > 200)
+  ) {
+    throw new ProjectLibraryProblem("invalid", "The title must be 1-200 characters.");
+  }
+  const provenance =
+    options.provenance === undefined ? undefined : checkedProvenance(options.provenance);
+  if (!(await specweaveFolder(root))) {
+    throw new ProjectLibraryProblem(
+      "not_specweave",
+      "This project has no .specweave folder. Run specweave init in it to save reports.",
+    );
+  }
+  const title = named ?? reportTitle(normalizedText, source.title ?? "Report");
+  // A named increment is checked before the duplicate lookup, so a wrong
+  // name is refused even when the same text is already saved.
+  const requested = options.increment?.trim();
+  const explicit =
+    requested === undefined || requested.length === 0
+      ? undefined
+      : requested.toLowerCase() === "none"
+        ? null
+        : await namedIncrement(root, requested);
+  const before = await readThreadReports(root, source);
+  const key = reportKey(source.threadId, normalizedText);
+  const own = ownFrontMatter(normalizedText);
+  const provenanceLines = provenance
+    ? [
+        `source: ${frontMatterValue(provenance.source)}`,
+        ...(provenance.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
+      ]
+    : [];
+  // The key is short, so a hit is the same report only when the words match.
+  // An import of a text saved before without provenance adds it there.
+  const already = async (relativePath: string): Promise<SavedReport | null> => {
+    const absolutePath = NodePath.join(root, ...relativePath.split("/"));
+    const stored = await readSavedReport(absolutePath);
+    if (stored === null || !sameBody(stored.body, own.body)) return null;
+    if (provenanceLines.length > 0 && !stored.hasSource && stored.blockEnd > 0) {
+      await NodeFSP.writeFile(
+        absolutePath,
+        `${stored.content.slice(0, stored.blockEnd)}\n${provenanceLines.join("\n")}${stored.content.slice(stored.blockEnd)}`,
+        "utf8",
+      );
+    }
+    const snapshot = await readThreadReports(root, source);
+    return {
+      snapshot,
+      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+        key,
+        path: relativePath,
+        savedAt: now.toISOString(),
+      },
+      title: stored.title ?? title,
+      alreadySaved: true,
+      absolutePath,
+    };
+  };
+  for (const report of before.reports) {
+    if (report.key !== key) continue;
+    const found = await already(report.path);
+    if (found !== null) return found;
+  }
+
+  const increment =
+    explicit !== undefined
+      ? explicit
+      : (before.increment?.id ??
+        (options.resolveFromText
+          ? await resolveReportIncrement(root, source, normalizedText)
+          : null));
+  const relativeDir =
+    increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
+  const target = await ensureDirectoryWithin(root, relativeDir);
+  const savedAt = now.toISOString();
+  const content = [
+    "---",
+    `title: ${frontMatterValue(title)}`,
+    `thread: ${frontMatterValue(source.threadId)}`,
+    ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
+    ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
+    `savedAt: ${frontMatterValue(savedAt)}`,
+    ...provenanceLines,
+    ...own.lines,
+    "---",
+    "",
+    own.body,
+    "",
+  ].join("\n");
+  const first = reportFileName({ savedAt, title, threadId: source.threadId, text: normalizedText });
+  for (let attempt = 1; attempt <= 9; attempt += 1) {
+    // A second report under the same day, title and key gets a number before the key.
+    const name = attempt === 1 ? first : first.replace(`-${key}.md`, `-${attempt}-${key}.md`);
+    const relativePath = posix(NodePath.join(relativeDir, name));
+    try {
+      await NodeFSP.writeFile(NodePath.join(target, name), content, {
+        encoding: "utf8",
+        flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
+        mode: 0o644,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      // A save of the same text that ran alongside this one wrote it first; it
+      // may still be writing, so read again briefly before calling it different.
+      for (let read = 0; read < 5; read += 1) {
+        const found = await already(relativePath);
+        if (found !== null) return found;
+        await NodeTimers.setTimeout(20);
+      }
+      continue;
+    }
+    const snapshot = await readThreadReports(root, source);
+    return {
+      snapshot,
+      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+        key,
+        path: relativePath,
+        savedAt,
+      },
+      title,
+      alreadySaved: false,
+      absolutePath: NodePath.join(root, relativeDir, name),
+    };
+  }
+  throw new ProjectLibraryProblem(
+    "conflict",
+    "Nine reports already share this title today; save this one under its own title.",
+  );
 }
 
 /**
@@ -333,59 +656,7 @@ export async function saveThreadReport(
   source: ThreadReportSource,
   text: string,
   now: Date = new Date(),
-  options: {
-    /**
-     * Also match increment folders the report names. Off for a person's save,
-     * so the file lands where the card said it would.
-     */
-    readonly resolveFromText?: boolean;
-  } = {},
+  options: { readonly resolveFromText?: boolean } = {},
 ): Promise<ProjectThreadReportsSnapshot> {
-  const root = NodePath.resolve(workspaceRoot);
-  const body = text.replace(/\r\n?/g, "\n").trim();
-  if (body.length === 0) throw new ProjectLibraryProblem("invalid", "The report is empty.");
-  if (Buffer.byteLength(body, "utf8") > MAX_SAVED_REPORT_BYTES) {
-    throw new ProjectLibraryProblem("invalid", "The report is larger than 512 KiB.");
-  }
-  if (!(await specweaveFolder(root))) {
-    throw new ProjectLibraryProblem(
-      "not_specweave",
-      "This project has no .specweave folder. Run specweave init in it to save reports.",
-    );
-  }
-  const before = await readThreadReports(root, source);
-  const key = reportKey(source.threadId, body);
-  if (before.reports.some((report) => report.key === key)) return before;
-
-  const increment =
-    before.increment?.id ??
-    (options.resolveFromText ? await resolveReportIncrement(root, source, body) : null);
-  const relativeDir =
-    increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
-  const target = await ensureDirectoryWithin(root, relativeDir);
-  const savedAt = now.toISOString();
-  const title = reportTitle(body, source.title ?? "Report");
-  const name = reportFileName({ savedAt, title, threadId: source.threadId, text: body });
-  const content = [
-    "---",
-    `title: ${frontMatterValue(title)}`,
-    `thread: ${frontMatterValue(source.threadId)}`,
-    ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
-    ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
-    `savedAt: ${frontMatterValue(savedAt)}`,
-    "---",
-    "",
-    body,
-    "",
-  ].join("\n");
-  try {
-    await NodeFSP.writeFile(NodePath.join(target, name), content, {
-      encoding: "utf8",
-      flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
-      mode: 0o644,
-    });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-  return readThreadReports(root, source);
+  return (await saveReport(workspaceRoot, source, text, now, options)).snapshot;
 }

@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import { claudeRulePath } from "../../provider/AgentProtectedPaths.ts";
+import { CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS } from "../../provider/ClaudeWorkflowPolicy.ts";
 import {
   isWindowsClaudeLauncherShimPath,
   resolveClaudeSdkExecutablePath,
@@ -378,6 +379,38 @@ function withoutDefaultWorkflowSettings(expected: unknown, actual: unknown): unk
     ...(actual as Record<string, unknown>),
     options: Object.keys(settings).length === 0 ? options : { ...options, settings },
   };
+}
+
+/**
+ * Recordings made before SpecWithCode kept Claude sessions from publishing
+ * provider-hosted documents (1320) lack those disallowed tools. Only that whole
+ * set is tolerated against such a recording; any other list compares in full.
+ */
+function withoutProviderHostedDocumentTools(expected: unknown, actual: unknown): unknown {
+  const hosted: ReadonlyArray<string> = CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS;
+  const options = objectField(actual, "options");
+  const tools = stringArray(options?.disallowedTools);
+  if (options === undefined || tools === undefined) return actual;
+  if (!hosted.every((tool) => tools.includes(tool))) return actual;
+  const expectedTools = stringArray(objectField(expected, "options")?.disallowedTools);
+  if (expectedTools?.some((tool) => hosted.includes(tool))) return actual;
+  const rest = tools.filter((tool) => !hosted.includes(tool));
+  const { disallowedTools: _disallowedTools, ...others } = options;
+  return {
+    ...(actual as Record<string, unknown>),
+    options:
+      rest.length === 0 && expectedTools === undefined
+        ? others
+        : { ...others, disallowedTools: rest },
+  };
+}
+
+function objectField(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const field: unknown = Reflect.get(value, key);
+  return typeof field === "object" && field !== null
+    ? (field as Record<string, unknown>)
+    : undefined;
 }
 
 function stringArray(value: unknown): ReadonlyArray<string> | undefined {
@@ -911,7 +944,10 @@ function makeReplayQueryRunner(
           expected,
           withoutDefaultWorkflowSettings(
             expected,
-            withoutAgentSecretDenySettings(expected, withoutPromptOfferUuid(actual)),
+            withoutAgentSecretDenySettings(
+              expected,
+              withoutProviderHostedDocumentTools(expected, withoutPromptOfferUuid(actual)),
+            ),
           ),
         ),
       ) ||

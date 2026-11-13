@@ -30,7 +30,10 @@ import { ProjectLibraryProblem } from "./ProjectLibrary.ts";
 import {
   readThreadReports,
   resolveReportIncrement,
+  saveReport,
   saveThreadReport,
+  type SavedReport,
+  type SaveReportOptions,
   type ThreadReportSource,
 } from "./ThreadReports.ts";
 
@@ -43,6 +46,16 @@ export class ThreadReportService extends Context.Service<
     readonly save: (
       input: ProjectThreadReportSaveInput,
     ) => Effect.Effect<ProjectThreadReportsSnapshot, ProjectLibraryError>;
+    /**
+     * Saves a report an agent wrote or brought in from another tool, filed
+     * as the calling thread's, and says where it went.
+     */
+    readonly saveForThread: (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly text: string;
+      readonly options: Omit<SaveReportOptions, "resolveFromText">;
+    }) => Effect.Effect<SavedReport, ProjectLibraryError>;
     /** Saves a finished worker's report when it is long and its increment is known. */
     readonly saveFinishedReport: (input: {
       readonly threadId: ThreadId;
@@ -85,6 +98,8 @@ export const make = Effect.gen(function* () {
         title: thread.title,
         branch: thread.branch,
       };
+      // Reports live in the project folder, not a thread's worktree: the thread's
+      // shelf, the Library and the report viewer all read them there.
       return { workspaceRoot: project.value.workspaceRoot, source };
     }).pipe(Effect.mapError(failure(projectId)));
 
@@ -103,6 +118,26 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(({ workspaceRoot, source }) =>
         Effect.tryPromise({
           try: () => saveThreadReport(workspaceRoot, source, input.text),
+          catch: failure(input.projectId),
+        }),
+      ),
+    );
+
+  const saveForThread = (input: {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+    readonly text: string;
+    readonly options: Omit<SaveReportOptions, "resolveFromText">;
+  }) =>
+    locate(input.projectId, input.threadId).pipe(
+      Effect.flatMap(({ workspaceRoot, source }) =>
+        Effect.tryPromise({
+          // An agent's report names its increment in the text more often than a person's save.
+          try: () =>
+            saveReport(workspaceRoot, source, input.text, undefined, {
+              ...input.options,
+              resolveFromText: true,
+            }),
           catch: failure(input.projectId),
         }),
       ),
@@ -138,7 +173,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return ThreadReportService.of({ read, save, saveFinishedReport });
+  return ThreadReportService.of({ read, save, saveForThread, saveFinishedReport });
 });
 
 export const layer = Layer.effect(ThreadReportService, make);
