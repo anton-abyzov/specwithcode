@@ -69,7 +69,9 @@ export function useCopyDraft({
     if (known) {
       if (!explicit.machine) setForm.machine(known.id);
       // A folder belongs to its machine, so it only shows when that machine is chosen.
-      if (draft.folder) setForm.folder(draft.folder, known.id, draft.copyRoot);
+      // A requested machine keeps its own saved folder; a draft never retargets it.
+      if (draft.folder && !explicit.machine)
+        setForm.folder(draft.folder, known.id, draft.copyRoot);
     }
     if (!explicit.mode && (draft.mode === "copy-only" || canMove)) setForm.mode(draft.mode);
     setForm.chooseFirst(draft.chooseFirst);

@@ -117,6 +117,8 @@ export interface MachineHandoffOpenRequest {
   readonly mode: "add" | "move" | "copy" | "sync";
   readonly seq: number;
   readonly machine?: EnvironmentId;
+  /** "sync": the copy chosen in the menu, `${environmentId}:${projectId}`. */
+  readonly target?: string;
 }
 
 /**
@@ -218,7 +220,7 @@ export function ProjectMachineHandoff({
   // Opening the dialog means moving the project; "Copy files only" is the other choice.
   const [intent, setIntent] = useState<MoveIntent>("move");
   // "Sync to X…": X already has this project, so only files travel, into its own folder.
-  const [syncing, setSyncing] = useState(false);
+  const [syncKey, setSyncKey] = useState<string | null>(null);
   // The copy flow's machine, so switching to Git keeps it.
   const [copyMachine, setCopyMachine] = useState<EnvironmentId | null>(null);
   const [copyDone, setCopyDone] = useState(false);
@@ -466,7 +468,7 @@ export function ProjectMachineHandoff({
       (item) => `${item.environmentId}:${item.id}` === requestedTarget,
     );
     setIntent("move");
-    setSyncing(false);
+    setSyncKey(null);
     setMethod(existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : "copy");
     setShareView(false);
     setSelected(requestedTarget);
@@ -784,11 +786,16 @@ export function ProjectMachineHandoff({
     phase === "choose" &&
     project.workspaceSettings?.coordinatorBinding?.state !== "transferring";
   // Sync names the machine's own folder, the one the copy fills in.
-  const syncFolder = syncing
-    ? candidates.find((item) => item.environmentId === gitMachine)?.workspaceRoot
+  // The copy chosen in the menu, never another copy on the same machine.
+  const syncCopy = syncKey
+    ? candidates.find((item) => `${item.environmentId}:${item.id}` === syncKey)
     : undefined;
-  const syncLabel = machines.find((item) => item.id === gitMachine)?.label;
-  const syncTo = syncFolder && syncLabel ? { machine: syncLabel, folder: syncFolder } : null;
+  const syncLabel = machines.find((item) => item.id === syncCopy?.environmentId)?.label;
+  // Choosing another machine in the copy form makes it an ordinary copy there.
+  const syncTo =
+    syncCopy && syncLabel && (copyMachine === null || copyMachine === syncCopy.environmentId)
+      ? { machine: syncLabel, folder: syncCopy.workspaceRoot }
+      : null;
   const shareConfig = gitMachine ? configs.get(gitMachine)?.environment.capabilities : undefined;
 
   /**
@@ -797,11 +804,23 @@ export function ProjectMachineHandoff({
    */
   const openDialog = (
     mode: MachineHandoffOpenRequest["mode"],
-    machine?: EnvironmentId | undefined,
+    requestedMachineId?: EnvironmentId | undefined,
+    syncTarget?: string | undefined,
   ) => {
     if (!sourceReady) return;
+    const syncCandidate =
+      mode === "sync"
+        ? candidates.find((item) => `${item.environmentId}:${item.id}` === syncTarget)
+        : undefined;
+    // A sync whose copy is gone has no folder to fill in; it never falls back to a guess.
+    if (mode === "sync" && !syncCandidate) {
+      toastManager.add({ type: "warning", title: "That machine's copy of this project is gone." });
+      return;
+    }
+    const machine = syncCandidate?.environmentId ?? requestedMachineId;
     changeOpen(true);
-    setSyncing(mode === "sync");
+    setSyncKey(syncCandidate ? syncTarget! : null);
+    if (syncCandidate) setCopyMachine(null);
     if (!snapshot) {
       setIntent("move");
       try {
@@ -869,7 +888,7 @@ export function ProjectMachineHandoff({
     // The menu has no tooltip to explain a refusal, so it says why here.
     const reason = latestBlockedReason.current;
     if (reason) toastManager.add({ type: "warning", title: reason });
-    else latestOpenDialog.current(openRequest.mode, openRequest.machine);
+    else latestOpenDialog.current(openRequest.mode, openRequest.machine, openRequest.target);
   }, [openRequest]);
 
   return (
@@ -1027,11 +1046,16 @@ export function ProjectMachineHandoff({
                   configs.get(item.id)?.environment.capabilities?.memoryThreeWay === true,
               }))}
               savedFolder={(environmentId) =>
-                candidates.find((item) => item.environmentId === environmentId)?.workspaceRoot ??
-                null
+                (syncCopy?.environmentId === environmentId
+                  ? syncCopy.workspaceRoot
+                  : candidates.find((item) => item.environmentId === environmentId)
+                      ?.workspaceRoot) ?? null
               }
-              preferredMachine={requestedMachine ?? gitMachine ?? suggestedMachine}
-              machineRequested={requestedMachine !== null}
+              preferredMachine={
+                requestedMachine ?? syncCopy?.environmentId ?? gitMachine ?? suggestedMachine
+              }
+              // Requested, so a saved draft or last copy cannot swap the machine or its folder.
+              machineRequested={requestedMachine !== null || syncCopy !== undefined}
               defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
               onChoicesChange={({ mode, machine, done }) => {
                 setIntent(mode === "copy-and-move" ? "move" : "copy");
