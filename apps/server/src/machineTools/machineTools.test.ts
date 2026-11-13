@@ -276,7 +276,7 @@ describe.runIf(posix && process.env.STUDIO_MACHINE_TOOLS_LIVE === "1")(
       );
       expect(after.node).toBe("present");
       expect(after.gh).toBe("present");
-      console.log(lines.join("\n"));
+      expect(lines.some((line) => line.startsWith("Downloading"))).toBe(true);
     }, 300_000);
   },
 );
