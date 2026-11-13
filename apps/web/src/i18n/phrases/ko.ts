@@ -557,8 +557,6 @@ export const ko: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "자동 선택은 기본적으로 구독 사용량을 씁니다. 토큰당 과금되는 제공업체(API 크레딧)는 여기서 허용하지 않으면 사용하지 않으며, 허용해도 선택한 등급까지만 사용합니다. 자동 선택은 키를 추가하거나, 로그인하거나, 크레딧을 구매하지 않습니다.",
   "Switches the hosted app release channel.": "호스팅 앱의 릴리스 채널을 전환합니다.",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "같은 프로젝트가 있는 다른 컴퓨터에 각 턴을 동기화해 어느 컴퓨터에서든 이어갈 수 있게 합니다. 이 컴퓨터의 스레드에 적용되며 기존 스레드도 포함됩니다. 토큰을 조금 더 사용합니다.",
   "System default follows your browser or OS clock preference.":
     "시스템 기본값은 브라우저나 OS의 시계 설정을 따릅니다.",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1850,16 +1848,12 @@ export const ko: PhraseCatalog = {
   "Allow again": "다시 허용",
   "Allowed before work could be limited, so it may use every project and sign-in here until you change it.":
     "작업을 제한할 수 있게 되기 전에 허용되었으므로, 변경할 때까지 여기의 모든 프로젝트와 로그인을 사용할 수 있습니다.",
-  "Whose machine": "컴퓨터 소유자",
   "Whose machine is it": "이 컴퓨터의 소유자",
   "Projects it may run work in": "작업을 실행할 수 있는 프로젝트",
   "Sign-ins its work may use": "작업에서 사용할 수 있는 로그인",
-  "Most access": "최대 액세스",
   "Could not read who can run work here. Refresh to retry.":
     "여기서 작업을 실행할 수 있는 대상을 읽지 못했습니다. 새로 고쳐 다시 시도하세요.",
   "Checking who can run work here…": "여기서 작업을 실행할 수 있는 대상을 확인하는 중…",
-  "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
-    "취소하면 새 작업이 즉시 거부됩니다. 여기서 시작한 스레드는 2분 동안 계속 실행된 뒤 중지되며, 워크트리와 변경 사항은 남습니다.{value}",
   "Checking your machines…": "컴퓨터를 확인하는 중…",
   "No machines yet.": "아직 컴퓨터가 없습니다.",
   "Advanced connection settings": "고급 연결 설정",
@@ -4289,8 +4283,6 @@ export const ko: PhraseCatalog = {
   "Current machine": "현재 컴퓨터",
   "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
     "연결하려면 이 서버 소유자가 보낸 {value} 포함 페어링 링크를 열거나, 그 컴퓨터의 자체 링크로 연결 추가를 사용하세요.",
-  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
-    "이 앱을 열 때 응답하는 내 컴퓨터에 자동으로 연결해 그 프로젝트를 여기에 표시합니다. 끄면 컴퓨터 연결로 하나씩 직접 연결합니다. 에이전트 권한은 바뀌지 않습니다. 이 기기에 저장됩니다.",
   "Cannot use Connect? Pair over your own network": "Connect를 쓸 수 없나요? 내 네트워크로 페어링",
   "Cannot use Connect? Pair over your own network.":
     "Connect를 쓸 수 없나요? 내 네트워크로 페어링하세요.",
@@ -4573,4 +4565,191 @@ export const ko: PhraseCatalog = {
     "목록에 없음: {names}. 여기에서 사용하려면 해당 머신에서 설정 > 머신 을 열고 {machine}이(가) 그곳에서 작업을 실행하도록 허용하세요.",
   "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
     "이 기기는 SpecWithCode Connect로만 연결되며, 이 앱의 Connect 계정에는 아직 표시되지 않습니다. 여기서 같은 계정으로 SpecWithCode Connect에 로그인하고 잠시 기다린 뒤 연결을 다시 누르세요.",
+  "1 chosen project (could not read this machine's projects)":
+    "선택한 프로젝트 1개 (이 컴퓨터의 프로젝트를 읽지 못함)",
+  "1 more machine": "컴퓨터 1대 더",
+  "1 running thread": "실행 중인 스레드 1개",
+  "1 running thread stops at {time}": "실행 중인 스레드 1개가 {time}에 중지됩니다",
+  "Active until {time}": "{time}까지 활성",
+  "Add {machineLabel}": "{machineLabel} 추가",
+  "Added {machineLabel}. Choose Allow on this line after Refresh.":
+    "{machineLabel}을(를) 추가했습니다. 새로 고침 후 이 줄에서 허용을 선택하세요.",
+  "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
+    "각 턴이 끝나면 이 컴퓨터의 스레드를 기존 스레드까지 포함해 같은 프로젝트가 있는 다른 컴퓨터로 복사하므로 어느 컴퓨터에서든 이어서 할 수 있습니다. 토큰을 조금 더 사용합니다.",
+  "After work left while it slept. Ask shows one button to bring it back.":
+    "잠자기 중에 작업이 다른 곳으로 옮겨진 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
+  "Agents on {hereLabel} can start work on {thereLabel}":
+    "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있음",
+  "Agents on {thereLabel} can start work on {hereLabel}":
+    "{thereLabel}의 에이전트가 {hereLabel}에서 작업을 시작할 수 있음",
+  "All sign-ins": "모든 로그인",
+  "All sign-ins on this machine": "이 컴퓨터의 모든 로그인",
+  Allow: "허용",
+  "Allow all projects": "모든 프로젝트 허용",
+  "Allow another machine": "다른 컴퓨터 허용",
+  "Allowing them needs Manage access on this machine.":
+    "허용하려면 이 컴퓨터에서 액세스 관리 권한이 필요합니다.",
+  "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:":
+    "이미 연결되어 있나요? {link}을(를) 열고 해당 카드에서 추가를 선택하세요. 복사할 것은 없습니다. 그렇지 않으면 다음 단계를 따르세요:",
+  "Away target": "자리 비움 대상",
+  "Can manage routines": "루틴 관리 가능",
+  "Cannot manage routines": "루틴 관리 불가",
+  "Changing this needs Manage access on this machine.":
+    "이 항목을 변경하려면 이 컴퓨터에서 액세스 관리 권한이 필요합니다.",
+  "Checking your SpecWithCode Connect sign-in…": "SpecWithCode Connect 로그인을 확인하는 중…",
+  "Choose Allow on its card above, on the line about agents here starting work on it.":
+    "위의 해당 카드에서 여기의 에이전트가 그 컴퓨터에서 작업을 시작하는 줄의 허용을 선택하세요.",
+  Chosen: "선택됨",
+  "Chosen projects": "선택한 프로젝트",
+  "Connection details": "연결 세부 정보",
+  "Connects this app to your machines that answer, so their projects show here. Off: you connect each one yourself. Changes no permissions. This device only.":
+    "응답하는 내 컴퓨터에 이 앱을 연결해 해당 프로젝트를 여기에 표시합니다. 끄면 각 컴퓨터를 직접 연결합니다. 권한은 바뀌지 않습니다. 이 기기에만 적용됩니다.",
+  "Could not open {label} through SpecWithCode Connect. Check that it is online, then choose it again.":
+    "SpecWithCode Connect를 통해 {label}을(를) 열지 못했습니다. 온라인인지 확인한 후 다시 선택하세요.",
+  "Could not read this machine's projects. The grant keeps its choices.":
+    "이 컴퓨터의 프로젝트를 읽지 못했습니다. 권한 부여의 선택 사항은 그대로 유지됩니다.",
+  "Each card shows who may start work where, both ways. Hover a line for details.":
+    "각 카드는 누가 어디에서 작업을 시작할 수 있는지 양방향으로 보여 줍니다. 자세한 내용은 줄 위에 마우스를 올리세요.",
+  "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
+    "이 앱이 아는 다른 모든 컴퓨터는 이미 설정 > 머신의 '여기서 작업을 실행할 수 있는 사람'에 있습니다. 그곳에서 변경, 취소 또는 복원하세요.",
+  "Expired: that machine must allow workers here again":
+    "만료됨: 해당 컴퓨터에서 이곳의 워커를 다시 허용해야 합니다",
+  Filter: "필터",
+  "Filter: {label}": "필터: {label}",
+  "Grace time": "유예 시간",
+  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
+    "이 Mac이 잠자기 상태가 되면 작업을 자리 비움 대상에 넘깁니다. 대상은 먼저 유예 시간 동안 기다리며, 그 전에 돌아오면 아무것도 옮겨지지 않습니다. Mac 전용입니다.",
+  "How long the target waits after the lid closes before it takes over.":
+    "덮개를 닫은 후 대상이 작업을 넘겨받기 전까지 기다리는 시간입니다.",
+  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
+    "또한 1년 동안 이 컴퓨터의 액세스, 업데이트, 스킬을 관리하는 키를 받습니다. 기존 프로젝트 및 로그인 제한은 계속 적용됩니다.",
+  "Its app sees this machine": "해당 앱에서 이 컴퓨터가 보임",
+  "Its work may use any sign-in on this machine.":
+    "해당 작업은 이 컴퓨터의 모든 로그인을 사용할 수 있습니다.",
+  "Its work may use no sign-in here, so every launch is refused.":
+    "해당 작업은 여기의 어떤 로그인도 사용할 수 없으므로 모든 실행이 거부됩니다.",
+  Lasts: "기간",
+  "Leave automatically when the lid closes": "덮개를 닫으면 자동으로 자리 비움",
+  "Let another of your machines run work here": "내 다른 컴퓨터가 여기서 작업을 실행하도록 허용",
+  "Let {machine} manage scheduled routines": "{machine}이(가) 예약된 루틴을 관리하도록 허용",
+  Limits: "제한",
+  "Linked projects": "연결된 프로젝트",
+  "Linked to it": "연결됨",
+  "Looking for your other machines…": "다른 컴퓨터를 찾는 중…",
+  "Make pairing link": "페어링 링크 만들기",
+  "Most access for agents from {hereLabel}": "{hereLabel}의 에이전트에 대한 최대 권한",
+  "Most its work may do": "해당 작업의 최대 권한",
+  "My machine": "내 컴퓨터",
+  "No longer answers. If it was wiped or reinstalled, remove it here; a fresh install joins as a new machine.":
+    "더 이상 응답하지 않습니다. 초기화했거나 다시 설치했다면 여기서 제거하세요. 새로 설치하면 새 컴퓨터로 참여합니다.",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Another account, or no Connect below.":
+    "아직 선택할 컴퓨터가 없습니다. 이 빌드에는 SpecWithCode Connect가 없으므로 컴퓨터는 코드나 참여 문자열로 참여합니다. 아래에서 '다른 계정 또는 Connect 없음'을 여세요.",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Settings > Machines, then Another account, or no Connect.":
+    "아직 선택할 컴퓨터가 없습니다. 이 빌드에는 SpecWithCode Connect가 없으므로 컴퓨터는 코드나 참여 문자열로 참여합니다. 설정 > 머신을 연 다음 '다른 계정 또는 Connect 없음'을 여세요.",
+  "No other machine can start work here. To allow one, choose Allow on its card above, on the line that says its agents can start work on this machine.":
+    "여기서 작업을 시작할 수 있는 다른 컴퓨터가 없습니다. 허용하려면 위의 해당 카드에서 그 에이전트가 이 컴퓨터에서 작업을 시작할 수 있다는 줄의 허용을 선택하세요.",
+  "No other machine is on your SpecWithCode Connect account yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "아직 SpecWithCode Connect 계정에 다른 컴퓨터가 없습니다. 다른 컴퓨터에 SpecWithCode를 설치하고 이 계정으로 SpecWithCode Connect에 로그인하세요. 그러면 여기에 표시됩니다.",
+  "No other machine is signed in to {account} yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "아직 {account}에 로그인한 다른 컴퓨터가 없습니다. 다른 컴퓨터에 SpecWithCode를 설치하고 이 계정으로 SpecWithCode Connect에 로그인하세요. 그러면 여기에 표시됩니다.",
+  "No project folder (chats)": "프로젝트 폴더 없음 (채팅)",
+  "No projects": "프로젝트 없음",
+  "No projects allowed": "허용된 프로젝트 없음",
+  "No sign-ins": "로그인 없음",
+  "No sign-ins on this machine yet. Add one under Settings > Providers.":
+    "아직 이 컴퓨터에 로그인이 없습니다. 설정 > 제공업체에서 추가하세요.",
+  "No sign-ins: every launch is refused": "로그인 없음: 모든 실행이 거부됩니다",
+  "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
+    "아니요. {machineLabel}에서 이 컴퓨터의 프로젝트를 열려면 여기서 일회용 링크를 만들어 그곳에서 여세요.",
+  "Not included. Each secret transfer still asks you.":
+    "포함되지 않습니다. 시크릿을 전송할 때마다 여전히 확인을 요청합니다.",
+  "Not set up yet.": "아직 설정되지 않았습니다.",
+  "Nothing allowed yet: tick a project or pick All projects":
+    "아직 허용된 항목 없음: 프로젝트를 체크하거나 모든 프로젝트를 선택하세요",
+  "Nothing matches.": "일치하는 항목이 없습니다.",
+  "Nothing to choose on this machine yet.": "아직 이 컴퓨터에서 선택할 항목이 없습니다.",
+  "Off: agents on {machine} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if {machine} should set up recurring work here.":
+    "꺼짐: {machine}의 에이전트가 여기서 작업을 시작할 수 있지만 이 컴퓨터의 예약된 루틴을 만들거나 변경, 실행, 삭제할 수는 없습니다. {machine}이(가) 여기서 반복 작업을 설정해야 한다면 켜세요.",
+  "On {coordinatorLabel}, agents can pick this machine now. Keep SpecWithCode open here; while this machine sleeps or the app is closed it shows there as not answering. To stop it, choose Revoke under Who can run work here in Settings > Machines.":
+    "이제 {coordinatorLabel}의 에이전트가 이 컴퓨터를 선택할 수 있습니다. 여기서 SpecWithCode를 열어 두세요. 이 컴퓨터가 잠자기 상태이거나 앱이 닫혀 있으면 그곳에 응답 없음으로 표시됩니다. 중지하려면 설정 > 머신의 '여기서 작업을 실행할 수 있는 사람'에서 취소를 선택하세요.",
+  "On: agents on {machine} may create, change, run and delete scheduled routines on this machine, in the projects it may use. Turn it off to let them start work here but leave the schedules alone.":
+    "켜짐: {machine}의 에이전트가 사용할 수 있는 프로젝트에서 이 컴퓨터의 예약된 루틴을 만들고 변경, 실행, 삭제할 수 있습니다. 여기서 작업은 시작하되 일정은 건드리지 않게 하려면 끄세요.",
+  "Opening {label} through SpecWithCode Connect…":
+    "SpecWithCode Connect를 통해 {label}을(를) 여는 중…",
+  "Pick the machine whose agents may start work here.":
+    "여기서 에이전트가 작업을 시작할 수 있는 컴퓨터를 선택하세요.",
+  "Pick the machine whose agents may start work here. Machines on your SpecWithCode Connect account show up by themselves.":
+    "여기서 에이전트가 작업을 시작할 수 있는 컴퓨터를 선택하세요. SpecWithCode Connect 계정의 컴퓨터는 자동으로 표시됩니다.",
+  "Projects linked to {machine} (could not read this machine's projects)":
+    "{machine}에 연결된 프로젝트 (이 컴퓨터의 프로젝트를 읽지 못함)",
+  "Projects linked to {machine} (none yet)": "{machine}에 연결된 프로젝트 (아직 없음)",
+  "Projects linked to {machine}: {projects}": "{machine}에 연결된 프로젝트: {projects}",
+  "Projects {machine} may use": "{machine}이(가) 사용할 수 있는 프로젝트",
+  "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
+    "새 작업을 즉시 거부합니다. 여기서 시작한 스레드는 2분 후 중지되며, 워크트리와 변경 사항은 유지됩니다.",
+  "Renews automatically.": "자동으로 갱신됩니다.",
+  "Revoked {time}. New work is refused": "{time}에 취소됨. 새 작업이 거부됩니다",
+  "Revoked. New work is refused": "취소됨. 새 작업이 거부됩니다",
+  "Search sign-ins": "로그인 검색",
+  Secrets: "시크릿",
+  "Set when it first starts work": "처음 작업을 시작할 때 설정됨",
+  Shared: "공유됨",
+  "Show the switch": "스위치 표시",
+  "Sign in to SpecWithCode Connect on this machine. Your other machines on the same account are then listed here.":
+    "이 컴퓨터에서 SpecWithCode Connect에 로그인하세요. 그러면 같은 계정의 다른 컴퓨터가 여기에 표시됩니다.",
+  "Sign-ins": "로그인",
+  "Sign-ins {machine} may use": "{machine}이(가) 사용할 수 있는 로그인",
+  Skip: "건너뛰기",
+  "Someone else's machine": "다른 사람의 컴퓨터",
+  "SpecWithCode Connect cannot be reached right now, so your machines cannot be listed. Check this machine's internet connection, then choose Check again.":
+    "지금 SpecWithCode Connect에 연결할 수 없어 컴퓨터 목록을 표시할 수 없습니다. 이 컴퓨터의 인터넷 연결을 확인한 후 다시 확인을 선택하세요.",
+  "SpecWithCode Connect is off on this machine, so your other machines cannot reach it. Turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow.":
+    "이 컴퓨터에서 SpecWithCode Connect가 꺼져 있어 다른 컴퓨터가 연결할 수 없습니다. 설정 > 머신에서 SpecWithCode Connect 스위치를 켠 다음 허용을 선택하세요.",
+  "The most a thread {machine} starts here may do without asking. A thread can run with less, never more. Chosen on {machine}, on this machine's card; change it there.":
+    "{machine}이(가) 여기서 시작한 스레드가 묻지 않고 할 수 있는 최대 범위입니다. 스레드는 더 적은 권한으로 실행될 수 있지만 더 많은 권한으로는 실행되지 않습니다. {machine}의 이 컴퓨터 카드에서 선택하며, 변경도 그곳에서 하세요.",
+  "The same choice as in a chat.": "채팅에서와 같은 선택입니다.",
+  "These machines are signed in to {account}, like this one. Pick whose agents may start work here.":
+    "이 컴퓨터들은 이 컴퓨터처럼 {account}에 로그인되어 있습니다. 여기서 에이전트가 작업을 시작할 수 있는 컴퓨터를 선택하세요.",
+  "This machine has no projects yet. Add a project folder here, or hand a project off to it, then tick it.":
+    "이 컴퓨터에는 아직 프로젝트가 없습니다. 여기에 프로젝트 폴더를 추가하거나 프로젝트를 이 컴퓨터로 넘긴 다음 체크하세요.",
+  "Until you stop it here or on {coordinatorLabel}. After Allow, this card says whether it renews by itself or ends on a date.":
+    "여기나 {coordinatorLabel}에서 중지할 때까지입니다. 허용한 후 이 카드에 자동으로 갱신되는지 특정 날짜에 끝나는지 표시됩니다.",
+  "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
+    "여기나 {coordinatorLabel}에서 중지할 때까지입니다. 자동으로 갱신됩니다.",
+  "Until you stop it, here or on that machine.": "여기나 해당 컴퓨터에서 중지할 때까지입니다.",
+  "What {thereLabel} may use here: under Who can run work here.":
+    "{thereLabel}이(가) 여기서 사용할 수 있는 항목: '여기서 작업을 실행할 수 있는 사람'에서 확인하세요.",
+  "When this machine wakes": "이 컴퓨터가 깨어날 때",
+  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
+    "자리 비움 시 스레드, 루틴, 코디네이터를 보내는 곳입니다. 이 컴퓨터가 잠자기 상태일 때도 사용되며, 화면 잠금은 해당하지 않습니다.",
+  "Who is it for": "누구를 위한 것인가요",
+  "Whose machine {machine} is": "{machine}의 소유자",
+  "Work from {machine}": "{machine}의 작업",
+  "Work {machine} starts here may itself start work on one more machine, and no further. It can never loop back to {machine}.":
+    "{machine}이(가) 여기서 시작한 작업은 컴퓨터 1대에서만 더 작업을 시작할 수 있으며 그 이상은 안 됩니다. {machine}(으)로 되돌아갈 수는 없습니다.",
+  "Work {machine} starts here may itself start work on {count} more machines, and no further. It can never loop back to {machine}.":
+    "{machine}이(가) 여기서 시작한 작업은 컴퓨터 {count}대에서만 더 작업을 시작할 수 있으며 그 이상은 안 됩니다. {machine}(으)로 되돌아갈 수는 없습니다.",
+  "Work {machine} starts here stays here: it cannot start work on another machine from this one.":
+    "{machine}이(가) 여기서 시작한 작업은 여기에 머뭅니다. 이 컴퓨터에서 다른 컴퓨터로 작업을 시작할 수 없습니다.",
+  "archived, uncheck to remove": "보관됨, 체크 해제하여 제거",
+  "automated, uncheck to remove": "자동화됨, 체크 해제하여 제거",
+  "checking…": "확인 중…",
+  "folder for chats, uncheck to remove": "채팅용 폴더, 체크 해제하여 제거",
+  "not answering right now": "현재 응답 없음",
+  "not connected in this app": "이 앱에서 연결되지 않음",
+  "not signed in": "로그인 안 됨",
+  online: "온라인",
+  "renews automatically": "자동 갱신",
+  "until {date}": "{date}까지",
+  "up to {access}": "최대 {access}",
+  "{access}, until {date}": "{access}, {date}까지",
+  "{count} chosen projects (could not read this machine's projects)":
+    "선택한 프로젝트 {count}개 (이 컴퓨터의 프로젝트를 읽지 못함)",
+  "{count} more machines": "컴퓨터 {count}대 더",
+  "{count} running threads": "실행 중인 스레드 {count}개",
+  "{count} running threads stop at {time}": "실행 중인 스레드 {count}개가 {time}에 중지됩니다",
+  "{machine} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.":
+    "{machine}이(가) 다음에 여기서 작업을 시작할 때 설정합니다. 여기서 시작한 스레드가 묻지 않고 할 수 있는 최대 범위입니다.",
+  "{title} (archived)": "{title} (보관됨)",
+  "{title} (automated)": "{title} (자동화됨)",
 };

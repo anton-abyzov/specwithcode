@@ -560,8 +560,6 @@ export const ru: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "По умолчанию автовыбор тратит использование подписки. Провайдеры с оплатой за токены (кредиты API) не используются, если не разрешены здесь, и только до выбранного уровня. Автовыбор никогда не добавляет ключ, не входит в аккаунт и не покупает кредиты.",
   "Switches the hosted app release channel.": "Переключает канал релизов размещённого приложения.",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "Синхронизирует каждый ход с другими машинами, где есть тот же проект, чтобы любая из них могла продолжить. Действует для тредов этой машины, в том числе существующих. Тратит чуть больше токенов.",
   "System default follows your browser or OS clock preference.":
     "«Системный» следует настройке часов браузера или ОС.",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1865,16 +1863,12 @@ export const ru: PhraseCatalog = {
   "Allow again": "Разрешить снова",
   "Allowed before work could be limited, so it may use every project and sign-in here until you change it.":
     "Разрешено до того, как работу можно было ограничивать, поэтому она может использовать все проекты и входы здесь, пока вы это не измените.",
-  "Whose machine": "Чья машина",
   "Whose machine is it": "Чья это машина",
   "Projects it may run work in": "Проекты, в которых она может запускать работу",
   "Sign-ins its work may use": "Входы, которые может использовать её работа",
-  "Most access": "Максимальный доступ",
   "Could not read who can run work here. Refresh to retry.":
     "Не удалось прочитать, кто может запускать работу здесь. Обновите, чтобы повторить.",
   "Checking who can run work here…": "Проверка, кто может запускать работу здесь…",
-  "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
-    "Отзыв сразу отклоняет новую работу. Треды, которые она запустила здесь, работают ещё 2 минуты, затем останавливаются; их рабочие деревья и изменения сохраняются.{value}",
   "Checking your machines…": "Проверка ваших машин…",
   "No machines yet.": "Машин пока нет.",
   "Advanced connection settings": "Расширенные настройки подключения",
@@ -4331,8 +4325,6 @@ export const ru: PhraseCatalog = {
   "Current machine": "Текущая машина",
   "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
     "Чтобы подключить машину, откройте ссылку связывания от владельца этого сервера с {value} или используйте «Добавить подключение» со ссылкой самой машины.",
-  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
-    "При открытии приложения подключаться к вашим машинам, которые отвечают, чтобы их проекты были видны здесь. Если выключить, каждую машину вы подключаете сами через «Подключить машину». Права агентов не меняются. Сохраняется на этом устройстве.",
   "Cannot use Connect? Pair over your own network":
     "Нельзя использовать Connect? Подключите по своей сети",
   "Cannot use Connect? Pair over your own network.":
@@ -4621,4 +4613,193 @@ export const ru: PhraseCatalog = {
     "Нет в списке: {names}. Чтобы использовать машину здесь, откройте на ней Настройки > Машины и разрешите {machine} запускать там работу.",
   "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
     "Эта машина доступна только через SpecWithCode Connect, а аккаунт Connect в этом приложении её пока не показывает. Войдите здесь в SpecWithCode Connect тем же аккаунтом, подождите немного и снова нажмите «Подключить».",
+  "1 chosen project (could not read this machine's projects)":
+    "1 выбранный проект (не удалось прочитать проекты этой машины)",
+  "1 more machine": "Ещё 1 машина",
+  "1 running thread": "1 запущенный тред",
+  "1 running thread stops at {time}": "1 запущенный тред остановится в {time}",
+  "Active until {time}": "Активно до {time}",
+  "Add {machineLabel}": "Добавить {machineLabel}",
+  "Added {machineLabel}. Choose Allow on this line after Refresh.":
+    "{machineLabel} добавлена. После «Обновить» нажмите «Разрешить» в этой строке.",
+  "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
+    "После каждого хода копирует треды этой машины, включая существующие, на ваши другие машины с тем же проектом, чтобы любая из них могла продолжить. Расходует чуть больше токенов.",
+  "After work left while it slept. Ask shows one button to bring it back.":
+    "После того как работа ушла, пока машина спала. «Спросить» показывает одну кнопку, чтобы вернуть её.",
+  "Agents on {hereLabel} can start work on {thereLabel}":
+    "Агенты на {hereLabel} могут запускать работу на {thereLabel}",
+  "Agents on {thereLabel} can start work on {hereLabel}":
+    "Агенты на {thereLabel} могут запускать работу на {hereLabel}",
+  "All sign-ins": "Все входы",
+  "All sign-ins on this machine": "Все входы на этой машине",
+  Allow: "Разрешить",
+  "Allow all projects": "Разрешить все проекты",
+  "Allow another machine": "Разрешить другую машину",
+  "Allowing them needs Manage access on this machine.":
+    "Чтобы разрешить их, нужно право управления доступом на этой машине.",
+  "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:":
+    "Уже подключены к ней? Откройте {link} и нажмите «Добавить» на её карточке. Копировать ничего не нужно. Иначе выполните эти шаги:",
+  "Away target": "Машина для режима «Не на месте»",
+  "Can manage routines": "Может управлять рутинами",
+  "Cannot manage routines": "Не может управлять рутинами",
+  "Changing this needs Manage access on this machine.":
+    "Чтобы изменить это, нужно право управления доступом на этой машине.",
+  "Checking your SpecWithCode Connect sign-in…": "Проверяем ваш вход в SpecWithCode Connect…",
+  "Choose Allow on its card above, on the line about agents here starting work on it.":
+    "Нажмите «Разрешить» на её карточке выше, в строке о том, что агенты отсюда запускают на ней работу.",
+  Chosen: "Выбрано",
+  "Chosen projects": "Выбранные проекты",
+  "Connection details": "Сведения о подключении",
+  "Connects this app to your machines that answer, so their projects show here. Off: you connect each one yourself. Changes no permissions. This device only.":
+    "Подключает это приложение к вашим машинам, которые отвечают, чтобы их проекты были видны здесь. Выключено: вы подключаете каждую сами. Разрешения не меняет. Только на этом устройстве.",
+  "Could not open {label} through SpecWithCode Connect. Check that it is online, then choose it again.":
+    "Не удалось открыть {label} через SpecWithCode Connect. Проверьте, что машина в сети, и выберите её снова.",
+  "Could not read this machine's projects. The grant keeps its choices.":
+    "Не удалось прочитать проекты этой машины. Разрешение сохраняет свой выбор.",
+  "Each card shows who may start work where, both ways. Hover a line for details.":
+    "Каждая карточка показывает, кто где может запускать работу, в обе стороны. Наведите на строку, чтобы увидеть подробности.",
+  "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
+    "Все остальные машины, известные приложению, уже есть в разделе «Кто может запускать здесь работу» в «Настройки > Машины». Изменить, отозвать или восстановить доступ можно там.",
+  "Expired: that machine must allow workers here again":
+    "Истекло: та машина должна снова разрешить исполнителей здесь",
+  Filter: "Фильтр",
+  "Filter: {label}": "Фильтр: {label}",
+  "Grace time": "Время ожидания",
+  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
+    "Передаёт работу машине для режима «Не на месте», когда этот Mac засыпает. Сначала она ждёт заданное время, и если вы вернётесь раньше, ничего не переносится. Только Mac.",
+  "How long the target waits after the lid closes before it takes over.":
+    "Сколько машина ждёт после закрытия крышки, прежде чем взять работу.",
+  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
+    "Она также получает ключ для управления доступом, обновлениями и навыками на этой машине на год. Текущие ограничения по проектам и входам продолжают действовать.",
+  "Its app sees this machine": "Её приложение видит эту машину",
+  "Its work may use any sign-in on this machine.":
+    "Её работа может использовать любой вход на этой машине.",
+  "Its work may use no sign-in here, so every launch is refused.":
+    "Её работа не может использовать здесь ни один вход, поэтому каждый запуск отклоняется.",
+  Lasts: "Действует",
+  "Leave automatically when the lid closes": "Уходить автоматически при закрытии крышки",
+  "Let another of your machines run work here":
+    "Разрешить другой вашей машине запускать здесь работу",
+  "Let {machine} manage scheduled routines":
+    "Разрешить {machine} управлять запланированными рутинами",
+  Limits: "Ограничения",
+  "Linked projects": "Связанные проекты",
+  "Linked to it": "Связано с ней",
+  "Looking for your other machines…": "Ищем ваши другие машины…",
+  "Make pairing link": "Создать ссылку связывания",
+  "Most access for agents from {hereLabel}": "Максимальный доступ для агентов с {hereLabel}",
+  "Most its work may do": "Максимум, что может её работа",
+  "My machine": "Моя машина",
+  "No longer answers. If it was wiped or reinstalled, remove it here; a fresh install joins as a new machine.":
+    "Больше не отвечает. Если её стёрли или переустановили, удалите её здесь: новая установка подключится как новая машина.",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Another account, or no Connect below.":
+    "Пока нет машин для выбора. В этой сборке нет SpecWithCode Connect, поэтому машина подключается по коду или строке подключения: откройте ниже «Другой аккаунт или без Connect».",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Settings > Machines, then Another account, or no Connect.":
+    "Пока нет машин для выбора. В этой сборке нет SpecWithCode Connect, поэтому машина подключается по коду или строке подключения: откройте «Настройки > Машины», затем «Другой аккаунт или без Connect».",
+  "No other machine can start work here. To allow one, choose Allow on its card above, on the line that says its agents can start work on this machine.":
+    "Ни одна другая машина не может запускать здесь работу. Чтобы разрешить, нажмите «Разрешить» на её карточке выше, в строке о том, что её агенты могут запускать работу на этой машине.",
+  "No other machine is on your SpecWithCode Connect account yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "В вашем аккаунте SpecWithCode Connect пока нет других машин. На другой машине установите SpecWithCode и войдите в SpecWithCode Connect с этим аккаунтом. После этого она появится здесь.",
+  "No other machine is signed in to {account} yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "В {account} пока не вошла ни одна другая машина. На другой машине установите SpecWithCode и войдите в SpecWithCode Connect с этим аккаунтом. После этого она появится здесь.",
+  "No project folder (chats)": "Без папки проекта (чаты)",
+  "No projects": "Нет проектов",
+  "No projects allowed": "Проекты не разрешены",
+  "No sign-ins": "Нет входов",
+  "No sign-ins on this machine yet. Add one under Settings > Providers.":
+    "На этой машине пока нет входов. Добавьте вход в «Настройки > Провайдеры».",
+  "No sign-ins: every launch is refused": "Нет входов: каждый запуск отклоняется",
+  "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
+    "Нет. Чтобы открыть проекты этой машины с {machineLabel}, создайте здесь одноразовую ссылку и откройте её там.",
+  "Not included. Each secret transfer still asks you.":
+    "Не входит. Каждая передача секрета по-прежнему требует вашего подтверждения.",
+  "Not set up yet.": "Ещё не настроено.",
+  "Nothing allowed yet: tick a project or pick All projects":
+    "Пока ничего не разрешено: отметьте проект или выберите «Все проекты»",
+  "Nothing matches.": "Ничего не найдено.",
+  "Nothing to choose on this machine yet.": "На этой машине пока нечего выбрать.",
+  "Off: agents on {machine} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if {machine} should set up recurring work here.":
+    "Выключено: агенты на {machine} могут запускать здесь работу, но не могут создавать, менять, запускать или удалять запланированные рутины на этой машине. Включите, если {machine} должна настраивать здесь повторяющуюся работу.",
+  "On {coordinatorLabel}, agents can pick this machine now. Keep SpecWithCode open here; while this machine sleeps or the app is closed it shows there as not answering. To stop it, choose Revoke under Who can run work here in Settings > Machines.":
+    "На {coordinatorLabel} агенты теперь могут выбирать эту машину. Держите SpecWithCode открытым здесь: пока машина спит или приложение закрыто, там она отображается как не отвечающая. Чтобы прекратить, нажмите «Отозвать» в разделе «Кто может запускать здесь работу» в «Настройки > Машины».",
+  "On: agents on {machine} may create, change, run and delete scheduled routines on this machine, in the projects it may use. Turn it off to let them start work here but leave the schedules alone.":
+    "Включено: агенты на {machine} могут создавать, менять, запускать и удалять запланированные рутины на этой машине в доступных ей проектах. Выключите, чтобы они могли запускать здесь работу, но не трогали расписания.",
+  "Opening {label} through SpecWithCode Connect…": "Открываем {label} через SpecWithCode Connect…",
+  "Pick the machine whose agents may start work here.":
+    "Выберите машину, агенты которой могут запускать здесь работу.",
+  "Pick the machine whose agents may start work here. Machines on your SpecWithCode Connect account show up by themselves.":
+    "Выберите машину, агенты которой могут запускать здесь работу. Машины из вашего аккаунта SpecWithCode Connect появляются сами.",
+  "Projects linked to {machine} (could not read this machine's projects)":
+    "Проекты, связанные с {machine} (не удалось прочитать проекты этой машины)",
+  "Projects linked to {machine} (none yet)": "Проекты, связанные с {machine} (пока нет)",
+  "Projects linked to {machine}: {projects}": "Проекты, связанные с {machine}: {projects}",
+  "Projects {machine} may use": "Проекты, которые может использовать {machine}",
+  "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
+    "Сразу отклоняет новую работу. Треды, которые она запустила здесь, остановятся через 2 минуты; их worktree и изменения сохранятся.",
+  "Renews automatically.": "Продлевается автоматически.",
+  "Revoked {time}. New work is refused": "Отозвано {time}. Новая работа отклоняется",
+  "Revoked. New work is refused": "Отозвано. Новая работа отклоняется",
+  "Search sign-ins": "Поиск входов",
+  Secrets: "Секреты",
+  "Set when it first starts work": "Задаётся при первом запуске работы",
+  Shared: "Общие",
+  "Show the switch": "Показать переключатель",
+  "Sign in to SpecWithCode Connect on this machine. Your other machines on the same account are then listed here.":
+    "Войдите в SpecWithCode Connect на этой машине. После этого здесь появятся ваши другие машины с тем же аккаунтом.",
+  "Sign-ins": "Входы",
+  "Sign-ins {machine} may use": "Входы, которые может использовать {machine}",
+  Skip: "Пропустить",
+  "Someone else's machine": "Чужая машина",
+  "SpecWithCode Connect cannot be reached right now, so your machines cannot be listed. Check this machine's internet connection, then choose Check again.":
+    "SpecWithCode Connect сейчас недоступен, поэтому список ваших машин получить нельзя. Проверьте подключение этой машины к интернету и нажмите «Проверить снова».",
+  "SpecWithCode Connect is off on this machine, so your other machines cannot reach it. Turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow.":
+    "SpecWithCode Connect выключен на этой машине, поэтому ваши другие машины не могут до неё достучаться. Включите переключатель SpecWithCode Connect в «Настройки > Машины», затем нажмите «Разрешить».",
+  "The most a thread {machine} starts here may do without asking. A thread can run with less, never more. Chosen on {machine}, on this machine's card; change it there.":
+    "Максимум, что тред, запущенный здесь машиной {machine}, может делать без запроса. Тред может работать с меньшим доступом, но не с большим. Выбирается на {machine}, на карточке этой машины; менять там же.",
+  "The same choice as in a chat.": "Тот же выбор, что и в чате.",
+  "These machines are signed in to {account}, like this one. Pick whose agents may start work here.":
+    "Эти машины, как и эта, вошли в {account}. Выберите, чьи агенты могут запускать здесь работу.",
+  "This machine has no projects yet. Add a project folder here, or hand a project off to it, then tick it.":
+    "На этой машине пока нет проектов. Добавьте здесь папку проекта или передайте ей проект, затем отметьте его.",
+  "Until you stop it here or on {coordinatorLabel}. After Allow, this card says whether it renews by itself or ends on a date.":
+    "Пока вы не остановите это здесь или на {coordinatorLabel}. После «Разрешить» карточка покажет, продлевается ли доступ сам или заканчивается в определённую дату.",
+  "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
+    "Пока вы не остановите это здесь или на {coordinatorLabel}. Продлевается само.",
+  "Until you stop it, here or on that machine.":
+    "Пока вы не остановите это здесь или на той машине.",
+  "What {thereLabel} may use here: under Who can run work here.":
+    "Что {thereLabel} может использовать здесь: в разделе «Кто может запускать здесь работу».",
+  "When this machine wakes": "Когда эта машина просыпается",
+  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
+    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов. Также используется, когда эта машина спит; блокировка экрана не считается.",
+  "Who is it for": "Для кого это",
+  "Whose machine {machine} is": "Чья машина {machine}",
+  "Work from {machine}": "Работа с {machine}",
+  "Work {machine} starts here may itself start work on one more machine, and no further. It can never loop back to {machine}.":
+    "Работа, которую {machine} запускает здесь, может сама запустить работу ещё на одной машине, но не дальше. Вернуться к {machine} она никогда не может.",
+  "Work {machine} starts here may itself start work on {count} more machines, and no further. It can never loop back to {machine}.":
+    "Работа, которую {machine} запускает здесь, может сама запускать работу ещё на {count} машинах, но не дальше. Вернуться к {machine} она никогда не может.",
+  "Work {machine} starts here stays here: it cannot start work on another machine from this one.":
+    "Работа, которую {machine} запускает здесь, остаётся здесь: с этой машины она не может запускать работу на другой.",
+  "archived, uncheck to remove": "в архиве, снимите отметку, чтобы убрать",
+  "automated, uncheck to remove": "автоматический, снимите отметку, чтобы убрать",
+  "checking…": "проверка…",
+  "folder for chats, uncheck to remove": "папка для чатов, снимите отметку, чтобы убрать",
+  "not answering right now": "сейчас не отвечает",
+  "not connected in this app": "не подключена в этом приложении",
+  "not signed in": "вход не выполнен",
+  online: "в сети",
+  "renews automatically": "продлевается автоматически",
+  "until {date}": "до {date}",
+  "up to {access}": "не больше чем {access}",
+  "{access}, until {date}": "{access}, до {date}",
+  "{count} chosen projects (could not read this machine's projects)":
+    "Выбрано проектов: {count} (не удалось прочитать проекты этой машины)",
+  "{count} more machines": "Ещё машин: {count}",
+  "{count} running threads": "Запущено тредов: {count}",
+  "{count} running threads stop at {time}": "Запущенные треды ({count}) остановятся в {time}",
+  "{machine} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.":
+    "{machine} задаст это при следующем запуске работы здесь. Это максимум, что запущенный ею здесь тред может делать без запроса.",
+  "{title} (archived)": "{title} (в архиве)",
+  "{title} (automated)": "{title} (автоматический)",
 };
