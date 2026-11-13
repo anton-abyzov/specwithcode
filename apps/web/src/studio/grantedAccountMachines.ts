@@ -17,13 +17,13 @@ import { fleetMachineHasTailnetAddress } from "./fleetAutoConnect";
 /**
  * Whether a fleet machine's grant to run work here is in force. A machine
  * listed with a revoked, expired or never-given grant is no consent to save
- * it; one from a server too old to report grants counts as allowed.
+ * it, nor is one from a server too old to report grants, as elsewhere.
  */
 export function fleetMachineGranted(machine: {
   readonly workers?: { readonly status: string } | undefined;
 }): boolean {
   const status = machine.workers?.status;
-  return status === undefined || status === "allowed" || status === "expiring";
+  return status === "allowed" || status === "expiring";
 }
 
 /** Account machines in the fleet that this app should save with a Connect route now. */

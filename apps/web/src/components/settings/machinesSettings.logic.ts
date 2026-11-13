@@ -19,6 +19,7 @@ import { fleetMachineHasTailnetAddress, fleetMachineSaved } from "../../studio/f
 import {
   type AccountAutoConnectState,
   accountConnectCanRetry,
+  fleetMachineGranted,
 } from "../../studio/grantedAccountMachines";
 import { CONNECTING_REASON } from "../../studio/handoffAccountMachines";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
@@ -280,7 +281,9 @@ export function withAccountConnectState(
     row.fleetMachine === null ||
     row.fleetMachine.status === "identity-mismatch" ||
     fleetMachineHasTailnetAddress(row.fleetMachine) ||
-    !onAccount
+    !onAccount ||
+    // Without a grant in force it is not saved for this; its row stays as built.
+    (state === undefined && !fleetMachineGranted(row.fleetMachine))
   )
     return row;
   if (state?.phase === "connecting")

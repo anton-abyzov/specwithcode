@@ -52,8 +52,6 @@ const MAX_ATTEMPTS = 3;
 const RETRY_MS = 60_000;
 /** Re-reads of the account list for a fleet machine it does not show; one on another account never shows. */
 const MAX_LOOKUPS = 2;
-/** Pause after MAX_LOOKUPS before the list is read for that machine again. */
-const LOOKUP_PAUSE_MS = 15 * RETRY_MS;
 
 interface Attempt {
   readonly count: number;
@@ -100,13 +98,15 @@ export function GrantedAccountMachines({
   // the machine is saved; it overrides holds and the wait for one try. The
   // shared in-flight set keeps the reconciler's linked path from adding it too.
   const requested = useRef(new Set<string>());
-  const lookedUp = useRef(new Map<string, Attempt>());
+  const lookedUp = useRef(new Map<string, Attempt & { readonly sign: string }>());
   // The list belongs to this account only after a refresh that started once it was active.
   const sawRefresh = useRef(false);
   // Presses not acted on yet: each one asks for one try now.
   const unanswered = useRef(new Set<string>());
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const savedRef = useRef(new Set<string>());
+  savedRef.current = new Set(environments.map((item) => item.environmentId));
   const discoveredRef = useRef(discovery.environments);
   if (!discovery.refreshing) discoveredRef.current = discovery.environments;
   // Machines the account list has shown this session: while it cannot be
@@ -122,6 +122,8 @@ export function GrantedAccountMachines({
         // Saving needs the machine's entry on this Connect account; without
         // it (another account, not signed in) the caller pairs instead.
         if (environmentIds.some((id) => !discoveredRef.current.has(id))) return false;
+        // A saved machine's Connect is about its address or approval: the caller's.
+        if (environmentIds.some((id) => savedRef.current.has(id))) return false;
         const tailnet = new Set<string>(
           (snapshotRef.current?.machines ?? [])
             .filter((machine) => fleetMachineHasTailnetAddress(machine))
@@ -298,20 +300,26 @@ export function GrantedAccountMachines({
     }).filter(
       (id) => !removed.has(id) && (autoConnect || linked.has(id) || requested.current.has(id)),
     );
+    const fleetSign = new Map(
+      (snapshot?.machines ?? []).map((machine) => [
+        machine.environmentId as string,
+        `${machine.status}:${machine.transport ?? ""}`,
+      ]),
+    );
     let readNow = false;
     if (!unreachable)
       for (const id of [...needList, ...missing]) {
         let looked = lookedUp.current.get(id);
-        // After MAX_LOOKUPS, the list is read again for it after a long pause:
-        // a machine may sign in to Connect well after it allowed this one.
-        if (looked !== undefined && looked.count >= MAX_LOOKUPS) {
-          waiting = true;
-          if (now - looked.at < LOOKUP_PAUSE_MS) continue;
-          looked = undefined;
+        // Read again once how the fleet reaches it changes (it came online,
+        // or now answers over Connect): it may have signed in to Connect.
+        const sign = fleetSign.get(id) ?? "";
+        if (looked !== undefined && looked.sign !== sign) {
           lookedUp.current.delete(id);
+          looked = undefined;
         }
+        if (looked !== undefined && looked.count >= MAX_LOOKUPS) continue;
         if (looked === undefined || now - looked.at >= RETRY_MS) {
-          lookedUp.current.set(id, { count: (looked?.count ?? 0) + 1, at: now });
+          lookedUp.current.set(id, { count: (looked?.count ?? 0) + 1, at: now, sign });
           readNow = true;
         }
         if ((lookedUp.current.get(id)?.count ?? 0) < MAX_LOOKUPS) waiting = true;

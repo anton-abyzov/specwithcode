@@ -16,6 +16,7 @@ const connectOnly = (environmentId: string) => ({
   environmentId,
   label: environmentId.toUpperCase(),
   url: `https://relay.specwithcode.com/e/${environmentId}`,
+  workers: { status: "allowed" },
 });
 const base = {
   savedEnvironmentIds: new Set<string>(["m4"]),
@@ -143,7 +144,12 @@ describe("handoffAccountMachines", () => {
   });
 
   it("offers Connect for a tailnet machine once its fleet pairing finished without saving it", () => {
-    const tailnet = { environmentId: "m1", label: "M1", url: "https://m1.tail1234.ts.net:3773" };
+    const tailnet = {
+      environmentId: "m1",
+      label: "M1",
+      url: "https://m1.tail1234.ts.net:3773",
+      workers: { status: "allowed" },
+    };
     expect(
       handoffAccountMachines({ ...base, discovered: [found("m1", "M1")], fleet: [tailnet] })
         .fallback,
@@ -175,10 +181,10 @@ describe("handoffFleetOnlyMachines", () => {
     expect(
       handoffFleetOnlyMachines({
         fleet: [
-          { environmentId: "m1", label: "M1" },
-          { environmentId: "m5", label: "M5" },
-          { environmentId: "m5", label: "M5" },
-          { environmentId: "m6", label: "M6" },
+          { environmentId: "m1", label: "M1", workers: { status: "allowed" } },
+          { environmentId: "m5", label: "M5", workers: { status: "allowed" } },
+          { environmentId: "m5", label: "M5", workers: { status: "allowed" } },
+          { environmentId: "m6", label: "M6", workers: { status: "allowed" } },
           { environmentId: "mini", label: "Mini" },
         ],
         savedEnvironmentIds: new Set(["m1"]),
@@ -192,10 +198,21 @@ describe("handoffFleetOnlyMachines", () => {
     expect(
       handoffFleetOnlyMachines({
         fleet: [
-          { environmentId: "m1", label: "M1", url: "https://m1.tail1234.ts.net:3773" },
-          { environmentId: "m2", label: "M2", url: "https://relay.specwithcode.com/e/m2" },
+          {
+            environmentId: "m1",
+            label: "M1",
+            workers: { status: "allowed" },
+            url: "https://m1.tail1234.ts.net:3773",
+          },
+          {
+            environmentId: "m2",
+            label: "M2",
+            workers: { status: "allowed" },
+            url: "https://relay.specwithcode.com/e/m2",
+          },
           {
             environmentId: "m3",
+            workers: { status: "allowed" },
             label: "M3",
             url: "https://relay.specwithcode.com/e/m3",
             status: "identity-mismatch",
