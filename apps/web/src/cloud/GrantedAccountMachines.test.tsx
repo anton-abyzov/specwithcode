@@ -82,6 +82,13 @@ function m5InFleet() {
         url: "https://relay.specwithcode.com/e/m5",
         status: "reachable",
         pairingConfigured: false,
+        workers: {
+          status: "allowed",
+          access: "full-access",
+          expiresAt: null,
+          renewable: true,
+          problem: null,
+        },
       },
     ],
   };

@@ -574,6 +574,13 @@ describe("withAccountConnectState", () => {
           url: "https://relay.specwithcode.com/e/env-m5",
           transport: "connect",
           pairingConfigured: false,
+          workers: {
+            status: "allowed",
+            access: "full-access",
+            expiresAt: null,
+            renewable: true,
+            problem: null,
+          },
         }),
       ]),
       savedOrigins: new Map(),

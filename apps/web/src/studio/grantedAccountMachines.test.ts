@@ -22,6 +22,7 @@ const fleet = (
       url: machine.url ?? CONNECT_URL,
       status: machine.status ?? "reachable",
       pairingConfigured: true,
+      workers: { status: "allowed" },
     })),
   }) as unknown as StudioFleetSnapshot;
 

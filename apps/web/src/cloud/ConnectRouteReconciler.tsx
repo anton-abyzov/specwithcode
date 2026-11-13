@@ -20,8 +20,9 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { usePrimaryFleetSnapshot } from "../studio/fleet";
 import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
 import {
-  accountAutoConnectStates,
   connectRouteAddsInFlight,
+  onConnectRouteAddsChange,
+  useAccountAutoConnectStates,
   grantedAccountMachinesToConnect,
   setConnectRouteAddInFlight,
 } from "../studio/grantedAccountMachines";
@@ -86,6 +87,10 @@ export function ConnectRouteReconciler() {
   // Bumped when the user asks for Connect routes from the Connections banner,
   // so the add runs now and gets fresh attempts.
   const [requests, setRequests] = useState(0);
+  // The saver's published states and adds feed the linked path's skip list.
+  const saverStates = useAccountAutoConnectStates();
+  const [addsVersion, setAddsVersion] = useState(0);
+  useEffect(() => onConnectRouteAddsChange(() => setAddsVersion((current) => current + 1)), []);
   // Machines the user asked for: a failed add is reported, not retried silently.
   const requestedRef = useRef<Set<string>>(new Set());
   useEffect(
@@ -167,7 +172,7 @@ export function ConnectRouteReconciler() {
         ...granted,
         ...connectRouteAddsInFlight(),
         // Machines the saver publishes a state for, a pressed tailnet one too.
-        ...accountAutoConnectStates().keys(),
+        ...saverStates.keys(),
       ]),
     });
     for (const machine of linked) {
@@ -198,6 +203,8 @@ export function ConnectRouteReconciler() {
     register,
     registerRequested,
     requests,
+    saverStates,
+    addsVersion,
   ]);
 
   // Reorder once the catalog shows the new route, so the order lists every route.

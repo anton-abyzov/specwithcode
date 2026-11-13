@@ -92,7 +92,7 @@ export function HandoffAccountMachines({
           // Also those whose state is published while the list cannot be read.
           accountEnvironmentIds: new Set([...discovery.environments.keys(), ...states.keys()]),
           removed: removedHere,
-          fleetPairingSettled: fleetAutoConnectSettled,
+          fleetPairingSettled: pairingDone,
           name,
         });
   if (fallback.length === 0 && notAllowed.length === 0 && fleetOnly.length === 0) return null;
