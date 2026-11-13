@@ -4619,4 +4619,6 @@ export const ru: PhraseCatalog = {
   "SpecWithCode Connect cannot be reached right now.": "SpecWithCode Connect сейчас недоступен.",
   "Could not connect over SpecWithCode Connect.":
     "Не удалось подключиться через SpecWithCode Connect.",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect принял её, но здесь она не добавлена.",
 };

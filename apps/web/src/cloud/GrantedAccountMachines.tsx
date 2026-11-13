@@ -21,6 +21,7 @@ import {
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
+  fleetMachineHasTailnetAddress,
   readSkippedFleetEnvironments,
   setFleetEnvironmentSkipped,
 } from "../studio/fleetAutoConnect";
@@ -29,7 +30,9 @@ import {
   type AccountAutoConnectState,
   CONNECT_FAILED_REASON,
   CONNECT_NO_ANSWER_REASON,
+  CONNECT_NOT_ADDED_REASON,
   connectRouteAddsInFlight,
+  fleetMachineGranted,
   onConnectRouteAddsChange,
   setConnectRouteAddInFlight,
   CONNECT_UNREACHABLE_REASON,
@@ -87,7 +90,8 @@ export function GrantedAccountMachines({
     label: "Refresh SpecWithCode Connect machines",
     reportFailure: false,
   });
-  const inFlight = useRef(new Set<string>());
+  // Machines whose last try reported success yet were not added here.
+  const accepted = useRef(new Set<string>());
   const attempts = useRef(new Map<string, Attempt>());
   const failures = useRef(new Map<string, string | undefined>());
   // Machines asked for by hand, a tailnet one too. A press is in force until
@@ -168,7 +172,6 @@ export function GrantedAccountMachines({
     for (const machine of candidates) {
       const id = machine.environmentId;
       const tried = attempts.current.get(id);
-      const pressed = requested.current.has(id);
       // A press not acted on yet asks for one more try, now.
       const asked = unanswered.current.has(id);
       const detail = failures.current.get(id);
@@ -177,7 +180,7 @@ export function GrantedAccountMachines({
         : detail === undefined
           ? { phase: "failed", reason: CONNECT_FAILED_REASON }
           : { phase: "failed", reason: CONNECT_FAILED_REASON, detail };
-      if (inFlight.current.has(id) || connectRouteAddsInFlight().has(id)) {
+      if (connectRouteAddsInFlight().has(id)) {
         next.set(id, { phase: "connecting" });
         continue;
       }
@@ -186,7 +189,9 @@ export function GrantedAccountMachines({
         continue;
       }
       const automatic = autoConnect || linked.has(id);
-      if (!asked && !pressed && (!automatic || removed.has(id))) {
+      // Once a press has had its try, later holds (removed here, Connect
+      // automatically off) apply again; a failure keeps saying why.
+      if (!asked && (!automatic || removed.has(id))) {
         // A failed try keeps saying why, also while saving is held.
         next.set(
           id,
@@ -214,14 +219,16 @@ export function GrantedAccountMachines({
       ) {
         if (failure !== undefined) next.set(id, failure);
         else if (tried.count >= MAX_ATTEMPTS)
-          next.set(id, { phase: "failed", reason: CONNECT_NO_ANSWER_REASON });
+          next.set(id, {
+            phase: "failed",
+            reason: accepted.current.has(id) ? CONNECT_NOT_ADDED_REASON : CONNECT_NO_ANSWER_REASON,
+          });
         else next.set(id, { phase: "connecting" });
         if (tried.count < MAX_ATTEMPTS) waiting = true;
         continue;
       }
       unanswered.current.delete(id);
       attempts.current.set(id, { count: (tried?.count ?? 0) + 1, at: now });
-      inFlight.current.add(id);
       setConnectRouteAddInFlight(id, true);
       next.set(id, { phase: "connecting" });
       void register(
@@ -229,11 +236,12 @@ export function GrantedAccountMachines({
           target: new RelayConnectionTarget({ environmentId: id, label: machine.label }),
         }),
       ).then((result) => {
-        inFlight.current.delete(id);
         setConnectRouteAddInFlight(id, false);
         // An interrupted try counts as a try, so the wait and the cap still apply.
-        if (result._tag === "Success") failures.current.delete(id);
-        else if (!isAtomCommandInterrupted(result)) {
+        if (result._tag === "Success") {
+          failures.current.delete(id);
+          accepted.current.add(id);
+        } else if (!isAtomCommandInterrupted(result)) {
           const cause = squashAtomCommandFailure(result);
           // The message is the relay's own, shown as a detail next to a translated reason.
           failures.current.set(
@@ -244,6 +252,22 @@ export function GrantedAccountMachines({
         setTick((current) => current + 1);
       });
     }
+    // A failed read empties the account list: machines this app would save
+    // still say why they wait, instead of falling back to a Tailscale pairing.
+    if (unreachable)
+      for (const machine of snapshot?.machines ?? []) {
+        const id = machine.environmentId;
+        if (
+          next.has(id) ||
+          id === primaryEnvironmentId ||
+          savedEnvironmentIds.has(id) ||
+          machine.status === "identity-mismatch" ||
+          !fleetMachineGranted(machine) ||
+          fleetMachineHasTailnetAddress(machine)
+        )
+          continue;
+        next.set(id, { phase: "held", reason: CONNECT_UNREACHABLE_REASON });
+      }
     publishAccountAutoConnectStates(next);
 
     // The account list is read again, at most MAX_LOOKUPS times a minute

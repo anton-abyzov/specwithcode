@@ -193,10 +193,8 @@ export function usePrimaryFleetSnapshot(primaryEnvironmentId: EnvironmentId | nu
     readonly snapshot: typeof next;
   }>({ raw: null, key: "null", snapshot: null });
   if (kept.current.raw !== next) {
-    // observedAt changes on every read; the machines are what callers act on.
-    const key = JSON.stringify(
-      next === null ? null : [next.connectPermission ?? null, next.machines],
-    );
+    // observedAt changes on every read and is the one field nobody acts on.
+    const key = JSON.stringify(next === null ? null : { ...next, observedAt: "" });
     kept.current = {
       raw: next,
       key,

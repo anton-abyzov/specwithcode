@@ -4571,4 +4571,6 @@ export const ko: PhraseCatalog = {
   "SpecWithCode Connect cannot be reached right now.":
     "지금은 SpecWithCode Connect에 연결할 수 없습니다.",
   "Could not connect over SpecWithCode Connect.": "SpecWithCode Connect로 연결하지 못했습니다.",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect가 받아들였지만 여기에는 추가되지 않았습니다.",
 };
