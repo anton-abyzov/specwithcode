@@ -39,7 +39,8 @@ export function HandoffAccountMachines({
   // Saving happens in this app, so its own server's fleet says what is being
   // saved; which machines can take the work is the source machine's fleet,
   // as in the dialog's list.
-  const fleetSnapshot = usePrimaryFleetSnapshot(usePrimaryEnvironmentId());
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const fleetSnapshot = usePrimaryFleetSnapshot(primaryEnvironmentId);
   const sourceFleet = useStudioFleet(sourceEnvironmentId).snapshot;
   // Read from the atom, not the environments hook, so callers mocking that module still render.
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
@@ -62,11 +63,13 @@ export function HandoffAccountMachines({
   });
   // Named only once the list is current, and only machines answering now.
   const notAllowed = discovery.refreshing ? [] : accountOnly.filter((machine) => machine.answering);
+  // Settings > Machines lists this app's own fleet, so the notice that points
+  // there is given for a project on this app's own machine only.
   const fleetOnly =
-    discovery.refreshing || sourceMachines === null
+    discovery.refreshing || fleetMachines === null || sourceEnvironmentId !== primaryEnvironmentId
       ? []
       : handoffFleetOnlyMachines({
-          fleet: sourceMachines,
+          fleet: fleetMachines,
           savedEnvironmentIds,
           sourceEnvironmentId,
           accountEnvironmentIds: new Set(discovery.environments.keys()),

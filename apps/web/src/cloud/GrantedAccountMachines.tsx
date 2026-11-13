@@ -7,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
 import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -19,9 +20,7 @@ import {
 } from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
-import { usePrimaryFleetSnapshot } from "../studio/fleet";
 import {
-  fleetMachineHasTailnetAddress,
   readSkippedFleetEnvironments,
   setFleetEnvironmentSkipped,
 } from "../studio/fleetAutoConnect";
@@ -42,11 +41,7 @@ import {
   publishAccountAutoConnectStates,
 } from "../studio/grantedAccountMachines";
 import { linkedMachineIds } from "../studio/linkedMachines";
-import {
-  readDeclinedConnectRoutes,
-  requestConnectRoutes,
-  setConnectRouteDeclined,
-} from "./connectRoutePlan";
+import { readDeclinedConnectRoutes, setConnectRouteDeclined } from "./connectRoutePlan";
 
 /** Tries per machine before it waits for Connect by hand. */
 const MAX_ATTEMPTS = 3;
@@ -66,19 +61,24 @@ interface Attempt {
  * Tailscale address. The grant given there is the consent: nothing needs
  * pressing here. Runs while Connect automatically is on, and always for a
  * machine a shared project also names (which the reconciler's linked path
- * leaves to this one). Connect by hand (`requestAccountMachineConnect`) saves
- * one in any case, a tailnet machine too, and lifts an earlier removal.
+ * leaves to this one). Every Connect press for a machine in this fleet
+ * (`requestAccountMachineConnect`) is saved here, a tailnet machine too, so
+ * its state and any failure are published; it also lifts an earlier removal.
  *
  * Publishes one state per machine for the move dialog, Settings > Machines
  * and the checking state. Mounted by the reconciler, per account.
  */
-export function GrantedAccountMachines() {
+export function GrantedAccountMachines({
+  snapshot,
+}: {
+  /** This app's own server's fleet, from the reconciler. */
+  readonly snapshot: StudioFleetSnapshot | null;
+}) {
   const { environments } = useEnvironments();
   const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
   const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const snapshot = usePrimaryFleetSnapshot(primaryEnvironmentId);
   const register = useAtomCommand(environmentCatalog.register, {
     label: "Add SpecWithCode Connect route",
     reportFailure: false,
@@ -90,16 +90,15 @@ export function GrantedAccountMachines() {
   const inFlight = useRef(new Set<string>());
   const attempts = useRef(new Map<string, Attempt>());
   const failures = useRef(new Map<string, string | undefined>());
-  // Machines asked for by hand, with when. A press is in force until the
-  // machine is saved; it overrides holds and the wait for one try.
-  const requested = useRef(new Map<string, number>());
+  // Machines asked for by hand, a tailnet one too. A press is in force until
+  // the machine is saved; it overrides holds and the wait for one try. The
+  // shared in-flight set keeps the reconciler's linked path from adding it too.
+  const requested = useRef(new Set<string>());
   const lookedUp = useRef(new Map<string, Attempt>());
   // The list belongs to this account only after a refresh that started once it was active.
   const sawRefresh = useRef(false);
   // Presses not acted on yet: each one asks for one try now.
   const unanswered = useRef(new Set<string>());
-  const projectsRef = useRef(projects);
-  projectsRef.current = projects;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const [tick, setTick] = useState(0);
@@ -108,35 +107,23 @@ export function GrantedAccountMachines() {
   useEffect(
     () =>
       onAccountMachineConnectRequest((environmentIds) => {
-        const now = Date.now();
         const shown = new Map(accountAutoConnectStates());
-        // A machine a shared project names is saved by the reconciler's
-        // linked path when it has a tailnet address: the press goes there.
-        const linked = linkedMachineIds(projectsRef.current);
-        const viaLinked = environmentIds.filter((id) => {
-          const inFleet = snapshotRef.current?.machines.find(
-            (machine) => machine.environmentId === id,
-          );
-          return linked.has(id) && (!inFleet || fleetMachineHasTailnetAddress(inFleet));
-        });
         const inFleet = new Set<string>(
           (snapshotRef.current?.machines ?? []).map((machine) => machine.environmentId),
         );
         // Not in this app's fleet: nothing here can save it.
-        if (environmentIds.some((id) => !inFleet.has(id) && !viaLinked.includes(id))) return false;
+        if (environmentIds.some((id) => !inFleet.has(id))) return false;
         for (const id of environmentIds) {
           // Connecting by hand undoes an earlier removal on this device.
           setFleetEnvironmentSkipped(id as EnvironmentId, false);
           setConnectRouteDeclined(id, false);
-          if (viaLinked.includes(id)) continue;
-          requested.current.set(id, now);
+          requested.current.add(id);
           unanswered.current.add(id);
           shown.set(id, { phase: "connecting" });
         }
         // Says so at once, also while the account list is being read.
         publishAccountAutoConnectStates(shown);
         setTick((current) => current + 1);
-        if (viaLinked.length > 0) requestConnectRoutes(viaLinked);
         return true;
       }),
     [],
@@ -156,7 +143,7 @@ export function GrantedAccountMachines() {
     }
     const now = Date.now();
     const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
-    for (const id of requested.current.keys())
+    for (const id of requested.current)
       if (savedEnvironmentIds.has(id)) {
         requested.current.delete(id);
         unanswered.current.delete(id);
@@ -167,8 +154,7 @@ export function GrantedAccountMachines() {
       currentEnvironmentId: primaryEnvironmentId,
       savedEnvironmentIds,
       discovered: discovery.environments,
-      // A linked tailnet machine stays with the reconciler's linked path.
-      requested: new Set([...requested.current.keys()].filter((id) => !linked.has(id))),
+      requested: requested.current,
     });
     const removed = new Set<string>([
       ...readSkippedFleetEnvironments(),
@@ -182,7 +168,7 @@ export function GrantedAccountMachines() {
     for (const machine of candidates) {
       const id = machine.environmentId;
       const tried = attempts.current.get(id);
-      const pressedAt = requested.current.get(id);
+      const pressed = requested.current.has(id);
       // A press not acted on yet asks for one more try, now.
       const asked = unanswered.current.has(id);
       const detail = failures.current.get(id);
@@ -200,7 +186,7 @@ export function GrantedAccountMachines() {
         continue;
       }
       const automatic = autoConnect || linked.has(id);
-      if (!asked && pressedAt === undefined && (!automatic || removed.has(id))) {
+      if (!asked && !pressed && (!automatic || removed.has(id))) {
         // A failed try keeps saying why, also while saving is held.
         next.set(
           id,

@@ -41,7 +41,6 @@ vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: { autoConnectPrivateMachines: boolean }) => boolean) =>
     select({ autoConnectPrivateMachines: state.autoConnect }),
 }));
-vi.mock("../studio/fleet", () => ({ usePrimaryFleetSnapshot: () => state.snapshot }));
 vi.mock("../state/relay", () => ({ relayEnvironmentDiscovery: { refresh: "refresh" } }));
 vi.mock("../connection/catalog", () => ({ environmentCatalog: { register: "register" } }));
 vi.mock("../state/use-atom-command", () => ({
@@ -64,6 +63,11 @@ vi.mock("../studio/linkedMachines", async (importOriginal) => ({
 
 const { GrantedAccountMachines } = await import("./GrantedAccountMachines");
 const { onConnectRouteRequest } = await import("./connectRoutePlan");
+
+/** The component as the reconciler mounts it, with the fleet it reads. */
+function Subject() {
+  return <GrantedAccountMachines snapshot={state.snapshot as never} />;
+}
 const { accountAutoConnectStates, requestAccountMachineConnect } =
   await import("../studio/grantedAccountMachines");
 
@@ -89,10 +93,10 @@ async function mount(): Promise<ReactTestRenderer> {
   // The account list counts as this account's once a refresh has been seen.
   state.refreshing = true;
   await act(async () => {
-    renderer = create(<GrantedAccountMachines />);
+    renderer = create(<Subject />);
   });
   state.refreshing = false;
-  await act(async () => renderer!.update(<GrantedAccountMachines />));
+  await act(async () => renderer!.update(<Subject />));
   return renderer!;
 }
 
@@ -168,7 +172,7 @@ describe("GrantedAccountMachines", () => {
     });
     const renderer = await mount();
     // The failure lands after the register promise settles.
-    await act(async () => renderer.update(<GrantedAccountMachines />));
+    await act(async () => renderer.update(<Subject />));
     expect(accountAutoConnectStates().get("m5")).toEqual({
       phase: "failed",
       reason: "Could not connect over SpecWithCode Connect.",
@@ -182,8 +186,7 @@ describe("GrantedAccountMachines", () => {
     // Success, but the catalog never lists it (as some registries do).
     state.register.mockResolvedValue({ _tag: "Success" });
     const renderer = await mount();
-    for (let pass = 0; pass < 5; pass += 1)
-      await act(async () => renderer.update(<GrantedAccountMachines />));
+    for (let pass = 0; pass < 5; pass += 1) await act(async () => renderer.update(<Subject />));
     expect(state.register).toHaveBeenCalledTimes(1);
     expect(accountAutoConnectStates().get("m5")).toEqual({ phase: "connecting" });
     await act(async () => renderer.unmount());
@@ -214,7 +217,7 @@ describe("GrantedAccountMachines", () => {
       cause: Cause.fail(new Error("Relay refused")),
     });
     const renderer = await mount();
-    await act(async () => renderer.update(<GrantedAccountMachines />));
+    await act(async () => renderer.update(<Subject />));
     expect(state.register).toHaveBeenCalledTimes(1);
     await act(async () => requestAccountMachineConnect(["m5"]));
     expect(state.register).toHaveBeenCalledTimes(2);
@@ -227,7 +230,7 @@ describe("GrantedAccountMachines", () => {
     const renderer = await mount();
     state.refreshing = true;
     state.discovered = new Map();
-    await act(async () => renderer.update(<GrantedAccountMachines />));
+    await act(async () => renderer.update(<Subject />));
     expect(accountAutoConnectStates().get("m5")).toEqual({
       phase: "held",
       reason: "Connect automatically is off.",
@@ -236,7 +239,7 @@ describe("GrantedAccountMachines", () => {
     await act(async () => renderer.unmount());
   });
 
-  it("sends a press for a linked tailnet machine to the reconciler's linked path", async () => {
+  it("saves a linked tailnet machine on Connect itself, keeping the reconciler out", async () => {
     m5InFleet();
     (state.snapshot as { machines: Array<{ url: string }> }).machines[0]!.url =
       "https://m5.tail1234.ts.net:3773";
@@ -245,8 +248,9 @@ describe("GrantedAccountMachines", () => {
     const stop = onConnectRouteRequest((ids) => heard.push([...ids]));
     const renderer = await mount();
     await act(async () => requestAccountMachineConnect(["m5"]));
-    expect(heard).toEqual([["m5"]]);
-    expect(state.register).not.toHaveBeenCalled();
+    // Saved here, with its state published; no second route is asked for.
+    expect(heard).toEqual([]);
+    expect(state.register).toHaveBeenCalledTimes(1);
     // An earlier removal here is lifted, so the linked path saves it.
     const { setFleetEnvironmentSkipped } = await import("../studio/fleetAutoConnect");
     expect(setFleetEnvironmentSkipped).toHaveBeenCalledWith("m5", false);
@@ -259,7 +263,7 @@ describe("GrantedAccountMachines", () => {
     state.autoConnect = false;
     let renderer: ReactTestRenderer | undefined;
     await act(async () => {
-      renderer = create(<GrantedAccountMachines />);
+      renderer = create(<Subject />);
     });
     expect(accountAutoConnectStates().get("m5")).toEqual({
       phase: "held",
@@ -272,9 +276,9 @@ describe("GrantedAccountMachines", () => {
     m5InFleet();
     let renderer: ReactTestRenderer | undefined;
     await act(async () => {
-      renderer = create(<GrantedAccountMachines />);
+      renderer = create(<Subject />);
     });
-    await act(async () => renderer!.update(<GrantedAccountMachines />));
+    await act(async () => renderer!.update(<Subject />));
     expect(state.refresh).toHaveBeenCalledTimes(1);
     expect(state.register).not.toHaveBeenCalled();
     await act(async () => renderer!.unmount());
@@ -300,7 +304,7 @@ describe("GrantedAccountMachines", () => {
     state.discovered = new Map();
     let renderer: ReactTestRenderer | undefined;
     await act(async () => {
-      renderer = create(<GrantedAccountMachines />);
+      renderer = create(<Subject />);
     });
     expect(state.refresh).toHaveBeenCalledTimes(1);
     await act(async () => renderer!.unmount());
@@ -311,7 +315,7 @@ describe("GrantedAccountMachines", () => {
     state.autoConnect = false;
     let renderer: ReactTestRenderer | undefined;
     await act(async () => {
-      renderer = create(<GrantedAccountMachines />);
+      renderer = create(<Subject />);
     });
     expect(state.refresh).not.toHaveBeenCalled();
     await act(async () => renderer!.unmount());

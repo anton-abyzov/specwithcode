@@ -233,5 +233,5 @@ export function ConnectRouteReconciler() {
     return () => clearInterval(timer);
   }, [anyUnreachable, refreshDiscovery]);
 
-  return <GrantedAccountMachines />;
+  return <GrantedAccountMachines snapshot={fleetSnapshot} />;
 }

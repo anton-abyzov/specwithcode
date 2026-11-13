@@ -88,10 +88,12 @@ export function handoffAccountMachines(input: {
 } {
   const fallback: HandoffConnectFallback[] = [];
   const notAllowed: HandoffAccountMachine[] = [];
+  if (input.fleet === null) return { fallback, notAllowed };
   const allowedFleet = input.sourceFleet === undefined ? input.fleet : input.sourceFleet;
-  if (input.fleet === null || allowedFleet === null) return { fallback, notAllowed };
   const fleetById = new Map(input.fleet.map((machine) => [machine.environmentId, machine]));
-  const allowedIds = new Set(allowedFleet.map((machine) => machine.environmentId));
+  // Unknown while the source machine's fleet cannot be read: nobody is named.
+  const allowedIds =
+    allowedFleet === null ? null : new Set(allowedFleet.map((machine) => machine.environmentId));
   const discoveredIds = new Set<string>();
   for (const { environment, availability } of input.discovered) {
     discoveredIds.add(environment.environmentId);
@@ -102,7 +104,11 @@ export function handoffAccountMachines(input: {
       label: input.name?.(id, environment.label) ?? environment.label,
       answering: availability !== "offline" && availability !== "error",
     };
-    if (!allowedIds.has(id)) notAllowed.push(machine);
+    // Not allowed by the source machine: it cannot take this work, saved or not.
+    if (allowedIds !== null && !allowedIds.has(id)) {
+      notAllowed.push(machine);
+      continue;
+    }
     const inFleet = fleetById.get(id);
     if (!inFleet) continue;
     const state = input.states.get(id);
@@ -123,6 +129,7 @@ export function handoffAccountMachines(input: {
   for (const [id, state] of input.states) {
     const inFleet = fleetById.get(id);
     if (!inFleet || listed.has(id) || discoveredIds.has(id)) continue;
+    if (allowedIds !== null && !allowedIds.has(id)) continue;
     if (id === input.sourceEnvironmentId || input.savedEnvironmentIds.has(id)) continue;
     fallback.push(
       withState(
