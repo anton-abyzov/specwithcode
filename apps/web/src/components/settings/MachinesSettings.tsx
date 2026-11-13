@@ -200,6 +200,8 @@ export function MachinesSettingsPanel() {
     // A Connect-only machine of this account is saved over Connect, not paired.
     if (
       !fleetMachineHasTailnetAddress(machine) &&
+      // A saved machine's Connect updates its address through the pairing below.
+      !savedIds.has(machine.environmentId) &&
       (accountMachines.has(machine.environmentId) || accountStates.has(machine.environmentId))
     ) {
       setError(null);

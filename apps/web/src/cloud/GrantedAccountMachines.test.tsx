@@ -63,6 +63,7 @@ vi.mock("../studio/linkedMachines", async (importOriginal) => ({
 }));
 
 const { GrantedAccountMachines } = await import("./GrantedAccountMachines");
+const { onConnectRouteRequest } = await import("./connectRoutePlan");
 const { accountAutoConnectStates, requestAccountMachineConnect } =
   await import("../studio/grantedAccountMachines");
 
@@ -232,5 +233,46 @@ describe("GrantedAccountMachines", () => {
     });
     state.refreshing = false;
     await act(async () => renderer.unmount());
+  });
+
+  it("sends a press for a linked tailnet machine to the reconciler's linked path", async () => {
+    m5InFleet();
+    (state.snapshot as { machines: Array<{ url: string }> }).machines[0]!.url =
+      "https://m5.tail1234.ts.net:3773";
+    state.projects = [{ id: "shared" }];
+    const heard: string[][] = [];
+    const stop = onConnectRouteRequest((ids) => heard.push([...ids]));
+    const renderer = await mount();
+    await act(async () => requestAccountMachineConnect(["m5"]));
+    expect(heard).toEqual([["m5"]]);
+    expect(state.register).not.toHaveBeenCalled();
+    stop();
+    await act(async () => renderer.unmount());
+  });
+
+  it("says why a machine is held before the account list is read", async () => {
+    m5InFleet();
+    state.autoConnect = false;
+    let renderer: ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = create(<GrantedAccountMachines />);
+    });
+    expect(accountAutoConnectStates().get("m5")).toEqual({
+      phase: "held",
+      reason: "Connect automatically is off.",
+    });
+    await act(async () => renderer!.unmount());
+  });
+
+  it("reads the account list once when mounted after the sign-in read", async () => {
+    m5InFleet();
+    let renderer: ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = create(<GrantedAccountMachines />);
+    });
+    await act(async () => renderer!.update(<GrantedAccountMachines />));
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    expect(state.register).not.toHaveBeenCalled();
+    await act(async () => renderer!.unmount());
   });
 });

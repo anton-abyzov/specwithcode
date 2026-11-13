@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useRef } from "react";
 import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 import {
   AuthAccessReadScope,
@@ -177,11 +178,22 @@ export function useProjectRemoteWorkers(environmentId: EnvironmentId, projectId:
   };
 }
 
-/** The primary server's fleet list, or null without a primary or before it loads. */
+/**
+ * The primary server's fleet list, or null without a primary or before it
+ * loads. The same object until its content changes: the list is read every
+ * ten seconds, and effects that depend on it should run on changes only.
+ */
 export function usePrimaryFleetSnapshot(primaryEnvironmentId: EnvironmentId | null) {
   // The fleet atom needs an id; one that matches no environment reads as no fleet.
   const fleet = useStudioFleet(primaryEnvironmentId ?? ("" as EnvironmentId));
-  return primaryEnvironmentId === null ? null : fleet.snapshot;
+  const next = primaryEnvironmentId === null ? null : fleet.snapshot;
+  const kept = useRef<{ readonly key: string; readonly snapshot: typeof next }>({
+    key: "null",
+    snapshot: null,
+  });
+  const key = JSON.stringify(next);
+  if (kept.current.key !== key) kept.current = { key, snapshot: next };
+  return kept.current.snapshot;
 }
 
 export function useStudioFleet(environmentId: EnvironmentId) {
