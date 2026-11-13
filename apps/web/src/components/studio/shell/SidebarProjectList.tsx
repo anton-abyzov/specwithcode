@@ -576,6 +576,10 @@ export function ProjectRow(props: {
   // whose notifications the person turned off.
   const muted = props.notifications !== undefined && !projectShowsWaitingCount(props.notifications);
   const quiet = archived || muted;
+  const coverageText =
+    !quiet && props.attentionComplete === false
+      ? (props.attentionLabel ?? "Some machines are offline")
+      : null;
   const waiting = quiet ? 0 : props.waiting;
   const [renaming, setRenaming] = useState<RenameState | null>(null);
   // Losing the right to rename mid-edit ends the edit; it does not come back later.
@@ -676,7 +680,7 @@ export function ProjectRow(props: {
             label={
               personal
                 ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-                : `${displayName} · ${project.workspaceRoot}${elsewhereText ? ` · ${elsewhereText}` : ""}${shared ? ` · ${shared.label}` : ""}${props.linkSuggestion ? ` · ${props.linkSuggestion.label}. Link them?` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
+                : `${displayName} · ${project.workspaceRoot}${elsewhereText ? ` · ${elsewhereText}` : ""}${shared ? ` · ${shared.label}` : ""}${props.linkSuggestion ? ` · ${props.linkSuggestion.label}. Link them?` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}${coverageText ? ` · ${coverageText}` : ""}`
             }
           >
             <Link
@@ -726,7 +730,7 @@ export function ProjectRow(props: {
               ) : null}
               {shared ? (
                 <span
-                  className="sws-side-row-pin sws-side-row-shared"
+                  className="sws-side-row-pin sws-side-row-shared sws-side-row-on-hover"
                   data-shared-project={shared.role}
                   role="img"
                   aria-label={shared.label}
@@ -748,7 +752,12 @@ export function ProjectRow(props: {
                 />
               ) : null}
               {pinned ? (
-                <PinIcon className="sws-side-row-pin" aria-label={tx("Pinned")} role="img" />
+                // The pinned group above the divider already says it; the pin shows on hover.
+                <PinIcon
+                  className="sws-side-row-pin sws-side-row-on-hover"
+                  aria-label={tx("Pinned")}
+                  role="img"
+                />
               ) : null}
               {/* Count and availability stay visible while the adjacent menu opens. */}
               {copying?.waiting && keyedCopy ? (
@@ -775,19 +784,24 @@ export function ProjectRow(props: {
                 </span>
               ) : null}
               {elsewhere.length > 0 ? (
-                // The Chats list's machine tag, so a project and its chats name machines alike.
+                // The main machine in its color, as the Chats list names machines. "+N" for
+                // the others drops on a narrow sidebar; the tooltip names them all.
                 <span
                   className="sws-row-machine sws-project-elsewhere machine-mark"
                   data-machine-color={machineIdentity(elsewhere[0]!.environmentId).color}
                   data-project-elsewhere=""
                   aria-hidden
                 >
-                  <span className="sws-row-machine-name">
-                    {elsewhere.length > 1
-                      ? `${elsewhere[0]!.name} +${elsewhere.length - 1}`
-                      : elsewhere[0]!.name}
-                  </span>
+                  <span className="sws-row-machine-name">{elsewhere[0]!.name}</span>
+                  {elsewhere.length > 1 ? (
+                    <span className="sws-row-machine-more">+{elsewhere.length - 1}</span>
+                  ) : null}
                 </span>
+              ) : null}
+              {/* One indicator per row: the count. That a machine is offline, so the count
+                  may be short, is said by the tooltip and to screen readers. */}
+              {coverageText ? (
+                <span className="sws-project-coverage sr-only">{coverageText}</span>
               ) : null}
               <span className="sws-side-row-end">
                 {waiting > 0 ? (
@@ -800,14 +814,6 @@ export function ProjectRow(props: {
                       {props.attentionLabel ?? needsYouLabel(waiting)}
                     </span>
                   </span>
-                ) : null}
-                {!quiet && props.attentionComplete === false ? (
-                  <span
-                    className="sws-project-coverage"
-                    role="img"
-                    aria-label={props.attentionLabel ?? "Some machines are offline"}
-                    title={props.attentionLabel ?? "Some machines are offline"}
-                  />
                 ) : null}
               </span>
               {copying && !copying.waiting ? <CopyProgressLine activity={copying} /> : null}

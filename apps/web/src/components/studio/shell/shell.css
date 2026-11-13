@@ -938,7 +938,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   width: 12px;
   height: 12px;
 }
-/* Reserve independent badge and menu space: hover never hides a live count. */
+/* Badge space: hover never hides a live count. Project rows give it room only when a
+   count shows, so names run up to the edge. */
 .sws-side-row-end {
   position: relative;
   flex: none;
@@ -947,22 +948,28 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   align-items: center;
   justify-content: center;
 }
-.sws-project-coverage {
-  position: absolute;
-  right: 0;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--sidebar-muted-foreground);
+.sws-project-row .sws-side-row-end {
+  width: auto;
+  min-width: 0;
+}
+.sws-project-row .sws-side-row-end:empty {
+  display: none;
 }
 .sws-project-row .sws-count {
   max-width: 30px;
   padding-inline: 3px;
 }
-.sws-project-row .sws-side-row,
-.sws-project-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
+/* The actions button takes room only while it shows (hover, focus, open menu). */
+.sws-project-row .sws-side-row {
+  padding-right: 8px;
+}
+.sws-project-row:is(
+    :hover,
+    :focus-within,
+    :has(.sws-chat-menu:is(:focus-visible, [data-popup-open]))
+  )
   .sws-side-row {
-  padding-right: 28px;
+  padding-right: 30px;
 }
 .sws-project-row .sws-chat-menu {
   right: 2px;
@@ -982,6 +989,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
    lands and the list keeps a divider between pinned projects and the rest. */
 .sws-project-list {
   position: relative;
+  container: sideprojects / inline-size;
 }
 .sws-project-list[data-dragging] {
   cursor: grabbing;
@@ -1145,9 +1153,29 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   height: 1px;
   background: var(--border);
 }
+/* The main machine of a project with no copy here, sized to its name; "+N" for the
+   others only where the sidebar has room. */
 .sws-project-row .sws-row-machine.sws-project-elsewhere[data-machine-color] {
   width: auto;
   max-width: calc(9.5ch + 10px);
+}
+.sws-row-machine-more {
+  flex: none;
+}
+@container sideprojects (width < 300px) {
+  .sws-row-machine-more {
+    display: none;
+  }
+}
+/* Shared and pinned marks wait for the pointer, so the name keeps the row's width.
+   Touch screens have no hover and keep them. */
+@media (hover: hover) {
+  .sws-project-row .sws-side-row > .sws-side-row-on-hover {
+    display: none;
+  }
+  .sws-project-row:is(:hover, :focus-within) .sws-side-row > .sws-side-row-on-hover {
+    display: inline-flex;
+  }
 }
 @media (hover: none) {
   .sws-side-row {
