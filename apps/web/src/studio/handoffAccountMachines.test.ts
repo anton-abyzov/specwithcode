@@ -88,6 +88,30 @@ describe("handoffAccountMachines", () => {
     expect(result.notAllowed).toEqual([]);
   });
 
+  it("offers Connect for a machine that allowed the project's machine but not this one", () => {
+    const result = handoffAccountMachines({
+      ...base,
+      discovered: [found("m6", "M6")],
+      fleet: [],
+      sourceFleet: [connectOnly("m6")],
+    });
+    expect(result.fallback.map((machine) => [machine.environmentId, machine.canConnect])).toEqual([
+      ["m6", true],
+    ]);
+    expect(result.notAllowed).toEqual([]);
+  });
+
+  it("names a machine whose grant was revoked as not allowed", () => {
+    const revoked = { ...connectOnly("m5"), workers: { status: "revoked" } };
+    const result = handoffAccountMachines({
+      ...base,
+      discovered: [found("m5", "M5")],
+      fleet: [revoked],
+      sourceFleet: [revoked],
+    });
+    expect(result.notAllowed.map((machine) => machine.environmentId)).toEqual(["m5"]);
+  });
+
   it("offers no Connect while SpecWithCode Connect cannot be reached", () => {
     const [row] = handoffAccountMachines({
       ...base,

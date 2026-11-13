@@ -105,6 +105,11 @@ export function GrantedAccountMachines({
   const unanswered = useRef(new Set<string>());
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const discoveredRef = useRef(discovery.environments);
+  if (!discovery.refreshing) discoveredRef.current = discovery.environments;
+  // Machines the account list has shown this session: while it cannot be
+  // read, only these are said to wait for Connect.
+  const onAccount = useRef(new Set<string>());
   const [tick, setTick] = useState(0);
   const [retryPending, setRetryPending] = useState(false);
 
@@ -115,14 +120,16 @@ export function GrantedAccountMachines({
         const inFleet = new Set<string>(
           (snapshotRef.current?.machines ?? []).map((machine) => machine.environmentId),
         );
-        // Not in this app's fleet: nothing here can save it.
-        if (environmentIds.some((id) => !inFleet.has(id))) return false;
+        // Neither in this app's fleet nor on the account: nothing here can save it.
+        if (environmentIds.some((id) => !inFleet.has(id) && !discoveredRef.current.has(id)))
+          return false;
         for (const id of environmentIds) {
           // Connecting by hand undoes an earlier removal on this device.
           setFleetEnvironmentSkipped(id as EnvironmentId, false);
           setConnectRouteDeclined(id, false);
           requested.current.add(id);
-          unanswered.current.add(id);
+          // A try already running answers this press.
+          if (!connectRouteAddsInFlight().has(id)) unanswered.current.add(id);
           shown.set(id, { phase: "connecting" });
         }
         // Says so at once, also while the account list is being read.
@@ -146,6 +153,7 @@ export function GrantedAccountMachines({
       return;
     }
     const now = Date.now();
+    for (const id of discovery.environments.keys()) onAccount.current.add(id);
     const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
     for (const id of requested.current)
       if (savedEnvironmentIds.has(id)) {
@@ -261,6 +269,7 @@ export function GrantedAccountMachines({
           next.has(id) ||
           id === primaryEnvironmentId ||
           savedEnvironmentIds.has(id) ||
+          !onAccount.current.has(id) ||
           machine.status === "identity-mismatch" ||
           !fleetMachineGranted(machine) ||
           fleetMachineHasTailnetAddress(machine)

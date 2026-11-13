@@ -375,4 +375,18 @@ describe("GrantedAccountMachines", () => {
     expect(state.register).toHaveBeenCalledTimes(2);
     await act(async () => renderer.unmount());
   });
+
+  it("saves an account machine outside this fleet when Connect is pressed for it", async () => {
+    state.snapshot = { machines: [] };
+    state.discovered = new Map([["m6", { environment: { environmentId: "m6", label: "M6" } }]]);
+    const renderer = await mount();
+    expect(state.register).not.toHaveBeenCalled();
+    let taken = false;
+    await act(async () => {
+      taken = requestAccountMachineConnect(["m6"]);
+    });
+    expect(taken).toBe(true);
+    expect(state.register).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+  });
 });

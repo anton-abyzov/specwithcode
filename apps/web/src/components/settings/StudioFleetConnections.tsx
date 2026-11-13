@@ -89,6 +89,8 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
+import { requestAccountMachineConnect } from "../../studio/grantedAccountMachines";
 
 /** A listener's bind address does not describe Tailscale Serve or an SSH tunnel. */
 export function StudioListenerRow({
@@ -497,8 +499,15 @@ export function StudioFleetConnections({
   }
   async function pair(machine: StudioFleetMachine) {
     if (pending || !canPair) return;
-    setPending(machine.id);
     setError(null);
+    // A Connect-only machine of this account is saved over Connect, not paired
+    // over Tailscale, which cannot reach it.
+    if (
+      !fleetMachineHasTailnetAddress(machine) &&
+      requestAccountMachineConnect([machine.environmentId])
+    )
+      return;
+    setPending(machine.id);
     try {
       const credential = await pairStudioFleet(environmentId, machine.id);
       const result = await connect({
