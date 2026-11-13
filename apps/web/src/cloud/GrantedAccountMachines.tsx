@@ -52,6 +52,8 @@ const MAX_ATTEMPTS = 3;
 const RETRY_MS = 60_000;
 /** Re-reads of the account list for a fleet machine it does not show; one on another account never shows. */
 const MAX_LOOKUPS = 2;
+/** Pause after MAX_LOOKUPS before the list is read for that machine again. */
+const LOOKUP_PAUSE_MS = 15 * RETRY_MS;
 
 interface Attempt {
   readonly count: number;
@@ -117,15 +119,19 @@ export function GrantedAccountMachines({
     () =>
       onAccountMachineConnectRequest((environmentIds) => {
         const shown = new Map(accountAutoConnectStates());
-        const inFleet = new Set<string>(
-          (snapshotRef.current?.machines ?? []).map((machine) => machine.environmentId),
+        // Saving needs the machine's entry on this Connect account; without
+        // it (another account, not signed in) the caller pairs instead.
+        if (environmentIds.some((id) => !discoveredRef.current.has(id))) return false;
+        const tailnet = new Set<string>(
+          (snapshotRef.current?.machines ?? [])
+            .filter((machine) => fleetMachineHasTailnetAddress(machine))
+            .map((machine) => machine.environmentId),
         );
-        // Neither in this app's fleet nor on the account: nothing here can save it.
-        if (environmentIds.some((id) => !inFleet.has(id) && !discoveredRef.current.has(id)))
-          return false;
         for (const id of environmentIds) {
-          // Connecting by hand undoes an earlier removal on this device.
-          setFleetEnvironmentSkipped(id as EnvironmentId, false);
+          // Connecting by hand undoes an earlier removal on this device. A
+          // tailnet machine keeps its fleet skip, so the Tailscale pairing
+          // does not race this Connect route.
+          if (!tailnet.has(id)) setFleetEnvironmentSkipped(id as EnvironmentId, false);
           setConnectRouteDeclined(id, false);
           requested.current.add(id);
           // A try already running answers this press.
@@ -295,8 +301,15 @@ export function GrantedAccountMachines({
     let readNow = false;
     if (!unreachable)
       for (const id of [...needList, ...missing]) {
-        const looked = lookedUp.current.get(id);
-        if (looked !== undefined && looked.count >= MAX_LOOKUPS) continue;
+        let looked = lookedUp.current.get(id);
+        // After MAX_LOOKUPS, the list is read again for it after a long pause:
+        // a machine may sign in to Connect well after it allowed this one.
+        if (looked !== undefined && looked.count >= MAX_LOOKUPS) {
+          waiting = true;
+          if (now - looked.at < LOOKUP_PAUSE_MS) continue;
+          looked = undefined;
+          lookedUp.current.delete(id);
+        }
         if (looked === undefined || now - looked.at >= RETRY_MS) {
           lookedUp.current.set(id, { count: (looked?.count ?? 0) + 1, at: now });
           readNow = true;

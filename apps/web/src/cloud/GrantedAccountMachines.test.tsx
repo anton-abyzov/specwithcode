@@ -251,9 +251,9 @@ describe("GrantedAccountMachines", () => {
     // Saved here, with its state published; no second route is asked for.
     expect(heard).toEqual([]);
     expect(state.register).toHaveBeenCalledTimes(1);
-    // An earlier removal here is lifted, so the linked path saves it.
+    // Its fleet skip stays, so the Tailscale pairing does not race this route.
     const { setFleetEnvironmentSkipped } = await import("../studio/fleetAutoConnect");
-    expect(setFleetEnvironmentSkipped).toHaveBeenCalledWith("m5", false);
+    expect(setFleetEnvironmentSkipped).not.toHaveBeenCalledWith("m5", false);
     stop();
     await act(async () => renderer.unmount());
   });

@@ -20,6 +20,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { usePrimaryFleetSnapshot } from "../studio/fleet";
 import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
 import {
+  accountAutoConnectStates,
   connectRouteAddsInFlight,
   grantedAccountMachinesToConnect,
   setConnectRouteAddInFlight,
@@ -165,6 +166,8 @@ export function ConnectRouteReconciler() {
         ...readSkippedFleetEnvironments(),
         ...granted,
         ...connectRouteAddsInFlight(),
+        // Machines the saver publishes a state for, a pressed tailnet one too.
+        ...accountAutoConnectStates().keys(),
       ]),
     });
     for (const machine of linked) {
