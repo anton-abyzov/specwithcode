@@ -279,15 +279,16 @@ describe("GrantedAccountMachines", () => {
     await act(async () => renderer!.unmount());
   });
 
-  it("reads the account list once when mounted after the sign-in read", async () => {
+  it("reads the account list once when mounted after the sign-in read, then saves", async () => {
     m5InFleet();
     let renderer: ReactTestRenderer | undefined;
     await act(async () => {
       renderer = create(<Subject />);
     });
     await act(async () => renderer!.update(<Subject />));
+    // The read ends without this component seeing it run: it still counts.
     expect(state.refresh).toHaveBeenCalledTimes(1);
-    expect(state.register).not.toHaveBeenCalled();
+    expect(state.register).toHaveBeenCalledTimes(1);
     await act(async () => renderer!.unmount());
   });
 

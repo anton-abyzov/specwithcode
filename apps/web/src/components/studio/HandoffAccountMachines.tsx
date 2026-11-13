@@ -83,7 +83,12 @@ export function HandoffAccountMachines({
   // Settings > Machines lists this app's own fleet, so the notice that points
   // there is given for a project on this app's own machine only.
   const fleetOnly =
-    discovery.refreshing || fleetMachines === null || sourceEnvironmentId !== primaryEnvironmentId
+    discovery.refreshing ||
+    // Unread, the list cannot say which machines are on the account.
+    discovery.error._tag === "Some" ||
+    discovery.offline ||
+    fleetMachines === null ||
+    sourceEnvironmentId !== primaryEnvironmentId
       ? []
       : handoffFleetOnlyMachines({
           fleet: fleetMachines,

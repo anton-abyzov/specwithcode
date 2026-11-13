@@ -122,6 +122,8 @@ export function GrantedAccountMachines({
         const shown = new Map(accountAutoConnectStates());
         // Saving needs the machine's entry on this Connect account; without
         // it (another account, not signed in) the caller pairs instead.
+        // Before this account's list is read, it may still be the previous one's.
+        if (!sawRefresh.current) return false;
         if (environmentIds.some((id) => !discoveredRef.current.has(id))) return false;
         // A saved machine's Connect is about its address or approval: the caller's.
         if (environmentIds.some((id) => savedRef.current.has(id))) return false;
@@ -330,7 +332,12 @@ export function GrantedAccountMachines({
         if ((lookedUp.current.get(id)?.count ?? 0) < MAX_LOOKUPS) waiting = true;
       }
     setRetryPending(waiting);
-    if (readNow) void refresh();
+    // A read that ends without this component seeing it run still counts.
+    if (readNow)
+      void refresh().then(() => {
+        sawRefresh.current = true;
+        setTick((current) => current + 1);
+      });
   }, [
     autoConnect,
     discovery,

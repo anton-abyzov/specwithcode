@@ -502,13 +502,12 @@ export function StudioFleetConnections({
     setError(null);
     // A Connect-only machine is saved over Connect, which needs no pairing
     // permission; Tailscale pairing cannot reach it.
-    if (!fleetMachineHasTailnetAddress(machine)) {
-      if (!requestAccountMachineConnect([machine.environmentId]))
-        setError(
-          "This machine is reached over SpecWithCode Connect only. Sign in to SpecWithCode Connect here with the same account, then press Connect again.",
-        );
+    // A saved one, or one this account's list does not show, is paired as before.
+    if (
+      !fleetMachineHasTailnetAddress(machine) &&
+      requestAccountMachineConnect([machine.environmentId])
+    )
       return;
-    }
     if (!canPair) return;
     setPending(machine.id);
     try {
@@ -906,11 +905,14 @@ export function StudioFleetRoster({
             const canRemove = !current && onRemove !== undefined && canManageWorkers;
             const readinessOpen = readinessFor === machine.id;
             // Why pairing is not offered reads as a note, not as a button that does nothing.
-            const pairNote = !machine.pairingConfigured
-              ? "Pairing needs setup"
-              : !canPair
-                ? "Pairing permission required"
-                : null;
+            // A Connect-only machine is saved over Connect: no pairing to set up.
+            const pairNote = !fleetMachineHasTailnetAddress(machine)
+              ? null
+              : !machine.pairingConfigured
+                ? "Pairing needs setup"
+                : !canPair
+                  ? "Pairing permission required"
+                  : null;
             const reinvite = fleetMachineNeedsReinvite(machine);
             // Stop and Remove only take access away, so the rules leave them available.
             const machineLock = current
