@@ -78,6 +78,7 @@ import { isTerminalFocused } from "../../../lib/terminalFocus";
 import { isModelPickerOpen } from "../../../modelPickerVisibility";
 import { resolveAdjacentThreadId } from "../../Sidebar.logic";
 import {
+  hasNoCopyHere,
   localCopiesFirst,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
@@ -130,7 +131,7 @@ import {
   moveProject,
   rememberPinnedMembers,
   resolveProjectOrder,
-  stepProject,
+  stepProjectInSection,
   toggleProjectPin,
   type ProjectDropTarget,
 } from "../../../studio/projectOrder";
@@ -897,6 +898,9 @@ export default function StudioSidebar() {
     unpinned: arranged.unpinned.map((group) => group.projectKey),
   };
   const pinnedKeys = new Set(listedKeys.pinned);
+  const elsewhereKeys = new Set(
+    arranged.unpinned.filter(hasNoCopyHere).map((group) => group.projectKey),
+  );
   const folded = !showAllProjects && codeProjects.length > PROJECT_PAGE + 1;
   const shownWhenFolded = (group: SidebarProjectSnapshot, index: number) =>
     index < PROJECT_PAGE ||
@@ -1077,11 +1081,11 @@ export default function StudioSidebar() {
                 onOpen={closeMobile}
                 onMove={moveProjectTo}
                 onStep={(projectKey, direction) => {
-                  const target = stepProject(listedKeys, projectKey, direction);
+                  const target = stepProjectInSection(listedKeys, elsewhereKeys, projectKey, direction);
                   if (target) moveProjectTo(projectKey, target);
                 }}
                 canStep={(projectKey, direction) =>
-                  stepProject(listedKeys, projectKey, direction) !== null
+                  stepProjectInSection(listedKeys, elsewhereKeys, projectKey, direction) !== null
                 }
                 onPin={(projectKey) =>
                   saveProjectOrder(toggleProjectPin(projectOrder, listedKeys, projectKey))

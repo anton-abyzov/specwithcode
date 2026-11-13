@@ -50,7 +50,6 @@ import {
   Share2Icon,
 } from "lucide-react";
 import {
-  Fragment,
   lazy,
   Suspense,
   useCallback,
@@ -423,24 +422,26 @@ export function SidebarProjectList(props: {
               {visible.pinned.length === 0 ? <span>{tx("Drop here to pin")}</span> : null}
             </li>
           ) : null}
-          {visible.unpinned.map((group, index) =>
-            // The list puts projects only on other machines last; a label starts them.
-            hasNoCopyHere(group) &&
-            (index === 0 || !hasNoCopyHere(visible.unpinned[index - 1]!)) ? (
-              <Fragment key={`elsewhere:${group.projectKey}`}>
-                <li
-                  role="presentation"
-                  className="sws-project-elsewhere-divider"
-                  data-project-elsewhere-divider
-                >
-                  <span>{tx("On other machines")}</span>
-                </li>
-                {renderRow(group, false)}
-              </Fragment>
-            ) : (
-              renderRow(group, false)
-            ),
-          )}
+          {visible.unpinned.flatMap((group, index) => {
+            const row = renderRow(group, false);
+            // The list puts projects only on other machines last; a label starts them. The
+            // label is its own keyed sibling, so no row is remounted when the first one changes.
+            const startsElsewhere =
+              hasNoCopyHere(group) && (index === 0 || !hasNoCopyHere(visible.unpinned[index - 1]!));
+            return startsElsewhere
+              ? [
+                  <li
+                    key="elsewhere-divider"
+                    role="presentation"
+                    className="sws-project-elsewhere-divider"
+                    data-project-elsewhere-divider
+                  >
+                    <span>{tx("On other machines")}</span>
+                  </li>,
+                  row,
+                ]
+              : [row];
+          })}
         </ul>
         {insertion ? (
           <div

@@ -8,6 +8,7 @@ import {
   sameProjectOrder,
   stepProject,
   toggleProjectPin,
+  stepProjectInSection,
 } from "./projectOrder";
 
 const groups = ["a", "b", "c", "d"].map((projectKey) => ({ projectKey }));
@@ -155,5 +156,26 @@ describe("pins across folder changes", () => {
   it("keeps a pin whose project is not listed right now", () => {
     const saved = rememberPinnedMembers({ pinned: ["gone"], unpinned: [] }, []);
     expect(resolveProjectOrder(saved, before).pinned).toEqual(["gone"]);
+  });
+
+  it("steps within the section a project shows in", () => {
+    const listed = { pinned: ["p"], unpinned: ["a", "b", "x", "y"] };
+    const elsewhere = new Set(["x", "y"]);
+    // The last local project cannot step down into the projects on other machines.
+    expect(stepProjectInSection(listed, elsewhere, "b", "down")).toBeNull();
+    // The first project on other machines steps up into the pinned group, not past "b".
+    expect(stepProjectInSection(listed, elsewhere, "x", "up")).toEqual({
+      pinned: true,
+      beforeKey: null,
+    });
+    expect(stepProjectInSection(listed, elsewhere, "y", "up")).toEqual({
+      pinned: false,
+      beforeKey: "x",
+    });
+    expect(stepProjectInSection(listed, elsewhere, "y", "down")).toBeNull();
+    expect(stepProjectInSection(listed, elsewhere, "p", "down")).toEqual({
+      pinned: false,
+      beforeKey: "a",
+    });
   });
 });

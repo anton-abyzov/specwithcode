@@ -157,6 +157,29 @@ export function stepProject(
   return inPinned ? { pinned: false, beforeKey: listedKeys.unpinned[0] ?? null } : null;
 }
 
+/**
+ * One step up or down while the unpinned group shows in two sections: projects this
+ * device can run, then projects only on other machines. A step stays inside the
+ * project's own section, since the list puts each project back there; the first
+ * project on other machines steps up into the pinned group.
+ */
+export function stepProjectInSection(
+  listedKeys: ArrangedProjects<string>,
+  elsewhereKeys: ReadonlySet<string>,
+  projectKey: string,
+  direction: "up" | "down",
+): ProjectDropTarget | null {
+  const elsewhere = elsewhereKeys.has(projectKey);
+  return stepProject(
+    {
+      pinned: listedKeys.pinned,
+      unpinned: listedKeys.unpinned.filter((key) => elsewhereKeys.has(key) === elsewhere),
+    },
+    projectKey,
+    direction,
+  );
+}
+
 export function sameProjectOrder(a: SidebarProjectOrder, b: SidebarProjectOrder): boolean {
   const same = (x: ReadonlyArray<string>, y: ReadonlyArray<string>) =>
     x.length === y.length && x.every((key, index) => key === y[index]);
