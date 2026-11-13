@@ -115,8 +115,15 @@ export function resetDictationTargetsForTest(): void {
 }
 
 /**
+ * In Auto mode a press held this long is push-to-talk: letting go stops it.
+ * A shorter tap leaves the microphone on until the next press.
+ */
+export const DICTATION_HOLD_MS = 400;
+
+/**
  * The `composer.dictation.toggle` shortcut for one composer. Every composer
- * listens, and only the picked one acts, so the key never toggles twice. Toggle
+ * listens, and only the picked one acts, so the key never toggles twice. Auto
+ * mode (the default) is push-to-talk when held and stays on after a tap; Toggle
  * mode starts and stops on each press; Hold mode dictates until a key is let go.
  * Where dictation cannot run the key is left alone for the browser.
  */
@@ -144,10 +151,14 @@ export function useDictationShortcut({
       disabled: () => latest.current.disabled,
     };
     const unregister = registerDictationTarget(target);
-    let holding = false;
+    // When the press that started dictation went down, while its keys are still held.
+    let pressedAt: number | null = null;
     const release = () => {
-      if (!holding) return;
-      holding = false;
+      if (pressedAt === null) return;
+      const heldFor = Date.now() - pressedAt;
+      pressedAt = null;
+      // Auto: a quick tap leaves the microphone on, a longer hold was push-to-talk.
+      if (latest.current.mode === "auto" && heldFor < DICTATION_HOLD_MS) return;
       void latest.current.dictation.stop();
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -173,15 +184,16 @@ export function useDictationShortcut({
       const { dictation: control, mode: currentMode } = latest.current;
       if (control.phase === "finishing") return;
       if (control.active) {
-        holding = false;
+        pressedAt = null;
         void control.stop();
         return;
       }
       if (latest.current.disabled || isVoiceCallLive()) return;
-      holding = currentMode === "hold";
+      pressedAt = currentMode === "toggle" ? null : Date.now();
       void control.start();
     };
     // Letting go of any key in the chord ends a held dictation, and so does leaving the window.
+    // (In Auto mode only once the press lasted past DICTATION_HOLD_MS.)
     const onKeyUp = () => release();
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);

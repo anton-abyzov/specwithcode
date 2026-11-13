@@ -64,9 +64,13 @@ type Session = {
   /** stop() ran: the microphone is closed and the queue is being written out. */
   stopping: boolean;
   failures: number;
+  /** When the last phrase ended (or listening began); null while one is being spoken. */
+  quietSince: number | null;
 };
 
 const MAX_FAILED_PHRASES = 3;
+/** A forgotten microphone turns itself off after this long without speech. */
+export const DICTATION_SILENCE_STOP_MS = 60_000;
 const NOTHING_HEARD =
   "No speech was heard. Check that the microphone is plugged in and selected in Sound settings.";
 
@@ -214,6 +218,9 @@ export function useVoiceDictation(
     [bridge, fail, insert, setNotice],
   );
 
+  // The silence stop runs from the microphone callback, which connect sets up before stop exists.
+  const stopRef = useRef<() => Promise<void>>(async () => undefined);
+
   const connect = useCallback(async () => {
     if (!bridge || session.current) return;
     const id = ++attempt.current;
@@ -239,6 +246,7 @@ export function useVoiceDictation(
       dropped: false,
       stopping: false,
       failures: 0,
+      quietSince: null,
     };
     session.current = current;
     try {
@@ -252,7 +260,18 @@ export function useVoiceDictation(
           Math.min(1, rootMeanSquare(frame) * 12).toFixed(3),
         );
         for (const event of current.detector.push(frame)) {
-          if (event.type === "utterance") enqueue(current, event.samples, event.sampleRate);
+          if (event.type === "speech-start") current.quietSince = null;
+          if (event.type === "utterance") {
+            current.quietSince = Date.now();
+            enqueue(current, event.samples, event.sampleRate);
+          }
+        }
+        if (
+          !current.stopping &&
+          current.quietSince !== null &&
+          Date.now() - current.quietSince >= DICTATION_SILENCE_STOP_MS
+        ) {
+          void stopRef.current();
         }
       });
       if (cancelled()) {
@@ -263,6 +282,7 @@ export function useVoiceDictation(
       current.detector = new UtteranceDetector(microphone.sampleRate, {
         endAfterSilenceMs: 800,
       });
+      current.quietSince = Date.now();
       setPhase("listening");
     } catch (cause) {
       if (cancelled()) return;
@@ -305,6 +325,10 @@ export function useVoiceDictation(
       setPhase("error");
     }
   }, [enqueue, release]);
+
+  useLayoutEffect(() => {
+    stopRef.current = stop;
+  });
 
   // Leaving the project or the page: microphone off now, nothing lands afterward.
   useEffect(

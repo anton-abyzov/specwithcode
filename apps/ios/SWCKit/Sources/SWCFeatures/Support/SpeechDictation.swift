@@ -22,7 +22,8 @@ protocol SpeechEngine: AnyObject {
 }
 
 /// The composer's mic. Words appear in the draft as they are heard and stay
-/// there unsent, as with desktop dictation.
+/// there unsent, as with desktop dictation. A forgotten mic turns itself off
+/// after `silenceLimit` without new words.
 @MainActor
 @Observable
 final class SpeechDictation {
@@ -35,8 +36,14 @@ final class SpeechDictation {
   /// The draft before the words being heard now; partial results replace
   /// only what follows it.
   @ObservationIgnored private var base: String?
+  @ObservationIgnored private let silenceLimit: Duration
+  @ObservationIgnored private var silenceTimer: Task<Void, Never>?
 
-  init(makeEngine: @escaping @MainActor () -> SpeechEngine = { SpeechDictation.systemEngine() }) {
+  init(
+    silenceLimit: Duration = .seconds(60),
+    makeEngine: @escaping @MainActor () -> SpeechEngine = { SpeechDictation.systemEngine() }
+  ) {
+    self.silenceLimit = silenceLimit
     self.makeEngine = makeEngine
   }
 
@@ -59,6 +66,7 @@ final class SpeechDictation {
           self?.handle(event, draft: draft)
         }
         if self.engine === engine, phase == .starting { phase = .listening }
+        if self.engine === engine { restartSilenceTimer() }
       } catch {
         if self.engine === engine { fail(error.localizedDescription) }
       }
@@ -66,14 +74,30 @@ final class SpeechDictation {
   }
 
   func stop() {
+    silenceTimer?.cancel()
+    silenceTimer = nil
     engine?.stop()
     engine = nil
     base = nil
     phase = .idle
   }
 
+  /// Every new word pushes the automatic stop back.
+  private func restartSilenceTimer() {
+    silenceTimer?.cancel()
+    guard let current = engine else { return }
+    let session = ObjectIdentifier(current)
+    let limit = silenceLimit
+    silenceTimer = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: limit)
+      guard !Task.isCancelled, let self, let engine = self.engine, ObjectIdentifier(engine) == session else { return }
+      self.stop()
+    }
+  }
+
   private func handle(_ event: SpeechEvent, draft: Binding<String>) {
     guard let base else { return }
+    if case .failed = event {} else { restartSilenceTimer() }
     switch event {
     case let .partial(text):
       if phase == .starting { phase = .listening }

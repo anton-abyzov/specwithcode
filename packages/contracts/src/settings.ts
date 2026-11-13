@@ -428,7 +428,7 @@ export const DictationLanguage = Schema.String.check(
   Schema.isMaxLength(35),
   Schema.isPattern(/^(?:[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*)?$/),
 );
-export const DictationMode = Schema.Literals(["toggle", "hold"]);
+export const DictationMode = Schema.Literals(["auto", "toggle", "hold"]);
 export type DictationMode = typeof DictationMode.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
@@ -455,8 +455,12 @@ export const ClientSettingsSchema = Schema.Struct({
    * language from the speech. One value for the whole app, every project and thread.
    */
   dictationLanguage: DictationLanguage.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
-  /** Toggle: the dictation shortcut starts and stops it. Hold: dictate while it is held. */
-  dictationMode: DictationMode.pipe(Schema.withDecodingDefault(Effect.succeed("toggle" as const))),
+  /**
+   * Auto: a tap of the dictation shortcut keeps listening until the next tap,
+   * and holding it dictates until it is let go. Toggle: every press starts or
+   * stops. Hold: dictate only while it is held.
+   */
+  dictationMode: DictationMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto" as const))),
   /** Pair this browser with reachable private machines from the server's fleet list on load. */
   autoConnectPrivateMachines: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Overview's "What you can do" checklist was dismissed. Settings > General brings it back. */
