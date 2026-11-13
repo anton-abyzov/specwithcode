@@ -15,9 +15,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 
 import * as ServerConfig from "../../../config.ts";
+import { nodePath as NodePath } from "../../../nodePath.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";

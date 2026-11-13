@@ -17,10 +17,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as NodePath from "node:path";
 
 import * as EnvironmentAuth from "../../../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../../../config.ts";
+import { nodePath as NodePath } from "../../../nodePath.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { workerClientName } from "../../../fleet/workerGrantMint.ts";
