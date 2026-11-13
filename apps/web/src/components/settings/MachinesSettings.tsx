@@ -3,43 +3,21 @@ import { useTx } from "../../i18n";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import type { FleetMachineCardExtras } from "./StudioFleetConnections";
 import { MachineRemoteControl } from "./MachineRemoteControl";
-import { useAtomValue } from "@effect/atom-react";
-import {
-  AuthAccessWriteScope,
-  AuthStandardClientScopes,
-  type AdvertisedEndpoint,
-  type EnvironmentId,
-} from "@specweave-studio/contracts";
+import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
 import { Link } from "@tanstack/react-router";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
-import { AsyncResult } from "effect/reactivity";
 import { EllipsisIcon, RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { requestConfirmDialog } from "../../confirmDialog";
-import {
-  createServerPairingCredential,
-  readPrimaryEnvironmentTarget,
-} from "../../environments/primary";
 import { displayFolder } from "../../lib/displayFolder";
 import { machineStatus } from "../../lib/machineStatus";
-import { desktopNetworkAccessStateAtom } from "../../state/desktopNetworkAccess";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import {
-  useEnvironments,
-  usePrimaryEnvironmentId,
-  useRelayEnvironmentDiscovery,
-} from "../../state/environments";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import {
-  addVisibleMachineToStudioFleet,
-  useMachineWorkGrants,
-  useStudioFleet,
-} from "../../studio/fleet";
+import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
+import { useEnvironmentScope } from "../../state/session";
+import { addVisibleMachineToStudioFleet, useMachineWorkGrants } from "../../studio/fleet";
 import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
 import {
   useAccountAutoConnectStates,
@@ -56,7 +34,6 @@ import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
