@@ -4814,7 +4814,8 @@ export const ko: PhraseCatalog = {
     "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
   "Browse…": "찾아보기…",
   "Add to this machine…": "이 컴퓨터에 추가…",
-  "Runs on {machine}. No copy on this device.": "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
+  "Runs on {machine}. No copy on this device.":
+    "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
   "Agent status": "에이전트 상태",
   "Last time it was not signed in.": "지난번에는 로그인되어 있지 않았습니다.",
   "Last time it was signed in as {account}.":
@@ -4823,4 +4824,12 @@ export const ko: PhraseCatalog = {
   "Not signed in": "로그인 안 됨",
   "Sign in with {account}": "{account} 계정으로 로그인",
   "Turn it on to use it in chat.": "채팅에서 사용하려면 켜세요.",
+  "Reviewed by {model}": "{model} 검토 완료",
+  "Reviewed by {model} at {commit}": "{model}가 {commit}에서 검토",
+  ship: "출시 가능",
+  "fix first": "먼저 수정",
+  "same family as the author": "작성자와 같은 모델 계열",
+  "Review by another model family required": "다른 모델 계열의 검토 필요",
+  "{family} review required": "{family} 검토 필요",
+  "Reviewed, model not recorded": "검토됨, 모델 기록 없음",
 };

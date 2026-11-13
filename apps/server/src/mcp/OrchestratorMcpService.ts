@@ -1,4 +1,15 @@
 import { launchTierModel } from "./launchTier.ts";
+import {
+  type ReviewDelegationDecision,
+  reviewDelegationBrief,
+  reviewDelegationTarget,
+  reviewerLabel,
+} from "../review/reviewDelegation.ts";
+import { simulatedUsageLimitInstances } from "../orchestration-v2/ProviderFailure.ts";
+import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
+import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
+import { readIncrementReviewPolicy } from "../review/incrementReview.ts";
+import type { IncrementReviewPolicy } from "@specweave-studio/shared/reviewPolicy";
 import { orchestratorFeatures } from "./orchestratorFeatures.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
 import { isPaidModel } from "@specweave-studio/shared/modelBilling";
@@ -9,6 +20,7 @@ import {
   type RunId,
   isProviderAvailable,
   MessageId,
+  DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
   type ScheduledTaskGrantedBy,
   NodeId,
@@ -26,6 +38,7 @@ import {
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
   type OrchestratorMcpDelegateTaskInput,
+  type OrchestratorMcpDelegateReview,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpDeleteScheduledTaskInput,
@@ -802,16 +815,40 @@ function threadTitle(input: {
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
+/** What a review delegation's result says about its reviewer. */
+function reviewResultFields(
+  review: Extract<ReviewDelegationDecision, { kind: "pick" | "named" }>,
+  policy: IncrementReviewPolicy | null,
+): OrchestratorMcpDelegateReview {
+  return {
+    reviewer: review.label,
+    reviewerFamily: review.reviewerFamily,
+    authorFamily: review.authorFamily,
+    crossFamily: review.authorFamily === "other" || review.reviewerFamily !== review.authorFamily,
+    chosenBy: review.kind === "pick" ? "review-order" : "caller",
+    ...(policy === null
+      ? {}
+      : {
+          policy: `${policy.family}${policy.model ? ` (${policy.model})` : ""}, ${policy.depth ?? "standard"}${policy.required ? ", required" : ""}`,
+        }),
+    skipped: review.skipped.map((skip) => ({ reviewer: skip.label, reason: skip.reason })),
+    ...(review.warning === null ? {} : { warning: review.warning }),
+  };
+}
+
 function taskPrompt(
   input: OrchestratorMcpDelegateTaskInput,
   increment: LaunchIncrementOutcome = {},
+  reviewBrief: string | null = null,
 ): string {
   const task = withIncrementBrief(input.task, increment);
   // `role` is deprecated: it adds no persona, only a pointer to the skill that
-  // holds the procedure, and only where such a skill exists.
-  return input.role === "review"
-    ? `Load the sw-review skill first, when it is installed.\n\n${task}`
-    : task;
+  // holds the procedure, and only where such a skill exists. A review task
+  // also says who reviews whose work (review/reviewDelegation.ts).
+  const body = reviewBrief === null ? task : `${reviewBrief}\n\n${task}`;
+  return input.role === "review" || reviewBrief !== null
+    ? `Load the sw-review skill first, when it is installed.\n\n${body}`
+    : body;
 }
 
 /**
@@ -1933,6 +1970,90 @@ const make = Effect.gen(function* () {
     });
 
   /**
+   * The reviewer for a review delegation, from the project's reviewer order
+   * and the increment's `## Review` policy (review/reviewDelegation.ts).
+   * `named` is the model the caller picked, checked but never replaced.
+   */
+  const reviewDelegationFor = (input: {
+    readonly project: Effect.Success<ReturnType<typeof requireProject>>;
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly policy: IncrementReviewPolicy | null;
+    readonly named: ModelSelection | null;
+  }) =>
+    Effect.gen(function* () {
+      const preferences = Option.isNone(serverSettings)
+        ? DEFAULT_SERVER_SETTINGS
+        : yield* serverSettings.value.getSettings.pipe(
+            Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+          );
+      const settings = resolveProjectSettings(
+        preferences,
+        input.project.id,
+        input.project,
+      ).settings;
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
+      for (const instanceId of yield* usageLimitHeldInstances(nowMs)) limited.add(instanceId);
+      return reviewDelegationTarget({
+        providers: input.providers,
+        author: input.parent.thread.modelSelection,
+        named: input.named,
+        reviewers: settings.adversarialReview.reviewers,
+        tier: settings.adversarialReview.tier,
+        tiers: settings.modelTiers,
+        excludedModels: settings.providerLimitExcludedModels,
+        policy: input.policy,
+        nowMs,
+        limitedInstanceIds: limited,
+      });
+    });
+
+  /**
+   * The picked reviewer as a launch target. A deep policy asks for extra-high
+   * effort; a model with no such option runs at its default rather than failing.
+   */
+  const reviewerTarget = (input: {
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly selection: ModelSelection;
+    readonly effort: string | undefined;
+    readonly deep: boolean;
+  }) => {
+    const base = {
+      providerInstanceId: input.selection.instanceId,
+      model: input.selection.model,
+    } as OrchestratorMcpTarget;
+    if (input.effort !== undefined)
+      return resolveTargetRechecking({
+        parent: input.parent,
+        target: { ...base, effort: input.effort } as OrchestratorMcpTarget,
+        providers: input.providers,
+      });
+    if (!input.deep)
+      return resolveTargetRechecking({
+        parent: input.parent,
+        target: base,
+        providers: input.providers,
+      });
+    return resolveTargetRechecking({
+      parent: input.parent,
+      target: { ...base, effort: "xhigh" } as OrchestratorMcpTarget,
+      providers: input.providers,
+    }).pipe(
+      Effect.catchIf(
+        (error) => error.code === "invalid_request",
+        () =>
+          resolveTargetRechecking({
+            parent: input.parent,
+            target: base,
+            providers: input.providers,
+          }),
+      ),
+    );
+  };
+
+  /**
    * Auto model routing on top of a resolved worker target (see
    * project/TaskRouting.ts): only when nothing named a model and the app
    * picks it (a coordinator's worker) or the caller passed a task class.
@@ -2818,7 +2939,34 @@ const make = Effect.gen(function* () {
         const workerProject = yield* workerProjectOf(project, parent.thread.id, work);
         const providers = yield* loadProviders;
         const hostDefault = defaultWorkerModelSelection(providers);
-        if (needsExplicitWorkerTarget(workerProject, parent.thread.id, input.target, hostDefault))
+        // A review with no model named goes to the project's reviewer order,
+        // another family than the author's (review/reviewDelegation.ts).
+        const reviewTask = input.role === "review" || input.taskClass === "review";
+        const reviewIncrement = reviewTask
+          ? yield* launchIncrementFor(project, parent.thread, { ref: input.increment })
+          : undefined;
+        const reviewPolicy =
+          reviewIncrement?.increment === undefined
+            ? null
+            : yield* Effect.promise(() =>
+                readIncrementReviewPolicy(reviewIncrement.increment!.specPath),
+              );
+        const reviewPick =
+          reviewTask && !targetPinsModel(input.target)
+            ? yield* reviewDelegationFor({
+                project,
+                parent,
+                providers,
+                policy: reviewPolicy,
+                named: null,
+              })
+            : null;
+        if (reviewPick?.kind === "none")
+          return yield* failure("model_unavailable", reviewPick.message);
+        if (
+          reviewPick === null &&
+          needsExplicitWorkerTarget(workerProject, parent.thread.id, input.target, hostDefault)
+        )
           return yield* failure(
             "invalid_request",
             "Choose a project worker model or pass an explicit target.",
@@ -2836,28 +2984,58 @@ const make = Effect.gen(function* () {
           hostDefault,
           launch?.selection,
         );
-        const { target, routing } = yield* routeResolvedTarget({
-          project,
-          parent,
-          requested: input.target,
-          taskClass: input.taskClass,
-          taskLane: input.taskLane,
-          task: { text: input.task, title: input.title },
-          providers,
-          options: projectModelOptions(workerProject, input.target, delegationTarget, options),
-          baseline: yield* resolveTargetRechecking({
-            parent,
-            target: delegationTarget,
-            providers,
-            taskLane: input.taskLane,
-            modelTiers: yield* projectModelTiers(project),
-          }),
-        });
-        const launchFallbackFrom = workerLaunchFallbackFrom(
-          launch,
-          delegationTarget !== input.target,
-          target,
-        );
+        const { target, routing } =
+          reviewPick?.kind === "pick"
+            ? {
+                target: yield* reviewerTarget({
+                  parent,
+                  providers,
+                  selection: reviewPick.selection,
+                  effort: input.target?.effort,
+                  deep: reviewPolicy?.depth === "deep",
+                }),
+                routing: null,
+              }
+            : yield* routeResolvedTarget({
+                project,
+                parent,
+                requested: input.target,
+                taskClass: input.taskClass,
+                taskLane: input.taskLane,
+                task: { text: input.task, title: input.title },
+                providers,
+                options: projectModelOptions(
+                  workerProject,
+                  input.target,
+                  delegationTarget,
+                  options,
+                ),
+                baseline: yield* resolveTargetRechecking({
+                  parent,
+                  target: delegationTarget,
+                  providers,
+                  taskLane: input.taskLane,
+                  modelTiers: yield* projectModelTiers(project),
+                }),
+              });
+        // A model the caller named for a review runs as asked, with a warning
+        // when it is the author's family or not the one the policy asks for.
+        const review =
+          reviewPick?.kind === "pick"
+            ? reviewPick
+            : reviewTask
+              ? yield* reviewDelegationFor({
+                  project,
+                  parent,
+                  providers,
+                  policy: reviewPolicy,
+                  named: target.modelSelection,
+                })
+              : null;
+        const launchFallbackFrom =
+          reviewPick?.kind === "pick"
+            ? null
+            : workerLaunchFallbackFrom(launch, delegationTarget !== input.target, target);
         // Whatever picked the model, a grant's work runs only on the sign-ins it allows.
         yield* assertAccountInGrant(work, target.modelSelection.instanceId);
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
@@ -2906,16 +3084,34 @@ const make = Effect.gen(function* () {
           if (refusal !== null) return yield* failure("invalid_request", refusal);
         }
         // The child runs in the parent's checkout; a bad ref dispatches nothing.
-        const increment = yield* launchIncrementFor(project, parent.thread, {
-          ref: input.increment,
-        });
+        const increment =
+          reviewIncrement ??
+          (yield* launchIncrementFor(project, parent.thread, {
+            ref: input.increment,
+          }));
         if (increment.increment !== undefined) {
           const seeded = increment.increment;
           yield* Effect.promise(() =>
             writeLaunchBinding(deriveDelegatedTaskThread({ commandId }), seeded),
           );
         }
-        const incrementFields = launchIncrementFields(increment);
+        const incrementFields = {
+          ...launchIncrementFields(increment),
+          ...(review === null || review.kind === "none"
+            ? {}
+            : { review: reviewResultFields(review, reviewPolicy) }),
+        };
+        const prompt = taskPrompt(
+          input,
+          increment,
+          review === null || review.kind === "none"
+            ? null
+            : reviewDelegationBrief({
+                decision: review,
+                authorLabel: reviewerLabel(providers, parent.thread.modelSelection),
+                policy: reviewPolicy,
+              }),
+        );
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
@@ -2925,7 +3121,7 @@ const make = Effect.gen(function* () {
             parentThreadId: scope.thread.threadId,
             parentRunId: parentRun.id,
             parentNodeId,
-            task: promptWithRoutingNote(taskPrompt(input, increment), routing),
+            task: promptWithRoutingNote(prompt, routing),
             ...(input.title === undefined ? {} : { title: input.title }),
             modelSelection: target.modelSelection,
             ...(routing === null ? {} : { routing }),

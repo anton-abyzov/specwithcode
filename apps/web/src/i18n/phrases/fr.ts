@@ -4911,7 +4911,8 @@ export const fr: PhraseCatalog = {
     "Non installé. Récupère-le sur son propre site, ou demande à une personne qui peut gérer cette machine de l'installer d'ici.",
   "Browse…": "Parcourir…",
   "Add to this machine…": "Ajouter à cette machine…",
-  "Runs on {machine}. No copy on this device.": "S’exécute sur {machine}. Aucune copie sur cet appareil.",
+  "Runs on {machine}. No copy on this device.":
+    "S’exécute sur {machine}. Aucune copie sur cet appareil.",
   "Agent status": "État de l'agent",
   "Last time it was not signed in.": "La dernière fois, il n'était pas connecté.",
   "Last time it was signed in as {account}.":
@@ -4920,4 +4921,12 @@ export const fr: PhraseCatalog = {
   "Not signed in": "Non connecté",
   "Sign in with {account}": "Se connecter avec {account}",
   "Turn it on to use it in chat.": "Activez-le pour l'utiliser dans le chat.",
+  "Reviewed by {model}": "Relu par {model}",
+  "Reviewed by {model} at {commit}": "Relu par {model} à {commit}",
+  ship: "prêt à publier",
+  "fix first": "corriger d'abord",
+  "same family as the author": "même famille que l'auteur",
+  "Review by another model family required": "Relecture par une autre famille de modèles requise",
+  "{family} review required": "Relecture {family} requise",
+  "Reviewed, model not recorded": "Relu, modèle non enregistré",
 };

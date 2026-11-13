@@ -4688,4 +4688,12 @@ export const zh: PhraseCatalog = {
   "Not signed in": "未登录",
   "Sign in with {account}": "使用 {account} 登录",
   "Turn it on to use it in chat.": "开启后即可在聊天中使用。",
+  "Reviewed by {model}": "由 {model} 审查",
+  "Reviewed by {model} at {commit}": "由 {model} 在 {commit} 审查",
+  ship: "可以发布",
+  "fix first": "先修复",
+  "same family as the author": "与作者同一模型系列",
+  "Review by another model family required": "需要其他模型系列审查",
+  "{family} review required": "需要 {family} 审查",
+  "Reviewed, model not recorded": "已审查，未记录模型",
 };

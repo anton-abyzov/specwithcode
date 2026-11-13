@@ -4871,7 +4871,8 @@ export const ja: PhraseCatalog = {
     "未インストールです。公式サイトから入手するか、このマシンを管理できる人にここからインストールしてもらってください。",
   "Browse…": "参照…",
   "Add to this machine…": "このマシンに追加…",
-  "Runs on {machine}. No copy on this device.": "{machine} で実行されます。このデバイスにはコピーがありません。",
+  "Runs on {machine}. No copy on this device.":
+    "{machine} で実行されます。このデバイスにはコピーがありません。",
   "Agent status": "エージェントの状態",
   "Last time it was not signed in.": "前回はサインインしていませんでした。",
   "Last time it was signed in as {account}.": "前回は {account} としてサインインしていました。",
@@ -4879,4 +4880,12 @@ export const ja: PhraseCatalog = {
   "Not signed in": "未サインイン",
   "Sign in with {account}": "{account} でサインイン",
   "Turn it on to use it in chat.": "チャットで使うにはオンにしてください。",
+  "Reviewed by {model}": "{model} がレビュー済み",
+  "Reviewed by {model} at {commit}": "{model} が {commit} でレビュー済み",
+  ship: "リリース可",
+  "fix first": "先に修正",
+  "same family as the author": "作成者と同じモデル系統",
+  "Review by another model family required": "別のモデル系統によるレビューが必要",
+  "{family} review required": "{family} のレビューが必要",
+  "Reviewed, model not recorded": "レビュー済み、モデル未記録",
 };

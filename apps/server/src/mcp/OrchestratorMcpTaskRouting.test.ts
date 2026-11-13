@@ -162,6 +162,11 @@ interface Harness {
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** The project's own model; lanes and Auto apply only without one. */
   readonly projectModel?: typeof opus;
+  /** Settings > Adversarial review order. */
+  readonly reviewers?: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly model: string;
+  }>;
 }
 
 type Dispatched = {
@@ -188,6 +193,14 @@ const run = <A, E>(
       ...(harness.modelLanes !== undefined ? { modelLanes: harness.modelLanes } : {}),
       ...(harness.learnedModelPreferences !== undefined
         ? { learnedModelPreferences: harness.learnedModelPreferences }
+        : {}),
+      ...(harness.reviewers !== undefined
+        ? {
+            adversarialReview: {
+              ...DEFAULT_SERVER_SETTINGS.adversarialReview,
+              reviewers: harness.reviewers,
+            },
+          }
         : {}),
     };
     const layer = Layer.mergeAll(
@@ -244,7 +257,8 @@ const run = <A, E>(
       Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistryV2,
         ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
-          list: () => Effect.succeed([claude, copilot]),
+          list: () =>
+            Effect.succeed((harness.providers ?? providers).map((entry) => entry.instanceId)),
           get: (instanceId) => Effect.succeed({ instanceId } as unknown as ProviderAdapterV2Shape),
         }),
       ),
@@ -744,6 +758,103 @@ describe("OrchestratorMcpService task routing", () => {
         assert.equal(creates[1]?.modelSelection?.model, "claude-opus-5-5");
         assert.equal(creates[1]?.routing?.taskClass, "animation-final");
         assert.equal(result.threads[0]?.routing?.selection.model, "claude-sonnet-5-5");
+      }),
+    ),
+  );
+});
+
+describe("OrchestratorMcpService review delegation", () => {
+  const codex = ProviderInstanceId.make("codex");
+  const withCodex = (used: number): ReadonlyArray<ServerProvider> => [
+    ...providers,
+    {
+      ...provider(codex, "codex", [
+        ["gpt-6.1-sol", "GPT-6.1 Sol"],
+        ["gpt-6-luna", "GPT-6 Luna"],
+      ]),
+      usageLimits: {
+        checkedAt: new Date().toISOString(),
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: used,
+            resetsAt: "2099-12-05T01:55:06.000Z",
+          },
+        ],
+      },
+    } as ServerProvider,
+  ];
+  const reviewers = [
+    { instanceId: claude, model: "claude-sonnet-5-5" },
+    { instanceId: codex, model: "gpt-6.1-sol" },
+  ];
+
+  it.effect(
+    "sends a Claude thread's review to GPT-6.1 Sol from the reviewer order and says so",
+    () =>
+      run({ providers: withCodex(3), reviewers }, (service, dispatched) =>
+        Effect.gen(function* () {
+          const result = yield* service.delegateTask(scope, {
+            task: "Review PR 345.",
+            taskClass: "review",
+            mode: "async",
+            clientRequestId: "review-pick",
+          });
+          const request = yield* delegated(dispatched);
+          assert.deepEqual(request.modelSelection, { instanceId: codex, model: "gpt-6.1-sol" });
+          assert.include(
+            request.task ?? "",
+            "reviewing work written by Claude Opus 5.5 on claudeAgent (Claude)",
+          );
+          assert.include(request.task ?? "", "specweave review --record");
+          assert.equal(result.review?.reviewerFamily, "openai");
+          assert.equal(result.review?.chosenBy, "review-order");
+          // Sonnet, then the same Sonnet through Copilot: both the author's family.
+          assert.deepEqual(
+            result.review?.skipped.map((skip) => skip.reason),
+            ["same model family as the work", "same model family as the work"],
+          );
+          assert.equal(result.review?.skipped[0]?.reviewer, "Claude Sonnet 5.5 on claudeAgent");
+        }),
+      ),
+  );
+
+  it.effect("refuses instead of falling back to Claude when the OpenAI reviewer is full", () =>
+    run({ providers: withCodex(100), reviewers }, (service, dispatched) =>
+      Effect.gen(function* () {
+        const failure = yield* service
+          .delegateTask(scope, {
+            task: "Review PR 345.",
+            role: "review",
+            mode: "async",
+            clientRequestId: "review-none",
+          })
+          .pipe(Effect.flip);
+        assert.equal(failure.code, "model_unavailable");
+        assert.include(failure.message, "GPT-6.1 Sol on codex is usage full");
+        assert.include(failure.message, "Nothing was started");
+        assert.isUndefined(yield* delegated(dispatched));
+      }),
+    ),
+  );
+
+  it.effect("runs a named same-family reviewer as asked and warns", () =>
+    run({ providers: withCodex(3), reviewers }, (service, dispatched) =>
+      Effect.gen(function* () {
+        const result = yield* service.delegateTask(scope, {
+          task: "Review PR 345.",
+          taskClass: "review",
+          target: { providerInstanceId: claude, model: "claude-sonnet-5-5" },
+          mode: "async",
+          clientRequestId: "review-named",
+        });
+        const request = yield* delegated(dispatched);
+        assert.equal(request.modelSelection?.model, "claude-sonnet-5-5");
+        assert.equal(result.review?.chosenBy, "caller");
+        assert.isFalse(result.review?.crossFamily);
+        assert.include(result.review?.warning ?? "", "not a cross-family review");
       }),
     ),
   );

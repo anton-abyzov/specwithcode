@@ -4869,7 +4869,8 @@ export const ru: PhraseCatalog = {
     "Не установлен. Скачайте его с официального сайта или попросите того, кто может обслуживать эту машину, установить его отсюда.",
   "Browse…": "Обзор…",
   "Add to this machine…": "Добавить на этот компьютер…",
-  "Runs on {machine}. No copy on this device.": "Работает на {machine}. На этом устройстве копии нет.",
+  "Runs on {machine}. No copy on this device.":
+    "Работает на {machine}. На этом устройстве копии нет.",
   "Agent status": "Статус агента",
   "Last time it was not signed in.": "В прошлый раз вход не был выполнен.",
   "Last time it was signed in as {account}.": "В прошлый раз вход был выполнен как {account}.",
@@ -4877,4 +4878,12 @@ export const ru: PhraseCatalog = {
   "Not signed in": "Вход не выполнен",
   "Sign in with {account}": "Войти через {account}",
   "Turn it on to use it in chat.": "Включите его, чтобы использовать в чате.",
+  "Reviewed by {model}": "Проверено: {model}",
+  "Reviewed by {model} at {commit}": "Проверено: {model}, коммит {commit}",
+  ship: "можно выпускать",
+  "fix first": "сначала исправить",
+  "same family as the author": "та же семья моделей, что у автора",
+  "Review by another model family required": "Нужна проверка моделью другой семьи",
+  "{family} review required": "Нужна проверка {family}",
+  "Reviewed, model not recorded": "Проверено, модель не записана",
 };

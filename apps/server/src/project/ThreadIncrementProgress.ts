@@ -59,6 +59,7 @@ import {
   withinCheckTime,
 } from "./registeredCheckout.ts";
 import { INCREMENTS_DIR, resolveReportIncrement } from "./ThreadReports.ts";
+import { readIncrementReview } from "../review/incrementReview.ts";
 
 const SPEC_BYTES = 262_144;
 const INCREMENT_FOLDER = /^\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
@@ -679,6 +680,7 @@ export async function readIncrementProgress(input: {
       acceptedSkips: ledgerFold?.acceptedSkips ?? [],
     }),
     verify,
+    review: await readIncrementReview({ incrementPath: folder, spec, ledger }),
   };
 }
 
