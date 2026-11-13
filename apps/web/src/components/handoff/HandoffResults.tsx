@@ -6,6 +6,8 @@ import type {
 } from "@specweave-studio/contracts";
 import { CheckIcon, XIcon } from "lucide-react";
 
+import { useMachineIdentity } from "../../studio/machineIdentity";
+import { MachineDot } from "../MachineDot";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
 /** A machine a thread can move to; "this-machine" continues here with another model. */
@@ -22,6 +24,17 @@ export function destinationText(destination: HandoffDestination): string {
   return destination.state === "offline"
     ? `${destination.label} (${(destination.reason ?? "Offline").toLowerCase()})`
     : destination.label;
+}
+
+/** A destination's name after its machine's color, as the sidebar shows it. */
+export function HandoffDestinationName({ destination }: { destination: HandoffDestination }) {
+  const identity = useMachineIdentity(destination.environmentId);
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5" data-handoff-destination>
+      <MachineDot identity={identity} />
+      <span className="truncate">{destinationText(destination)}</span>
+    </span>
+  );
 }
 
 export function HandoffDestinationSelect(props: {
@@ -47,7 +60,9 @@ export function HandoffDestinationSelect(props: {
       }}
     >
       <SelectTrigger id={props.id} size="sm">
-        <SelectValue>{selected ? destinationText(selected) : "Choose a machine"}</SelectValue>
+        <SelectValue>
+          {selected ? <HandoffDestinationName destination={selected} /> : "Choose a machine"}
+        </SelectValue>
       </SelectTrigger>
       <SelectPopup>
         {props.destinations.map((destination) => (
@@ -56,7 +71,7 @@ export function HandoffDestinationSelect(props: {
             value={destination.environmentId}
             disabled={destination.state === "offline"}
           >
-            {destinationText(destination)}
+            <HandoffDestinationName destination={destination} />
           </SelectItem>
         ))}
       </SelectPopup>

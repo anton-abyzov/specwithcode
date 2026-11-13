@@ -31,7 +31,7 @@ export function useRenameMachine(): {
     identity: {
       readonly name: string;
       readonly color: MachineColorId;
-      readonly icon: EnvironmentMachineKind;
+      readonly icon?: EnvironmentMachineKind;
       readonly short?: string;
     },
   ) => boolean;
@@ -68,7 +68,7 @@ export function useRenameMachine(): {
       identity: {
         readonly name: string;
         readonly color: MachineColorId;
-        readonly icon: EnvironmentMachineKind;
+        readonly icon?: EnvironmentMachineKind;
         readonly short?: string;
       },
     ) => {

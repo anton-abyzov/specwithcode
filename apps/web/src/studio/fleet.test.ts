@@ -28,6 +28,12 @@ vi.mock("@effect/atom-react", async () => {
   }
   return { useAtomValue: read };
 });
+// The hooks are called outside a render here; noting fleet machines for colors is
+// an effect with nothing to check in these tests.
+vi.mock("react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react")>()),
+  useEffect: () => {},
+}));
 vi.mock("../connection/runtime", () => ({
   connectionAtomRuntime: {
     atom: (evaluate: unknown) => ({

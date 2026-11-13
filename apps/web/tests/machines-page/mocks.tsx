@@ -8,6 +8,7 @@ export const desktopNetworkAccessStateAtom = null;
 export const useProjects = () => [];
 export const useServerConfigs = () => new Map();
 export const useEnvironments = () => ({ environments: [] });
+export const usePrimaryEnvironmentId = () => "env-m4";
 export const useEnvironmentScope = (id: string) => id !== "env-phone";
 export const readEnvironmentScope = () => true;
 export const useEnvironmentScopeAccess = (id: string) =>

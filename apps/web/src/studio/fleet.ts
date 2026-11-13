@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 import {
   AuthAccessReadScope,
@@ -50,6 +50,7 @@ import {
   requestWorkGrants,
 } from "./fleetRequest";
 import { environmentConnectedAtom } from "./connected";
+import { noteFleetMachines } from "./knownMachines";
 import {
   fleetRetainsWorkers,
   fleetWorkerCapability,
@@ -206,8 +207,13 @@ export function usePrimaryFleetSnapshot(primaryEnvironmentId: EnvironmentId | nu
 
 export function useStudioFleet(environmentId: EnvironmentId) {
   const result = useAtomValue(fleetAtom(environmentId));
+  const snapshot = Option.getOrNull(AsyncResult.value(result));
+  // Machines known only from this list still count when colors are dealt out.
+  useEffect(() => {
+    if (snapshot) noteFleetMachines(snapshot.machines);
+  }, [snapshot]);
   return {
-    snapshot: Option.getOrNull(AsyncResult.value(result)),
+    snapshot,
     loading: result.waiting,
     failed: result._tag === "Failure",
     refresh: () => appAtomRegistry.refresh(fleetAtom(environmentId)),

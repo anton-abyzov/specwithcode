@@ -37,6 +37,7 @@ import { Atom } from "effect/reactivity";
 import { createContext, useMemo } from "react";
 
 import { environmentServerConfigsAtom } from "../state/server";
+import { fleetMachinesAtom } from "./knownMachines";
 import { resolveMachineNickname, useMachineNameSources } from "./machineNickname";
 
 export const MACHINE_COLOR_LABELS: Record<MachineColorId, string> = {
@@ -81,13 +82,31 @@ const machineKindsAtom = Atom.make((get): ReadonlyMap<string, EnvironmentMachine
     : next;
 }).pipe(Atom.withLabel("machine-kinds"));
 
-/** Resolves any machine's identity from the nickname map and what is known of the fleet. */
-export function resolveMachineIdentities(input: {
+interface MachineIdentitySources {
   readonly nicknames: MachineNicknames;
   readonly labels: ReadonlyMap<string, string>;
   readonly kinds: ReadonlyMap<string, EnvironmentMachineKind>;
-}): (environmentId: string, fallbackLabel?: string | null) => MachineIdentity {
-  const known = [...input.labels.keys(), ...input.kinds.keys()];
+  /** Machines a fleet list names, connected here or not (`knownMachines.ts`). */
+  readonly fleet?: Iterable<string> | undefined;
+}
+
+/** Every machine this device knows of: connected, listed by a fleet or named. */
+export function knownMachineIds(input: MachineIdentitySources): readonly string[] {
+  return [
+    ...new Set([
+      ...input.labels.keys(),
+      ...input.kinds.keys(),
+      ...(input.fleet ?? []),
+      ...Object.keys(input.nicknames),
+    ]),
+  ];
+}
+
+/** Resolves any machine's identity from the nickname map and what is known of the fleet. */
+export function resolveMachineIdentities(
+  input: MachineIdentitySources,
+): (environmentId: string, fallbackLabel?: string | null) => MachineIdentity {
+  const known = [...input.labels.keys(), ...input.kinds.keys(), ...(input.fleet ?? [])];
   const colors = assignMachineColors(known, input.nicknames);
   const nameOf = (environmentId: string, fallbackLabel?: string | null) =>
     resolveMachineNickname(
@@ -146,18 +165,74 @@ export function resolveMachineIdentities(input: {
 const kindsOf = (value: unknown): ReadonlyMap<string, EnvironmentMachineKind> =>
   value instanceof Map ? (value as ReadonlyMap<string, EnvironmentMachineKind>) : NO_KINDS;
 const NO_KINDS: ReadonlyMap<string, EnvironmentMachineKind> = new Map();
+const fleetOf = (value: unknown): ReadonlyMap<string, string> =>
+  value instanceof Map ? (value as ReadonlyMap<string, string>) : NO_FLEET;
+const NO_FLEET: ReadonlyMap<string, string> = new Map();
+
+/**
+ * A fleet machine never connected here is named by the fleet list's computer
+ * name, as its card is; a connected machine's own label wins.
+ */
+export function withFleetLabels(
+  labels: ReadonlyMap<string, string>,
+  fleet: ReadonlyMap<string, string>,
+): ReadonlyMap<string, string> {
+  const missing = [...fleet].filter(([id, label]) => label !== "" && !labels.has(id));
+  return missing.length === 0 ? labels : new Map([...labels, ...missing]);
+}
+
+function useMachineIdentitySources(): MachineIdentitySources {
+  const { nicknames, labels: connected } = useMachineNameSources();
+  const kinds = kindsOf(useAtomValue(machineKindsAtom));
+  const listed = fleetOf(useAtomValue(fleetMachinesAtom));
+  return useMemo(
+    () => ({
+      nicknames,
+      labels: withFleetLabels(connected, listed),
+      kinds,
+      fleet: [...listed.keys()],
+    }),
+    [nicknames, connected, kinds, listed],
+  );
+}
 
 /** Resolves any machine's identity; re-renders when a nickname, color or icon changes. */
 export function useMachineIdentities(): (
   environmentId: string,
   fallbackLabel?: string | null,
 ) => MachineIdentity {
-  const { nicknames, labels } = useMachineNameSources();
-  const kinds = kindsOf(useAtomValue(machineKindsAtom));
-  return useMemo(
-    () => resolveMachineIdentities({ nicknames, labels, kinds }),
-    [nicknames, labels, kinds],
-  );
+  const sources = useMachineIdentitySources();
+  return useMemo(() => resolveMachineIdentities(sources), [sources]);
+}
+
+/**
+ * Which known machines wear each color, so a color picker can say a color is
+ * taken ("Teal: M1") before two machines end up looking alike.
+ */
+export function machineColorWearers(
+  input: MachineIdentitySources,
+): ReadonlyMap<MachineColorId, readonly MachineIdentity[]> {
+  const resolve = resolveMachineIdentities(input);
+  const wearers = new Map<MachineColorId, MachineIdentity[]>();
+  for (const id of knownMachineIds(input)) {
+    const identity = resolve(id);
+    wearers.set(identity.color, [...(wearers.get(identity.color) ?? []), identity]);
+  }
+  return wearers;
+}
+
+/** Every known machine's identity, for places that hold only a machine's shown name. */
+export function useKnownMachineIdentities(): readonly MachineIdentity[] {
+  const sources = useMachineIdentitySources();
+  return useMemo(() => {
+    const resolve = resolveMachineIdentities(sources);
+    return knownMachineIds(sources).map((id) => resolve(id));
+  }, [sources]);
+}
+
+export function useMachineColorWearers(): ReadonlyMap<MachineColorId, readonly MachineIdentity[]> {
+  const sources = useMachineIdentitySources();
+  return useMemo(() => machineColorWearers(sources), [sources]);
 }
 
 export function useMachineIdentity(
@@ -189,8 +264,9 @@ export function machineColorProps(identity: Pick<MachineIdentity, "color"> | nul
 
 /**
  * The patch that saves a machine's name, color and icon in one entry. An empty
- * name restores the default name. The color and icon are always written out,
- * so choosing the default again is a choice a later merge keeps.
+ * name restores the default name. The color is always written out, so choosing
+ * the default again is a choice a later merge keeps. The icon is written when
+ * given; without one the stored icon stays, or none, so the detected kind decides.
  */
 export function machineIdentityPatch(
   nicknames: MachineNicknames,
@@ -198,12 +274,14 @@ export function machineIdentityPatch(
   identity: {
     readonly name: string;
     readonly color: MachineColorId;
-    readonly icon: EnvironmentMachineKind;
+    /** Absent keeps the stored one, or none, so a detected kind still decides. */
+    readonly icon?: EnvironmentMachineKind | undefined;
     /** Absent keeps the stored one; empty goes back to the derived label. */
     readonly short?: string | undefined;
   },
   now?: number,
 ): { readonly machineNicknames: Record<string, MachineNickname> } {
+  const icon = identity.icon ?? nicknames[environmentId]?.icon;
   const short =
     identity.short === undefined
       ? nicknames[environmentId]?.short
@@ -214,7 +292,7 @@ export function machineIdentityPatch(
         name: normalizeMachineNickname(identity.name),
         updatedAt: nextMachineNicknameStamp(nicknames[environmentId], now ?? Date.now()),
         color: identity.color,
-        icon: identity.icon,
+        ...(icon === undefined ? {} : { icon }),
         ...(short === undefined ? {} : { short }),
       },
     },

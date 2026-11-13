@@ -2334,6 +2334,34 @@ export const ja: PhraseCatalog = {
     "名前が入らない狭いチップに表示する2〜3文字。空欄なら名前から決まります。",
   "Use 2 or 3 characters.":
     "2〜3文字にしてください。",
+  "{name} wears {color}":
+    "{name} の色は {color}",
+  "Change the color of {name}, now {color}":
+    "{name} の色を変更（現在は {color}）",
+  "Change color":
+    "色を変更",
+  "Color of {name}":
+    "{name} の色",
+  "{color}, also on {names}":
+    "{color}（{names} も使用中）",
+  "Letters under a color name the machines that wear it.":
+    "色の下の文字は、その色を使っているマシンを示します。",
+  "Violet":
+    "バイオレット",
+  "Teal":
+    "ティール",
+  "Amber":
+    "アンバー",
+  "Rose":
+    "ローズ",
+  "Blue":
+    "ブルー",
+  "Green":
+    "グリーン",
+  "Orange":
+    "オレンジ",
+  "Slate":
+    "スレート",
   "Computer name {hostLabel}":
     "コンピュータ名 {hostLabel}",
   "Use {defaultName}": "{defaultName} を使う",

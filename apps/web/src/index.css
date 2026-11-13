@@ -2730,3 +2730,43 @@ video.artifact-viewer-media {
   border-color: var(--background);
   box-shadow: 0 0 0 2px var(--machine);
 }
+/* A machine's color beside its name where a chip would crowd the line (grant
+   pills, Settings lists): the sidebar's small square. The name always follows. */
+.machine-dot[data-machine-color] {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--machine);
+}
+/* A machine's icon on its color, heading its card in Settings. As a button it
+   opens the color choices. */
+.machine-tile[data-machine-color] {
+  border: 1px solid var(--machine-edge);
+  background: var(--machine-surface);
+  color: var(--machine-text);
+}
+button.machine-tile[data-machine-color]:not(:disabled):hover {
+  background: color-mix(in srgb, var(--machine) 24%, transparent);
+}
+/* A machine's card in Settings wears its color on the leading edge, as a pane does. */
+.machine-card[data-machine-color] {
+  position: relative;
+}
+.machine-card[data-machine-color]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0.625rem;
+  inset-inline-start: 0;
+  width: 3px;
+  border-start-end-radius: 3px;
+  border-end-end-radius: 3px;
+  background: var(--machine);
+}
+@media (forced-colors: active) {
+  .machine-dot[data-machine-color],
+  .machine-card[data-machine-color]::before {
+    forced-color-adjust: none;
+  }
+}

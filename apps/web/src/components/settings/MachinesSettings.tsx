@@ -15,7 +15,7 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { LaptopIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
+import { PencilIcon, RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
@@ -29,7 +29,11 @@ import { displayFolder } from "../../lib/displayFolder";
 import { machineStatus } from "../../lib/machineStatus";
 import { desktopNetworkAccessStateAtom } from "../../state/desktopNetworkAccess";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   addVisibleMachineToStudioFleet,
@@ -41,6 +45,12 @@ import {
   useAccountAutoConnectStates,
   requestAccountMachineConnect,
 } from "../../studio/grantedAccountMachines";
+import {
+  machineColorProps,
+  useKnownMachineIdentities,
+  useMachineIdentities,
+  useMachineIdentity,
+} from "../../studio/machineIdentity";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
@@ -50,6 +60,8 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ArchivedDisclosure } from "./ArchivedDisclosure";
+import { MachineDot } from "../MachineDot";
+import { MachineColorButton } from "./MachineColor";
 import { RenameMachineDialog } from "./RenameMachineDialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -508,6 +520,13 @@ function HoverText({ text, className }: { text: string; className: string }) {
 /** Machines named on a row before the rest fold into "+N", so a long list never crowds it. */
 const MAX_MACHINE_CHIPS = 2;
 
+/** The machine a card is for, as its project lines name it. */
+interface MachineHere {
+  readonly environmentId: EnvironmentId;
+  readonly name: string;
+  readonly seen: MachineSeen;
+}
+
 /** The machine a copy is on, as "ministorm (This app can see it)", so its dot is never the only clue. */
 function spokenMachine(machine: { name: string; seen: MachineSeen }): string {
   return `${machine.name} (${machine.seen.text})`;
@@ -537,9 +556,23 @@ function projectWhereLabel(project: MachineProject): string {
   return `${project.title}: ${elsewhere}${folder}. Show every copy`;
 }
 
-function MachineChip({ name, seen }: { name: string; seen: MachineSeen }) {
+/** A machine's name in its color, as the sidebar and composer chips wear it, with its status dot. */
+function MachineChip({
+  environmentId,
+  name,
+  seen,
+}: {
+  environmentId: EnvironmentId;
+  name: string;
+  seen: MachineSeen;
+}) {
+  const identity = useMachineIdentity(environmentId);
   return (
-    <span className="inline-flex min-w-0 max-w-32 items-center gap-1 rounded-full border border-border/70 px-1.5 py-px text-foreground/80">
+    <span
+      {...machineColorProps(identity)}
+      data-settings-machine-chip={environmentId}
+      className="machine-chip inline-flex min-w-0 max-w-32 items-center gap-1 rounded-full border border-border/70 px-1.5 py-px text-foreground/80"
+    >
       <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${SEEN_DOT[seen.state]}`} />
       <span className="truncate">{name}</span>
     </span>
@@ -557,13 +590,15 @@ function ProjectWhere({
   here,
 }: {
   project: MachineProject;
-  here: { name: string; seen: MachineSeen };
+  here: MachineHere;
 }) {
+  const identities = useMachineIdentities();
   const shown = project.elsewhere.slice(0, MAX_MACHINE_CHIPS);
   const folded = project.elsewhere.length - shown.length;
   const copies = [
     {
       key: "here",
+      environmentId: here.environmentId,
       name: here.name,
       seen: here.seen,
       folder: project.folder,
@@ -586,7 +621,12 @@ function ProjectWhere({
         }
       >
         {shown.map((copy) => (
-          <MachineChip key={copy.environmentId} name={copy.name} seen={copy.seen} />
+          <MachineChip
+            key={copy.environmentId}
+            environmentId={copy.environmentId}
+            name={copy.name}
+            seen={copy.seen}
+          />
         ))}
         {folded > 0 ? (
           <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-foreground/80">
@@ -616,6 +656,7 @@ function ProjectWhere({
                   aria-hidden
                   className={`size-1.5 shrink-0 rounded-full ${SEEN_DOT[copy.seen.state]}`}
                 />
+                <MachineDot identity={identities(copy.environmentId, copy.name)} />
                 <span className="truncate font-medium text-foreground">{copy.name}</span>
                 <span className="shrink-0 text-muted-foreground">
                   {[copy.seen.text, copy.roleLabel].filter(Boolean).join(" · ")}
@@ -639,6 +680,16 @@ function ProjectWhere({
  */
 function AccountAlsoOn({ names }: { names: readonly string[] }) {
   const tx = useTx();
+  // The names come from the limits list, which names a machine as everywhere else;
+  // a name two machines share gets no color rather than a wrong one.
+  const known = useKnownMachineIdentities();
+  const byName = useMemo(() => {
+    const found = new Map<string, (typeof known)[number] | null>();
+    for (const identity of known) {
+      found.set(identity.name, found.has(identity.name) ? null : identity);
+    }
+    return found;
+  }, [known]);
   const shown = names.slice(0, MAX_MACHINE_CHIPS);
   const rest = names.slice(MAX_MACHINE_CHIPS);
   return (
@@ -653,7 +704,8 @@ function AccountAlsoOn({ names }: { names: readonly string[] }) {
         <span
           key={name}
           aria-hidden
-          className="min-w-0 max-w-32 truncate rounded-full border border-border/70 px-1.5 py-px text-foreground/80"
+          {...machineColorProps(byName.get(name))}
+          className="machine-chip min-w-0 max-w-32 truncate rounded-full border border-border/70 px-1.5 py-px text-foreground/80"
         >
           {name}
         </span>
@@ -687,7 +739,7 @@ function ProjectList({
   here,
 }: {
   projects: readonly MachineProject[];
-  here: { name: string; seen: MachineSeen };
+  here: MachineHere;
 }) {
   return (
     <ul className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)]">
@@ -759,11 +811,22 @@ export function MachineRow({
   const hostNames = [row.label === nickname ? null : row.label, row.machineName]
     .filter((name): name is string => name !== null)
     .join(" · ");
-  const here = { name: nickname, seen: row.seen };
+  const identity = useMachineIdentity(row.environmentId, row.label);
+  const hereEnvironmentId = usePrimaryEnvironmentId();
+  const here = { environmentId: row.environmentId, name: nickname, seen: row.seen };
   return (
-    <li className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4" aria-label={nickname}>
+    <li
+      {...(bare ? {} : machineColorProps(identity))}
+      className="machine-card flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"
+      aria-label={nickname}
+    >
       <div className={bare ? "hidden" : "flex min-w-0 flex-wrap items-center gap-3"}>
-        <LaptopIcon aria-hidden className="size-4 shrink-0 text-foreground/70" />
+        {/* Pulled in by a step each side, so the name still starts where the lines below do. */}
+        <MachineColorButton
+          environmentId={row.environmentId}
+          fallbackLabel={row.label}
+          className="-mx-1"
+        />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm break-words sm:truncate">
             {nickname}
@@ -833,6 +896,8 @@ export function MachineRow({
             <MachineWorkSummary
               hereLabel={hereLabel}
               thereLabel={nickname}
+              hereId={hereEnvironmentId}
+              thereId={row.environmentId}
               workers={row.workers}
               workHere={row.workHere}
             />

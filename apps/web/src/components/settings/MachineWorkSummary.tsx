@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { ArrowRightIcon, ChevronRightIcon } from "lucide-react";
 import { useTx, type TranslatePhrase } from "../../i18n";
 import { accessLabel } from "../../studio/fleetWorkers";
+import { type MachineIdentity, useMachineIdentities } from "../../studio/machineIdentity";
+import { MachineDot } from "../MachineDot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { MachineWorkerGrant, MachineWorkHere } from "./machinesSettings.logic";
 import {
@@ -64,12 +66,17 @@ function incoming(workHere: MachineWorkHere, tx: TranslatePhrase): { tone: Tone;
 function WorkChip({
   from,
   to,
+  fromIdentity,
+  toIdentity,
   tone,
   text,
   hint,
 }: {
   from: string;
   to: string;
+  /** Each machine's color, as a small square before its name. */
+  fromIdentity?: MachineIdentity | null;
+  toIdentity?: MachineIdentity | null;
   tone: Tone;
   text: string;
   hint: string;
@@ -85,8 +92,10 @@ function WorkChip({
           />
         }
       >
+        <MachineDot identity={fromIdentity} />
         <span className="shrink-0 font-medium">{from}</span>
         <ArrowRightIcon aria-hidden className="size-3 shrink-0" />
+        <MachineDot identity={toIdentity} />
         <span className="shrink-0 font-medium">{to}</span>
         <span className="truncate text-muted-foreground">{text}</span>
       </TooltipTrigger>
@@ -102,16 +111,24 @@ function WorkChip({
 export function MachineWorkSummary({
   hereLabel,
   thereLabel,
+  hereId,
+  thereId,
   workers,
   workHere,
 }: {
   hereLabel: string;
   thereLabel: string;
+  /** The two machines, so each name carries its color; without them the names stand alone. */
+  hereId?: string | null;
+  thereId?: string | null;
   workers: MachineWorkerGrant | null;
   /** Null with `allowBackOffered`: that direction is not set up yet. */
   workHere: MachineWorkHere | null;
 }) {
   const tx = useTx();
+  const identities = useMachineIdentities();
+  const here = hereId ? identities(hereId, hereLabel) : null;
+  const there = thereId ? identities(thereId, thereLabel) : null;
   const out = workers ? outgoing(workers, tx) : null;
   const back = workHere ? incoming(workHere, tx) : null;
   const outHint = tx("Agents on {hereLabel} can start work on {thereLabel}", {
@@ -127,6 +144,8 @@ export function MachineWorkSummary({
       <WorkChip
         from={hereLabel}
         to={thereLabel}
+        fromIdentity={here}
+        toIdentity={there}
         tone={out?.tone ?? "off"}
         text={out?.text ?? tx("Not set up")}
         hint={
@@ -138,6 +157,8 @@ export function MachineWorkSummary({
       <WorkChip
         from={thereLabel}
         to={hereLabel}
+        fromIdentity={there}
+        toIdentity={here}
         tone={back?.tone ?? "off"}
         text={back?.text ?? tx("Not allowed")}
         hint={

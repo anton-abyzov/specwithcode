@@ -58,7 +58,9 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { unreachableMachines } from "../../cloud/connectRoutePlan";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { machineColorProps, useMachineIdentities } from "../../studio/machineIdentity";
 import { useMachineNicknames } from "../../studio/machineNickname";
+import { MachineColorButton } from "./MachineColor";
 import { ConnectDeregisterHint, fleetRemoveConnectNote } from "./ConnectDeregisterHint";
 import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
@@ -842,6 +844,7 @@ export function StudioFleetRoster({
   banner?: ReactNode;
 }) {
   const tx = useTx();
+  const identities = useMachineIdentities();
   const [readinessFor, setReadinessFor] = useState<string | null>(null);
   const [terminalFor, setTerminalFor] = useState<string | null>(null);
   const closeMachineTerminal = useCloseMachineTerminal();
@@ -1027,11 +1030,16 @@ export function StudioFleetRoster({
             const controls = (
               <li
                 key={machine.id}
-                className="flex min-w-0 flex-col gap-2 px-3 py-3 sm:px-4"
+                {...machineColorProps(identities(machine.environmentId, machine.label))}
+                className="machine-card flex min-w-0 flex-col gap-2 px-3 py-3 sm:px-4"
                 aria-label={machine.label}
               >
                 <div className="flex min-w-0 items-start gap-3">
-                  <LaptopIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-foreground/70" />
+                  <MachineColorButton
+                    environmentId={machine.environmentId}
+                    fallbackLabel={machine.label}
+                    className="-mx-1"
+                  />
                   <div className="min-w-0 flex-1">
                     <h3 className="truncate text-sm font-medium">
                       {machine.label}
