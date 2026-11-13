@@ -14,6 +14,7 @@ import type {
 import {
   buildMachineRows,
   canAllowBack,
+  copyRole,
   connectBothWaysInstruction,
   pairingLinkBaseUrl,
   replacedMachineRecords,
@@ -83,6 +84,60 @@ const env = (environmentId: EnvironmentId, label: string, phase = "connected") =
   label,
   phase,
   statusText: phase === "connected" ? "Connected" : "Connecting…",
+});
+
+describe("copyRole", () => {
+  const withEpoch = (copy: MachineProjectInput, epoch: number): MachineProjectInput => ({
+    ...copy,
+    workspaceSettings: { ...copy.workspaceSettings, coordinatorBinding: { epoch, state: "active" } },
+  });
+
+  it("names one coordinator when two copies never handed off, the same one from every copy", () => {
+    const here = easyChamp(m4, "p-m4", "/Users/a/ec");
+    const there = easyChamp(m3, "p-m3", "/Users/b/ec");
+    // Each copy may list the members in its own order; the lead must not depend on it.
+    const reordered = (copy: MachineProjectInput): MachineProjectInput => ({
+      ...copy,
+      workspaceSettings: {
+        ...copy.workspaceSettings!,
+        logicalProject: {
+          ...copy.workspaceSettings!.logicalProject!,
+          members: [member(m3, "p-m3"), member(m4, "p-m4")],
+        },
+      },
+    });
+    for (const both of [
+      [there, here],
+      [here, there],
+      [reordered(there), here],
+      [there, reordered(here)],
+    ]) {
+      const roles = both.map((copy) => copyRole(copy, both));
+      expect(roles.filter((role) => role === "coordinator")).toHaveLength(1);
+      expect(roles).toContain("also-coordinator");
+    }
+    expect(copyRole(there, [there, here])).toBe("coordinator");
+    expect(copyRole(here, [there, here])).toBe("also-coordinator");
+  });
+
+  it("follows the newest coordinator binding over link order", () => {
+    const here = easyChamp(m4, "p-m4", "/Users/a/ec");
+    const there = withEpoch(easyChamp(m3, "p-m3", "/Users/b/ec"), 2);
+    expect(copyRole(there, [here, there])).toBe("coordinator");
+    expect(copyRole(here, [here, there])).toBe("also-coordinator");
+  });
+
+  it("keeps a handed-off or moving copy's own role", () => {
+    const here = easyChamp(m4, "p-m4", "/Users/a/ec");
+    const there = easyChamp(m3, "p-m3", "/Users/b/ec", "transferred");
+    expect(copyRole(here, [here, there])).toBe("coordinator");
+    expect(copyRole(there, [here, there])).toBe("runs-workers");
+  });
+
+  it("names this copy coordinator when it is the only one in sight", () => {
+    const there = easyChamp(m3, "p-m3", "/Users/b/ec");
+    expect(copyRole(there, [there])).toBe("coordinator");
+  });
 });
 
 describe("machine rows", () => {
@@ -216,7 +271,7 @@ describe("machine rows", () => {
       key: "logical-easychamp",
       title: "EasyChamp",
       role: "coordinator",
-      roleLabel: "Main copy",
+      roleLabel: "Coordinator here",
       alsoOn: ["MacBook Pro"],
       elsewhere: [
         {
@@ -224,16 +279,16 @@ describe("machine rows", () => {
           name: "MacBook Pro",
           seen: { state: "connected", text: "This app can see it" },
           folder: "/Users/a/easychamp",
-          roleLabel: "Runs workers only",
+          roleLabel: "Workers only",
         },
       ],
       folder: "/Users/a/Projects/sw-easychamp",
     });
     expect(rows[1]?.projects.own[0]?.elsewhere).toMatchObject([
-      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Main copy" },
+      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Coordinator here" },
     ]);
     expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([
-      "Runs workers only",
+      "Workers only",
     ]);
 
     const hidden = buildMachineRows({
@@ -244,7 +299,7 @@ describe("machine rows", () => {
       projects: [easyChamp(m4, "p-m4", "/Users/a/Projects/sw-easychamp", "transferring")],
       hostBlocks: [],
     });
-    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("Moving main copy");
+    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("Moving coordinator");
     expect(hidden[1]?.projects.own).toMatchObject([
       {
         key: "logical-easychamp",
@@ -257,7 +312,7 @@ describe("machine rows", () => {
             name: "M4MAX",
             seen: { state: "this-machine" },
             folder: "/Users/a/Projects/sw-easychamp",
-            roleLabel: "Moving main copy",
+            roleLabel: "Moving coordinator",
           },
         ],
       },
@@ -459,7 +514,7 @@ describe("buildMachineRows project lists", () => {
       project("scratch", {}, "/Users/a/scratch"),
     ]);
     expect(row?.projects.own.map((entry) => [entry.title, entry.roleLabel])).toEqual([
-      ["mine", "This machine only"],
+      ["mine", "Not shared"],
     ]);
     expect(row?.projects.automated.map((entry) => entry.title)).toEqual(["check"]);
     expect(row?.projects.archived.map((entry) => entry.title)).toEqual(["old", "old-check"]);

@@ -450,11 +450,11 @@ describe("Settings > Machines", () => {
     expect(html).toContain('data-slot="machine-work-summary"');
     expect(html).toContain(">Auto<");
     expect(html).toContain("EasyChamp");
-    expect(html).toContain("Runs workers only");
+    expect(html).toContain("Workers only");
     // The row keeps the folder short; the button says it in full.
     expect(html).toContain("~/easychamp");
     expect(html).toContain(
-      'aria-label="EasyChamp: Also on M4MAX (This machine). Folder /Users/a/easychamp. Show every copy"',
+      'aria-label="EasyChamp: Also on M4MAX (This machine). Folder on MacBook Pro: /Users/a/easychamp. Show every copy"',
     );
     expect(html).toContain("someone@example.com");
     expect(html).toContain('<span class="sr-only">also on M4MAX</span>');
@@ -535,7 +535,7 @@ describe("Settings > Machines", () => {
     expect(html).toContain('~/Projects/github/</span><span class="shrink-0">specweave-umb');
     expect(html).toContain(">+1<");
     expect(html).toContain(
-      "Umbrella: Also on MacBook Pro (This app can see it); ministorm (This app can see it); M1Max (This app cannot see it). Folder /Users/you/Projects/github/specweave-umb. Show every copy",
+      "Umbrella: Also on MacBook Pro (This app can see it); ministorm (This app can see it); M1Max (This app cannot see it). Folder on M4MAX: /Users/you/Projects/github/specweave-umb. Show every copy",
     );
     expect(html).not.toContain("Also on MacBook Pro, ministorm");
   });

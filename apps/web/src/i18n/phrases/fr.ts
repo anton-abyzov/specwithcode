@@ -2356,6 +2356,30 @@ export const fr: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Supprimer de cet appareil l'ancien enregistrement de {name} ({host}) ?\nLa machine a rejoint à nouveau comme une nouvelle et continue de fonctionner ; seuls l'enregistrement mort et ses fils en cache ici disparaissent.",
   "Use 2 or 3 characters.":
     "Utilisez 2 ou 3 caractères.",
+  "Coordinator here":
+    "Coordinateur ici",
+  "Coordinator here too":
+    "Coordinateur ici aussi",
+  "Workers only":
+    "Workers seulement",
+  "Moving coordinator":
+    "Coordinateur en transfert",
+  "Not shared":
+    "Non partagé",
+  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
+    "Le coordinateur du projet tourne sur cette copie, qu'il travaille en ce moment ou non. Les copies des autres machines reçoivent du travail de lui. Il s'agit du coordinateur, pas de la façon dont la copie a été faite.",
+  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
+    "Cette copie fait aussi tourner son propre coordinateur, comme chaque machine peut le faire, mais le coordinateur du projet est celui d'une autre copie. Transférer déplace le coordinateur et ne laisse ici que des workers.",
+  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
+    "Le coordinateur est passé sur une autre machine. Cette copie ne fait tourner que les workers qu'il envoie ici.",
+  "The project's coordinator is moving between machines right now.":
+    "Le coordinateur du projet passe d'une machine à l'autre en ce moment.",
+  "No other machine has a copy of this project.":
+    "Aucune autre machine n'a de copie de ce projet.",
+  "Connect to see its role":
+    "Connectez-vous pour voir son rôle",
+  "This app cannot see this machine, so it cannot tell what this copy does.":
+    "Cette app ne voit pas cette machine et ne peut donc pas dire ce que fait cette copie.",
   "{name} wears {color}":
     "{name} porte {color}",
   "Change the color of {name}, now {color}":

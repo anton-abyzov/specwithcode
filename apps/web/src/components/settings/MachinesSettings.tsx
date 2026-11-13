@@ -511,6 +511,7 @@ const ROLE_BADGE: Readonly<
   Record<NonNullable<MachineProject["role"]>, "info" | "secondary" | "warning" | "outline">
 > = {
   coordinator: "info",
+  "also-coordinator": "secondary",
   "runs-workers": "secondary",
   "handoff-pending": "warning",
   "only-here": "outline",
@@ -561,12 +562,12 @@ function missingFolderText(seen: MachineSeen): string {
 }
 
 /** What the "where" button reads aloud: every machine and the folder, though the row shows fewer. */
-function projectWhereLabel(project: MachineProject): string {
+function projectWhereLabel(project: MachineProject, here: MachineHere): string {
   const elsewhere =
     project.elsewhere.length > 0
       ? `Also on ${project.elsewhere.map(spokenMachine).join("; ")}`
-      : "On this machine only";
-  const folder = project.folder ? `. Folder ${project.folder}` : "";
+      : `Not shared, only on ${here.name}`;
+  const folder = project.folder ? `. Folder on ${here.name}: ${project.folder}` : "";
   return `${project.title}: ${elsewhere}${folder}. Show every copy`;
 }
 
@@ -606,6 +607,7 @@ function ProjectWhere({
   project: MachineProject;
   here: MachineHere;
 }) {
+  const tx = useTx();
   const identities = useMachineIdentities();
   const shown = project.elsewhere.slice(0, MAX_MACHINE_CHIPS);
   const folded = project.elsewhere.length - shown.length;
@@ -629,11 +631,27 @@ function ProjectWhere({
         render={
           <button
             type="button"
-            aria-label={projectWhereLabel(project)}
+            aria-label={projectWhereLabel(project, here)}
             className="col-span-2 flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-left text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:col-span-1"
           />
         }
       >
+        {/* This card's own folder first, after its machine's color; the other machines follow. */}
+        {project.folder ? (
+          <>
+            <MachineDot identity={identities(here.environmentId, here.name)} />
+            <MiddleTruncate
+              value={displayFolder(project.folder)}
+              {...folderNameTail(displayFolder(project.folder))}
+              showTitle={false}
+              className="min-w-0 flex-1"
+              data-copy-folder=""
+            />
+          </>
+        ) : (
+          <span className="min-w-0 flex-1" />
+        )}
+        {shown.length > 0 ? <span className="shrink-0">{tx("also on")}</span> : null}
         {shown.map((copy) => (
           <MachineChip
             key={copy.environmentId}
@@ -647,19 +665,11 @@ function ProjectWhere({
             +{folded}
           </span>
         ) : null}
-        {project.folder ? (
-          <MiddleTruncate
-            value={displayFolder(project.folder)}
-            {...folderNameTail(displayFolder(project.folder))}
-            showTitle={false}
-            className="min-w-0 flex-1"
-          />
-        ) : null}
       </PopoverTrigger>
       <PopoverPopup side="top" align="start" width="md" padding="compact">
         <PopoverTitle className="text-xs font-medium">
           {copies.length === 1
-            ? `${project.title} is on this machine only`
+            ? `${project.title} is only on ${here.name}`
             : `${project.title} is on ${copies.length} machines`}
         </PopoverTitle>
         <ul className="mt-2 space-y-2 text-xs">
@@ -673,7 +683,10 @@ function ProjectWhere({
                 <MachineDot identity={identities(copy.environmentId, copy.name)} />
                 <span className="truncate font-medium text-foreground">{copy.name}</span>
                 <span className="shrink-0 text-muted-foreground">
-                  {[copy.seen.text, copy.roleLabel].filter(Boolean).join(" · ")}
+                  {[copy.seen.text, copy.roleLabel]
+                    .filter((part): part is string => Boolean(part))
+                    .map((part) => tx(part))
+                    .join(" · ")}
                 </span>
               </p>
               <p className="select-text break-all pl-3 font-mono text-2xs text-muted-foreground">
@@ -755,6 +768,7 @@ function ProjectList({
   projects: readonly MachineProject[];
   here: MachineHere;
 }) {
+  const tx = useTx();
   return (
     <ul className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)]">
       {projects.map((project) => (
@@ -766,11 +780,11 @@ function ProjectList({
               render={<span className="inline-flex justify-self-start" />}
             >
               <Badge size="sm" variant={project.role ? ROLE_BADGE[project.role] : "secondary"}>
-                {project.roleLabel}
+                {tx(project.roleLabel)}
               </Badge>
             </TooltipTrigger>
             <TooltipPopup side="top" className="max-w-72">
-              {project.roleHelp}
+              {tx(project.roleHelp)}
             </TooltipPopup>
           </Tooltip>
           <ProjectWhere project={project} here={here} />
