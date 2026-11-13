@@ -38,6 +38,7 @@ import {
   resolvePreviousWorktreeSeed,
   shouldShowEnvironmentIndicator,
   composerRepositoryPicks,
+  composerTaskPick,
 } from "./BranchToolbar.logic";
 import {
   BranchToolbarBranchSelector,
@@ -659,6 +660,16 @@ export const BranchToolbar = memo(function BranchToolbar({
     [pickingRepositories, repositoriesRead.data],
   );
   const composerPick = useComposerRepositoryPick(threadId);
+  // "Agent decides" shows the pick the launch will make from the draft as it is typed.
+  const draftPrompt = useComposerDraftStore((store) =>
+    composerRepositories.length > 0 && composerPick.repositories.length === 0
+      ? (store.getComposerDraft(draftId ?? threadRef)?.prompt ?? "")
+      : "",
+  );
+  const composerTaskPickValue = useMemo(
+    () => composerTaskPick(draftPrompt, composerRepositories),
+    [draftPrompt, composerRepositories],
+  );
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
 
@@ -721,6 +732,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                   environmentId,
                   found: composerRepositories,
                   pick: composerPick,
+                  taskPick: composerTaskPickValue,
                   onChange: (pick) => composerRepositoryPicks.set(threadId, pick),
                 }
               : undefined

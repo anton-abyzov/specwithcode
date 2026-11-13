@@ -143,6 +143,24 @@ try {
       const composer = page.locator('[data-section="composer"]');
       const control = composer.locator("[data-composer-repositories]");
       assert.equal((await control.textContent())?.trim(), "Repositories: Agent decides▾");
+      // A message that names a repository by path: "Agent decides" shows what it starts with.
+      const draft = composer.locator("[data-composer-draft]");
+      await draft.fill("Fix the install flag in repositories/acme/cli/src/install.ts");
+      assert.equal((await control.textContent())?.trim(), "Repositories: Agent decides · cli▾");
+      assert.equal(await composer.locator("[data-composer-repositories-named]").count(), 1);
+      await control.click();
+      const hint = page.locator("[data-composer-agent-decides-hint]");
+      assert.equal(
+        (await hint.textContent())?.trim(),
+        "Starts with cli, named in your message. The agent adds others the task changes.",
+      );
+      await noOverflow(page, width, `composer named ${theme}`);
+      await shot(page, `composer-named-${theme}-${width}`);
+      receipt.checks.push(`composer names cli from the draft (${theme} ${width})`);
+      await page.keyboard.press("Escape");
+      // Product names in prose pick nothing.
+      await draft.fill("Make SpecWithCode and the cli faster");
+      assert.equal((await control.textContent())?.trim(), "Repositories: Agent decides▾");
       await control.click();
       const options = page.getByRole("group", { name: "Repositories" });
       assert.equal(await options.getByRole("checkbox").count(), 7);

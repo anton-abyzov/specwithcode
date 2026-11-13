@@ -5,10 +5,19 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import {
+  repositoriesNamedInTask,
+  taskRepositoryNames,
+  TASK_REPOSITORIES_MAX,
+  type TaskRepositoryMention,
+} from "@specweave-studio/shared/taskRepositories";
+
 import { readFolderLayout } from "../../../project/FolderLayout.ts";
 import {
+  availableRepositories,
   discoverProjectRepositories,
   foundRepositoryLines,
+  type ProjectRepositoryDiscovery,
   type SavedRepositoryEntry,
 } from "../../../project/ProjectRepositoryDiscovery.ts";
 import {
@@ -56,22 +65,46 @@ export function projectUsesWorktrees(
 export const WORKTREE_OFF_NOTICE =
   "Use worktrees is off for this project, so the thread works in the project folder on whatever branch is checked out there; ask it to create or switch to its branch itself (for a nested repository, by that repository's path). For a separate worktree the user must first turn on Use worktrees in the project's settings.";
 
-/** What the launcher is told when a thread starts in its own folder with no repository yet. */
+/** What the launcher is told when a thread starts in its own folder, with the repositories its message names. */
 export const EMPTY_THREAD_FOLDER_NOTICE =
-  'Use worktrees is on and this project folder holds separate clones, so the thread starts in its own folder on its own branch with no repository yet. It adds a worktree of each repository it changes with studio_worktree_add_repository. To start with some, pass workspaceStrategy {type:"worktree", baseRef, repositories:[...]} with paths relative to the project folder.';
+  'Use worktrees is on and this project folder holds separate clones, so the thread starts in its own folder on its own branch, with a worktree of each repository its message names by path (with none named, no repository yet). It adds a worktree of any other repository it changes with studio_worktree_add_repository. To choose yourself, pass workspaceStrategy {type:"worktree", baseRef, repositories:[...]} with paths relative to the project folder.';
+
+/** The first line of a thread's notice: what it starts with, and why. */
+function startsWithLine(input: {
+  readonly workspaceRoot: string;
+  readonly picked: ReadonlyArray<TaskRepositoryMention>;
+  readonly named: ReadonlyArray<TaskRepositoryMention>;
+}): string {
+  const folder = `The project folder is ${input.workspaceRoot}; read anything there.`;
+  const [only] = input.picked;
+  if (only !== undefined && input.picked.length === 1)
+    return `This thread works in its own folder (its working directory), on its own branch. It starts with a worktree of ${only.name} (${only.relativePath}), because its task names ${only.evidence}. ${folder}`;
+  if (input.picked.length > 1)
+    return `This thread works in its own folder (its working directory), on its own branch. It starts with a worktree of each repository its task names: ${input.picked
+      .map((mention) => `${mention.name} (${mention.relativePath}, named as ${mention.evidence})`)
+      .join("; ")}. ${folder}`;
+  if (input.named.length > TASK_REPOSITORIES_MAX)
+    return `This thread works in its own folder (its working directory), on its own branch, with no repository yet: its task names ${input.named.length} repositories (${taskRepositoryNames(input.named)}), which reads as a list, so add only the ones it changes. ${folder}`;
+  return `This thread works in its own folder (its working directory), on its own branch, with no repository yet. ${folder}`;
+}
 
 /**
- * What a thread that starts in its own empty folder reads with its first
- * message: the repositories it can add and the rules for changing them.
+ * What a thread that starts in its own folder reads with its first message:
+ * the repositories it started with and why, the ones it can add, and the
+ * rules for changing them.
  */
 export function emptyThreadFolderNotice(input: {
   readonly workspaceRoot: string;
   /** `foundRepositoryLines` of the project folder. */
   readonly repositories: string;
+  /** What `repositoriesNamedInTask` found in the thread's message. */
+  readonly picked?: ReadonlyArray<TaskRepositoryMention> | undefined;
+  readonly named?: ReadonlyArray<TaskRepositoryMention> | undefined;
 }): string {
+  const picked = input.picked ?? [];
   return [
-    `This thread works in its own folder (its working directory), on its own branch, with no repository yet. The project folder is ${input.workspaceRoot}; read anything there.`,
-    "Before changing a repository, add it with studio_worktree_add_repository, naming it by its path relative to the project folder. Its worktree then sits at the same relative path inside this thread's folder; edit and commit there. Adding a repository installs no dependencies: run that repository's normal install in its worktree only when you build or test there, and never link another checkout's node_modules.",
+    startsWithLine({ workspaceRoot: input.workspaceRoot, picked, named: input.named ?? [] }),
+    `Before changing ${picked.length > 0 ? "any other" : "a"} repository, add it with studio_worktree_add_repository, naming it by its path relative to the project folder. Its worktree then sits at the same relative path inside this thread's folder; edit and commit there. Adding a repository installs no dependencies: run that repository's normal install in its worktree only when you build or test there, and never link another checkout's node_modules.`,
     "Do not edit or commit in the project folder's clones. SpecWeave planning stays in the project folder: run specweave there.",
     ...(input.repositories === ""
       ? []
@@ -102,13 +135,25 @@ export async function incrementWorktreeSetRepositories(input: {
   readonly increment: { readonly root: string; readonly incrementId: string };
 }): Promise<ReadonlyArray<string> | null> {
   const root = NodePath.resolve(input.workspaceRoot);
-  const [sources, rootEntries] = await Promise.all([
+  const [sources, rootEntries, layout] = await Promise.all([
     readIncrementRepositorySources(input.increment),
     NodeFSP.readdir(root).catch((): Array<string> => []),
+    readFolderLayout(root),
   ]);
+  // Clones of their own (a `.git` folder) own the task files under them, in any layout.
+  const clones = (layout?.repositories ?? [])
+    .map((relative) => NodePath.join(root, ...relative.split("/")))
+    .filter((folder) => {
+      try {
+        return NodeFS.statSync(NodePath.join(folder, ".git")).isDirectory();
+      } catch {
+        return false;
+      }
+    });
   const candidates = incrementRepositoryCandidates({
     projectRoot: root,
     checkouts: input.checkouts,
+    clones,
     sources,
     rootEntries: new Set(rootEntries),
   });
@@ -135,10 +180,22 @@ export async function holdsSeparateClones(workspaceRoot: string): Promise<boolea
 }
 
 /**
+ * The repositories a thread's task names among the clones it can get a
+ * worktree of here. Only clones inside the project folder count, named by
+ * their relative path, so a path written on another machine names the same
+ * clone on this one.
+ */
+export function taskRepositoryPick(discovery: ProjectRepositoryDiscovery | null, text: string) {
+  return repositoriesNamedInTask(text, availableRepositories(discovery));
+}
+
+/**
  * A worktree launch that names no repository, in a project folder of separate
- * clones, starts in its own empty folder (`repositories: []`), and its first
- * message carries `notice`. Anywhere else an empty list is dropped: it means a
- * single worktree, as before. Every other strategy is returned as it came.
+ * clones, starts in its own folder with a worktree of each repository its
+ * message names (`taskRepositoryPick`), else none (`repositories: []`), and
+ * its first message carries `notice`. Anywhere else an empty list is dropped:
+ * it means a single worktree, as before. Every other strategy is returned as
+ * it came.
  */
 export async function emptyThreadFolderLaunch(
   strategy: ThreadLaunchWorkspaceStrategy,
@@ -155,6 +212,8 @@ export async function emptyThreadFolderLaunch(
           | undefined;
       }
     | undefined,
+  /** The thread's first message, which may name the repositories it changes. */
+  taskText = "",
 ): Promise<{
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly notice: string | null;
@@ -176,11 +235,14 @@ export async function emptyThreadFolderLaunch(
         });
   if (project === undefined || found?.separateClones !== true)
     return { workspaceStrategy: single, notice: null };
+  const { picked, named } = taskRepositoryPick(found, taskText);
   return {
-    workspaceStrategy: { ...single, repositories: [] },
+    workspaceStrategy: { ...single, repositories: picked.map((mention) => mention.relativePath) },
     notice: emptyThreadFolderNotice({
       workspaceRoot: project.workspaceRoot,
       repositories: foundRepositoryLines(found),
+      picked,
+      named,
     }),
   };
 }

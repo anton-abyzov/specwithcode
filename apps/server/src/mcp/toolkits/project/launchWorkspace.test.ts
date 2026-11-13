@@ -324,3 +324,62 @@ it("gives an empty thread folder only to a folder of separate clones", async () 
       notice: null,
     });
 });
+
+it("starts with the repositories the task names by path, and says why", async () => {
+  const umbrella = makeFolder({
+    ".git": "dir",
+    "repositories/acme/api/.git": "dir",
+    "repositories/acme/api-dev/.git": "dir",
+    "repositories/acme/web/.git": "dir",
+  });
+  const worktree = { type: "worktree", baseRef: "main" } as const;
+  const project = { id: umbrella, workspaceRoot: umbrella };
+  const named = await emptyThreadFolderLaunch(
+    worktree,
+    project,
+    "Fix repositories/acme/api/src/a.ts. SpecWithCode and web need nothing.",
+  );
+  expect(named.workspaceStrategy).toEqual({ ...worktree, repositories: ["repositories/acme/api"] });
+  expect(named.notice).toContain(
+    "It starts with a worktree of api (repositories/acme/api), because its task names repositories/acme/api/src/a.ts.",
+  );
+  expect(named.notice).toContain("Before changing any other repository, add it");
+  // A path written on another machine, and a name in backticks.
+  const remote = await emptyThreadFolderLaunch(
+    worktree,
+    project,
+    "See /home/other/umb/repositories/acme/web/x.ts and `api-dev`",
+  );
+  expect(remote.workspaceStrategy).toEqual({
+    ...worktree,
+    repositories: ["repositories/acme/web", "repositories/acme/api-dev"],
+  });
+  expect(remote.notice).toContain(
+    "web (repositories/acme/web, named as /home/other/umb/repositories/acme/web/x.ts)",
+  );
+  // A repository this machine has not cloned is not picked and does not fail the launch.
+  const missing = await emptyThreadFolderLaunch(
+    worktree,
+    project,
+    "Fix repositories/acme/billing/a.ts",
+  );
+  expect(missing.workspaceStrategy).toEqual({ ...worktree, repositories: [] });
+  expect(missing.notice).toContain("with no repository yet");
+});
+
+it("treats more than four named repositories as a list and starts with none", async () => {
+  const names = ["a", "b", "c", "d", "e"];
+  const umbrella = makeFolder({
+    ".git": "dir",
+    ...Object.fromEntries(names.map((name) => [`repositories/acme/${name}/.git`, "dir" as const])),
+  });
+  const launch = await emptyThreadFolderLaunch(
+    { type: "worktree", baseRef: "main" },
+    { id: umbrella, workspaceRoot: umbrella },
+    names.map((name) => `- repositories/acme/${name}`).join("\n"),
+  );
+  expect(launch.workspaceStrategy).toEqual({ type: "worktree", baseRef: "main", repositories: [] });
+  expect(launch.notice).toContain(
+    "its task names 5 repositories (a, b and 3 more), which reads as a list",
+  );
+});

@@ -9,6 +9,7 @@ import type {
 
 import {
   AGENT_DECIDES,
+  composerTaskPick,
   threadRepositoriesLabel,
   threadRepositoryEvents,
   type ComposerRepositoryPick,
@@ -153,18 +154,30 @@ const project = {
 
 function Composer() {
   const [pick, setPick] = useState<ComposerRepositoryPick>(AGENT_DECIDES);
+  const [draft, setDraft] = useState("");
   return (
     <div
-      className="flex items-center gap-2 rounded-lg border p-2 text-xs"
+      className="flex flex-col gap-2 rounded-lg border p-2 text-xs"
       data-pick={JSON.stringify(pick)}
     >
-      <span className="text-muted-foreground">Use worktree</span>
-      <ComposerRepositoriesControl
-        environmentId={environmentId}
-        found={found}
-        pick={pick}
-        onChange={setPick}
+      <textarea
+        aria-label="Message"
+        className="min-h-12 w-full resize-none rounded bg-transparent p-1 text-sm outline-none"
+        placeholder="Ask anything"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        data-composer-draft=""
       />
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0 text-muted-foreground">Use worktree</span>
+        <ComposerRepositoriesControl
+          environmentId={environmentId}
+          found={found}
+          pick={pick}
+          taskPick={composerTaskPick(draft, found)}
+          onChange={setPick}
+        />
+      </div>
     </div>
   );
 }

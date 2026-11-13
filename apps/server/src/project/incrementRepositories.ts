@@ -84,12 +84,15 @@ export type IncrementRepositoryCandidate = {
  * Candidate repositories, before the caller checks each is a git checkout. A
  * declared entry is an environment repository id, else a path relative to the
  * project root. Without declarations, each task file belongs to the deepest
- * environment repository holding it, else its `repositories/<org>/<repo>`
- * folder, else the project root when its first folder is there.
+ * environment repository or clone in the project folder holding it, in any
+ * layout, else its `repositories/<org>/<repo>` folder, else the project root
+ * when its first folder is there.
  */
 export function incrementRepositoryCandidates(input: {
   readonly projectRoot: string;
   readonly checkouts: ReadonlyArray<LaunchRepositoryCheckout>;
+  /** Clones found in the project folder (absolute paths), owners as much as saved checkouts. */
+  readonly clones?: ReadonlyArray<string> | undefined;
   readonly sources: IncrementRepositorySources;
   /**
    * Names at the top of the project root. A file whose first folder is not
@@ -117,8 +120,15 @@ export function incrementRepositoryCandidates(input: {
     }
     return candidates;
   }
-  const owners = input.checkouts
-    .map((checkout) => ({ id: checkout.id, path: NodePath.resolve(checkout.path) }))
+  const owners: ReadonlyArray<IncrementRepositoryCandidate> = [
+    ...input.checkouts.map((checkout) => ({
+      id: checkout.id,
+      path: NodePath.resolve(checkout.path),
+    })),
+    ...(input.clones ?? []).map((clone) => ({ path: NodePath.resolve(clone) })),
+  ]
+    // A saved checkout that is also a found clone keeps its id.
+    .filter((owner, index, all) => all.findIndex((other) => other.path === owner.path) === index)
     .toSorted((left, right) => right.path.length - left.path.length);
   for (const file of input.sources.files) {
     const absolute = NodePath.resolve(root, file);
