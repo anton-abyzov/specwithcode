@@ -121,12 +121,32 @@ export const BUSY_SQL = `
   + (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests WHERE status = 'pending')
   AS count`;
 
+/**
+ * Whether this server sweeps: an installed app does; a development server, CI
+ * and test servers do not (they would download into throwaway homes), and
+ * STUDIO_READINESS_SWEEP=off turns it off anywhere.
+ */
+export function sweepEnabled(
+  env: Readonly<Record<string, string | undefined>>,
+  devUrl: URL | undefined,
+): boolean {
+  const flag = env["STUDIO_READINESS_SWEEP"]?.trim().toLowerCase();
+  if (flag === "off" || flag === "0" || flag === "false") return false;
+  if (flag === "on" || flag === "1" || flag === "true") return true;
+  const ci = env["CI"]?.trim().toLowerCase();
+  if (ci !== undefined && ci !== "" && ci !== "0" && ci !== "false") return false;
+  return devUrl === undefined;
+}
+
 /** Starts the sweep in the background; it ends once this version is checked. */
 export const layerStart = Layer.effectDiscard(
   Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    // oxlint-disable-next-line studio/no-global-process-runtime -- the server's own environment decides.
+    if (!sweepEnabled(process.env, config.devUrl)) return;
     const sql = yield* SqlClient.SqlClient;
     const services = yield* Effect.context<MachineToolsContextServices>();
-    const home = (yield* ServerConfig.ServerConfig).baseDir;
+    const home = config.baseDir;
     const host = makeNodeProvisionHost();
     const run = Effect.runPromiseWith(yield* Effect.context<never>());
     const busy = () =>

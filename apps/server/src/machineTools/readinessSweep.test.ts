@@ -6,7 +6,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { sweepOnce, sweepTargets, type SweepDeps } from "./readinessSweep.ts";
+import { sweepEnabled, sweepOnce, sweepTargets, type SweepDeps } from "./readinessSweep.ts";
 
 const status = (
   tool: MachineReadinessToolId,
@@ -79,7 +79,15 @@ describe("sweepTargets", () => {
       ),
     ).toEqual([]);
     // A server's answer without `tools` gives nothing to do.
-    expect(sweepTargets({ git: "present", node: "present", gh: "present", packageManager: null, installable: [] })).toEqual([]);
+    expect(
+      sweepTargets({
+        git: "present",
+        node: "present",
+        gh: "present",
+        packageManager: null,
+        installable: [],
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -165,5 +173,16 @@ describe("sweepOnce", () => {
       fail: { node: "busy" },
     });
     expect(await sweepOnce(run.value)).toBe("waiting");
+  });
+});
+
+describe("sweepEnabled", () => {
+  it("runs in an installed app, not in development, CI or when turned off", () => {
+    expect(sweepEnabled({}, undefined)).toBe(true);
+    expect(sweepEnabled({}, new URL("http://localhost:5733"))).toBe(false);
+    expect(sweepEnabled({ CI: "true" }, undefined)).toBe(false);
+    expect(sweepEnabled({ CI: "false" }, undefined)).toBe(true);
+    expect(sweepEnabled({ STUDIO_READINESS_SWEEP: "off" }, undefined)).toBe(false);
+    expect(sweepEnabled({ STUDIO_READINESS_SWEEP: "on", CI: "1" }, undefined)).toBe(true);
   });
 });
