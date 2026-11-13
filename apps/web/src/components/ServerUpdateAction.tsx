@@ -23,6 +23,7 @@ import type {
   ServerPrepareServiceUpdateResult,
   ServiceUpdateBlocker,
 } from "@specweave-studio/contracts";
+import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
 import { CircleArrowUpIcon } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
 
@@ -63,6 +64,15 @@ const COPY_LOOK_MS = 5_000;
 export const REMOTE_QUIET_CHECK_MS = 15_000;
 // Updates waiting for their machine to be quiet; a second press does not start another.
 const quietWaits = new Map<EnvironmentId, { cancelled: boolean }>();
+
+/** Whether a machine already runs `targetVersion` or a newer one; false when either is unknown. */
+export function serverReachedVersion(
+  serverVersion: string | null | undefined,
+  targetVersion: string,
+): boolean {
+  if (!serverVersion || !parseSemver(serverVersion) || !parseSemver(targetVersion)) return false;
+  return compareSemverVersions(serverVersion, targetVersion) >= 0;
+}
 
 /** The question before an update that would cut off folder copies on that machine. */
 export function describeServerUpdateCopies(serverLabel: string, copies: number): string {
@@ -154,7 +164,7 @@ function useServerUpdate() {
   // there would be cut off (running work or a folder copy). It never forces;
   // Cancel or closing the notice ends the wait at once.
   const waitThenUpdate = async (target: ServerUpdateTarget, failureTitle: string) => {
-    const { environmentId, serverLabel } = target;
+    const { environmentId, serverLabel, targetVersion } = target;
     if (quietWaits.has(environmentId)) return;
     const wait = { cancelled: false };
     quietWaits.set(environmentId, wait);
@@ -179,9 +189,23 @@ function useServerUpdate() {
     try {
       const signedOut = () =>
         !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)));
-      for (;;) {
-        await new Promise((resolve) => setTimeout(resolve, REMOTE_QUIET_CHECK_MS));
+      // The machine may update on its own while this waits (its own install
+      // waits for quiet too), or from another window. Installing the pinned
+      // version then would restart it again, or move it back.
+      const alreadyThere = () =>
+        serverReachedVersion(
+          appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.environment
+            ?.serverVersion,
+          targetVersion,
+        );
+      for (let first = true; ; first = false) {
+        if (!first) await new Promise((resolve) => setTimeout(resolve, REMOTE_QUIET_CHECK_MS));
         if (wait.cancelled) return;
+        if (alreadyThere()) {
+          end();
+          toastManager.close(toastId);
+          return;
+        }
         // Access ended while it waited: say so now, not never.
         if (signedOut()) break;
         const checked = await lookAt(environmentId);
@@ -195,6 +219,7 @@ function useServerUpdate() {
       if (wait.cancelled) return;
       end();
       toastManager.close(toastId);
+      if (alreadyThere()) return;
       if (signedOut()) {
         toastManager.add({
           type: "error",

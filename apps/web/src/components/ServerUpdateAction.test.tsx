@@ -18,6 +18,9 @@ const testState = vi.hoisted(() => ({
   continueThreadsAfterServerUpdate: false,
   session: null as AsyncResult.AsyncResult<AuthSessionState, Error> | null,
   sessionAtom: Symbol("session"),
+  configAtom: Symbol("config"),
+  /** The machine's server config, for the version it runs now. */
+  config: null as { environment: { serverVersion: string } } | null,
 }));
 
 vi.mock("~/hooks/useCopyToClipboard", () => ({
@@ -36,7 +39,9 @@ vi.mock("~/hooks/useSettings", () => ({
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => testState.session }));
 vi.mock("~/rpc/atomRegistry", () => ({
-  appAtomRegistry: { get: () => testState.session },
+  appAtomRegistry: {
+    get: (atom: unknown) => (atom === testState.configAtom ? testState.config : testState.session),
+  },
 }));
 vi.mock("~/state/session", () => ({
   environmentSession: { sessionStateAtom: () => testState.sessionAtom },
@@ -45,6 +50,7 @@ vi.mock("~/state/server", () => ({
   serverEnvironment: {
     updateServer: Symbol("updateServer"),
     prepareServiceUpdate: testState.prepareCommand,
+    configValueAtom: () => testState.configAtom,
   },
 }));
 vi.mock("~/state/use-atom-command", () => ({
@@ -65,6 +71,7 @@ import {
   ServerUpdateAction,
   ServerUpdateProgress,
   ServerUpdatesAction,
+  serverReachedVersion,
   type ServerUpdateTarget,
 } from "./ServerUpdateAction";
 
@@ -632,11 +639,13 @@ describe("ServerUpdateAction while work runs there", () => {
     testState.toast.mockReset().mockReturnValue("quiet-toast");
     testState.closeToast.mockReset();
     testState.session = AsyncResult.success(currentSession);
+    testState.config = null;
     resetConfirmDialogForTests();
     registerConfirmDialogHost();
   });
   afterEach(() => {
     resetConfirmDialogForTests();
+    testState.config = null;
     vi.useRealTimers();
   });
 
@@ -713,5 +722,38 @@ describe("ServerUpdateAction while work runs there", () => {
     testState.prepare.mockResolvedValue(AsyncResult.success({ idle: true, blockers: [] }));
     await vi.advanceTimersByTimeAsync(60_000);
     expect(testState.updateServer).not.toHaveBeenCalled();
+  });
+
+  it("updates at once when the machine is already quiet as the wait starts", async () => {
+    await press();
+    testState.prepare.mockResolvedValue(AsyncResult.success({ idle: true, blockers: [] }));
+    respondToConfirmDialog(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31" },
+    });
+  });
+
+  it("ends the wait without installing again once the machine runs that version", async () => {
+    await press();
+    respondToConfirmDialog(true);
+    await vi.advanceTimersByTimeAsync(0);
+    // The machine updated itself while the wait ran, then went quiet.
+    testState.config = { environment: { serverVersion: "0.0.31" } };
+    testState.prepare.mockResolvedValue(AsyncResult.success({ idle: true, blockers: [] }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(testState.closeToast).toHaveBeenCalledWith("quiet-toast");
+    expect(testState.updateServer).not.toHaveBeenCalled();
+  });
+});
+
+describe("serverReachedVersion", () => {
+  it("is true only for the target version or a newer one", () => {
+    expect(serverReachedVersion("0.0.31", "0.0.31")).toBe(true);
+    expect(serverReachedVersion("0.1.0", "0.0.31")).toBe(true);
+    expect(serverReachedVersion("0.0.30", "0.0.31")).toBe(false);
+    expect(serverReachedVersion(null, "0.0.31")).toBe(false);
+    expect(serverReachedVersion("dev", "0.0.31")).toBe(false);
   });
 });
