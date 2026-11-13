@@ -4660,4 +4660,46 @@ export const zh: PhraseCatalog = {
   Connecting: "正在连接",
   Disconnected: "已断开",
   "Signed out": "已退出登录",
+  "Get {tool}": "获取 {tool}",
+  "Recommended. SpecWeave runs on Node.js, and many agent tools need it.":
+    "推荐。SpecWeave 运行在 Node.js 上，许多智能体工具也需要它。",
+  "Publishes projects to GitHub and opens pull requests from the app.":
+    "将项目发布到 GitHub，并从应用中创建拉取请求。",
+  "Installed. Sign in to GitHub with gh auth login when you want to publish.":
+    "已安装。需要发布时，请用 gh auth login 登录 GitHub。",
+  "Installing. Its log is below.": "正在安装。日志在下方。",
+  "The install ended with an error. Its log is below.": "安装出错结束。日志在下方。",
+  "Not installed. One click installs it with winget, and Windows asks for your permission.":
+    "未安装。点击一次即可用 winget 安装，Windows 会请求你的许可。",
+  "Not installed. Download Git for Windows, install it, then press Check again.":
+    "未安装。请下载并安装 Git for Windows，然后点击“重新检查”。",
+  "Not installed. Run this command in a terminal, then press Check again.":
+    "未安装。请在终端中运行此命令，然后点击“重新检查”。",
+  "Not installed. Install Git with your system's package manager, then press Check again.":
+    "未安装。请用系统的包管理器安装 Git，然后点击“重新检查”。",
+  "Not installed. One click installs Node.js 22 in SpecWithCode's own folder, with no admin password. A Node.js you install yourself later still comes first.":
+    "未安装。点击一次即可将 Node.js 22 安装到 SpecWithCode 自己的文件夹中，无需管理员密码。之后你自己安装的 Node.js 仍会优先使用。",
+  "Not installed. One click installs it in SpecWithCode's own folder, with no admin password.":
+    "未安装。点击一次即可将它安装到 SpecWithCode 自己的文件夹中，无需管理员密码。",
+  "Not installed. Get it from its own site, then press Check again.":
+    "未安装。请从其官网获取，然后点击“重新检查”。",
+  "Install {tool}": "安装 {tool}",
+  "Git, Node.js and GitHub CLI are ready.": "Git、Node.js 和 GitHub CLI 已就绪。",
+  "Git and Node.js are ready.": "Git 和 Node.js 已就绪。",
+  "Optional, for publishing to GitHub: GitHub CLI": "可选，用于发布到 GitHub：GitHub CLI",
+  "Install log": "安装日志",
+  "Starting…": "正在启动…",
+  "Install {tool} on {machine}": "在 {machine} 上安装 {tool}",
+  "SpecWeave runs on Node.js. Once it is installed, set SpecWeave up again.":
+    "SpecWeave 运行在 Node.js 上。安装完成后，请重新设置 SpecWeave。",
+  "A new project is a Git repository. Once Git is installed, create it again.":
+    "新项目是一个 Git 仓库。安装 Git 后，请重新创建它。",
+  "Publishing to GitHub uses the GitHub CLI.": "发布到 GitHub 需要使用 GitHub CLI。",
+  "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
+    "这台电脑运行的是无法安装它的旧版 SpecWithCode。请在那台电脑上更新 SpecWithCode，或自行安装。",
+  "{tool} is already on this machine.": "{tool} 已在这台电脑上。",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "未安装。在那台 Mac 的终端中运行此命令，然后点按“重新检查”。",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "未安装。请从其官网获取，或请能维护这台机器的人从这里安装。",
 };

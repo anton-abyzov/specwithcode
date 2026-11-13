@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import * as ServerConfig from "../config.ts";
 import { vskillSearchDirs } from "../fleet/fleetSkills.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -45,7 +46,13 @@ export const specweaveUnavailableDetail = (platform: NodeJS.Platform): string =>
 
 export type SpecweaveSetupResult =
   | { readonly ok: true; readonly alreadySetUp: boolean }
-  | { readonly ok: false; readonly reason: "unavailable" | "failed"; readonly detail: string };
+  | {
+      readonly ok: false;
+      readonly reason: "unavailable" | "failed";
+      readonly detail: string;
+      /** Node.js is missing, which the app can install from first-run setup's machine basics. */
+      readonly needs?: "node";
+    };
 
 export class SpecweaveSetup extends Context.Service<
   SpecweaveSetup,
@@ -86,11 +93,16 @@ const make = Effect.gen(function* () {
     xdgDataHome: yield* optional("XDG_DATA_HOME"),
   };
   const usualDirs = vskillSearchDirs({ home, pathEnv, platform, appData });
+  // Where first-run setup installs Node.js; absent where the server has no config (tests).
+  const studioHome = Option.getOrUndefined(
+    Option.map(yield* Effect.serviceOption(ServerConfig.ServerConfig), (config) => config.baseDir),
+  );
   // Read on each request: Node can be installed or switched while the app runs.
   const managerDirsNow = nodeToolDirs({
     home,
     platform,
     execPath: process.execPath,
+    studioHome,
     ...managerEnv,
   }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
   const findIn = (dirs: ReadonlyArray<string>, name: string) =>
@@ -183,10 +195,13 @@ const make = Effect.gen(function* () {
     const npx = specweave === null ? yield* findIn(searchDirs, "npx") : null;
     const command = specweave ?? npx;
     if (command === null) {
+      // Node.js without npm (a distribution's nodejs package) is not a missing Node.js.
+      const node = yield* findIn(searchDirs, "node");
       return {
         ok: false,
         reason: "unavailable",
         detail: specweaveUnavailableDetail(platform),
+        ...(node === null ? { needs: "node" as const } : {}),
       } as const;
     }
     const args =

@@ -136,6 +136,7 @@ import {
 } from "./coordinatorContext.ts";
 import { makeUnmergedWorkers } from "./unmergedWorkers.ts";
 import * as ProvisionRpc from "../provision/rpc.ts";
+import * as MachineToolsRpc from "../machineTools/rpc.ts";
 import * as GitHubSignInRpc from "../sourceControl/gitHubSignInRpc.ts";
 import {
   DestinationCopies,
@@ -1564,11 +1565,12 @@ const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrument
 );
 
 /**
- * Provisioning and GitHub sign-in ride along here, so ws.ts registers them without a new
+ * Provisioning, machine basics and GitHub sign-in ride along here, so ws.ts registers them without a new
  * import (TS2589).
  */
 export const layerRpcHandlers = Layer.mergeAll(
   layerFolderCopyRpcHandlers,
   ProvisionRpc.layerRpcHandlers,
+  MachineToolsRpc.layerRpcHandlers,
   GitHubSignInRpc.layerRpcHandlers,
 );

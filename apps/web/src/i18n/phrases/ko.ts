@@ -4794,4 +4794,47 @@ export const ko: PhraseCatalog = {
   Connecting: "연결 중",
   Disconnected: "연결 끊김",
   "Signed out": "로그아웃됨",
+  "Get {tool}": "{tool} 받기",
+  "Recommended. SpecWeave runs on Node.js, and many agent tools need it.":
+    "권장. SpecWeave는 Node.js에서 실행되며, 많은 에이전트 도구에 필요합니다.",
+  "Publishes projects to GitHub and opens pull requests from the app.":
+    "앱에서 프로젝트를 GitHub에 게시하고 풀 리퀘스트를 엽니다.",
+  "Installed. Sign in to GitHub with gh auth login when you want to publish.":
+    "설치됨. 게시하려면 gh auth login으로 GitHub에 로그인하세요.",
+  "Installing. Its log is below.": "설치 중입니다. 로그는 아래에 있습니다.",
+  "The install ended with an error. Its log is below.":
+    "설치가 오류로 끝났습니다. 로그는 아래에 있습니다.",
+  "Not installed. One click installs it with winget, and Windows asks for your permission.":
+    "설치 안 됨. 한 번 클릭하면 winget으로 설치되며, Windows가 권한을 요청합니다.",
+  "Not installed. Download Git for Windows, install it, then press Check again.":
+    '설치 안 됨. Git for Windows를 다운로드해 설치한 다음 "다시 확인"을 누르세요.',
+  "Not installed. Run this command in a terminal, then press Check again.":
+    '설치 안 됨. 터미널에서 이 명령을 실행한 다음 "다시 확인"을 누르세요.',
+  "Not installed. Install Git with your system's package manager, then press Check again.":
+    '설치 안 됨. 시스템의 패키지 관리자로 Git을 설치한 다음 "다시 확인"을 누르세요.',
+  "Not installed. One click installs Node.js 22 in SpecWithCode's own folder, with no admin password. A Node.js you install yourself later still comes first.":
+    "설치 안 됨. 한 번 클릭하면 관리자 암호 없이 SpecWithCode 전용 폴더에 Node.js 22가 설치됩니다. 나중에 직접 설치한 Node.js가 있으면 그것이 먼저 사용됩니다.",
+  "Not installed. One click installs it in SpecWithCode's own folder, with no admin password.":
+    "설치 안 됨. 한 번 클릭하면 관리자 암호 없이 SpecWithCode 전용 폴더에 설치됩니다.",
+  "Not installed. Get it from its own site, then press Check again.":
+    '설치 안 됨. 공식 사이트에서 받은 다음 "다시 확인"을 누르세요.',
+  "Install {tool}": "{tool} 설치",
+  "Git, Node.js and GitHub CLI are ready.": "Git, Node.js, GitHub CLI가 준비되었습니다.",
+  "Git and Node.js are ready.": "Git과 Node.js가 준비되었습니다.",
+  "Optional, for publishing to GitHub: GitHub CLI": "선택 사항, GitHub에 게시하려면: GitHub CLI",
+  "Install log": "설치 로그",
+  "Starting…": "시작하는 중…",
+  "Install {tool} on {machine}": "{machine}에 {tool} 설치",
+  "SpecWeave runs on Node.js. Once it is installed, set SpecWeave up again.":
+    "SpecWeave는 Node.js에서 실행됩니다. 설치가 끝나면 SpecWeave를 다시 설정하세요.",
+  "A new project is a Git repository. Once Git is installed, create it again.":
+    "새 프로젝트는 Git 저장소입니다. Git 설치가 끝나면 다시 만드세요.",
+  "Publishing to GitHub uses the GitHub CLI.": "GitHub에 게시할 때는 GitHub CLI를 사용합니다.",
+  "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
+    "이 컴퓨터는 이를 설치할 수 없는 이전 버전의 SpecWithCode를 실행 중입니다. 그곳의 SpecWithCode를 업데이트하거나 직접 설치하세요.",
+  "{tool} is already on this machine.": "{tool}이(가) 이미 이 컴퓨터에 있습니다.",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "설치되어 있지 않습니다. 해당 Mac의 터미널에서 이 명령을 실행한 다음 다시 확인을 누르세요.",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
 };

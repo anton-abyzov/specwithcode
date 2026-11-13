@@ -1,6 +1,7 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
   PROVISION_RPC_METHODS,
+  MACHINE_TOOLS_RPC_METHODS,
   WS_METHODS,
   type WsRpcGroup,
 } from "@specweave-studio/contracts";
@@ -85,6 +86,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.machineHandoffReadiness]: "projects",
   [PROVISION_RPC_METHODS.provisionPreview]: "server",
   [PROVISION_RPC_METHODS.provisionRun]: "server",
+  [MACHINE_TOOLS_RPC_METHODS.machineToolsCheck]: "server",
+  [MACHINE_TOOLS_RPC_METHODS.machineToolsInstall]: "server",
   [WS_METHODS.gitHubSignInStart]: "source-control",
   [WS_METHODS.gitHubSignInStatus]: "source-control",
   [WS_METHODS.gitHubSignInCancel]: "source-control",

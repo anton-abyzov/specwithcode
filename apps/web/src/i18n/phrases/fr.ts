@@ -4890,4 +4890,48 @@ export const fr: PhraseCatalog = {
   Connecting: "Connexion",
   Disconnected: "Déconnecté",
   "Signed out": "Déconnecté",
+  "Get {tool}": "Obtenir {tool}",
+  "Recommended. SpecWeave runs on Node.js, and many agent tools need it.":
+    "Recommandé. SpecWeave fonctionne avec Node.js, et de nombreux outils d'agents en ont besoin.",
+  "Publishes projects to GitHub and opens pull requests from the app.":
+    "Publie les projets sur GitHub et ouvre des pull requests depuis l'app.",
+  "Installed. Sign in to GitHub with gh auth login when you want to publish.":
+    "Installé. Connectez-vous à GitHub avec gh auth login quand vous voulez publier.",
+  "Installing. Its log is below.": "Installation en cours. Son journal est ci-dessous.",
+  "The install ended with an error. Its log is below.":
+    "L'installation s'est terminée par une erreur. Son journal est ci-dessous.",
+  "Not installed. One click installs it with winget, and Windows asks for your permission.":
+    "Non installé. Un clic l'installe avec winget, et Windows vous demande votre autorisation.",
+  "Not installed. Download Git for Windows, install it, then press Check again.":
+    "Non installé. Téléchargez Git for Windows, installez-le, puis appuyez sur Vérifier à nouveau.",
+  "Not installed. Run this command in a terminal, then press Check again.":
+    "Non installé. Lancez cette commande dans un terminal, puis appuyez sur Vérifier à nouveau.",
+  "Not installed. Install Git with your system's package manager, then press Check again.":
+    "Non installé. Installez Git avec le gestionnaire de paquets de votre système, puis appuyez sur Vérifier à nouveau.",
+  "Not installed. One click installs Node.js 22 in SpecWithCode's own folder, with no admin password. A Node.js you install yourself later still comes first.":
+    "Non installé. Un clic installe Node.js 22 dans le dossier propre à SpecWithCode, sans mot de passe administrateur. Un Node.js que vous installez vous-même plus tard reste prioritaire.",
+  "Not installed. One click installs it in SpecWithCode's own folder, with no admin password.":
+    "Non installé. Un clic l'installe dans le dossier propre à SpecWithCode, sans mot de passe administrateur.",
+  "Not installed. Get it from its own site, then press Check again.":
+    "Non installé. Obtenez-le sur son site officiel, puis appuyez sur Vérifier à nouveau.",
+  "Install {tool}": "Installer {tool}",
+  "Git, Node.js and GitHub CLI are ready.": "Git, Node.js et GitHub CLI sont prêts.",
+  "Git and Node.js are ready.": "Git et Node.js sont prêts.",
+  "Optional, for publishing to GitHub: GitHub CLI":
+    "Facultatif, pour publier sur GitHub : GitHub CLI",
+  "Install log": "Journal d'installation",
+  "Starting…": "Démarrage…",
+  "Install {tool} on {machine}": "Installer {tool} sur {machine}",
+  "SpecWeave runs on Node.js. Once it is installed, set SpecWeave up again.":
+    "SpecWeave fonctionne avec Node.js. Une fois Node.js installé, configurez à nouveau SpecWeave.",
+  "A new project is a Git repository. Once Git is installed, create it again.":
+    "Un nouveau projet est un dépôt Git. Une fois Git installé, créez-le à nouveau.",
+  "Publishing to GitHub uses the GitHub CLI.": "La publication sur GitHub utilise GitHub CLI.",
+  "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
+    "Cette machine utilise une ancienne version de SpecWithCode qui ne peut pas l'installer. Mettez SpecWithCode à jour sur cette machine, ou installez-le vous-même.",
+  "{tool} is already on this machine.": "{tool} est déjà sur cette machine.",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "Non installé. Lance cette commande dans un terminal sur ce Mac, puis appuie sur Vérifier à nouveau.",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "Non installé. Récupère-le sur son propre site, ou demande à une personne qui peut gérer cette machine de l'installer d'ici.",
 };

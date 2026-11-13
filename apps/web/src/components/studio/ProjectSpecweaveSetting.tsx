@@ -3,6 +3,7 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { requestMachineToolInstall } from "../machineTools/machineToolInstallRequest";
 import { SPECWEAVE_SETUP_DESCRIPTION } from "./ProjectCreation";
 
 /**
@@ -27,6 +28,8 @@ export function ProjectSpecweaveSetting({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The machine has no Node.js: the install is offered right under the reason.
+  const [needsNode, setNeedsNode] = useState(false);
   const setUp = useAtomCommand(projectWorkspace.specweaveSetUp);
   if (specweave === undefined) return null;
 
@@ -34,6 +37,7 @@ export function ProjectSpecweaveSetting({
     if (disabled || busy) return;
     setBusy(true);
     setError(null);
+    setNeedsNode(false);
     const result = await setUp({
       environmentId: project.environmentId,
       input: { projectId: project.id },
@@ -42,6 +46,9 @@ export function ProjectSpecweaveSetting({
     if (result._tag === "Failure") {
       const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : "SpecWeave could not be set up.");
+      setNeedsNode(
+        typeof cause === "object" && cause !== null && "needs" in cause && cause.needs === "node",
+      );
       return;
     }
     setConfirming(false);
@@ -64,8 +71,25 @@ export function ProjectSpecweaveSetting({
         ) : null}
         {error ? (
           <p role="alert" className="project-muted text-destructive-foreground">
-            {error}
+            {needsNode
+              ? "SpecWeave needs Node.js, which this machine does not have. Install it here, then run specweave init again."
+              : error}
           </p>
+        ) : null}
+        {needsNode ? (
+          <button
+            type="button"
+            className="project-control"
+            onClick={() =>
+              requestMachineToolInstall({
+                environmentId: project.environmentId,
+                tool: "node",
+                machineLabel: null,
+              })
+            }
+          >
+            Install Node.js
+          </button>
         ) : null}
       </div>
       {specweave ? null : confirming ? (

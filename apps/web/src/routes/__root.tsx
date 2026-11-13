@@ -28,6 +28,7 @@ import { HandoffDesktopBridge } from "../components/handoff/HandoffDesktopBridge
 import { HandOffMachineDialogHost } from "../components/handoff/HandOffMachineDialog";
 import { HandOffThreadDialogHost } from "../components/handoff/HandOffThreadDialog";
 import { AwayDialogHost } from "../components/away/AwayDialog";
+import { MachineToolInstallDialogHost } from "../components/machineTools/MachineToolInstallDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -283,6 +284,7 @@ function RootRouteView() {
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
           <AwayDialogHost />
+          <MachineToolInstallDialogHost />
           <UsageSheetHost />
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />

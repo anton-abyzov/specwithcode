@@ -6,6 +6,7 @@ import {
   type ClientGuardedRpcTag,
   ORCHESTRATION_V2_WS_METHODS,
   PROVISION_RPC_METHODS,
+  MACHINE_TOOLS_RPC_METHODS,
   WS_METHODS,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
@@ -81,6 +82,7 @@ export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress
   | typeof PROVISION_RPC_METHODS.provisionRun
+  | typeof MACHINE_TOOLS_RPC_METHODS.machineToolsInstall
   | typeof WS_METHODS.gitRunStackedAction;
 
 export type EnvironmentStreamRpcTag =

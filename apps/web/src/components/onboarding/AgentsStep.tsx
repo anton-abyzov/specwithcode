@@ -8,6 +8,7 @@ import type {
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
   AuthOrchestrationReadScope,
+  AuthEnvironmentMaintainScope,
   AuthProvidersManageScope,
   AuthTerminalOperateScope,
   defaultInstanceIdForDriver,
@@ -65,6 +66,7 @@ import { cn } from "../../lib/utils";
 import { useT, useTx } from "../../i18n";
 import { AgentCommand, AgentRow, AgentRowStatus } from "./AgentRow";
 import { FoundAgentRow, GitRow, InstallAgentRow, ProviderAgentRow } from "./AgentRows";
+import { MachineBasics } from "./MachineBasics";
 import { StepShell, useHeldFor, WizardStepFooter } from "./WizardFrame";
 
 const AddProviderInstanceDialog = lazy(() =>
@@ -239,6 +241,7 @@ function ConnectedAgentsStep({
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const canSearch = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  const canMaintain = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const { search, find } = useAgentSearch(environmentId, canSearch);
   const [rechecking, setRechecking] = useState(false);
   // The agent whose install last ended with an error, for a line on its row.
@@ -644,24 +647,32 @@ function ConnectedAgentsStep({
           "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.",
         )}
       </p>
-      {gitMissing || (gitWasMissing && git === "present") ? (
-        <div className="mt-3">
-          <GitRow
-            state={gitMissing ? (gitRequested ? "requested" : "missing") : "present"}
-            os={os}
-            disabled={panelBlocked}
-            onInstall={() => {
-              setGitRequested(true);
-              openPanel({
-                agent: "git",
-                agentName: "Git",
-                command: DEVELOPER_TOOLS_INSTALL_COMMAND,
-                purpose: "tools",
-              });
-            }}
-          />
-        </div>
-      ) : null}
+      <MachineBasics
+        environmentId={environmentId}
+        os={os}
+        readOnly={!canMaintain}
+        // A machine on an older SpecWithCode answers only whether it has Git.
+        fallback={
+          gitMissing || (gitWasMissing && git === "present") ? (
+            <div className="mt-3">
+              <GitRow
+                state={gitMissing ? (gitRequested ? "requested" : "missing") : "present"}
+                os={os}
+                disabled={panelBlocked}
+                onInstall={() => {
+                  setGitRequested(true);
+                  openPanel({
+                    agent: "git",
+                    agentName: "Git",
+                    command: DEVELOPER_TOOLS_INSTALL_COMMAND,
+                    purpose: "tools",
+                  });
+                }}
+              />
+            </div>
+          ) : null
+        }
+      />
       {addingAccount ? (
         <AddManagedCodexAccountDialog
           environmentId={environmentId}

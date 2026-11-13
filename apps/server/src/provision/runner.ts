@@ -101,7 +101,7 @@ export async function runProvision(
     );
   let release: (() => Promise<void>) | null = null;
   if (!options.dryRun) {
-    release = await acquireLock(host, paths.lockPath);
+    release = await acquireProvisionLock(host, paths.lockPath);
     if (!release)
       throw new ProvisionRunError(
         "busy",
@@ -456,7 +456,8 @@ async function readState(host: ProvisionHost, path: string): Promise<RunState | 
   }
 }
 
-async function acquireLock(
+/** Held by one provisioning run, or one machine-tools install, at a time. */
+export async function acquireProvisionLock(
   host: ProvisionHost,
   path: string,
 ): Promise<(() => Promise<void>) | null> {

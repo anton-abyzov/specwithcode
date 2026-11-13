@@ -7,6 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { NODE_VERSION } from "../provision/manifest.ts";
 import { nodeToolDirs, orderNvmVersions, pickNvmVersion } from "./nodeToolDirs.ts";
 
 const tempHome = () => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "node-tool-dirs-"));
@@ -40,6 +41,34 @@ describe("orderNvmVersions", () => {
 });
 
 describe("nodeToolDirs", () => {
+  it.live("searches the Node.js first-run setup installed, after the person's own", () =>
+    Effect.gen(function* () {
+      const home = yield* Effect.promise(tempHome);
+      const studioHome = NodePath.join(home, ".specwithcode");
+      const execPath = NodePath.join(home, "service", "node");
+      const dirs = yield* nodeToolDirs({
+        home,
+        platform: "linux",
+        arch: "x64",
+        glibc: true,
+        execPath,
+        studioHome,
+      });
+      const managed = NodePath.join(
+        studioHome,
+        "runtime",
+        "node",
+        `node-v${NODE_VERSION}-linux-x64`,
+        "bin",
+      );
+      expect(dirs).toContain(managed);
+      expect(dirs.indexOf(managed)).toBeGreaterThan(
+        dirs.indexOf(NodePath.join(home, ".volta", "bin")),
+      );
+      expect(dirs.at(-1)).toBe(NodePath.join(home, "service"));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live(
     "lists fnm, nvm, volta and npm folders under the home, ahead of the Node binary's own",
     () =>
