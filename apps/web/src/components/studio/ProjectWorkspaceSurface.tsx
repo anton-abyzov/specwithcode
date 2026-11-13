@@ -391,7 +391,7 @@ export function ProjectWorkspaceSurface({
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
   const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
-  // The machine menu's "Add to…" and "Move to…": the handoff dialog opens on that step.
+  // The machine menu's "Copy to another machine…": the dialog opens on the copy.
   const [handoffRequest, setHandoffRequest] = useState<MachineHandoffOpenRequest | null>(null);
   const requestHandoff = useCallback(
     (mode: MachineHandoffOpenRequest["mode"], target?: string) =>
@@ -2041,78 +2041,68 @@ export function ProjectWorkspaceSurface({
                       onMove={
                         mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
                       }
-                      // Sync fills in what the other machine's own copy lacks; nothing moves.
-                      onSync={
-                        mainCoordinatorId && canOperate && !machinePrivate
-                          ? (key) => requestHandoff("sync", key)
-                          : null
-                      }
-                      onAdd={canOperate && !machinePrivate ? () => requestHandoff("add") : null}
-                      onMoveElsewhere={
-                        mainCoordinatorId && canOperate && !machinePrivate
-                          ? () => requestHandoff("move")
-                          : null
-                      }
+                      // One Copy to another machine: its dialog asks where the coordinator runs.
+                      onCopy={canOperate && !machinePrivate ? () => requestHandoff("copy") : null}
                     />
                     {/* After the model, at the row's end: voice and the run state are icons,
                         so the machine and the model keep the room. */}
                     <span className="sws-composer-aside" data-composer-aside="">
-                    <ComposerVoiceMenu
-                      dictation={dictation}
-                      call={voiceCall}
-                      callDisabled={Boolean(blocked) || (!model && !coordinatorId)}
-                      shortcut={shortcutLabelForCommand(keybindings, "composer.dictation.toggle")}
-                    />
-                    {coordinator && coordinatorTone ? (
-                      <Tip
-                        label={
-                          chipOpens === "answer"
-                            ? machinePrivate
-                              ? "Percy asked you a question. Answer it in the message box"
-                              : "The coordinator asked you a question. Answer it in the message box"
-                            : attention && chipOpens === "coordinator-review"
-                              ? `${say(attention.message)} Review here`
-                              : machinePrivate
-                                ? `${THREAD_TONE_LABELS[coordinatorTone]}. Percy's status: show its latest message`
-                                : `${THREAD_TONE_LABELS[coordinatorTone]}. Coordinator status: show its latest message`
-                        }
-                      >
-                        <button
-                          type="button"
-                          className="sws-state"
-                          data-tone={coordinatorTone}
-                          data-opens={chipOpens}
-                          onClick={
+                      <ComposerVoiceMenu
+                        dictation={dictation}
+                        call={voiceCall}
+                        callDisabled={Boolean(blocked) || (!model && !coordinatorId)}
+                        shortcut={shortcutLabelForCommand(keybindings, "composer.dictation.toggle")}
+                      />
+                      {coordinator && coordinatorTone ? (
+                        <Tip
+                          label={
                             chipOpens === "answer"
-                              ? () => void focusCoordinatorPrompt()
-                              : chipOpens === "coordinator-review"
-                                ? openCoordinatorPage
-                                : openCoordinator
+                              ? machinePrivate
+                                ? "Percy asked you a question. Answer it in the message box"
+                                : "The coordinator asked you a question. Answer it in the message box"
+                              : attention && chipOpens === "coordinator-review"
+                                ? `${say(attention.message)} Review here`
+                                : machinePrivate
+                                  ? `${THREAD_TONE_LABELS[coordinatorTone]}. Percy's status: show its latest message`
+                                  : `${THREAD_TONE_LABELS[coordinatorTone]}. Coordinator status: show its latest message`
                           }
                         >
-                          <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
-                          {/* Words only when it needs the person; otherwise the dot and its
-                              tooltip say it, and the composer's line keeps its room. */}
-                          <span
-                            className={STATE_WORDS.has(coordinatorTone) ? undefined : "sr-only"}
-                            data-state-label=""
+                          <button
+                            type="button"
+                            className="sws-state"
+                            data-tone={coordinatorTone}
+                            data-opens={chipOpens}
+                            onClick={
+                              chipOpens === "answer"
+                                ? () => void focusCoordinatorPrompt()
+                                : chipOpens === "coordinator-review"
+                                  ? openCoordinatorPage
+                                  : openCoordinator
+                            }
                           >
-                            {THREAD_TONE_LABELS[coordinatorTone]}
-                          </span>
-                          <span className="sr-only">
-                            {chipOpens === "answer"
-                              ? machinePrivate
-                                ? ", answer Percy's question in the message box"
-                                : ", answer the coordinator's question in the message box"
-                              : attention && chipOpens === "coordinator-review"
-                                ? `, ${attention.action.toLowerCase()} here`
-                                : machinePrivate
-                                  ? ", show Percy's latest message"
-                                  : ", show the coordinator's latest message"}
-                          </span>
-                        </button>
-                      </Tip>
-                    ) : null}
+                            <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
+                            {/* Words only when it needs the person; otherwise the dot and its
+                              tooltip say it, and the composer's line keeps its room. */}
+                            <span
+                              className={STATE_WORDS.has(coordinatorTone) ? undefined : "sr-only"}
+                              data-state-label=""
+                            >
+                              {THREAD_TONE_LABELS[coordinatorTone]}
+                            </span>
+                            <span className="sr-only">
+                              {chipOpens === "answer"
+                                ? machinePrivate
+                                  ? ", answer Percy's question in the message box"
+                                  : ", answer the coordinator's question in the message box"
+                                : attention && chipOpens === "coordinator-review"
+                                  ? `, ${attention.action.toLowerCase()} here`
+                                  : machinePrivate
+                                    ? ", show Percy's latest message"
+                                    : ", show the coordinator's latest message"}
+                            </span>
+                          </button>
+                        </Tip>
+                      ) : null}
                     </span>
                     {machinePrivate ? null : (
                       <ProjectMachineHandoff

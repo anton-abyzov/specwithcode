@@ -254,9 +254,9 @@ it("reads a cancelled pointer with the person's choices", () => {
 });
 
 const moveRadio = () =>
-  [...container.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-    (node) => node.textContent === "Hand off and continue there",
-  )!;
+  [
+    ...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
+  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
 const checkbox = (selector: string) =>
   container.querySelector<HTMLElement>(`${selector} [data-slot="checkbox"]`)!;
 const folderValue = () =>
@@ -287,7 +287,7 @@ it("keeps machine, folder, mode and chosen classes after Stop copy while choosin
   await mount();
   await act(async () => moveRadio().click());
   await act(async () => checkbox('[data-slot="copy-choose-first"]').click());
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   expect(stage()).toBe("select");
   await act(async () => checkbox('[data-class="untracked"]').click());
   // A move says Stop handoff.
@@ -295,9 +295,9 @@ it("keeps machine, folder, mode and chosen classes after Stop copy while choosin
   expect(names()).toContain("copyRelease");
   expect(pointerNow()).toBeNull();
   expect(stage()).toBe("setup");
-  expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
+  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
   expect(folderValue()).toBe("/home/anton/Projects/project");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   expect(stage()).toBe("select");
   expect(checkbox('[data-class="untracked"]').getAttribute("aria-checked")).toBe("false");
   expect(pointerNow()).toMatchObject({ mode: "copy-and-move" });

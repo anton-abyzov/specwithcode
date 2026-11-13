@@ -1,4 +1,4 @@
-import { ChevronDownIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import {
   createContext,
   useContext,
@@ -13,14 +13,13 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Radio, RadioGroup } from "../ui/radio-group";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 /** What the person wants: the project continues there, or only its files go there. */
 export type MoveIntent = "move" | "copy";
 
 /**
  * What the project dialog shares with the copy flow it hosts: the file method lives in the
- * dialog, but on screen 1 it sits under the copy flow's More options. Absent outside the dialog.
+ * dialog, but on screen 1 it sits under the copy flow's Details. Absent outside the dialog.
  */
 export interface ProjectMoveDialogContext {
   readonly method: HandoffFolderMethod;
@@ -43,41 +42,119 @@ export function useProjectMoveDialog() {
   return useContext(ProjectMoveDialog);
 }
 
-/** The segmented choice at the top of screen 1. */
-export function MoveIntentToggle({
+/**
+ * "Where should the coordinator run?": the one difference between copying a project and
+ * handing it over. Keep runs `copy-only` and links the copy as workers; Move runs
+ * `copy-and-move`. A sync into a machine's own copy never moves it, so it shows nothing.
+ */
+export function CoordinatorChoice({
   value,
   onChange,
   canMove,
+  sourceLabel,
+  targetLabel,
   disabled = false,
 }: {
   readonly value: MoveIntent;
   readonly onChange: (intent: MoveIntent) => void;
   readonly canMove: boolean;
+  readonly sourceLabel: string;
+  readonly targetLabel: string | null;
   readonly disabled?: boolean;
 }) {
-  // A sync never hands off: the other machine already has this project and its coordinator.
   if (useProjectMoveDialog()?.sync) return null;
+  const there = targetLabel ?? "the other machine";
+  const options: ReadonlyArray<{
+    readonly value: MoveIntent;
+    readonly label: string;
+    readonly detail: string;
+    readonly off: boolean;
+  }> = [
+    {
+      value: "copy",
+      label: `Keep on ${sourceLabel}`,
+      detail: `${there} runs workers. You can move it later.`,
+      off: false,
+    },
+    {
+      value: "move",
+      label: `Move to ${there}`,
+      detail: `Its conversation and threads continue on ${there}; ${sourceLabel} runs workers.`,
+      off: !canMove,
+    },
+  ];
   return (
-    <ToggleGroup
-      aria-label="What to do"
-      className="w-full *:flex-1"
-      data-slot="handoff-intent"
-      value={[value]}
-      disabled={disabled}
-      onValueChange={(next) => {
-        const chosen = next[0];
-        if ((chosen === "move" && canMove) || chosen === "copy") onChange(chosen);
-      }}
-    >
-      <Toggle value="move" disabled={!canMove}>
-        Hand off and continue there
-      </Toggle>
-      <Toggle value="copy">Copy local files</Toggle>
-    </ToggleGroup>
+    <fieldset disabled={disabled} className="min-w-0" data-slot="handoff-coordinator">
+      <legend className="mb-2 text-sm font-medium">Where should the coordinator run?</legend>
+      <RadioGroup
+        value={value}
+        onValueChange={(next) => {
+          if (next === "copy" || (next === "move" && canMove)) onChange(next);
+        }}
+        disabled={disabled}
+        aria-label="Where should the coordinator run?"
+      >
+        {options.map((item) => (
+          <label
+            key={item.value}
+            className={`flex min-w-0 items-start gap-3 rounded-lg border p-2.5 text-sm has-data-checked:border-primary has-data-checked:bg-primary/4 ${item.off ? "cursor-not-allowed opacity-60" : disabled ? "cursor-default" : "cursor-pointer"}`}
+          >
+            <span className="flex h-5 items-center">
+              <Radio value={item.value} disabled={item.off} />
+            </span>
+            <span className="min-w-0 leading-5">
+              <span className="block wrap-anywhere">{item.label}</span>
+              <span className="block wrap-anywhere text-xs text-muted-foreground">
+                {item.detail}
+              </span>
+            </span>
+          </label>
+        ))}
+      </RadioGroup>
+    </fieldset>
   );
 }
 
-/** Rare choices, folded away. Kept mounted so their state survives closing it. */
+/** One line of "What comes along": ticked when it travels, a dash when it stays. */
+export function AlongLine({
+  stays = false,
+  slot,
+  children,
+}: {
+  readonly stays?: boolean;
+  readonly slot?: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <li
+      className="flex min-w-0 items-start gap-2.5"
+      data-stays={stays || undefined}
+      data-slot={slot}
+    >
+      <span className="flex h-5 w-4 shrink-0 items-center justify-center text-muted-foreground">
+        {stays ? "–" : <CheckIcon className="size-4 text-primary" aria-label="comes along" />}
+      </span>
+      <span className={`min-w-0 wrap-anywhere leading-5 ${stays ? "text-muted-foreground" : ""}`}>
+        {children}
+      </span>
+    </li>
+  );
+}
+
+/** "What comes along": a short list instead of warnings, the details one click away. */
+export function WhatComesAlong({ children }: { readonly children: ReactNode }) {
+  return (
+    <section className="min-w-0 text-sm" data-slot="handoff-along" aria-label="What comes along">
+      <h3 className="mb-2 font-medium">What comes along</h3>
+      <ul className="space-y-1.5 rounded-lg border p-3">{children}</ul>
+    </section>
+  );
+}
+
+/**
+ * Details: the paths, the worktree notes and the rare file methods, folded away. Kept
+ * mounted so their state survives closing it.
+ */
 export function MoreOptions({
   defaultOpen = false,
   disabled = false,
@@ -93,7 +170,7 @@ export function MoreOptions({
         className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         disabled={disabled}
       >
-        More options
+        Details
         <ChevronDownIcon
           className="size-3.5 transition-transform group-data-panel-open:rotate-180"
           aria-hidden
@@ -113,9 +190,8 @@ const METHODS: ReadonlyArray<{
 }> = [
   {
     value: "copy",
-    label: "Copy everything except secrets",
-    detail:
-      "Includes uncommitted and ignored files. Files like .env stay here unless you pick them.",
+    label: "Copy everything",
+    detail: "Includes uncommitted and ignored files, and secrets unless you leave them out.",
   },
   {
     value: "clone",
@@ -124,13 +200,13 @@ const METHODS: ReadonlyArray<{
   },
   {
     value: "folder",
-    label: "Use Git, no file copy",
+    label: "Git only, no file copy",
     detail:
-      "Continues in a folder already saved there, which updates from origin. Nothing else is sent.",
+      "Continues in a folder already saved there, which updates from origin. Always moves the coordinator.",
   },
 ];
 
-/** The plain name of a way files travel, as More options lists it. */
+/** The plain name of a way files travel, as Details lists it. */
 export const methodLabel = (method: HandoffFolderMethod): string =>
   METHODS.find((item) => item.value === method)?.label ?? "";
 
@@ -149,7 +225,7 @@ export function FilesTravelChoice() {
         aria-label="How files travel"
       >
         {METHODS.map((item) => {
-          // Git carries the coordinator with the commits; it cannot copy files only.
+          // Git carries the coordinator with the commits; it cannot keep it here.
           const blocked = item.value === "folder" && intent === "copy";
           return (
             <label
@@ -162,7 +238,7 @@ export function FilesTravelChoice() {
               <span className="min-w-0 leading-5">
                 <span className="block wrap-anywhere">{item.label}</span>
                 <span className="block wrap-anywhere text-xs text-muted-foreground">
-                  {blocked ? "Only when handing off the project." : item.detail}
+                  {blocked ? "Only when the coordinator moves." : item.detail}
                 </span>
               </span>
             </label>

@@ -108,9 +108,9 @@ const editFolder = (value: string) =>
     folderInput().dispatchEvent(new Event("input", { bubbles: true }));
   });
 const moveRadio = () =>
-  [...document.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-    (node) => node.textContent === "Hand off and continue there",
-  )!;
+  [
+    ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
+  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
 const stageNow = () =>
   container.querySelector('[data-slot="handoff-folder-copy"]')?.getAttribute("data-stage");
 const measuredWithoutSecrets = () => {
@@ -172,7 +172,7 @@ it("shows Your choices while choosing, with one Change link that stops the copy"
   ]);
   const choices = document.querySelector('[data-slot="copy-choices"]')!;
   expect(choices.textContent).toContain("Copy to M3: /home/anton/Projects/project");
-  expect(choices.textContent).toContain("Copy everything except secrets");
+  expect(choices.textContent).toContain("Copy everything");
   expect(choices.querySelectorAll("button")).toHaveLength(1);
   expect(changeLink()?.textContent).toBe("Change (stops this copy)");
   expect(changeLink()?.disabled).toBe(false);
@@ -198,8 +198,8 @@ it("offers no Change while coordinator context transfers", async () => {
   ];
   await mount();
   await act(async () => moveRadio().click());
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
   expect(stageNow()).toBe("moving");
   expect(stepState()).toEqual([
     "Where:done",
@@ -313,7 +313,7 @@ it("cancels the copy from Review's Change setup, and opens the form with the sam
   await mount();
   await act(async () => moveRadio().click());
   await chooseFirst();
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   await click("Preview on M3");
   expect(stageNow()).toBe("preview");
   // Review's footer holds the way back; Your choices has no second one.
@@ -332,8 +332,8 @@ it("cancels the copy from Review's Change setup, and opens the form with the sam
   );
   expect(folderInput().disabled).toBe(false);
   expect(folderInput().value).toBe("/home/anton/Projects/project");
-  expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
-  expect(button("Hand off to M3").disabled).toBe(false);
+  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
+  expect(button("Copy and move to M3").disabled).toBe(false);
   // Closing right after keeps those choices for the next open.
   expect(JSON.parse(localStorage.getItem(DRAFT_KEY)!)).toMatchObject({
     machine: "m3",
@@ -643,8 +643,8 @@ it("remembers the setup form while no copy has started", async () => {
   await reopen();
   await settle();
   expect(folderInput().value).toBe("/home/anton/Elsewhere/project");
-  expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
-  await click("Hand off to M3");
+  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
+  await click("Copy and move to M3");
   // The copy's pointer holds the choices from here.
   expect(localStorage.getItem(DRAFT_KEY)).toBeNull();
   expect(pointerNow()).toMatchObject({ targetFolder: "/home/anton/Elsewhere/project" });
@@ -708,14 +708,14 @@ it("keeps the move and machine the dialog was opened with over the last copy-onl
     preferredMachine: "m1",
     machineRequested: true,
   });
-  expect(moveRadio().getAttribute("aria-pressed")).toBe("true");
-  expect(button("Hand off to M1").disabled).toBe(false);
+  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
+  expect(button("Copy and move to M1").disabled).toBe(false);
   expect(() => button("Copy to M3")).toThrow();
   await act(async () => root.unmount());
   root = createRoot(container);
   // "Move project" with only a remembered machine: still a move; the draft may pick the machine.
   await mount({ m1Available: true, defaultMode: "copy-and-move", preferredMachine: "m1" });
-  expect(button("Hand off to M3").disabled).toBe(false);
+  expect(button("Copy and move to M3").disabled).toBe(false);
 });
 
 it("lets the last copy go back to being the last copy when its destination is offline", async () => {

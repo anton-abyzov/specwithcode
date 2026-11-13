@@ -1,6 +1,6 @@
 /*
  * Synthetic data only: the composer's bottom line as Anton reported it on November 13,
- * 2026. A project on m4 (rose) whose coordinator runs there, with a thread on linux-mini
+ * 2026. A project on m4 (rose) whose coordinator runs there, with a thread on linux-box
  * (blue) open beside it. The real CoordinatorComposer with the real machine chip, voice
  * menu and model picker, and the real ChatComposer with its machine chip, model chip,
  * voice, attach and skills, inside the real ComposerSurface.
@@ -165,7 +165,7 @@ function CoordinatorPane() {
                 },
                 {
                   key: "env-lm:specweave",
-                  machine: "linux-mini",
+                  machine: "linux-box",
                   folder: "/home/fixture/specweave",
                   role: "workers",
                   canStart: true,
@@ -372,9 +372,9 @@ function ThreadComposer() {
             onFileOpen={() => {}}
             machine={{
               kind: "linux",
-              label: "linux-mini",
+              label: "linux-box",
               short: "LM",
-              tip: "Runs on linux-mini (Ubuntu, Linux).",
+              tip: "Runs on linux-box (Ubuntu, Linux).",
               warning: null,
               color: "blue",
               isThisMachine: false,

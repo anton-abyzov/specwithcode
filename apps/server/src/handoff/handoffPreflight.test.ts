@@ -53,7 +53,7 @@ describe("preflightFailures", () => {
 
   it("names the machine and the exact missing piece", () => {
     expect(messages({ missingFiles: [".env.local"] })).toEqual([
-      "Minis: no .env.local. Send it with studio_file_transfer, or with Handoff > Copy local files",
+      "Minis: no .env.local. Send it with studio_file_transfer, or with Copy to another machine",
     ]);
     expect(messages({ provider: { ...ready.provider!, authStatus: "unauthenticated" } })).toEqual([
       "Minis: Claude not signed in",
@@ -95,8 +95,8 @@ describe("preflightFailures", () => {
         provider: { ...ready.provider!, authStatus: "unauthenticated" },
       }),
     ).toEqual([
-      "Minis: no .env.local. Send it with studio_file_transfer, or with Handoff > Copy local files",
-      "Minis: no .env. Send it with studio_file_transfer, or with Handoff > Copy local files",
+      "Minis: no .env.local. Send it with studio_file_transfer, or with Copy to another machine",
+      "Minis: no .env. Send it with studio_file_transfer, or with Copy to another machine",
       "Minis: Claude not signed in",
     ]);
   });

@@ -136,12 +136,12 @@ const moveToM3 = async () => {
     }),
   ];
   await mount();
-  const move = [...container.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-    (node) => node.textContent === "Hand off and continue there",
-  )!;
+  const move = [
+    ...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
+  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
   await act(async () => move.click());
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
 };
 const published = () =>
   state.calls.filter(

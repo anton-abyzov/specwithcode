@@ -103,7 +103,7 @@ export const environmentServerConfigsAtom = Atom.make(
     // The narrow-chip scene adds a machine with a long name and no nickname.
     ...(machinesScene
       ? [
-          ["env-lm", machine("env-lm", "linux-mini", "server", nicknames)] as const,
+          ["env-lm", machine("env-lm", "linux-box", "server", nicknames)] as const,
           ["env-ww", machine("env-ww", "Workstation W", "desktop", nicknames)] as const,
         ]
       : []),

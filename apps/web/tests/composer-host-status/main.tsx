@@ -45,7 +45,7 @@ const synced = params.get("synced");
 window.__lastSyncedAt = synced === "unknown" ? null : NOW - Number(synced ?? 0) * 60_000;
 // `?view=this-mac`: Runs on switched to this device's own copy, which is connected.
 const viewThis = params.get("view") === "this-mac";
-const machine = viewThis ? "M4 Max" : (params.get("name") ?? "linux-mini");
+const machine = viewThis ? "M4 Max" : (params.get("name") ?? "linux-box");
 window.__fixtureMachine = machine;
 
 type FixtureState =
@@ -62,7 +62,7 @@ declare global {
   }
 }
 
-const environmentId = EnvironmentId.make(viewThis ? "this-mac" : "linux-mini-env");
+const environmentId = EnvironmentId.make(viewThis ? "this-mac" : "linux-box-env");
 const composer = getProjectCoordinatorComposer(environmentId, "specweave");
 const SETTINGS = { paused: false, archived: false };
 
@@ -169,7 +169,7 @@ function Harness() {
             <CoordinatorBlockedNotice
               text={blocked}
               coordinator={null}
-              current="linux-mini-env:specweave"
+              current="linux-box-env:specweave"
               members={[]}
               copies={[]}
               onOpen={null}
@@ -184,11 +184,11 @@ function Harness() {
               label={machine}
               connected={connected}
               statusDetail={statusDetail}
-              current={viewThis ? "this-mac:specweave" : "linux-mini-env:specweave"}
+              current={viewThis ? "this-mac:specweave" : "linux-box-env:specweave"}
               copies={[
                 {
-                  key: "linux-mini-env:specweave",
-                  machine: viewThis ? (params.get("name") ?? "linux-mini") : machine,
+                  key: "linux-box-env:specweave",
+                  machine: viewThis ? (params.get("name") ?? "linux-box") : machine,
                   folder: "/workspace/specweave",
                   role: "coordinator",
                   canStart: false,

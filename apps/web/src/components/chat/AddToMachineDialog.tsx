@@ -175,7 +175,8 @@ function AddToMachineBody({
   const [folder, setFolder] = useState(() => defaultDestinationFolder(source.workspaceRoot));
   const [copyIgnored, setCopyIgnored] = useState(false);
   const [secrets, setSecrets] = useState<ReadonlyArray<string>>([]);
-  const [secretsConfirmed, setSecretsConfirmed] = useState(false);
+  // Secrets travel by default, shown as one checked line; unticking it leaves them here.
+  const [includeSecrets, setIncludeSecrets] = useState(true);
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [scan, setScan] = useState<Scan>({ state: "scanning" });
   const [scanRound, setScanRound] = useState(0);
@@ -294,7 +295,7 @@ function AddToMachineBody({
   const plan = result ? destinationPlan(result) : null;
   const secretFiles = scan.state === "ready" ? scan.summary.secretFiles : [];
   const extrasBlocked = scan.state === "failed";
-  const secretsReady = secrets.length === 0 || secretsConfirmed;
+  const secretsReady = secrets.length === 0 || includeSecrets;
   const locked = busy || stage.kind !== "setup";
 
   const blocker = !connected
@@ -427,7 +428,6 @@ function AddToMachineBody({
         onCancelled={() => {
           offerRef.current = null;
           setSecrets([]);
-          setSecretsConfirmed(false);
           setStage({ kind: "setup" });
           setScanRound((round) => round + 1);
         }}
@@ -523,12 +523,13 @@ function AddToMachineBody({
               files={secretFiles}
               hints={scan.state === "ready" ? scan.summary.secretHints : undefined}
               selected={secrets}
-              confirmed={secretsConfirmed}
+              included={includeSecrets}
+              sourceLabel={sourceName}
               targetLabel={destName}
               homeSupported={capabilities?.homeSecretFiles === true}
               disabled={locked}
               onSelectedChange={setSecrets}
-              onConfirmedChange={setSecretsConfirmed}
+              onIncludedChange={setIncludeSecrets}
             />
           )}
 

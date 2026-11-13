@@ -50,9 +50,7 @@ import { HandoffLeftBehind } from "./HandoffLeftBehind";
 import type { MachineOption } from "../handoff/MachineOptionRows";
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
-import { AddToMachineDialog } from "../chat/AddToMachineDialog";
 import { toastManager } from "../ui/toast";
-import { HandoffShare } from "./HandoffShare";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
 import {
   copyActivityKey,
@@ -146,7 +144,7 @@ export function ProjectMachineHandoff({
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
   readonly requestedTarget?: string | null;
-  /** Set by the project's machine menu: "Add to another machine…" or "Move to another machine…". */
+  /** Set by the project's machine menu: "Copy to another machine…". */
   readonly openRequest?: MachineHandoffOpenRequest | null;
   /** Off where the machine menu opens the dialog instead of its own button. */
   readonly showTrigger?: boolean;
@@ -227,11 +225,6 @@ export function ProjectMachineHandoff({
   const [copyBusy, setCopyBusyState] = useState(false);
   const [copyLocked, setCopyLocked] = useState(false);
   // Sharing is what the dialog opens on; moving and copying files start from it.
-  const [shareView, setShareView] = useState(true);
-  const [shareBusy, setShareBusy] = useState(false);
-  const [addFolderOn, setAddFolderOn] = useState<EnvironmentId | null>(null);
-  // The move "Hand off to X" asked for, reviewed once that machine's folder is selected.
-  const queuedMove = useRef<EnvironmentId | null>(null);
   // Read when the dialog closes: a measure or copy still running is watched until it is ready.
   const copyRunning = useRef(false);
   const setCopyBusy = useCallback((value: boolean) => {
@@ -454,7 +447,6 @@ export function ProjectMachineHandoff({
   useEffect(
     () =>
       registerCopyOpener(copyActivityKey(project.environmentId, project.id), () => {
-        setShareView(false);
         latestChangeOpen.current(true);
       }),
     [project.environmentId, project.id],
@@ -470,7 +462,6 @@ export function ProjectMachineHandoff({
     setIntent("move");
     setSyncKey(null);
     setMethod(existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : "copy");
-    setShareView(false);
     setSelected(requestedTarget);
     setPickerMachine(null);
     setSnapshot(null);
@@ -773,18 +764,6 @@ export function ProjectMachineHandoff({
     setSelected(saved?.key ?? "");
     setPickerMachine(saved ? null : environmentId);
   };
-  useEffect(() => {
-    if (!queuedMove.current || target?.environmentId !== queuedMove.current) return;
-    queuedMove.current = null;
-    void review();
-  });
-  // A handoff begun in another window leaves no pointer here, only the fence.
-  const sharing =
-    open &&
-    shareView &&
-    !snapshot &&
-    phase === "choose" &&
-    project.workspaceSettings?.coordinatorBinding?.state !== "transferring";
   // Sync names the machine's own folder, the one the copy fills in.
   // The copy chosen in the menu, never another copy on the same machine.
   const syncCopy = syncKey
@@ -796,11 +775,10 @@ export function ProjectMachineHandoff({
     syncCopy && syncLabel && (copyMachine === null || copyMachine === syncCopy.environmentId)
       ? { machine: syncLabel, folder: syncCopy.workspaceRoot }
       : null;
-  const shareConfig = gitMachine ? configs.get(gitMachine)?.environment.capabilities : undefined;
 
   /**
-   * Opens the dialog. "add" starts on sharing the project with another
-   * machine (this copy keeps running); "move" starts on handing it over.
+   * Opens the dialog. Every request but an unfinished Git handoff starts on the copy, with
+   * the coordinator kept here; "move" starts with it moving.
    */
   const openDialog = (
     mode: MachineHandoffOpenRequest["mode"],
@@ -822,14 +800,13 @@ export function ProjectMachineHandoff({
     setSyncKey(syncCandidate ? syncTarget! : null);
     if (syncCandidate) setCopyMachine(null);
     if (!snapshot) {
-      setIntent("move");
       try {
         const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
         // An unfinished Git handoff resumes in the method that started it, an
         // unfinished copy in the current one; otherwise every opening starts fresh.
         const copyPending =
           localStorage.getItem(folderCopyStorageKey(project.environmentId, project.id)) !== null;
-        setShareView(!pending && !copyPending);
+        setIntent(pending ? "move" : "copy");
         if (pending) setMethod("folder");
         else if (!copyPending) setMethod("copy");
         const saved = readHandoffMachinePreference(preferenceKey);
@@ -838,18 +815,6 @@ export function ProjectMachineHandoff({
         const preferredFolder = destinations.find(
           (item) => item.environmentId === preferred && !item.unavailable,
         );
-        // A project inside a larger repository has no checkout of its own to continue in.
-        const preferredProject = candidates.find(
-          (item) => `${item.environmentId}:${item.id}` === preferredFolder?.key,
-        );
-        if (
-          preferredProject &&
-          ownCheckout(project) &&
-          ownCheckout(preferredProject) &&
-          !pending &&
-          !copyPending
-        )
-          setMethod("folder");
         // The preferred machine wins; without a saved folder there, the picker opens on it.
         const choice =
           pending?.targetKey ??
@@ -860,17 +825,12 @@ export function ProjectMachineHandoff({
         setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
         setError(null);
       } catch (cause) {
-        setShareView(false);
         setSelected("");
         showError(cause);
       }
     }
-    if (mode === "move" && !snapshot) {
-      setShareView(false);
-      setIntent("move");
-    }
+    if (mode === "move" && !snapshot) setIntent("move");
     if ((mode === "copy" || mode === "sync") && !snapshot) {
-      setShareView(false);
       setIntent("copy");
       setMethod("copy");
       if (machine) {
@@ -961,70 +921,18 @@ export function ProjectMachineHandoff({
         method={method}
         onMethodChange={(next) => {
           if (discardPreview() === "failed") return;
-          setShareView(false);
           if (next === "folder") {
             setIntent("move");
             if (method !== "folder" && copyMachine) chooseGitMachine(copyMachine);
           }
           setMethod(next);
         }}
-        copyBusy={sharing ? shareBusy : copyBusy}
-        copyLocked={sharing ? shareBusy : copyLocked}
+        copyBusy={copyBusy}
+        copyLocked={copyLocked}
         copyDoneOn={
           copyDone ? (machines.find((item) => item.id === copyMachine)?.label ?? null) : null
         }
-        shareFlow={
-          sharing ? (
-            <HandoffShare
-              project={project}
-              sourceLabel={source?.label ?? "this machine"}
-              machines={machineOptions}
-              machine={gitMachine}
-              machineLabel={machines.find((item) => item.id === gitMachine)?.label ?? null}
-              linked={destinations.some(
-                (item) => item.environmentId === gitMachine && !item.unavailable,
-              )}
-              joined={candidates.some(
-                (item) =>
-                  item.environmentId === gitMachine &&
-                  item.workspaceSettings?.logicalProject !== undefined &&
-                  item.workspaceSettings.logicalProject?.id ===
-                    project.workspaceSettings?.logicalProject?.id,
-              )}
-              uncommittedFiles={sourceChanges?.state === "dirty" ? sourceChanges.fileCount : 0}
-              loading={machinesLoading}
-              canClone={
-                shareConfig?.cloneDestinationChecks === true &&
-                shareConfig.projectCloneTracking === true
-              }
-              onMachineChange={chooseGitMachine}
-              onMove={() => {
-                if (!gitMachine) return;
-                queuedMove.current = gitMachine;
-                setShareView(false);
-                setIntent("move");
-                setMethod("folder");
-                chooseGitMachine(gitMachine);
-              }}
-              onPrepareRepositories={() => {
-                setShareView(false);
-                setIntent("copy");
-                setMethod("clone");
-              }}
-              onCopyInstead={() => {
-                setShareView(false);
-                setIntent("copy");
-                setMethod("copy");
-              }}
-              onNeedsFolderChoice={() => {
-                setAddFolderOn(gitMachine);
-                changeOpen(false);
-              }}
-              onBusyChange={setShareBusy}
-              onClose={() => changeOpen(false)}
-            />
-          ) : undefined
-        }
+        copyTargetLabel={machines.find((item) => item.id === copyMachine)?.label ?? null}
         copyFlow={
           method === "folder" ? undefined : (
             <HandoffFolderCopy
@@ -1071,6 +979,7 @@ export function ProjectMachineHandoff({
                 ) ?? null
               }
               canMove={sourceReady && !syncTo}
+              uncommittedFiles={sourceChanges?.state === "dirty" ? sourceChanges.fileCount : null}
               onBusyChange={setCopyBusy}
               onCloseLockChange={setCopyLocked}
               onOpenProject={({ environmentId, projectId, folder }) => {
@@ -1179,17 +1088,6 @@ export function ProjectMachineHandoff({
             : undefined
         }
       />
-      {addFolderOn && (
-        <AddToMachineDialog
-          open
-          onOpenChange={(next) => {
-            if (!next) setAddFolderOn(null);
-          }}
-          source={project}
-          destinationEnvironmentId={addFolderOn}
-          onAdded={() => setAddFolderOn(null)}
-        />
-      )}
     </>
   );
 }

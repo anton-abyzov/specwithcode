@@ -330,9 +330,9 @@ it("chooses a folder with the system dialog when it is offered", async () => {
 });
 
 it("names the machine it browses", async () => {
-  await render({ defaultPath: `${HOME}/Projects`, machineLabel: "linux-mini" });
-  expect(container.textContent).toContain("Project location on linux-mini");
-  expect(list().getAttribute("aria-label")).toBe("Folders on linux-mini");
+  await render({ defaultPath: `${HOME}/Projects`, machineLabel: "linux-box" });
+  expect(container.textContent).toContain("Project location on linux-box");
+  expect(list().getAttribute("aria-label")).toBe("Folders on linux-box");
 });
 
 it("offers a default folder that does not exist yet instead of a browse error", async () => {

@@ -216,7 +216,7 @@ export function HandoffCopyFooter({
           <SetupActions
             disabled={busy || setupBlocked}
             hint={machine ? null : "Choose a machine above."}
-            label={`${mode === "copy-and-move" ? "Hand off" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
+            label={`${mode === "copy-and-move" ? "Copy and move" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
             onStart={onMeasure}
           />
         ))}

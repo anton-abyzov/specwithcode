@@ -79,7 +79,7 @@ export function HandoffLeftBehind({
         ))}
       </ul>
       <p className="mt-2 text-xs text-muted-foreground">
-        Push it first, or use Copy local files. The move goes ahead either way.
+        Push it first, or choose Copy everything under Details. The move goes ahead either way.
       </p>
     </details>
   );

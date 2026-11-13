@@ -10,7 +10,7 @@ const NOW = Date.parse("2026-11-13T18:00:00Z");
 const remote: HostAdmissionContext = {
   isThisDevice: false,
   graceElapsed: true,
-  machineLabel: "linux-mini",
+  machineLabel: "linux-box",
 };
 const here: HostAdmissionContext = { isThisDevice: true, graceElapsed: true };
 
@@ -20,7 +20,7 @@ describe("composerHostStatus", () => {
     expect(status).toMatchObject({
       tone: "offline",
       headline: "{machine} is offline",
-      machine: "linux-mini",
+      machine: "linux-box",
       progress: "Reconnecting…",
       action: null,
       showsSync: true,
@@ -116,7 +116,7 @@ describe("ComposerHostStatus", () => {
     await show("reconnecting");
     expect(container.querySelectorAll("[data-host-status]")).toHaveLength(1);
     expect(container.querySelector("[role=status]")?.textContent).toContain(
-      "linux-mini is offline · Reconnecting…",
+      "linux-box is offline · Reconnecting…",
     );
     expect(container.querySelector("[data-host-status-detail]")).toBeNull();
     expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
@@ -151,7 +151,7 @@ describe("ComposerHostStatus", () => {
     await show("reconnecting");
     await show("connecting");
     expect(container.querySelector("[role=status]")?.textContent).toContain(
-      "Connecting to linux-mini…",
+      "Connecting to linux-box…",
     );
     // Connecting has no detail to show, so no Details button.
     expect(toggle()).toBeNull();
@@ -171,7 +171,7 @@ describe("ComposerHostStatus", () => {
       ),
     );
     expect(container.querySelector("[role=status]")?.textContent).toContain(
-      "Signed out of linux-mini · Reload the page to sign in again.",
+      "Signed out of linux-box · Reload the page to sign in again.",
     );
     expect(toggle()).toBeNull();
   });
@@ -179,7 +179,7 @@ describe("ComposerHostStatus", () => {
     setLocalePreference("de");
     await show("reconnecting", remote, NOW - 3 * 3_600_000);
     expect(container.querySelector("[role=status]")?.textContent).toContain(
-      "linux-mini ist offline · Verbinde neu…",
+      "linux-box ist offline · Verbinde neu…",
     );
     await act(async () => toggle()!.click());
     expect(container.querySelector("[data-host-status-detail]")?.textContent).toContain(

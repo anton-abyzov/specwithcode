@@ -124,6 +124,7 @@ export function HandoffFolderCopy({
   defaultMode,
   onChoicesChange,
   canMove,
+  uncommittedFiles = null,
   onBusyChange,
   onCloseLockChange,
   onOpenProject,
@@ -152,6 +153,8 @@ export function HandoffFolderCopy({
     readonly done: boolean;
   }) => void;
   readonly canMove: boolean;
+  /** Uncommitted files in the source, named in What comes along; null when unknown. */
+  readonly uncommittedFiles?: number | null;
   readonly onBusyChange: (busy: boolean) => void;
   /** True only while closing the dialog would interrupt a step that must finish here. */
   readonly onCloseLockChange?: (locked: boolean) => void;
@@ -195,7 +198,8 @@ export function HandoffFolderCopy({
     useState<ReadonlyArray<FolderCopyFileClass>>(DEFAULT_COPY_SELECTION);
   const [copy, setCopy] = useState<FolderCopyStatus | null>(null);
   const [secretPaths, setSecretPaths] = useState<ReadonlyArray<string>>([]);
-  const [secretsConfirmed, setSecretsConfirmed] = useState(false);
+  // Secrets travel by default; What comes along and the review show it and turn it off.
+  const [includeSecrets, setIncludeSecrets] = useState(true);
   const [pending, setPending] = useState<PendingCopy | null>(null);
   const [undoPreview, setUndoPreview] = useState<FolderCopyUndoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -586,7 +590,6 @@ export function HandoffFolderCopy({
     if (latestPending.current?.operationId !== saved.operationId) {
       setSummary(null);
       setSecretPaths([]);
-      setSecretsConfirmed(false);
     }
     latestPending.current = saved;
     setPending(saved);
@@ -727,7 +730,6 @@ export function HandoffFolderCopy({
     const operationId = randomUUID();
     setSummary(null);
     setSecretPaths([]);
-    setSecretsConfirmed(false);
     const projectFolder = copiedProjectFolder(folder, projectRelativePath);
     const projectId = destinationProjectId(machine, mode, projectFolder);
     const existing = mode === "copy-and-move" && knownProject(machine, projectFolder) !== null;
@@ -880,7 +882,7 @@ export function HandoffFolderCopy({
     }
   };
 
-  const secretsTicked = secretPaths.length > 0 && secretsConfirmed;
+  const secretsTicked = secretPaths.length > 0 && includeSecrets;
   /** The ticked and confirmed secret files go to the source for this destination only. */
   const sendTickedSecrets = async (operationId: string) => {
     unwrap(
@@ -1172,7 +1174,7 @@ export function HandoffFolderCopy({
     if (!keepChoices) {
       setSelection(DEFAULT_COPY_SELECTION);
       setSecretPaths([]);
-      setSecretsConfirmed(false);
+      setIncludeSecrets(true);
     }
     setStage("setup");
   };
@@ -1220,7 +1222,7 @@ export function HandoffFolderCopy({
     (pending?.projectRelativePath ?? scope.selected.projectRelativePath) !== "."
       ? "Umbrella root"
       : "Project root";
-  const approveLabel = `${mode === "copy-and-move" ? "Hand off" : "Copy"} to ${targetLabel}`;
+  const approveLabel = `${mode === "copy-and-move" ? "Copy and move" : "Copy"} to ${targetLabel}`;
   const replaced = stage === "preview" && copy ? replacementText(copy.rows) : null;
   const replaceLeft = stage === "preview" && copy ? replaceAllLeftText(copy.rows, rootLabel) : null;
   // Files changed on the source while copying, or a failed check: copying again fixes it.
@@ -1234,7 +1236,7 @@ export function HandoffFolderCopy({
     stage === "done"
       ? secretsLeftText(secretsLeft(summary?.secretFiles, copy?.secrets), sourceLabel)
       : null;
-  const secretsUnconfirmed = secretPaths.length > 0 && !secretsConfirmed;
+  const secretsUnconfirmed = secretPaths.length > 0 && !includeSecrets;
   const next = nextStepText({
     stage,
     auto,
@@ -1276,18 +1278,8 @@ export function HandoffFolderCopy({
 
   return (
     <div className="space-y-4" data-slot="handoff-folder-copy" data-stage={stage}>
-      <HandoffWorkspaceSummary
-        transferContext={(pending?.mode ?? mode) === "copy-and-move"}
-        source={workspaceContext ?? { projectFolder: project.workspaceRoot }}
-        copyRoot={pending?.copyRoot ?? scope.selected.copyRoot}
-        destinationFolder={copiedProjectFolder(
-          pending?.targetFolder ?? folder,
-          pending?.projectRelativePath ?? scope.selected.projectRelativePath,
-        )}
-        destinationCheckout={copy?.projectFolder}
-        destinationWorktreeStorage={target?.worktreeStorage}
-      />
-      <CopyStepLine steps={stepView.steps} />
+      {/* A fresh setup screen shows no steps; they show once a copy started or stopped. */}
+      {(stage !== "setup" || pending || error) && <CopyStepLine steps={stepView.steps} />}
       {stepView.note && <CopyResumeNote>{stepView.note}</CopyResumeNote>}
       {stepView.checking ? (
         <CopyCheckingStep
@@ -1360,9 +1352,19 @@ export function HandoffFolderCopy({
             onRepositories={changeRepositories}
             replanning={replanning}
             secretPaths={secretPaths}
-            secretsConfirmed={secretsConfirmed}
+            includeSecrets={includeSecrets}
             onSecretPathsChange={setSecretPaths}
-            onSecretsConfirmedChange={setSecretsConfirmed}
+            onIncludeSecretsChange={setIncludeSecrets}
+            uncommittedFiles={uncommittedFiles}
+            details={
+              <HandoffWorkspaceSummary
+                transferContext={mode === "copy-and-move"}
+                source={workspaceContext ?? { projectFolder: project.workspaceRoot }}
+                copyRoot={scope.selected.copyRoot}
+                destinationFolder={copiedProjectFolder(folder, scope.selected.projectRelativePath)}
+                destinationWorktreeStorage={target?.worktreeStorage}
+              />
+            }
             failedBeforeApply={failedBeforeApply}
             undoPreview={undoPreview}
             contextTransferred={contextTransferred}

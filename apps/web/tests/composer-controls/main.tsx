@@ -71,8 +71,7 @@ function App() {
                 onStart={() => {}}
                 onAllowWorkers={() => {}}
                 onMigrate={() => {}}
-                onAdd={() => {}}
-                onMoveElsewhere={() => {}}
+                onCopy={() => {}}
                 onLeave={() => {}}
               />
               <ComposerVoiceMenu dictation={dictation} call={call} />

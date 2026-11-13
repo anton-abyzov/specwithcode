@@ -166,7 +166,7 @@ export function CopyChoicesSummary({
         )}
       </div>
       <p className="wrap-anywhere" data-slot="copy-scope-mapping">
-        {pending.mode === "copy-and-move" ? "Hand off" : "Copy"} to {targetLabel}:{" "}
+        {pending.mode === "copy-and-move" ? "Copy and move" : "Copy"} to {targetLabel}:{" "}
         <span className="font-mono">{target}</span>
         <span className="block text-muted-foreground">
           From <span className="font-mono">{source}</span>

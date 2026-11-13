@@ -81,9 +81,11 @@ export function HandoffCopyStepPanels({
   onRepositories,
   replanning,
   secretPaths,
-  secretsConfirmed,
+  includeSecrets,
   onSecretPathsChange,
-  onSecretsConfirmedChange,
+  onIncludeSecretsChange,
+  uncommittedFiles,
+  details,
   failedBeforeApply,
   undoPreview,
   contextTransferred,
@@ -145,9 +147,14 @@ export function HandoffCopyStepPanels({
   readonly onRepositories: (next: RepositoryChoices) => void;
   readonly replanning: boolean;
   readonly secretPaths: ReadonlyArray<string>;
-  readonly secretsConfirmed: boolean;
+  /** Secret files travel unless this is off; on by default, and seeing it on is the consent. */
+  readonly includeSecrets: boolean;
   readonly onSecretPathsChange: (paths: ReadonlyArray<string>) => void;
-  readonly onSecretsConfirmedChange: (confirmed: boolean) => void;
+  readonly onIncludeSecretsChange: (include: boolean) => void;
+  /** Uncommitted files in the source, for What comes along; null when unknown. */
+  readonly uncommittedFiles: number | null;
+  /** The Workspace locations rows, shown under Details on the setup screen. */
+  readonly details: ReactNode;
   readonly failedBeforeApply: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly contextTransferred: boolean;
@@ -205,6 +212,13 @@ export function HandoffCopyStepPanels({
             onMachineChange={onMachineChange}
             targetLabel={targetLabel}
             sourceLabel={sourceLabel}
+            sourceRoot={project.workspaceRoot}
+            along={{
+              uncommittedFiles,
+              includeSecrets,
+              onIncludeSecretsChange,
+              details,
+            }}
             folder={folder}
             onFolderChange={onFolderChange}
             findingHome={findingHome}
@@ -318,14 +332,15 @@ export function HandoffCopyStepPanels({
               )}
               hints={summary.secretHints}
               selected={secretPaths}
-              confirmed={secretsConfirmed}
+              included={includeSecrets}
+              sourceLabel={sourceLabel}
               targetLabel={targetLabel}
               homeSupported={
                 machines.find((entry) => entry.id === machine)?.homeSecretFiles === true
               }
               disabled={busy}
               onSelectedChange={onSecretPathsChange}
-              onConfirmedChange={onSecretsConfirmedChange}
+              onIncludedChange={onIncludeSecretsChange}
             />
           )}
         </>
