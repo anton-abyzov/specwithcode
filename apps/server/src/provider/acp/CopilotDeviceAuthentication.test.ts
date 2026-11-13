@@ -8,10 +8,17 @@ import { HostProcessExecutablePath } from "@specweave-studio/shared/hostProcess"
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import {
   copilotBrowserOverride,
+  copilotCliNoAnswerMessage,
+  copilotCliNotInstalledMessage,
+  copilotCliTooOldMessage,
   copilotDeviceLoginArgs,
+  copilotNodeMissingMessage,
+  copilotOutputShowsNodeMissing,
   isCopilotDeviceLogin,
   readCopilotDeviceCode,
+  readCopilotVersion,
   supportsCopilotDeviceLogin,
+  withCopilotLoginHost,
 } from "./CopilotDeviceAuthentication.ts";
 
 const decode = Schema.decodeSync(AcpRegistrySettings);
@@ -135,5 +142,82 @@ describe("owned Copilot terminal output", () => {
         "login",
       ]),
     );
+  });
+});
+
+describe("Copilot sign-in failure messages name the cause and the fix", () => {
+  it("says Node.js is missing and where SpecWithCode installs it", () => {
+    const message = copilotNodeMissingMessage();
+    assert.include(message, "runs on Node.js, which this machine does not have");
+    assert.include(message, "Install Node.js in Settings > Machines or in first-run setup");
+  });
+  it("points a missing CLI at Install / update agent", () => {
+    assert.include(copilotCliNotInstalledMessage(), "not installed or not prepared");
+    assert.include(copilotCliNotInstalledMessage(), "Install / update agent");
+  });
+  it("names the found and the needed version", () => {
+    const old = copilotCliTooOldMessage("1.0.94", true);
+    assert.include(old, "Copilot CLI 1.0.94 is too old");
+    assert.include(old, "1.0.95 or newer");
+    assert.include(old, "Install / update agent");
+    assert.include(copilotCliTooOldMessage("1.2.0", false), "does not offer device-code sign-in");
+    assert.include(copilotCliTooOldMessage("2.0.0", true), "Update SpecWithCode");
+    assert.include(copilotCliTooOldMessage(undefined, true), "Could not read which Copilot CLI");
+  });
+  it("says the CLI did not answer, with the timeout or exit code, and to retry", () => {
+    assert.include(
+      copilotCliNoAnswerMessage({ kind: "timeout" }),
+      "did not answer within 10 seconds",
+    );
+    assert.include(copilotCliNoAnswerMessage({ kind: "exit", code: 3 }), "exited with code 3");
+    assert.include(copilotCliNoAnswerMessage({ kind: "truncated" }), "Retry sign-in");
+    assert.include(
+      copilotCliNoAnswerMessage({ kind: "exit", code: 1 }, "Node.js"),
+      "Node.js exited",
+    );
+  });
+  it("never uses the old catch-all text", () => {
+    for (const message of [
+      copilotNodeMissingMessage(),
+      copilotCliNotInstalledMessage(),
+      copilotCliTooOldMessage("1.0.1", true),
+      copilotCliNoAnswerMessage({ kind: "timeout" }),
+    ])
+      assert.notInclude(message, "requires a compatible Copilot CLI 1.x");
+  });
+  it("recognizes npm shims that cannot find Node.js", () => {
+    assert.isTrue(copilotOutputShowsNodeMissing(127, ""));
+    assert.isTrue(copilotOutputShowsNodeMissing(1, "env: node: No such file or directory"));
+    assert.isTrue(
+      copilotOutputShowsNodeMissing(
+        1,
+        "'node' is not recognized as an internal or external command,",
+      ),
+    );
+    assert.isFalse(copilotOutputShowsNodeMissing(1, "error: unknown option --help"));
+  });
+  it("reads the version from copilot --version output", () => {
+    assert.strictEqual(readCopilotVersion("GitHub Copilot CLI 1.0.97\n"), "1.0.97");
+    assert.isUndefined(readCopilotVersion("dev build"));
+  });
+});
+
+describe("device sign-in host from existing gh sign-ins", () => {
+  const args = ["--no-auto-update", "login", "--device-code"];
+  const help = "  --host <host>  GitHub host\n  --device-code  Device flow\n";
+  it("adds --host only when the help lists it and a host was found", () => {
+    assert.deepEqual(withCopilotLoginHost(args, help, "aaby.ghe.com"), [
+      "--no-auto-update",
+      "login",
+      "--host",
+      "aaby.ghe.com",
+      "--device-code",
+    ]);
+    assert.strictEqual(withCopilotLoginHost(args, "  --device-code\n", "aaby.ghe.com"), args);
+    assert.strictEqual(withCopilotLoginHost(args, help, undefined), args);
+  });
+  it("never overrides a host the agent chose", () => {
+    const chosen = ["login", "--host", "other.ghe.com", "--device-code"];
+    assert.strictEqual(withCopilotLoginHost(chosen, help, "aaby.ghe.com"), chosen);
   });
 });

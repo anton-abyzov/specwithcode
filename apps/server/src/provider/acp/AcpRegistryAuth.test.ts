@@ -24,6 +24,10 @@ import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/share
 import { TeamRules, teamRulesOf } from "../../teamRules/TeamRules.ts";
 import { makeAcpRegistryAuth, type AcpRegistryCredential } from "./AcpRegistryAuth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import {
+  NO_COPILOT_EXISTING_SIGN_INS,
+  type CopilotExistingSignIns,
+} from "./copilotExistingSignIns.ts";
 import type { AcpSessionRuntime } from "./AcpSessionRuntime.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -72,7 +76,11 @@ const makeHarness = (
   providerInstanceId = instanceId,
   preflight: { help?: string; version?: string; hang?: boolean; noopExit?: number } = {},
   credentials = false,
-  extra: { environment?: NodeJS.ProcessEnv; canSave?: Effect.Effect<boolean> } = {},
+  extra: {
+    environment?: NodeJS.ProcessEnv;
+    canSave?: Effect.Effect<boolean>;
+    existing?: CopilotExistingSignIns;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const verify = yield* Deferred.make<void>();
@@ -142,6 +150,7 @@ const makeHarness = (
       cwd: "/workspace",
       environment: { PATH: "/tools", OVERRIDE: "base", ...extra.environment },
       ...(extra.canSave === undefined ? {} : { canSaveCredential: extra.canSave }),
+      findCopilotExistingSignIns: Effect.succeed(extra.existing ?? NO_COPILOT_EXISTING_SIGN_INS),
       onChanged: (value) =>
         Effect.sync(() => {
           changed.push(value);
@@ -692,31 +701,30 @@ it.effect("expires the owned Copilot PTY and clears the code without authenticat
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-for (const unsupported of [
-  { version: "1.0.94" },
-  { version: "2.0.0" },
-  { help: " --web-flow  Web login" },
-  { noopExit: 1 },
-]) {
-  it.effect(
-    `fails closed before login when device authorization cannot be safely prepared ${JSON.stringify(unsupported)}`,
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness(
-          copilotMethod,
-          false,
-          copilotSettings,
-          instanceId,
-          unsupported,
-        );
-        yield* h.controller.start("owner");
-        const failed = yield* h.phase("failed");
-        assert.include(failed.message ?? "", "retry device sign-in");
-        assert.isUndefined(h.terminalSpawn());
-        assert.deepEqual(h.changed, []);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
+it.effect.each([
+  { unsupported: { version: "1.0.94" }, expected: "Copilot CLI 1.0.94 is too old" },
+  {
+    unsupported: { version: "2.0.0" },
+    expected: "Copilot CLI 2.0.0 is newer than this SpecWithCode supports",
+  },
+  {
+    unsupported: { help: " --web-flow  Web login" },
+    expected: "does not offer device-code sign-in",
+  },
+  { unsupported: { noopExit: 1 }, expected: "Node.js exited with code 1" },
+])(
+  "fails closed before login when device authorization cannot be safely prepared $unsupported",
+  ({ unsupported, expected }) =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, unsupported);
+      yield* h.controller.start("owner");
+      const failed = yield* h.phase("failed");
+      assert.include(failed.message ?? "", expected);
+      assert.notInclude(failed.message ?? "", "compatible Copilot CLI 1.x");
+      assert.isUndefined(h.terminalSpawn());
+      assert.deepEqual(h.changed, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("times out and cleans up a stuck capability check without starting login", () =>
   Effect.gen(function* () {
@@ -724,7 +732,8 @@ it.effect("times out and cleans up a stuck capability check without starting log
     yield* h.controller.start("owner");
     yield* Deferred.await(h.preflightStarted);
     yield* TestClock.adjust("10 seconds");
-    yield* h.phase("failed");
+    const failed = yield* h.phase("failed");
+    assert.include(failed.message ?? "", "did not answer within 10 seconds");
     assert.strictEqual(h.preflightCleanups(), 1);
     assert.isUndefined(h.terminalSpawn());
     assert.deepEqual(h.changed, []);
@@ -776,6 +785,60 @@ it.effect("disposes only the owned Copilot PTY on service restart and starts a f
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("shows existing sign-ins and signs in against the one enterprise gh host", () =>
+  Effect.gen(function* () {
+    const existing = {
+      vscodeCopilot: true,
+      ghAccounts: [
+        { host: "github.com", account: "octocat" },
+        { host: "aaby.ghe.com", account: "anton_aaby" },
+      ],
+    };
+    const h = yield* makeHarness(
+      copilotMethod,
+      false,
+      copilotSettings,
+      instanceId,
+      {
+        help: "  --host <host>  GitHub host\n  --device-code  Use device authorization\n",
+      },
+      false,
+      { existing },
+    );
+    const found = yield* h.state((s) => s.copilotExistingSignIns !== undefined);
+    assert.deepEqual(found.copilotExistingSignIns, existing);
+    yield* h.controller.start("owner");
+    const waiting = yield* h.phase("waiting");
+    assert.deepEqual(waiting.copilotExistingSignIns, existing);
+    assert.deepEqual(h.terminalSpawn()?.args, [
+      "--no-auto-update",
+      "login",
+      "--host",
+      "aaby.ghe.com",
+      "--device-code",
+    ]);
+    h.data(devicePrompt("AAAA-1111").replace("github.com", "aaby.ghe.com"));
+    const code = yield* h.state(
+      (s) => s.interaction?.type === "terminal" && !!s.interaction.deviceCode,
+    );
+    assert.strictEqual(
+      code.interaction?.type === "terminal" ? code.interaction.deviceCode?.url : null,
+      "https://aaby.ghe.com/login/device",
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps login args when Copilot's help has no --host option", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(copilotMethod, false, copilotSettings, instanceId, {}, false, {
+      existing: { vscodeCopilot: false, ghAccounts: [{ host: "aaby.ghe.com", account: "a" }] },
+    });
+    yield* h.controller.start("owner");
+    yield* h.phase("waiting");
+    assert.deepEqual(h.terminalSpawn()?.args, ["--no-auto-update", "login", "--device-code"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("rechecks changed CLI capabilities after cancellation and allows a supported retry", () =>
   Effect.gen(function* () {
     const capabilities = { version: "1.0.97", help: " --device-code Device authorization" };
@@ -786,7 +849,7 @@ it.effect("rechecks changed CLI capabilities after cancellation and allows a sup
     capabilities.help = " --web-flow Web authorization";
     yield* h.controller.start("owner");
     const unsupported = yield* h.phase("failed");
-    assert.include(unsupported.message ?? "", "retry device sign-in");
+    assert.include(unsupported.message ?? "", "does not offer device-code sign-in");
     assert.isNull(unsupported.interaction);
     capabilities.help = " --device-code Device authorization";
     capabilities.version = "1.0.98";

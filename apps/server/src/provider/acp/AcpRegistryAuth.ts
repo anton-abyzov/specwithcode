@@ -37,14 +37,33 @@ import {
   normalizeAcpTerminalAuthMethod,
 } from "./AcpTerminalAuthentication.ts";
 import {
-  COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE,
   copilotBrowserNoopArgs,
   copilotBrowserOverride,
+  copilotCliNoAnswerMessage,
+  copilotCliNotInstalledMessage,
+  copilotCliTooOldMessage,
   copilotDeviceLoginArgs,
+  copilotLoginUnrecognizedMessage,
+  copilotNodeMissingMessage,
+  copilotOutputShowsNodeMissing,
   isCopilotDeviceLogin,
   readCopilotDeviceCode,
+  readCopilotVersion,
   supportsCopilotDeviceLogin,
+  withCopilotLoginHost,
 } from "./CopilotDeviceAuthentication.ts";
+import {
+  CopilotProbeError,
+  copilotEnterpriseHost,
+  findCopilotExistingSignIns,
+  type CopilotExistingSignIns,
+} from "./copilotExistingSignIns.ts";
+
+/** A spawn that failed because the program does not exist. */
+const isCommandNotFound = (cause: unknown): boolean => {
+  const reason = (cause as { readonly reason?: { readonly _tag?: unknown } } | undefined)?.reason;
+  return reason?._tag === "NotFound";
+};
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -105,6 +124,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   readonly makeRuntime?: (
     spawn: AcpSessionRuntime.AcpSpawnInput,
   ) => Effect.Effect<Runtime, ProviderSetupError, Scope.Scope>;
+  /** Replaces the VS Code / gh probe (tests). Used only for the GitHub Copilot registry agent. */
+  readonly findCopilotExistingSignIns?: Effect.Effect<CopilotExistingSignIns>;
 }) {
   const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -119,6 +140,48 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+  const isCopilotAgent =
+    options.settings.source !== "local" && options.settings.agentId === COPILOT_USAGE_AGENT_ID;
+  // Reads only extension folder names and plain `gh auth status` text, never a token.
+  const copilotExistingSignIns = isCopilotAgent
+    ? yield* Effect.cached(
+        options.findCopilotExistingSignIns ??
+          findCopilotExistingSignIns({
+            environment: options.environment,
+            join: (...segments) => path.join(...segments),
+            readDirectory: (directory) =>
+              fs
+                .readDirectory(directory)
+                .pipe(Effect.mapError((cause) => new CopilotProbeError({ cause }))),
+            exec: (command, args, environment) =>
+              Effect.gen(function* () {
+                const child = yield* spawner.spawn(
+                  ChildProcess.make(command, args, {
+                    env: environment,
+                    stdin: "ignore",
+                    shell: false,
+                    forceKillAfter: "1 second",
+                  }),
+                );
+                yield* Effect.addFinalizer(() =>
+                  child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
+                );
+                const [stdout, stderr] = yield* Effect.all(
+                  [
+                    collectUint8StreamText({ stream: child.stdout, maxBytes: 32_768 }),
+                    collectUint8StreamText({ stream: child.stderr, maxBytes: 32_768 }),
+                    child.exitCode,
+                  ],
+                  { concurrency: "unbounded" },
+                );
+                return `${stdout.text}\n${stderr.text}`;
+              }).pipe(
+                Effect.scoped,
+                Effect.mapError((cause) => new CopilotProbeError({ cause })),
+              ),
+          }),
+      )
+    : undefined;
   // Discovery, sign-in and sign-out each start the agent, which rules can forbid.
   const refuseByTeamRules = (operation: string) =>
     Effect.gen(function* () {
@@ -263,19 +326,41 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       ...(method.type === "terminal" ? method.env : {}),
     };
     if (deviceLogin) {
-      const args = copilotDeviceLoginArgs(invocation.args);
-      if (!args) return yield* failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE);
-      const runPreflight = (command: string, args: ReadonlyArray<string>) =>
+      const deviceArgs = copilotDeviceLoginArgs(invocation.args);
+      if (!deviceArgs) return yield* failure("start", copilotLoginUnrecognizedMessage());
+      // Copilot CLI is an npm package: check Node.js before asking the CLI anything.
+      const node = yield* resolveNodeExecutable("Copilot sign-in", environment).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError((cause) => failure("start", copilotNodeMissingMessage(), cause)),
+      );
+      const runPreflight = (
+        command: string,
+        args: ReadonlyArray<string>,
+        program: "Copilot CLI" | "Node.js",
+      ) =>
         Effect.gen(function* () {
-          const child = yield* spawner.spawn(
-            ChildProcess.make(command, args, {
-              cwd: options.cwd,
-              env: environment,
-              stdin: "ignore",
-              shell: false,
-              forceKillAfter: "1 second",
-            }),
-          );
+          const child = yield* spawner
+            .spawn(
+              ChildProcess.make(command, args, {
+                cwd: options.cwd,
+                env: environment,
+                stdin: "ignore",
+                shell: false,
+                forceKillAfter: "1 second",
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                failure(
+                  "start",
+                  program === "Node.js" && isCommandNotFound(cause)
+                    ? copilotNodeMissingMessage()
+                    : copilotCliNotInstalledMessage(),
+                  cause,
+                ),
+              ),
+            );
           yield* Effect.addFinalizer(() =>
             child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
           );
@@ -286,46 +371,70 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
               child.exitCode,
             ],
             { concurrency: "unbounded" },
+          ).pipe(
+            Effect.mapError((cause) =>
+              failure("start", copilotCliNoAnswerMessage({ kind: "unreadable" }, program), cause),
+            ),
           );
-          if (Number(exitCode) !== 0 || stdout.truncated || stderr.truncated)
-            return yield* failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE);
-          return stdout.text + stderr.text;
+          const text = stdout.text + stderr.text;
+          const code = Number(exitCode);
+          if (code !== 0)
+            return yield* failure(
+              "start",
+              copilotOutputShowsNodeMissing(code, text)
+                ? copilotNodeMissingMessage()
+                : copilotCliNoAnswerMessage({ kind: "exit", code }, program),
+            );
+          if (stdout.truncated || stderr.truncated)
+            return yield* failure(
+              "start",
+              copilotCliNoAnswerMessage({ kind: "truncated" }, program),
+            );
+          return text;
         }).pipe(
           Effect.scoped,
-          Effect.timeout("10 seconds"),
-          Effect.mapError(() => failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE)),
+          Effect.timeoutOrElse({
+            duration: "10 seconds",
+            orElse: () =>
+              Effect.fail(
+                failure("start", copilotCliNoAnswerMessage({ kind: "timeout" }, program)),
+              ),
+          }),
         );
-      const help = yield* runPreflight(invocation.command, [
-        ...args.filter((arg) => arg !== "--device-code"),
-        "--help",
-      ]);
+      const help = yield* runPreflight(
+        invocation.command,
+        [...deviceArgs.filter((arg) => arg !== "--device-code"), "--help"],
+        "Copilot CLI",
+      );
       // Inspect the actual selected executable; a command override may differ
       // from the version in registry metadata.
-      const versionOutput = yield* runPreflight(invocation.command, [
-        ...args.slice(0, args.indexOf("login")),
-        "--version",
-      ]);
-      const version = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/u.exec(versionOutput)?.[1];
+      const versionOutput = yield* runPreflight(
+        invocation.command,
+        [...deviceArgs.slice(0, deviceArgs.indexOf("login")), "--version"],
+        "Copilot CLI",
+      );
+      const version = readCopilotVersion(versionOutput);
       if (!version || !supportsCopilotDeviceLogin(version, help))
-        return yield* failure("start", COPILOT_DEVICE_LOGIN_UPDATE_MESSAGE);
-      const node = yield* resolveNodeExecutable("Copilot sign-in", environment).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.mapError(() =>
-          failure(
-            "start",
-            "Copilot sign-in requires Node.js on this environment. Install Node.js and retry.",
-          ),
-        ),
+        return yield* failure(
+          "start",
+          copilotCliTooOldMessage(version, /(?:^|\s)--device-code(?:\s|$)/u.test(help)),
+        );
+      // One enterprise host among this machine's gh sign-ins: sign in there.
+      const existing = copilotExistingSignIns ? yield* copilotExistingSignIns : undefined;
+      const args = withCopilotLoginHost(
+        deviceArgs,
+        help,
+        existing ? copilotEnterpriseHost(existing.ghAccounts) : undefined,
       );
       // Copilot device login still opens a browser by default. Its argv override
       // is scoped to this login; the controlling client owns the browser action.
       environment.ELECTRON_RUN_AS_NODE = "1";
       environment.COPILOT_DEBUG_BROWSER = copilotBrowserOverride(node);
-      yield* runPreflight(node, [
-        ...copilotBrowserNoopArgs,
-        "https://example.invalid/device-preflight",
-      ]);
+      yield* runPreflight(
+        node,
+        [...copilotBrowserNoopArgs, "https://example.invalid/device-preflight"],
+        "Node.js",
+      );
       invocation = { ...invocation, args };
     }
     const exited = yield* Deferred.make<number>();
@@ -639,5 +748,6 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     ...(options.settings.authMethodId ? { defaultMethodId: options.settings.authMethodId } : {}),
     authenticate,
     logout: signOut,
+    ...(copilotExistingSignIns ? { copilotExistingSignIns } : {}),
   });
 });
