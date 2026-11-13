@@ -89,11 +89,31 @@ export const CONNECT_UNREACHABLE_REASON = "SpecWithCode Connect cannot be reache
 export const CONNECT_NO_ANSWER_REASON = "SpecWithCode Connect did not answer for it.";
 export const CONNECT_FAILED_REASON = "Could not connect over SpecWithCode Connect.";
 
+const addsInFlight = new Set<string>();
+const addListeners = new Set<() => void>();
+
 /**
  * Machines whose Connect route is being added right now, by the reconciler's
  * linked path or GrantedAccountMachines: neither starts a second add for one.
  */
-export const connectRouteAddsInFlight = new Set<string>();
+export function connectRouteAddsInFlight(): ReadonlySet<string> {
+  return addsInFlight;
+}
+
+export function setConnectRouteAddInFlight(environmentId: string, inFlight: boolean): void {
+  if (inFlight === addsInFlight.has(environmentId)) return;
+  if (inFlight) addsInFlight.add(environmentId);
+  else addsInFlight.delete(environmentId);
+  for (const listener of addListeners) listener();
+}
+
+/** Called when an add starts or ends, so the other side can act on its result. */
+export function onConnectRouteAddsChange(listener: () => void): () => void {
+  addListeners.add(listener);
+  return () => {
+    addListeners.delete(listener);
+  };
+}
 
 let states: ReadonlyMap<string, AccountAutoConnectState> = new Map();
 const listeners = new Set<() => void>();
@@ -136,7 +156,7 @@ export function accountAutoConnectStates(): ReadonlyMap<string, AccountAutoConne
   return states;
 }
 
-const connectRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) => void>();
+const connectRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) => boolean>();
 
 /**
  * Connect by hand for account machines that allowed this one: saves them over
@@ -145,13 +165,16 @@ const connectRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) 
  * stay put.
  */
 export function requestAccountMachineConnect(environmentIds: ReadonlyArray<string>): boolean {
-  for (const listener of connectRequestListeners) listener(environmentIds);
-  // False while signed out of Connect: nothing listens, the caller pairs instead.
-  return connectRequestListeners.size > 0;
+  // False when nothing will save them (signed out of Connect, or not in this
+  // app's fleet): the caller pairs instead.
+  let taken = false;
+  for (const listener of connectRequestListeners) taken = listener(environmentIds) || taken;
+  return taken;
 }
 
+/** The listener returns whether it will save the machines. */
 export function onAccountMachineConnectRequest(
-  listener: (environmentIds: ReadonlyArray<string>) => void,
+  listener: (environmentIds: ReadonlyArray<string>) => boolean,
 ): () => void {
   connectRequestListeners.add(listener);
   return () => {

@@ -187,15 +187,22 @@ export function usePrimaryFleetSnapshot(primaryEnvironmentId: EnvironmentId | nu
   // The fleet atom needs an id; one that matches no environment reads as no fleet.
   const fleet = useStudioFleet(primaryEnvironmentId ?? ("" as EnvironmentId));
   const next = primaryEnvironmentId === null ? null : fleet.snapshot;
-  const kept = useRef<{ readonly key: string; readonly snapshot: typeof next }>({
-    key: "null",
-    snapshot: null,
-  });
-  // observedAt changes on every read; the machines are what callers act on.
-  const key = JSON.stringify(
-    next === null ? null : [next.connectPermission ?? null, next.machines],
-  );
-  if (kept.current.key !== key) kept.current = { key, snapshot: next };
+  const kept = useRef<{
+    readonly raw: typeof next;
+    readonly key: string;
+    readonly snapshot: typeof next;
+  }>({ raw: null, key: "null", snapshot: null });
+  if (kept.current.raw !== next) {
+    // observedAt changes on every read; the machines are what callers act on.
+    const key = JSON.stringify(
+      next === null ? null : [next.connectPermission ?? null, next.machines],
+    );
+    kept.current = {
+      raw: next,
+      key,
+      snapshot: kept.current.key === key ? kept.current.snapshot : next,
+    };
+  }
   return kept.current.snapshot;
 }
 

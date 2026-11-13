@@ -69,6 +69,12 @@ export function handoffAccountMachines(input: {
    * to run work. Null until it has loaded, when nothing is said yet.
    */
   readonly fleet: ReadonlyArray<FleetEntry> | null;
+  /**
+   * The fleet of the machine the project is on, when that is not this app's
+   * own: which machines allowed it decides who is "not allowed". Defaults to
+   * `fleet`.
+   */
+  readonly sourceFleet?: ReadonlyArray<FleetEntry> | null;
   /** Where saving each Connect-only machine stands, from the reconciler. */
   readonly states: ReadonlyMap<string, AccountAutoConnectState>;
   /** Tailnet machines whose automatic fleet pairing has finished. */
@@ -82,8 +88,10 @@ export function handoffAccountMachines(input: {
 } {
   const fallback: HandoffConnectFallback[] = [];
   const notAllowed: HandoffAccountMachine[] = [];
-  if (input.fleet === null) return { fallback, notAllowed };
+  const allowedFleet = input.sourceFleet === undefined ? input.fleet : input.sourceFleet;
+  if (input.fleet === null || allowedFleet === null) return { fallback, notAllowed };
   const fleetById = new Map(input.fleet.map((machine) => [machine.environmentId, machine]));
+  const allowedIds = new Set(allowedFleet.map((machine) => machine.environmentId));
   const discoveredIds = new Set<string>();
   for (const { environment, availability } of input.discovered) {
     discoveredIds.add(environment.environmentId);
@@ -94,11 +102,9 @@ export function handoffAccountMachines(input: {
       label: input.name?.(id, environment.label) ?? environment.label,
       answering: availability !== "offline" && availability !== "error",
     };
+    if (!allowedIds.has(id)) notAllowed.push(machine);
     const inFleet = fleetById.get(id);
-    if (!inFleet) {
-      notAllowed.push(machine);
-      continue;
-    }
+    if (!inFleet) continue;
     const state = input.states.get(id);
     if (state) fallback.push(withState(machine, state));
     // A tailnet machine is paired by the fleet; once that has finished without

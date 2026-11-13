@@ -31,6 +31,8 @@ import {
   CONNECT_FAILED_REASON,
   CONNECT_NO_ANSWER_REASON,
   connectRouteAddsInFlight,
+  onConnectRouteAddsChange,
+  setConnectRouteAddInFlight,
   CONNECT_UNREACHABLE_REASON,
   REMOVED_HERE_REASON,
   accountAutoConnectStates,
@@ -94,7 +96,6 @@ export function GrantedAccountMachines() {
   const lookedUp = useRef(new Map<string, Attempt>());
   // The list belongs to this account only after a refresh that started once it was active.
   const sawRefresh = useRef(false);
-  const askedForList = useRef(false);
   // Presses not acted on yet: each one asks for one try now.
   const unanswered = useRef(new Set<string>());
   const projectsRef = useRef(projects);
@@ -118,6 +119,11 @@ export function GrantedAccountMachines() {
           );
           return linked.has(id) && (!inFleet || fleetMachineHasTailnetAddress(inFleet));
         });
+        const inFleet = new Set<string>(
+          (snapshotRef.current?.machines ?? []).map((machine) => machine.environmentId),
+        );
+        // Not in this app's fleet: nothing here can save it.
+        if (environmentIds.some((id) => !inFleet.has(id) && !viaLinked.includes(id))) return false;
         for (const id of environmentIds) {
           // Connecting by hand undoes an earlier removal on this device.
           setFleetEnvironmentSkipped(id as EnvironmentId, false);
@@ -131,9 +137,13 @@ export function GrantedAccountMachines() {
         publishAccountAutoConnectStates(shown);
         setTick((current) => current + 1);
         if (viaLinked.length > 0) requestConnectRoutes(viaLinked);
+        return true;
       }),
     [],
   );
+
+  // An add by the reconciler's linked path ended: act on its result.
+  useEffect(() => onConnectRouteAddsChange(() => setTick((current) => current + 1)), []);
 
   // Nothing stays published once this account signs out.
   useEffect(() => () => publishAccountAutoConnectStates(new Map()), []);
@@ -167,6 +177,8 @@ export function GrantedAccountMachines() {
     const unreachable = discovery.error._tag === "Some" || discovery.offline;
     const next = new Map<string, AccountAutoConnectState>();
     let waiting = false;
+    // Machines to save that wait for the account list to be read.
+    const needList: string[] = [];
     for (const machine of candidates) {
       const id = machine.environmentId;
       const tried = attempts.current.get(id);
@@ -179,7 +191,7 @@ export function GrantedAccountMachines() {
         : detail === undefined
           ? { phase: "failed", reason: CONNECT_FAILED_REASON }
           : { phase: "failed", reason: CONNECT_FAILED_REASON, detail };
-      if (inFlight.current.has(id) || connectRouteAddsInFlight.has(id)) {
+      if (inFlight.current.has(id) || connectRouteAddsInFlight().has(id)) {
         next.set(id, { phase: "connecting" });
         continue;
       }
@@ -204,6 +216,7 @@ export function GrantedAccountMachines() {
       // The list may still be the previous account's until it is read again.
       if (!sawRefresh.current) {
         next.set(id, { phase: "connecting" });
+        needList.push(id);
         continue;
       }
       // At most MAX_ATTEMPTS tries a minute apart, also when a try reported
@@ -223,7 +236,7 @@ export function GrantedAccountMachines() {
       unanswered.current.delete(id);
       attempts.current.set(id, { count: (tried?.count ?? 0) + 1, at: now });
       inFlight.current.add(id);
-      connectRouteAddsInFlight.add(id);
+      setConnectRouteAddInFlight(id, true);
       next.set(id, { phase: "connecting" });
       void register(
         new RelayConnectionRegistration({
@@ -231,7 +244,7 @@ export function GrantedAccountMachines() {
         }),
       ).then((result) => {
         inFlight.current.delete(id);
-        connectRouteAddsInFlight.delete(id);
+        setConnectRouteAddInFlight(id, false);
         // An interrupted try counts as a try, so the wait and the cap still apply.
         if (result._tag === "Success") failures.current.delete(id);
         else if (!isAtomCommandInterrupted(result)) {
@@ -246,30 +259,33 @@ export function GrantedAccountMachines() {
       });
     }
     publishAccountAutoConnectStates(next);
-    setRetryPending(waiting);
-    // Mounted after the sign-in read: the list is read once for this account,
-    // so no machine waits as connecting for a read that never comes.
-    if (!sawRefresh.current && !askedForList.current && next.size > 0) {
-      askedForList.current = true;
-      void refresh();
-    }
 
-    // A machine that joined a moment ago may be missing from the list read
-    // earlier; one on another account never shows, so a few reads only.
+    // The account list is read again, at most MAX_LOOKUPS times a minute
+    // apart per machine, only for machines this app would save: one the list
+    // missed (it joined a moment ago, or this component mounted after the
+    // sign-in read). A read empties every machine list for a moment, and a
+    // machine on another account never shows, so never more than that.
     const missing = grantedMachinesMissingFromAccount({
       snapshot,
       currentEnvironmentId: primaryEnvironmentId,
       savedEnvironmentIds,
       discovered: discovery.environments,
-    }).filter((id) => {
-      const looked = lookedUp.current.get(id);
-      return looked === undefined || (looked.count < MAX_LOOKUPS && now - looked.at >= RETRY_MS);
-    });
-    if (missing.length > 0 && sawRefresh.current && !unreachable) {
-      for (const id of missing)
-        lookedUp.current.set(id, { count: (lookedUp.current.get(id)?.count ?? 0) + 1, at: now });
-      void refresh();
-    }
+    }).filter(
+      (id) => !removed.has(id) && (autoConnect || linked.has(id) || requested.current.has(id)),
+    );
+    let readNow = false;
+    if (!unreachable)
+      for (const id of [...needList, ...missing]) {
+        const looked = lookedUp.current.get(id);
+        if (looked !== undefined && looked.count >= MAX_LOOKUPS) continue;
+        if (looked === undefined || now - looked.at >= RETRY_MS) {
+          lookedUp.current.set(id, { count: (looked?.count ?? 0) + 1, at: now });
+          readNow = true;
+        }
+        if ((lookedUp.current.get(id)?.count ?? 0) < MAX_LOOKUPS) waiting = true;
+      }
+    setRetryPending(waiting);
+    if (readNow) void refresh();
   }, [
     autoConnect,
     discovery,
