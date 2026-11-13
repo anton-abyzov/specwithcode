@@ -441,6 +441,12 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
       progress: null,
       error: null,
     });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      expect(approvals).toBe(0);
+      return { state: "ready" };
+    };
     let approvals = 0;
     state.handlers.copyApprove = () => {
       approvals += 1;
@@ -450,6 +456,8 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(approvals).toBe(1);
+    // What comes along showed the secrets included: they go first, to the source.
+    expect(sent).toEqual([[".env"]]);
     expect(state.toasts).toEqual([]);
     destination = "applied";
     await act(async () => vi.advanceTimersByTimeAsync(2000));
@@ -458,6 +466,63 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
     expect((state.toasts[0] as { title: string }).title).toBe(
       "Copy to M3 is done. Open Move Project to finish setting it up.",
     );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("sends an empty secrets list before a one-click approval that left secrets on the source", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true, secrets: { included: false, out: [] } });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(sent).toEqual([[]]);
+    expect(approvals).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("waits for the person when the secrets choice cannot be sent", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    state.handlers.copySecrets = () => {
+      throw new Error("The source is offline.");
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
   } finally {
     vi.useRealTimers();
   }

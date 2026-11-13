@@ -47,7 +47,8 @@ import {
 } from "~/studio/addToMachineCopy";
 import { useMachineNicknames } from "~/studio/machineNickname";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { HandoffSecretsStep, receivableSecretFiles } from "../studio/HandoffSecretsStep";
+import { HandoffSecretsStep } from "../studio/HandoffSecretsStep";
+import { receivableSecretFiles } from "../studio/handoffCopySecrets";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {

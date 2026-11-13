@@ -321,6 +321,34 @@ it("keeps an unticked secret file out after Change setup, a close and a reopen",
   expect(sentSecrets()).toEqual([[".env"]]);
 });
 
+it("keeps a saved opt-out when a reopened one-click copy approves on its own", async () => {
+  localStorage.setItem(
+    "specwithcode:folder-copy:m4:source",
+    JSON.stringify({
+      operationId: "00000000-0000-4000-8000-000000000009",
+      environmentId: "m3",
+      mode: "copy-only",
+      targetFolder: "/target",
+      projectId: null,
+      auto: true,
+      secrets: { included: false, out: [] },
+    }),
+  );
+  state.handlers.copySourceStatus = () => ({
+    state: "ready",
+    summary,
+    progress: null,
+    error: null,
+  });
+  statuses = [copyStatus("previewed", { rows: [newRow(".")] }), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(names()).toContain("copyApprove");
+  // The resumed run reads the pointer's choice, not the default the first render held.
+  expect(sentSecrets()).toEqual([[]]);
+});
+
 it("keeps secrets left on the source when the dialog closes and reopens before Copy", async () => {
   statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
   await mount();

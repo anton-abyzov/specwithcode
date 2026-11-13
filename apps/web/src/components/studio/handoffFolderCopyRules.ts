@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
@@ -59,6 +59,20 @@ export const POLL_MS = 1000;
 export const APPLYING: ReadonlySet<string> = new Set(["applying", "applied"]);
 /** Repository clicks closer together than this re-compare once. */
 export const REPOSITORY_SETTLE_MS = 400;
+
+/**
+ * State that long async runs read through the ref: a copy that runs straight through, or a
+ * resumed one, started in an older render and would otherwise read that render's value.
+ */
+export function useLiveState<T>(initial: T) {
+  const [value, setValue] = useState(initial);
+  const ref = useRef(initial);
+  const set = useCallback((next: T) => {
+    ref.current = next;
+    setValue(next);
+  }, []);
+  return [value, set, ref] as const;
+}
 
 export const NOT_ABSOLUTE =
   "Enter the full absolute path of the folder on the destination machine.";

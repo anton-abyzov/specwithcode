@@ -85,7 +85,7 @@ import {
   newCopyComparison,
 } from "./handoffCopyScanRecovery";
 import { HandoffCopyScanFreshness } from "./HandoffCopyScanFreshness";
-import { HandoffCopyStepPanels, reviewedSecrets, travellingSecrets } from "./HandoffCopyStepPanels";
+import { HandoffCopyStepPanels } from "./HandoffCopyStepPanels";
 import {
   absolute,
   APPLYING,
@@ -94,12 +94,19 @@ import {
   POLL_MS,
   REPOSITORY_SETTLE_MS,
   useCopyReporting,
+  useLiveState,
   type CopyChoices,
 } from "./handoffFolderCopyRules";
 import { useCopyLink } from "./useCopyLink";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
 import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
-import { planRepositoryChoices, type RepositoryChoices } from "./HandoffCopyPreview";
+import {
+  planRepositoryChoices,
+  reviewedSecrets,
+  sendableSecrets,
+  travellingSecrets,
+  type RepositoryChoices,
+} from "./handoffCopySecrets";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
 export type { CopyMachine };
@@ -192,18 +199,12 @@ export function HandoffFolderCopy({
   const [offer, setOffer] = useState<FolderCopyOffer | null>(null);
   const [scanStatus, setScanStatus] = useState<FolderCopySourceStatus | null>(null);
   const legacyOperation = useRef<string | undefined>(undefined);
-  const [summary, setSummaryState] = useState<FolderCopySourceSummary | null>(null);
-  // Read when sending secrets: a copy that runs straight through started in an older render.
-  const summaryNow = useRef<FolderCopySourceSummary | null>(null);
-  const setSummary = (value: FolderCopySourceSummary | null) => {
-    summaryNow.current = value;
-    setSummaryState(value);
-  };
+  const [summary, setSummary, summaryNow] = useLiveState<FolderCopySourceSummary | null>(null);
   // The source's progress: measuring, then building the copy while the destination compares.
   const [measured, setMeasured] = useState<FolderCopySourceStatus["progress"]>(null);
   const [selection, setSelection] =
     useState<ReadonlyArray<FolderCopyFileClass>>(DEFAULT_COPY_SELECTION);
-  const [copy, setCopy] = useState<FolderCopyStatus | null>(null);
+  const [copy, setCopy, copyNow] = useLiveState<FolderCopyStatus | null>(null);
   // Secrets travel by default; files the person unticked stay out through a new measure or
   // a reopen. What comes along and the review show the choice and change it.
   const [secretsChoice, setSecretsChoice] = useState<SecretsChoice>(ALL_SECRETS);
@@ -881,34 +882,35 @@ export function HandoffFolderCopy({
     }
   };
 
-  const secretsFrom = {
+  const { candidates: secretCandidates, paths: secretPaths } = travellingSecrets({
     summary,
     copy,
     skip: copy ? (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip : [],
     homeSupported: target?.homeSecretFiles === true,
     choice: secretsChoice,
-  };
-  const { candidates: secretCandidates, paths: secretPaths } = travellingSecrets(secretsFrom);
+  });
+  const machinesNow = useRef(machines);
+  machinesNow.current = machines;
   const chooseSecrets = (choice: SecretsChoice) => {
     setSecretsChoice(choice);
     const saved = latestPending.current;
     if (saved) remember({ ...saved, secrets: choice });
     else draft.keepDraft({ secrets: choice });
   };
-  /**
-   * Sends the current secrets choice before every approval, for this destination only. An
-   * empty list withdraws files sent before an approval that was refused.
-   */
+  /** The copy's secrets choice goes to the source before every approval (see sendableSecrets). */
   const sendTickedSecrets = async (operationId: string) => {
-    const latest = summaryNow.current;
-    if (!latest || latest.secretFiles.length === 0) return;
-    const { paths } = travellingSecrets({ ...secretsFrom, summary: latest });
-    unwrap(
-      await sendSecrets({
-        environmentId: project.environmentId,
-        input: { operationId, paths, destinationLabel: targetLabel },
-      }),
-    );
+    const saved = latestPending.current;
+    const there = machinesNow.current.find(({ id }) => id === (saved?.environmentId ?? machine));
+    const paths = sendableSecrets({
+      summary: summaryNow.current,
+      plan: copyNow.current,
+      repositories: repositoryDraft.current,
+      machine: there,
+      choice: saved?.secrets ?? secretsChoice,
+    });
+    if (!paths) return;
+    const input = { operationId, paths, destinationLabel: there?.label ?? targetLabel };
+    unwrap(await sendSecrets({ environmentId: project.environmentId, input }));
   };
 
   /** Approves, then checks a failed answer once in case the approval landed anyway. */

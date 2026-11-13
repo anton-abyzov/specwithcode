@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { formatBytes } from "../../studio/folderCopy";
 import { Checkbox } from "../ui/checkbox";
+import { isHomeSecretRow, receivableSecretFiles } from "./handoffCopySecrets";
 
 export interface SecretFileRow {
   readonly path: string;
@@ -12,21 +13,6 @@ export interface SecretHintRow {
   readonly path: string;
   readonly source: string;
   readonly hint: string;
-}
-
-/** A `~/` path is a file in the home folder (for example .NET user secrets), not in the project. */
-export const isHomeSecretRow = (path: string) => path.startsWith("~/");
-
-/**
- * The secret files a destination can receive. A `~/` file needs a destination
- * that writes it into its home folder; an older one would put it in the project,
- * so it is left out there.
- */
-export function receivableSecretFiles<F extends SecretFileRow>(
-  files: ReadonlyArray<F>,
-  homeSupported: boolean,
-): ReadonlyArray<F> {
-  return homeSupported ? files : files.filter((file) => !isHomeSecretRow(file.path));
 }
 
 /**

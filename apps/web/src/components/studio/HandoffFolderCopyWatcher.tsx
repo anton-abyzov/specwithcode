@@ -22,8 +22,10 @@ import {
   folderCopyStorageKey,
   isFolderCopyNotFound,
   readPendingCopy,
+  ALL_SECRETS,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
+import { sendableSecrets } from "./handoffCopySecrets";
 import {
   copyStartInput,
   replaceAllReady,
@@ -143,8 +145,8 @@ const writePointer = (key: string, value: PendingCopy) => {
  * its progress on the project's sidebar row and banner, and says when it is ready, then
  * stops. A one-click copy
  * keeps going here: once measured it starts comparing, and a plan that replaces nothing
- * and has no secret files to choose is approved, as the dialog would. Reopening the
- * dialog unmounts it; the dialog resumes the operation itself.
+ * is approved, as the dialog would, after the saved secrets choice goes to the source.
+ * Reopening the dialog unmounts it; the dialog resumes the operation itself.
  */
 export function HandoffFolderCopyWatcher({
   environmentId,
@@ -177,7 +179,8 @@ export function HandoffFolderCopyWatcher({
   const start = useAtomCommand(machineHandoff.copyStart, { reportFailure: false });
   const decide = useAtomCommand(machineHandoff.copyDecide, { reportFailure: false });
   const approve = useAtomCommand(machineHandoff.copyApprove, { reportFailure: false });
-  const commands = { status, sourceStatus, offerCopy, start, decide, approve };
+  const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
+  const commands = { status, sourceStatus, offerCopy, start, decide, approve, sendSecrets };
   const latest = useRef({ commands, machineLabel, sourceLabel, onOpenDialog, onDone });
   latest.current = { commands, machineLabel, sourceLabel, onOpenDialog, onDone };
 
@@ -236,9 +239,36 @@ export function HandoffFolderCopyWatcher({
     };
 
     /**
+     * Sends the copy's saved secrets choice (What comes along showed it) before a one-click
+     * approval here. Whether that machine takes `~/` files is unknown here, so they stay on
+     * the source. False when the source's list cannot be read or the send failed.
+     */
+    const stageSecrets = async (saved: PendingCopy, previewed: FolderCopyStatus) => {
+      const summary = await readSummary();
+      if (!summary) return false;
+      const paths = sendableSecrets({
+        summary,
+        plan: previewed,
+        repositories: null,
+        machine: undefined,
+        choice: saved.secrets ?? ALL_SECRETS,
+      });
+      if (!paths) return true;
+      const sent = await latest.current.commands.sendSecrets({
+        environmentId,
+        input: {
+          operationId,
+          paths,
+          destinationLabel: latest.current.machineLabel(saved.environmentId),
+        },
+      });
+      return sent._tag === "Success";
+    };
+
+    /**
      * A preview to carry on: the clone choice once, then approve a one-click plan that
      * replaces nothing, or a plan answered with Replace all once nothing is left open.
-     * Secret-like files never stop it; they stay on the source.
+     * Replace all sent its secrets when it was clicked; a one-click plan sends them here.
      */
     const settle = async (saved: PendingCopy, previewed: FolderCopyStatus) => {
       const { decide, approve, status } = latest.current.commands;
@@ -265,6 +295,7 @@ export function HandoffFolderCopyWatcher({
         }
         return "ask" as const;
       }
+      if (!saved.replaceAll && !(await stageSecrets(saved, previewed))) return "ask" as const;
       const approved = await approve({ environmentId: destination, input: { operationId } });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.
