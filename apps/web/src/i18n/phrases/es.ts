@@ -4918,4 +4918,7 @@ export const es: PhraseCatalog = {
     "No está instalado. Ejecuta este comando en un terminal de ese Mac y luego pulsa Volver a comprobar.",
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "No está instalado. Descárgalo de su propio sitio o pide a alguien que pueda mantener esta máquina que lo instale desde aquí.",
+  "Browse…": "Explorar…",
+  "Add to this machine…": "Añadir a este equipo…",
+  "Runs on {machine}. No copy on this device.": "Se ejecuta en {machine}. No hay copia en este dispositivo.",
 };

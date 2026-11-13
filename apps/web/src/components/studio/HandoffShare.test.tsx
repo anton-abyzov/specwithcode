@@ -167,11 +167,62 @@ it("hands off directly when the machine already has the project", async () => {
   expect(button("Add Ministorm")).toBeUndefined();
 });
 
-it("offers only the copy when the project has no Git remote", async () => {
+const choice = (value: string) =>
+  container.querySelector<HTMLElement>(`[data-share-choice="${value}"] [role="radio"]`);
+const choiceOrder = () =>
+  [...container.querySelectorAll("[data-share-choice]")].map((item) =>
+    item.getAttribute("data-share-choice"),
+  );
+
+it("leads with the copy when the project has no Git remote, and shows why Clone is off", async () => {
   await show({ project: { ...project, repositoryIdentity: null } as never });
-  expect(container.textContent).toContain("has no Git remote");
+  expect(choiceOrder()).toEqual(["copy", "clone"]);
+  expect(choice("copy")?.getAttribute("aria-checked")).toBe("true");
+  expect(choice("clone")?.hasAttribute("data-disabled")).toBe(true);
+  expect(container.textContent).toContain("No Git remote to clone from");
   expect(button("Add Ministorm")).toBeUndefined();
-  expect(button("Copy files instead")).toBeDefined();
+  await act(async () => button("Review files to transfer")!.click());
+  expect(base.onPrepareRepositories).toHaveBeenCalledOnce();
+});
+
+it("shows Copy files beside Clone for a plain repository, with Clone first", async () => {
+  await show();
+  expect(choiceOrder()).toEqual(["clone", "copy"]);
+  expect(choice("clone")?.getAttribute("aria-checked")).toBe("true");
+  expect(container.querySelector("[data-slot='handoff-more-options']")).toBeNull();
+  await act(async () => choice("copy")!.click());
+  expect(button("Add Ministorm")).toBeUndefined();
+  await act(async () => button("Copy files…")!.click());
+  expect(base.onCopyInstead).toHaveBeenCalledOnce();
+});
+
+it("leads with copying the whole folder when it holds nested repositories", async () => {
+  state.scope.selected = {
+    repositories: ["repositories/acme/api", "repositories/acme/web"],
+    repositoryOrigins: [],
+    truncated: false,
+  };
+  await show({ uncommittedFiles: 3 });
+  expect(choiceOrder()).toEqual(["copy", "clone"]);
+  expect(container.textContent).toContain("Copy the whole folder");
+  expect(container.textContent).toContain("2 repositories, with local work");
+  expect(container.textContent).toContain("Pushed work only");
+  // Nothing is lost on the copy path, so no warning until Clone is picked.
+  expect(container.textContent).not.toContain("uncommitted files stay");
+  await act(async () => choice("clone")!.click());
+  expect(container.textContent).toContain("3 uncommitted files stay on M4");
+  expect(button("Add Ministorm")).toBeDefined();
+});
+
+it("keeps the long explanations in hints a keyboard can reach", async () => {
+  await show();
+  const hints = [...container.querySelectorAll("button")].map((item) =>
+    item.getAttribute("aria-label"),
+  );
+  expect(hints).toEqual(
+    expect.arrayContaining(["About Clone from Git", "About Copy files", "About Include secrets"]),
+  );
+  expect(container.textContent).not.toContain("shares its goal, instructions");
 });
 
 it("says uncommitted files stay here", async () => {
@@ -258,11 +309,8 @@ const tick = (label: string) =>
     .find((item) => item.textContent?.startsWith(label))
     ?.querySelector<HTMLElement>('[role="checkbox"]');
 
-it("says ignored files and secrets stay behind, with both ticks off", async () => {
+it("starts with both extras ticks off", async () => {
   await show();
-  expect(container.textContent).toContain(
-    "Files Git ignores and secret files, such as .env, stay on M4",
-  );
   expect(tick("Copy ignored files")?.getAttribute("aria-checked")).toBe("false");
   expect(tick("Include secrets")?.getAttribute("aria-checked")).toBe("false");
 });
@@ -296,4 +344,19 @@ it("keeps Copy ignored files a live tick while Include secrets is ticked", async
 it("shows no extras ticks once the machine has the project", async () => {
   await show({ linked: true });
   expect(tick("Copy ignored files")).toBeUndefined();
+});
+
+it("still offers a copy without moving when the machine already has the project", async () => {
+  await show({ linked: true });
+  await act(async () => button("Copy files…")!.click());
+  expect(base.onCopyInstead).toHaveBeenCalledOnce();
+});
+
+it("selects the copy when this machine cannot clone, and holds Add while nested repositories are checked", async () => {
+  await show({ canClone: false });
+  expect(choice("copy")?.getAttribute("aria-checked")).toBe("true");
+  expect(choiceOrder()).toEqual(["copy", "clone"]);
+  state.scope = { ...state.scope, loading: true };
+  await show({ canClone: true });
+  expect(button("Add Ministorm")?.disabled).toBe(true);
 });

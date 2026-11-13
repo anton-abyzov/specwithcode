@@ -18,6 +18,8 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: keyof typeof state) => state[command],
 }));
 vi.mock("../../localApi", () => ({ readLocalApi: () => undefined }));
+vi.mock("../../studio/machineNickname", () => ({ useMachineNickname: () => "M4" }));
+vi.mock("./ProjectFolderCopies", () => ({ ProjectFolderCopies: () => null }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (r: { error: Error }) => r.error,
 }));

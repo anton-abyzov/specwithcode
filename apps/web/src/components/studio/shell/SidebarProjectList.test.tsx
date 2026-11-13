@@ -19,6 +19,11 @@ vi.mock("../../../studio/machineNickname", () => ({
   useMachineNicknames: () => (id: string) => ({ m4: "M4 Max", m1: "Ministorm" })[id] ?? id,
 }));
 
+vi.mock("../../../studio/machineIdentity", () => ({
+  useMachineIdentities: () => () => ({ color: "teal" }),
+}));
+vi.mock("../../../state/environments", () => ({ usePrimaryEnvironmentId: () => "m4" }));
+
 const { ProjectRow } = await import("./SidebarProjectList");
 
 const member = (environmentId: string, projectId: string) => ({

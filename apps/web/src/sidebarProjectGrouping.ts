@@ -251,3 +251,30 @@ export function withPendingMachineAdds<TProject extends Project>(
     ? projects
     : projects.map((project) => replaced.get(project) ?? project);
 }
+
+/**
+ * The machines a project lives on when this device has no copy of it, in the
+ * order the group lists them and each named once. Empty when this device has
+ * a copy, or when the only other copies sit in a sandbox on this device: such a
+ * project runs here, so the sidebar marks nothing.
+ */
+export function remoteOnlyMachines(
+  group: Pick<
+    SidebarProjectSnapshot,
+    "environmentPresence" | "allRemoteMembersAreDesktopLocal" | "memberProjects"
+  >,
+  nameOf: (environmentId: EnvironmentId, fallbackLabel: string | null) => string,
+): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly name: string }> {
+  if (group.environmentPresence !== "remote-only" || group.allRemoteMembersAreDesktopLocal) {
+    return [];
+  }
+  const machines: Array<{ environmentId: EnvironmentId; name: string }> = [];
+  for (const member of group.memberProjects) {
+    if (machines.some((machine) => machine.environmentId === member.environmentId)) continue;
+    machines.push({
+      environmentId: member.environmentId,
+      name: nameOf(member.environmentId, member.environmentLabel),
+    });
+  }
+  return machines;
+}

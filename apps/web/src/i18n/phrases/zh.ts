@@ -4703,4 +4703,7 @@ export const zh: PhraseCatalog = {
     "未安装。在那台 Mac 的终端中运行此命令，然后点按“重新检查”。",
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "未安装。请从其官网获取，或请能维护这台机器的人从这里安装。",
+  "Browse…": "浏览…",
+  "Add to this machine…": "添加到此机器…",
+  "Runs on {machine}. No copy on this device.": "在 {machine} 上运行。此设备上没有副本。",
 };

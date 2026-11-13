@@ -23,6 +23,8 @@ import { readLocalApi } from "../../localApi";
 import { projectEnvironment } from "../../state/projects";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useMachineNickname } from "../../studio/machineNickname";
+import { ProjectFolderCopies } from "./ProjectFolderCopies";
 
 function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -224,6 +226,7 @@ export function ProjectFolderChange({
   onChanged,
   useWorktrees = null,
   onUseWorktreesChange,
+  embedded = false,
 }: {
   project: EnvironmentProject;
   disabled: boolean;
@@ -234,7 +237,10 @@ export function ProjectFolderChange({
   useWorktrees?: boolean | null;
   /** Flips the switch; called only when the person ticked the box and the folder changed. */
   onUseWorktreesChange?: ((on: boolean) => void) | undefined;
+  /** Another machine's copy, changed from the list under this project's own folder. */
+  embedded?: boolean;
 }) {
+  const machine = useMachineNickname(project.environmentId);
   const [alsoSwitch, setAlsoSwitch] = useState(false);
   const [folder, setFolder] = useState("");
   const [check, setCheck] = useState<ProjectFolderCheck | null>(null);
@@ -355,24 +361,41 @@ export function ProjectFolderChange({
     check.activeThreads.length > 0 ||
     (!check.sameRepository && !confirmRepository);
 
+  const Wrapper = embedded ? "div" : "section";
   return (
-    <section className="project-setting-row" aria-labelledby="project-folder-title">
+    <Wrapper
+      className={embedded ? "project-folder-copy-change" : "project-setting-row"}
+      {...(embedded ? {} : { "aria-labelledby": "project-folder-title" })}
+    >
       <div>
-        <h3 id="project-folder-title">Project folder</h3>
-        <p className="project-muted">
-          Point this project at another folder, such as the repository root after it moved. Its
-          threads, memory and history stay with the project.
-        </p>
-        <div className="project-folder-current" title={project.workspaceRoot}>
-          <FolderGit2Icon size={15} aria-hidden="true" />
-          <span>
-            <bdi>{displayFolder(project.workspaceRoot)}</bdi>
-          </span>
-          <small>Current</small>
-        </div>
+        {embedded ? null : (
+          <>
+            <h3 id="project-folder-title">
+              {machine ? `Project folder on ${machine}` : "Project folder"}
+            </h3>
+            <p className="project-muted">
+              Point this project at another folder, such as the repository root after it moved. Its
+              threads, memory and history stay with the project.
+            </p>
+            <div className="project-folder-current" title={project.workspaceRoot}>
+              <FolderGit2Icon size={15} aria-hidden="true" />
+              <span>
+                <bdi>{displayFolder(project.workspaceRoot)}</bdi>
+              </span>
+              <small>Current</small>
+            </div>
+            <ProjectFolderCopies
+              project={project}
+              disabled={locked}
+              renderChange={(copy, done) => (
+                <ProjectFolderChange project={copy} disabled={disabled} embedded onChanged={done} />
+              )}
+            />
+          </>
+        )}
         <div className="project-input-row">
           <input
-            aria-label="New project folder"
+            aria-label={embedded ? `New project folder on ${machine}` : "New project folder"}
             placeholder="New folder path, for example ~/Projects/my-repo"
             value={folder}
             disabled={locked}
@@ -385,7 +408,7 @@ export function ProjectFolderChange({
               if (e.key === "Enter") void inspect();
             }}
           />
-          {pickFolder ? (
+          {pickFolder && !embedded ? (
             <button
               type="button"
               className="project-control"
@@ -563,6 +586,6 @@ export function ProjectFolderChange({
           </div>
         ) : null}
       </div>
-    </section>
+    </Wrapper>
   );
 }

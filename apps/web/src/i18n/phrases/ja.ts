@@ -4895,4 +4895,7 @@ export const ja: PhraseCatalog = {
     "未インストールです。その Mac のターミナルでこのコマンドを実行してから、「もう一度確認」を押してください。",
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "未インストールです。公式サイトから入手するか、このマシンを管理できる人にここからインストールしてもらってください。",
+  "Browse…": "参照…",
+  "Add to this machine…": "このマシンに追加…",
+  "Runs on {machine}. No copy on this device.": "{machine} で実行されます。このデバイスにはコピーがありません。",
 };

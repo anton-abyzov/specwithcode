@@ -41,6 +41,7 @@ import {
   BotOffIcon,
   Link2Icon,
   Link2OffIcon,
+  MonitorDownIcon,
   MoreHorizontalIcon,
   PaletteIcon,
   PencilIcon,
@@ -49,6 +50,8 @@ import {
   Share2Icon,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -84,10 +87,14 @@ import {
   projectShowsWaitingCount,
   type ProjectNotificationLevel,
 } from "@specweave-studio/shared/projectNotifications";
-import type {
-  SidebarProjectGroupMember,
-  SidebarProjectSnapshot,
+import {
+  remoteOnlyMachines,
+  type SidebarProjectGroupMember,
+  type SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
+import { usePrimaryEnvironmentId } from "../../../state/environments";
+import { addToMachineRoute } from "../../../studio/addToMachine";
+import { useMachineIdentities } from "../../../studio/machineIdentity";
 import { coordinatorMachineKey } from "../../../studio/projectCoordinatorMachine";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { copyRolesSummary } from "../../../studio/projectDomain";
@@ -105,6 +112,16 @@ import {
   withoutMovingDestinations,
   type CopyActivity,
 } from "../../../studio/folderCopyActivity";
+
+// Loaded on first use: Add to this machine is rare, and the sidebar loads with every window.
+const AddToMachineDialog = lazy(() =>
+  import("../../chat/AddToMachineDialog").then((module) => ({
+    default: module.AddToMachineDialog,
+  })),
+);
+const DraftFolderCopy = lazy(() =>
+  import("../../chat/DraftFolderCopy").then((module) => ({ default: module.DraftFolderCopy })),
+);
 
 // Environments without matchMedia (tests, some embeds) get no motion at all.
 const canAnimate = () => typeof window !== "undefined" && typeof window.matchMedia === "function";
@@ -588,270 +605,345 @@ export function ProjectRow(props: {
   const keyedCopy = useKeyedCopyActivity(group.memberProjects);
   const copying = keyedCopy?.activity ?? null;
   const copyingText = copying ? copyActivityText(copying) : null;
+  // A project with no copy on this device still opens and runs on its machine; the
+  // row says where, mutes its name, and offers to bring a copy here.
+  const here = usePrimaryEnvironmentId();
+  const machineIdentity = useMachineIdentities();
+  const elsewhere = personal ? [] : remoteOnlyMachines(group, nickname);
+  const elsewhereName = elsewhere.map((machine) => machine.name).join(", ");
+  const elsewhereText =
+    elsewhere.length > 0
+      ? tx("Runs on {machine}. No copy on this device.", { machine: elsewhereName })
+      : null;
+  const [addingHere, setAddingHere] = useState<{ seq: number } | null>(null);
+  const addSource = props.displayedProject ?? group.memberProjects[0];
   return (
-    <li
-      ref={setNodeRef}
-      {...(props.sortable && renaming === null ? { ...dragAttributes, ...listeners } : {})}
-      onKeyDown={props.onKeyDown}
-      onClickCapture={(event) => {
-        if (props.clickSuppressed?.()) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      }}
-      className="sws-project-row"
-      data-project-key={group.projectKey}
-      data-archived={archived || undefined}
-      data-pinned={pinned || undefined}
-      data-dragging={props.dragging || undefined}
-      data-renaming={(renaming !== null && props.rename !== undefined) || undefined}
-      data-copying={(copying !== null && !copying.waiting) || undefined}
-    >
-      {renaming !== null && props.rename ? (
-        <SidebarNameEditor
-          icon={<ProjectFavicon project={project} className="size-[18px] shrink-0" />}
-          label={tx("Project name")}
-          rename={props.rename}
-          state={renaming}
-          onChange={setRenaming}
-          onDone={(refocus) => {
-            refocusRow.current = refocus;
-            setRenaming(null);
-          }}
-        />
-      ) : (
-        <Tip
-          side="right"
-          label={
-            personal
-              ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
-              : `${displayName} · ${project.workspaceRoot}${shared ? ` · ${shared.label}` : ""}${props.linkSuggestion ? ` · ${props.linkSuggestion.label}. Link them?` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
+    <>
+      <li
+        ref={setNodeRef}
+        {...(props.sortable && renaming === null ? { ...dragAttributes, ...listeners } : {})}
+        onKeyDown={props.onKeyDown}
+        onClickCapture={(event) => {
+          if (props.clickSuppressed?.()) {
+            event.preventDefault();
+            event.stopPropagation();
           }
-        >
-          <Link
-            to="/projects/$projectKey"
-            params={{ projectKey: group.projectKey }}
-            search={returnSearch}
-            ref={linkRef}
-            className="sws-side-row"
-            aria-current={props.current ? "page" : undefined}
-            draggable={false}
-            onClick={props.onOpen}
-            // A double click renames the project in place, or opens its settings where it cannot be renamed.
-            onMouseDown={(event) => {
-              if (event.detail > 1) event.preventDefault();
+        }}
+        className="sws-project-row"
+        data-project-key={group.projectKey}
+        data-archived={archived || undefined}
+        data-pinned={pinned || undefined}
+        data-dragging={props.dragging || undefined}
+        data-renaming={(renaming !== null && props.rename !== undefined) || undefined}
+        data-copying={(copying !== null && !copying.waiting) || undefined}
+        data-elsewhere={elsewhere.length > 0 || undefined}
+      >
+        {renaming !== null && props.rename ? (
+          <SidebarNameEditor
+            icon={<ProjectFavicon project={project} className="size-[18px] shrink-0" />}
+            label={tx("Project name")}
+            rename={props.rename}
+            state={renaming}
+            onChange={setRenaming}
+            onDone={(refocus) => {
+              refocusRow.current = refocus;
+              setRenaming(null);
             }}
-            onDoubleClick={(event) => {
-              if (props.clickSuppressed?.()) return;
-              event.preventDefault();
-              if (props.rename) setRenaming({ draft: displayName, error: null });
-              else requestProjectSettings(group.projectKey);
-            }}
+          />
+        ) : (
+          <Tip
+            side="right"
+            label={
+              personal
+                ? `${displayName} · ${PERSONAL_ASSISTANT_LABEL}: ${PERSONAL_ASSISTANT_DESCRIPTION}`
+                : `${displayName} · ${project.workspaceRoot}${elsewhereText ? ` · ${elsewhereText}` : ""}${shared ? ` · ${shared.label}` : ""}${props.linkSuggestion ? ` · ${props.linkSuggestion.label}. Link them?` : ""}${copies ? ` · ${copies}` : ""}${archived ? " · Archived" : ""}${copyingText ? ` · ${copyingText}` : ""}`
+            }
           >
-            <ProjectFavicon project={project} className="size-[18px] shrink-0" />
-            <span className="sws-side-row-label">{displayName}</span>
-            {copies ? <span className="sr-only">, {copies}</span> : null}
-            {copyingText ? <span className="sr-only">, {copyingText}</span> : null}
-            {props.hint ? (
-              <span className="sws-side-row-hint sws-side-row-namesake" title={props.hint}>
-                {props.hint}
-              </span>
-            ) : null}
-            {props.linkSuggestion && !shared ? (
-              // Opens the link dialog, which compares both folders before anything links.
-              <span
-                className="sws-side-row-pin sws-side-row-link-suggestion"
-                role="img"
-                aria-label={`${props.linkSuggestion.label}. Link them?`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  props.linkSuggestion?.onLink();
-                }}
-              >
-                <Link2Icon aria-hidden />
-              </span>
-            ) : null}
-            {shared ? (
-              <span
-                className="sws-side-row-pin sws-side-row-shared"
-                data-shared-project={shared.role}
-                role="img"
-                aria-label={shared.label}
-                title={shared.label}
-              >
-                {shared.role === "workers" ? (
-                  <ArrowRightLeftIcon aria-hidden />
-                ) : (
-                  <Share2Icon aria-hidden />
-                )}
-              </span>
-            ) : null}
-            {/* Automated rows start without alerts; a bell on each would say nothing. */}
-            {muted && !archived && !props.automated ? (
-              <BellOffIcon
-                className="sws-side-row-pin"
-                aria-label={tx("Notifications off")}
-                role="img"
-              />
-            ) : null}
-            {pinned ? (
-              <PinIcon className="sws-side-row-pin" aria-label={tx("Pinned")} role="img" />
-            ) : null}
-            {/* Count and availability stay visible while the adjacent menu opens. */}
-            {copying?.waiting && keyedCopy ? (
-              // A copy waiting for the person is a clear call to act, not a stalled bar.
-              // A mouse shortcut: the row's accessible name says the copy waits, and the
-              // project's banner holds the Review button for keyboard and screen readers.
-              <span
-                className="sws-copy-review"
-                aria-hidden="true"
-                onClick={(event) => {
-                  // Open the checkout the copy started from: its page holds the review.
-                  event.preventDefault();
-                  event.stopPropagation();
-                  props.onOpen();
-                  void navigate({
-                    to: "/projects/$projectKey",
-                    params: { projectKey: group.projectKey },
-                    search: { checkout: keyedCopy.key },
-                  });
-                  requestCopyReview(keyedCopy.key);
-                }}
-              >
-                {tx("Review")}
-              </span>
-            ) : null}
-            <span className="sws-side-row-end">
-              {waiting > 0 ? (
-                <span
-                  className="sws-count sws-count-waiting"
-                  title={props.attentionLabel ?? needsYouLabel(waiting)}
-                >
-                  <span aria-hidden="true">{waiting}</span>
-                  <span className="sr-only">{props.attentionLabel ?? needsYouLabel(waiting)}</span>
+            <Link
+              to="/projects/$projectKey"
+              params={{ projectKey: group.projectKey }}
+              search={returnSearch}
+              ref={linkRef}
+              className="sws-side-row"
+              aria-current={props.current ? "page" : undefined}
+              draggable={false}
+              onClick={props.onOpen}
+              // A double click renames the project in place, or opens its settings where it cannot be renamed.
+              onMouseDown={(event) => {
+                if (event.detail > 1) event.preventDefault();
+              }}
+              onDoubleClick={(event) => {
+                if (props.clickSuppressed?.()) return;
+                event.preventDefault();
+                if (props.rename) setRenaming({ draft: displayName, error: null });
+                else requestProjectSettings(group.projectKey);
+              }}
+            >
+              <ProjectFavicon project={project} className="size-[18px] shrink-0" />
+              <span className="sws-side-row-label">{displayName}</span>
+              {copies ? <span className="sr-only">, {copies}</span> : null}
+              {elsewhereText ? <span className="sr-only">, {elsewhereText}</span> : null}
+              {copyingText ? <span className="sr-only">, {copyingText}</span> : null}
+              {props.hint ? (
+                <span className="sws-side-row-hint sws-side-row-namesake" title={props.hint}>
+                  {props.hint}
                 </span>
               ) : null}
-              {!quiet && props.attentionComplete === false ? (
+              {props.linkSuggestion && !shared ? (
+                // Opens the link dialog, which compares both folders before anything links.
                 <span
-                  className="sws-project-coverage"
+                  className="sws-side-row-pin sws-side-row-link-suggestion"
                   role="img"
-                  aria-label={props.attentionLabel ?? "Some machines are offline"}
-                  title={props.attentionLabel ?? "Some machines are offline"}
+                  aria-label={`${props.linkSuggestion.label}. Link them?`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    props.linkSuggestion?.onLink();
+                  }}
+                >
+                  <Link2Icon aria-hidden />
+                </span>
+              ) : null}
+              {shared ? (
+                <span
+                  className="sws-side-row-pin sws-side-row-shared"
+                  data-shared-project={shared.role}
+                  role="img"
+                  aria-label={shared.label}
+                  title={shared.label}
+                >
+                  {shared.role === "workers" ? (
+                    <ArrowRightLeftIcon aria-hidden />
+                  ) : (
+                    <Share2Icon aria-hidden />
+                  )}
+                </span>
+              ) : null}
+              {/* Automated rows start without alerts; a bell on each would say nothing. */}
+              {muted && !archived && !props.automated ? (
+                <BellOffIcon
+                  className="sws-side-row-pin"
+                  aria-label={tx("Notifications off")}
+                  role="img"
                 />
               ) : null}
-            </span>
-            {copying && !copying.waiting ? <CopyProgressLine activity={copying} /> : null}
-          </Link>
-        </Tip>
-      )}
-      <Menu>
-        <MenuTrigger
-          render={
-            <button
-              type="button"
-              className="sws-icon-button sws-chat-menu"
-              aria-label={tx("Actions for {name}", { name: displayName })}
-            />
-          }
-        >
-          <MoreHorizontalIcon aria-hidden />
-        </MenuTrigger>
-        <MenuPopup
-          align="start"
-          side="bottom"
-          finalFocus={() => {
-            const keep = !renameFromMenu.current;
-            renameFromMenu.current = false;
-            return keep;
-          }}
-        >
-          {designsProjectId ? (
-            <>
-              <MenuItem
-                onClick={() => {
-                  props.onOpen();
-                  void navigate({ to: "/design", search: { project: designsProjectId } });
-                }}
-              >
-                <PaletteIcon aria-hidden />
-                {tx("Designs")}
-              </MenuItem>
-              <MenuSeparator />
-            </>
-          ) : null}
-          {props.rename ? (
-            <>
-              <MenuItem
-                onClick={() => {
-                  renameFromMenu.current = true;
-                  setRenaming({ draft: displayName, error: null });
-                }}
-              >
-                <PencilIcon aria-hidden />
-                {tx("Rename project")}
-              </MenuItem>
-              <MenuSeparator />
-            </>
-          ) : null}
-          {props.onPin ? (
-            <MenuItem onClick={props.onPin}>
-              {pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
-              {pinned ? tx("Unpin project") : tx("Pin project")}
-            </MenuItem>
-          ) : null}
-          {props.onStep ? (
-            <>
-              <MenuItem disabled={!props.canStep?.("up")} onClick={() => props.onStep?.("up")}>
-                <ArrowUpIcon aria-hidden />
-                {tx("Move up")}
-                <MenuShortcut>{MOVE_SHORTCUT.up}</MenuShortcut>
-              </MenuItem>
-              <MenuItem disabled={!props.canStep?.("down")} onClick={() => props.onStep?.("down")}>
-                <ArrowDownIcon aria-hidden />
-                {tx("Move down")}
-                <MenuShortcut>{MOVE_SHORTCUT.down}</MenuShortcut>
-              </MenuItem>
-              <MenuSeparator />
-            </>
-          ) : null}
-          {props.onNotificationsChange && props.notifications ? (
-            <>
-              <ProjectNotificationsMenu
-                level={props.notifications}
-                onChange={props.onNotificationsChange}
+              {pinned ? (
+                <PinIcon className="sws-side-row-pin" aria-label={tx("Pinned")} role="img" />
+              ) : null}
+              {/* Count and availability stay visible while the adjacent menu opens. */}
+              {copying?.waiting && keyedCopy ? (
+                // A copy waiting for the person is a clear call to act, not a stalled bar.
+                // A mouse shortcut: the row's accessible name says the copy waits, and the
+                // project's banner holds the Review button for keyboard and screen readers.
+                <span
+                  className="sws-copy-review"
+                  aria-hidden="true"
+                  onClick={(event) => {
+                    // Open the checkout the copy started from: its page holds the review.
+                    event.preventDefault();
+                    event.stopPropagation();
+                    props.onOpen();
+                    void navigate({
+                      to: "/projects/$projectKey",
+                      params: { projectKey: group.projectKey },
+                      search: { checkout: keyedCopy.key },
+                    });
+                    requestCopyReview(keyedCopy.key);
+                  }}
+                >
+                  {tx("Review")}
+                </span>
+              ) : null}
+              {elsewhere.length > 0 ? (
+                // The Chats list's machine tag, so a project and its chats name machines alike.
+                <span
+                  className="sws-row-machine sws-project-elsewhere machine-mark"
+                  data-machine-color={machineIdentity(elsewhere[0]!.environmentId).color}
+                  data-project-elsewhere=""
+                  aria-hidden
+                >
+                  <span className="sws-row-machine-name">
+                    {elsewhere.length > 1
+                      ? `${elsewhere[0]!.name} +${elsewhere.length - 1}`
+                      : elsewhere[0]!.name}
+                  </span>
+                </span>
+              ) : null}
+              <span className="sws-side-row-end">
+                {waiting > 0 ? (
+                  <span
+                    className="sws-count sws-count-waiting"
+                    title={props.attentionLabel ?? needsYouLabel(waiting)}
+                  >
+                    <span aria-hidden="true">{waiting}</span>
+                    <span className="sr-only">
+                      {props.attentionLabel ?? needsYouLabel(waiting)}
+                    </span>
+                  </span>
+                ) : null}
+                {!quiet && props.attentionComplete === false ? (
+                  <span
+                    className="sws-project-coverage"
+                    role="img"
+                    aria-label={props.attentionLabel ?? "Some machines are offline"}
+                    title={props.attentionLabel ?? "Some machines are offline"}
+                  />
+                ) : null}
+              </span>
+              {copying && !copying.waiting ? <CopyProgressLine activity={copying} /> : null}
+            </Link>
+          </Tip>
+        )}
+        <Menu>
+          <MenuTrigger
+            render={
+              <button
+                type="button"
+                className="sws-icon-button sws-chat-menu"
+                aria-label={tx("Actions for {name}", { name: displayName })}
               />
-              <MenuSeparator />
-            </>
-          ) : null}
-          {props.linkSuggestion ? (
-            <>
-              <MenuItem onClick={props.linkSuggestion.onLink}>
-                <Link2Icon aria-hidden />
-                {props.linkSuggestion.action}
+            }
+          >
+            <MoreHorizontalIcon aria-hidden />
+          </MenuTrigger>
+          <MenuPopup
+            align="start"
+            side="bottom"
+            finalFocus={() => {
+              const keep = !renameFromMenu.current;
+              renameFromMenu.current = false;
+              return keep;
+            }}
+          >
+            {designsProjectId ? (
+              <>
+                <MenuItem
+                  onClick={() => {
+                    props.onOpen();
+                    void navigate({ to: "/design", search: { project: designsProjectId } });
+                  }}
+                >
+                  <PaletteIcon aria-hidden />
+                  {tx("Designs")}
+                </MenuItem>
+                <MenuSeparator />
+              </>
+            ) : null}
+            {props.rename ? (
+              <>
+                <MenuItem
+                  onClick={() => {
+                    renameFromMenu.current = true;
+                    setRenaming({ draft: displayName, error: null });
+                  }}
+                >
+                  <PencilIcon aria-hidden />
+                  {tx("Rename project")}
+                </MenuItem>
+                <MenuSeparator />
+              </>
+            ) : null}
+            {props.onPin ? (
+              <MenuItem onClick={props.onPin}>
+                {pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
+                {pinned ? tx("Unpin project") : tx("Pin project")}
               </MenuItem>
-              <MenuItem onClick={props.linkSuggestion.onDismiss}>
-                <Link2OffIcon aria-hidden />
-                {tx("Not the same project")}
+            ) : null}
+            {props.onStep ? (
+              <>
+                <MenuItem disabled={!props.canStep?.("up")} onClick={() => props.onStep?.("up")}>
+                  <ArrowUpIcon aria-hidden />
+                  {tx("Move up")}
+                  <MenuShortcut>{MOVE_SHORTCUT.up}</MenuShortcut>
+                </MenuItem>
+                <MenuItem
+                  disabled={!props.canStep?.("down")}
+                  onClick={() => props.onStep?.("down")}
+                >
+                  <ArrowDownIcon aria-hidden />
+                  {tx("Move down")}
+                  <MenuShortcut>{MOVE_SHORTCUT.down}</MenuShortcut>
+                </MenuItem>
+                <MenuSeparator />
+              </>
+            ) : null}
+            {props.onNotificationsChange && props.notifications ? (
+              <>
+                <ProjectNotificationsMenu
+                  level={props.notifications}
+                  onChange={props.onNotificationsChange}
+                />
+                <MenuSeparator />
+              </>
+            ) : null}
+            {props.linkSuggestion ? (
+              <>
+                <MenuItem onClick={props.linkSuggestion.onLink}>
+                  <Link2Icon aria-hidden />
+                  {props.linkSuggestion.action}
+                </MenuItem>
+                <MenuItem onClick={props.linkSuggestion.onDismiss}>
+                  <Link2OffIcon aria-hidden />
+                  {tx("Not the same project")}
+                </MenuItem>
+                <MenuSeparator />
+              </>
+            ) : null}
+            {elsewhere.length > 0 && here !== null && addSource ? (
+              <>
+                <MenuItem
+                  onClick={() => setAddingHere((previous) => ({ seq: (previous?.seq ?? 0) + 1 }))}
+                >
+                  <MonitorDownIcon aria-hidden />
+                  {tx("Add to this machine…")}
+                </MenuItem>
+                <MenuSeparator />
+              </>
+            ) : null}
+            {props.onOriginChange ? (
+              <MenuItem
+                onClick={() => props.onOriginChange?.(props.automated ? "user" : "automated")}
+              >
+                {props.automated ? <BotOffIcon aria-hidden /> : <BotIcon aria-hidden />}
+                {props.automated ? "Move to my projects" : "Move to Automated"}
               </MenuItem>
-              <MenuSeparator />
-            </>
-          ) : null}
-          {props.onOriginChange ? (
-            <MenuItem
-              onClick={() => props.onOriginChange?.(props.automated ? "user" : "automated")}
-            >
-              {props.automated ? <BotOffIcon aria-hidden /> : <BotIcon aria-hidden />}
-              {props.automated ? "Move to my projects" : "Move to Automated"}
+            ) : null}
+            <MenuItem onClick={() => props.onArchive(!archived)}>
+              <ArchiveIcon aria-hidden />
+              {archived ? tx("Restore project") : tx("Archive project")}
             </MenuItem>
-          ) : null}
-          <MenuItem onClick={() => props.onArchive(!archived)}>
-            <ArchiveIcon aria-hidden />
-            {archived ? tx("Restore project") : tx("Archive project")}
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
-    </li>
+          </MenuPopup>
+        </Menu>
+      </li>
+      {/* Outside the row, so typing and clicks in the dialog never reach its drag and key handlers. */}
+      {addingHere && here !== null && addSource ? (
+        <Suspense fallback={null}>
+          {
+            // The Add to another machine flow, with this device as the destination: a clone
+            // from the project's Git remote, or the folder copy review when it has none.
+            addToMachineRoute(addSource) === "clone" ? (
+              <AddToMachineDialog
+                open
+                onOpenChange={(next) => {
+                  if (!next) setAddingHere(null);
+                }}
+                source={addSource}
+                destinationEnvironmentId={here}
+                onAdded={() => setAddingHere(null)}
+              />
+            ) : (
+              <DraftFolderCopy
+                key={`${addSource.environmentId}:${addSource.id}`}
+                project={addSource}
+                machine={here}
+                seq={addingHere.seq}
+                onClose={() => setAddingHere(null)}
+              />
+            )
+          }
+        </Suspense>
+      ) : null}
+    </>
   );
 }
 
