@@ -2340,6 +2340,34 @@ export const pt: PhraseCatalog = {
     "2 ou 3 caracteres para um chip estreito demais para o nome. Vazio segue o nome.",
   "Use 2 or 3 characters.":
     "Use 2 ou 3 caracteres.",
+  "{name} wears {color}":
+    "{name} usa {color}",
+  "Change the color of {name}, now {color}":
+    "Mudar a cor de {name}, agora {color}",
+  "Change color":
+    "Mudar cor",
+  "Color of {name}":
+    "Cor de {name}",
+  "{color}, also on {names}":
+    "{color}, também em {names}",
+  "Letters under a color name the machines that wear it.":
+    "As letras sob uma cor indicam as máquinas que a usam.",
+  "Violet":
+    "Violeta",
+  "Teal":
+    "Verde-azulado",
+  "Amber":
+    "Âmbar",
+  "Rose":
+    "Rosa",
+  "Blue":
+    "Azul",
+  "Green":
+    "Verde",
+  "Orange":
+    "Laranja",
+  "Slate":
+    "Ardósia",
   "Computer name {hostLabel}":
     "Nome do computador {hostLabel}",
   "Use {defaultName}": "Usar {defaultName}",

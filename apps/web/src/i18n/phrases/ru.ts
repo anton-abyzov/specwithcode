@@ -2328,6 +2328,34 @@ export const ru: PhraseCatalog = {
     "2 или 3 символа для чипа, в который не помещается имя. Пусто — берутся из имени.",
   "Use 2 or 3 characters.":
     "Используйте 2 или 3 символа.",
+  "{name} wears {color}":
+    "У {name} цвет {color}",
+  "Change the color of {name}, now {color}":
+    "Изменить цвет {name}, сейчас {color}",
+  "Change color":
+    "Изменить цвет",
+  "Color of {name}":
+    "Цвет {name}",
+  "{color}, also on {names}":
+    "{color}, также у {names}",
+  "Letters under a color name the machines that wear it.":
+    "Буквы под цветом — машины, у которых он уже есть.",
+  "Violet":
+    "Фиолетовый",
+  "Teal":
+    "Бирюзовый",
+  "Amber":
+    "Янтарный",
+  "Rose":
+    "Розовый",
+  "Blue":
+    "Синий",
+  "Green":
+    "Зелёный",
+  "Orange":
+    "Оранжевый",
+  "Slate":
+    "Графитовый",
   "Computer name {hostLabel}":
     "Имя компьютера {hostLabel}",
   "Use {defaultName}": "Использовать {defaultName}",
