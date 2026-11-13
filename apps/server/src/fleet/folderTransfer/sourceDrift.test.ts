@@ -230,6 +230,12 @@ it("lists a changed Git setting or exclude rule as the repository's settings; ho
   write(hook, "#!/bin/sh\nexit 0\n");
   git(folder, "config", "core.pager", "less -R");
   expect(await changed()).toEqual([]);
+  // A per-worktree config the copy would carry is a change.
+  const worktreeConfig = Path.join(folder, ".git/config.worktree");
+  await FSP.writeFile(worktreeConfig, "[core]\n\tautocrlf = input\n");
+  expect(await changed()).toEqual(["."]);
+  await FSP.rm(worktreeConfig);
+  expect(await changed()).toEqual([]);
 });
 
 it.skipIf(process.platform === "win32")(

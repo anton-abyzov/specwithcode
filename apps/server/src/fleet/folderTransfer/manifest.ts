@@ -581,6 +581,8 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
     }
     children.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     let scope = repos;
+    // A `.git` Git cannot read is never copied as plain files: its config and hooks would run unchecked.
+    let skipGitEntry = false;
     if (!insideGitData) {
       const gitChild = children.find((child) => child.name === ".git");
       // A linked worktree of a repository inside the root is not walked or read
@@ -622,8 +624,9 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
           }
         } catch (cause) {
           if (!(cause instanceof FolderGitError)) throw cause;
+          skipGitEntry = true;
           warnings.push(
-            `${relativeOf(realRoot, absolute)} has a .git entry Git cannot read; it is copied as plain files.`,
+            `${relativeOf(realRoot, absolute)} has a .git entry Git cannot read; its Git data is not copied. Its other files are.`,
           );
         }
       }
@@ -638,6 +641,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
       stats[index] = await NodeFSP.lstat(NodePath.join(absolute, child.name)).catch(() => null);
     });
     for (const [index, child] of children.entries()) {
+      if (skipGitEntry && child.name === ".git") continue;
       const location = NodePath.join(absolute, child.name);
       const relative = relativeOf(realRoot, location);
       if (!safe[index]) {

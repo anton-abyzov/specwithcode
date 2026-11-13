@@ -10,7 +10,8 @@ import { preparePortableGit } from "./portableGit.ts";
 import {
   isUncarriedGitPath,
   parseNullConfigList,
-  rewriteCopiedGitConfigs,
+  sanitizeCopiedGitDir,
+  worktreeInside,
   safeGitConfigEntries,
   safeRemoteUrl,
 } from "./safeGitConfig.ts";
@@ -74,18 +75,21 @@ describe("safeRemoteUrl", () => {
 
 describe("safeGitConfigEntries", () => {
   it("keeps plain settings and drops every command, helper, alias and include", () => {
-    const kept = safeGitConfigEntries([
-      ["core.repositoryformatversion", "0"],
-      ["core.bare", "false"],
-      ["remote.origin.url", "https://u:t@example.invalid/r.git"],
-      ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
-      ["branch.main.remote", "origin"],
-      ["branch.main.merge", "refs/heads/main"],
-      ["submodule.lib.url", "https://example.invalid/lib.git"],
-      ["submodule.lib.update", "rebase"],
-      ["core.worktree", "../../../lib"],
-      ...UNSAFE,
-    ]);
+    const kept = safeGitConfigEntries(
+      [
+        ["core.repositoryformatversion", "0"],
+        ["core.bare", "false"],
+        ["remote.origin.url", "https://u:t@example.invalid/r.git"],
+        ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
+        ["branch.main.remote", "origin"],
+        ["branch.main.merge", "refs/heads/main"],
+        ["submodule.lib.url", "https://example.invalid/lib.git"],
+        ["submodule.lib.update", "rebase"],
+        ["core.worktree", "../../../lib"],
+        ...UNSAFE,
+      ],
+      { keepWorktree: (value) => !value.startsWith("/") },
+    );
     expect(kept).toEqual([
       ["core.repositoryformatversion", "0"],
       ["core.bare", "false"],
@@ -115,9 +119,10 @@ describe("parseNullConfigList", () => {
 });
 
 describe("isUncarriedGitPath", () => {
-  it("skips hooks folders at any depth and nothing else", () => {
+  it("skips only the main hooks folder while copying; sanitizing removes the rest", () => {
     expect(isUncarriedGitPath("hooks", true)).toBe(true);
-    expect(isUncarriedGitPath("modules/lib/hooks", true)).toBe(true);
+    // A branch named hooks/x lives in refs/heads/hooks: never skipped by name.
+    expect(isUncarriedGitPath("refs/heads/hooks", true)).toBe(false);
     expect(isUncarriedGitPath("hooks", false)).toBe(false);
     expect(isUncarriedGitPath("config", false)).toBe(false);
     expect(isUncarriedGitPath("refs/heads/hooks", false)).toBe(false);
@@ -167,7 +172,7 @@ describe("copied repositories", () => {
       NodePath.join(gitDir, "modules/lib/config"),
       "[core]\n\tbare = false\n\tworktree = ../../../lib\n\tfsmonitor = evil-fsmonitor\n",
     );
-    await rewriteCopiedGitConfigs(gitDir);
+    await sanitizeCopiedGitDir(gitDir, main);
     const config = NodeFS.readFileSync(NodePath.join(gitDir, "config"), "utf8");
     for (const [, value] of UNSAFE) expect(config).not.toContain(value);
     expect(config).not.toContain("never-transfer");
@@ -216,5 +221,112 @@ describe("copied repositories", () => {
       hints.filter((hint) => hint.source === TRACKED_SECRET_SOURCE).map((h) => h.path),
     ).toEqual(expect.arrayContaining([".env", "certs/server.pem"]));
     expect(hints.some((hint) => hint.path === "file.txt")).toBe(false);
+  });
+
+  it("sanitizes every Git directory and removes what selects or names other places", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const gitDir = NodePath.join(main, ".git");
+    // A submodule whose name holds a slash and starts with refs.
+    const nested = NodePath.join(gitDir, "modules/refs/lib");
+    NodeFS.mkdirSync(nested, { recursive: true });
+    write(NodePath.join(nested, "HEAD"), "ref: refs/heads/main\n");
+    write(
+      NodePath.join(nested, "config"),
+      "[core]\n\tfsmonitor = evil-fsmonitor\n\tworktree = ../../../../..\n",
+    );
+    write(NodePath.join(gitDir, "commondir"), "shadow\n");
+    write(NodePath.join(gitDir, "shadow/config"), "[core]\n\tfsmonitor = evil-fsmonitor\n");
+    write(NodePath.join(gitDir, "remotes/origin"), "URL: https://u:token@example.invalid/r.git\n");
+    write(NodePath.join(nested, "hooks/post-checkout"), "#!/bin/sh\nexit 1\n", 0o755);
+    const configFile = NodePath.join(gitDir, "config");
+    git(
+      root,
+      "config",
+      "--file",
+      configFile,
+      "branch.main.remote",
+      "https://u:token@example.invalid/r.git",
+    );
+    git(root, "config", "--file", configFile, "branch.main.pushRemote", "origin");
+    git(
+      root,
+      "config",
+      "--file",
+      configFile,
+      "remote.web.url",
+      "https://example.invalid/r.git?access_token=secret#x",
+    );
+    git(root, "config", "--file", configFile, "filter.lfs.smudge", "git-lfs smudge -- %f");
+    git(root, "config", "--file", configFile, "filter.lfs.process", "git-lfs filter-process");
+    git(root, "config", "--file", configFile, "filter.lfs.clean", "evil-clean %f");
+    await sanitizeCopiedGitDir(gitDir, main);
+    expect(NodeFS.existsSync(NodePath.join(gitDir, "commondir"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(gitDir, "remotes"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(nested, "hooks"))).toBe(false);
+    const nestedConfig = NodeFS.readFileSync(NodePath.join(nested, "config"), "utf8");
+    expect(nestedConfig).not.toContain("evil");
+    // A worktree outside the copied folder is dropped.
+    expect(nestedConfig).not.toContain("worktree");
+    const read = (key: string) =>
+      git(root, "config", "--file", configFile, "--get-all", key).split("\n");
+    expect(read("branch.main.remote")).toEqual(["https://example.invalid/r.git"]);
+    expect(read("branch.main.pushremote")).toEqual(["origin"]);
+    expect(read("remote.web.url")).toEqual(["https://example.invalid/r.git"]);
+    expect(read("filter.lfs.smudge")).toEqual(["git-lfs smudge -- %f"]);
+    expect(read("filter.lfs.process")).toEqual(["git-lfs filter-process"]);
+    expect(NodeFS.readFileSync(configFile, "utf8")).not.toContain("evil-clean");
+  });
+
+  it("refuses a pending rebase that runs commands", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const gitDir = NodePath.join(main, ".git");
+    write(
+      NodePath.join(gitDir, "rebase-merge/git-rebase-todo"),
+      "pick abc one\nexec touch /tmp/x\n",
+    );
+    await expect(sanitizeCopiedGitDir(gitDir, main)).rejects.toThrow(/exec lines/);
+    write(NodePath.join(gitDir, "rebase-merge/git-rebase-todo"), "pick abc one\n");
+    await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
+  });
+
+  it("does not copy a .git Git cannot read", async () => {
+    const root = tempRoot();
+    const folder = NodePath.join(root, "folder");
+    write(NodePath.join(folder, "file.txt"), "kept\n");
+    write(NodePath.join(folder, ".git/config"), "[core]\n\tfsmonitor = evil-fsmonitor\n");
+    write(NodePath.join(folder, ".git/hooks/post-checkout"), "#!/bin/sh\nexit 1\n", 0o755);
+    const scan = await scanFolder(folder);
+    expect(scan.entries.some((entry) => entry.path.startsWith(".git"))).toBe(false);
+    expect(scan.entries.some((entry) => entry.path === "file.txt")).toBe(true);
+    expect(scan.warnings.join(" ")).toContain("its Git data is not copied");
+  });
+});
+
+describe("remote URL forms", () => {
+  it.each([
+    ["host.example:org/repo.git", "host.example:org/repo.git"],
+    ["git@[::1]:org/repo.git", "git@[::1]:org/repo.git"],
+    ["git@host.example:path with spaces/repo.git", "git@host.example:path with spaces/repo.git"],
+    ["ssh://git@host.example/srv/link/../repo.git", "ssh://git@host.example/srv/link/../repo.git"],
+    ["https://%75ser:%70w@host.example/r.git", "https://host.example/r.git"],
+  ])("keeps %s as %s", (raw, expected) => {
+    expect(safeRemoteUrl(raw)).toBe(expected);
+  });
+
+  it.each(["C:/repo", "-oProxyCommand=x:repo", "ssh://-oProxyCommand=x/repo", "git@host:repo\nx"])(
+    "drops %s",
+    (raw) => {
+      expect(safeRemoteUrl(raw)).toBeNull();
+    },
+  );
+
+  it("keeps a submodule worktree only inside the copied folder", () => {
+    const file = "/copy/.git/modules/lib/config";
+    expect(worktreeInside(file, "/copy")("../../../lib")).toBe(true);
+    expect(worktreeInside(file, "/copy")("../../../..")).toBe(false);
+    expect(worktreeInside(file, "/copy")("\\\\server\\share")).toBe(false);
+    expect(worktreeInside(file, "/copy")("C:lib")).toBe(false);
   });
 });

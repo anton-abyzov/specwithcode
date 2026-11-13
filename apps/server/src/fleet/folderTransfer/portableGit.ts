@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import { privateDirectory } from "./durable.ts";
 import { FolderGitError, runGit } from "./git.ts";
-import { isUncarriedGitPath, rewriteCopiedGitConfigs, safeRemoteUrl } from "./safeGitConfig.ts";
+import { isUncarriedGitPath, safeRemoteUrl, sanitizeCopiedGitDir } from "./safeGitConfig.ts";
 import {
   emptyTotals,
   FolderScanError,
@@ -594,7 +594,7 @@ async function snapshotMain(
   });
   const after = await readRefs(context, sourceFolder);
   // Only plain settings travel: hooks, drivers, helpers and credentialed URLs stay here (1328).
-  await rewriteCopiedGitConfigs(targetGit, { signal: context.signal });
+  await sanitizeCopiedGitDir(targetGit, snapshotRoot, { signal: context.signal });
   // Objects AFTER all HEAD/index/refs/reflogs are frozen: every object they
   // name existed before they were written.
   await copyObjects(
