@@ -599,6 +599,31 @@ it("never approves a one-click copy whose unchanged folder would overwrite files
   }
 });
 
+it("keeps a reopened dialog's secrets choice when the clone choice answers after unmount", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true, method: "clone" });
+    state.handlers.copyStatus = () => previewed([row({ cloneAvailable: true })]);
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyDecide = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await act(async () => root.render(<></>));
+    pointer({ auto: true, method: "clone", secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer(previewed([row({ cloneAvailable: true, clone: true })]));
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(readPointer()).toMatchObject({ secrets: { included: false, out: [] } });
+    expect(readPointer()).not.toHaveProperty("cloneDecided");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("keeps the remembered steps when it records the clone choice or drops a Replace all", async () => {
   vi.useFakeTimers();
   try {

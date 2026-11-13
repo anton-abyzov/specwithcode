@@ -283,7 +283,10 @@ export function HandoffFolderCopyWatcher({
               input: { operationId, clone: cloneableRows(previewed.rows) },
             }),
           );
-        writePointer(key, { ...saved, cloneDecided: true });
+        // A reopened dialog may have changed the pointer meanwhile: mark only this operation's.
+        const now = readPendingCopy(key);
+        if (stopped || now?.operationId !== operationId) return "ask" as const;
+        writePointer(key, { ...now, cloneDecided: true });
         return "again" as const;
       }
       const approvable = saved.replaceAll
