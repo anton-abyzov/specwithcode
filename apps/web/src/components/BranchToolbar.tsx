@@ -661,10 +661,11 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
   const composerPick = useComposerRepositoryPick(threadId);
   // "Agent decides" shows the pick the launch will make from the draft as it is typed.
+  // Only a folder of separate clones picks from the message; elsewhere the launch is one worktree.
+  const picksFromMessage =
+    repositoriesRead.data?.separateClones === true && composerPick.repositories.length === 0;
   const draftPrompt = useComposerDraftStore((store) =>
-    composerRepositories.length > 0 && composerPick.repositories.length === 0
-      ? (store.getComposerDraft(draftId ?? threadRef)?.prompt ?? "")
-      : "",
+    picksFromMessage ? (store.getComposerDraft(draftId ?? threadRef)?.prompt ?? "") : "",
   );
   const composerTaskPickValue = useMemo(
     () => composerTaskPick(draftPrompt, composerRepositories),

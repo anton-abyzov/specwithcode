@@ -383,6 +383,37 @@ describe("ChatMarkdown project-page thread links", () => {
   });
 });
 
+describe("ChatMarkdown provider-hosted pages", () => {
+  it("shows a claude.ai artifact as an outside document chip, never a branded link", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="First, the nine calls in its report [Release checklist](https://claude.ai/artifact/Xq7Lm2Rt9Vb4Nc8Pd3Kf6H). Docs: [guide](https://example.com/guide)."
+      />,
+    );
+    expect(html).toContain('data-outside-document="Claude"');
+    expect(html).toContain("Release checklist");
+    expect(html).toContain("outside · Claude");
+    expect(html).not.toContain('href="https://claude.ai/artifact/Xq7Lm2Rt9Vb4Nc8Pd3Kf6H"');
+    expect(html).not.toContain("domain=claude.ai");
+    // Every other link renders as before.
+    expect(html).toContain('href="https://example.com/guide"');
+    expect(html).toContain("domain=example.com");
+  });
+
+  it("names a bare provider URL by the kind of page it is", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="See https://chatgpt.com/codex/tasks/task_e_68a1b2c3 for it."
+      />,
+    );
+    expect(html).toContain('data-outside-document="Codex"');
+    expect(html).toContain("a Codex task");
+    expect(html).not.toContain('href="https://chatgpt.com/codex/tasks/task_e_68a1b2c3"');
+  });
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

@@ -328,6 +328,8 @@ export function copyStatus(record: DestinationRecord, plan: Plan | null): Folder
           })),
         }
       : {}),
+    ...(record.startedAt ? { startedAt: record.startedAt } : {}),
+    ...(record.finishedAt ? { finishedAt: record.finishedAt } : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };

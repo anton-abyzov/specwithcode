@@ -48,6 +48,19 @@ const isSpace = (ch: string) => /\s/u.test(ch);
 const opensPath = (ch: string) => ch === "" || isSpace(ch) || "/`'\"([<{:=,;".includes(ch);
 /** Where a path may end with nothing under it. */
 const closesPath = (ch: string) => ch === "" || isSpace(ch) || "`'\")]>},;:!?".includes(ch);
+/**
+ * What may come before a path inside its word: nothing, `./`, an option or
+ * label (`--cwd=`, `path:`), or an absolute path at least one folder deep
+ * (`/Users/x/umb/`, `C:/work/`, `~/umb/`). Anything else (`src/`, `/`,
+ * `@scope/`, `github.com/owner/`) means the text is a path inside something
+ * else, a route, a package or a link.
+ */
+const ABSOLUTE_PREFIX = /^(?:[A-Za-z]:|~)?\/(?:[^/]+\/)+$/u;
+const startsPath = (prefix: string) =>
+  prefix === "" ||
+  prefix === "./" ||
+  (/[:=]$/u.test(prefix) && !/[/@]/u.test(prefix)) ||
+  ABSOLUTE_PREFIX.test(prefix);
 /** Where the word holding a mention stops, both ways. */
 const endsToken = (ch: string) => isSpace(ch) || "`'\"()[]<>{},;".includes(ch);
 
@@ -120,6 +133,7 @@ export function repositoriesNamedInTask(
       const token = scan.slice(from, to);
       const named =
         opensPath(before) &&
+        startsPath(scan.slice(from, index)) &&
         !token.includes("://") &&
         (underIt || quoted || (!oneSegment && alone));
       if (named) {

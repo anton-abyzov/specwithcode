@@ -85,6 +85,16 @@ describe("repositoriesNamedInTask", () => {
       { relativePath: "web", name: "web" },
     ];
     expect(picked("The api is slow and the web too", nested)).toEqual([]);
+    // A path inside another folder, a route, a package and a link without a scheme.
+    expect(picked("In web, fix src/api/client.ts", nested)).toEqual([]);
+    expect(picked("The /api/users endpoint 500s", nested)).toEqual([]);
+    expect(picked("bump @acme/web/foo", nested)).toEqual([]);
+    expect(picked("See github.com/acme/api/pull/12", nested)).toEqual([]);
+    expect(picked("git clone git@github.com:api/tool.git", nested)).toEqual([]);
+    // From the project folder, an absolute path, or an option.
+    expect(picked("Run ./api/scripts/x.sh", nested)).toEqual(["api"]);
+    expect(picked("Open /Users/sam/proj/web/src/a.tsx", nested)).toEqual(["web"]);
+    expect(picked("pnpm --dir=api/src test", nested)).toEqual(["api"]);
     expect(picked("Fix api/src/server.ts then `web`", nested)).toEqual(["api", "web"]);
   });
 

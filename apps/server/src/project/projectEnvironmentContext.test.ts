@@ -105,6 +105,15 @@ describe("worktreeSwitchLine", () => {
           usesWorktrees,
         }),
       ).toBe("This folder holds no Git repository, so threads work in the folder.");
+    // Not a repository and no clone of its own, even with a repository saved outside it.
+    expect(
+      worktreeSwitchLine({
+        discovery: discovery({ kind: "nested", rootIsRepository: false, separateClones: false }),
+        usesWorktrees: true,
+      }),
+    ).toBe(
+      "The project folder is not a Git repository and holds no clone of its own, so threads work in the folder.",
+    );
     expect(worktreeSwitchLine({ discovery: discovery(), usesWorktrees: null })).toBeNull();
     expect(worktreeSwitchLine({ discovery: null, usesWorktrees: true })).toBeNull();
   });

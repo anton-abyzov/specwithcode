@@ -31,8 +31,11 @@ export function worktreeSwitchLine(input: {
   readonly usesWorktrees: boolean | null;
 }): string | null {
   const { discovery } = input;
-  if (discovery?.kind === "plain" && availableRepositories(discovery).length === 0)
-    return "This folder holds no Git repository, so threads work in the folder.";
+  // A launch here has nothing to cut a worktree from, whatever the switch says.
+  if (discovery !== null && !discovery.rootIsRepository && !discovery.separateClones)
+    return discovery.kind === "plain"
+      ? "This folder holds no Git repository, so threads work in the folder."
+      : "The project folder is not a Git repository and holds no clone of its own, so threads work in the folder.";
   if (input.usesWorktrees === null || discovery === null) return null;
   if (!input.usesWorktrees)
     return "Use worktrees is off for this project: threads work in the project folder, on whatever branch is checked out there.";

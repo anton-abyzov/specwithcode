@@ -15,6 +15,7 @@ import {
 import { readFolderLayout } from "../../../project/FolderLayout.ts";
 import {
   availableRepositories,
+  cloneHasCommit,
   discoverProjectRepositories,
   foundRepositoryLines,
   type ProjectRepositoryDiscovery,
@@ -74,8 +75,13 @@ function startsWithLine(input: {
   readonly workspaceRoot: string;
   readonly picked: ReadonlyArray<TaskRepositoryMention>;
   readonly named: ReadonlyArray<TaskRepositoryMention>;
+  readonly noCommit: ReadonlyArray<TaskRepositoryMention>;
 }): string {
-  const folder = `The project folder is ${input.workspaceRoot}; read anything there.`;
+  const folder = `The project folder is ${input.workspaceRoot}; read anything there.${
+    input.noCommit.length === 0
+      ? ""
+      : ` Its task also names ${taskRepositoryNames(input.noCommit)}, which ${input.noCommit.length === 1 ? "has" : "have"} no commit to start a worktree from, so ${input.noCommit.length === 1 ? "it was" : "they were"} not added.`
+  }`;
   const [only] = input.picked;
   if (only !== undefined && input.picked.length === 1)
     return `This thread works in its own folder (its working directory), on its own branch. It starts with a worktree of ${only.name} (${only.relativePath}), because its task names ${only.evidence}. ${folder}`;
@@ -100,10 +106,17 @@ export function emptyThreadFolderNotice(input: {
   /** What `repositoriesNamedInTask` found in the thread's message. */
   readonly picked?: ReadonlyArray<TaskRepositoryMention> | undefined;
   readonly named?: ReadonlyArray<TaskRepositoryMention> | undefined;
+  /** Named and available, but with no commit to cut a worktree from. */
+  readonly noCommit?: ReadonlyArray<TaskRepositoryMention> | undefined;
 }): string {
   const picked = input.picked ?? [];
   return [
-    startsWithLine({ workspaceRoot: input.workspaceRoot, picked, named: input.named ?? [] }),
+    startsWithLine({
+      workspaceRoot: input.workspaceRoot,
+      picked,
+      named: input.named ?? [],
+      noCommit: input.noCommit ?? [],
+    }),
     `Before changing ${picked.length > 0 ? "any other" : "a"} repository, add it with studio_worktree_add_repository, naming it by its path relative to the project folder. Its worktree then sits at the same relative path inside this thread's folder; edit and commit there. Adding a repository installs no dependencies: run that repository's normal install in its worktree only when you build or test there, and never link another checkout's node_modules.`,
     "Do not edit or commit in the project folder's clones. SpecWeave planning stays in the project folder: run specweave there.",
     ...(input.repositories === ""
@@ -183,10 +196,24 @@ export async function holdsSeparateClones(workspaceRoot: string): Promise<boolea
  * The repositories a thread's task names among the clones it can get a
  * worktree of here. Only clones inside the project folder count, named by
  * their relative path, so a path written on another machine names the same
- * clone on this one.
+ * clone on this one. A clone with no commit (a fresh `git init`) is left out
+ * of `picked` and listed in `noCommit`: a worktree could not start from it,
+ * and the thread would fail instead of starting.
  */
-export function taskRepositoryPick(discovery: ProjectRepositoryDiscovery | null, text: string) {
-  return repositoriesNamedInTask(text, availableRepositories(discovery));
+export async function taskRepositoryPick(discovery: ProjectRepositoryDiscovery | null, text: string) {
+  const available = availableRepositories(discovery);
+  const { picked, named } = repositoriesNamedInTask(text, available);
+  const checked = await Promise.all(
+    picked.map(async (mention) => {
+      const row = available.find((repository) => repository.relativePath === mention.relativePath);
+      return { mention, usable: row !== undefined && (await cloneHasCommit(row.path)) };
+    }),
+  );
+  return {
+    picked: checked.filter((entry) => entry.usable).map((entry) => entry.mention),
+    named,
+    noCommit: checked.filter((entry) => !entry.usable).map((entry) => entry.mention),
+  };
 }
 
 /**
@@ -235,7 +262,7 @@ export async function emptyThreadFolderLaunch(
         });
   if (project === undefined || found?.separateClones !== true)
     return { workspaceStrategy: single, notice: null };
-  const { picked, named } = taskRepositoryPick(found, taskText);
+  const { picked, named, noCommit } = await taskRepositoryPick(found, taskText);
   return {
     workspaceStrategy: { ...single, repositories: picked.map((mention) => mention.relativePath) },
     notice: emptyThreadFolderNotice({
@@ -243,6 +270,7 @@ export async function emptyThreadFolderLaunch(
       repositories: foundRepositoryLines(found),
       picked,
       named,
+      noCommit,
     }),
   };
 }

@@ -146,6 +146,12 @@ import {
   parseStudioThreadTarget,
 } from "../studio/studioThreadLinks";
 import { DeadThreadLinkChip } from "./ThreadLinkChip";
+import { draftOutsideDocumentImport, OutsideDocumentLink } from "./chat/OutsideDocumentLink";
+import {
+  providerHostedDocument,
+  providerHostedDocumentMarkdown,
+  providerHostedDocumentNoun,
+} from "../providerHostedDocument";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
@@ -3401,6 +3407,33 @@ const CHAT_MARKDOWN_COMPONENTS = {
       ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
         resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd))
       : null;
+    // A page on a provider's site (a claude.ai artifact, a ChatGPT share) is not one
+    // of the project's reports: a neutral chip says so and offers to save it here.
+    const hostedDocument = fileLinkMeta ? null : providerHostedDocument(href);
+    if (hostedDocument !== null) {
+      const text = hastPlainTextDeep(node).trim();
+      // A bare pasted URL names nothing; say what kind of page it is.
+      const label =
+        text.length === 0 || text === href ? providerHostedDocumentNoun(hostedDocument) : text;
+      return (
+        <OutsideDocumentLink
+          document={hostedDocument}
+          label={label}
+          copyMarkdown={providerHostedDocumentMarkdown(hostedDocument, label)}
+          onSaveToProject={
+            threadRef
+              ? () => draftOutsideDocumentImport(threadRef, hostedDocument, label)
+              : undefined
+          }
+          onOpen={() => {
+            const api = readLocalApi();
+            if (api) void api.shell.openExternal(hostedDocument.url);
+            else window.open(hostedDocument.url, "_blank", "noopener,noreferrer");
+          }}
+          onCopy={() => void writeTextToClipboard(hostedDocument.url, "link")}
+        />
+      );
+    }
     if (!fileLinkMeta) {
       const faviconHost = resolveExternalWebLinkHost(href);
       const pullRequestAutolink = String(

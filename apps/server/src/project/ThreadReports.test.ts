@@ -7,7 +7,12 @@ import { reportKey } from "@specweave-studio/shared/threadReport";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
-import { readThreadReports, resolveReportIncrement, saveThreadReport } from "./ThreadReports.ts";
+import {
+  readThreadReports,
+  resolveReportIncrement,
+  saveReport,
+  saveThreadReport,
+} from "./ThreadReports.ts";
 
 const roots: string[] = [];
 const REPORT = [
@@ -329,5 +334,280 @@ describe("saveThreadReport", () => {
     expect(read.reports[0]!.path.startsWith(".specweave/increments/10025-work-55/reports/")).toBe(
       true,
     );
+  });
+});
+
+describe("saveReport", () => {
+  const IMPORTED = [
+    "# Release checklist: what is unfinished",
+    "",
+    "## Bottom line",
+    "",
+    "Nothing was lost.",
+  ].join("\n");
+  const ORIGINAL = "https://claude.ai/artifact/Xq7Lm2Rt9Vb4Nc8Pd3Kf6H";
+
+  it("imports another tool's document with its source and original as properties", async () => {
+    const root = await project(["1314-idle-scratch-copies", "1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-import", title: "Own reports of 1320", branch: null, home };
+    const saved = await saveReport(root, source, IMPORTED, new Date("2026-11-13T19:00:00Z"), {
+      increment: "none",
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(saved.alreadySaved).toBe(false);
+    expect(saved.title).toBe("Release checklist: what is unfinished");
+    expect(saved.report.path).toMatch(
+      /^\.specweave\/reports\/threads\/2026-11-13-release-checklist-what-is-unfinished-[0-9a-f]{6}-[0-9a-f]{6}\.md$/,
+    );
+    const content = await NodeFSP.readFile(NodePath.join(root, saved.report.path), "utf8");
+    expect(content).toContain('source: "Claude desktop"');
+    expect(content).toContain(`original: "${ORIGINAL}"`);
+    expect(content).not.toContain("increment:");
+    expect(content.trimEnd().endsWith("Nothing was lost.")).toBe(true);
+
+    const again = await saveReport(root, source, IMPORTED, new Date(), {
+      increment: "none",
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(again.alreadySaved).toBe(true);
+    expect(again.report).toEqual(saved.report);
+  });
+
+  it("saves into a named increment by number or folder, and the thread's otherwise", async () => {
+    const root = await project(["1314-idle-scratch-copies", "1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-named", title: "Own reports of 1320", branch: null, home };
+    const byNumber = await saveReport(root, source, "# One\n\nBody one.", new Date(), {
+      increment: "1314",
+    });
+    expect(
+      byNumber.report.path.startsWith(".specweave/increments/1314-idle-scratch-copies/reports/"),
+    ).toBe(true);
+    const byFolder = await saveReport(root, source, "# Two\n\nBody two.", new Date(), {
+      increment: "1320-own-reports",
+    });
+    expect(byFolder.report.path.startsWith(".specweave/increments/1320-own-reports/reports/")).toBe(
+      true,
+    );
+    const fromThread = await saveReport(
+      root,
+      { ...source, threadId: "t-thread" },
+      "# Three\n\nBody three.",
+    );
+    expect(
+      fromThread.report.path.startsWith(".specweave/increments/1320-own-reports/reports/"),
+    ).toBe(true);
+  });
+
+  it("keeps the text's own front matter in one block, the app's keys first", async () => {
+    const root = await project(["1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const text = [
+      "---",
+      "title: Release review",
+      "status: shipped",
+      "thread: someone-else",
+      "tags:",
+      "  - release",
+      "---",
+      "",
+      "# Release review",
+      "",
+      "All green.",
+    ].join("\n");
+    const saved = await saveReport(
+      root,
+      { threadId: "t-fm", title: "1320 review", branch: null, home },
+      text,
+      new Date("2026-11-13T19:00:00Z"),
+    );
+    const content = await NodeFSP.readFile(NodePath.join(root, saved.report.path), "utf8");
+    expect(content.match(/^---$/gm)).toHaveLength(2);
+    expect(content).toContain('title: "Release review"');
+    expect(content).toContain('thread: "t-fm"');
+    expect(content).not.toContain("someone-else");
+    expect(content).toContain("status: shipped");
+    expect(content).toContain("tags:\n  - release");
+    expect(content.trimEnd().endsWith("All green.")).toBe(true);
+  });
+
+  it("refuses an unknown increment, a bad original and a bad title", async () => {
+    const root = await project(["1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-bad", title: null, branch: null, home };
+    await expect(
+      saveReport(root, source, IMPORTED, new Date(), { increment: "9999" }),
+    ).rejects.toThrow("No increment 9999 in this project.");
+    for (const original of [
+      "http://claude.ai/artifact/x",
+      "not a url",
+      "https://u:p@claude.ai/x",
+    ]) {
+      await expect(
+        saveReport(root, source, IMPORTED, new Date(), {
+          provenance: { source: "Claude desktop", original },
+        }),
+      ).rejects.toThrow("The original link must be an https URL");
+    }
+    await expect(
+      saveReport(root, source, IMPORTED, new Date(), { provenance: { source: " " } }),
+    ).rejects.toThrow("The source names the tool");
+    await expect(saveReport(root, source, IMPORTED, new Date(), { title: "  " })).rejects.toThrow(
+      "The title must be 1-200 characters.",
+    );
+    expect(await readThreadReports(root, source)).toMatchObject({ reports: [] });
+  });
+
+  it("refuses an empty or oversized report and a project without .specweave", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-size", title: null, branch: null, home };
+    await expect(saveReport(root, source, " \n ", new Date())).rejects.toThrow(
+      "The report is empty.",
+    );
+    await expect(
+      saveReport(root, source, `# Big\n\n${"x".repeat(512 * 1024)}`, new Date()),
+    ).rejects.toThrow("The report is larger than 512 KiB.");
+    const plain = await temp("studio-plain-");
+    await expect(saveReport(plain, source, IMPORTED, new Date())).rejects.toThrow(
+      "This project has no .specweave folder.",
+    );
+  });
+
+  it("keeps provenance the app writes over the document's own, whatever the key's case or quotes", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-spoof", title: null, branch: null, home };
+    const text = [
+      "---",
+      "Source: Someone else",
+      '"original": "https://example.com/fake"',
+      "Title: Fake",
+      "owner: Anton",
+      "---",
+      "# Real",
+      "",
+      "Body.",
+    ].join("\n");
+    const saved = await saveReport(root, source, text, new Date("2026-11-13T19:00:00Z"), {
+      provenance: { source: "Codex", original: "https://chatgpt.com/codex/tasks/task_e_1" },
+    });
+    const content = await NodeFSP.readFile(saved.absolutePath, "utf8");
+    expect(content).not.toContain("Someone else");
+    expect(content).not.toContain("example.com/fake");
+    expect(content).not.toContain("Title: Fake");
+    expect(content).toContain('source: "Codex"');
+    expect(content).toContain("owner: Anton");
+  });
+
+  it("keeps a document that opens with a horizontal rule whole", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-rule", title: null, branch: null, home };
+    const text = "---\n# Heading\n\nParagraph.\ntitle: x\n---\nRest.";
+    const saved = await saveReport(root, source, text, new Date("2026-11-13T19:00:00Z"));
+    const content = await NodeFSP.readFile(saved.absolutePath, "utf8");
+    expect(content).toContain("\n\n---\n# Heading\n\nParagraph.\ntitle: x\n---\nRest.");
+  });
+
+  it("writes a title with a Unicode line separator on one line, so the report still lists", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-sep", title: null, branch: null, home };
+    const options = { title: 'Plan thread: "x"' };
+    const saved = await saveReport(root, source, IMPORTED, new Date(), options);
+    expect(await readThreadReports(root, source)).toMatchObject({
+      reports: [{ path: saved.report.path }],
+    });
+    expect((await saveReport(root, source, IMPORTED, new Date(), options)).alreadySaved).toBe(true);
+  });
+
+  it("adds an import's provenance to the same text saved before, and returns its title", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-again", title: null, branch: null, home };
+    const first = await saveReport(root, source, IMPORTED, new Date(), { title: "First name" });
+    const again = await saveReport(root, source, IMPORTED, new Date(), {
+      title: "Second name",
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(again).toMatchObject({ alreadySaved: true, title: "First name" });
+    expect(again.absolutePath).toBe(first.absolutePath);
+    const content = await NodeFSP.readFile(first.absolutePath, "utf8");
+    expect(content.match(/^---$/gm)).toHaveLength(2);
+    expect(content).toContain(`savedAt: `);
+    expect(content).toMatch(/savedAt: .+\nsource: "Claude desktop"\noriginal: ".+"\n---\n/);
+  });
+
+  it("never calls a different text with the same key already saved", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-clash", title: null, branch: null, home };
+    const at = new Date("2026-11-13T19:00:00Z");
+    // Another body under exactly the name this text would get.
+    const name = `2026-11-13-release-checklist-what-is-unfinished-${reportKey("t-clash", IMPORTED)}.md`;
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/reports/threads"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(root, ".specweave/reports/threads", name),
+      '---\ntitle: "Other"\nthread: "t-clash"\n---\n\nSomething else.\n',
+    );
+    const saved = await saveReport(root, source, IMPORTED, at);
+    expect(saved.alreadySaved).toBe(false);
+    expect(saved.report.path.endsWith(`-2-${reportKey("t-clash", IMPORTED)}.md`)).toBe(true);
+    expect(await NodeFSP.readFile(saved.absolutePath, "utf8")).toContain("Nothing was lost.");
+  });
+
+  it("saves one file when the same text is saved twice at once", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-race", title: null, branch: null, home };
+    const at = new Date("2026-11-13T19:00:00Z");
+    const both = await Promise.all([
+      saveReport(root, source, IMPORTED, at),
+      saveReport(root, source, IMPORTED, at),
+    ]);
+    expect(both[0].absolutePath).toBe(both[1].absolutePath);
+    expect(both.map((saved) => saved.alreadySaved).sort()).toEqual([false, true]);
+    expect((await readThreadReports(root, source)).reports).toHaveLength(1);
+  });
+
+  it("keeps a leading block of list items or links whole, and writes quoted keys bare", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-lists", title: null, branch: null, home };
+    for (const text of [
+      "---\n- a\n- b\n---\n# Lists\n\nBody.",
+      "---\nhttps://x.com\n---\n# Link\n\nBody.",
+    ]) {
+      const saved = await saveReport(root, source, text, new Date("2026-11-13T19:00:00Z"));
+      const content = await NodeFSP.readFile(saved.absolutePath, "utf8");
+      expect(content).toContain(`\n\n${text}\n`);
+    }
+    const quoted = await saveReport(
+      root,
+      source,
+      '---\n"owner": Anton\n---\n# Quoted\n\nBody.',
+      new Date("2026-11-13T19:00:00Z"),
+    );
+    expect(await NodeFSP.readFile(quoted.absolutePath, "utf8")).toMatch(/\nowner: Anton\n---\n/);
+  });
+
+  it("never reads or writes through a link planted under a report's name", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const outside = await temp("studio-outside-");
+    const source = { threadId: "t-link", title: null, branch: null, home };
+    const target = NodePath.join(outside, "notes.md");
+    await NodeFSP.writeFile(target, `---\nthread: "t-link"\n---\n\n${IMPORTED}\n`);
+    const name = `2026-11-13-release-checklist-what-is-unfinished-${reportKey("t-link", IMPORTED)}.md`;
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/reports/threads"), { recursive: true });
+    await NodeFSP.symlink(target, NodePath.join(root, ".specweave/reports/threads", name));
+    const saved = await saveReport(root, source, IMPORTED, new Date("2026-11-13T19:00:00Z"), {
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(saved.alreadySaved).toBe(false);
+    expect(saved.report.path.endsWith(`-2-${reportKey("t-link", IMPORTED)}.md`)).toBe(true);
+    expect(await NodeFSP.readFile(target, "utf8")).not.toContain("Claude desktop");
   });
 });
