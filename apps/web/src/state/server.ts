@@ -47,14 +47,16 @@ export interface EnvironmentStorageStatus {
   readonly environmentId: EnvironmentId;
   readonly os: string;
   readonly storage: StorageStatus;
+  /** The machine can remove its old app versions on request. */
+  readonly canCleanOldAppVersions?: boolean;
 }
 
 const EMPTY_STORAGE_STATUSES: ReadonlyArray<EnvironmentStorageStatus> = [];
 const storageStatusesKey = (statuses: ReadonlyArray<EnvironmentStorageStatus>) =>
   statuses
     .map(
-      ({ environmentId, storage }) =>
-        `${environmentId}:${storage.level}:${storage.freeBytes}:${storage.homeUsage?.checkedAt ?? ""}:${storage.homeUsage?.level ?? ""}:${storage.homeUsage?.warnAboveBytes ?? ""}`,
+      ({ environmentId, storage, canCleanOldAppVersions }) =>
+        `${environmentId}:${canCleanOldAppVersions === true}:${storage.level}:${storage.freeBytes}:${storage.homeUsage?.checkedAt ?? ""}:${storage.homeUsage?.level ?? ""}:${storage.homeUsage?.warnAboveBytes ?? ""}`,
     )
     .join("\n");
 
@@ -71,7 +73,12 @@ export const environmentStorageStatusesAtom = (() => {
     const next: Array<EnvironmentStorageStatus> = [];
     for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
       if (config.storage === undefined) continue;
-      next.push({ environmentId, os: config.environment.platform.os, storage: config.storage });
+      next.push({
+        environmentId,
+        os: config.environment.platform.os,
+        storage: config.storage,
+        canCleanOldAppVersions: config.environment.capabilities.cleanOldAppVersions === true,
+      });
     }
     if (storageStatusesKey(next) === storageStatusesKey(previous)) return previous;
     previous = next.length === 0 ? EMPTY_STORAGE_STATUSES : next;

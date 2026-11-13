@@ -16,6 +16,7 @@ import {
   homeUsageLevel,
   homeUsageReport,
   HOME_USAGE_INTERVAL_MS,
+  withOldAppVersions,
 } from "./measure.ts";
 import { listProcessCwds, parseLsofCwds } from "./processCwds.ts";
 import { decideScratchRetention, runScratchRetention } from "./scratchRetention.ts";
@@ -336,5 +337,18 @@ describe("scratch retention", () => {
         "p1\nfcwd\nn/Users/me\np2\nfcwd\nn/Users/me/.specwithcode/m4/scratch/a b\np3\n",
       ),
     ).toEqual(["/Users/me", "/Users/me/.specwithcode/m4/scratch/a b"]);
+  });
+});
+
+describe("withOldAppVersions", () => {
+  it("measures old app versions as their own part, ahead of worktrees", () => {
+    const parts = [
+      { key: "scratch", paths: ["/h/scratch"] },
+      { key: "worktrees", paths: ["/h/worktrees"] },
+    ];
+    expect(
+      withOldAppVersions(parts, ["/h/runtime/versions/1.0.1"]).map((part) => part.key),
+    ).toEqual(["scratch", "app-versions", "worktrees"]);
+    expect(withOldAppVersions(parts, [])).toBe(parts);
   });
 });

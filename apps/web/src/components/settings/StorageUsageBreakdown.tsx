@@ -3,7 +3,9 @@ import { useTx } from "../../i18n";
 import { formatStorageFreeSpace, type StorageHomeUsage } from "@specweave-studio/contracts";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import { homeUsagePartLabel } from "../LowDiskSpaceBanner.logic";
+import { useCleanOldAppVersions } from "../../lib/oldAppVersions";
+import { homeUsagePartLabel, oldAppVersionsBytesOf } from "../LowDiskSpaceBanner.logic";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -68,9 +70,21 @@ export function homeUsageBreakdown(usage: StorageHomeUsage): string {
 export function AppFolderUsage() {
   const tx = useTx();
   const { connectedEnvironments } = useSettingsScope();
+  const oldAppVersions = useCleanOldAppVersions();
   const measured = connectedEnvironments.flatMap((environment) => {
     const usage = environment.serverConfig?.storage?.homeUsage;
-    return usage === undefined ? [] : [{ label: environment.label, usage }];
+    const canClean =
+      environment.serverConfig?.environment.capabilities.cleanOldAppVersions === true;
+    return usage === undefined
+      ? []
+      : [
+          {
+            environmentId: environment.environmentId,
+            label: environment.label,
+            usage,
+            oldAppVersionsBytes: canClean ? oldAppVersionsBytesOf(usage) : undefined,
+          },
+        ];
   });
   if (measured.length === 0)
     return (
@@ -79,9 +93,24 @@ export function AppFolderUsage() {
         description="Measured a few minutes after the app starts, then every six hours."
       />
     );
-  return measured.map(({ label, usage }) => (
+  return measured.map(({ environmentId, label, usage, oldAppVersionsBytes }) => (
     <SettingsRow
       key={`${label}:${usage.path}`}
+      control={
+        oldAppVersionsBytes === undefined ? undefined : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={oldAppVersions.isPending(environmentId)}
+            onClick={() => void oldAppVersions.clean(environmentId)}
+            data-clean-old-app-versions=""
+          >
+            {oldAppVersions.isPending(environmentId)
+              ? "Removing…"
+              : `Remove old app versions (${formatStorageFreeSpace(oldAppVersionsBytes)})`}
+          </Button>
+        )
+      }
       title={
         measured.length > 1
           ? `${label}: ${formatStorageFreeSpace(usage.totalBytes)}`

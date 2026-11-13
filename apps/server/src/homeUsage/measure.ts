@@ -109,6 +109,23 @@ export function homeUsageLayout(input: {
   };
 }
 
+/**
+ * The layout's parts with the old app versions (`runtime/versions` folders the
+ * automatic cleanup would remove) as their own `app-versions` part, ahead of
+ * worktrees. Read at each measurement: updates change the list.
+ */
+export function withOldAppVersions(
+  parts: ReadonlyArray<WalkPartInput>,
+  oldVersionDirs: ReadonlyArray<string>,
+): ReadonlyArray<WalkPartInput> {
+  if (oldVersionDirs.length === 0) return parts;
+  const part: WalkPartInput = { key: "app-versions", paths: oldVersionDirs };
+  const worktrees = parts.findIndex((entry) => entry.key === "worktrees");
+  return worktrees === -1
+    ? [...parts, part]
+    : [...parts.slice(0, worktrees), part, ...parts.slice(worktrees)];
+}
+
 /** Sleep per 1024 entries: about 50 s over the 5 million entry limit. */
 const WALK_PAUSE_MS = 10;
 

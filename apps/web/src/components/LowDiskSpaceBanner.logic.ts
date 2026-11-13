@@ -16,6 +16,8 @@ export interface LowDiskSpaceNotice {
   readonly message: string;
   /** Set when the notice names the app folder's parts: the card offers a way to Storage settings. */
   readonly action?: "review-storage";
+  /** Bytes of old app versions the machine can remove with one click. */
+  readonly oldAppVersionsBytes?: number;
 }
 
 const PART_LABELS: Readonly<Record<string, string>> = {
@@ -25,12 +27,19 @@ const PART_LABELS: Readonly<Record<string, string>> = {
   scratch: "scratch folders",
   evidence: "evidence",
   release: "release builds",
+  "app-versions": "old app versions",
   logs: "logs",
   other: "other",
 };
 
 /** A part key of an app folder measurement as people read it. */
 export const homeUsagePartLabel = (key: string): string => PART_LABELS[key] ?? key;
+
+/** Old app versions worth a one-click cleanup (at least 1 GB), or undefined. */
+export function oldAppVersionsBytesOf(usage: StorageHomeUsage | undefined): number | undefined {
+  const bytes = usage?.parts.find((part) => part.key === "app-versions")?.bytes ?? 0;
+  return bytes >= 1e9 ? bytes : undefined;
+}
 
 /** Names the shown categories and explicitly accounts for any omitted bytes. */
 export function describeHomeUsageParts(usage: StorageHomeUsage, limit = 3): string {
@@ -92,7 +101,7 @@ export function resolveLowDiskSpaceNotices(input: {
   readonly appName: string;
 }): ReadonlyArray<LowDiskSpaceNotice> {
   const notices: Array<LowDiskSpaceNotice & { readonly primary: boolean }> = [];
-  for (const { environmentId, os, storage } of input.statuses) {
+  for (const { environmentId, os, storage, canCleanOldAppVersions } of input.statuses) {
     if (storage.level === "ok") continue;
     const primary = environmentId === input.primaryEnvironmentId;
     if (!primary && storage.level !== "critical") continue;
@@ -104,6 +113,7 @@ export function resolveLowDiskSpaceNotices(input: {
     const subject = local ? `This ${machine}` : named;
     const free = formatStorageFreeSpace(storage.freeBytes);
     const usage = storage.homeUsage;
+    const oldAppVersionsBytes = canCleanOldAppVersions ? oldAppVersionsBytesOf(usage) : undefined;
     const message = `${subject} is almost out of disk space (${free} free). ${input.appName}${
       local ? "" : " on it"
     } may stop responding until you free some space.`;
@@ -119,6 +129,7 @@ export function resolveLowDiskSpaceNotices(input: {
             message: `${message} ${describeHomeUsage(usage, input.appName)}`,
             action: "review-storage" as const,
           }),
+      ...(oldAppVersionsBytes === undefined ? {} : { oldAppVersionsBytes }),
     });
   }
   return notices

@@ -641,6 +641,7 @@ export const WS_METHODS = {
   accessRevokeGrant: "access.revokeGrant",
   personalDataStatus: "personalData.status",
   personalDataSetAccess: "personalData.setAccess",
+  serverCleanOldAppVersions: "server.cleanOldAppVersions",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -2069,6 +2070,23 @@ const WsPersonalDataSetAccessRpc = Rpc.make(WS_METHODS.personalDataSetAccess, {
   error: Schema.Union([PersonalDataAccessError, EnvironmentAuthorizationError]),
 });
 
+/** Removes old app versions now, with the same rules as the automatic cleanup. */
+export const ServerCleanOldAppVersionsResult = Schema.Struct({
+  removedCount: NonNegativeInt,
+  freedBytes: NonNegativeInt,
+  /** Versions kept because something still used them or the rename failed. */
+  failedCount: NonNegativeInt,
+  /** Why nothing was considered (an update in progress, an unreadable process list). */
+  skipped: Schema.optionalKey(Schema.String),
+});
+export type ServerCleanOldAppVersionsResult = typeof ServerCleanOldAppVersionsResult.Type;
+
+const WsServerCleanOldAppVersionsRpc = Rpc.make(WS_METHODS.serverCleanOldAppVersions, {
+  payload: Schema.Struct({}),
+  success: ServerCleanOldAppVersionsResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
   WS_METHODS.scheduledTasksListWebhookDeliveries,
   {
@@ -2448,6 +2466,11 @@ export const WsPersonalDataRpcGroup = RpcGroup.make(
   WsPersonalDataSetAccessRpc,
 ).middleware(RpcScopeAuthorization);
 
+/** Old app versions in `runtime/versions`; its own group for the same depth reason. */
+export const WsAppVersionsRpcGroup = RpcGroup.make(WsServerCleanOldAppVersionsRpc).middleware(
+  RpcScopeAuthorization,
+);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2470,4 +2493,5 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsGitHubSignInRpcGroup)
   .merge(WsDesignRpcGroup)
   .merge(WsDesignSystemImportRpcGroup)
-  .merge(WsPersonalDataRpcGroup);
+  .merge(WsPersonalDataRpcGroup)
+  .merge(WsAppVersionsRpcGroup);

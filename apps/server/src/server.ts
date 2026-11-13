@@ -176,6 +176,7 @@ import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as WorkerEpochStore from "./fleet/WorkerEpochStore.ts";
 import * as PersonalDataAccess from "./personalData/PersonalDataAccess.ts";
 import * as PersonalDataStatus from "./personalData/personalDataStatus.ts";
+import * as AppVersionsRpc from "./cloud/appVersionsRpc.ts";
 import * as WorkGrants from "./fleet/WorkGrants.ts";
 import * as WorkGrantRevokeSweeper from "./fleet/workGrantRevokeSweeper.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
@@ -1022,6 +1023,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(ComputerUseBroker.layerRpcHandlers),
   // Registered here for the same reason; they read the grants and labels from the request context.
   Layer.provideMerge(PersonalDataStatus.layerRpcHandlers),
+  Layer.provideMerge(AppVersionsRpc.layerRpcHandlers),
   Layer.provideMerge(ComputerUseBroker.layer),
   Layer.provide(NetService.layer),
 );
