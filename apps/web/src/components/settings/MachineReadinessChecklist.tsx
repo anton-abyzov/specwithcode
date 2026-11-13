@@ -19,6 +19,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { cliOfDriver, knownProviderLabel, providerLabel } from "../../studio/projectUsageModel";
 import { useCoordinatorProvider } from "../../studio/useCoordinatorProvider";
+import { MachineBasicsOn } from "../onboarding/MachineBasics";
 import { Button } from "../ui/button";
 import { GitHubCredentialCard, useGitHubCredentialCardAvailable } from "./GitHubCredentialCard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -233,6 +234,11 @@ export function MachineReadinessChecklist({
           { environmentLabel: environmentLabel },
         )}
       </p>
+      {/* Git, Node.js, SpecWeave and gh on that machine, installed there over its own connection. */}
+      <div data-slot="machine-readiness-basics">
+        <h4 className="text-xs font-medium text-muted-foreground">{tx("Machine basics")}</h4>
+        <MachineBasicsOn environmentId={environmentId} />
+      </div>
       <ul className="space-y-1">
         {missing ? (
           <Row

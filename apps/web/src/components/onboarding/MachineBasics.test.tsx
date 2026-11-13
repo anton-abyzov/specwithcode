@@ -264,3 +264,127 @@ describe("Machine basics", () => {
     expect(renderer.root.findAll((node) => node.props["data-fallback"]).length).toBe(1);
   });
 });
+
+const tool = (
+  id: "git" | "node" | "gh" | "specweave",
+  over: Partial<NonNullable<MachineToolsCheck["tools"]>[number]> = {},
+) => ({
+  tool: id,
+  presence: "present" as const,
+  version: null,
+  managed: false,
+  outdated: false,
+  canInstall: false,
+  ...over,
+});
+
+describe("Machine readiness", () => {
+  const ready = (over: ReadonlyArray<ReturnType<typeof tool>> = []): MachineToolsCheck => ({
+    ...ALL_PRESENT,
+    tools: (["git", "node", "gh", "specweave"] as const).map(
+      (id) => over.find((entry) => entry.tool === id) ?? tool(id),
+    ),
+  });
+
+  it("names SpecWeave in the quiet line when this machine reports it", async () => {
+    answer(ready());
+    await render("windows");
+    expect(rows()).toEqual([]);
+    expect(text(renderer.root)).toContain("Git, Node.js, SpecWeave and GitHub CLI are ready.");
+  });
+
+  it("gives a missing SpecWeave its own row and installs it there", async () => {
+    answer(ready([tool("specweave", { presence: "missing", canInstall: true })]));
+    await render("windows");
+    expect(rows()).toEqual(["specweave"]);
+    await act(async () => button("Install SpecWeave").props.onClick());
+    expect(state.install).toHaveBeenCalledWith({
+      environmentId: ENV,
+      input: { tool: "specweave" },
+    });
+  });
+
+  it("offers Update for the app's own older copy, and only names the person's own old one", async () => {
+    answer(
+      ready([
+        tool("gh", { version: "2.90.0", managed: true, outdated: true, canInstall: true }),
+        tool("node", { version: "18.19.0", outdated: true }),
+      ]),
+    );
+    await render("linux");
+    expect(rows()).toEqual(["node", "gh"]);
+    expect(hasButton("Update GitHub CLI")).toBe(true);
+    expect(hasButton("Install Node.js")).toBe(false);
+    expect(hasButton("Update Node.js")).toBe(false);
+    expect(text(renderer.root)).toContain(
+      "Version 18.19.0 is older than SpecWeave and Copilot need",
+    );
+  });
+
+  it("installs everything missing one after another, Node.js before SpecWeave", async () => {
+    answer(
+      ready([
+        tool("node", { presence: "missing", canInstall: true }),
+        tool("specweave", { presence: "missing", canInstall: true }),
+      ]),
+    );
+    await render("windows");
+    await act(async () => button("Install everything missing").props.onClick());
+    expect(state.install).toHaveBeenCalledTimes(1);
+    expect(state.install).toHaveBeenLastCalledWith({ environmentId: ENV, input: { tool: "node" } });
+    act(() => registry.set(state.installAtom, { ...IDLE, tool: "node", status: "running" }));
+    act(() => registry.set(state.installAtom, { ...IDLE, tool: "node", status: "done" }));
+    await act(async () => {});
+    expect(state.install).toHaveBeenCalledTimes(2);
+    expect(state.install).toHaveBeenLastCalledWith({
+      environmentId: ENV,
+      input: { tool: "specweave" },
+    });
+  });
+
+  it("stops installing everything after a failed install", async () => {
+    answer(
+      ready([
+        tool("node", { presence: "missing", canInstall: true }),
+        tool("specweave", { presence: "missing", canInstall: true }),
+      ]),
+    );
+    await render("windows");
+    await act(async () => button("Install everything missing").props.onClick());
+    act(() => registry.set(state.installAtom, { ...IDLE, tool: "node", status: "running" }));
+    act(() => registry.set(state.installAtom, { ...IDLE, tool: "node", status: "failed" }));
+    await act(async () => {});
+    expect(state.install).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no install buttons for someone who may not maintain the machine", async () => {
+    answer(
+      ready([
+        tool("node", { presence: "missing", canInstall: true }),
+        tool("specweave", { presence: "missing", canInstall: true }),
+      ]),
+    );
+    await render("windows", true);
+    expect(rows()).toEqual(["node", "specweave"]);
+    expect(hasButton("Install everything missing")).toBe(false);
+    expect(hasButton("Install Node.js")).toBe(false);
+    expect(hasButton("Install SpecWeave")).toBe(false);
+  });
+
+  it("says what the check after the last update did", async () => {
+    answer({
+      ...ready(),
+      lastSweep: {
+        version: "1.0.290",
+        at: "2026-11-13T20:00:00.000Z",
+        state: "done",
+        installed: ["node", "specweave"],
+        detail: null,
+      },
+    });
+    await render("windows");
+    expect(text(renderer.root)).toContain(
+      "After the update to 1.0.290, SpecWithCode installed Node.js, SpecWeave.",
+    );
+  });
+});

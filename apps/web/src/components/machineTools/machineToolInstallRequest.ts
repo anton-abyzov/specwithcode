@@ -3,14 +3,16 @@
  * settings row, read by the install dialog. Kept free of the RPC runtime so
  * those callers stay light.
  */
-import type { EnvironmentId, MachineToolId } from "@specweave-studio/contracts";
+import type { EnvironmentId, MachineReadinessToolId } from "@specweave-studio/contracts";
 import { create } from "zustand";
 
 export interface MachineToolInstallRequest {
   readonly environmentId: EnvironmentId;
-  readonly tool: MachineToolId;
+  readonly tool: MachineReadinessToolId;
   /** The machine's name, when it is not this device. */
   readonly machineLabel: string | null;
+  /** What needs it, for the dialog's line; SpecWeave setup when absent. */
+  readonly neededBy?: "specweave" | "project" | "copilot" | undefined;
 }
 
 export const useMachineToolInstallRequest = create<{
