@@ -246,13 +246,13 @@ async function versionOf(host: ProvisionHost, binary: string): Promise<string | 
  * never leaves a half-unpacked tool behind.
  */
 type PinnedInstall = {
-    readonly name: string;
-    readonly pinned: { readonly url: string; readonly sha256: string; readonly maxBytes: number };
-    readonly file: string;
-    readonly destination: string;
-    /** The binary, relative to the unpacked folder, that must report `version`. */
-    readonly binary: string;
-    readonly version: string;
+  readonly name: string;
+  readonly pinned: { readonly url: string; readonly sha256: string; readonly maxBytes: number };
+  readonly file: string;
+  readonly destination: string;
+  /** The binary, relative to the unpacked folder, that must report `version`. */
+  readonly binary: string;
+  readonly version: string;
 };
 
 /**
@@ -324,7 +324,19 @@ async function installPinnedUnlocked(
     const unpacked = await host.exec(
       tar,
       [input.file.endsWith(".zip") ? "-xf" : "-xzf", archive, "-C", staging],
-      { timeoutMs: 10 * 60_000 },
+      {
+        timeoutMs: 10 * 60_000,
+        // GNU tar runs gzip from the PATH, which a service may not carry.
+        ...(host.platform === "win32"
+          ? {}
+          : {
+              env: {
+                PATH:
+                  withPathDirs(host.env["PATH"], ["/usr/bin", "/bin"], host.platform) ??
+                  host.env["PATH"],
+              },
+            }),
+      },
     );
     if (unpacked.code !== 0)
       throw new MachineToolInstallError(
