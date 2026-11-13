@@ -2180,22 +2180,29 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   justify-content: space-between;
   gap: 2px 10px;
 }
+/* One line, in priority order: attach, the machine, then the model, effort and access;
+   voice and the run state are icons at the line's end. The meta wrapper adds no box, so
+   its controls and the model's share one wrapping row. */
 .sws-composer-meta {
-  min-width: 0;
-  max-width: 100%;
-  flex-wrap: wrap;
-  flex: 1 1 auto;
-  display: flex;
+  display: contents;
+}
+.sws-composer-aside {
+  order: 2;
+  flex: none;
+  margin-inline-start: auto;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 2px;
 }
 .sws-composer-foot .sws-model-pick {
   max-width: 100%;
 }
-/* Model, effort and access: their own row under the meta row, packed from the left, so a
-   resize wraps them in place instead of sliding the access picker across the footer. */
+/* Model, effort and access, packed from the left right after the machine, so a resize
+   wraps them in place instead of sliding the access picker across the footer. */
 .sws-composer-controls {
-  flex: 1 1 100%;
+  order: 1;
+  /* Beside the machine while about 7rem is left; its own controls wrap inside it. */
+  flex: 1 1 7rem;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
@@ -2282,6 +2289,7 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-host .sws-dot {
   flex: none;
 }
+
 .sws-host-name {
   min-width: 0;
   max-width: 200px;
@@ -2388,6 +2396,9 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 }
 .sws-state {
   flex: none;
+  /* A dot alone for most states: still a full-size target. */
+  min-width: 24px;
+  justify-content: center;
   height: 24px;
   white-space: nowrap;
   padding: 0 7px;
@@ -2431,9 +2442,6 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 @media (max-width: 900px) {
   .sws-host:not(.sws-execution-control) {
     display: none;
-  }
-  .sws-composer-meta {
-    flex: none;
   }
 }
 

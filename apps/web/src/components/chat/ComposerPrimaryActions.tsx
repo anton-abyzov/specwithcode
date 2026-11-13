@@ -319,7 +319,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:opacity-(--disabled-opacity) disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
         showCreditLabel && "w-auto gap-1.5 px-3 text-sm sm:w-auto",
         namesTarget &&
-          "machine-send w-auto gap-1.5 px-3 text-sm font-semibold sm:w-auto @max-[520px]/composer-surface:gap-1 @max-[520px]/composer-surface:px-2.5",
+          "machine-send w-auto gap-1.5 px-3 text-sm font-semibold sm:w-auto @max-[720px]/composer-surface:gap-1 @max-[720px]/composer-surface:px-2.5",
         stageBackdropVariant
           ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
@@ -362,14 +362,14 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       )}
       {showCreditLabel ? <span>{tx("Send with credits")}</span> : null}
       {namesTarget ? (
-        <span className="max-w-32 truncate @max-[520px]/composer-surface:hidden" aria-hidden>
+        <span className="max-w-32 truncate @max-[720px]/composer-surface:hidden" aria-hidden>
           Send to {sendTarget.name}
         </span>
       ) : null}
       {/* Narrow, the machine's short label stays beside the arrow, never the arrow alone. */}
       {namesTarget ? (
         <span
-          className="hidden @max-[520px]/composer-surface:inline"
+          className="hidden @max-[720px]/composer-surface:inline"
           aria-hidden
           data-send-target-short=""
         >

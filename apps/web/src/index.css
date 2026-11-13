@@ -2622,6 +2622,21 @@ video.artifact-viewer-media {
     inset -3px 0 0 var(--machine),
     0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent);
 }
+/* With a banner above the message box (resume, subagents) the host's outline steps aside
+   and the box draws its own: it keeps the machine's color too. */
+[data-slot="composer-shell"][data-machine-color] [data-chat-composer-main-surface]::after {
+  border-color: var(--machine-edge);
+  box-shadow:
+    inset 3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent);
+}
+[dir="rtl"]
+  [data-slot="composer-shell"][data-machine-color]
+  [data-chat-composer-main-surface]::after {
+  box-shadow:
+    inset -3px 0 0 var(--machine),
+    0 0 0 3px color-mix(in srgb, var(--machine) 11%, transparent);
+}
 /* Focus keeps the machine's color and deepens the halo instead of swapping to the ring. */
 .sws-composer-card.machine-composer[data-machine-color]:focus-within {
   border-color: var(--machine);
@@ -2634,7 +2649,8 @@ video.artifact-viewer-media {
   .machine-composer[data-machine-color] {
     box-shadow: inset 3px 0 0 var(--machine);
   }
-  [data-slot="composer-shell"][data-machine-color] [data-slot="composer-host"]::after {
+  [data-slot="composer-shell"][data-machine-color] [data-slot="composer-host"]::after,
+  [data-slot="composer-shell"][data-machine-color] [data-chat-composer-main-surface]::after {
     box-shadow: inset 3px 0 0 var(--machine);
   }
 }
@@ -2669,32 +2685,39 @@ video.artifact-viewer-media {
     content: attr(data-send-short);
   }
 }
-/* The machine doing the work in the view on screen (windowMachine.ts), always on:
-   one 3px bar along the top edge, semi-transparent so it tints the chrome without
-   competing with content. No frame around the window: pane separators stay neutral.
-   Stronger in dark, where a faint hue disappears. */
-.machine-window-tint[data-machine-color] {
-  position: fixed;
-  inset: 0 0 auto;
-  height: 3px;
-  z-index: 2147483000;
+/* A pane doing work on a machine (the coordinator's column, a thread's pane, a chat)
+   wears that machine on its leading edge, top to bottom, so two panes on two machines
+   each say which one runs them; the composer's border and Send say it again. No
+   window-wide bar: it could name only one of them. Position is set at zero
+   specificity, so a pane positioned otherwise keeps its own. */
+:where(.machine-pane[data-machine-color]) {
+  position: relative;
+}
+.machine-pane[data-machine-color]::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 2px;
+  z-index: 40;
   pointer-events: none;
-  background: color-mix(in srgb, var(--machine) 62%, transparent);
+  background: color-mix(in srgb, var(--machine) 70%, transparent);
   @variant dark {
-    background: color-mix(in srgb, var(--machine) 78%, transparent);
+    background: color-mix(in srgb, var(--machine) 85%, transparent);
   }
 }
+/* A chat inside a project's thread pane: the pane already wears it. */
+[data-project-pane] .machine-pane[data-machine-color]::after {
+  content: none;
+}
 @media (prefers-contrast: more) {
-  .machine-window-tint[data-machine-color] {
+  .machine-pane[data-machine-color]::after {
     background: var(--machine);
-    @variant dark {
-      background: var(--machine);
-    }
   }
 }
 @media print {
-  .machine-window-tint {
-    display: none;
+  .machine-pane[data-machine-color]::after {
+    content: none;
   }
 }
 /* The color choices where a machine is renamed. */

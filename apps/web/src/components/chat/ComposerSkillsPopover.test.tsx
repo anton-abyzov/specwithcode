@@ -153,7 +153,9 @@ describe("ComposerSkillsPopover", () => {
     const trigger = container.querySelector<HTMLButtonElement>(
       "[data-testid=composer-skills-trigger]",
     )!;
-    expect(trigger.textContent).toContain("19");
+    // An icon: the count is in its name, not printed on the composer's line.
+    expect(trigger.textContent).toBe("");
+    expect(trigger.getAttribute("aria-label")).toBe("Skills: 19 total");
     await act(async () => trigger.click());
     const panel = document.querySelector<HTMLElement>("[data-testid=composer-skills-popover]")!;
     expect(panel.textContent).toContain("19 skills · 13 enabled · 6 off");

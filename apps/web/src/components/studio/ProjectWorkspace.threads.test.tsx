@@ -398,6 +398,8 @@ describe("the coordinator stays in the main column", () => {
     await openFirstThread();
     const chip = container.querySelector<HTMLButtonElement>(".sws-state")!;
     expect(chip.textContent).toContain("Idle");
+    // Idle is a dot on the line; its word is for screen readers and the tooltip.
+    expect(chip.querySelector("[data-state-label]")?.className).toBe("sr-only");
     await act(async () => chip.click());
     expect(nativeThread("coord")).toBeNull();
     expect(nativeThread("worker")).toBeNull();

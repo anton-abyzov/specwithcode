@@ -73,11 +73,13 @@ function ComposerRow() {
     </ComposerControl>,
   ];
   return (
-    <div className="flex items-center gap-2 px-3 pb-3">
+    // As ChatComposer's footer: one row while it fits, and below 560px the controls
+    // (machine and model first) take a row of their own over the actions.
+    <div className="flex items-center gap-2 px-3 pb-3 @max-[560px]/composer-surface:flex-wrap @max-[560px]/composer-surface:gap-y-1">
       <div
         ref={ref}
         data-fixture-controls
-        className="relative flex min-w-0 flex-1 items-center gap-1"
+        className="relative flex min-w-0 flex-1 items-center gap-1 @max-[560px]/composer-surface:basis-full"
       >
         <ThreadMachineComposerChip machine={machine} size="sm" />
         <ComposerControl data-chat-provider-model-picker="" data-fit={fit} className="shrink-0">
@@ -108,7 +110,7 @@ function ComposerRow() {
           </ComposerControl>
         </div>
       </div>
-      <div className="flex w-36 shrink-0 justify-end">
+      <div className="flex w-36 shrink-0 justify-end @max-[560px]/composer-surface:ms-auto">
         <ComposerControl>Skills 118</ComposerControl>
       </div>
     </div>

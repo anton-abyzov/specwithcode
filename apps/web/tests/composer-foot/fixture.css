@@ -1,0 +1,46 @@
+@import "../../src/index.css";
+@source "../../src";
+@source ".";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+/* A project page: the coordinator column beside an open thread's pane. */
+.fixture-window {
+  display: flex;
+  height: 100vh;
+  border-top: 1px solid var(--border);
+}
+.fixture-window > [data-project-pane] {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.fixture-window > [data-project-pane="coordinator"] {
+  flex: 1.25 1 0;
+}
+.fixture-window > [data-project-pane="threads"] {
+  flex: 1 1 0;
+  border-inline-start: 1px solid var(--border);
+}
+.fixture-conversation {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.fixture-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.fixture-thread-composer {
+  padding: 0 12px 12px;
+}

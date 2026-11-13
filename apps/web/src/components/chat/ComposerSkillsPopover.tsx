@@ -24,6 +24,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import {
   buildComposerSkillGroups,
@@ -93,22 +94,29 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
-          render={
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost-muted"
-              className="shrink-0"
-              data-testid="composer-skills-trigger"
-              aria-label={`Skills: ${count} total`}
-            >
-              <SparklesIcon aria-hidden="true" />
-              <span className="hidden sm:inline">{tx("Skills")}</span>
-              <span className="tabular-nums">{count}</span>
-            </Button>
-          }
-        />
+        {/* An icon on the composer's line: the machine and the model need the room more.
+            The count is in the tooltip, the accessible name and the panel's header. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <PopoverTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost-muted"
+                    className="shrink-0"
+                    data-testid="composer-skills-trigger"
+                    aria-label={`Skills: ${count} total`}
+                  />
+                }
+              />
+            }
+          >
+            <SparklesIcon aria-hidden="true" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{`${tx("Skills")}: ${count}`}</TooltipPopup>
+        </Tooltip>
         <PopoverPopup
           {...composerFloatingLayerProps}
           side="top"

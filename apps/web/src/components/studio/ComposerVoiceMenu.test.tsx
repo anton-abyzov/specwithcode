@@ -50,6 +50,13 @@ async function mount(
     root.render(<ComposerVoiceMenu dictation={dictation} call={call} disabled={disabled} />),
   );
   expect(container.querySelectorAll("button")).toHaveLength(1);
+  // An icon on the composer's line: no words beside it; its name says Voice.
+  expect(container.querySelector("button")!.textContent).toBe("");
+  // A running call or dictation is in the name (a menu button is not a toggle).
+  expect(container.querySelector("button")!.getAttribute("aria-label")).toBe(
+    call.active ? "Voice, in a call" : dictation.active ? "Voice, dictating" : "Voice",
+  );
+  expect(container.querySelector("button")!.hasAttribute("aria-pressed")).toBe(false);
   await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
   return { dictation, call };
 }

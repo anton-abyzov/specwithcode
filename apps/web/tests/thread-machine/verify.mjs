@@ -1,6 +1,7 @@
 // Headless captures of the thread machine chips: light and dark, wide and
 // phone width, reachable and unreachable, and the composer row at narrow widths,
-// which must keep the machine's name and give up other controls first. Build first with
+// which must keep the machine's whole name and give up other controls first; below
+// 560px the row wraps, the machine and model over the actions. Build first with
 // `node node_modules/vite-plus/bin/vp build --config apps/web/tests/thread-machine/vite.config.ts`.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
@@ -94,7 +95,8 @@ try {
       if (!long && row.cut) failures.push(`${label}: a short name ends in an ellipsis`);
       if (row.overflow > 0) failures.push(`${label}: model pushed out by ${row.overflow}px`);
       if (row.trailing.some((over) => over > 0)) failures.push(`${label}: a control is clipped`);
-      if (width < 520 && row.chip > 105) failures.push(`${label}: chip is ${row.chip}px wide`);
+      // "Runs on <machine>" keeps its whole name; only a name past the chip's cap is cut.
+      if (!long && row.chip > 192) failures.push(`${label}: chip is ${row.chip}px wide`);
       await page.screenshot({ path: NodePath.join(output, `composer-${label}.png`) });
       await page.close();
     }
