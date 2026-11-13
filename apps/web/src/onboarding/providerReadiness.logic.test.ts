@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  agentSignInAccount,
   canInstallOnboardingAgent,
   getOnboardingProviderState,
   listOnboardingAgents,
@@ -451,5 +452,22 @@ describe("canInstallOnboardingAgent", () => {
       "codex",
       "claudeAgent",
     ]);
+  });
+});
+
+describe("the account an agent's sign-in button names", () => {
+  it.each([
+    ["codex", "ChatGPT"],
+    ["claudeAgent", "Claude"],
+    ["muse", "Meta"],
+    ["gemini", "Google"],
+    ["github-copilot-cli", "GitHub"],
+  ])("signs %s in with %s", (agent, account) => {
+    expect(agentSignInAccount(agent)).toBe(account);
+  });
+
+  it("has no name for an agent it does not know, or for a word every object has", () => {
+    expect(agentSignInAccount("some-new-agent")).toBeNull();
+    expect(agentSignInAccount("constructor")).toBeNull();
   });
 });

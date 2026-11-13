@@ -1125,6 +1125,8 @@ export const FoundAgent = Schema.Struct({
   kind: Schema.Literals(["builtIn", "registry"]),
   /** The command or path that was run. */
   command: Schema.String,
+  /** The file that command is on this machine, when it was found. Older servers leave it out. */
+  path: Schema.optionalKey(Schema.String),
   state: AgentSearchState,
 });
 export type FoundAgent = typeof FoundAgent.Type;

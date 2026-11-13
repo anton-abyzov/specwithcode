@@ -14,11 +14,13 @@ import {
   type ServerSettings,
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
-import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -330,6 +332,8 @@ export interface AgentDiscoveryResult {
   readonly kind: "builtIn" | "registry";
   /** The command or path that was run. */
   readonly command: string;
+  /** The file that command is on this machine, when it was found. */
+  readonly path?: string;
   readonly state: ProviderDiscoveryState;
 }
 
@@ -391,7 +395,17 @@ export const discoverAgents = Effect.fn("providerDiscovery.discoverAgents")(func
     ({ agent, kind, command: fallback, probe }) => {
       const command = commandFor(settings, agent, fallback);
       return probe(command, environment).pipe(
-        Effect.map((state): AgentDiscoveryResult => ({ agent, kind, command, state })),
+        Effect.flatMap((state) => {
+          const result: AgentDiscoveryResult = { agent, kind, command, state };
+          if (state === "not-installed") return Effect.succeed(result);
+          // Settings shows where the command is, so a person can tell two installs apart.
+          return resolveCommandPath(command, { env: environment }).pipe(
+            Effect.match({
+              onFailure: () => result,
+              onSuccess: (path): AgentDiscoveryResult => ({ ...result, path }),
+            }),
+          );
+        }),
         Effect.tap(onResult),
       );
     },
@@ -472,7 +486,10 @@ const withNoAnswer = (answered: AgentSearchSnapshot["agents"]): AgentSearchSnaps
  */
 export const makeAgentSearch = Effect.gen(function* () {
   const services = yield* Effect.context<
-    ServerSettingsService | ChildProcessSpawner.ChildProcessSpawner
+    | ServerSettingsService
+    | ChildProcessSpawner.ChildProcessSpawner
+    | FileSystem.FileSystem
+    | Path.Path
   >();
   const scope = yield* Effect.scope;
   // Read once here: a search runs on its own fiber, not on the caller's.

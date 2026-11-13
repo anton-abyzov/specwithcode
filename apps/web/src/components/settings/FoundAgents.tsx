@@ -9,7 +9,7 @@ import {
   resolveProviderInstanceEnabled,
   type ServerSettings,
 } from "@specweave-studio/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useTx } from "../../i18n";
 import { acpAgentIdForInstanceConfig } from "../../providerInstances";
@@ -37,6 +37,33 @@ export function agentName(agent: string): string {
 }
 
 type AgentSettings = Pick<ServerSettings, "providers" | "providerInstances">;
+
+// What the last search on each machine answered, for parts of the page that
+// show one fact from it without running a search of their own.
+const lastSearches = new Map<EnvironmentId, AgentSearch>();
+const searchListeners = new Set<() => void>();
+const onSearchAnswered = (listener: () => void) => {
+  searchListeners.add(listener);
+  return () => void searchListeners.delete(listener);
+};
+function rememberSearch(environmentId: EnvironmentId, search: AgentSearch): void {
+  lastSearches.set(environmentId, search);
+  for (const listener of searchListeners) listener();
+}
+
+/**
+ * The file an agent's command is on a machine, from the last search there.
+ * Null until a search has answered, when the agent was not found, and on a
+ * machine whose server does not say.
+ */
+export function useFoundAgentPath(environmentId: EnvironmentId, agent: string): string | null {
+  const search = useSyncExternalStore(
+    onSearchAnswered,
+    () => lastSearches.get(environmentId) ?? null,
+    () => null,
+  );
+  return search?.agents.find((found) => found.agent === agent)?.path ?? null;
+}
 
 /**
  * The default entry of a built-in agent as Settings shows it: the saved entry,
@@ -154,6 +181,7 @@ export function useAgentSearch(environmentId: EnvironmentId, enabled: boolean) {
           return;
         }
         setSearch(next);
+        rememberSearch(environmentId, next);
         const reading = next.pending.length > 0 && Date.now() - startedAt < PROGRESS_LIMIT_MS;
         setAsking(reading);
         if (!reading) return;

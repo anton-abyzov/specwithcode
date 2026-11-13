@@ -22,7 +22,6 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
-  type ServerProvider,
   resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@specweave-studio/contracts";
@@ -36,7 +35,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../../connection/desktopLocal";
 import { environmentConnectionStatusTitle } from "../../lib/machineStatus";
@@ -94,6 +93,8 @@ import { ExpandableText } from "./ExpandableText";
 import { defaultAgentInstance, FoundAgents } from "./FoundAgents";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { ProviderLastChecked } from "./ProviderLastChecked";
+import { ProviderStatusRow } from "./ProviderStatusRow";
+import { statusRowShowsSetup } from "./providerStatus";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -171,95 +172,6 @@ function providerEnvironmentDetail(environment: EnvironmentPresentation): string
 // never changes the card's footprint.
 const providerCardHeightClassName =
   "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
-
-export function ProviderReadinessSummary({
-  provider,
-  enabled,
-  environmentLabel,
-}: {
-  readonly provider: ServerProvider | undefined;
-  readonly enabled: boolean;
-  readonly environmentLabel: string;
-}) {
-  const tx = useTx();
-  const auth = provider?.auth.status;
-  const nextStep = !enabled
-    ? tx("Enable this agent below to use it in chat.")
-    : !provider
-      ? tx("Refresh provider status to check installation, sign-in and models.")
-      : provider.availability === "unavailable"
-        ? (provider.unavailableReason ?? tx("This agent is unavailable on this machine."))
-        : !provider.installed
-          ? tx(
-              "Complete installation on {machine} or configure its executable below, then refresh provider status.",
-              { machine: environmentLabel },
-            )
-          : auth === "unauthenticated"
-            ? provider.setup?.canAuthenticate
-              ? tx("Complete sign-in in Setup below, then refresh provider status to load models.")
-              : tx(
-                  "Complete sign-in using this agent on {machine}, then refresh provider status.",
-                  { machine: environmentLabel },
-                )
-            : auth !== "authenticated"
-              ? tx(
-                  "Sign-in status is not reported. Review the agent settings below or refresh provider status.",
-                )
-              : provider.status === "error" || provider.status === "warning"
-                ? tx("Review the provider status below before starting a chat.")
-                : provider.models.length === 0
-                  ? tx("No models reported yet. Refresh provider status after completing setup.")
-                  : tx("Choose this agent and a model in the chat model picker.");
-  const stages = [
-    [
-      provider?.driver === "cursor" ? "Integration" : "Installation",
-      provider?.driver === "cursor"
-        ? "Built-in SDK"
-        : provider
-          ? provider.installed
-            ? "Installed"
-            : "Not installed"
-          : "Not checked",
-    ],
-    [
-      "Sign-in",
-      auth === "authenticated"
-        ? "Signed in"
-        : auth === "unauthenticated"
-          ? "Required"
-          : "Not reported",
-    ],
-    [
-      "Models",
-      provider?.models.length
-        ? tx("{count} reported", { count: provider.models.length })
-        : "None reported",
-    ],
-  ] as const;
-  return (
-    <section
-      aria-label={tx("Agent readiness")}
-      className="space-y-3 border-b border-border/70 pb-4"
-    >
-      <p className="text-xs text-muted-foreground">
-        {renderRich(tx("Agent runs on {environmentLabel}."), {
-          environmentLabel: environmentLabel,
-        })}
-      </p>
-      <dl className="grid grid-cols-3 gap-3">
-        {stages.map(([label, value]) => (
-          <div key={label} className="min-w-0">
-            <dt className="text-xs text-muted-foreground">{tx(label)}</dt>
-            <dd className="mt-1 text-sm font-medium">{tx(value)}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="text-xs leading-relaxed text-muted-foreground" role="status">
-        {nextStep}
-      </p>
-    </section>
-  );
-}
 
 /**
  * Same chrome as the provider editor (section heading, floating device tabs,
@@ -1086,15 +998,101 @@ export function EnvironmentProviderSettings({
     );
     const resetLabel = driverOption?.label ?? String(row.driver);
 
-    return (
+    const enabled = resolveProviderInstanceEnabled(row.instance);
+    const setupNode =
+      mode === "editor" && row.driver === "antigravity" ? (
+        <ProviderSetupSection
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          instanceId={row.instanceId}
+          provider={liveProvider}
+          binaryPath={configuredBinaryPath(row.instance.config)}
+          authMethod={readAntigravityAuthMethod(row.instance.config)}
+          enabled={resolveProviderInstanceEnabled(row.instance)}
+          readOnly={readOnly}
+          onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+        />
+      ) : mode === "editor" &&
+        row.driver === "codex" &&
+        readCodexSetupMode(row.instance.config) === "managed" ? (
+        <CodexSetupSection
+          environmentId={environmentId}
+          instanceId={row.instanceId}
+          provider={liveProvider}
+          mode={readCodexSetupMode(row.instance.config)}
+          enabled={resolveProviderInstanceEnabled(row.instance)}
+          readOnly={readOnly}
+          onModeChange={(setupMode) =>
+            updateProviderInstance(row, {
+              ...row.instance,
+              enabled: true,
+              config: {
+                ...(row.instance.config !== null && typeof row.instance.config === "object"
+                  ? row.instance.config
+                  : {}),
+                enabled: true,
+                setupMode,
+              },
+            })
+          }
+        />
+      ) : mode === "editor" && row.driver === "acpRegistry" ? (
+        <>
+          <AcpRegistryRepair
+            key={`${environmentId}:${row.instanceId}`}
+            environmentId={environmentId}
+            instanceId={row.instanceId}
+            instance={row.instance}
+            readOnly={readOnly}
+          />
+          {!readOnly &&
+          liveProvider &&
+          (liveProvider.setup?.canAuthenticate || liveProvider.installed) ? (
+            <ProviderAuthenticationSection
+              key={`${environmentId}:${row.instanceId}`}
+              environmentId={environmentId}
+              environmentLabel={environmentLabel}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+              readOnly={readOnly}
+            />
+          ) : null}
+        </>
+      ) : mode === "editor" &&
+        !readOnly &&
+        liveProvider &&
+        (liveProvider.setup?.canAuthenticate ||
+          (liveProvider.driver === "acpRegistry" && liveProvider.installed)) ? (
+        <ProviderAuthenticationSection
+          key={`${environmentId}:${row.instanceId}`}
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          instanceId={row.instanceId}
+          provider={liveProvider}
+          readOnly={readOnly}
+        />
+      ) : mode === "editor" &&
+        !readOnly &&
+        row.driver === "cursor" &&
+        liveProvider?.setup?.canAuthenticate === false ? (
+        <SettingsRow
+          title="Cursor account"
+          description="Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in."
+        />
+      ) : null;
+    // While the agent needs its sign-in or install, that block sits under its status.
+    const statusOwnsSetup =
+      mode === "editor" &&
+      !readOnly &&
+      setupNode !== undefined &&
+      setupNode !== null &&
+      statusRowShowsSetup(liveProvider, enabled);
+    const card = (
       <ProviderInstanceCard
         environmentLabel={environmentLabel}
         key={row.instanceId}
         environmentId={environmentId}
         acpProjects={projects}
-        onAcceptUrlAuth={
-          readOnly ? undefined : (action) => acceptUrlAuthentication(row.instanceId, action)
-        }
         instanceId={row.instanceId}
         instance={row.instance}
         driverOption={driverOption}
@@ -1119,88 +1117,7 @@ export function EnvironmentProviderSettings({
           ) : undefined
         }
         canWriteSettings={canWriteSettings}
-        setup={
-          mode === "editor" && row.driver === "antigravity" ? (
-            <ProviderSetupSection
-              environmentId={environmentId}
-              environmentLabel={environmentLabel}
-              instanceId={row.instanceId}
-              provider={liveProvider}
-              binaryPath={configuredBinaryPath(row.instance.config)}
-              authMethod={readAntigravityAuthMethod(row.instance.config)}
-              enabled={resolveProviderInstanceEnabled(row.instance)}
-              readOnly={readOnly}
-              onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
-            />
-          ) : mode === "editor" &&
-            row.driver === "codex" &&
-            readCodexSetupMode(row.instance.config) === "managed" ? (
-            <CodexSetupSection
-              environmentId={environmentId}
-              instanceId={row.instanceId}
-              provider={liveProvider}
-              mode={readCodexSetupMode(row.instance.config)}
-              enabled={resolveProviderInstanceEnabled(row.instance)}
-              readOnly={readOnly}
-              onModeChange={(setupMode) =>
-                updateProviderInstance(row, {
-                  ...row.instance,
-                  enabled: true,
-                  config: {
-                    ...(row.instance.config !== null && typeof row.instance.config === "object"
-                      ? row.instance.config
-                      : {}),
-                    enabled: true,
-                    setupMode,
-                  },
-                })
-              }
-            />
-          ) : mode === "editor" && row.driver === "acpRegistry" ? (
-            <>
-              <AcpRegistryRepair
-                key={`${environmentId}:${row.instanceId}`}
-                environmentId={environmentId}
-                instanceId={row.instanceId}
-                instance={row.instance}
-                readOnly={readOnly}
-              />
-              {!readOnly &&
-              liveProvider &&
-              (liveProvider.setup?.canAuthenticate || liveProvider.installed) ? (
-                <ProviderAuthenticationSection
-                  key={`${environmentId}:${row.instanceId}`}
-                  environmentId={environmentId}
-                  environmentLabel={environmentLabel}
-                  instanceId={row.instanceId}
-                  provider={liveProvider}
-                  readOnly={readOnly}
-                />
-              ) : null}
-            </>
-          ) : mode === "editor" &&
-            !readOnly &&
-            liveProvider &&
-            (liveProvider.setup?.canAuthenticate ||
-              (liveProvider.driver === "acpRegistry" && liveProvider.installed)) ? (
-            <ProviderAuthenticationSection
-              key={`${environmentId}:${row.instanceId}`}
-              environmentId={environmentId}
-              environmentLabel={environmentLabel}
-              instanceId={row.instanceId}
-              provider={liveProvider}
-              readOnly={readOnly}
-            />
-          ) : mode === "editor" &&
-            !readOnly &&
-            row.driver === "cursor" &&
-            liveProvider?.setup?.canAuthenticate === false ? (
-            <SettingsRow
-              title="Cursor account"
-              description="Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in."
-            />
-          ) : null
-        }
+        setup={statusOwnsSetup ? undefined : setupNode}
         onUpdate={(next) => {
           const wasEnabled = resolveProviderInstanceEnabled(row.instance);
           const isDisabling = next.enabled === false && wasEnabled;
@@ -1268,6 +1185,33 @@ export function EnvironmentProviderSettings({
         }
         isUpdating={isInstanceUpdateRunning}
       />
+    );
+    if (mode === "list") return card;
+    return (
+      <Fragment key={row.instanceId}>
+        <ProviderStatusRow
+          key={`${environmentId}:${row.instanceId}`}
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          instanceId={row.instanceId}
+          instance={row.instance}
+          provider={liveProvider}
+          enabled={enabled}
+          readOnly={readOnly}
+          name={row.instance.displayName?.trim() || resetLabel}
+          registryAgentId={
+            row.driver === "acpRegistry"
+              ? (acpAgentIdForInstanceConfig(row.instance.config) ?? undefined)
+              : undefined
+          }
+          setupBlock={statusOwnsSetup ? setupNode : undefined}
+          onTurnOn={() => void updateProviderInstance(row, { ...row.instance, enabled: true })}
+          onAcceptUrlAuth={
+            readOnly ? undefined : (action) => acceptUrlAuthentication(row.instanceId, action)
+          }
+        />
+        {card}
+      </Fragment>
     );
   };
 
@@ -1388,16 +1332,7 @@ export function EnvironmentProviderSettings({
           <div className="min-w-0 @min-[48rem]/providers:min-h-0">
             {selectedRow ? (
               <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
-                <div className="space-y-6 p-4">
-                  <ProviderReadinessSummary
-                    provider={serverProviders.find(
-                      (provider) => provider.instanceId === selectedRow.instanceId,
-                    )}
-                    enabled={resolveProviderInstanceEnabled(selectedRow.instance)}
-                    environmentLabel={environmentLabel}
-                  />
-                  {renderProviderInstance(selectedRow, "editor")}
-                </div>
+                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
               </ScrollArea>
             ) : (
               <div className="p-6 text-sm text-muted-foreground">

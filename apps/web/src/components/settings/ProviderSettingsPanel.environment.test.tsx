@@ -142,7 +142,8 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map(),
 }));
 
-import { EnvironmentProviderSettings, ProviderReadinessSummary } from "./ProviderSettingsPanel";
+import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { ProviderStatusRow } from "./ProviderStatusRow";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { AcpRegistryRepair } from "./AcpRegistryRepair";
 
@@ -214,31 +215,31 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("EnvironmentProviderSettings routing", () => {
-  beforeEach(() => {
-    hooks.reset();
-    atoms.providers = null;
-    settingsState.value = DEFAULT_UNIFIED_SETTINGS;
-    settingsState.readEnvironmentIds = [];
-    settingsState.updateEnvironmentIds = [];
-    settingsState.mutationEnvironmentIds = [];
-    settingsState.updateSettings.mockReset();
-    settingsState.updateClientSettings.mockReset();
-    settingsSearchState.targetId = null;
-    settingsSearchState.effects = [];
-    settingsState.mutateProviderInstance
-      .mockReset()
-      .mockResolvedValue({ _tag: "Success", value: {} });
-    commands.canManageProviders = true;
-    commands.canWriteSettings = true;
-    commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
-    commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
-    commands.uninstall.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
-    commands.acceptUrlAuth
-      .mockReset()
-      .mockResolvedValue({ _tag: "Success", value: { accepted: true } });
-  });
+beforeEach(() => {
+  hooks.reset();
+  atoms.providers = null;
+  settingsState.value = DEFAULT_UNIFIED_SETTINGS;
+  settingsState.readEnvironmentIds = [];
+  settingsState.updateEnvironmentIds = [];
+  settingsState.mutationEnvironmentIds = [];
+  settingsState.updateSettings.mockReset();
+  settingsState.updateClientSettings.mockReset();
+  settingsSearchState.targetId = null;
+  settingsSearchState.effects = [];
+  settingsState.mutateProviderInstance
+    .mockReset()
+    .mockResolvedValue({ _tag: "Success", value: {} });
+  commands.canManageProviders = true;
+  commands.canWriteSettings = true;
+  commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
+  commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
+  commands.uninstall.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
+  commands.acceptUrlAuth
+    .mockReset()
+    .mockResolvedValue({ _tag: "Success", value: { accepted: true } });
+});
 
+describe("EnvironmentProviderSettings routing", () => {
   it("offers explicit repair on the selected remote registry instance even before installation", () => {
     const id = ProviderInstanceId.make("copilot_work");
     const instance = {
@@ -671,9 +672,12 @@ describe("EnvironmentProviderSettings routing", () => {
       },
     ];
 
-    const panel = renderPanel();
-    const card = visitElements(panel, (element) => element.props.instanceId === instanceId);
-    (card?.props.onAcceptUrlAuth as ((candidate: typeof action) => void) | undefined)?.(action);
+    const panel = renderPanel({ targetInstanceId: instanceId });
+    const row = visitElements(
+      panel,
+      (element) => element.type === ProviderStatusRow && element.props.instanceId === instanceId,
+    );
+    (row?.props.onAcceptUrlAuth as ((candidate: typeof action) => void) | undefined)?.(action);
     await flushPromises();
 
     expect(commands.acceptUrlAuth).toHaveBeenCalledWith({
@@ -683,51 +687,50 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 });
 
-describe("Provider readiness evidence", () => {
-  const summary = (live = provider(), enabled = true) =>
-    JSON.stringify(
-      ProviderReadinessSummary({
-        provider: live,
-        enabled,
-        environmentLabel: "Remote device",
-      }),
-    );
-
-  it("does not infer signed-in status from a ready runtime", () => {
-    const live = { ...provider(), auth: { status: "unknown" as const } };
-    const output = summary(live);
-    expect(output).toContain("Installed");
-    expect(output).toContain("Not reported");
-    expect(output).toContain("Sign-in status is not reported");
-    expect(output).not.toContain("Signed in");
-    expect(output).toContain("Remote device");
+describe("the selected agent's status row", () => {
+  const signedOut = () => ({
+    ...provider(),
+    status: "error" as const,
+    auth: { status: "unauthenticated" as const },
+    setup: { canAuthenticate: true, canInstall: false },
   });
+  const statusRow = (panel: ReturnType<typeof renderPanel>) =>
+    visitElements(panel, (element) => element.type === ProviderStatusRow);
 
-  it("explains missing installation, sign-in, models and disabled agents independently", () => {
-    expect(summary({ ...provider(), installed: false })).toContain("Complete installation");
-    expect(summary({ ...provider(), auth: { status: "unauthenticated" } })).toContain(
-      "Complete sign-in",
-    );
-    expect(summary()).toContain("No models reported yet");
-    expect(summary(provider(), false)).toContain("Enable this agent below");
-    const unavailable = summary({
-      ...provider(),
-      availability: "unavailable",
-      unavailableReason: "Install this driver on Remote device.",
+  it("sits above the selected agent's settings, on the machine being edited", () => {
+    const row = statusRow(renderPanel());
+    expect(row?.props).toMatchObject({
+      environmentId,
+      environmentLabel: "Remote device",
+      enabled: true,
+      readOnly: false,
     });
-    expect(unavailable).toContain("Install this driver on Remote device.");
+    expect(row?.props.setupBlock).toBeUndefined();
   });
 
-  it("keeps unobserved state distinct from a failed setup", () => {
-    const output = JSON.stringify(
-      ProviderReadinessSummary({
-        provider: undefined,
-        enabled: true,
-        environmentLabel: "Remote device",
-      }),
-    );
-    expect(output).toContain("Not checked");
-    expect(output).toContain("Refresh provider status");
-    expect(output).not.toContain("Not installed");
+  it("takes the agent's sign-in out of Setup while the agent is signed out", () => {
+    atoms.providers = [signedOut()];
+    const panel = renderPanel();
+    expect(statusRow(panel)?.props.setupBlock).toBeTruthy();
+    const editor = visitElements(panel, (element) => element.props.mode === "editor");
+    expect(editor?.props.setup).toBeUndefined();
+  });
+
+  it("keeps the sign-in under the status row while a check gives no answer", () => {
+    atoms.providers = [
+      { ...signedOut(), status: "warning" as const, auth: { status: "unknown" as const } },
+    ];
+    const panel = renderPanel();
+    expect(statusRow(panel)?.props.setupBlock).toBeTruthy();
+    const editor = visitElements(panel, (element) => element.props.mode === "editor");
+    expect(editor?.props.setup).toBeUndefined();
+  });
+
+  it("leaves the sign-in out for a connection that cannot change agents", () => {
+    atoms.providers = [signedOut()];
+    commands.canManageProviders = false;
+    const row = statusRow(renderPanel({ readOnly: true }));
+    expect(row?.props.readOnly).toBe(true);
+    expect(row?.props.setupBlock).toBeUndefined();
   });
 });
