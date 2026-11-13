@@ -498,15 +498,18 @@ export function StudioFleetConnections({
     }
   }
   async function pair(machine: StudioFleetMachine) {
-    if (pending || !canPair) return;
+    if (pending) return;
     setError(null);
-    // A Connect-only machine of this account is saved over Connect, not paired
-    // over Tailscale, which cannot reach it.
-    if (
-      !fleetMachineHasTailnetAddress(machine) &&
-      requestAccountMachineConnect([machine.environmentId])
-    )
+    // A Connect-only machine is saved over Connect, which needs no pairing
+    // permission; Tailscale pairing cannot reach it.
+    if (!fleetMachineHasTailnetAddress(machine)) {
+      if (!requestAccountMachineConnect([machine.environmentId]))
+        setError(
+          "This machine is reached over SpecWithCode Connect only. Sign in to SpecWithCode Connect here with the same account, then press Connect again.",
+        );
       return;
+    }
+    if (!canPair) return;
     setPending(machine.id);
     try {
       const credential = await pairStudioFleet(environmentId, machine.id);

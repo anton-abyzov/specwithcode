@@ -122,7 +122,9 @@ export function handoffAccountMachines(input: {
     }
     const inFleet = fleetById.get(id);
     const state = input.states.get(id);
-    if (!inFleet) {
+    // In this app's fleet without a grant here, but allowed by the project's
+    // machine: offered as if outside this fleet.
+    if (!inFleet || (input.sourceFleet !== undefined && !state && !fleetMachineGranted(inFleet))) {
       // Allowed by the project's machine, not by this one: this app saves it
       // only when asked, over SpecWithCode Connect.
       if (input.sourceFleet !== undefined && allowedIds !== null)

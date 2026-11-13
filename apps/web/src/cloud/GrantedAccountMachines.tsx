@@ -98,7 +98,8 @@ export function GrantedAccountMachines({
   // the machine is saved; it overrides holds and the wait for one try. The
   // shared in-flight set keeps the reconciler's linked path from adding it too.
   const requested = useRef(new Set<string>());
-  const lookedUp = useRef(new Map<string, Attempt & { readonly sign: string }>());
+  const lookedUp = useRef(new Map<string, Attempt>());
+  const signsSeen = useRef(new Map<string, Set<string>>());
   // The list belongs to this account only after a refresh that started once it was active.
   const sawRefresh = useRef(false);
   // Presses not acted on yet: each one asks for one try now.
@@ -310,16 +311,20 @@ export function GrantedAccountMachines({
     if (!unreachable)
       for (const id of [...needList, ...missing]) {
         let looked = lookedUp.current.get(id);
-        // Read again once how the fleet reaches it changes (it came online,
-        // or now answers over Connect): it may have signed in to Connect.
+        // Read again the first time the fleet reaches it a new way (it came
+        // online, or now answers over Connect): it may have signed in to
+        // Connect. A machine flapping between ways seen before reads nothing.
         const sign = fleetSign.get(id) ?? "";
-        if (looked !== undefined && looked.sign !== sign) {
+        const signs = signsSeen.current.get(id) ?? new Set<string>();
+        signsSeen.current.set(id, signs);
+        if (looked !== undefined && !signs.has(sign)) {
           lookedUp.current.delete(id);
           looked = undefined;
         }
+        signs.add(sign);
         if (looked !== undefined && looked.count >= MAX_LOOKUPS) continue;
         if (looked === undefined || now - looked.at >= RETRY_MS) {
-          lookedUp.current.set(id, { count: (looked?.count ?? 0) + 1, at: now, sign });
+          lookedUp.current.set(id, { count: (looked?.count ?? 0) + 1, at: now });
           readNow = true;
         }
         if ((lookedUp.current.get(id)?.count ?? 0) < MAX_LOOKUPS) waiting = true;

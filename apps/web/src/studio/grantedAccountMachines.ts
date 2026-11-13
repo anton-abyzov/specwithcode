@@ -41,6 +41,12 @@ export function grantedAccountMachinesToConnect(input: {
 }): RelayClientEnvironmentRecord[] {
   const seen = new Set<string>();
   const machines: RelayClientEnvironmentRecord[] = [];
+  // The fleet says this one is not who it claims to be: never saved, pressed or not.
+  const mismatched = new Set<string>(
+    (input.snapshot?.machines ?? [])
+      .filter((machine) => machine.status === "identity-mismatch")
+      .map((machine) => machine.environmentId),
+  );
   for (const machine of input.snapshot?.machines ?? []) {
     const id = machine.environmentId;
     if (
@@ -62,7 +68,7 @@ export function grantedAccountMachinesToConnect(input: {
   // Connect by hand for an account machine outside this fleet (one that
   // allowed the project's machine, not this one): the press is the consent.
   for (const id of input.requested ?? []) {
-    if (seen.has(id) || id === input.currentEnvironmentId) continue;
+    if (seen.has(id) || id === input.currentEnvironmentId || mismatched.has(id)) continue;
     if (input.savedEnvironmentIds.has(id) || input.skip?.has(id)) continue;
     const found = input.discovered.get(id);
     if (found) machines.push(found.environment);

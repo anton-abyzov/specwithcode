@@ -37,6 +37,30 @@ const account = (...ids: string[]) =>
   );
 
 describe("grantedAccountMachinesToConnect", () => {
+  it("never saves a machine whose identity does not match, even when pressed", () => {
+    expect(
+      grantedAccountMachinesToConnect({
+        snapshot: fleet({ environmentId: "m5", status: "identity-mismatch" }),
+        currentEnvironmentId: "m4",
+        savedEnvironmentIds: new Set(["m4"]),
+        discovered: account("m4", "m5"),
+        requested: new Set(["m5"]),
+      }),
+    ).toEqual([]);
+  });
+
+  it("saves a pressed account machine outside this fleet", () => {
+    expect(
+      grantedAccountMachinesToConnect({
+        snapshot: fleet(),
+        currentEnvironmentId: "m4",
+        savedEnvironmentIds: new Set(["m4"]),
+        discovered: account("m4", "m6"),
+        requested: new Set(["m6"]),
+      }).map((machine) => machine.environmentId),
+    ).toEqual(["m6"]);
+  });
+
   it("saves a same-account, Connect-only machine that allowed this one, with no shared project", () => {
     // The M5 case: signed in to the same Connect account, no Tailscale address,
     // no copy of any project here, and its grant put it in this server's fleet.

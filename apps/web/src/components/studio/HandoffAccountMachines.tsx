@@ -56,13 +56,13 @@ export function HandoffAccountMachines({
     (fleetSnapshot?.machines ?? []).map((machine) => [machine.environmentId, machine.status]),
   );
   // A tailnet machine's automatic pairing is over, or will never run (Connect
-  // automatically off, removed here, or Tailscale not answering for it):
-  // Connect over SpecWithCode Connect is offered then.
+  // automatically off, removed here): Connect over SpecWithCode Connect is
+  // offered then. One still booting may yet pair over Tailscale, so it waits.
   const pairingDone = (environmentId: string) =>
-    fleetAutoConnectSettled(environmentId) ||
-    !autoConnect ||
-    removedHere.has(environmentId as EnvironmentId) ||
-    fleetStatusById.get(environmentId) !== "reachable";
+    fleetStatusById.get(environmentId) !== "identity-mismatch" &&
+    (fleetAutoConnectSettled(environmentId) ||
+      !autoConnect ||
+      removedHere.has(environmentId as EnvironmentId));
   const sourceLabel =
     environments.find((item) => item.environmentId === sourceEnvironmentId)?.label ??
     sourceEnvironmentId;
