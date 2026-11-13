@@ -191,6 +191,10 @@ main() {
     return 0
   fi
   check_launchers
+  # A fresh Linux install with no chosen home: say when a much larger volume would suit it.
+  if [ "$platform" = linux ] && [ -z "${STUDIO_HOME:-}" ] && [ ! -e "$studio_home" ]; then
+    advise_roomier_home
+  fi
 
   step "Finding your release..."
   resolve_version
@@ -703,6 +707,37 @@ ensure_tailscale() {
       fail "Tailscale is signed in, but your tailnet admin must approve this machine first (https://login.tailscale.com/admin/machines); then run this again" ;;
     *) fail "Tailscale is not signed in yet; sign in with the account your main machine uses, then run this again" ;;
   esac
+}
+
+# roomier_volume: on Linux, a mounted local volume with far more free room than the one holding
+# $HOME (at least 100 GB and three times as much), as "mountpoint free_kb fstype". Many Linux
+# machines have a small system volume and a large data one (/srv, /data, a second disk); agents
+# fill the app folder fast, so a new install should go there. Prints nothing when none qualifies.
+roomier_volume() {
+  home_line="$(df -P -T -k "$HOME" 2>/dev/null | awk 'NR == 2 { print $1, $5, $7 }')"
+  [ -n "$home_line" ] || return 0
+  home_device="${home_line%% *}"
+  home_free="$(printf '%s' "$home_line" | cut -d' ' -f2)"
+  df -P -T -k 2>/dev/null | awk -v device="$home_device" -v free="$home_free" '
+    NR > 1 && $1 != device && $2 ~ /^(ext[34]|xfs|btrfs|f2fs|zfs|bcachefs)$/ &&
+      $7 !~ /^\/(boot|snap|run|proc|sys|dev|tmp)(\/|$)/ && $7 !~ /^\/var\/(lib\/docker|snap)(\/|$)/ &&
+      $5 >= 100000000 && $5 >= 3 * free {
+      if ($5 > best) { best = $5; line = $7 " " $5 " " $2 }
+    }
+    END { if (line != "") print line }'
+}
+
+advise_roomier_home() {
+  roomier="$(roomier_volume)"
+  [ -n "$roomier" ] || return 0
+  roomier_path="${roomier%% *}"
+  roomier_gb="$(( $(printf '%s' "$roomier" | cut -d' ' -f2) / 1000000 ))"
+  roomier_fs="${roomier##* }"
+  printf '\n  %sTip:%s %s (%s) has %s GB free, far more than your home folder.\n' \
+    "$bold" "$reset" "$roomier_path" "$roomier_fs" "$roomier_gb" >&2
+  printf '  Agents fill the app folder with worktrees and builds. To keep it there, run:\n' >&2
+  printf '    sudo install -d -o "$USER" -g "$USER" %s/specwithcode\n' "$roomier_path" >&2
+  printf '    STUDIO_HOME=%s/specwithcode <this install command>\n\n' "$roomier_path" >&2
 }
 
 print_plan() {

@@ -332,3 +332,22 @@ describe("old app versions", () => {
     expect(resolve([status(5e8, true)])[0]?.oldAppVersionsBytes).toBeUndefined();
   });
 });
+
+describe("roomier volume", () => {
+  it("says where the app folder belongs when a much larger volume sits beside it", () => {
+    const notices = resolve([
+      {
+        environmentId: THIS_MAC,
+        os: "linux",
+        storage: {
+          ...storage("low", 4.4e9),
+          roomierVolume: { path: "/srv", freeBytes: 1.4e12, fileSystem: "xfs", clones: true },
+        },
+      },
+    ]);
+    expect(notices[0]?.message).toBe(
+      "This computer is almost out of disk space (4.4 GB free). SpecWithCode may stop responding until you free some space. /srv on this computer has 1400 GB free: keep the SpecWithCode folder there (Review storage shows how).",
+    );
+    expect(notices[0]?.action).toBe("review-storage");
+  });
+});

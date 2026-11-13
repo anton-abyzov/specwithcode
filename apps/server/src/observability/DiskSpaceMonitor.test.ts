@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
+import type { StorageRoomierVolume } from "@specweave-studio/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as DiskSpaceMonitor from "./DiskSpaceMonitor.ts";
@@ -21,16 +22,23 @@ const layerConfig = Layer.succeed(
 );
 
 /** Builds the monitor over `readings`, one per check; the last one repeats. */
-const buildMonitor = (readings: Array<number | "fail">, paths: Array<string> = []) => {
+const buildMonitor = (
+  readings: Array<number | "fail">,
+  paths: Array<string> = [],
+  roomier: StorageRoomierVolume | undefined = undefined,
+) => {
   const next = () => (readings.length > 1 ? readings.shift()! : readings[0]!);
   return Layer.build(
-    DiskSpaceMonitor.layerWith((path) => {
-      paths.push(path);
-      const reading = next();
-      return reading === "fail"
-        ? Effect.fail(new DiskSpaceMonitor.DiskSpaceReadError({ path, cause: "EIO" }))
-        : Effect.succeed({ freeBytes: reading, totalBytes: TOTAL });
-    }).pipe(Layer.provide(layerConfig)),
+    DiskSpaceMonitor.layerWith(
+      (path) => {
+        paths.push(path);
+        const reading = next();
+        return reading === "fail"
+          ? Effect.fail(new DiskSpaceMonitor.DiskSpaceReadError({ path, cause: "EIO" }))
+          : Effect.succeed({ freeBytes: reading, totalBytes: TOTAL });
+      },
+      () => Effect.succeed(roomier),
+    ).pipe(Layer.provide(layerConfig)),
   ).pipe(Effect.map((context) => Context.get(context, DiskSpaceMonitor.DiskSpaceMonitor)));
 };
 
@@ -222,4 +230,22 @@ describe("DiskSpaceMonitor", () => {
       DiskSpaceMonitor.sameStorageReport(status("low", 640_000_000), status("low", 589_000_000)),
     );
   });
+});
+
+describe("roomier volume", () => {
+  const srv: StorageRoomierVolume = {
+    path: "/srv",
+    freeBytes: 1.4e12,
+    fileSystem: "xfs",
+    clones: true,
+  };
+  it.effect("names a roomier volume only while the disk is low", () =>
+    Effect.gen(function* () {
+      const low = yield* buildMonitor([4.4e9], [], srv);
+      const status = yield* low.current;
+      assert.deepStrictEqual(Option.getOrThrow(status).roomierVolume, srv);
+      const ok = yield* buildMonitor([60e9], [], srv);
+      assert.strictEqual(Option.getOrThrow(yield* ok.current).roomierVolume, undefined);
+    }).pipe(Effect.scoped),
+  );
 });

@@ -5,6 +5,7 @@ import {
   formatStorageFreeSpace,
   statfsBytes,
   type StorageHomeUsage,
+  type StorageRoomierVolume,
   type StorageStatus,
   type StorageStatusLevel,
 } from "@specweave-studio/contracts";
@@ -18,7 +19,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+
 import * as ServerConfig from "../config.ts";
+import { findRoomierVolume } from "./roomierVolume.ts";
 
 // Decimal units, as the banner and a Mac's own Finder show free space.
 const CRITICAL_BELOW_BYTES = 1e9;
@@ -124,11 +128,18 @@ const readNodeDiskSpace = (path: string) =>
  */
 export const layerWith = (
   read: (path: string) => Effect.Effect<DiskSpaceReading, DiskSpaceReadError>,
+  findRoomier: (input: {
+    readonly platform: NodeJS.Platform;
+    readonly dataDir: string;
+    readonly homeFreeBytes: number;
+  }) => Effect.Effect<StorageRoomierVolume | undefined> = (input) =>
+    Effect.promise(() => findRoomierVolume(input)),
 ) =>
   Layer.effect(
     DiskSpaceMonitor,
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;
+      const platform = yield* HostProcessPlatform;
       const status = yield* SubscriptionRef.make(Option.none<StorageStatus>());
       let homeUsage: StorageHomeUsage | undefined;
 
@@ -139,6 +150,11 @@ export const layerWith = (
           onSome: (current) => current.level,
         });
         const level = storageLevel(previous, freeBytes);
+        // Only a low disk needs the advice; looking costs a statfs per mount.
+        const roomierVolume =
+          level === "ok"
+            ? undefined
+            : yield* findRoomier({ platform, dataDir: stateDir, homeFreeBytes: freeBytes });
         const checkedAt = DateTime.formatIso(yield* DateTime.now);
         yield* SubscriptionRef.set(
           status,
@@ -147,6 +163,7 @@ export const layerWith = (
             freeBytes,
             totalBytes,
             checkedAt,
+            ...(roomierVolume === undefined ? {} : { roomierVolume }),
             ...(homeUsage === undefined ? {} : { homeUsage }),
           }),
         );

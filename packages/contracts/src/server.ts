@@ -745,11 +745,27 @@ const BestEffortStorageHomeUsage = StorageHomeUsage.pipe(
   Schema.catchEncoding(() => Effect.succeedNone),
 );
 
+/**
+ * A mounted local volume on the same machine with far more room than the one
+ * holding the app's data (Linux only: `/srv`, `/data`, a second disk), named
+ * while the disk is low so the card can say where the app folder belongs.
+ */
+export const StorageRoomierVolume = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  freeBytes: NonNegativeInt,
+  fileSystem: TrimmedNonEmptyString,
+  /** Copy-on-write clones (XFS, Btrfs): worktree and folder copies cost almost nothing. */
+  clones: Schema.Boolean,
+});
+export type StorageRoomierVolume = typeof StorageRoomierVolume.Type;
+
 export const StorageStatus = Schema.Struct({
   level: StorageStatusLevel,
   freeBytes: NonNegativeInt,
   totalBytes: NonNegativeInt,
   checkedAt: IsoDateTime,
+  /** Present only while the disk is low and such a volume exists. */
+  roomierVolume: Schema.optionalKey(StorageRoomierVolume),
   /** Absent before the first measurement and on servers that predate it. */
   homeUsage: Schema.optionalKey(BestEffortStorageHomeUsage),
 });
