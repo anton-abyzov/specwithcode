@@ -268,6 +268,7 @@ export function withAccountConnectState(
   if (
     row.connect === null ||
     row.fleetMachine === null ||
+    row.fleetMachine.status === "identity-mismatch" ||
     fleetMachineHasTailnetAddress(row.fleetMachine) ||
     !onAccount
   )

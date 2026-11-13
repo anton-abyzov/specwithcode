@@ -41,8 +41,12 @@ import { onConnectRouteRequest, readDeclinedConnectRoutes } from "./connectRoute
 const NO_ENVIRONMENT = "" as EnvironmentId;
 /** Automatic tries per machine before it waits for Connect by hand. */
 const MAX_ATTEMPTS = 3;
-/** Wait after a failed try, and between re-reads of the account list for one machine. */
+/** Wait after a try before the next one, and between re-reads of the account list for one machine. */
 const RETRY_MS = 60_000;
+/** A Connect press stays in force this long, for the pass that acts on it. */
+const REQUEST_MS = 2 * RETRY_MS;
+/** Re-reads of the account list for one fleet machine it does not show, such as one on another account. */
+const MAX_LOOKUPS = 3;
 
 /**
  * Saves, with a SpecWithCode Connect route, each machine of this account that
@@ -72,18 +76,20 @@ export function GrantedAccountMachines() {
   const inFlight = useRef(new Set<string>());
   const attempts = useRef(new Map<string, { count: number; at: number }>());
   const failures = useRef(new Map<string, string>());
-  const requested = useRef(new Set<string>());
-  const lookedUp = useRef(new Map<string, number>());
+  // Machines asked for by hand, with when.
+  const requested = useRef(new Map<string, number>());
+  const lookedUp = useRef(new Map<string, { count: number; at: number }>());
   // The list belongs to this account only after a refresh that started once it was active.
   const sawRefresh = useRef(false);
   const [tick, setTick] = useState(0);
-  const [failedCount, setFailedCount] = useState(0);
+  const [retryPending, setRetryPending] = useState(false);
 
   useEffect(
     () =>
       onConnectRouteRequest((environmentIds) => {
+        const now = Date.now();
         for (const id of environmentIds) {
-          requested.current.add(id);
+          requested.current.set(id, now);
           attempts.current.delete(id);
           failures.current.delete(id);
           // Connecting by hand undoes an earlier removal on this device.
@@ -108,15 +114,17 @@ export function GrantedAccountMachines() {
     }
     const now = Date.now();
     const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
-    // Machines a shared project names are saved by the reconciler itself.
-    const linked = linkedMachineIds(projects);
+    // A press acts once: dropped when the machine is saved or the press is old.
+    for (const [id, at] of requested.current)
+      if (savedEnvironmentIds.has(id) || now - at >= REQUEST_MS) requested.current.delete(id);
     const candidates = grantedAccountMachinesToConnect({
       snapshot,
       currentEnvironmentId: primaryEnvironmentId,
       savedEnvironmentIds,
       discovered: discovery.environments,
-      skip: new Set([...linked].filter((id) => !requested.current.has(id))),
-      requested: requested.current,
+      // Machines a shared project names are saved by the reconciler itself, also on a press.
+      skip: linkedMachineIds(projects),
+      requested: new Set(requested.current.keys()),
     });
     const removed = new Set<string>([
       ...readSkippedFleetEnvironments(),
@@ -124,6 +132,8 @@ export function GrantedAccountMachines() {
     ]);
     const unreachable = discovery.error._tag === "Some" || discovery.offline;
     const next = new Map<string, AccountAutoConnectState>();
+    // Some machine waits for its next try.
+    let waiting = false;
     for (const machine of candidates) {
       const id = machine.environmentId;
       const asked = requested.current.has(id);
@@ -145,13 +155,18 @@ export function GrantedAccountMachines() {
         next.set(id, { phase: "held", reason: CONNECT_UNREACHABLE_REASON });
         continue;
       }
+      // Each machine is tried at most MAX_ATTEMPTS times, a minute apart, also
+      // when a try reported success but the catalog has not shown it saved.
       if (
         !asked &&
-        failure !== undefined &&
         tried !== undefined &&
         (tried.count >= MAX_ATTEMPTS || now - tried.at < RETRY_MS)
       ) {
-        next.set(id, { phase: "failed", reason: failure });
+        if (failure !== undefined) next.set(id, { phase: "failed", reason: failure });
+        else if (tried.count >= MAX_ATTEMPTS)
+          next.set(id, { phase: "failed", reason: CONNECT_NO_ANSWER_REASON });
+        else next.set(id, { phase: "connecting" });
+        if (tried.count < MAX_ATTEMPTS) waiting = true;
         continue;
       }
       requested.current.delete(id);
@@ -173,11 +188,11 @@ export function GrantedAccountMachines() {
             cause instanceof Error && cause.message ? cause.message : CONNECT_NO_ANSWER_REASON,
           );
         }
-        setFailedCount(failures.current.size);
         setTick((current) => current + 1);
       });
     }
     publishAccountAutoConnectStates(next);
+    setRetryPending(waiting);
 
     // A machine that joined a moment ago may be missing from the list read earlier.
     const missing = grantedMachinesMissingFromAccount({
@@ -185,9 +200,13 @@ export function GrantedAccountMachines() {
       currentEnvironmentId: primaryEnvironmentId,
       savedEnvironmentIds,
       discovered: discovery.environments,
-    }).filter((id) => now - (lookedUp.current.get(id) ?? 0) >= RETRY_MS);
+    }).filter((id) => {
+      const looked = lookedUp.current.get(id);
+      return looked === undefined || (looked.count < MAX_LOOKUPS && now - looked.at >= RETRY_MS);
+    });
     if (missing.length > 0 && !unreachable) {
-      for (const id of missing) lookedUp.current.set(id, now);
+      for (const id of missing)
+        lookedUp.current.set(id, { count: (lookedUp.current.get(id)?.count ?? 0) + 1, at: now });
       void refresh();
     }
   }, [
@@ -202,12 +221,12 @@ export function GrantedAccountMachines() {
     tick,
   ]);
 
-  // Failed machines are tried again after the wait, up to MAX_ATTEMPTS.
+  // A machine waiting for its next try is tried again after the wait.
   useEffect(() => {
-    if (failedCount === 0) return;
+    if (!retryPending) return;
     const timer = setTimeout(() => setTick((current) => current + 1), RETRY_MS);
     return () => clearTimeout(timer);
-  }, [failedCount, tick]);
+  }, [retryPending, tick]);
 
   return null;
 }

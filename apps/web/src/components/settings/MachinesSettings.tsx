@@ -1,3 +1,4 @@
+import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { ConnectionsSettings } from "./ConnectionsSettings";
@@ -36,6 +37,7 @@ import {
   useMachineWorkGrants,
   useStudioFleet,
 } from "../../studio/fleet";
+import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
 import { useAccountAutoConnectStates } from "../../studio/grantedAccountMachines";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
@@ -187,6 +189,11 @@ export function MachinesSettingsPanel() {
 
   async function connect(machine: StudioFleetMachine) {
     if (pending) return;
+    // A Connect-only machine of this account is saved over Connect, not paired.
+    if (!fleetMachineHasTailnetAddress(machine) && accountMachines.has(machine.environmentId)) {
+      requestConnectRoutes([machine.environmentId]);
+      return;
+    }
     setPending(machine.environmentId);
     setError(null);
     try {

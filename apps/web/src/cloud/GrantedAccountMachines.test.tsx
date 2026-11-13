@@ -166,6 +166,18 @@ describe("GrantedAccountMachines", () => {
     await act(async () => renderer.unmount());
   });
 
+  it("tries a machine whose save never shows up at most once a minute, three times", async () => {
+    m5InFleet();
+    // Success, but the catalog never lists it (as some registries do).
+    state.register.mockResolvedValue({ _tag: "Success" });
+    const renderer = await mount();
+    for (let pass = 0; pass < 5; pass += 1)
+      await act(async () => renderer.update(<GrantedAccountMachines />));
+    expect(state.register).toHaveBeenCalledTimes(1);
+    expect(accountAutoConnectStates().get("m5")).toEqual({ phase: "connecting" });
+    await act(async () => renderer.unmount());
+  });
+
   it("does nothing for an account machine that never allowed this one", async () => {
     state.snapshot = { machines: [] };
     state.discovered = new Map([["m7", { environment: { environmentId: "m7", label: "M7" } }]]);
