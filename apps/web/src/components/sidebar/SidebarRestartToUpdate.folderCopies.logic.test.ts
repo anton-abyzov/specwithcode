@@ -35,7 +35,7 @@ describe("folder copies before an update", () => {
       [
         "Restart to install SpecWithCode 1.0.126?",
         "1 folder copy to or from another machine is in progress. Restarting cuts it off, and it may need Retry.",
-        "Restart when idle lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.",
+        "Wait until quiet lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.",
       ].join("\n"),
     );
     expect(

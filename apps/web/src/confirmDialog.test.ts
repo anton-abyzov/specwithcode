@@ -106,7 +106,7 @@ describe("confirm dialog coordinator", () => {
   it("reports the third button of a choice dialog", async () => {
     const unregister = registerConfirmDialogHost();
     const choice = requestChoiceDialog("Restart now?", {
-      confirmLabel: "Restart when idle",
+      confirmLabel: "Wait until quiet",
       alternateLabel: "Restart now",
     });
     expect(readConfirmDialogState()).toMatchObject({

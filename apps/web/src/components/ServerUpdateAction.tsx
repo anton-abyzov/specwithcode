@@ -19,6 +19,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
+import type {
+  ServerPrepareServiceUpdateResult,
+  ServiceUpdateBlocker,
+} from "@specweave-studio/contracts";
+import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
 import { CircleArrowUpIcon } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
 
@@ -27,6 +32,10 @@ import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment, updateOutdatedServer } from "~/state/server";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { askRestartForWork } from "./serviceUpdateCalls";
+import { LiveRestartRunningWorkList } from "./sidebar/RestartRunningWorkList";
+import { describeListedRestart } from "./sidebar/restartRunningWork.logic";
+import { interruptedWork } from "./sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -49,8 +58,21 @@ function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
 
-/** How long the look for folder copies may take before the update goes ahead without it. */
+/** How long the look at what runs may take before the update goes ahead without it. */
 const COPY_LOOK_MS = 5_000;
+/** While an update waits for that machine to be quiet, look this often. */
+export const REMOTE_QUIET_CHECK_MS = 15_000;
+// Updates waiting for their machine to be quiet; a second press does not start another.
+const quietWaits = new Map<EnvironmentId, { cancelled: boolean }>();
+
+/** Whether a machine already runs `targetVersion` or a newer one; false when either is unknown. */
+export function serverReachedVersion(
+  serverVersion: string | null | undefined,
+  targetVersion: string,
+): boolean {
+  if (!serverVersion || !parseSemver(serverVersion) || !parseSemver(targetVersion)) return false;
+  return compareSemverVersions(serverVersion, targetVersion) >= 0;
+}
 
 /** The question before an update that would cut off folder copies on that machine. */
 export function describeServerUpdateCopies(serverLabel: string, copies: number): string {
@@ -81,34 +103,34 @@ function useServerUpdate() {
     reportFailure: false,
     reportDefect: false,
   });
-  /** Folder copies that machine serves or pulls now; 0 when it cannot say (older servers omit it). */
-  const folderCopiesOn = async (environmentId: EnvironmentId): Promise<number> => {
+  /** What runs on that machine now; null when it cannot say in time (older servers, offline). */
+  const lookAt = async (
+    environmentId: EnvironmentId,
+  ): Promise<ServerPrepareServiceUpdateResult | null> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const answer = await Promise.race([
-      prepare({ environmentId, input: { stopWork: false } }).catch(() => null),
+      Promise.resolve()
+        .then(() => prepare({ environmentId, input: { stopWork: false } }))
+        .catch(() => null),
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), COPY_LOOK_MS);
       }),
     ]);
     clearTimeout(timer);
-    return answer?._tag === "Success" ? (answer.value.folderCopies ?? 0) : 0;
+    // A server too old to report what runs answers without a list.
+    return answer?._tag === "Success" && Array.isArray(answer.value?.blockers)
+      ? answer.value
+      : null;
   };
-  return async (target: ServerUpdateTarget, failureTitle = "Server update failed") => {
+  const readWork =
+    (environmentId: EnvironmentId) =>
+    async (): Promise<ReadonlyArray<ServiceUpdateBlocker> | null> => {
+      const checked = await lookAt(environmentId);
+      return checked === null ? null : interruptedWork(checked.blockers);
+    };
+  const run = async (target: ServerUpdateTarget, failureTitle: string) => {
     const { environmentId, serverLabel, selfUpdate, targetVersion } = target;
-    if (
-      !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))) ||
-      pendingUpdateEnvironmentIds.has(environmentId)
-    )
-      return;
-    pendingUpdateEnvironmentIds.add(environmentId);
     try {
-      // The update restarts that machine's service, which serves or pulls a folder copy in-process.
-      const copies = await folderCopiesOn(environmentId);
-      if (
-        copies > 0 &&
-        !((await requestConfirmDialog(describeServerUpdateCopies(serverLabel, copies))) ?? true)
-      )
-        return;
       const result = await updateServer({
         environmentId,
         input: {
@@ -136,8 +158,152 @@ function useServerUpdate() {
         title: failureTitle,
         description: updateFailureMessage(error),
       });
+    }
+  };
+  // Wait until quiet: look again every few seconds and update once nothing
+  // there would be cut off (running work or a folder copy). It never forces;
+  // Cancel or closing the notice ends the wait at once.
+  const waitThenUpdate = async (target: ServerUpdateTarget, failureTitle: string) => {
+    const { environmentId, serverLabel, targetVersion } = target;
+    if (quietWaits.has(environmentId)) return;
+    const wait = { cancelled: false };
+    quietWaits.set(environmentId, wait);
+    const end = () => {
+      wait.cancelled = true;
+      if (quietWaits.get(environmentId) === wait) quietWaits.delete(environmentId);
+    };
+    const toastId = toastManager.add({
+      type: "info",
+      title: `${serverLabel} updates when quiet`,
+      description: "It updates once nothing running there would be cut off.",
+      timeout: 0,
+      onClose: end,
+      actionProps: {
+        children: "Cancel",
+        onClick: () => {
+          end();
+          toastManager.close(toastId);
+        },
+      },
+    });
+    try {
+      const signedOut = () =>
+        !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)));
+      // The machine may update on its own while this waits (its own install
+      // waits for quiet too), or from another window. Installing the pinned
+      // version then would restart it again, or move it back.
+      const alreadyThere = () =>
+        serverReachedVersion(
+          appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.environment
+            ?.serverVersion,
+          targetVersion,
+        );
+      for (let first = true; ; first = false) {
+        if (!first) await new Promise((resolve) => setTimeout(resolve, REMOTE_QUIET_CHECK_MS));
+        if (wait.cancelled) return;
+        if (alreadyThere()) {
+          end();
+          toastManager.close(toastId);
+          return;
+        }
+        // Access ended while it waited: say so now, not never.
+        if (signedOut()) break;
+        const checked = await lookAt(environmentId);
+        if (
+          checked !== null &&
+          interruptedWork(checked.blockers).length === 0 &&
+          (checked.folderCopies ?? 0) === 0
+        )
+          break;
+      }
+      if (wait.cancelled) return;
+      end();
+      toastManager.close(toastId);
+      if (alreadyThere()) return;
+      if (signedOut()) {
+        toastManager.add({
+          type: "error",
+          title: `${serverLabel} was not updated`,
+          description:
+            "This app may no longer update that machine. Sign in to it again, then Update.",
+        });
+        return;
+      }
+      pendingUpdateEnvironmentIds.add(environmentId);
+      try {
+        await run(target, failureTitle);
+      } finally {
+        pendingUpdateEnvironmentIds.delete(environmentId);
+      }
+    } finally {
+      if (quietWaits.get(environmentId) === wait) quietWaits.delete(environmentId);
+    }
+  };
+  return async (
+    target: ServerUpdateTarget,
+    failureTitle = "Server update failed",
+    /** The question for a desktop app relaunch, asked when nothing there would be cut off. */
+    relaunchQuestion: string | null = null,
+  ) => {
+    const { environmentId, serverLabel, targetVersion } = target;
+    if (
+      !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))) ||
+      pendingUpdateEnvironmentIds.has(environmentId) ||
+      quietWaits.has(environmentId)
+    )
+      return;
+    pendingUpdateEnvironmentIds.add(environmentId);
+    let waiting = false;
+    try {
+      // The update restarts that machine's service: say what it would cut off first.
+      const checked = await lookAt(environmentId);
+      const working = checked === null ? [] : interruptedWork(checked.blockers);
+      const copies = checked?.folderCopies ?? 0;
+      if (working.length > 0) {
+        const choice =
+          (await askRestartForWork(
+            describeListedRestart({
+              title:
+                target.selfUpdate === "desktop-managed"
+                  ? `Update and relaunch the app on ${serverLabel}?`
+                  : `Update ${serverLabel} to ${targetVersion}?`,
+              continues:
+                target.threadContinuation === true &&
+                target.continueThreadsAfterServerUpdate === true,
+              folderCopies: copies,
+            }),
+            {
+              canWait: true,
+              nowLabel: "Update now",
+              details: (
+                <LiveRestartRunningWorkList
+                  initial={working}
+                  poll={readWork(environmentId)}
+                  machine={{ environmentId, name: serverLabel }}
+                  openFromDialog
+                />
+              ),
+            },
+          )) ?? "now";
+        if (choice === "later") return;
+        if (choice === "wait") {
+          waiting = true;
+          return;
+        }
+      } else if (relaunchQuestion !== null) {
+        // No themed host mounted (undefined) means proceed: the click itself was the request.
+        if (!((await requestConfirmDialog(relaunchQuestion)) ?? true)) return;
+      } else if (
+        copies > 0 &&
+        !((await requestConfirmDialog(describeServerUpdateCopies(serverLabel, copies))) ?? true)
+      )
+        return;
+      if (!canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))))
+        return;
+      await run(target, failureTitle);
     } finally {
       pendingUpdateEnvironmentIds.delete(environmentId);
+      if (waiting) void waitThenUpdate(target, failureTitle);
     }
   };
 }
@@ -276,28 +442,23 @@ export function ServerUpdateAction({
     ) {
       return;
     }
-    if (isDesktopAppUpdate) {
-      // No themed host mounted (undefined) means proceed: the click itself
-      // was the request. This is the only confirmation in the flow; the
-      // remote machine installs without asking anyone there.
-      const confirmed =
-        (await requestConfirmDialog(
-          `Update the SpecWithCode desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
-        )) ?? true;
-      if (!confirmed) {
-        return;
-      }
-    }
-    if (!canUpdateServer(appAtomRegistry.get(sessionStateAtom))) return;
-    await update({
-      environmentId,
-      serverLabel,
-      selfUpdate,
-      desktopAppUpdate,
-      threadContinuation,
-      targetVersion,
-      continueThreadsAfterServerUpdate,
-    });
+    // The one question in the flow (the remote machine installs without asking
+    // anyone there): the live list when work runs there, else the relaunch.
+    await update(
+      {
+        environmentId,
+        serverLabel,
+        selfUpdate,
+        desktopAppUpdate,
+        threadContinuation,
+        targetVersion,
+        continueThreadsAfterServerUpdate,
+      },
+      undefined,
+      isDesktopAppUpdate
+        ? `Update the SpecWithCode desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`
+        : null,
+    );
   };
 
   if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {

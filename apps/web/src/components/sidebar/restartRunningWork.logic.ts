@@ -133,3 +133,114 @@ export function runningWorkCounts(work: {
     .filter(Boolean)
     .join(" · ");
 }
+
+/** What a restart would cut off in one thread: one row of the restart dialog's list. */
+export interface RestartWorkRow {
+  readonly key: string;
+  readonly threadId: string | null;
+  /** The machine the thread lives on, to open it; null when the list cannot tell. */
+  readonly environmentId: string | null;
+  readonly title: string;
+  readonly projectTitle: string | null;
+  readonly state: "running" | "queued" | "question";
+  /** What it is doing now: its current command or tool, else what the service reports. */
+  readonly now: string;
+  /** Where it runs ("M4", "M4 → Minis"); null when unknown. */
+  readonly machine: string | null;
+  readonly machineDescription: string | null;
+}
+
+/** What the client knows about a listed thread beyond what the service reports. */
+export interface RestartWorkThreadInfo {
+  readonly environmentId: string;
+  /** The active run's newest unfinished command, tool or subagent. */
+  readonly activeWork: string | null;
+  readonly machine: string | null;
+  readonly machineDescription: string | null;
+}
+
+function nowFor(thread: RunningWorkThread, activeWork: string | null): string {
+  if (thread.running > 0) {
+    if (activeWork !== null && activeWork.trim() !== "") return activeWork.trim();
+    return thread.running === 1 ? "Working" : `${thread.running} running`;
+  }
+  if (thread.queued > 0)
+    return thread.queued === 1 ? "1 message queued" : `${thread.queued} queued`;
+  return thread.questions === 1
+    ? "Waiting for your answer"
+    : `${thread.questions} questions waiting`;
+}
+
+/**
+ * The rows of the restart dialog: one per thread, busiest first, each with its
+ * current step and machine when the client knows the thread.
+ */
+export function restartWorkRows(
+  blockers: ReadonlyArray<ServiceUpdateBlocker>,
+  info: (threadId: string) => RestartWorkThreadInfo | null,
+  fallbackMachine: { readonly environmentId: string | null; readonly name: string | null } = {
+    environmentId: null,
+    name: null,
+  },
+): ReadonlyArray<RestartWorkRow> {
+  const rows: Array<RestartWorkRow & { readonly weight: RunningWorkThread }> = [];
+  for (const project of groupRunningWork(blockers)) {
+    for (const thread of project.threads) {
+      const known = thread.threadId === null ? null : info(thread.threadId);
+      rows.push({
+        key: `${project.projectId ?? ""}\u0000${thread.threadId ?? thread.title}`,
+        threadId: thread.threadId,
+        environmentId: known?.environmentId ?? fallbackMachine.environmentId,
+        title: thread.title,
+        projectTitle: project.projectId === null ? null : project.title,
+        state: thread.running > 0 ? "running" : thread.queued > 0 ? "queued" : "question",
+        now: nowFor(thread, known?.activeWork ?? null),
+        machine: known?.machine ?? fallbackMachine.name,
+        machineDescription: known?.machineDescription ?? null,
+        weight: thread,
+      });
+    }
+  }
+  return rows
+    .sort((a, b) =>
+      a.threadId === null ? 1 : b.threadId === null ? -1 : busiestFirst(a.weight, b.weight),
+    )
+    .map(({ weight: _weight, ...row }) => row);
+}
+
+/** The count above the list: "3 threads running", "1 thread waiting", or "All quiet". */
+export function restartWorkCount(rows: ReadonlyArray<RestartWorkRow>): string {
+  if (rows.length === 0) return "All quiet";
+  const running = rows.filter((row) => row.state === "running").length;
+  const threads = plural(rows.length, "thread", "threads");
+  if (running === rows.length) return `${threads} running`;
+  if (running === 0) return `${threads} waiting`;
+  return `${threads}: ${running} running`;
+}
+
+/** The default choice of every restart or update question that would cut off work. */
+export const WAIT_UNTIL_QUIET = "Wait until quiet";
+
+/**
+ * The question above the live list: one title and one short line. `continues`
+ * is true when every listed thread continues on its own after the restart.
+ */
+export function describeListedRestart(input: {
+  readonly title: string;
+  readonly continues: boolean;
+  readonly folderCopies?: number;
+  readonly openTerminals?: number;
+}): string {
+  const copies = input.folderCopies ?? 0;
+  const terminals = input.openTerminals ?? 0;
+  const line = [
+    input.continues
+      ? "Work cut off continues after the restart."
+      : "Work cut off can be continued after the restart.",
+    terminals > 0 ? `${plural(terminals, "terminal closes", "terminals close")}.` : null,
+    copies > 0 ? `${plural(copies, "folder copy", "folder copies")} may need Retry.` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `${input.title}\n${line}`;
+}
