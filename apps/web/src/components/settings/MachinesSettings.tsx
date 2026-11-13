@@ -174,6 +174,10 @@ export function MachinesSettingsPanel() {
       }),
     [environments, fleet, hostBlocks, projects, grants.snapshot, configs, machineName],
   );
+  const savedIds = useMemo(
+    () => new Set<string>(environments.map((environment) => environment.environmentId)),
+    [environments],
+  );
   // Connect-only machines that allowed this one are saved over Connect, not paired.
   const rows = useMemo(
     () =>
@@ -182,9 +186,10 @@ export function MachinesSettingsPanel() {
           row,
           accountStates.get(row.environmentId),
           accountMachines.has(row.environmentId),
+          savedIds.has(row.environmentId),
         ),
       ),
-    [accountMachines, accountStates, builtRows],
+    [accountMachines, accountStates, builtRows, savedIds],
   );
 
   async function connect(machine: StudioFleetMachine) {

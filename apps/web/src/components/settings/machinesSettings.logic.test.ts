@@ -591,19 +591,25 @@ describe("withAccountConnectState", () => {
   it("lets a Connect-only account machine connect over Connect, not Tailscale pairing", () => {
     const row = connectOnlyRow();
     expect(row.connect?.enabled).toBe(false);
-    expect(withAccountConnectState(row, undefined, true).connect).toEqual({
+    expect(withAccountConnectState(row, undefined, true, false).connect).toEqual({
       enabled: true,
       label: "Connect",
     });
-    expect(withAccountConnectState(row, undefined, false)).toBe(row);
+    expect(withAccountConnectState(row, undefined, false, false)).toBe(row);
+    expect(withAccountConnectState(row, undefined, true, true)).toBe(row);
   });
 
   it("says it is connecting while it is saved, and the reason once it failed", () => {
     const row = connectOnlyRow();
-    const connecting = withAccountConnectState(row, { phase: "connecting" }, true);
+    const connecting = withAccountConnectState(row, { phase: "connecting" }, true, false);
     expect(connecting.seen.text).toBe("Connecting over SpecWithCode Connect…");
     expect(connecting.connect).toEqual({ enabled: false, label: "Connecting…" });
-    const failed = withAccountConnectState(row, { phase: "failed", reason: "Relay refused" }, true);
+    const failed = withAccountConnectState(
+      row,
+      { phase: "failed", reason: "Relay refused" },
+      true,
+      false,
+    );
     expect(failed.seen.text).toBe("Relay refused");
     expect(failed.connect?.enabled).toBe(true);
   });

@@ -264,8 +264,11 @@ export function withAccountConnectState(
   row: MachineRowModel,
   state: AccountAutoConnectState | undefined,
   onAccount: boolean,
+  /** Saved here already: its Connect is about its address, not this. */
+  saved: boolean,
 ): MachineRowModel {
   if (
+    saved ||
     row.connect === null ||
     row.fleetMachine === null ||
     row.fleetMachine.status === "identity-mismatch" ||

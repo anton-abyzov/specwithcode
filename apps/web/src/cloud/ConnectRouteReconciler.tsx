@@ -6,14 +6,21 @@ import {
   connectionRoutes,
   hasRelayRoute,
 } from "@specweave-studio/client-runtime/connection";
+import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { useProjects } from "../state/entities";
-import { useEnvironments, useRelayEnvironmentDiscovery } from "../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useStudioFleet } from "../studio/fleet";
 import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
+import { grantedAccountMachinesToConnect } from "../studio/grantedAccountMachines";
 import { linkedMachinesToConnect } from "../studio/linkedMachines";
 import { GrantedAccountMachines } from "./GrantedAccountMachines";
 import {
@@ -30,7 +37,8 @@ const MAX_REORDER_ATTEMPTS = 3;
 const MAX_ADD_ATTEMPTS = 3;
 /** How often the Connect list is re-read while a saved machine can't be reached. */
 const UNREACHABLE_REFRESH_MS = 5 * 60_000;
-
+// The fleet atom needs an id; one that matches no environment reads as no fleet.
+const NO_ENVIRONMENT = "" as EnvironmentId;
 /**
  * While signed in to SpecWithCode Connect, keeps a Connect route on every
  * saved machine this account reaches, placed first when it is added so
@@ -46,6 +54,9 @@ export function ConnectRouteReconciler() {
   const { environments } = useEnvironments();
   const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const fleet = useStudioFleet(primaryEnvironmentId ?? NO_ENVIRONMENT);
+  const fleetSnapshot = primaryEnvironmentId === null ? null : fleet.snapshot;
   const register = useAtomCommand(environmentCatalog.register, {
     label: "Add SpecWithCode Connect route",
     reportFailure: false,
@@ -135,11 +146,21 @@ export function ConnectRouteReconciler() {
       });
     }
     // Linked machines this device has no entry for: Connect is their only route here.
+    const savedEnvironmentIds = new Set<string>(
+      environments.map((machine) => machine.environmentId),
+    );
+    // A linked machine that also allowed this one is saved by GrantedAccountMachines.
+    const granted = grantedAccountMachinesToConnect({
+      snapshot: fleetSnapshot,
+      currentEnvironmentId: primaryEnvironmentId,
+      savedEnvironmentIds,
+      discovered: discovery.environments,
+    }).map((machine) => machine.environmentId);
     const linked = linkedMachinesToConnect({
       projects,
-      savedEnvironmentIds: new Set(environments.map((machine) => machine.environmentId)),
+      savedEnvironmentIds,
       discovered: discovery.environments,
-      skip: new Set([...skip, ...readSkippedFleetEnvironments()]),
+      skip: new Set([...skip, ...readSkippedFleetEnvironments(), ...granted]),
     });
     for (const machine of linked) {
       inFlightRef.current.add(machine.environmentId);
@@ -156,7 +177,16 @@ export function ConnectRouteReconciler() {
         }),
       ).then(() => inFlightRef.current.delete(machine.environmentId));
     }
-  }, [discovery, environments, projects, register, registerRequested, requests]);
+  }, [
+    discovery,
+    environments,
+    fleetSnapshot,
+    primaryEnvironmentId,
+    projects,
+    register,
+    registerRequested,
+    requests,
+  ]);
 
   // Reorder once the catalog shows the new route, so the order lists every route.
   useEffect(() => {
