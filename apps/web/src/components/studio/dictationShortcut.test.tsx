@@ -247,6 +247,39 @@ describe("dictation shortcut", () => {
     expect(written.thread).toEqual(["hello there"]);
   });
 
+  it("in Auto mode the keyup of a key typed before the chord is not a tap", async () => {
+    state.settings.dictationMode = "auto";
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await mount();
+    box("thread").focus();
+    await press();
+    now += 50;
+    await press("keyup", { key: "a", code: "KeyA" });
+    expect(sessions.thread!.phase).toBe("listening");
+    now += DICTATION_HOLD_MS + 200;
+    await speak();
+    await press("keyup");
+    expect(sessions.thread!.active).toBe(false);
+    expect(written.thread).toEqual(["hello there"]);
+  });
+
+  it("letting go after the microphone already stopped leaves its message", async () => {
+    state.settings.dictationMode = "hold";
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await mount();
+    box("coordinator").focus();
+    await press();
+    const quiet = new Float32Array(1024);
+    now += DICTATION_SILENCE_STOP_MS + 1_000;
+    await act(async () => state.frame?.(quiet));
+    await flush();
+    expect(sessions.coordinator!.phase).toBe("error");
+    await press("keyup");
+    expect(sessions.coordinator!.phase).toBe("error");
+  });
+
   it("stops a forgotten microphone after a minute of silence", async () => {
     let now = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);

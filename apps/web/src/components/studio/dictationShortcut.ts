@@ -153,12 +153,17 @@ export function useDictationShortcut({
     const unregister = registerDictationTarget(target);
     // When the press that started dictation went down, while its keys are still held.
     let pressedAt: number | null = null;
+    // The keys of that press: its key and the modifiers held with it.
+    let chord = new Set<string>();
     const release = () => {
       if (pressedAt === null) return;
       const heldFor = Date.now() - pressedAt;
       pressedAt = null;
+      chord = new Set();
       // Auto: a quick tap leaves the microphone on, a longer hold was push-to-talk.
       if (latest.current.mode === "auto" && heldFor < DICTATION_HOLD_MS) return;
+      // Already over (stopped after silence, or failed): leave its state and message alone.
+      if (!latest.current.dictation.active) return;
       void latest.current.dictation.stop();
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -190,11 +195,19 @@ export function useDictationShortcut({
       }
       if (latest.current.disabled || isVoiceCallLive()) return;
       pressedAt = currentMode === "toggle" ? null : Date.now();
+      chord = new Set([event.code]);
+      if (event.ctrlKey) chord.add("Control");
+      if (event.shiftKey) chord.add("Shift");
+      if (event.altKey) chord.add("Alt");
+      if (event.metaKey) chord.add("Meta");
       void control.start();
     };
     // Letting go of any key in the chord ends a held dictation, and so does leaving the window.
     // (In Auto mode only once the press lasted past DICTATION_HOLD_MS.)
-    const onKeyUp = () => release();
+    // A key typed just before the chord is let go after it went down; that is not the chord.
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (chord.has(event.code) || chord.has(event.key)) release();
+    };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", release);
