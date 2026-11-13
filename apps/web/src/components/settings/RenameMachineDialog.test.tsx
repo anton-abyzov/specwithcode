@@ -29,10 +29,6 @@ vi.mock("../../studio/machineNickname", async (importOriginal) => {
 });
 vi.mock("../../studio/machineIdentity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../studio/machineIdentity")>()),
-  useMachineIdentities: () => (id: string) => ({
-    environmentId: id,
-    short: state.nicknames[id]?.short ?? id.slice(0, 2).toUpperCase(),
-  }),
   useMachineIdentity: (id: string | null) =>
     id === null
       ? null
@@ -158,6 +154,18 @@ describe("RenameMachineDialog", () => {
       live,
       expect.objectContaining({ name: "", short: "" }),
     );
+  });
+
+  it("previews the chip letters the fleet will assign after saving", () => {
+    // Sorted ids decide who claims first: this machine before "zeta", so after the
+    // rename it takes BE and zeta moves on, though zeta shows BE today.
+    state.labels = new Map([
+      [live, "Alpha"],
+      ["zeta", "Beta"],
+    ]);
+    open();
+    type(nameInput(), "Big Engine");
+    expect(document.querySelector("[data-preview-short]")?.textContent).toBe("BE");
   });
 
   it("keeps chip letters, color and icon under Customize", () => {

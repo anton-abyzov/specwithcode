@@ -64,10 +64,13 @@ export function machineNicknameHolder(
   environmentId: string,
   name: string,
 ): string | null {
-  const wanted = normalizeMachineNickname(name).toLocaleLowerCase();
+  // Compared as shown, never cut to the 16-character field: a long computer name
+  // differs from its first 16 characters.
+  const fold = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  const wanted = fold(normalizeMachineNickname(name));
   if (wanted === "") return null;
   for (const [id, shown] of names) {
-    if (id !== environmentId && normalizeMachineNickname(shown).toLocaleLowerCase() === wanted) {
+    if (id !== environmentId && fold(shown) === wanted) {
       return id;
     }
   }

@@ -62,6 +62,33 @@ export function useCustomMachineNickname(environmentId: string | null | undefine
   useVersion();
   return environmentId ? (nicknames.get(environmentId) ?? null) : null;
 }
+export function useMachineNameSources() {
+  useVersion();
+  return {
+    nicknames: Object.fromEntries(
+      [...nicknames].map(([id, name]) => [id, { name, updatedAt: "2026-11-01T00:00:00.000Z" }]),
+    ),
+    labels: new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+  };
+}
+export function useMachineNameHolder() {
+  useVersion();
+  return (environmentId: string, name: string) => {
+    const wanted = name.trim().toLowerCase();
+    for (const environment of environments) {
+      const shown = nicknames.get(environment.environmentId) ?? shortName(environment.label);
+      if (environment.environmentId !== environmentId && shown.toLowerCase() === wanted) {
+        return { environmentId: environment.environmentId, name: shown };
+      }
+    }
+    return null;
+  };
+}
+export const resolveMachineNickname = (
+  map: Record<string, { name: string }>,
+  environmentId: string,
+  label?: string | null,
+) => map[environmentId]?.name ?? (label ? shortName(label) : environmentId);
 export const renameMachineLockText = () => null;
 export function useRenameMachine() {
   return {
@@ -71,6 +98,14 @@ export function useRenameMachine() {
       else nicknames.delete(environmentId);
       version += 1;
       (window as any).renamed = { environmentId, name };
+      for (const listener of listeners) listener();
+      return true;
+    },
+    saveIdentity: (environmentId: string, identity: { name: string }) => {
+      if (identity.name) nicknames.set(environmentId, identity.name);
+      else nicknames.delete(environmentId);
+      version += 1;
+      (window as any).renamed = { environmentId, name: identity.name };
       for (const listener of listeners) listener();
       return true;
     },

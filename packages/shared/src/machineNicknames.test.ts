@@ -46,6 +46,10 @@ describe("machine nicknames", () => {
     expect(machineNicknameHolder(names, "stale", "m5")).toBeNull();
     expect(machineNicknameHolder(names, "live", "M4")).toBeNull();
     expect(machineNicknameHolder(names, "live", "  ")).toBeNull();
+    // A long shown name is not its first 16 characters.
+    const long = new Map([["mini", "Mac mini (123456789)"]]);
+    expect(machineNicknameHolder(long, "live", "Mac mini (123456")).toBeNull();
+    expect(machineNicknameHolder(long, "live", "Anton M5MAX PROLED")).toBeNull();
   });
 
   it("normalizes a typed name to at most 16 characters", () => {

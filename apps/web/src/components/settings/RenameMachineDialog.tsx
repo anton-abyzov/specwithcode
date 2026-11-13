@@ -13,16 +13,16 @@ import {
   suggestMachineNickname,
 } from "@specweave-studio/shared/machineNicknames";
 import {
-  foldMachineShortLabel,
+  assignMachineShortLabels,
   graphemeLength,
   MACHINE_SHORT_LABEL_MIN_LENGTH,
-  pickMachineShortLabel,
 } from "@specweave-studio/shared/machineShortLabel";
 import { ChevronRightIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
   renameMachineLockText,
+  resolveMachineNickname,
   useCustomMachineNickname,
   useMachineNameHolder,
   useMachineNameSources,
@@ -30,7 +30,6 @@ import {
 import {
   MACHINE_COLOR_IDS,
   MACHINE_COLOR_LABELS,
-  useMachineIdentities,
   useMachineIdentity,
 } from "../../studio/machineIdentity";
 import { useRenameMachine } from "../../studio/useRenameMachine";
@@ -95,7 +94,6 @@ export function RenameMachineDialog({
   const [value, setValue] = useState(current);
   const [nameTouched, setNameTouched] = useState(false);
   const { nicknames, labels } = useMachineNameSources();
-  const identities = useMachineIdentities();
   const nameHolder = useMachineNameHolder();
   const storedShort = (environmentId ? nicknames[environmentId]?.short : undefined) ?? "";
   const [shortValue, setShortValue] = useState(storedShort);
@@ -130,15 +128,24 @@ export function RenameMachineDialog({
     nextShort === "" || graphemeLength(nextShort) >= MACHINE_SHORT_LABEL_MIN_LENGTH;
   // With nothing typed over it, the machine shows its whole computer name.
   const previewName = next === "" || (!nameTouched && custom === null) ? fullDefaultName : next;
-  // Letters other machines already show, so the preview matches the chip it will get.
-  const takenShorts = useMemo(() => {
-    const taken = new Set<string>();
-    for (const id of new Set([...Object.keys(nicknames), ...labels.keys()])) {
-      if (id !== environmentId) taken.add(foldMachineShortLabel(identities(id).short));
-    }
-    return taken;
-  }, [nicknames, labels, identities, environmentId]);
-  const derivedShort = pickMachineShortLabel(previewName, undefined, takenShorts);
+  // Saving re-runs the fleet-wide letter assignment, so the preview runs it too,
+  // with this machine's new name and letters in place.
+  const derivedShort = useMemo(() => {
+    const ids = new Set([...Object.keys(nicknames), ...labels.keys()]);
+    if (environmentId !== null) ids.add(environmentId);
+    const assigned = assignMachineShortLabels(
+      [...ids].map((id) =>
+        id === environmentId
+          ? { environmentId: id, name: previewName, short: undefined }
+          : {
+              environmentId: id,
+              name: resolveMachineNickname(nicknames, id, labels.get(id)),
+              short: nicknames[id]?.short,
+            },
+      ),
+    );
+    return environmentId === null ? "" : (assigned.get(environmentId) ?? "");
+  }, [nicknames, labels, environmentId, previewName]);
   const previewShort = nextShort !== "" ? nextShort : derivedShort;
   const clash = environmentId !== null && nameChanged ? nameHolder(environmentId, next) : null;
   const looksChanged =
