@@ -17,6 +17,7 @@ import {
   projectContextSnapshot,
   type ProjectContextSnapshot,
 } from "./ProjectContextSnapshot.ts";
+import { currentTimeLine } from "./currentTimeLine.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   PROJECT_CONTEXT_CHARACTER_LIMIT,
@@ -46,6 +47,7 @@ import {
   type ProjectWorkspaceReadResult,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -185,9 +187,9 @@ export function projectContextText(input: {
   const coordinator = settings.coordinatorThreadId === input.threadId;
   const role = coordinator
     ? [
-        "You coordinate this project's work and do none of it yourself: you start, brief and route work to worker threads and track it. Workers do everything else, including research, reading files, settings or logs, running commands, web lookups and Gmail, Calendar or Drive reads. Answer only from this conversation, project memory and the thread list; anything more goes to a worker, however small it looks.",
+        "You coordinate this project's work and do none of it yourself: you start, brief and route work to worker threads and track it. Workers do everything else, including research, reading files, settings or logs, running commands, web lookups and Gmail, Calendar or Drive reads, however small. Answer from this chat, memory, the thread list, the clock section or settled general facts with no worker; this project's code and current facts (versions, prices) go to a worker.",
         "Before starting work, call studio_thread_list and send a follow-up with studio_thread_send to the worker already owning that area; never duplicate an active assignment. Revive an idle worker only while its context is recent; otherwise start a fresh one.",
-        "Route at once: after that check, your next call starts the worker with delegate_task in mode async and a title of a few words. The brief is the user's own words plus only what the worker cannot find itself: relevant memory, decisions made, and the default you chose where the request was ambiguous. Never add deliverables the user did not ask for. Pass a provider, model or effort the user names; otherwise leave them out and the app uses the project's worker model.",
+        "Route at once: for work a worker must do, after that check your next call starts the worker with delegate_task in mode async and a title of a few words. The brief is the user's own words plus only what the worker cannot find itself: relevant memory, decisions made, and the default you chose where the request was ambiguous. Never add deliverables the user did not ask for. Pass a provider, model or effort the user names; otherwise leave them out and the app uses the project's worker model.",
         "Delegated workers share this checkout: give parallel workers separate files and have them leave branches and commits alone unless the user asked for them. Use studio_thread_launch with a worktree only when the user asks for separate branches or worktrees.",
         // The launch tools' own description of increment is not enough: without
         // this line coordinators stopped passing it and threads started unlinked.
@@ -207,7 +209,7 @@ export function projectContextText(input: {
         "Acknowledge a delegated request in one line naming where it went, with each worker's threadLink from the tool result copied verbatim. Never show internal IDs such as taskId or run IDs.",
         "The user cannot start a thread in this project; when they ask for one, start it in that same turn with their title and words, and answer with its link.",
         "'User follow-up from selected worker <threadId>, message <messageId>' is the user's reply in that worker. Read it and forward with studio_thread_send {threadId, forwardMessageId}, without retyping. Keep it with that worker unless clearly misdirected; for a new worker, launch then forward. Same-worker forwarding gets no commentary or confirmation; otherwise give one line linking its destination.",
-        "The user reads a worker's result in its thread, so do not relay, summarize or repeat it here. Use it only to coordinate next work, memory or delivery. Have the existing independent verifier record the worker's current scope with studio_thread_record_delivery. Include this in verification the work already needs and keep parent obligations separate. If all tasks are done and the assignment includes closing the increment, delegate only its remaining close checks. Respect repository rules and existing evidence. A task limited to implementation, tests or a report does not authorize closure. If the user must act, link the worker and say what is needed in one line, quoting errors exactly, and otherwise end the turn without a reply.",
+        "The user reads a worker's result in its thread, so do not relay, summarize or repeat it here. Use it only to coordinate next work, memory or delivery. Have the existing independent verifier record the worker's current scope with studio_thread_record_delivery; for a worker asked only a question, record it yourself as no_code. Include this in verification the work already needs and keep parent obligations separate. If all tasks are done and the assignment includes closing the increment, delegate only its remaining close checks. Respect repository rules and existing evidence. A task limited to implementation, tests or a report does not authorize closure. If the user must act, link the worker and say what is needed in one line, quoting errors exactly, and otherwise end the turn without a reply.",
         ...(settings.kind === "personal"
           ? [
               "You are the user's personal assistant. This conversation is separate from their project chats: nothing goes into a project's chat, and nothing from one is shown here, unless the user asks for it.",
@@ -507,6 +509,7 @@ const make = Effect.gen(function* () {
       if (settings.archived && !restoring) return yield* fail(projectId, "archived");
       if (!restoring && settings.paused && settings.coordinatorThreadId === threadId)
         return yield* fail(projectId, "paused");
+      const now = yield* Clock.currentTimeMillis;
       const files = yield* summaries(projectId);
       const view = yield* knowledgeView(projectId);
       if (
@@ -573,10 +576,18 @@ const make = Effect.gen(function* () {
         ],
         ["memory_index", memoryIndexSection((yield* file(projectId, "MEMORY.md"))?.content)],
       ]);
+      // The coordinator's clock: a fresh minute is a changed section, so it is
+      // delivered with every message and wake; workers read the time themselves.
+      const clockLine = currentTimeLine(now);
+      const clock: ProjectContextSnapshot =
+        settings.coordinatorThreadId === threadId
+          ? [{ name: "clock", value: clockLine, revision: contextDigest(clockLine) }]
+          : [];
       // Knowledge has its own allowance and comes last, after the sections every turn needs.
       return view === null
-        ? shared
+        ? [...clock, ...shared]
         : [
+            ...clock,
             ...shared,
             ...knowledgeSections(view, {
               coordinator: settings.coordinatorThreadId === threadId,
