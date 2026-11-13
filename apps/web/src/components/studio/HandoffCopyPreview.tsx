@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   AlertTriangleIcon,
   CheckIcon,
@@ -25,6 +25,7 @@ import {
   FILE_CLASS_TEXT,
   formatBytes,
   isExactCopy,
+  copyTimingText,
   progressFraction,
   progressText,
   ROW_STATUS_TEXT,
@@ -736,6 +737,7 @@ export function CopyProgress({
   const counts = progressText(status);
   const fraction = progressFraction(status);
   const detail = line ? counts : null;
+  const timing = useCopyTiming(status);
   line ??= counts ?? STEP_TEXT[status.state] ?? "Working…";
   return (
     <div className="space-y-2 text-sm" role="status" aria-live="polite" data-slot="copy-progress">
@@ -744,6 +746,15 @@ export function CopyProgress({
         {detail && (
           <span className="block text-xs text-muted-foreground" data-slot="copy-progress-detail">
             {detail}
+          </span>
+        )}
+        {timing && (
+          <span
+            className="block text-xs text-muted-foreground tabular-nums"
+            aria-live="off"
+            data-slot="copy-progress-timing"
+          >
+            {timing}
           </span>
         )}
       </p>
@@ -755,6 +766,18 @@ export function CopyProgress({
       </div>
     </div>
   );
+}
+
+/** The running copy's elapsed time and estimate, ticking once a second while it runs. */
+function useCopyTiming(status: FolderCopyStatus): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  const running = copyTimingText(status, now) !== null;
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  return copyTimingText(status, now);
 }
 
 /** What Undo would restore, and which files changed after Apply. */

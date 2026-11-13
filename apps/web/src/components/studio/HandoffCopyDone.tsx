@@ -11,7 +11,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { retentionMovedText } from "./handoffRetention";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
-import { copiedProjectFolder } from "../../studio/folderCopy";
+import { copiedProjectFolder, copyDurationText } from "../../studio/folderCopy";
 import { EllipsisIcon } from "lucide-react";
 import { MachineReadinessChecklist } from "../settings/MachineReadinessChecklist";
 import { Button } from "../ui/button";
@@ -92,6 +92,7 @@ export function HandoffCopyDone({
   // Inside the dialog its title says it; standalone, the panel does.
   const titled = useProjectMoveDialog() !== null;
   const moved = mode === "copy-and-move" && contextTransferred;
+  const duration = copyDurationText(copy);
   return (
     <div className="space-y-3 text-sm" data-slot="copy-done">
       {!titled && (
@@ -131,6 +132,11 @@ export function HandoffCopyDone({
               : copy.targetFolder}
           </span>
         </p>
+        {duration && (
+          <p className="text-xs text-muted-foreground tabular-nums" data-slot="copy-done-duration">
+            {duration}
+          </p>
+        )}
       </div>
       {moved && movedRetention && (
         <p className="text-xs text-muted-foreground" data-slot="copy-done-retention">

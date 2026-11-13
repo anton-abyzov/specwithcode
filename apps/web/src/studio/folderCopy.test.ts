@@ -6,7 +6,10 @@ import type {
 } from "@specweave-studio/contracts";
 import {
   cloneableRows,
+  copyDurationText,
   copySettled,
+  copyTimingText,
+  formatDuration,
   suggestedCopyFolder,
   copiedProjectFolder,
   savedCopyRoot,
@@ -145,6 +148,43 @@ describe("folder copy helpers", () => {
       expect(progressText({ ...copying, state })).toBeNull();
       expect(progressFraction({ ...copying, state })).toBeNull();
     }
+  });
+
+  it("shows time elapsed, time left and the finished copy's duration", () => {
+    const started = Date.parse("2026-11-13T20:00:00.000Z");
+    const copying = status({
+      state: "transferring",
+      startedAt: "2026-11-13T20:00:00.000Z",
+      progress: {
+        phase: "files",
+        filesDone: 1200,
+        filesTotal: 4000,
+        bytesDone: 2_500_000_000,
+        bytesTotal: 8_500_000_000,
+        bytesLocal: 500_000_000,
+      },
+    });
+    // 2 GB moved in 60 s: the 6 GB left takes about 3 minutes.
+    expect(copyTimingText(copying, started + 60_000)).toBe(
+      "1 min 00 s elapsed · about 3 min 00 s left",
+    );
+    // Too early to guess, and no guess outside the files step.
+    expect(copyTimingText(copying, started + 5_000)).toBe("5 s elapsed");
+    expect(
+      copyTimingText(
+        { ...copying, state: "applying", progress: { ...copying.progress!, phase: "apply" } },
+        started + 3_725_000,
+      ),
+    ).toBe("1 h 2 min elapsed");
+    // Older machines send no start; a stopped or finished copy has no running clock.
+    const { startedAt: _startedAt, ...unstarted } = copying;
+    expect(copyTimingText(unstarted as FolderCopyStatus, started)).toBeNull();
+    expect(copyTimingText({ ...copying, state: "failed" }, started + 60_000)).toBeNull();
+    expect(copyDurationText(copying)).toBeNull();
+    expect(
+      copyDurationText({ ...copying, state: "applied", finishedAt: "2026-11-13T20:07:05.000Z" }),
+    ).toBe("Copied in 7 min 05 s");
+    expect(formatDuration(42_400)).toBe("42 s");
   });
 });
 

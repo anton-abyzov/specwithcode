@@ -138,6 +138,10 @@ export interface DestinationRecord {
   readonly secrets?: ReadonlyArray<ReceivedSecret>;
   /** Every approved secret file was received (or the source offered none). */
   readonly secretsDone?: boolean;
+  /** When the person approved the copy; the copy's clock starts here. */
+  readonly startedAt?: string;
+  /** When Apply finished: the files are in place, checked or not. */
+  readonly finishedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -311,7 +315,19 @@ export class DestinationCopies {
     return this.locked(operationId, async () => {
       const current = await this.read(operationId);
       if (!current) throw new CopyError("refused", "Unknown copy.");
-      const next = { ...current, ...patch, updatedAt: this.now() } as DestinationRecord;
+      const now = this.now();
+      // Apply ended (with or without differing checks): the copy's clock stops once.
+      const finished =
+        current.startedAt !== undefined &&
+        current.finishedAt === undefined &&
+        (patch.state === "applied" ||
+          (patch.state === "failed" && patch.failedStep === "applied"));
+      const next = {
+        ...current,
+        ...patch,
+        ...(finished ? { finishedAt: now } : {}),
+        updatedAt: now,
+      } as DestinationRecord;
       await writeJson(this.paths(operationId).record, next);
       return next;
     });
@@ -584,12 +600,14 @@ export class DestinationCopies {
     }
     const next = await this.locked(operationId, async () => {
       await assertSamePreview();
+      const { finishedAt: _finishedAt, ...unfinished } = record;
       const approved: DestinationRecord = {
-        ...record,
+        ...unfinished,
         state: "approved",
         disk: { needed, free },
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
+        startedAt: this.now(),
         updatedAt: this.now(),
       };
       await writeJson(this.paths(operationId).record, approved);
