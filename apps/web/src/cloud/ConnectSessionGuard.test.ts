@@ -6,7 +6,10 @@ import { relaySessionRejected } from "./ConnectSessionGuard";
 
 describe("relaySessionRejected", () => {
   it("is true only for an authentication refusal", () => {
-    const refused = new ConnectionBlockedError({ reason: "authentication", detail: "Your sign-in expired." });
+    const refused = new ConnectionBlockedError({
+      reason: "authentication",
+      detail: "Your sign-in expired.",
+    });
     expect(relaySessionRejected(Option.some(refused))).toBe(true);
   });
 

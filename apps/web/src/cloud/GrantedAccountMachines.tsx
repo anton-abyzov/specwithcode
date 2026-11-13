@@ -11,7 +11,6 @@ import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { useClientSettings } from "../hooks/useSettings";
-import { useProjects } from "../state/entities";
 import {
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -34,7 +33,6 @@ import {
   grantedMachinesMissingFromAccount,
   publishAccountAutoConnectStates,
 } from "../studio/grantedAccountMachines";
-import { linkedMachineIds } from "../studio/linkedMachines";
 import { onConnectRouteRequest, readDeclinedConnectRoutes } from "./connectRoutePlan";
 
 // The fleet atom needs an id; one that matches no environment reads as no fleet.
@@ -55,11 +53,11 @@ const MAX_LOOKUPS = 3;
  * pressing here. Runs while Connect automatically is on; Connect by hand
  * (`requestConnectRoutes`) saves one in any case, and lifts an earlier
  * removal. Publishes one state per machine for the move dialog, Settings >
- * Machines and the checking state. Mounted by the reconciler, per account.
+ * Machines and the checking state. Mounted by the reconciler, per account; a
+ * machine a shared project also names is saved here, not by its linked path.
  */
 export function GrantedAccountMachines() {
   const { environments } = useEnvironments();
-  const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
   const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -95,10 +93,10 @@ export function GrantedAccountMachines() {
           // Connecting by hand undoes an earlier removal on this device.
           setFleetEnvironmentSkipped(id as EnvironmentId, false);
         }
+        // The reconciler, which hears the same press, reads the account list again.
         setTick((current) => current + 1);
-        void refresh();
       }),
-    [refresh],
+    [],
   );
 
   // A fresh list for this account, and nothing left published once it signs out.
@@ -122,8 +120,6 @@ export function GrantedAccountMachines() {
       currentEnvironmentId: primaryEnvironmentId,
       savedEnvironmentIds,
       discovered: discovery.environments,
-      // Machines a shared project names are saved by the reconciler itself, also on a press.
-      skip: linkedMachineIds(projects),
       requested: new Set(requested.current.keys()),
     });
     const removed = new Set<string>([
@@ -143,12 +139,17 @@ export function GrantedAccountMachines() {
         next.set(id, { phase: "connecting" });
         continue;
       }
-      if (!asked && !autoConnect) {
-        next.set(id, { phase: "held", reason: AUTO_CONNECT_OFF_REASON });
-        continue;
-      }
-      if (!asked && removed.has(id)) {
-        next.set(id, { phase: "held", reason: REMOVED_HERE_REASON });
+      // A press that failed keeps saying why, also while saving is held.
+      if (!asked && (!autoConnect || removed.has(id))) {
+        next.set(
+          id,
+          failure !== undefined
+            ? { phase: "failed", reason: failure }
+            : {
+                phase: "held",
+                reason: autoConnect ? REMOVED_HERE_REASON : AUTO_CONNECT_OFF_REASON,
+              },
+        );
         continue;
       }
       if (unreachable) {
@@ -179,9 +180,9 @@ export function GrantedAccountMachines() {
         }),
       ).then((result) => {
         inFlight.current.delete(id);
+        // An interrupted try counts as a try, so the wait and the cap still apply.
         if (result._tag === "Success") failures.current.delete(id);
-        else if (isAtomCommandInterrupted(result)) attempts.current.delete(id);
-        else {
+        else if (!isAtomCommandInterrupted(result)) {
           const cause = squashAtomCommandFailure(result);
           failures.current.set(
             id,
@@ -214,7 +215,6 @@ export function GrantedAccountMachines() {
     discovery,
     environments,
     primaryEnvironmentId,
-    projects,
     refresh,
     register,
     snapshot,

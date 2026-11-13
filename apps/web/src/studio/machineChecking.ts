@@ -36,6 +36,15 @@ export function fleetAutoConnectSettled(environmentId: string): boolean {
   return settledAutoConnects.has(environmentId);
 }
 
+/** Re-renders when an automatic fleet pairing settles; returns a version to list as a dependency. */
+export function useFleetAutoConnectSettledVersion(): number {
+  return useSyncExternalStore(
+    subscribe,
+    () => version,
+    () => version,
+  );
+}
+
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);

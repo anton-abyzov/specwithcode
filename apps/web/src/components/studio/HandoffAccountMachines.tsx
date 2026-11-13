@@ -14,7 +14,10 @@ import {
   handoffAccountMachines,
   handoffFleetOnlyMachines,
 } from "../../studio/handoffAccountMachines";
-import { fleetAutoConnectSettled } from "../../studio/machineChecking";
+import {
+  fleetAutoConnectSettled,
+  useFleetAutoConnectSettledVersion,
+} from "../../studio/machineChecking";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { usePrimaryFleet } from "../settings/usePrimaryFleet";
 import { Button } from "../ui/button";
@@ -42,6 +45,8 @@ export function HandoffAccountMachines({
   // Read from the atom, not the environments hook, so callers mocking that module still render.
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const states = useAccountAutoConnectStates();
+  // A tailnet machine whose pairing just finished without saving it is offered at once.
+  useFleetAutoConnectSettledVersion();
   const name = useMachineNicknames();
   const refresh = useAtomCommand(relayEnvironmentDiscovery.refresh, { reportFailure: false });
   // So a machine that just signed in is found at once, without a probe on every remount.
@@ -53,7 +58,7 @@ export function HandoffAccountMachines({
   }, [refresh]);
   const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
   const fleetMachines = fleet.snapshot?.machines ?? null;
-  const { fallback, notAllowed } = handoffAccountMachines({
+  const { fallback, notAllowed: accountOnly } = handoffAccountMachines({
     discovered: discovery.environments.values(),
     savedEnvironmentIds,
     sourceEnvironmentId,
@@ -62,6 +67,8 @@ export function HandoffAccountMachines({
     fleetPairingSettled: fleetAutoConnectSettled,
     name,
   });
+  // Named only once the list is current, and only machines answering now.
+  const notAllowed = discovery.refreshing ? [] : accountOnly.filter((machine) => machine.answering);
   const fleetOnly =
     discovery.refreshing || fleetMachines === null
       ? []
