@@ -223,8 +223,8 @@ export function MachineHandoffDialog({
                 : sync && copying
                   ? `Sync ${projectTitle} to ${sync.machine}`
                   : complete
-                  ? `${projectTitle} is on ${targetLabel}`
-                  : `${intent === "copy" ? "Copy local files:" : "Hand off"} ${projectTitle}`}
+                    ? `${projectTitle} is on ${targetLabel}`
+                    : `${intent === "copy" ? "Copy local files:" : "Hand off"} ${projectTitle}`}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}
             {!(copying && copyDoneOn) && (
@@ -234,10 +234,10 @@ export function MachineHandoffDialog({
                   : sync && copying
                     ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two copies and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
                     : sharing
-                    ? "Share this project with another machine. Its code moves only through Git."
-                    : intent === "copy"
-                      ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
-                      : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}
+                      ? "Share this project with another machine. Its code moves only through Git."
+                      : intent === "copy"
+                        ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
+                        : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}
               </DialogDescription>
             )}
           </DialogHeader>
@@ -469,8 +469,8 @@ function GitWhere({
                 className="wrap-anywhere text-sm text-muted-foreground"
                 data-slot="handoff-existing-folder"
               >
-                {machineLabel} already has this project in this folder. Nothing is copied: only
-                the coordinator conversation moves, and the code there comes from Git.
+                {machineLabel} already has this project in this folder. Nothing is copied: only the
+                coordinator conversation moves, and the code there comes from Git.
               </p>
             )}
           </>

@@ -1188,7 +1188,7 @@ it("lets a running folder copy close, keeps it, and watches it app wide until th
   expect(currentCopyWatches().has("m4:source")).toBe(true);
 });
 
-it("opens Move coordinator to X as a move with X chosen for the copy and the Git move", async () => {
+it("opens Move coordinator to X with its own checkout as the Git move: nothing to copy", async () => {
   state.environments = machineEnvironments;
   state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
   localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m1" }));
@@ -1205,11 +1205,9 @@ it("opens Move coordinator to X as a move with X chosen for the copy and the Git
   expect(props().intent).toBe("move");
   expect(props().selected).toBe("m3:m3-target");
   expect(props().machine).toBe("m3");
-  const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
-  expect(copy.preferredMachine).toBe("m3");
-  // Requested, so a saved draft or last copy cannot swap the machine or the move.
-  expect(copy.machineRequested).toBe(true);
-  expect(copy.defaultMode).toBe("copy-and-move");
+  // X already has the project in its own folder: only the coordinator moves, through Git.
+  expect(props().method).toBe("folder");
+  expect(props().copyFlow).toBeUndefined();
 });
 
 it("says why Move project is off: a focusable button that describes the reason and does nothing", async () => {
