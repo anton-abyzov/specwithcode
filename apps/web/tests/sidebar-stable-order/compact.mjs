@@ -73,11 +73,8 @@ try {
         );
       });
       await page.goto(
-        `http://127.0.0.1:${server.address().port}/?theme=${theme}&live=off&scenario=elsewhere`,
+        `http://127.0.0.1:${server.address().port}/?theme=${theme}&live=off&scenario=elsewhere&width=${sidebarWidth}`,
       );
-      await page.addStyleTag({
-        content: `[style*="--sidebar-width"]{--sidebar-width:${sidebarWidth}px !important}`,
-      });
       await page.locator("[data-project-elsewhere-divider]").waitFor();
       await page.mouse.move(1000, 700);
       const rows = await page.locator(".sws-project-row").evaluateAll((items) =>
@@ -92,6 +89,12 @@ try {
       );
       const sidebar = page.locator("aside").first();
       const box = await sidebar.boundingBox();
+      assert.equal(Math.round(box.width), sidebarWidth, "sidebar renders at the asked width");
+      // "+N" for a project's other machines only where the sidebar has room.
+      const more = await page.locator(".sws-row-machine-more").evaluateAll((items) =>
+        items.filter((item) => getComputedStyle(item).display !== "none").length,
+      );
+      if (name === "after") assert.equal(more > 0, sidebarWidth >= 316, `+N shown: ${more}`);
       const clip = { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 520) };
       await page.screenshot({ path: join(output, `${name}-${sidebarWidth}-${theme}.png`), clip });
       // Hovering the pinned, shared row shows its marks.
@@ -101,7 +104,7 @@ try {
         clip,
       });
       assert.deepEqual(errors, []);
-      receipt.cases.push({ name, sidebarWidth, theme, rows, errors });
+      receipt.cases.push({ name, sidebarWidth, theme, rows, errors, width: box.width });
       await page.close();
     }
   }
