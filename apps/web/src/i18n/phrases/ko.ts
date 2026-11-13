@@ -2290,8 +2290,30 @@ export const ko: PhraseCatalog = {
   "provider order": "제공업체 순서",
   "Providers for the recommended model": "추천 모델의 제공업체",
   "Rename machine": "컴퓨터 이름 변경",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "{hostLabel}의 짧은 이름입니다. 스레드 행, 실행 위치, 다른 기기에 표시됩니다.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "실행 위치, 스레드 행, 사이드바, 다른 기기에 이 이름이 표시됩니다.",
+  "Machine name":
+    "컴퓨터 이름",
+  "Computer name: {hostLabel}, unchanged.":
+    "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
+  "Call it {name}":
+    "{name}(으)로 부르기",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "다른 컴퓨터가 이미 {name}(이)라는 이름입니다. 이 컴퓨터의 오래된 사본이라면 다른 컴퓨터에서 제거하세요.",
+  "Use the computer name":
+    "시스템 이름 사용",
+  "Chip letters":
+    "칩 글자",
+  "Narrow chip":
+    "좁은 칩",
+  "Customize chip letters, color and icon":
+    "칩 글자, 색상, 아이콘 사용자 지정",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "이름이 들어가지 않는 좁은 칩에 표시할 2~3자입니다. 비워 두면 이름을 따릅니다.",
+  "Use 2 or 3 characters.":
+    "2~3자를 사용하세요.",
+  "Computer name {hostLabel}":
+    "시스템 이름 {hostLabel}",
   "Use {defaultName}": "{defaultName} 사용",
   "Waiting for sample": "샘플 대기 중",
   "Updated {span}{value}": "업데이트 {span}{value}",

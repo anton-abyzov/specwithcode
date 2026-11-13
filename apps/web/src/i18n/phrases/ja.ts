@@ -2312,8 +2312,30 @@ export const ja: PhraseCatalog = {
   "provider order": "プロバイダーの順序",
   "Providers for the recommended model": "推奨モデルのプロバイダー",
   "Rename machine": "マシン名を変更",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "{hostLabel} の短い名前です。スレッドの行、「実行先」、他のデバイスに表示されます。",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "実行先、スレッドの行、サイドバー、ほかのデバイスにこの名前が表示されます。",
+  "Machine name":
+    "マシン名",
+  "Computer name: {hostLabel}, unchanged.":
+    "コンピュータ名: {hostLabel}（変更されません）",
+  "Call it {name}":
+    "{name} と呼ぶ",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "別のマシンがすでに {name} という名前です。このマシンの古いコピーなら、「ほかのマシン」で削除してください。",
+  "Use the computer name":
+    "コンピュータ名を使う",
+  "Chip letters":
+    "チップの文字",
+  "Narrow chip":
+    "狭いチップ",
+  "Customize chip letters, color and icon":
+    "チップの文字・色・アイコンをカスタマイズ",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "名前が入らない狭いチップに表示する2〜3文字。空欄なら名前から決まります。",
+  "Use 2 or 3 characters.":
+    "2〜3文字にしてください。",
+  "Computer name {hostLabel}":
+    "コンピュータ名 {hostLabel}",
   "Use {defaultName}": "{defaultName} を使う",
   "Waiting for sample": "サンプルを待っています",
   "Updated {span}{value}": "更新: {span}{value}",

@@ -2329,8 +2329,30 @@ export const fr: PhraseCatalog = {
   "provider order": "ordre des fournisseurs",
   "Providers for the recommended model": "Fournisseurs du modèle recommandé",
   "Rename machine": "Renommer la machine",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "Un nom court pour {hostLabel}. Les lignes de fils, Exécuter sur et vos autres appareils l’affichent.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "Exécuter sur, les lignes de fil, la barre latérale et vos autres appareils affichent ce nom.",
+  "Machine name":
+    "Nom de la machine",
+  "Computer name: {hostLabel}, unchanged.":
+    "Nom de l’ordinateur : {hostLabel}, inchangé.",
+  "Call it {name}":
+    "L’appeler {name}",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "Une autre machine s’appelle déjà {name}. S’il s’agit d’une ancienne copie de celle-ci, retirez-la sous Autres machines.",
+  "Use the computer name":
+    "Utiliser le nom de l’ordinateur",
+  "Chip letters":
+    "Lettres de la puce",
+  "Narrow chip":
+    "Puce étroite",
+  "Customize chip letters, color and icon":
+    "Personnaliser les lettres, la couleur et l’icône",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "2 ou 3 caractères pour une puce trop étroite pour le nom. Vide suit le nom.",
+  "Use 2 or 3 characters.":
+    "Utilisez 2 ou 3 caractères.",
+  "Computer name {hostLabel}":
+    "Nom de l’ordinateur {hostLabel}",
   "Use {defaultName}": "Utiliser {defaultName}",
   "Waiting for sample": "En attente d’un échantillon",
   "Updated {span}{value}": "Mis à jour {span}{value}",

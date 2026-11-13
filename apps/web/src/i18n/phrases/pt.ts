@@ -2318,8 +2318,30 @@ export const pt: PhraseCatalog = {
   "provider order": "ordem dos provedores",
   "Providers for the recommended model": "Provedores do modelo recomendado",
   "Rename machine": "Renomear máquina",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "Um nome curto para {hostLabel}. Linhas de threads, Executar em e seus outros aparelhos mostram esse nome.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "Executar em, as linhas de thread, a barra lateral e seus outros dispositivos mostram este nome.",
+  "Machine name":
+    "Nome da máquina",
+  "Computer name: {hostLabel}, unchanged.":
+    "Nome do computador: {hostLabel}, sem alteração.",
+  "Call it {name}":
+    "Chamar de {name}",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "Outra máquina já se chama {name}. Se for uma cópia antiga desta, remova-a em Outras máquinas.",
+  "Use the computer name":
+    "Usar o nome do computador",
+  "Chip letters":
+    "Letras do chip",
+  "Narrow chip":
+    "Chip estreito",
+  "Customize chip letters, color and icon":
+    "Personalizar letras do chip, cor e ícone",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "2 ou 3 caracteres para um chip estreito demais para o nome. Vazio segue o nome.",
+  "Use 2 or 3 characters.":
+    "Use 2 ou 3 caracteres.",
+  "Computer name {hostLabel}":
+    "Nome do computador {hostLabel}",
   "Use {defaultName}": "Usar {defaultName}",
   "Waiting for sample": "Aguardando amostra",
   "Updated {span}{value}": "Atualizado {span}{value}",
