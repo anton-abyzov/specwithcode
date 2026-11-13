@@ -53,6 +53,11 @@ export const FolderCopyCapabilities = Schema.Struct({
   scopeVersion: Schema.Literal(1),
   /** Accepts a coordinator handoff that summarizes worker chats (`context.retention`). */
   contextRetention: Schema.optional(Schema.Literal(1)),
+  /**
+   * A Git move into an existing copy brings it to the source heads, reports `updateSkipped`
+   * and honors `staleCopy` on start (1326).
+   */
+  existingCopyUpdate: Schema.optional(Schema.Literal(1)),
 });
 const scopeFields = {
   /** Canonical source folder explicitly selected for this operation. */
