@@ -4888,4 +4888,8 @@ export const ru: PhraseCatalog = {
   "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
     "На этой машине старая версия SpecWithCode, которая не умеет это устанавливать. Обновите там SpecWithCode или установите сами.",
   "{tool} is already on this machine.": "{tool} уже есть на этой машине.",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "Не установлен. Выполните эту команду в терминале на этом Mac, затем нажмите «Проверить снова».",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "Не установлен. Скачайте его с официального сайта или попросите того, кто может обслуживать эту машину, установить его отсюда.",
 };

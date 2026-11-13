@@ -28,6 +28,13 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../studio/machineTools", () => ({
   machineTools: { check: "check", install: "install" },
+  IDLE_MACHINE_TOOL_INSTALL: {
+    tool: null,
+    status: "idle",
+    lines: [],
+    detail: null,
+    handedOff: false,
+  },
   machineToolInstallAtom: () => state.installAtom,
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -229,6 +236,26 @@ describe("Machine basics", () => {
     await render("darwin", true);
     expect(rows()).toEqual(["node"]);
     expect(hasButton("Install Node.js")).toBe(false);
+    expect(text(renderer.root)).toContain("ask someone who can maintain this machine");
+    expect(renderer.root.find((node) => node.type === "a").props.href).toBe(
+      "https://nodejs.org/en/download",
+    );
+  });
+
+  it("gives someone who may not install the Mac's own Git command", async () => {
+    answer({ ...ALL_PRESENT, git: "missing", installable: ["git"] });
+    await render("darwin", true);
+    expect(hasButton("Install Git")).toBe(false);
+    expect(text(renderer.root)).toContain("xcode-select --install");
+  });
+
+  it("forgets an install that ended before setup opened", async () => {
+    answer({ ...ALL_PRESENT, git: "missing", installable: ["git"] });
+    registry.set(state.installAtom, { ...IDLE, tool: "git", status: "done", handedOff: true });
+    await render("darwin");
+    expect(registry.get(state.installAtom).status).toBe("idle");
+    expect(text(renderer.root)).not.toContain("macOS window");
+    expect(state.check).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to the old Git row for a machine on an older SpecWithCode", async () => {

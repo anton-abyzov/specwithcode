@@ -195,11 +195,13 @@ const make = Effect.gen(function* () {
     const npx = specweave === null ? yield* findIn(searchDirs, "npx") : null;
     const command = specweave ?? npx;
     if (command === null) {
+      // Node.js without npm (a distribution's nodejs package) is not a missing Node.js.
+      const node = yield* findIn(searchDirs, "node");
       return {
         ok: false,
         reason: "unavailable",
         detail: specweaveUnavailableDetail(platform),
-        needs: "node",
+        ...(node === null ? { needs: "node" as const } : {}),
       } as const;
     }
     const args =

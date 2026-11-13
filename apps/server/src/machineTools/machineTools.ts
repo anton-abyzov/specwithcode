@@ -26,6 +26,7 @@ import { cliArchiveTarCommand } from "@specweave-studio/shared/cliRelease";
 import * as NodePath from "node:path";
 
 import { mirroredUrl, type ProvisionHost } from "../provision/host.ts";
+import { acquireProvisionLock } from "../provision/runner.ts";
 import {
   GH_VERSION,
   ghDownload,
@@ -54,10 +55,23 @@ export function toolPlatformKey(
   return TOOL_PLATFORM_KEYS.find((candidate) => candidate === key) ?? null;
 }
 
-/** nodejs.org's Linux builds need glibc; Node reports the runtime's version when it has one. */
+let glibc: boolean | undefined;
+
+/**
+ * nodejs.org's Linux builds need glibc; Node reports the runtime's version when
+ * it has one. A diagnostic report is heavy, so it is built once, and only on Linux.
+ */
 export function runsOnGlibc(): boolean {
-  const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } };
-  return typeof report?.header?.glibcVersionRuntime === "string";
+  if (glibc !== undefined) return glibc;
+  // oxlint-disable-next-line studio/no-global-process-runtime -- the running server's own libc.
+  if (process.platform !== "linux") return (glibc = false);
+  try {
+    const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } };
+    glibc = typeof report?.header?.glibcVersionRuntime === "string";
+  } catch {
+    glibc = false;
+  }
+  return glibc;
 }
 
 const pathFor = (platform: string) => (platform === "win32" ? NodePath.win32 : NodePath.posix);
@@ -209,8 +223,8 @@ export interface InstallOutcome {
 }
 
 export class MachineToolInstallError extends Error {
-  readonly code: "unsupported" | "present" | "failed";
-  constructor(code: "unsupported" | "present" | "failed", message: string) {
+  readonly code: "unsupported" | "busy" | "present" | "failed";
+  constructor(code: "unsupported" | "busy" | "present" | "failed", message: string) {
     super(message);
     this.code = code;
   }
@@ -231,10 +245,7 @@ async function versionOf(host: ProvisionHost, binary: string): Promise<string | 
  * folder next to `destination` and moves it into place, so a stopped install
  * never leaves a half-unpacked tool behind.
  */
-async function installPinned(
-  ctx: MachineToolsContext,
-  log: InstallLog,
-  input: {
+type PinnedInstall = {
     readonly name: string;
     readonly pinned: { readonly url: string; readonly sha256: string; readonly maxBytes: number };
     readonly file: string;
@@ -242,7 +253,37 @@ async function installPinned(
     /** The binary, relative to the unpacked folder, that must report `version`. */
     readonly binary: string;
     readonly version: string;
-  },
+};
+
+/**
+ * Provisioning writes the same folders, so an install takes its lock and
+ * waits for no one: while it runs, the person is told to try again after.
+ */
+async function installPinned(
+  ctx: MachineToolsContext,
+  log: InstallLog,
+  input: PinnedInstall,
+): Promise<void> {
+  const path = pathFor(ctx.host.platform);
+  const provisionDir = path.join(ctx.home, "provision");
+  await ctx.host.mkdirp(provisionDir);
+  const release = await acquireProvisionLock(ctx.host, path.join(provisionDir, "run.lock"));
+  if (release === null)
+    throw new MachineToolInstallError(
+      "busy",
+      "SpecWithCode is setting this machine up right now. Try again when that ends.",
+    );
+  try {
+    await installPinnedUnlocked(ctx, log, input);
+  } finally {
+    await release();
+  }
+}
+
+async function installPinnedUnlocked(
+  ctx: MachineToolsContext,
+  log: InstallLog,
+  input: PinnedInstall,
 ): Promise<void> {
   const { host } = ctx;
   const path = pathFor(host.platform);
@@ -355,6 +396,12 @@ export async function installMachineTool(
       timeoutMs: 60_000,
       onLine: log,
     });
+    // Tools macOS counts as installed, yet no Git runs: no window opens, so say so.
+    if (result.code !== 0 && /already installed/iu.test(`${result.stdout}\n${result.stderr}`))
+      throw new MachineToolInstallError(
+        "failed",
+        "macOS says its developer tools are already installed, but Git does not run. Open Terminal and run git --version to see why.",
+      );
     // It exits non-zero when macOS's window is already open or the tools are on their way.
     return {
       handedOff: true,

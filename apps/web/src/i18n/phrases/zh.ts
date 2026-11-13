@@ -4698,4 +4698,8 @@ export const zh: PhraseCatalog = {
   "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
     "这台电脑运行的是无法安装它的旧版 SpecWithCode。请在那台电脑上更新 SpecWithCode，或自行安装。",
   "{tool} is already on this machine.": "{tool} 已在这台电脑上。",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "未安装。在那台 Mac 的终端中运行此命令，然后点按“重新检查”。",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "未安装。请从其官网获取，或请能维护这台机器的人从这里安装。",
 };

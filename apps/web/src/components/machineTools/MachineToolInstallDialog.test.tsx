@@ -17,6 +17,13 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../studio/machineTools", () => ({
   machineTools: { check: "check", install: "install" },
+  IDLE_MACHINE_TOOL_INSTALL: {
+    tool: null,
+    status: "idle",
+    lines: [],
+    detail: null,
+    handedOff: false,
+  },
   machineToolInstallAtom: () => state.installAtom,
 }));
 vi.mock("../../state/use-atom-command", () => ({

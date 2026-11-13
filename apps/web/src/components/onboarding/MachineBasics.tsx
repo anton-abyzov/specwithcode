@@ -100,6 +100,12 @@ export function MachineToolRow({
     <span className="text-warning-foreground">
       {tx("The install ended with an error. Its log is below.")}
     </span>
+  ) : readOnly && tool === "git" && os === "darwin" ? (
+    tx("Not installed. Run this command in a terminal on that Mac, then press Check again.")
+  ) : readOnly && linuxCommand === null ? (
+    tx(
+      "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.",
+    )
   ) : tool === "git" && os === "darwin" ? (
     tx(
       "Not installed. On a Mac it comes with Apple's developer tools. Without them, macOS shows its own prompt the first time something runs Git.",
@@ -122,7 +128,15 @@ export function MachineToolRow({
     tx("Not installed. Get it from its own site, then press Check again.")
   );
 
-  const action = present ? undefined : readOnly ? undefined : installable ? (
+  const readOnlyMacGit = readOnly && tool === "git" && os === "darwin";
+  const action = present ? undefined : readOnly ? (
+    <>
+      {readOnlyMacGit || linuxCommand !== null ? null : <DownloadLink tool={tool} />}
+      <Button size="sm" variant="ghost" onClick={onCheckAgain}>
+        {tx("Check again")}
+      </Button>
+    </>
+  ) : installable ? (
     running ? undefined : (
       <Button
         size="sm"
@@ -187,6 +201,9 @@ export function MachineToolRow({
           status={install.status}
           detail={failed ? install.detail : null}
         />
+      ) : null}
+      {!present && readOnlyMacGit ? (
+        <AgentCommand command="xcode-select --install" open flush />
       ) : null}
       {!present && !mine && linuxCommand !== null ? (
         <AgentCommand command={linuxCommand} open flush />

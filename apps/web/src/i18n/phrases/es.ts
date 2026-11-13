@@ -4913,4 +4913,8 @@ export const es: PhraseCatalog = {
   "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
     "Este equipo ejecuta una versión antigua de SpecWithCode que no puede instalarlo. Actualiza SpecWithCode allí o instálalo tú.",
   "{tool} is already on this machine.": "{tool} ya está en este equipo.",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "No está instalado. Ejecuta este comando en un terminal de ese Mac y luego pulsa Volver a comprobar.",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "No está instalado. Descárgalo de su propio sitio o pide a alguien que pueda mantener esta máquina que lo instale desde aquí.",
 };

@@ -4890,4 +4890,8 @@ export const ja: PhraseCatalog = {
   "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
     "このマシンでは、これをインストールできない古い SpecWithCode が動いています。そのマシンの SpecWithCode を更新するか、自分でインストールしてください。",
   "{tool} is already on this machine.": "{tool} はこのマシンにすでにあります。",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "未インストールです。その Mac のターミナルでこのコマンドを実行してから、「もう一度確認」を押してください。",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "未インストールです。公式サイトから入手するか、このマシンを管理できる人にここからインストールしてもらってください。",
 };

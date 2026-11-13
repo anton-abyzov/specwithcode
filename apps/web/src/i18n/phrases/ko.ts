@@ -4833,4 +4833,8 @@ export const ko: PhraseCatalog = {
   "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
     "이 컴퓨터는 이를 설치할 수 없는 이전 버전의 SpecWithCode를 실행 중입니다. 그곳의 SpecWithCode를 업데이트하거나 직접 설치하세요.",
   "{tool} is already on this machine.": "{tool}이(가) 이미 이 컴퓨터에 있습니다.",
+  "Not installed. Run this command in a terminal on that Mac, then press Check again.":
+    "설치되어 있지 않습니다. 해당 Mac의 터미널에서 이 명령을 실행한 다음 다시 확인을 누르세요.",
+  "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
+    "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
 };

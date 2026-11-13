@@ -226,6 +226,34 @@ describe.runIf(posix && toolPlatformKey(HOST_PLATFORM, HOST_ARCH, true) !== null
       expect(ran).toEqual(["/usr/bin/xcode-select --install"]);
       expect(outcome.handedOff).toBe(true);
     });
+
+    it("says so, instead of waiting on a window, when macOS counts its tools as installed", async () => {
+      if (HOST_PLATFORM !== "darwin") return;
+      const home = await tempDir("machine-tools-home");
+      const { host } = hostWith({
+        exec: async () => ({
+          code: 1,
+          stdout: "",
+          stderr:
+            'xcode-select: error: command line tools are already installed, use "Software Update" to install updates',
+        }),
+      });
+      await expect(
+        installMachineTool(context(host, home), "git", "missing", () => {}),
+      ).rejects.toMatchObject({ code: "failed" });
+    });
+
+    it("waits for a provisioning run that holds the machine", async () => {
+      const home = await tempDir("machine-tools-home");
+      await NodeFSP.mkdir(NodePath.join(home, "provision"), { recursive: true });
+      // A live process other than this one: the test runner's parent.
+      await NodeFSP.writeFile(NodePath.join(home, "provision", "run.lock"), `${process.ppid}\n`);
+      const { host, downloads } = hostWith({ archive: await fakeNodeArchive(NODE_VERSION) });
+      await expect(
+        installMachineTool(context(host, home), "node", "present", () => {}),
+      ).rejects.toMatchObject({ code: "busy" });
+      expect(downloads).toEqual([]);
+    });
   },
 );
 

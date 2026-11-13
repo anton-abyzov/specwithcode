@@ -588,6 +588,7 @@ it.effect("keeps the project and says why when SpecWeave cannot be set up", () =
           const projects = yield* ProjectService.ProjectService;
           const result = yield* folders.createNamedProject({ name: "No CLI", specweave: true });
           assert.include(result.specweaveError ?? "", "neither specweave nor npx");
+          assert.isTrue(result.specweaveNeedsNode);
           assert.isTrue(Option.isSome(yield* projects.getById(result.projectId)));
           assert.equal(
             yield* gitOutput(result.workspaceRoot, ["log", "--format=%s"]),
@@ -602,6 +603,7 @@ it.effect("keeps the project and says why when SpecWeave cannot be set up", () =
             ok: false,
             reason: "unavailable",
             detail: SpecweaveSetup.specweaveUnavailableDetail("linux"),
+            needs: "node",
           } as const),
       }),
     },

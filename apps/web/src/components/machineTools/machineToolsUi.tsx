@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   MachinePackageManager,
@@ -9,7 +9,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { machineToolInstallAtom, machineTools } from "../../studio/machineTools";
+import {
+  IDLE_MACHINE_TOOL_INSTALL,
+  machineToolInstallAtom,
+  machineTools,
+} from "../../studio/machineTools";
 
 export const MACHINE_TOOL_NAMES: Readonly<Record<MachineToolId, string>> = {
   git: "Git",
@@ -60,6 +64,7 @@ export function useMachineTools(environmentId: EnvironmentId, enabled = true) {
   const checkCommand = useAtomCommand(machineTools.check, { reportFailure: false });
   const installCommand = useAtomCommand(machineTools.install, { reportFailure: false });
   const install = useAtomValue(machineToolInstallAtom(environmentId));
+  const setInstall = useAtomSet(machineToolInstallAtom(environmentId));
   const [state, setState] = useState<MachineToolsCheckState>({ kind: "checking" });
   const request = useRef(0);
 
@@ -77,10 +82,21 @@ export function useMachineTools(environmentId: EnvironmentId, enabled = true) {
     void refresh();
   }, [enabled, refresh]);
 
-  // A finished install is read again, so its row turns ready or says what is left.
-  const status = install.status;
+  // An install that ended before this opened is history: no stale log, no waiting on macOS.
+  // One still running stays on screen.
+  const opened = useRef(install.status);
   useEffect(() => {
-    if (status === "done" || status === "failed") void refresh();
+    if (opened.current === "done" || opened.current === "failed")
+      setInstall(IDLE_MACHINE_TOOL_INSTALL);
+  }, [setInstall]);
+
+  // An install ending is read again, so its row turns ready or says what is left.
+  const status = install.status;
+  const seen = useRef(status);
+  useEffect(() => {
+    const before = seen.current;
+    seen.current = status;
+    if (before !== status && (status === "done" || status === "failed")) void refresh();
   }, [status, refresh]);
 
   const waitingFor =

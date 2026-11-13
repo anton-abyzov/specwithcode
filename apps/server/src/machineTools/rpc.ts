@@ -49,7 +49,10 @@ function addToServerPath(dirs: ReadonlyArray<string>): void {
 const toolName = (tool: MachineToolId) =>
   tool === "gh" ? "GitHub CLI" : tool === "node" ? "Node.js" : "Git";
 
+/** The install running on this machine. It is held until the install itself ends, not its stream. */
 let installing: MachineToolId | null = null;
+/** The handlers are built per connection; the PATH is seeded once per server. */
+let pathSeeded = false;
 
 export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
@@ -60,16 +63,19 @@ export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumenta
     const host = makeNodeProvisionHost();
     const glibc = runsOnGlibc();
     // Tools the app installed earlier are on the PATH from the start.
-    const installed: string[] = [];
-    for (const dir of managedToolDirs({
-      home: config.baseDir,
-      platform: host.platform,
-      arch: host.arch,
-      glibc,
-    })) {
-      if (yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))) installed.push(dir);
+    if (!pathSeeded) {
+      pathSeeded = true;
+      const installed: string[] = [];
+      for (const dir of managedToolDirs({
+        home: config.baseDir,
+        platform: host.platform,
+        arch: host.arch,
+        glibc,
+      })) {
+        if (yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))) installed.push(dir);
+      }
+      addToServerPath(installed);
     }
-    addToServerPath(installed);
 
     const context = Effect.gen(function* () {
       const env = process.env;
@@ -120,27 +126,35 @@ export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumenta
                 code: "busy",
                 reason: `${toolName(installing)} is being installed on this machine. Wait for it to end.`,
               });
-            const { ctx, git } = yield* context;
+            // Taken before the first yield, so a second request sees it.
             installing = input.tool;
+            const release = () => {
+              installing = null;
+            };
+            const { ctx, git } = yield* context.pipe(Effect.onError(() => Effect.sync(release)));
             const log = (line: string) =>
               Queue.offerUnsafe(queue, { type: "log", line: line.slice(0, 3900) });
-            yield* Effect.tryPromise({
-              try: async () => {
-                const outcome = await installMachineTool(ctx, input.tool, git, log);
-                addToServerPath(outcome.pathDirs);
-                Queue.offerUnsafe(queue, {
-                  type: "done",
-                  ok: true,
-                  ...(outcome.handedOff ? { handedOff: true } : {}),
-                  detail: outcome.detail,
-                });
-              },
+            // A closed stream stops the waiting, not the install: the lock and the
+            // PATH follow the install to its end.
+            const run = installMachineTool(ctx, input.tool, git, log).then((outcome) => {
+              addToServerPath(outcome.pathDirs);
+              return outcome;
+            });
+            void run.then(release, release);
+            const outcome = yield* Effect.tryPromise({
+              try: () => run,
               catch: (cause) =>
                 new MachineToolsError({
                   code: cause instanceof MachineToolInstallError ? cause.code : "failed",
                   reason: (cause instanceof Error ? cause.message : String(cause)).slice(0, 1900),
                 }),
-            }).pipe(Effect.ensuring(Effect.sync(() => (installing = null))));
+            });
+            Queue.offerUnsafe(queue, {
+              type: "done",
+              ok: true,
+              ...(outcome.handedOff ? { handedOff: true } : {}),
+              detail: outcome.detail,
+            });
           }).pipe(
             Effect.catchTags({ MachineToolsError: (error) => Queue.fail(queue, error) }),
             Effect.andThen(Queue.end(queue)),
