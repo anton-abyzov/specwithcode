@@ -11,6 +11,12 @@ type ConfirmDialogRequest = {
   readonly alternateLabel?: string;
   /** Rich content under the description, such as a list of what is affected. */
   readonly details?: ReactNode;
+  /** Icons drawn before each button's label. */
+  readonly confirmIcon?: ReactNode;
+  readonly alternateIcon?: ReactNode;
+  readonly cancelIcon?: ReactNode;
+  /** The alternate button's look; "outline" when absent. */
+  readonly alternateVariant?: "outline" | "destructive-outline";
 };
 
 /** Which button closed the dialog; dismissing it counts as cancel. */
@@ -101,10 +107,16 @@ export function requestConfirmDialog(
  */
 export function requestChoiceDialog(
   message: string,
-  options?: ConfirmDialogOptions & {
-    readonly alternateLabel?: string;
-    readonly details?: ReactNode;
-  },
+  options?: ConfirmDialogOptions &
+    Pick<
+      ConfirmDialogRequest,
+      | "alternateLabel"
+      | "details"
+      | "confirmIcon"
+      | "alternateIcon"
+      | "cancelIcon"
+      | "alternateVariant"
+    >,
 ): Promise<ConfirmDialogChoice> | undefined {
   if (registeredHostCount === 0) return undefined;
 
@@ -116,6 +128,10 @@ export function requestChoiceDialog(
       ...(options?.cancelLabel ? { cancelLabel: options.cancelLabel } : {}),
       ...(options?.alternateLabel ? { alternateLabel: options.alternateLabel } : {}),
       ...(options?.details ? { details: options.details } : {}),
+      ...(options?.confirmIcon ? { confirmIcon: options.confirmIcon } : {}),
+      ...(options?.alternateIcon ? { alternateIcon: options.alternateIcon } : {}),
+      ...(options?.cancelIcon ? { cancelIcon: options.cancelIcon } : {}),
+      ...(options?.alternateVariant ? { alternateVariant: options.alternateVariant } : {}),
       resolve,
     };
     if (activeConfirmation || state.status === "closing") {

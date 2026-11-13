@@ -322,7 +322,10 @@ describe("SidebarServerUpdate", () => {
     await act(async () => {
       respondToConfirmDialog(false);
     });
-    expect(state.updateServer).not.toHaveBeenCalled();
+    // The one command mock also answers the look at what runs there; no update was asked.
+    expect(state.updateServer).not.toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ targetVersion: "1.0.66" }) }),
+    );
   });
 
   it("keeps naming the machine's server in the update toast", async () => {

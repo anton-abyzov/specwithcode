@@ -336,14 +336,14 @@ describe("SidebarRestartToUpdate", () => {
     const dialog = readConfirmDialogState();
     expect(dialog).toMatchObject({
       status: "confirming",
-      confirmLabel: "Restart when idle",
+      confirmLabel: "Wait until quiet",
       alternateLabel: "Restart now",
-      cancelLabel: "Cancel",
+      cancelLabel: "Later",
     });
-    expect(dialog.status === "confirming" && dialog.message).toContain(
-      "2 running, 1 queued in 1 thread",
+    // One title and one short line: the live list under it names the threads.
+    expect(dialog.status === "confirming" && dialog.message).toBe(
+      "Restart to install SpecWithCode 0.2.5?\nWork cut off can be continued after the restart.",
     );
-    // The work is listed under the summary, grouped by project.
     expect(dialog.status === "confirming" && dialog.details).toBeTruthy();
     await act(async () => {
       respondToConfirmDialog("alternate");
@@ -851,24 +851,44 @@ describe("SidebarRestartToUpdate", () => {
       const dialog = readConfirmDialogState();
       expect(dialog).toMatchObject({
         status: "confirming",
-        confirmLabel: "Stop and update now",
-        cancelLabel: "Cancel",
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
+        cancelLabel: "Later",
       });
       const message = dialog.status === "idle" ? "" : dialog.message;
       expect(message.split("\n")).toEqual([
-        "Stop running work and update now?",
-        "2 tasks will be interrupted. You can continue them after the update.",
-        "1 queued message will be cancelled.",
-        "1 open question or approval will be closed.",
-        "2 terminals will close.",
+        "Restart to install SpecWithCode 0.2.5?",
+        "Work cut off can be continued after the restart. 2 terminals close.",
       ]);
+      // The threads it cuts off are listed live under the question.
+      expect(dialog.status === "confirming" && dialog.details).toBeTruthy();
       // Nothing is stopped while the user decides.
       expect(calls).toEqual(["prepare:false"]);
       expect(button()?.props.disabled).toBe(true);
       await act(async () => {
-        respondToConfirmDialog(true);
+        respondToConfirmDialog("alternate");
       });
       expect(calls).toEqual(STOP_AND_INSTALL);
+    });
+
+    it("waits until quiet when chosen, then updates without asking again", async () => {
+      checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+      registerConfirmDialogHost();
+      render();
+      await click();
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
+      await act(async () => {
+        respondToConfirmDialog(true);
+      });
+      await advance(0);
+      // Nothing is stopped while it waits.
+      expect(calls.filter((call) => call !== "prepare:false")).toEqual([]);
+      expect(label()).toMatch(/^Restarts when idle/);
+      checked = { idle: true, stoppedThreads: 0, blockers: [] };
+      await advance(15_000);
+      expect(calls).toContain("installServiceUpdate:force");
+      // The wait came due without a second question.
+      expect(readConfirmDialogState().status).not.toBe("confirming");
     });
 
     it("starts at once when nothing runs", async () => {

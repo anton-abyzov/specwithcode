@@ -1485,7 +1485,7 @@ describe("describeAppRestartWarning", () => {
         "Restart to install SpecWithCode 1.0.21?",
         "3 running in 2 threads. Restarting interrupts this work.",
         "Still running: 1 running task in “Fix login”; 2 running tasks in “Docs”.",
-        "Restart when idle lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.",
+        "Wait until quiet lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.",
       ].join("\n"),
     );
   });
@@ -1564,7 +1564,7 @@ describe("describeAppRestartWarning", () => {
       "1 question waiting for you is asked again after the restart.",
     );
     expect(restartWhenIdleNote(2)).toBe(
-      "Restart when idle lets it finish first, for up to 2 minutes.",
+      "Wait until quiet restarts once nothing runs, at most 2 minutes.",
     );
     expect(describeServiceUpdateStop(check)).toBe(
       [

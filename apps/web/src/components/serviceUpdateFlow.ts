@@ -3,13 +3,14 @@ import {
   type StudioServiceInstallOptions,
   type StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { createElement, useCallback, useEffect, useSyncExternalStore } from "react";
 
-import { requestConfirmDialog } from "../confirmDialog";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
 import { markRestartStep } from "./restartTrace";
+import { describeListedRestart } from "./sidebar/restartRunningWork.logic";
+import { LiveRestartRunningWorkList } from "./sidebar/RestartRunningWorkList";
 import {
   AGENT_SETTLED,
   AGENT_UNSETTLED_ON_VERSION,
@@ -38,6 +39,9 @@ import {
   STOP_WORK_TIMEOUT_MS,
   withdrawRequest,
   withTimeout,
+  askRestartForWork,
+  readInterruptedWork,
+  type RenderRestartWork,
 } from "./serviceUpdateCalls";
 import { startServiceUpdateRun } from "./serviceUpdateRunFlow";
 import { liveServiceUpdateRun } from "./serviceUpdateRunView";
@@ -76,6 +80,7 @@ import {
   canPressUpdateAgain,
   canRetryServiceUpdate,
   describeServiceUpdateStop,
+  interruptedWork,
   isForcedRequestLive,
   isReleaseUnavailableFailure,
   isRestartRefusalWithRelease,
@@ -812,6 +817,16 @@ export interface StartServiceUpdateOptions {
    * own. A service already on that version resolves the press "app-only".
    */
   readonly thenInstallApp?: { readonly appVersion: string | null } | null;
+  /** The wait for quiet came due: stop what still runs without asking again. */
+  readonly confirmed?: boolean;
+  /** The live list of what the update cuts off, under the question. */
+  readonly renderDetails?: RenderRestartWork;
+  /**
+   * Offers Wait until quiet (the default) and is called when it is chosen; the
+   * press then resolves false and the caller waits. Without it the question
+   * offers Restart now and Later only.
+   */
+  readonly onWaitForQuiet?: () => void;
 }
 
 /**
@@ -903,20 +918,46 @@ export async function startServiceUpdateNow(
     const lookAt = Date.now();
     const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
     // A service that cannot say what runs may still be running something.
-    const question = checked === null ? STOP_UNKNOWN : describeServiceUpdateStop(checked);
+    const stop = checked === null ? STOP_UNKNOWN : describeServiceUpdateStop(checked);
     markRestartStep("quick-look", {
       startedAt: lookAt,
-      detail: question === null ? "nothing runs" : "asks to stop work",
+      detail: stop === null ? "nothing runs" : "asks to stop work",
     });
-    if (question !== null) {
+    if (stop !== null && options.confirmed !== true) {
+      const working = checked === null ? [] : interruptedWork(checked.blockers);
+      // Every caller lists the work: one without its own list (Settings, a toast's
+      // Try again) gets the live list that opens threads from the dialog.
+      const render: RenderRestartWork =
+        options.renderDetails ??
+        ((rows) =>
+          createElement(LiveRestartRunningWorkList, {
+            initial: rows,
+            poll: readInterruptedWork,
+            openFromDialog: true,
+          }));
+      const listed = working.length > 0;
+      // The listed question is one title and one line: the list says the rest.
+      const question =
+        listed && checked !== null
+          ? describeListedRestart({
+              title: `Restart to install SpecWithCode ${wanted ?? target ?? "the update"}?`,
+              continues: working.every((blocker) => blocker.continuesAfterRestart === true),
+              folderCopies: checked.folderCopies ?? 0,
+              openTerminals: checked.openTerminals ?? 0,
+            })
+          : stop;
+      const onWait = options.onWaitForQuiet;
       // No themed host mounted (undefined) means proceed: the click was the request.
-      const confirmed =
-        (await requestConfirmDialog(question, {
-          variant: "destructive",
-          confirmLabel: "Stop and update now",
-          cancelLabel: "Cancel",
-        })) ?? true;
-      if (!confirmed) return false;
+      const choice =
+        (await askRestartForWork(question, {
+          canWait: onWait !== undefined,
+          ...(listed && checked !== null ? { details: render(working, checked.blockers) } : {}),
+        })) ?? "now";
+      if (choice === "later") return false;
+      if (choice === "wait") {
+        onWait?.();
+        return false;
+      }
     }
   } finally {
     setState({ starting: false });

@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import {
   completeConfirmDialogClose,
@@ -61,7 +61,11 @@ export function ConfirmDialogHost() {
   useEffect(() => registerConfirmDialogHost(), []);
 
   const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
-  const confirmVariant = state.status === "idle" ? "default" : state.variant;
+  const active = state.status === "idle" ? null : state;
+  // A three-way choice starts on its default (the confirm button), so Enter
+  // picks it and not a row of the list under the question.
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const confirmVariant = active?.variant ?? "default";
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
 
@@ -75,7 +79,7 @@ export function ConfirmDialogHost() {
         if (!open) completeConfirmDialogClose();
       }}
     >
-      <AlertDialogPopup>
+      <AlertDialogPopup {...(active?.alternateLabel ? { initialFocus: confirmRef } : {})}>
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           {copy.description ? (
@@ -89,15 +93,21 @@ export function ConfirmDialogHost() {
         ) : null}
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>
-            {(state.status === "idle" ? undefined : state.cancelLabel) ?? "Cancel"}
+            {active?.cancelIcon}
+            {active?.cancelLabel ?? "Cancel"}
           </AlertDialogClose>
-          {state.status !== "idle" && state.alternateLabel ? (
-            <Button variant="outline" onClick={() => respondToConfirmDialog("alternate")}>
-              {state.alternateLabel}
+          {active?.alternateLabel ? (
+            <Button
+              variant={active.alternateVariant ?? "outline"}
+              onClick={() => respondToConfirmDialog("alternate")}
+            >
+              {active.alternateIcon}
+              {active.alternateLabel}
             </Button>
           ) : null}
-          <Button variant={confirmVariant} onClick={onConfirm}>
-            {(state.status === "idle" ? undefined : state.confirmLabel) ?? "Confirm"}
+          <Button ref={confirmRef} variant={confirmVariant} onClick={onConfirm}>
+            {active?.confirmIcon}
+            {active?.confirmLabel ?? "Confirm"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

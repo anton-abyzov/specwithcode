@@ -594,7 +594,7 @@ describe("Update now for the service and the app", () => {
       await advance(0);
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Restart when idle",
+        confirmLabel: "Wait until quiet",
       });
       await act(async () => {
         respondToConfirmDialog(true);

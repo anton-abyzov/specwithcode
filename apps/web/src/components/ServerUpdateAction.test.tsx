@@ -13,6 +13,7 @@ const testState = vi.hoisted(() => ({
   prepare: vi.fn(),
   prepareCommand: Symbol("prepareServiceUpdate"),
   toast: vi.fn(),
+  closeToast: vi.fn(),
   clipboard: vi.fn(),
   continueThreadsAfterServerUpdate: false,
   session: null as AsyncResult.AsyncResult<AuthSessionState, Error> | null,
@@ -51,7 +52,7 @@ vi.mock("~/state/use-atom-command", () => ({
     command === testState.prepareCommand ? testState.prepare : testState.updateServer,
 }));
 vi.mock("./ui/toast", () => ({
-  toastManager: { add: testState.toast },
+  toastManager: { add: testState.toast, close: testState.closeToast },
 }));
 
 import {
@@ -603,5 +604,114 @@ describe("ServerUpdateProgress", () => {
     expect(markup).toContain('role="alert"');
     expect(markup).toContain("The package could not be verified.");
     expect(markup).not.toContain("animate-status-pulse");
+  });
+});
+
+describe("ServerUpdateAction while work runs there", () => {
+  const running = AsyncResult.success({
+    idle: false,
+    blockers: [
+      {
+        kind: "run",
+        count: 1,
+        threadId: "thread-1",
+        threadTitle: "Fix login",
+        projectId: "project-1",
+        projectTitle: "specweave",
+      },
+    ],
+  });
+  beforeEach(() => {
+    vi.useFakeTimers();
+    testState.updateServer
+      .mockReset()
+      .mockResolvedValue(
+        AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+      );
+    testState.prepare.mockReset().mockResolvedValue(running);
+    testState.toast.mockReset().mockReturnValue("quiet-toast");
+    testState.closeToast.mockReset();
+    testState.session = AsyncResult.success(currentSession);
+    resetConfirmDialogForTests();
+    registerConfirmDialogHost();
+  });
+  afterEach(() => {
+    resetConfirmDialogForTests();
+    vi.useRealTimers();
+  });
+
+  const press = async () => {
+    renderAction().props.onClick?.();
+    await vi.advanceTimersByTimeAsync(0);
+  };
+
+  it("lists what it cuts off and offers Wait until quiet, Update now and Later", async () => {
+    await press();
+    const dialog = readConfirmDialogState();
+    expect(dialog).toMatchObject({
+      status: "confirming",
+      message: "Update Test server to 0.0.31?\nWork cut off can be continued after the restart.",
+      confirmLabel: "Wait until quiet",
+      alternateLabel: "Update now",
+      cancelLabel: "Later",
+    });
+    expect(dialog.status === "confirming" && dialog.details).toBeTruthy();
+    respondToConfirmDialog("cancel");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(testState.updateServer).not.toHaveBeenCalled();
+  });
+
+  it("updates at once on Update now", async () => {
+    await press();
+    respondToConfirmDialog("alternate");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31" },
+    });
+  });
+
+  it("waits until nothing runs there, never forcing, then updates", async () => {
+    await press();
+    respondToConfirmDialog(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Test server updates when quiet" }),
+    );
+    // Still busy for many checks: no update is forced.
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(testState.updateServer).not.toHaveBeenCalled();
+    testState.prepare.mockResolvedValue(AsyncResult.success({ idle: true, blockers: [] }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(testState.closeToast).toHaveBeenCalledWith("quiet-toast");
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31" },
+    });
+  });
+
+  it("says so when access to the machine ends during the wait", async () => {
+    await press();
+    respondToConfirmDialog(true);
+    await vi.advanceTimersByTimeAsync(0);
+    testState.session = AsyncResult.success({ ...currentSession, scopes: [] });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", title: "Test server was not updated" }),
+    );
+    expect(testState.updateServer).not.toHaveBeenCalled();
+  });
+
+  it("ends the wait when its toast is cancelled", async () => {
+    await press();
+    respondToConfirmDialog(true);
+    await vi.advanceTimersByTimeAsync(0);
+    const toast = testState.toast.mock.calls.at(-1)![0] as {
+      actionProps: { onClick: () => void };
+    };
+    toast.actionProps.onClick();
+    testState.prepare.mockResolvedValue(AsyncResult.success({ idle: true, blockers: [] }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(testState.updateServer).not.toHaveBeenCalled();
   });
 });
