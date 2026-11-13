@@ -28,6 +28,8 @@ const copy = (key: string, machine: string, canStart: boolean): OrchestratorCopy
   machine,
   folder: `/${machine}/atlas`,
   role: canStart ? "workers" : "coordinator",
+  main: !canStart,
+  label: canStart ? { text: "Copy" } : { text: "Main" },
   canStart,
 });
 const buttons = () => [...container.querySelectorAll("button")].map((b) => b.textContent);

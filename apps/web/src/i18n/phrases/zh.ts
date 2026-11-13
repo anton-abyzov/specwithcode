@@ -2248,19 +2248,7 @@ export const zh: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
   "Use 2 or 3 characters.": "请使用 2 或 3 个字符。",
-  "Coordinator here": "协调者在此",
-  "Coordinator here too": "这里也有协调者",
-  "Workers only": "仅运行 worker",
-  "Moving coordinator": "协调者迁移中",
   "Not shared": "未共享",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "项目的协调者在这个副本上运行，无论它现在是否在工作。其他机器上的副本从它那里接收工作。这里说的是协调者，不是副本是怎么创建的。",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "这个副本也在运行自己的协调者（每台机器都可以），但项目的协调者属于另一个副本。移交会把协调者移过去，这里只留下 worker。",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "协调者已迁移到另一台机器。这个副本只运行它派来的 worker。",
-  "The project's coordinator is moving between machines right now.":
-    "项目的协调者正在机器之间迁移。",
   "No other machine has a copy of this project.": "没有其他机器有这个项目的副本。",
   "Connect to see its role": "连接后可查看角色",
   "This app cannot see this machine, so it cannot tell what this copy does.":
@@ -4929,4 +4917,18 @@ export const zh: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
   "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
+  "Main":
+    "主副本",
+  "Moving main":
+    "主副本迁移中",
+  "Copy · main on {machine}":
+    "副本 · 主副本在 {machine}",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "此项目的工作从这里开始。其他机器上的副本从这里接收工作。",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "主副本在 {machine}。此副本也可以开始自己的工作。",
+  "Work starts on {machine}. This copy takes work from there.":
+    "工作从 {machine} 开始。此副本从那里接收工作。",
+  "Main is moving between machines right now.":
+    "主副本正在机器之间迁移。",
 };

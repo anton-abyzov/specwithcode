@@ -31,7 +31,22 @@ const copy = (
   machine: string,
   role: OrchestratorCopy["role"] = "coordinator",
   canStart = false,
-): OrchestratorCopy => ({ key, machine, folder: "/w/atlas", role, canStart });
+): OrchestratorCopy => ({
+  key,
+  machine,
+  folder: "/w/atlas",
+  role,
+  main: role === "coordinator",
+  label:
+    role === "coordinator"
+      ? { text: "Main" }
+      : role === "workers"
+        ? { text: "Copy · main on {machine}", values: { machine: "M4" } }
+        : role === "pending"
+          ? { text: "Moving main" }
+          : { text: "not linked" },
+  canStart,
+});
 
 const handlers = () => ({
   onView: vi.fn<(key: string) => void>(),
@@ -332,7 +347,7 @@ it("names machines once and labels every group of actions", async () => {
   await renderSwitcher({ ...calls, onCopy: vi.fn(), onLeave: vi.fn() });
   expect(
     [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
-  ).toEqual(["M4coordinator", "Miniscoordinator paused"]);
+  ).toEqual(["M4Main", "Miniscoordinator paused"]);
   expect(
     [...document.querySelectorAll('[data-slot="menu-label"]')].map((row) => row.textContent),
   ).toEqual(["View this project on", "This project", "On M4"]);

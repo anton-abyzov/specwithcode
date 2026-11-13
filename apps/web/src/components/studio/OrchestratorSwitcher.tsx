@@ -45,19 +45,6 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 
-// What each machine's copy is, beside its name. "not linked": a checkout of the same
-// repository registered on its own, with its own coordinator, threads and memory.
-const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
-  coordinator: "coordinator",
-  workers: "workers only",
-  pending: "move pending",
-  independent: "not linked",
-};
-
-/** A workers-only copy that kept its coordinator from before says so: it is paused, not gone. */
-const noteOf = (copy: OrchestratorCopy) =>
-  copy.canStart ? "coordinator paused" : ROLE_NOTE[copy.role];
-
 /** Runs the pending action once the popup holding this has left the DOM. */
 function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }) {
   useEffect(
@@ -247,7 +234,14 @@ export function OrchestratorSwitcher({
                 ...listed.map((copy) => ({
                   key: copy.key,
                   name: nameOf(copy),
-                  note: noteOf(copy),
+                  // A copy that kept its coordinator from before says so: it is paused, not
+                  // gone. Every other copy shows the badge Settings > Machines shows for it;
+                  // a checkout registered on its own reads "not linked".
+                  note: copy.canStart
+                    ? tx("coordinator paused")
+                    : copy.label.text
+                      ? tx(copy.label.text, copy.label.values)
+                      : "",
                   hint: copy.canStart
                     ? tx(
                         "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.",
@@ -264,7 +258,7 @@ export function OrchestratorSwitcher({
                 ...unknown.map((ref) => ({
                   key: ref.key,
                   name: ref.machine,
-                  note: "not connected",
+                  note: tx("not connected"),
                   hint: tx(
                     "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.",
                     { machine: ref.machine },
@@ -281,7 +275,7 @@ export function OrchestratorSwitcher({
                   <span className="flex w-full items-center gap-2">
                     <span className="min-w-0 truncate">{row.name}</span>
                     {row.note ? (
-                      <span className="shrink-0 text-muted-foreground text-xs">{tx(row.note)}</span>
+                      <span className="shrink-0 text-muted-foreground text-xs">{row.note}</span>
                     ) : null}
                     <MenuRadioItemIndicator className="ms-auto ps-4" />
                   </span>

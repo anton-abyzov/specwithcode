@@ -2310,19 +2310,7 @@ export const ko: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
   "Use 2 or 3 characters.": "2~3자를 사용하세요.",
-  "Coordinator here": "여기가 코디네이터",
-  "Coordinator here too": "여기도 코디네이터",
-  "Workers only": "워커만",
-  "Moving coordinator": "코디네이터 이동 중",
   "Not shared": "공유 안 함",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "프로젝트의 코디네이터가 이 복사본에서 실행됩니다(지금 작업 중이든 아니든). 다른 머신의 복사본은 여기서 작업을 받습니다. 복사본을 만든 방식이 아니라 코디네이터에 관한 표시입니다.",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "이 복사본에서도 자체 코디네이터가 실행됩니다(어느 머신이나 가능). 하지만 프로젝트의 코디네이터는 다른 복사본입니다. 넘기기를 하면 코디네이터가 옮겨 가고 여기에는 워커만 남습니다.",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "코디네이터가 다른 머신으로 옮겨 갔습니다. 이 복사본은 거기서 보내는 워커만 실행합니다.",
-  "The project's coordinator is moving between machines right now.":
-    "프로젝트의 코디네이터가 지금 머신 사이를 이동하고 있습니다.",
   "No other machine has a copy of this project.":
     "다른 어떤 머신에도 이 프로젝트의 복사본이 없습니다.",
   "Connect to see its role": "연결하면 역할이 보입니다",
@@ -5069,4 +5057,18 @@ export const ko: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
   "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
+  "Main":
+    "메인",
+  "Moving main":
+    "메인 이동 중",
+  "Copy · main on {machine}":
+    "복사본 · 메인은 {machine}",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "이 프로젝트의 작업은 여기서 시작됩니다. 다른 머신의 복사본은 여기서 작업을 받습니다.",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "메인은 {machine}에 있습니다. 이 복사본도 자체 작업을 시작할 수 있습니다.",
+  "Work starts on {machine}. This copy takes work from there.":
+    "작업은 {machine}에서 시작됩니다. 이 복사본은 거기서 작업을 받습니다.",
+  "Main is moving between machines right now.":
+    "메인이 지금 머신 간에 이동 중입니다.",
 };

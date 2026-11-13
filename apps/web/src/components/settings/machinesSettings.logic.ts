@@ -34,6 +34,8 @@ import {
   type TeamRulesLock,
   type TeamRulesMachineView,
 } from "../../teamRules/teamRulesView";
+import { copyRoles, type CopyRole } from "../../studio/projectDomain";
+import { copyRoleHelp, copyRoleLabel } from "../../studio/workersOnlyCopy";
 import { workGrantProjectsSummary, workGrantStatus } from "./machineWorkGrants.logic";
 import { isShareablePairingUrl } from "./pairingUrls";
 
@@ -85,9 +87,9 @@ export type MachineSeenState =
   | "not-connected";
 
 /**
- * A shared copy's part in its project. "coordinator": the project's coordinator runs
- * here. "also-coordinator": this copy runs a coordinator of its own too (each machine
- * may), but another copy leads. The labels name the coordinator, never how a copy was made.
+ * A shared copy's part in its project, from `copyRoles`. "coordinator": Main.
+ * "also-coordinator": runs a coordinator of its own too (each machine may), but Main is
+ * another copy. "runs-workers": work for it starts from Main (shown "Copy · main on m4").
  */
 export type SharedProjectRole =
   | "coordinator"
@@ -100,9 +102,11 @@ export interface MachineProject {
   readonly title: string;
   /** Null when this app cannot see that copy, so its role is unknown here. */
   readonly role: SharedProjectRole | "only-here" | null;
+  /** An English phrase ("Main", "Copy · main on {machine}"), translated with `roleValues`. */
   readonly roleLabel: string;
-  /** The role in a sentence, for the label's tooltip. */
+  /** The role in a sentence, for the label's tooltip; translated with `roleValues`. */
   readonly roleHelp: string;
+  readonly roleValues?: { readonly machine: string };
   /** The other machines that hold a copy. */
   readonly alsoOn: readonly string[];
   /** Those copies in full: each machine, how this app sees it, its folder and role. */
@@ -119,6 +123,7 @@ export interface MachineProjectCopy {
   readonly folder: string | null;
   /** Null when this app cannot see that copy. */
   readonly roleLabel: string | null;
+  readonly roleValues?: { readonly machine: string };
 }
 
 export interface MachineSeen {
@@ -201,26 +206,6 @@ export interface MachineRowModel {
   readonly replacedBy?: EnvironmentId | null;
 }
 
-// English phrases, translated where shown.
-const ROLE_LABELS: Readonly<Record<SharedProjectRole | "only-here", string>> = {
-  coordinator: "Coordinator here",
-  "also-coordinator": "Coordinator here too",
-  "runs-workers": "Workers only",
-  "handoff-pending": "Moving coordinator",
-  "only-here": "Not shared",
-};
-
-const ROLE_HELP: Readonly<Record<SharedProjectRole | "only-here", string>> = {
-  coordinator:
-    "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.",
-  "also-coordinator":
-    "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.",
-  "runs-workers":
-    "The coordinator moved to another machine. This copy only runs the workers it sends here.",
-  "handoff-pending": "The project's coordinator is moving between machines right now.",
-  "only-here": "No other machine has a copy of this project.",
-};
-
 /** Shown when a machine reports no account; translated where it is displayed. */
 export const ACCOUNT_NOT_REPORTED = "Account not reported";
 
@@ -233,50 +218,63 @@ export function sharedProjectRole(
   return "coordinator";
 }
 
-const copyKey = (copy: { readonly environmentId: string; readonly id: string }) =>
-  `${copy.environmentId}:${copy.id}`;
+const SHARED_ROLE: Readonly<Record<CopyRole, SharedProjectRole>> = {
+  main: "coordinator",
+  "also-main": "also-coordinator",
+  copy: "runs-workers",
+  moving: "handoff-pending",
+};
 
 /**
- * The copy that coordinates the project as a whole, among the copies this app sees:
- * the newest binding epoch, then the lowest machine and project id. The tie-break
- * reads only the copies themselves, never one copy's member list (each copy may
- * keep its members in another order), so every copy picks the same lead and two
- * copies that never handed off name one coordinator, not two. Copies on an old
- * record of a machine that joined again (`retired`) never lead: that record is dead.
+ * A shared copy's role among the copies this app sees, from `copyRoles`, the one
+ * derivation the project menu uses too, so the two never disagree.
  */
-function leadCoordinator(
-  copy: MachineProjectInput,
-  projects: readonly MachineProjectInput[],
-  retired?: ReadonlyMap<string, unknown>,
-): MachineProjectInput | null {
-  const logical = copy.workspaceSettings?.logicalProject;
-  if (!logical) return null;
-  const epoch = (candidate: MachineProjectInput) =>
-    candidate.workspaceSettings?.coordinatorBinding?.epoch ?? 0;
-  const [lead] = projects
-    .filter(
-      (candidate) =>
-        candidate.workspaceSettings?.logicalProject?.id === logical.id &&
-        !retired?.has(candidate.environmentId) &&
-        sharedProjectRole(candidate.workspaceSettings?.coordinatorBinding) === "coordinator",
-    )
-    .toSorted(
-      (a, b) => epoch(b) - epoch(a) || (copyKey(a) < copyKey(b) ? -1 : copyKey(a) > copyKey(b) ? 1 : 0),
-    );
-  return lead ?? null;
-}
-
-/** A shared copy's role among the copies this app sees: one coordinator per project. */
-export function copyRole(
+function roleIn(
   copy: MachineProjectInput,
   projects: readonly MachineProjectInput[],
   /** Old records of machines that joined again (`replacedMachineRecords`). */
   retired?: ReadonlyMap<string, unknown>,
+): { readonly role: CopyRole; readonly mainEnvironmentId: string | null } {
+  const logical = copy.workspaceSettings?.logicalProject?.id;
+  const of = copyRoles(
+    projects.filter((candidate) => candidate.workspaceSettings?.logicalProject?.id === logical),
+    retired,
+  ).get(`${copy.environmentId}:${copy.id}`);
+  return of ?? { role: "main", mainEnvironmentId: null };
+}
+
+/** A shared copy's role among the copies this app sees: one main per project. */
+export function copyRole(
+  copy: MachineProjectInput,
+  projects: readonly MachineProjectInput[],
+  retired?: ReadonlyMap<string, unknown>,
 ): SharedProjectRole {
-  const own = sharedProjectRole(copy.workspaceSettings?.coordinatorBinding);
-  if (own !== "coordinator") return own;
-  const lead = leadCoordinator(copy, projects, retired);
-  return lead === null || copyKey(lead) === copyKey(copy) ? "coordinator" : "also-coordinator";
+  return SHARED_ROLE[roleIn(copy, projects, retired).role];
+}
+
+/** The badge, its tooltip and the main machine's name for a shared copy. */
+function roleWords(
+  copy: MachineProjectInput,
+  projects: readonly MachineProjectInput[],
+  nameOf: (environmentId: EnvironmentId) => string,
+  retired?: ReadonlyMap<string, unknown>,
+): {
+  readonly role: SharedProjectRole;
+  readonly roleLabel: string;
+  readonly roleHelp: string;
+  readonly roleValues?: { readonly machine: string };
+} {
+  const { role, mainEnvironmentId } = roleIn(copy, projects, retired);
+  const main = mainEnvironmentId ? nameOf(mainEnvironmentId as EnvironmentId) : null;
+  const label = copyRoleLabel(role, main);
+  const help = copyRoleHelp(role, main);
+  const values = label.values ?? help.values;
+  return {
+    role: SHARED_ROLE[role],
+    roleLabel: label.text,
+    roleHelp: help.text,
+    ...(values ? { roleValues: values } : {}),
+  };
 }
 
 /** One identity with copies on more than one machine. */
@@ -412,11 +410,13 @@ function otherCopies(
       (candidate) =>
         candidate.environmentId === member.environmentId && candidate.id === member.projectId,
     );
+    const words = copy ? roleWords(copy, projects, (id) => machineOf(id).name, retired) : null;
     copies.push({
       environmentId: member.environmentId,
       ...machineOf(member.environmentId),
       folder: copy?.workspaceRoot ?? null,
-      roleLabel: copy ? ROLE_LABELS[copyRole(copy, projects, retired)] : null,
+      roleLabel: words?.roleLabel ?? null,
+      ...(words?.roleValues ? { roleValues: words.roleValues } : {}),
     });
   }
   return copies;
@@ -457,16 +457,20 @@ function projectsOn(
       )
         continue;
       const shared = isSharedProject(project);
-      const role = shared ? copyRole(project, projects, retired) : "only-here";
+      const words = shared
+        ? roleWords(project, projects, (id) => machineOf(id).name, retired)
+        : {
+            role: "only-here" as const,
+            roleLabel: "Not shared",
+            roleHelp: "No other machine has a copy of this project.",
+          };
       const elsewhere = shared
         ? otherCopies(environmentId, project, projects, machineOf, retired)
         : [];
       lists[projectListOf(project)].push({
         key: project.workspaceSettings?.logicalProject?.id ?? project.id,
         title: logicalProjectTitle(project),
-        role,
-        roleLabel: ROLE_LABELS[role],
-        roleHelp: ROLE_HELP[role],
+        ...words,
         alsoOn: elsewhere.map((copy) => copy.name),
         elsewhere,
         folder: project.workspaceRoot,

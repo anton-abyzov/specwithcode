@@ -2,11 +2,18 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  LogicalProject,
+  ProjectCoordinatorBinding,
+  ProjectId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { projectThreads } from "./projectWorkspaceModel";
 import { isOrchestratorThreadId } from "./projectCoordinatorThreads";
 import { modelLabel, shortMachineName, type ProviderNameSource } from "./shellModel";
 import { isNestedSubagentThread } from "./threadSubagents";
+import { copyRoleLabel } from "./workersOnlyCopy";
 
 export interface ProjectExecutionScope {
   environmentId: EnvironmentId;
@@ -57,8 +64,21 @@ export interface LogicalCoordinators<T> {
   readonly contested: readonly T[];
 }
 
-const memberKey = (member: EnvironmentProject) => `${member.environmentId}:${member.id}`;
-const bindingOf = (member: EnvironmentProject) => member.workspaceSettings?.coordinatorBinding;
+/** What role derivation reads of a copy: the settings app and project pages both pass theirs. */
+export interface CoordinatedCopy {
+  readonly environmentId: string;
+  readonly id: string;
+  readonly workspaceSettings?:
+    | {
+        readonly logicalProject?: LogicalProject | undefined;
+        readonly coordinatorBinding?: ProjectCoordinatorBinding | undefined;
+      }
+    | null
+    | undefined;
+}
+
+const memberKey = (member: CoordinatedCopy) => `${member.environmentId}:${member.id}`;
+const bindingOf = (member: CoordinatedCopy) => member.workspaceSettings?.coordinatorBinding;
 
 /**
  * The coordinators of a linked project. Each machine may run its own (0969), so
@@ -66,7 +86,7 @@ const bindingOf = (member: EnvironmentProject) => member.workspaceSettings?.coor
  * took over again is superseded. A copy never becomes a coordinator by election:
  * its own server records the binding.
  */
-export function logicalCoordinators<T extends EnvironmentProject>(
+export function logicalCoordinators<T extends CoordinatedCopy>(
   members: readonly T[],
 ): LogicalCoordinators<T> | null {
   const declared = members.filter((member) => member.workspaceSettings?.logicalProject);
@@ -142,6 +162,72 @@ export function logicalCoordinator<T extends EnvironmentProject>(
   return { problem: COORDINATOR_UNAVAILABLE_PROBLEM };
 }
 
+/**
+ * A linked copy's part in its project, one derivation for the project menu, the sidebar
+ * and Settings. main: the copy that leads the project (newest epoch among the live
+ * coordinators, then machine and project id, never a copy on a retired machine record).
+ * also-main: runs a coordinator of its own too (each machine may), but main is another
+ * copy. copy: handed main on, or was taken over; work for it starts from main. moving:
+ * main is moving to or from it and the move is not confirmed yet.
+ */
+export type CopyRole = "main" | "also-main" | "copy" | "moving";
+
+export interface CopyRoleOf<T> {
+  readonly role: CopyRole;
+  /** The machine main is on, when another copy in sight or a recorded successor names it. */
+  readonly mainEnvironmentId: string | null;
+  readonly main: T | null;
+}
+
+/**
+ * Every linked copy's role among `copies` (the copies of one project this app sees).
+ * Keyed `environmentId:projectId`; copies without a logical project are left out.
+ * `retired`: old records of machines that joined again, which never lead.
+ */
+export function copyRoles<T extends CoordinatedCopy>(
+  copies: readonly T[],
+  retired?: { has(environmentId: string): boolean },
+): ReadonlyMap<string, CopyRoleOf<T>> {
+  const found = logicalCoordinators(copies);
+  const roles = new Map<string, CopyRoleOf<T>>();
+  if (!found) return roles;
+  const epochOf = (copy: T) => bindingOf(copy)?.epoch ?? 0;
+  // A linked copy with no binding recorded yet coordinates, as it always has.
+  const live = new Set([
+    ...found.coordinators,
+    ...copies.filter((copy) => copy.workspaceSettings?.logicalProject && !bindingOf(copy)),
+  ]);
+  // Code-unit order, not locale order, so every device picks the same main.
+  const [main = null] = [...live]
+    .filter((copy) => !retired?.has(copy.environmentId))
+    .toSorted(
+      (a, b) =>
+        epochOf(b) - epochOf(a) ||
+        (memberKey(a) < memberKey(b) ? -1 : memberKey(a) > memberKey(b) ? 1 : 0),
+    );
+  for (const copy of copies) {
+    if (!copy.workspaceSettings?.logicalProject) continue;
+    const state = bindingOf(copy)?.state;
+    const role: CopyRole =
+      state === "transferring"
+        ? "moving"
+        : copy === main
+          ? "main"
+          : live.has(copy)
+            ? "also-main"
+            : "copy";
+    const successor = bindingOf(copy)?.successor;
+    roles.set(memberKey(copy), {
+      role,
+      main,
+      mainEnvironmentId:
+        main?.environmentId ??
+        (state === "transferred" && successor ? successor.environmentId : null),
+    });
+  }
+  return roles;
+}
+
 export function logicalProjectThreads(
   threads: readonly EnvironmentThreadShell[],
   scopes: readonly ProjectExecutionScope[],
@@ -192,9 +278,8 @@ export function requestExecutionLabel(
 }
 
 /**
- * "M4: coordinator · M3: runs workers" for a project shared across machines;
- * null for a project with one copy. The sidebar shows the project once and
- * names each copy here.
+ * "M4: Main · M3: Copy" for a project shared across machines; null for a project with
+ * one copy. The sidebar shows the project once and names each copy here.
  */
 export function copyRolesSummary<
   T extends EnvironmentProject & { readonly environmentLabel?: string | null },
@@ -205,18 +290,11 @@ export function copyRolesSummary<
 ): string | null {
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
-  const coordinators = new Set<T>(logicalCoordinators(shared)?.coordinators ?? []);
+  const roles = copyRoles(shared);
   return shared
     .map((member) => {
-      const state = member.workspaceSettings?.coordinatorBinding?.state;
-      const role = coordinators.has(member)
-        ? "coordinator"
-        : state === "transferring"
-          ? "handoff pending"
-          : state === "transferred"
-            ? "runs workers"
-            : "coordinator unconfirmed";
-      return `${nameOf(member)}: ${role}`;
+      const role = roles.get(memberKey(member))?.role ?? "copy";
+      return `${nameOf(member)}: ${copyRoleLabel(role, null).text}`;
     })
     .join(" · ");
 }

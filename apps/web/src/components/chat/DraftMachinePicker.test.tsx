@@ -683,8 +683,9 @@ it("opens the folder copy review for a project with no Git remote, never a clone
 });
 
 it("offers Link, never Clone, when the machine has an unlinked checkout of the same remote", async () => {
+  // A copy matches by repository and place in it: both checkouts sit at their repository root.
   const identity = { canonicalKey: "github.com/acme/data", locator: { kind: "remote" } };
-  runtime.projects[0].repositoryIdentity = identity;
+  runtime.projects[0].repositoryIdentity = { ...identity, rootPath: "/m4/data" };
   runtime.projects.push(
     {
       id: ProjectId.make("same-name-m3"),
@@ -697,7 +698,7 @@ it("offers Link, never Clone, when the machine has an unlinked checkout of the s
       environmentId: m1,
       title: "data checkout",
       workspaceRoot: "/m1/code/data",
-      repositoryIdentity: identity,
+      repositoryIdentity: { ...identity, rootPath: "/m1/code/data" },
     },
   );
   await render();
