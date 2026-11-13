@@ -456,6 +456,30 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         });
       }
       const { threadId: _threadId, expectedRunId, ...report } = input;
+      // "No code" is checked against what the app recorded, not the child's
+      // word: a run with file changes or a linked pull request is code work.
+      if (report.kind === "no_code") {
+        const changes = yield* threads
+          .getProjectThreadRecords(
+            { projectId: projection.thread.projectId, threadId: projection.thread.id },
+            ["turnItems"],
+            { turnItemTypes: ["file_change"], turnItemRunIds: [expectedRunId] },
+          )
+          .pipe(Effect.mapError(unavailable));
+        const files = changes.turnItems.flatMap((item) =>
+          item.type === "file_change" ? [item.fileName] : [],
+        );
+        const pullRequests = projection.thread.pullRequests ?? [];
+        if (files.length > 0 || pullRequests.length > 0)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: `${
+              files.length > 0
+                ? `Run ${expectedRunId} changed files (${[...new Set(files)].slice(0, 5).join(", ")})`
+                : "This thread has a linked pull request"
+            }, so it is code work: record kind code with push, merge and deployment evidence after an independent check.`,
+          });
+      }
       const result = yield* threads
         .dispatch({
           type: "thread.lifecycle-receipt.record",

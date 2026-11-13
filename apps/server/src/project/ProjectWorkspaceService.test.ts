@@ -543,8 +543,11 @@ it("asks workers for short reports and the coordinator to relay only their outco
   assert.notInclude(coordinator, 'never "Studio"');
   assert.include(coordinator, "You coordinate this project's work and do none of it yourself");
   // Trivial questions stay with the coordinator; work still goes to workers.
-  assert.include(coordinator, "the clock section or settled facts with no worker");
-  assert.include(coordinator, "current facts (versions, prices) need a web lookup");
+  assert.include(coordinator, "the clock section or settled general facts with no worker");
+  assert.include(
+    coordinator,
+    "this project's code and current facts (versions, prices) go to a worker",
+  );
   assert.include(coordinator, "running commands, web lookups");
   assert.include(coordinator, "starts the worker with delegate_task in mode async");
   assert.include(coordinator, "do not relay, summarize or repeat it here");
@@ -601,7 +604,8 @@ it("keeps the coordinator role to what tools and code do not already say", () =>
   assert.notInclude(coordinator, "This project plans its work in SpecWeave");
   assert.notInclude(coordinator, "expectedRevision");
   // About 1,100 tokens; it was about 1,850 before the role moved into tools and code.
-  assert.isAtMost(coordinator.length, 4_500);
+  // About 1,150 tokens, with the clock and question-only delivery lines (November 13, 2026).
+  assert.isAtMost(coordinator.length, 4_700);
 });
 it("asks a coordinator for an increment on every launch only in a SpecWeave project", () => {
   const settings = {
@@ -681,7 +685,8 @@ it("keeps the worker and personal coordinator roles within their budgets", () =>
   assert.isAtMost(role("w", "code").length, 900);
   // About 2,060 tokens for a personal project's coordinator, with the person's
   // memory, topics and services lines (November 3, 2026).
-  assert.isAtMost(role("c", "personal").length, 8_300);
+  // Plus the clock and question-only delivery lines (November 13, 2026).
+  assert.isAtMost(role("c", "personal").length, 8_500);
 });
 it("tells a coordinator how to run workers on another machine and where this project's go", () => {
   const settings = {

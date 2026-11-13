@@ -37,11 +37,11 @@ describe("delegatedCompletionWakeText", () => {
     assert.include(text, "Do not start another worker just to verify a verifier's receipt");
   });
 
-  it("lets the parent resolve an answer-only child itself", () => {
+  it("lets the parent resolve a question-only child itself", () => {
     const text = delegatedCompletionWakeText(["task-1"]);
-    assert.include(text, "only answered a question or reported findings");
-    assert.include(text, "studio_thread_read view activity shows its run changed no files");
-    assert.include(text, "Record delivery yourself with kind no_code");
-    assert.include(text, "so its thread resolves");
+    assert.include(text, "asked only to answer a question or look something up");
+    assert.include(text, "with no change requested");
+    assert.include(text, "record delivery yourself with kind no_code");
+    assert.include(text, "the app refuses no_code for a run that changed files");
   });
 });

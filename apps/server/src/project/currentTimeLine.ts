@@ -1,8 +1,9 @@
 /**
- * The one line every project turn starts with: this machine's local date,
- * time and timezone when the turn was sent. System prompts are fixed when a
- * session starts, so the clock travels with each message instead; without it
- * a coordinator answered "what time is it?" by starting a worker.
+ * The project coordinator's `clock` context section: this machine's local
+ * date, time and timezone when the turn was sent. System prompts are fixed
+ * when a session starts, so the clock travels with each coordinator message
+ * and wake instead; without it a coordinator answered "what time is it?" by
+ * starting a worker. Workers read the time themselves.
  */
 export const CURRENT_TIME_PREFIX = "Current local time on this machine:";
 
