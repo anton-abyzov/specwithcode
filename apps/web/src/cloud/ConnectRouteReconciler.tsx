@@ -6,32 +6,16 @@ import {
   connectionRoutes,
   hasRelayRoute,
 } from "@specweave-studio/client-runtime/connection";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@specweave-studio/client-runtime/state/runtime";
-import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
-import { useClientSettings } from "../hooks/useSettings";
 import { useProjects } from "../state/entities";
-import {
-  useEnvironments,
-  usePrimaryEnvironmentId,
-  useRelayEnvironmentDiscovery,
-} from "../state/environments";
+import { useEnvironments, useRelayEnvironmentDiscovery } from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useStudioFleet } from "../studio/fleet";
 import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
-import {
-  clearAccountAutoConnectFailure,
-  grantedAccountMachinesToConnect,
-  grantedMachinesMissingFromAccount,
-  recordAccountAutoConnectFailure,
-} from "../studio/grantedAccountMachines";
 import { linkedMachinesToConnect } from "../studio/linkedMachines";
+import { GrantedAccountMachines } from "./GrantedAccountMachines";
 import {
   connectFirstRouteOrder,
   isConnectRouteRemoving,
@@ -46,16 +30,6 @@ const MAX_REORDER_ATTEMPTS = 3;
 const MAX_ADD_ATTEMPTS = 3;
 /** How often the Connect list is re-read while a saved machine can't be reached. */
 const UNREACHABLE_REFRESH_MS = 5 * 60_000;
-// The fleet atom needs an id; one that matches no environment reads as no fleet.
-const NO_ENVIRONMENT = "" as EnvironmentId;
-
-/** Plain words for a failed automatic Connect save, shown beside Connect in the move dialog. */
-function connectFailureReason(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
-  const cause = squashAtomCommandFailure(result);
-  return cause instanceof Error && cause.message
-    ? cause.message
-    : "SpecWithCode Connect did not answer for it.";
-}
 
 /**
  * While signed in to SpecWithCode Connect, keeps a Connect route on every
@@ -64,22 +38,14 @@ function connectFailureReason(result: Parameters<typeof squashAtomCommandFailure
  * sign-out or a failed add comes back; only one the user removed from the
  * route list stays removed. A machine a shared project names but this device
  * never saved, such as the machine a handed-off project came from, is saved
- * with a Connect route, unless the user removed it here. So is an account
- * machine that let this machine run work on it (it is in this server's fleet)
- * and has no Tailscale address, while Connect automatically is on: the grant
- * given there is enough, nothing needs pressing here. The caller keys this
- * by account.
+ * with a Connect route, unless the user removed it here. Account machines
+ * that allowed this one to run work on them are saved by
+ * {@link GrantedAccountMachines}. The caller keys this by account.
  */
 export function ConnectRouteReconciler() {
   const { environments } = useEnvironments();
   const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
-  const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const fleet = useStudioFleet(primaryEnvironmentId ?? NO_ENVIRONMENT);
-  const fleetSnapshot = autoConnect && primaryEnvironmentId !== null ? fleet.snapshot : null;
-  // Fleet machines the account list was re-read for, once each.
-  const lookedUpRef = useRef<Set<string>>(new Set());
   const register = useAtomCommand(environmentCatalog.register, {
     label: "Add SpecWithCode Connect route",
     reportFailure: false,
@@ -190,64 +156,7 @@ export function ConnectRouteReconciler() {
         }),
       ).then(() => inFlightRef.current.delete(machine.environmentId));
     }
-    // Account machines that allowed this one to run work on them, Connect-only.
-    const savedEnvironmentIds = new Set<string>(
-      environments.map((machine) => machine.environmentId),
-    );
-    const granted = grantedAccountMachinesToConnect({
-      snapshot: fleetSnapshot,
-      currentEnvironmentId: primaryEnvironmentId,
-      savedEnvironmentIds,
-      discovered: discovery.environments,
-      skip: new Set([
-        ...skip,
-        ...readSkippedFleetEnvironments(),
-        ...linked.map((machine) => machine.environmentId),
-      ]),
-    });
-    for (const machine of granted) {
-      inFlightRef.current.add(machine.environmentId);
-      addAttemptsRef.current.set(
-        machine.environmentId,
-        (addAttemptsRef.current.get(machine.environmentId) ?? 0) + 1,
-      );
-      void register(
-        new RelayConnectionRegistration({
-          target: new RelayConnectionTarget({
-            environmentId: machine.environmentId,
-            label: machine.label,
-          }),
-        }),
-      ).then((result) => {
-        inFlightRef.current.delete(machine.environmentId);
-        if (result._tag === "Success") clearAccountAutoConnectFailure(machine.environmentId);
-        else if (!isAtomCommandInterrupted(result))
-          recordAccountAutoConnectFailure(machine.environmentId, connectFailureReason(result));
-      });
-    }
-    // A machine that joined a moment ago may not be on the account list read
-    // earlier: read it again, once per machine.
-    const missing = grantedMachinesMissingFromAccount({
-      snapshot: fleetSnapshot,
-      currentEnvironmentId: primaryEnvironmentId,
-      savedEnvironmentIds,
-      discovered: discovery.environments,
-    }).filter((id) => !lookedUpRef.current.has(id));
-    if (missing.length > 0) {
-      for (const id of missing) lookedUpRef.current.add(id);
-      void refreshDiscovery();
-    }
-  }, [
-    discovery,
-    environments,
-    fleetSnapshot,
-    primaryEnvironmentId,
-    projects,
-    refreshDiscovery,
-    register,
-    registerRequested,
-    requests,
-  ]);
+  }, [discovery, environments, projects, register, registerRequested, requests]);
 
   // Reorder once the catalog shows the new route, so the order lists every route.
   useEffect(() => {
@@ -285,5 +194,5 @@ export function ConnectRouteReconciler() {
     return () => clearInterval(timer);
   }, [anyUnreachable, refreshDiscovery]);
 
-  return null;
+  return <GrantedAccountMachines />;
 }

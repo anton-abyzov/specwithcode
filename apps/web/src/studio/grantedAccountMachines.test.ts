@@ -3,11 +3,10 @@ import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/r
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  accountAutoConnectFailures,
-  clearAccountAutoConnectFailure,
+  accountAutoConnectStates,
   grantedAccountMachinesToConnect,
   grantedMachinesMissingFromAccount,
-  recordAccountAutoConnectFailure,
+  publishAccountAutoConnectStates,
 } from "./grantedAccountMachines";
 
 const CONNECT_URL = "https://relay.specwithcode.com/e/m5";
@@ -92,10 +91,33 @@ describe("grantedAccountMachinesToConnect", () => {
     ).toEqual(["m5"]);
   });
 
-  it("remembers why an automatic connection failed until it works", () => {
-    recordAccountAutoConnectFailure("m5", "Relay refused");
-    expect(accountAutoConnectFailures().get("m5")).toBe("Relay refused");
-    clearAccountAutoConnectFailure("m5");
-    expect(accountAutoConnectFailures().has("m5")).toBe(false);
+  it("includes a tailnet machine only when it was asked for by hand", () => {
+    const input = {
+      snapshot: fleet({ environmentId: "m1", url: "https://m1.tail1234.ts.net:3773" }),
+      currentEnvironmentId: "m4",
+      savedEnvironmentIds: new Set<string>(),
+      discovered: account("m1"),
+    };
+    expect(grantedAccountMachinesToConnect(input)).toEqual([]);
+    expect(
+      grantedAccountMachinesToConnect({ ...input, requested: new Set(["m1"]) }).map(
+        (machine) => machine.environmentId,
+      ),
+    ).toEqual(["m1"]);
+  });
+
+  it("publishes one state per machine, and only when it changes", () => {
+    publishAccountAutoConnectStates(new Map([["m5", { phase: "connecting" }]]));
+    const first = accountAutoConnectStates();
+    publishAccountAutoConnectStates(new Map([["m5", { phase: "connecting" }]]));
+    expect(accountAutoConnectStates()).toBe(first);
+    publishAccountAutoConnectStates(
+      new Map([["m5", { phase: "failed", reason: "Relay refused" }]]),
+    );
+    expect(accountAutoConnectStates().get("m5")).toEqual({
+      phase: "failed",
+      reason: "Relay refused",
+    });
+    publishAccountAutoConnectStates(new Map());
   });
 });

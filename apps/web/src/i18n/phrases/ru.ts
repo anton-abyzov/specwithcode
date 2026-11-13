@@ -4606,14 +4606,15 @@ export const ru: PhraseCatalog = {
     "Установка завершилась с ошибкой. Лог ниже. Нажмите там «Повторить» или выполните команду в терминале.",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "Нужен другой агент или свой провайдер, например Muse Code? Добавьте его в любой момент после настройки в разделе Настройки > Провайдеры.",
-  "Could not connect to {name}. Check that SpecWithCode is open there, then try again.":
-    "Не удалось подключиться к {name}. Проверьте, что там открыт SpecWithCode, и попробуйте снова.",
   "Connect automatically is off.": "Автоподключение выключено.",
-  "Not answering over SpecWithCode Connect.": "Не отвечает через SpecWithCode Connect.",
   "SpecWithCode Connect did not answer for it.": "SpecWithCode Connect не ответил за эту машину.",
   "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
     "Нет в списке: {names}. Чтобы использовать машину здесь, откройте на ней Настройки > Машины и разрешите этой машине запускать там работу.",
   "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
     "Нет в списке: {names}. Это приложение к ним ещё не подключено. Войдите здесь в SpecWithCode Connect с тем же аккаунтом или подключите их в",
   "Settings > Machines": "Настройки > Машины",
+  "Connecting over SpecWithCode Connect…": "Подключение через SpecWithCode Connect…",
+  "Not connected to this app yet.": "Ещё не подключена к этому приложению.",
+  "Removed from this app.": "Удалена из этого приложения.",
+  "SpecWithCode Connect cannot be reached right now.": "SpecWithCode Connect сейчас недоступен.",
 };

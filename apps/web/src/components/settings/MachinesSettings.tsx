@@ -29,13 +29,14 @@ import { displayFolder } from "../../lib/displayFolder";
 import { machineStatus } from "../../lib/machineStatus";
 import { desktopNetworkAccessStateAtom } from "../../state/desktopNetworkAccess";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   addVisibleMachineToStudioFleet,
   useMachineWorkGrants,
   useStudioFleet,
 } from "../../studio/fleet";
+import { useAccountAutoConnectStates } from "../../studio/grantedAccountMachines";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
@@ -57,6 +58,7 @@ import {
   type MachineWorkerGrant,
   type MachineWorkHere,
   ACCOUNT_NOT_REPORTED,
+  withAccountConnectState,
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { AccountJoinCard } from "./AccountJoinCard";
@@ -142,7 +144,9 @@ export function MachinesSettingsPanel() {
   const [addingProject, setAddingProject] = useState<AddProjectTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const rows = useMemo(
+  const accountStates = useAccountAutoConnectStates();
+  const accountMachines = useRelayEnvironmentDiscovery().environments;
+  const builtRows = useMemo(
     () =>
       buildMachineRows({
         environments: environments.map((environment) => ({
@@ -167,6 +171,18 @@ export function MachinesSettingsPanel() {
         displayName: machineName,
       }),
     [environments, fleet, hostBlocks, projects, grants.snapshot, configs, machineName],
+  );
+  // Connect-only machines that allowed this one are saved over Connect, not paired.
+  const rows = useMemo(
+    () =>
+      builtRows.map((row) =>
+        withAccountConnectState(
+          row,
+          accountStates.get(row.environmentId),
+          accountMachines.has(row.environmentId),
+        ),
+      ),
+    [accountMachines, accountStates, builtRows],
   );
 
   async function connect(machine: StudioFleetMachine) {

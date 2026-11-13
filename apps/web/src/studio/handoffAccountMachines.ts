@@ -1,14 +1,15 @@
 /**
  * Machines of this SpecWithCode Connect account that the move dialog cannot
  * list yet, and what to do about each. A machine that let this one run work
- * on it is saved on its own (see grantedAccountMachines); only when that
- * fails, or Connect automatically is off, is Connect offered by hand, with
- * the reason. A machine that has not allowed this one yet is named with where
- * to allow it.
+ * on it is saved on its own (see grantedAccountMachines); while that runs it
+ * says so, and when it fails or is held (Connect automatically off, removed
+ * here) Connect is offered by hand, with the reason. A machine that has not
+ * allowed this one yet is named with where to allow it.
  *
  * @module handoffAccountMachines
  */
 import { fleetMachineHasTailnetAddress } from "./fleetAutoConnect";
+import type { AccountAutoConnectState } from "./grantedAccountMachines";
 
 export interface HandoffAccountMachine {
   readonly environmentId: string;
@@ -18,8 +19,10 @@ export interface HandoffAccountMachine {
 }
 
 export interface HandoffConnectFallback extends HandoffAccountMachine {
-  /** Why it was not connected on its own. */
+  /** Why it is not in the list yet. */
   readonly reason: string;
+  /** Being saved over SpecWithCode Connect now: Connect waits. */
+  readonly connecting: boolean;
 }
 
 interface Discovered {
@@ -33,8 +36,8 @@ interface FleetEntry {
   readonly url: string;
 }
 
-export const AUTO_CONNECT_OFF_REASON = "Connect automatically is off.";
-export const NOT_ANSWERING_REASON = "Not answering over SpecWithCode Connect.";
+export const CONNECTING_REASON = "Connecting over SpecWithCode Connect…";
+export const NOT_CONNECTED_REASON = "Not connected to this app yet.";
 
 export function handoffAccountMachines(input: {
   readonly discovered: Iterable<Discovered>;
@@ -42,21 +45,26 @@ export function handoffAccountMachines(input: {
   readonly savedEnvironmentIds: ReadonlySet<string>;
   /** The machine the project is on. */
   readonly sourceEnvironmentId: string;
-  /** The machines this app's server fleet lists: those that allowed this one to run work. */
-  readonly fleet: ReadonlyArray<FleetEntry>;
-  readonly autoConnect: boolean;
-  /** Why the last automatic connection failed, by machine. */
-  readonly failures: ReadonlyMap<string, string>;
+  /**
+   * The machines this app's server fleet lists: those that allowed this one
+   * to run work. Null until it has loaded, when nothing is said yet.
+   */
+  readonly fleet: ReadonlyArray<FleetEntry> | null;
+  /** Where saving each Connect-only machine stands, from the reconciler. */
+  readonly states: ReadonlyMap<string, AccountAutoConnectState>;
+  /** Tailnet machines whose automatic fleet pairing has finished. */
+  readonly fleetPairingSettled: (environmentId: string) => boolean;
   readonly name?: (environmentId: string, label: string) => string;
 }): {
-  /** Connect by hand, with the reason it did not happen on its own. */
+  /** Shown with Connect and the reason it is not listed yet. */
   readonly fallback: HandoffConnectFallback[];
   /** On the account, not in the fleet: the machine has not allowed this one yet. */
   readonly notAllowed: HandoffAccountMachine[];
 } {
-  const fleetById = new Map(input.fleet.map((machine) => [machine.environmentId, machine]));
   const fallback: HandoffConnectFallback[] = [];
   const notAllowed: HandoffAccountMachine[] = [];
+  if (input.fleet === null) return { fallback, notAllowed };
+  const fleetById = new Map(input.fleet.map((machine) => [machine.environmentId, machine]));
   for (const { environment, availability } of input.discovered) {
     const id = environment.environmentId;
     if (id === input.sourceEnvironmentId || input.savedEnvironmentIds.has(id)) continue;
@@ -70,14 +78,14 @@ export function handoffAccountMachines(input: {
       notAllowed.push(machine);
       continue;
     }
-    const failure = input.failures.get(id);
-    if (failure !== undefined) fallback.push({ ...machine, reason: failure });
-    else if (!input.autoConnect) fallback.push({ ...machine, reason: AUTO_CONNECT_OFF_REASON });
-    // A machine with a tailnet address is paired by the fleet, and one without
-    // is being saved over Connect right now: neither needs a button unless it
-    // is not answering.
-    else if (!fleetMachineHasTailnetAddress(inFleet) && !machine.answering)
-      fallback.push({ ...machine, reason: NOT_ANSWERING_REASON });
+    const state = input.states.get(id);
+    if (state?.phase === "connecting")
+      fallback.push({ ...machine, reason: CONNECTING_REASON, connecting: true });
+    else if (state) fallback.push({ ...machine, reason: state.reason, connecting: false });
+    // A tailnet machine is paired by the fleet; once that has finished without
+    // saving it, Connect over SpecWithCode Connect is the way left.
+    else if (fleetMachineHasTailnetAddress(inFleet) && input.fleetPairingSettled(id))
+      fallback.push({ ...machine, reason: NOT_CONNECTED_REASON, connecting: false });
   }
   const byLabel = (a: HandoffAccountMachine, b: HandoffAccountMachine) =>
     a.label.localeCompare(b.label);

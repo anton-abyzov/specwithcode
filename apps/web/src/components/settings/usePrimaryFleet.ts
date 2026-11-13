@@ -2,6 +2,7 @@ import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/cont
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
 import { useCallback, useMemo } from "react";
 
+import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
 import { connectPairing } from "../../connection/onboarding";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
@@ -9,6 +10,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { pairStudioFleet, useStudioFleet } from "../../studio/fleet";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
+  fleetMachineHasTailnetAddress,
   rejectedSavedEnvironments,
   savedRouteOrigins,
   setFleetEnvironmentSkipped,
@@ -54,6 +56,11 @@ export function usePrimaryFleet() {
   const pair = useAtomCommand(connectPairing, { reportFailure: false });
   const connect = useCallback(
     async (machine: StudioFleetMachine) => {
+      // Without a tailnet address there is nothing to pair with: save it over Connect.
+      if (!fleetMachineHasTailnetAddress(machine)) {
+        requestConnectRoutes([machine.environmentId]);
+        return;
+      }
       if (primaryEnvironmentId === null) throw new Error("This app has no machine of its own.");
       const credential = await pairStudioFleet(primaryEnvironmentId, machine.id);
       const result = await pair({

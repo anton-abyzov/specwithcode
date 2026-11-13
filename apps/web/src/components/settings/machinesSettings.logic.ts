@@ -15,7 +15,8 @@ import type {
   StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
 
-import { fleetMachineSaved } from "../../studio/fleetAutoConnect";
+import { fleetMachineHasTailnetAddress, fleetMachineSaved } from "../../studio/fleetAutoConnect";
+import type { AccountAutoConnectState } from "../../studio/grantedAccountMachines";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
 import type { HostLimitBlock } from "../../studio/hostLimitsModel";
 import {
@@ -252,6 +253,36 @@ export function unopenedFleetMachineSeen(
         ? " via Tailscale"
         : "";
   return { state: "reachable", text: `Reachable${via} · not open in this window` };
+}
+
+/**
+ * A row for a Connect-only machine of this account that allowed this one:
+ * it is saved over SpecWithCode Connect on its own, so the row says how that
+ * stands instead of asking for a Tailscale pairing. Other rows are unchanged.
+ */
+export function withAccountConnectState(
+  row: MachineRowModel,
+  state: AccountAutoConnectState | undefined,
+  onAccount: boolean,
+): MachineRowModel {
+  if (
+    row.connect === null ||
+    row.fleetMachine === null ||
+    fleetMachineHasTailnetAddress(row.fleetMachine) ||
+    !onAccount
+  )
+    return row;
+  if (state?.phase === "connecting")
+    return {
+      ...row,
+      seen: { state: "reachable", text: "Connecting over SpecWithCode Connect…" },
+      connect: { enabled: false, label: "Connecting…" },
+    };
+  return {
+    ...row,
+    seen: state ? { state: row.seen.state, text: state.reason } : row.seen,
+    connect: { enabled: true, label: "Connect" },
+  };
 }
 
 /** Connect for a private machine, or why it cannot be pressed yet. */
