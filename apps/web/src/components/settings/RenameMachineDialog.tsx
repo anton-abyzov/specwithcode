@@ -116,7 +116,10 @@ export function RenameMachineDialog({
   }, [open]);
   const next = normalizeMachineNickname(value);
   const lockText = renameMachineLockText(lock);
-  const nameChanged = next !== current;
+  // Typing the cut computer name on purpose chooses it, though it matches the start value.
+  const choosesCutName =
+    custom === null && nameTouched && next === defaultName && defaultName !== fullDefaultName;
+  const nameChanged = next !== current || choosesCutName;
   // Letters typed here win; otherwise a changed name brings its own and an
   // unchanged one keeps the stored pair. The preview shows which, before Save.
   const nextShort = shortTouched
@@ -146,20 +149,19 @@ export function RenameMachineDialog({
     );
     return environmentId === null ? "" : (assigned.get(environmentId) ?? "");
   }, [nicknames, labels, environmentId, previewName]);
-  const previewShort = nextShort !== "" ? nextShort : derivedShort;
+  // An unchanged name keeps the letters it shows now; only a new name is re-assigned.
+  const previewShort =
+    nextShort !== "" ? nextShort : !nameChanged && identity ? identity.short : derivedShort;
   const clash = environmentId !== null && nameChanged ? nameHolder(environmentId, next) : null;
   const looksChanged =
     identity !== null &&
     (color !== identity.color || icon !== identity.icon || nextShort !== storedShort);
-  // Typing the cut computer name on purpose chooses it, though it matches the start value.
-  const choosesCutName =
-    custom === null && nameTouched && next === defaultName && defaultName !== fullDefaultName;
   const canSave =
     environmentId !== null &&
     lock === null &&
     next !== "" &&
     shortValid &&
-    (nameChanged || looksChanged || choosesCutName);
+    (nameChanged || looksChanged);
   const typeName = (name: string) => {
     setValue(name);
     setNameTouched(true);

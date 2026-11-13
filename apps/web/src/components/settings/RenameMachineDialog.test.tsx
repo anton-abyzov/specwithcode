@@ -110,6 +110,19 @@ describe("RenameMachineDialog", () => {
     );
   });
 
+  it("warns about a clash for the cut computer name chosen on purpose", () => {
+    state.nicknames = { other: { name: "Anton M5MAX", updatedAt: "2026-11-12T00:00:00Z" } };
+    open();
+    type(nameInput(), "Anton M5MA");
+    type(nameInput(), "Anton M5MAX");
+    expect(document.querySelector("[data-machine-name-clash]")).not.toBeNull();
+  });
+
+  it("previews the letters it shows now while the name is unchanged", () => {
+    open();
+    expect(document.querySelector("[data-preview-short]")?.textContent).toBe("AM");
+  });
+
   it("keeps chosen chip letters while the name stays the same", () => {
     state.nicknames = { [live]: { name: "Studio", updatedAt: "2026-11-13T00:00:00Z", short: "MX" } };
     open();
