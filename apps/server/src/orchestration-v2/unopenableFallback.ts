@@ -63,6 +63,7 @@ export type FallbackThread = Pick<
       | "interactionMode"
       | "updatedAt"
       | "modelIdentity"
+      | "routing"
     >
   >;
 

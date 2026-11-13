@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Plain promises over an increment folder, like ThreadIncrementProgress.
 /**
- * An increment's review policy (spec.md `## Review`) and its newest review
+ * An increment's review policy (spec.md `## Review` over the project's
+ * `.specweave/config.json` `review` layers) and its newest review
  * record (`reports/review*.md`, `reports/reviews/*.md`, as `specweave review`
  * and `specweave review --record` write them), read offline for the plan card
  * and for review delegations. No CLI, no Git; reads write nothing.
@@ -11,10 +12,14 @@ import * as NodeFSP from "node:fs/promises";
 
 import type { ThreadIncrementReview } from "@specweave-studio/contracts";
 import {
+  canonicalReviewFamily,
+  incrementReviewRepos,
   type IncrementReviewPolicy,
-  parseIncrementReviewPolicy,
   parseReviewRecordHeader,
-  reviewPolicyAccepts,
+  type ReviewConfigLayer,
+  type ReviewRecordForPolicy,
+  resolveIncrementReviewPolicy,
+  reviewPolicySatisfied,
 } from "@specweave-studio/shared/reviewPolicy";
 
 import { nodePath as NodePath } from "../nodePath.ts";
@@ -36,12 +41,35 @@ async function readSmall(path: string, maximum: number): Promise<string | null> 
   }
 }
 
-/** An increment's `## Review` policy, or null when its spec is missing or has none. */
+const CONFIG_BYTES = 262_144;
+
+/** The project's `review` config for an increment folder (`<root>/.specweave/increments/<id>`). */
+async function readReviewConfig(incrementPath: string): Promise<ReviewConfigLayer | null> {
+  const text = await readSmall(
+    NodePath.join(incrementPath, "..", "..", "config.json"),
+    CONFIG_BYTES,
+  );
+  if (text === null) return null;
+  try {
+    const config = JSON.parse(text) as { review?: unknown };
+    return config.review !== null && typeof config.review === "object"
+      ? (config.review as ReviewConfigLayer)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** An increment's effective review policy, or null when neither its spec nor the project config sets one. */
 export async function readIncrementReviewPolicy(
   specPath: string,
 ): Promise<IncrementReviewPolicy | null> {
-  const spec = await readSmall(specPath, SPEC_BYTES);
-  return spec === null ? null : parseIncrementReviewPolicy(spec);
+  const incrementPath = NodePath.dirname(specPath);
+  const [spec, config] = await Promise.all([
+    readSmall(specPath, SPEC_BYTES),
+    readReviewConfig(incrementPath),
+  ]);
+  return resolveIncrementReviewPolicy({ spec, config });
 }
 
 interface ReviewFile {
@@ -75,17 +103,6 @@ async function listReviewFiles(incrementPath: string): Promise<ReviewFile[]> {
   );
 }
 
-/** The ledger's finishing tool family, the way SpecWeave reads the author (`claude@mbp` is claude). */
-function familyOfTool(tool: string): string {
-  const t = tool.toLowerCase();
-  if (/^(claude|anthropic|opus|sonnet|haiku|fable)/u.test(t)) return "claude";
-  if (/^(codex|openai|gpt|chatgpt)/u.test(t)) return "openai";
-  if (/^(grok|xai)/u.test(t)) return "xai";
-  if (/^(gemini|google)/u.test(t)) return "google";
-  if (/^(muse|meta)/u.test(t)) return "meta";
-  return t;
-}
-
 /** The family that finished the most tasks in a ledger, or null. */
 export function ledgerAuthorFamily(ledger: string | null): string | null {
   if (ledger === null) return null;
@@ -96,7 +113,8 @@ export function ledgerAuthorFamily(ledger: string | null): string | null {
       try {
         const event = JSON.parse(line) as { e?: unknown; by?: unknown };
         if (event.e !== type || typeof event.by !== "string" || !event.by.includes("@")) continue;
-        const family = familyOfTool(event.by.split("@")[0] ?? "");
+        const tool = event.by.split("@")[0] ?? "";
+        const family = canonicalReviewFamily(tool) ?? tool.toLowerCase();
         counts.set(family, (counts.get(family) ?? 0) + 1);
       } catch {
         // a malformed line counts for nothing
@@ -120,10 +138,21 @@ export async function readIncrementReview(input: {
   readonly spec: string | null;
   readonly ledger: string | null;
 }): Promise<ThreadIncrementReview | null> {
-  const policy = input.spec === null ? null : parseIncrementReviewPolicy(input.spec);
+  const policy = resolveIncrementReviewPolicy({
+    spec: input.spec,
+    config: await readReviewConfig(input.incrementPath),
+  });
   const files = await listReviewFiles(input.incrementPath);
   const author = ledgerAuthorFamily(input.ledger);
-  const records = [];
+  const records: Array<
+    ReviewRecordForPolicy & {
+      readonly head: string | null;
+      readonly at: string;
+      readonly path: string;
+      readonly atMs: number;
+      readonly numbered: boolean;
+    }
+  > = [];
   for (const file of files) {
     const text = await readSmall(file.path, REPORT_BYTES);
     if (text === null) continue;
@@ -135,30 +164,35 @@ export async function readIncrementReview(input: {
         : (verdictMatch[1] ?? "").toLowerCase() === "ship"
           ? ("ship" as const)
           : ("fix first" as const);
+    // A record's own time orders it; a checkout's file time says nothing about
+    // when a review ran, so it orders only reports without a record line.
+    const atMs = header?.at ? Date.parse(header.at) : file.mtimeMs;
     records.push({
       model: header?.model ?? header?.reviewer ?? null,
       family: header?.family ?? "unknown",
+      depth: header?.depth ?? null,
       author: header?.author ?? author,
+      repo: header?.repo ?? null,
       head: header?.head ?? null,
       verdict,
       at: header?.at ?? new Date(file.mtimeMs).toISOString(),
+      atMs,
+      numbered: file.numbered,
       path: file.path,
     });
   }
+  records.sort(
+    (a, b) =>
+      b.atMs - a.atMs ||
+      Number(b.numbered) - Number(a.numbered) ||
+      b.path.localeCompare(a.path, undefined, { numeric: true }),
+  );
   const latest = records[0] ?? null;
   if (latest === null && policy === null) return null;
   const satisfied =
     policy === null
       ? null
-      : records.some(
-          (record) =>
-            record.verdict === "ship" &&
-            reviewPolicyAccepts(
-              policy,
-              { family: record.family, model: record.model },
-              record.author,
-            ),
-        );
+      : reviewPolicySatisfied(policy, records, incrementReviewRepos(input.spec), author);
   return {
     policy:
       policy === null

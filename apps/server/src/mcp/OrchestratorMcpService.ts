@@ -9,6 +9,7 @@ import { simulatedUsageLimitInstances } from "../orchestration-v2/ProviderFailur
 import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { readIncrementReviewPolicy } from "../review/incrementReview.ts";
+import { MODEL_FAMILY_LABELS } from "@specweave-studio/shared/fallbackOptions";
 import type { IncrementReviewPolicy } from "@specweave-studio/shared/reviewPolicy";
 import { orchestratorFeatures } from "./orchestratorFeatures.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
@@ -833,6 +834,35 @@ function reviewResultFields(
         }),
     skipped: review.skipped.map((skip) => ({ reviewer: skip.label, reason: skip.reason })),
     ...(review.warning === null ? {} : { warning: review.warning }),
+  };
+}
+
+/**
+ * The routing a review delegation's thread carries: its reviewer's family, so
+ * limit fallback and machine handoff keep the review on that family
+ * (TaskRoutingDecision.reviewFamily). Null for a reviewer of no known family.
+ */
+function reviewRouting(
+  review: Extract<ReviewDelegationDecision, { kind: "pick" | "named" }>,
+  routed: TaskRoutingDecision | null,
+  author: ModelSelection,
+  decidedAt: string,
+): TaskRoutingDecision | null {
+  if (review.reviewerFamily === "other") return routed;
+  if (routed !== null) return { ...routed, reviewFamily: review.reviewerFamily };
+  return {
+    taskClass: "review",
+    confidence: "high",
+    moved: false,
+    tier: null,
+    selection: review.selection,
+    baseline: author,
+    escalation: null,
+    billing: "unknown",
+    reason: `Review by ${review.label}; it stays on ${MODEL_FAMILY_LABELS[review.reviewerFamily]} models.`,
+    signals: [],
+    reviewFamily: review.reviewerFamily,
+    decidedAt,
   };
 }
 
@@ -3036,6 +3066,15 @@ const make = Effect.gen(function* () {
           reviewPick?.kind === "pick"
             ? null
             : workerLaunchFallbackFrom(launch, delegationTarget !== input.target, target);
+        const threadRouting =
+          review === null || review.kind === "none"
+            ? routing
+            : reviewRouting(
+                review,
+                routing,
+                parent.thread.modelSelection,
+                DateTime.formatIso(yield* DateTime.now),
+              );
         // Whatever picked the model, a grant's work runs only on the sign-ins it allows.
         yield* assertAccountInGrant(work, target.modelSelection.instanceId);
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
@@ -3124,7 +3163,7 @@ const make = Effect.gen(function* () {
             task: promptWithRoutingNote(prompt, routing),
             ...(input.title === undefined ? {} : { title: input.title }),
             modelSelection: target.modelSelection,
-            ...(routing === null ? {} : { routing }),
+            ...(threadRouting === null ? {} : { routing: threadRouting }),
             ...(launchFallbackFrom === null ? {} : { launchFallbackFrom }),
             runtimeMode,
             interactionMode,

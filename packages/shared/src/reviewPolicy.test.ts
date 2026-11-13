@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { ProviderInstanceId } from "@specweave-studio/contracts";
+
 import {
+  incrementReviewRepos,
   parseIncrementReviewPolicy,
   parseReviewRecordHeader,
+  resolveIncrementReviewPolicy,
+  reviewConstrainedRule,
   reviewPolicyAccepts,
+  reviewPolicySatisfied,
 } from "./reviewPolicy.ts";
 
 describe("parseIncrementReviewPolicy", () => {
@@ -85,5 +91,129 @@ describe("review records", () => {
         "claude",
       ),
     ).toBe(false);
+  });
+});
+
+describe("review policy evidence (Sol review, November 13, 2026)", () => {
+  it("compares canonical families: a Fable author is Claude, an unclassified reviewer never counts", () => {
+    expect(reviewPolicyAccepts({ family: "cross-family" }, { family: "claude" }, "fable")).toBe(
+      false,
+    );
+    expect(reviewPolicyAccepts({ family: "cross-family" }, { family: "unknown" }, "claude")).toBe(
+      false,
+    );
+    expect(reviewPolicyAccepts({ family: "cross-family" }, { family: "cursor" }, "claude")).toBe(
+      false,
+    );
+    // A record whose model belongs to another family than it claims.
+    expect(
+      reviewPolicyAccepts(
+        { family: "openai" },
+        { family: "openai", model: "claude-opus-5-5" },
+        "claude",
+      ),
+    ).toBe(false);
+  });
+
+  it("matches a pinned model across provider spellings and needs a deep review for a deep policy", () => {
+    expect(
+      reviewPolicyAccepts(
+        { family: "claude", model: "claude-opus-5-5" },
+        { family: "claude", model: "claude-opus-5.5" },
+        "openai",
+      ),
+    ).toBe(true);
+    const deep = { family: "openai" as const, depth: "deep" as const };
+    expect(reviewPolicyAccepts(deep, { family: "openai", depth: "standard" }, "claude")).toBe(
+      false,
+    );
+    expect(reviewPolicyAccepts(deep, { family: "openai" }, "claude")).toBe(false);
+    expect(reviewPolicyAccepts(deep, { family: "openai", depth: "deep" }, "claude")).toBe(true);
+  });
+
+  it("decodes percent-encoded header values and ignores an invalid time", () => {
+    const header = parseReviewRecordHeader(
+      "<!-- specweave review: reviewer=codex family=openai repo=repositories/acme/My%20App at=yesterday -->",
+    );
+    expect(header?.repo).toBe("repositories/acme/My App");
+    expect(header?.at).toBeNull();
+  });
+
+  it("layers the spec over review.policy over review.crossModel", () => {
+    expect(
+      resolveIncrementReviewPolicy({
+        spec: "## Review\n- Depth: deep\n",
+        config: { policy: { reviewer: "openai", required: true } },
+      }),
+    ).toEqual({ family: "openai", depth: "deep", required: true });
+    expect(
+      resolveIncrementReviewPolicy({
+        spec: "## Review\n- Reviewer: google\n- Required: no\n",
+        config: { policy: { reviewer: "openai", required: true } },
+      }),
+    ).toEqual({ family: "google", required: false });
+    expect(resolveIncrementReviewPolicy({ spec: "# T\n", config: { crossModel: true } })).toEqual({
+      family: "cross-family",
+      required: true,
+    });
+    expect(resolveIncrementReviewPolicy({ spec: null, config: null })).toBeNull();
+  });
+
+  it("judges the newest matching record in every repository", () => {
+    const policy = { family: "openai" as const };
+    const record = (repo: string, verdict: "ship" | "fix first") => ({
+      family: "openai",
+      model: "gpt-6.1-sol",
+      depth: "deep",
+      author: "claude",
+      repo,
+      verdict,
+    });
+    const app = "repositories/acme/app";
+    const api = "repositories/acme/api";
+    // Newest first: a newer fix first outranks an older ship.
+    expect(
+      reviewPolicySatisfied(
+        policy,
+        [record(app, "fix first"), record(app, "ship")],
+        [app],
+        "claude",
+      ),
+    ).toBe(false);
+    expect(reviewPolicySatisfied(policy, [record(app, "ship")], [app, api], "claude")).toBe(false);
+    expect(
+      reviewPolicySatisfied(
+        policy,
+        [record(app, "ship"), record(api, "ship")],
+        [app, api],
+        "claude",
+      ),
+    ).toBe(true);
+    expect(
+      incrementReviewRepos(
+        "- AC: AC-01 | Files: repositories/acme/app/src/a.ts, .specweave/x.md, scripts/b.sh | Test: t",
+      ),
+    ).toEqual([".", app]);
+  });
+
+  it("narrows a review thread's limit rule to its reviewer's family", () => {
+    const providers = [
+      {
+        instanceId: ProviderInstanceId.make("copilot"),
+        models: [
+          { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false, capabilities: null },
+          { slug: "claude-opus-5.5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+        ],
+      },
+    ];
+    const rule = { providerLimitExcludedModels: [{ model: "gpt-6-luna" }] };
+    expect(reviewConstrainedRule(rule, null, providers)).toBe(rule);
+    expect(
+      reviewConstrainedRule(rule, { reviewFamily: "openai" }, providers)
+        .providerLimitExcludedModels,
+    ).toEqual([
+      { model: "gpt-6-luna" },
+      { instanceId: ProviderInstanceId.make("copilot"), model: "claude-opus-5.5" },
+    ]);
   });
 });

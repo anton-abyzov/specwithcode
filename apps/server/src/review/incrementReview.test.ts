@@ -64,6 +64,60 @@ describe("readIncrementReview", () => {
     expect(review?.policySatisfied).toBe(true);
   });
 
+  it("orders records by their own time, so an older ship never hides a newer fix first", async () => {
+    const checkout = Date.parse("2026-11-13T12:00:00Z");
+    const header = (at: string) =>
+      `<!-- specweave review: reviewer=gpt-6.1-sol model=gpt-6.1-sol family=openai author=claude depth=deep head=3f9a2c1d00 at=${at} -->\n# Review: 1324\n`;
+    report(
+      "reviews/review-gpt-6.1-sol-1.md",
+      `${header("2026-11-13T09:00:00Z")}Verdict: ship\n`,
+      checkout,
+    );
+    const second = report(
+      "reviews/review-gpt-6.1-sol-2.md",
+      `${header("2026-11-13T10:00:00Z")}Verdict: fix first\n`,
+      checkout,
+    );
+    const review = await readIncrementReview({ incrementPath: folder, spec: SPEC, ledger: LEDGER });
+    expect(review?.latest).toMatchObject({ verdict: "fix first", reportPath: second });
+    expect(review?.policySatisfied).toBe(false);
+  });
+
+  it("applies the project's review config under the spec", async () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "inc-root-"));
+    try {
+      const increment = NodePath.join(root, ".specweave", "increments", "1324-demo");
+      NodeFS.mkdirSync(increment, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(root, ".specweave", "config.json"),
+        JSON.stringify({ review: { policy: { reviewer: "openai", required: true } } }),
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(increment, "spec.md"),
+        "# 1324\n\n## Review\n- Depth: deep\n",
+      );
+      expect(await readIncrementReviewPolicy(NodePath.join(increment, "spec.md"))).toEqual({
+        family: "openai",
+        depth: "deep",
+        required: true,
+      });
+      const review = await readIncrementReview({
+        incrementPath: increment,
+        spec: "# 1324\n\n## Review\n- Depth: deep\n",
+        ledger: LEDGER,
+      });
+      expect(review?.policy).toEqual({
+        family: "openai",
+        model: null,
+        depth: "deep",
+        required: true,
+      });
+      expect(review?.policySatisfied).toBe(false);
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("is null with no policy and no review, and reads the policy alone", async () => {
     expect(
       await readIncrementReview({ incrementPath: folder, spec: "# T\n", ledger: null }),

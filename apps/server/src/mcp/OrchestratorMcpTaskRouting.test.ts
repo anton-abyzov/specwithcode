@@ -810,6 +810,10 @@ describe("OrchestratorMcpService review delegation", () => {
             "reviewing work written by Claude Opus 5.5 on claudeAgent (Claude)",
           );
           assert.include(request.task ?? "", "specweave review --record");
+          // The child keeps its family: limit fallback cannot move it to Claude.
+          assert.equal(request.routing?.reviewFamily, "openai");
+          assert.equal(request.routing?.taskClass, "review");
+          assert.isFalse(request.routing?.moved);
           assert.equal(result.review?.reviewerFamily, "openai");
           assert.equal(result.review?.chosenBy, "review-order");
           // Sonnet, then the same Sonnet through Copilot: both the author's family.
@@ -853,6 +857,7 @@ describe("OrchestratorMcpService review delegation", () => {
         });
         const request = yield* delegated(dispatched);
         assert.equal(request.modelSelection?.model, "claude-sonnet-5-5");
+        assert.equal(request.routing?.reviewFamily, "claude");
         assert.equal(result.review?.chosenBy, "caller");
         assert.isFalse(result.review?.crossFamily);
         assert.include(result.review?.warning ?? "", "not a cross-family review");
