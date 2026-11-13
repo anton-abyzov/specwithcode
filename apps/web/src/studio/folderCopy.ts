@@ -177,6 +177,13 @@ export function formatDuration(ms: number): string {
 
 /** Wait this long before guessing what is left, so the first burst does not set the pace. */
 const ESTIMATE_AFTER_MS = 10_000;
+/** From approval to the end of Apply: the copy's clock runs. Apply sends no progress. */
+const CLOCK_STATES = new Set<FolderCopyStatus["state"]>([
+  "approved",
+  "transferring",
+  "verifying",
+  "applying",
+]);
 
 /**
  * How long a running copy has taken since it was approved, and while files move, about how
@@ -184,10 +191,12 @@ const ESTIMATE_AFTER_MS = 10_000;
  */
 export function copyTimingText(status: FolderCopyStatus, nowMs: number): string | null {
   const started = status.startedAt ? Date.parse(status.startedAt) : Number.NaN;
-  if (!Number.isFinite(started) || status.finishedAt || !liveProgress(status)) return null;
+  if (!Number.isFinite(started) || status.finishedAt || !CLOCK_STATES.has(status.state))
+    return null;
   const elapsed = Math.max(0, nowMs - started);
   const text = `${formatDuration(elapsed)} elapsed`;
-  const progress = status.progress;
+  // Only while files move: checking keeps the last counts, which would make the guess grow.
+  const progress = status.state === "transferring" ? status.progress : null;
   if (!progress || progress.phase !== "files" || elapsed < ESTIMATE_AFTER_MS) return text;
   const moved = progress.bytesDone - progress.bytesLocal;
   const left = progress.bytesTotal - progress.bytesDone;

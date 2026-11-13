@@ -320,8 +320,7 @@ export class DestinationCopies {
       const finished =
         current.startedAt !== undefined &&
         current.finishedAt === undefined &&
-        (patch.state === "applied" ||
-          (patch.state === "failed" && patch.failedStep === "applied"));
+        (patch.state === "applied" || (patch.state === "failed" && patch.failedStep === "applied"));
       const next = {
         ...current,
         ...patch,
