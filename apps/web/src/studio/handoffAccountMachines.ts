@@ -180,6 +180,7 @@ export function handoffFleetOnlyMachines(input: {
     readonly label: string;
     readonly url?: string;
     readonly status?: string;
+    readonly workers?: { readonly status: string };
   }>;
   /** Removed here on purpose: not reported as missing. */
   readonly removed?: ReadonlySet<string>;
@@ -201,6 +202,8 @@ export function handoffFleetOnlyMachines(input: {
         input.accountEnvironmentIds.has(id) ||
         input.removed?.has(id) ||
         machine.status === "identity-mismatch" ||
+        // A machine that no longer allows this one is not missing, it is gone.
+        !fleetMachineGranted(machine) ||
         (machine.url !== undefined &&
           fleetMachineHasTailnetAddress({ url: machine.url }) &&
           input.fleetPairingSettled?.(id) === false) ||

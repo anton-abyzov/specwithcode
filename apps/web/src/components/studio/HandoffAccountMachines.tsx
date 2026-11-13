@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useTx } from "../../i18n";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
@@ -35,6 +36,7 @@ export function HandoffAccountMachines({
   readonly sourceEnvironmentId: EnvironmentId;
 }) {
   const tx = useTx();
+  const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
   const { environments } = useEnvironments();
   // Saving happens in this app, so its own server's fleet says what is being
   // saved; which machines can take the work is the source machine's fleet,
@@ -49,6 +51,18 @@ export function HandoffAccountMachines({
   useFleetAutoConnectSettledVersion();
   const name = useMachineNicknames();
   const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
+  const removedHere = readSkippedFleetEnvironments();
+  const fleetStatusById = new Map<string, string>(
+    (fleetSnapshot?.machines ?? []).map((machine) => [machine.environmentId, machine.status]),
+  );
+  // A tailnet machine's automatic pairing is over, or will never run (Connect
+  // automatically off, removed here, or Tailscale not answering for it):
+  // Connect over SpecWithCode Connect is offered then.
+  const pairingDone = (environmentId: string) =>
+    fleetAutoConnectSettled(environmentId) ||
+    !autoConnect ||
+    removedHere.has(environmentId as EnvironmentId) ||
+    fleetStatusById.get(environmentId) !== "reachable";
   const sourceLabel =
     environments.find((item) => item.environmentId === sourceEnvironmentId)?.label ??
     sourceEnvironmentId;
@@ -61,7 +75,7 @@ export function HandoffAccountMachines({
     fleet: fleetMachines,
     sourceFleet: sourceMachines,
     states,
-    fleetPairingSettled: fleetAutoConnectSettled,
+    fleetPairingSettled: pairingDone,
     name,
   });
   // Named only once the list is current, and only machines answering now.
@@ -77,7 +91,7 @@ export function HandoffAccountMachines({
           sourceEnvironmentId,
           // Also those whose state is published while the list cannot be read.
           accountEnvironmentIds: new Set([...discovery.environments.keys(), ...states.keys()]),
-          removed: readSkippedFleetEnvironments(),
+          removed: removedHere,
           fleetPairingSettled: fleetAutoConnectSettled,
           name,
         });
