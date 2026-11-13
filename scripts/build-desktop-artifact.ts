@@ -3160,6 +3160,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       fpm: [
         `${path.join(repoRoot, "apps/desktop/resources/linux/com.specweave.studio.metainfo.xml")}=/usr/share/metainfo/com.specweave.studio.metainfo.xml`,
         `${path.join(repoRoot, "THIRD_PARTY_NOTICES.md")}=/usr/share/doc/specweave-studio/copyright`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/specweave-studio/LICENSE`,
         // Installs a signed update with no password; see docs/studio/releasing.md.
         `${path.join(repoRoot, "apps/desktop/resources/linux/update-helper")}=/usr/lib/specwithcode/update-helper`,
         `${path.join(repoRoot, "apps/desktop/resources/linux/update-key.gpg")}=/usr/lib/specwithcode/update-key.gpg`,

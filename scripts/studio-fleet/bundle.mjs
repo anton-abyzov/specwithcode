@@ -114,8 +114,12 @@ writeFileSync(
   JSON.stringify({ schemaVersion: 1, version }) + "\n",
 );
 for (const file of ["UPSTREAM.md"]) cpSync(join(root, file), join(output, file));
-// Preserve the installed notice path while source separates third-party terms.
-cpSync(join(root, "THIRD_PARTY_NOTICES.md"), join(output, "LICENSE"));
+// The installed notice path carries the project's MIT license first, then the
+// third-party notices, so the MIT-declaring runtime and npm packages ship both.
+writeFileSync(
+  join(output, "LICENSE"),
+  `${readFileSync(join(root, "LICENSE"), "utf8").trimEnd()}\n\n${readFileSync(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")}`,
+);
 const manifest = {
   schemaVersion: 1,
   product: "SpecWeave Studio",
