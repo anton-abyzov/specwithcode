@@ -511,6 +511,10 @@ export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   reapprovalRequired: Schema.optionalKey(Schema.Boolean),
   message: Schema.optionalKey(Schema.String),
+  /** `device_not_approved` while this device waits for approval on the machine (1327). */
+  refusal: Schema.optionalKey(Schema.Literal("device_not_approved")),
+  /** The code to type on the machine; shown with `message`. */
+  approvalCode: Schema.optionalKey(Schema.String),
   auth: ServerAuthDescriptor,
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   permissions: authScopeResponseFields.permissions,

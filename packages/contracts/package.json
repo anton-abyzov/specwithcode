@@ -12,6 +12,10 @@
       "types": "./src/studioFleet.ts",
       "import": "./src/studioFleet.ts"
     },
+    "./connectDevices": {
+      "types": "./src/connectDevices.ts",
+      "import": "./src/connectDevices.ts"
+    },
     "./deviceSignIn": {
       "types": "./src/deviceSignIn.ts",
       "import": "./src/deviceSignIn.ts"

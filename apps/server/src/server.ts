@@ -132,6 +132,7 @@ import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
 import * as SealedSecretsPeer from "./fleet/folderTransfer/sealedSecretsPeer.ts";
 import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts";
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
+import * as ConnectDevicesHttp from "./auth/connectDevicesHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
 import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
@@ -1095,6 +1096,7 @@ const layerMakeRoutes = Layer.mergeAll(
         ),
       ),
       Layer.provide(DeviceSignInHttp.layer),
+      Layer.provide(ConnectDevicesHttp.layer),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
