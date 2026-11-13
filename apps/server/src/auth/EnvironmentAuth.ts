@@ -73,6 +73,7 @@ import {
 } from "../fleet/fleetRedemption.ts";
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 
 const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -119,6 +120,9 @@ const untilTeamRulesRefuse = (session: RuledSession): Effect.Effect<void> =>
       yield* Effect.sleep(TEAM_RULES_SOCKET_CHECK);
     }
   });
+
+/** How often an open socket of a gated device rechecks its approval (AC-01: closed within 10 seconds). */
+const DEVICE_TRUST_SOCKET_CHECK = "5 seconds";
 
 export const MCP_CLIENT_SUBJECT = "mcp-client";
 /** The subject of the management token a fleet invitation hands another machine. */
@@ -174,6 +178,7 @@ import {
   isServerAuthCredentialError,
   serverAuthCredentialReason,
   serverAuthTeamRulesMessage,
+  serverAuthDeviceRefusal,
   type ServerAuthCredentialError,
   type ServerAuthInternalError,
   type ServerAuthInvalidRequestError,
@@ -334,7 +339,14 @@ export class EnvironmentAuth extends Context.Service<
     readonly watchSessionEnd: (
       session: Pick<
         AuthenticatedSession,
-        "sessionId" | "method" | "expiresAt" | "subject" | "principal" | "clientDeviceType"
+        | "sessionId"
+        | "method"
+        | "expiresAt"
+        | "subject"
+        | "principal"
+        | "clientDeviceType"
+        | "clientLabel"
+        | "proofKeyThumbprint"
       >,
     ) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
     readonly issueWebSocketTicket: (
@@ -520,6 +532,8 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
+  // Unwired, it refuses every gated device: the gate fails closed.
+  const deviceTrust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
 
   const authenticateToken = (
     token: string,
@@ -581,6 +595,37 @@ export const make = Effect.gen(function* () {
             );
       return refused === null ? session : yield* refusedByTeamRules(refused);
     });
+
+  /**
+   * The one device gate (1327): a Connect device or hub-linked phone this
+   * machine has not approved is refused here, on every route that turns a
+   * credential into a session (HTTP, WebSocket ticket, browser cookie, MCP).
+   * The refusal travels as `teamRulesMessage`, so older clients show the words
+   * instead of asking to pair again, plus `device_not_approved` and the code.
+   */
+  const refuseUnapprovedDevice = <S extends ConnectDeviceTrust.DeviceSessionFacts>(session: S) =>
+    deviceTrust.check(session).pipe(
+      Effect.flatMap((verdict) =>
+        verdict._tag === "allowed"
+          ? Effect.succeed(session)
+          : Effect.fail(
+              new ServerAuthInvalidCredentialError({
+                diagnostic: "device_not_approved",
+                teamRulesMessage: verdict.message,
+                deviceRefusal: "device_not_approved",
+                ...(verdict.approvalCode === undefined
+                  ? {}
+                  : { deviceApprovalCode: verdict.approvalCode }),
+              }),
+            ),
+      ),
+    );
+
+  /** Team rules first, then the device gate: every authenticated route calls this. */
+  const refuseSession = <S extends AuthenticatedSession>(
+    session: S,
+    request: HttpServerRequest.HttpServerRequest,
+  ) => refuseSessionByTeamRules(session, request).pipe(Effect.flatMap(refuseUnapprovedDevice));
 
   /** Refuses a new session the reach rules turn off, or that a hold could be hiding. */
   const refuseNewSessionByTeamRules = (input: {
@@ -700,6 +745,8 @@ export const make = Effect.gen(function* () {
         }
         return Effect.succeed(session);
       }),
+      // After the proof: only the key's holder learns its approval code.
+      Effect.flatMap(refuseUnapprovedDevice),
       Effect.map((session) => ({
         session,
         cookie: credential.source !== "bearer" && credential.source !== "dpop",
@@ -775,6 +822,7 @@ export const make = Effect.gen(function* () {
             : {}),
           // Why, in the owner's words: a client must not read this as a lost pairing.
           ...teamRulesMessageField(error),
+          ...serverAuthDeviceRefusal(error),
           auth: descriptor,
         } satisfies AuthSessionState),
       ),
@@ -1357,16 +1405,27 @@ export const make = Effect.gen(function* () {
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
+              // The device gate keys on it; a ticket session is the key holder's session.
+              ...(session.proofKeyThumbprint
+                ? { proofKeyThumbprint: session.proofKeyThumbprint }
+                : {}),
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
               clientDeviceType: session.client.deviceType,
               ...(session.client.label === undefined ? {} : { clientLabel: session.client.label }),
             })),
-            Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
+            Effect.flatMap((session) => refuseSession(session, request)),
           );
         }
       }
 
       return yield* authenticateSameOriginRequest(request);
+    });
+
+  const untilDeviceRefused = (session: ConnectDeviceTrust.DeviceSessionFacts) =>
+    Effect.gen(function* () {
+      while ((yield* deviceTrust.check(session))._tag === "allowed") {
+        yield* Effect.sleep(DEVICE_TRUST_SOCKET_CHECK);
+      }
     });
 
   // Browser-cookie sockets end at expiry because re-pairing replaces the session.
@@ -1385,9 +1444,13 @@ export const make = Effect.gen(function* () {
             deviceType: session.clientDeviceType,
             coordinator: session.principal?.kind === "coordinator",
           };
-          return sessionFollowsReachRules(ruled)
+          const ruledEnd = sessionFollowsReachRules(ruled)
             ? Effect.raceFirst(ended, untilTeamRulesRefuse(ruled))
             : ended;
+          // A removed device's open socket closes within the check interval.
+          return ConnectDeviceTrust.gatedDevice(session) === null
+            ? ruledEnd
+            : Effect.raceFirst(ruledEnd, untilDeviceRefused(session));
         }),
       );
 
@@ -1424,6 +1487,16 @@ export const make = Effect.gen(function* () {
           Effect.as(session),
         );
       }),
+      // Only `mcp-client` sessions reach here, which the device gate exempts;
+      // checked anyway so every session passes the same gate.
+      Effect.flatMap((session) =>
+        refuseUnapprovedDevice({
+          subject: session.subject,
+          proofKeyThumbprint: session.proofKeyThumbprint,
+          clientLabel: session.client.label,
+          clientDeviceType: session.client.deviceType,
+        }).pipe(Effect.as(session)),
+      ),
       Effect.map(
         (session) =>
           ({
@@ -1475,7 +1548,7 @@ export const make = Effect.gen(function* () {
         (session) => session.method === "browser-session-cookie" && !session.proofKeyThumbprint,
         () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
       ),
-      Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
+      Effect.flatMap((session) => refuseSession(session, request)),
       Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
     );
   };
@@ -1626,6 +1699,8 @@ export const mintStaticMcpClientToken = Effect.fn("EnvironmentAuth.mintStaticMcp
 );
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
+  // The device gate's store; merged so CloudLink and the settings routes share it.
+  Layer.provideMerge(ConnectDeviceTrust.layer),
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),

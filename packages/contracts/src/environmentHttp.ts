@@ -66,6 +66,18 @@ import {
   DeviceSignInStartResult,
 } from "./deviceSignIn.ts";
 import {
+  ConnectDevicesApproveInput,
+  ConnectDevicesApproveResult,
+  ConnectDevicesDenyInput,
+  ConnectDevicesDenyResult,
+  ConnectDevicesDone,
+  ConnectDevicesEmptyInput,
+  ConnectDevicesListInput,
+  ConnectDevicesRemoveInput,
+  ConnectDevicesRemoveResult,
+  ConnectDevicesSnapshot,
+} from "./connectDevices.ts";
+import {
   StudioCapacitySnapshot,
   StudioCapacityRefreshInput,
   StudioCapacityPolicyInput,
@@ -182,6 +194,10 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
+/** Stable code for a device this machine has not approved yet (1327). */
+export const DeviceRefusalCode = Schema.Literal("device_not_approved");
+export type DeviceRefusalCode = typeof DeviceRefusalCode.Type;
+
 export const EnvironmentAuthInvalidReason = Schema.Literals([
   "missing_credential",
   "invalid_credential",
@@ -275,6 +291,14 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
     /** Why Team rules refused this. An older client ignores it and reads `reason`. */
     teamRulesMessage: Schema.optionalKey(Schema.String),
+    /**
+     * `device_not_approved`: this device waits for approval on the machine,
+     * and `teamRulesMessage` says where and with which code. The client keeps
+     * its credential and retries; it must not ask to pair again.
+     */
+    refusal: Schema.optionalKey(DeviceRefusalCode),
+    /** The code the owner types on the machine to approve this device. */
+    approvalCode: Schema.optionalKey(Schema.String),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
@@ -1513,6 +1537,87 @@ class EnvironmentDeviceSignInHttpApi extends HttpApiGroup.make("deviceSignIn")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const ConnectDevicesErrors = [
+  ...EnvironmentScopedOperationErrors,
+  EnvironmentHttpBadRequestError,
+  EnvironmentHttpForbiddenError,
+  EnvironmentHttpConflictError,
+  EnvironmentHttpInternalServerError,
+] as const;
+
+const connectDevicesEndpoint = <
+  const Name extends string,
+  const Path extends `/${string}`,
+  P extends Schema.Top,
+  S extends Schema.Top,
+>(
+  name: Name,
+  path: Path,
+  payload: P,
+  success: S,
+) =>
+  HttpApiEndpoint.post(name, path, {
+    headers: OptionalBearerHeaders,
+    payload,
+    success,
+    error: ConnectDevicesErrors,
+  }).middleware(EnvironmentAuthenticatedAuth);
+
+/**
+ * Devices that can use this machine (1327). Every call checks the caller on
+ * the server: this machine's owner session, or a device already approved here.
+ * A device waiting for approval never reaches these: the auth gate refuses it.
+ */
+class EnvironmentConnectDevicesHttpApi extends HttpApiGroup.make("connectDevices")
+  .add(
+    connectDevicesEndpoint(
+      "list",
+      "/api/auth/connect-devices/list",
+      ConnectDevicesListInput,
+      ConnectDevicesSnapshot,
+    ),
+  )
+  .add(
+    connectDevicesEndpoint(
+      "approve",
+      "/api/auth/connect-devices/approve",
+      ConnectDevicesApproveInput,
+      ConnectDevicesApproveResult,
+    ),
+  )
+  .add(
+    connectDevicesEndpoint(
+      "deny",
+      "/api/auth/connect-devices/deny",
+      ConnectDevicesDenyInput,
+      ConnectDevicesDenyResult,
+    ),
+  )
+  .add(
+    connectDevicesEndpoint(
+      "remove",
+      "/api/auth/connect-devices/remove",
+      ConnectDevicesRemoveInput,
+      ConnectDevicesRemoveResult,
+    ),
+  )
+  .add(
+    connectDevicesEndpoint(
+      "confirmReview",
+      "/api/auth/connect-devices/confirm-review",
+      ConnectDevicesEmptyInput,
+      ConnectDevicesDone,
+    ),
+  )
+  .add(
+    connectDevicesEndpoint(
+      "repair",
+      "/api/auth/connect-devices/repair",
+      ConnectDevicesEmptyInput,
+      ConnectDevicesDone,
+    ),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -1524,4 +1629,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentWebhooksHttpApi)
   .add(EnvironmentStudioHttpApi)
   .add(EnvironmentStudioFleetHttpApi)
-  .add(EnvironmentDeviceSignInHttpApi) {}
+  .add(EnvironmentDeviceSignInHttpApi)
+  .add(EnvironmentConnectDevicesHttpApi) {}

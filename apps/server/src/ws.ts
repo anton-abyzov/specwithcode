@@ -281,6 +281,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import {
   failEnvironmentAuthInvalid,
+  failEnvironmentAuthRefused,
   failEnvironmentInternal,
   upgradeUntilSessionEnds,
 } from "./auth/http.ts";
@@ -3473,11 +3474,7 @@ export const serveRpcWebSocket = <E, R>(
     const analytics = yield* AnalyticsService.AnalyticsService;
     const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        failEnvironmentAuthInvalid(
-          EnvironmentAuth.serverAuthCredentialReason(error),
-          EnvironmentAuth.serverAuthDpopFailureReason(error),
-          EnvironmentAuth.serverAuthTeamRulesMessage(error),
-        ),
+        failEnvironmentAuthRefused(error),
       ),
       Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
         failEnvironmentInternal("internal_error", error),

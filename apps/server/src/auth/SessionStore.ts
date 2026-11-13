@@ -1333,6 +1333,8 @@ export const make = Effect.gen(function* () {
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
       scopes: row.value.scopes,
+      // The ticket was issued to this key's session; the device gate keys on it.
+      ...(row.value.proofKeyThumbprint ? { proofKeyThumbprint: row.value.proofKeyThumbprint } : {}),
     } satisfies VerifiedSession;
   });
 
