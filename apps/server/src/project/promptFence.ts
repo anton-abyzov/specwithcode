@@ -19,7 +19,8 @@ const CODEX_MENTION = /\$(?=[0-9]*[A-Za-z_:-])/g;
 /** Codex's linked mentions, `[$name](…/SKILL.md)` and `[@name](plugin://…)`, select by link target. */
 const LINKED_MENTION = /\[(?=[$@])/g;
 /** Lines that would read as the runtime's own markers around the user's message. */
-const RUNTIME_MARKER = /^([ \t]*)(?=current user message:|project context \()/gim;
+const RUNTIME_MARKER =
+  /^([ \t]*)(?=current user message:|project context \(|current local time on this machine:)/gim;
 
 /**
  * Text that reads the same to a model but names no skill an adapter or Codex
@@ -40,7 +41,7 @@ function neutralizeSkillMentions(text: string): string {
 /**
  * Body text inside an app fence such as `<project_memory>`: app tags are
  * escaped, a line that is only `[name]` or that starts like the runtime's
- * `Current user message:` or `Project context (` markers is escaped so it
+ * `Current user message:`, `Project context (` or `Current local time on this machine:` markers is escaped so it
  * cannot pose as a section or as the user's own words, and skill mentions
  * are neutralized.
  */

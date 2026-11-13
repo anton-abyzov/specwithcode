@@ -36,4 +36,11 @@ describe("delegatedCompletionWakeText", () => {
     assert.include(text, "Reuse the existing independent verifier");
     assert.include(text, "Do not start another worker just to verify a verifier's receipt");
   });
+
+  it("lets the parent resolve an answer-only child itself", () => {
+    const text = delegatedCompletionWakeText(["task-1"]);
+    assert.include(text, "only answered a question or reported findings");
+    assert.include(text, "record delivery yourself with kind no_code");
+    assert.include(text, "so its thread resolves");
+  });
 });

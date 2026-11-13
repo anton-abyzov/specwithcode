@@ -515,6 +515,10 @@ it("asks workers for short reports and the coordinator to relay only their outco
   });
   assert.notInclude(coordinator, 'never "Studio"');
   assert.include(coordinator, "You coordinate this project's work and do none of it yourself");
+  // Trivial questions stay with the coordinator; work still goes to workers.
+  assert.include(coordinator, "the local time each message opens with; no worker for that");
+  assert.include(coordinator, "running commands, web lookups");
+  assert.include(coordinator, "starts the worker with delegate_task in mode async");
   assert.include(coordinator, "do not relay, summarize or repeat it here");
   assert.include(coordinator, "otherwise end the turn without a reply");
   assert.include(coordinator, "the assignment includes closing the increment");
