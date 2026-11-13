@@ -4553,6 +4553,7 @@ export const ru: PhraseCatalog = {
   "Installs from npm": "Установки из npm",
   "View this project on": "Смотреть проект на",
   "Move to {machine}…": "Перенести на {machine}…",
+  "Sync to {machine}…": "Синхронизировать с {machine}…",
   "Start a coordinator on {machine}": "Запустить координатора на {machine}",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",

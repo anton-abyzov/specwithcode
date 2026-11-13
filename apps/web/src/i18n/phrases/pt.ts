@@ -4563,6 +4563,7 @@ export const pt: PhraseCatalog = {
   "Installs from npm": "Instalações pelo npm",
   "View this project on": "Ver este projeto em",
   "Move to {machine}…": "Mover para {machine}…",
+  "Sync to {machine}…": "Sincronizar com {machine}…",
   "Start a coordinator on {machine}": "Iniciar um coordenador em {machine}",
   "Machine access settings": "Configurações de acesso entre máquinas",
   "{machine} offline": "{machine} offline",

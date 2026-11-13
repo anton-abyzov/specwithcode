@@ -116,7 +116,13 @@ export function MachineHandoffDialog({
   copyDoneOn = null,
   machinesLoading = false,
   machinesExtra,
+  sync = null,
 }: {
+  /**
+   * "Sync to X…": X already has this project at `folder`. The dialog copies only files into
+   * that folder and says so; the coordinator stays here.
+   */
+  readonly sync?: { readonly machine: string; readonly folder: string } | null;
   /** Shown under the machine list: machines that can be connected from here. */
   readonly machinesExtra?: ReactNode;
   /** The other machines' first status read has not settled: their list shows a loading row. */
@@ -204,14 +210,19 @@ export function MachineHandoffDialog({
             close: locked ? null : close,
             machinesLoading,
             machinesExtra,
+            sync: sync !== null,
           }}
         >
           <DialogHeader>
             <DialogTitle className="wrap-anywhere">
               {/* A copy of files only leaves the project here: its title says copied, not on. */}
               {copying && copyDoneOn
-                ? `${projectTitle} ${intent === "copy" ? "is copied to" : "is on"} ${copyDoneOn}`
-                : complete
+                ? sync
+                  ? `${projectTitle} is synced to ${copyDoneOn}`
+                  : `${projectTitle} ${intent === "copy" ? "is copied to" : "is on"} ${copyDoneOn}`
+                : sync && copying
+                  ? `Sync ${projectTitle} to ${sync.machine}`
+                  : complete
                   ? `${projectTitle} is on ${targetLabel}`
                   : `${intent === "copy" ? "Copy local files:" : "Hand off"} ${projectTitle}`}
             </DialogTitle>
@@ -220,7 +231,9 @@ export function MachineHandoffDialog({
               <DialogDescription className="wrap-anywhere">
                 {complete
                   ? `The coordinator now runs on ${targetLabel}.`
-                  : sharing
+                  : sync && copying
+                    ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two copies and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
+                    : sharing
                     ? "Share this project with another machine. Its code moves only through Git."
                     : intent === "copy"
                       ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
@@ -442,14 +455,25 @@ function GitWhere({
             Add this project on {machineLabel} first, then hand it off there.
           </p>
         ) : (
-          <SavedFolderField
-            machineLabel={machineLabel}
-            saved={saved}
-            current={current}
-            onSelect={onSelect}
-            busy={busy}
-            onBrowse={folderPicker != null ? () => setChanging(selected) : undefined}
-          />
+          <>
+            <SavedFolderField
+              machineLabel={machineLabel}
+              saved={saved}
+              current={current}
+              onSelect={onSelect}
+              busy={busy}
+              onBrowse={folderPicker != null ? () => setChanging(selected) : undefined}
+            />
+            {current && !current.unavailable && (
+              <p
+                className="wrap-anywhere text-sm text-muted-foreground"
+                data-slot="handoff-existing-folder"
+              >
+                {machineLabel} already has this project in this folder. Nothing is copied: only
+                the coordinator conversation moves, and the code there comes from Git.
+              </p>
+            )}
+          </>
         )
       ) : null}
       <MoreOptions defaultOpen disabled={busy}>

@@ -44,6 +44,7 @@ import {
   type ChatAttachment,
   type ModelSelection,
   type ProjectStarterSuggestion,
+  type EnvironmentId,
   type ThreadId,
   PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
@@ -390,8 +391,12 @@ export function ProjectWorkspaceSurface({
   // The machine menu's "Add to…" and "Move to…": the handoff dialog opens on that step.
   const [handoffRequest, setHandoffRequest] = useState<MachineHandoffOpenRequest | null>(null);
   const requestHandoff = useCallback(
-    (mode: MachineHandoffOpenRequest["mode"]) =>
-      setHandoffRequest((previous) => ({ mode, seq: (previous?.seq ?? 0) + 1 })),
+    (mode: MachineHandoffOpenRequest["mode"], machine?: string) =>
+      setHandoffRequest((previous) => ({
+        mode,
+        seq: (previous?.seq ?? 0) + 1,
+        ...(machine ? { machine: machine as EnvironmentId } : {}),
+      })),
     [],
   );
   const handoffOpenChange = useCallback((open: boolean) => {
@@ -2025,6 +2030,12 @@ export function ProjectWorkspaceSurface({
                       // A personal assistant is private to its machine: it never moves.
                       onMove={
                         mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
+                      }
+                      // Sync fills in what the other machine's own copy lacks; nothing moves.
+                      onSync={
+                        mainCoordinatorId && canOperate && !machinePrivate
+                          ? (key) => requestHandoff("sync", key.slice(0, key.indexOf(":")))
+                          : null
                       }
                       onAdd={canOperate && !machinePrivate ? () => requestHandoff("add") : null}
                       onMoveElsewhere={

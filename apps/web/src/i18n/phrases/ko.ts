@@ -4505,6 +4505,7 @@ export const ko: PhraseCatalog = {
   "Installs from npm": "npm 설치",
   "View this project on": "이 프로젝트를 볼 컴퓨터",
   "Move to {machine}…": "{machine}(으)로 이동…",
+  "Sync to {machine}…": "{machine}(으)로 동기화…",
   "Start a coordinator on {machine}": "{machine}에서 코디네이터 시작",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
