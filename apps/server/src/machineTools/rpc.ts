@@ -54,6 +54,28 @@ let installing: MachineToolId | null = null;
 /** The handlers are built per connection; the PATH is seeded once per server. */
 let pathSeeded = false;
 
+/**
+ * Puts the tools the app installed earlier on this server's PATH. Called at
+ * server start, so agents resumed before any client connects find them.
+ */
+export const seedManagedToolPath = (baseDir: string) =>
+  Effect.gen(function* () {
+    if (pathSeeded) return;
+    pathSeeded = true;
+    const fs = yield* FileSystem.FileSystem;
+    const host = makeNodeProvisionHost();
+    const installed: string[] = [];
+    for (const dir of managedToolDirs({
+      home: baseDir,
+      platform: host.platform,
+      arch: host.arch,
+      glibc: runsOnGlibc(),
+    })) {
+      if (yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))) installed.push(dir);
+    }
+    addToServerPath(installed);
+  });
+
 export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -62,20 +84,8 @@ export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumenta
     const path = yield* Path.Path;
     const host = makeNodeProvisionHost();
     const glibc = runsOnGlibc();
-    // Tools the app installed earlier are on the PATH from the start.
-    if (!pathSeeded) {
-      pathSeeded = true;
-      const installed: string[] = [];
-      for (const dir of managedToolDirs({
-        home: config.baseDir,
-        platform: host.platform,
-        arch: host.arch,
-        glibc,
-      })) {
-        if (yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))) installed.push(dir);
-      }
-      addToServerPath(installed);
-    }
+    // Normally seeded at server start; this covers a server that skipped it.
+    yield* seedManagedToolPath(config.baseDir);
 
     const context = Effect.gen(function* () {
       const env = process.env;

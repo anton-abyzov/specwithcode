@@ -42,6 +42,7 @@ import * as ServerHttp from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { fixPath } from "./os-jank.ts";
+import { seedManagedToolPath } from "./machineTools/rpc.ts";
 import {
   installManualWorktreeGuard,
   setManualWorktreeGuard,
@@ -1143,6 +1144,8 @@ const layerMakeServer = Layer.unwrap(
     const layerLauncher = ServiceLauncherClient.layer;
 
     yield* fixPath();
+    // After fixPath, so tools the app installed come after the person's own.
+    yield* seedManagedToolPath(config.baseDir);
     // After fixPath, so the shim wraps the git the user's shell finds.
     const hostEnvironment = yield* HostProcessEnvironment;
     const hostPlatform = yield* HostProcessPlatform;
