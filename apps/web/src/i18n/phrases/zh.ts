@@ -4710,4 +4710,5 @@ export const zh: PhraseCatalog = {
   "Not signed in": "未登录",
   "Sign in with {account}": "使用 {account} 登录",
   "Turn it on to use it in chat.": "开启后即可在聊天中使用。",
+  "On other machines": "在其他机器上",
 };

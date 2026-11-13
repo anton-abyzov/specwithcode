@@ -4934,4 +4934,5 @@ export const de: PhraseCatalog = {
   "Not signed in": "Nicht angemeldet",
   "Sign in with {account}": "Mit {account} anmelden",
   "Turn it on to use it in chat.": "Schalte ihn ein, um ihn im Chat zu verwenden.",
+  "On other machines": "Auf anderen Rechnern",
 };

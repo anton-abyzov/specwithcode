@@ -1,7 +1,12 @@
 import { EnvironmentId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remoteOnlyMachines, type SidebarProjectSnapshot } from "./sidebarProjectGrouping";
+import {
+  hasNoCopyHere,
+  localCopiesFirst,
+  remoteOnlyMachines,
+  type SidebarProjectSnapshot,
+} from "./sidebarProjectGrouping";
 
 const m5 = EnvironmentId.make("env-m5");
 const m1 = EnvironmentId.make("env-m1");
@@ -51,5 +56,33 @@ describe("remoteOnlyMachines", () => {
         nameOf,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("localCopiesFirst", () => {
+  it("lists projects this device can run first, then the rest, each in the person's order", () => {
+    const row = (name: string, presence: SidebarProjectSnapshot["environmentPresence"], sandbox = false) => ({
+      name,
+      environmentPresence: presence,
+      allRemoteMembersAreDesktopLocal: sandbox,
+    });
+    const order = localCopiesFirst([
+      row("ai-com", "remote-only"),
+      row("easychamp", "mixed"),
+      row("firstproject", "local-only"),
+      row("sketchmate", "remote-only"),
+      row("sandboxed", "remote-only", true),
+    ]).map((item) => item.name);
+    expect(order).toEqual(["easychamp", "firstproject", "sandboxed", "ai-com", "sketchmate"]);
+  });
+});
+
+describe("hasNoCopyHere", () => {
+  it("counts a sandbox copy on this device even when other copies are on other machines", () => {
+    const presence = { environmentPresence: "remote-only" as const, allRemoteMembersAreDesktopLocal: false };
+    expect(hasNoCopyHere(presence)).toBe(true);
+    expect(hasNoCopyHere({ ...presence, someRemoteMembersAreDesktopLocal: true })).toBe(false);
+    expect(hasNoCopyHere({ ...presence, allRemoteMembersAreDesktopLocal: true })).toBe(false);
+    expect(hasNoCopyHere({ ...presence, environmentPresence: "mixed" })).toBe(false);
   });
 });
