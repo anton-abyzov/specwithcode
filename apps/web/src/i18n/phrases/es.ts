@@ -4631,4 +4631,15 @@ export const es: PhraseCatalog = {
     "La instalación terminó con un error. Su registro está abajo. Pulsa Reintentar allí o ejecuta el comando en una terminal.",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "¿Quieres otro agente o un proveedor personalizado, como Muse Code? Añádelo cuando quieras después de la configuración en Ajustes > Proveedores.",
+  "Could not connect to {name}. Check that SpecWithCode is open there, then try again.":
+    "No se pudo conectar con {name}. Comprueba que SpecWithCode esté abierto allí y vuelve a intentarlo.",
+  "Connect automatically is off.": "Conectar automáticamente está desactivado.",
+  "Not answering over SpecWithCode Connect.": "No responde a través de SpecWithCode Connect.",
+  "SpecWithCode Connect did not answer for it.":
+    "SpecWithCode Connect no respondió por esta máquina.",
+  "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
+    "No aparecen: {names}. Para usar una aquí, abre en ella Ajustes > Máquinas y permite que esta máquina ejecute trabajo allí.",
+  "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
+    "No aparecen: {names}. Esta app aún no está conectada a ellas. Inicia sesión aquí en SpecWithCode Connect con la misma cuenta o conéctalas en",
+  "Settings > Machines": "Ajustes > Máquinas",
 };

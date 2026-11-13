@@ -25,6 +25,7 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
 vi.mock("./HandoffShare", () => ({ HandoffShare: () => null }));
+vi.mock("./HandoffAccountMachines", () => ({ HandoffAccountMachines: () => null }));
 vi.mock("../chat/AddToMachineDialog", () => ({ AddToMachineDialog: () => null }));
 vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
 vi.mock("../../studio/fleet", () => ({

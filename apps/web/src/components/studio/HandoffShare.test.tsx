@@ -51,6 +51,7 @@ vi.mock("./HandoffCopyActions", () => ({
 }));
 vi.mock("./ProjectMoveOptions", () => ({
   MoreOptions: ({ children }: { children: ReactElement }) => <>{children}</>,
+  useProjectMoveDialog: () => null,
 }));
 
 const { HandoffShare } = await import("./HandoffShare");
