@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as NodeOS from "node:os";
 
 import * as ServerConfig from "../../../config.ts";
+import { nodePath as NodePath } from "../../../nodePath.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -184,9 +185,10 @@ describe("studio_project_create in a parent folder", () => {
     return Effect.gen(function* () {
       yield* create({ title: "Pinball Stats", parentPath: "/srv/code" });
       yield* create({ title: "Pinball Stats", parentPath: "~/Code" });
+      // Resolved the way this machine resolves folders (a drive letter on Windows).
       expect(named.map((input) => input.parentPath)).toEqual([
-        "/srv/code",
-        `${NodeOS.homedir()}/Code`,
+        NodePath.resolve("/srv/code"),
+        NodePath.join(NodeOS.homedir(), "Code"),
       ]);
       const relative = yield* create({ title: "Pinball Stats", parentPath: "Code" });
       expect(relative).toMatchObject({ code: "invalid_request" });

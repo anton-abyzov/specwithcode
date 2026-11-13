@@ -54,7 +54,8 @@ describe("nodeToolDirs", () => {
         execPath,
         studioHome,
       });
-      const managed = NodePath.join(
+      // A Linux folder, joined as Linux joins it, whatever machine runs the test.
+      const managed = NodePath.posix.join(
         studioHome,
         "runtime",
         "node",

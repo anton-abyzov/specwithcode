@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 
 import * as EnvironmentAuth from "../../../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../../../config.ts";
+import { nodePath as NodePath } from "../../../nodePath.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { workerClientName } from "../../../fleet/workerGrantMint.ts";
@@ -239,8 +240,14 @@ const setup = (input: {
         previewNamedProject: ({ parentPath }) =>
           Effect.succeed(
             Option.some({
-              kind: parentPath === "/fictional/existing" ? ("uses" as const) : ("creates" as const),
-              path: parentPath === "/fictional/existing" ? parentPath : `${parentPath}/widgets`,
+              kind:
+                parentPath === NodePath.resolve("/fictional/existing")
+                  ? ("uses" as const)
+                  : ("creates" as const),
+              path:
+                parentPath === NodePath.resolve("/fictional/existing")
+                  ? parentPath
+                  : `${parentPath}/widgets`,
             }),
           ),
         createNamedProject: ({ parentPath }) =>
@@ -601,7 +608,7 @@ describe("work started here by another machine", () => {
         parentPath: "/fictional/parent",
       });
       expect(created).toMatchObject({ message: "reached" });
-      expect(world.reached).toContain("create:/fictional/parent");
+      expect(world.reached).toContain(`create:${NodePath.resolve("/fictional/parent")}`);
       // A parent that already is a project here is not handed over.
       const existing = yield* world.call("studio_project_create", world.clientScope(M4), {
         title: "Widgets",
@@ -609,7 +616,7 @@ describe("work started here by another machine", () => {
       });
       expect(existing).toMatchObject({ code: "outside_grant_scope" });
       expect(String(existing.message)).toContain("workspaceRoot");
-      expect(world.reached).not.toContain("create:/fictional/existing");
+      expect(world.reached).not.toContain(`create:${NodePath.resolve("/fictional/existing")}`);
     }).pipe(Effect.provide(world.layer));
   });
 

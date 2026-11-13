@@ -33,7 +33,8 @@ export const makeXcodeBuildCheck =
     const selected = await input.run("xcode-select", ["-p"]);
     const developerDir = selected.stdout.trim();
     if (!selected.ok || developerDir === "") return false;
-    const xcodebuild = NodePath.join(developerDir, "usr", "bin", "xcodebuild");
+    // A macOS path, whatever machine runs this code.
+    const xcodebuild = NodePath.posix.join(developerDir, "usr", "bin", "xcodebuild");
     const version = await input.run(xcodebuild, ["-version"], XCODEBUILD_TIMEOUT_MS);
     return version.timedOut === true ? undefined : version.ok;
   };
