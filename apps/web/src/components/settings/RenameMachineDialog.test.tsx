@@ -181,6 +181,15 @@ describe("RenameMachineDialog", () => {
     expect(document.querySelector("[data-preview-short]")?.textContent).toBe("BE");
   });
 
+  it("previews derived letters once chosen ones are cleared", () => {
+    state.nicknames = { [live]: { name: "Studio", updatedAt: "2026-11-13T00:00:00Z", short: "MX" } };
+    state.labels = new Map([[live, "Anton M5MAX PROLED"]]);
+    open();
+    act(() => button("Customize chip letters, color and icon").click());
+    type(document.querySelector<HTMLInputElement>("[data-machine-short-input]")!, "");
+    expect(document.querySelector("[data-preview-short]")?.textContent).toBe("ST");
+  });
+
   it("keeps chip letters, color and icon under Customize", () => {
     open();
     expect(document.querySelector("[data-machine-short-input]")).toBeNull();

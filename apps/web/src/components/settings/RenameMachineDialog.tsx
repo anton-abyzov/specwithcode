@@ -149,9 +149,14 @@ export function RenameMachineDialog({
     );
     return environmentId === null ? "" : (assigned.get(environmentId) ?? "");
   }, [nicknames, labels, environmentId, previewName]);
-  // An unchanged name keeps the letters it shows now; only a new name is re-assigned.
+  // Untouched letters on an unchanged name stay as shown now; a new name, or
+  // letters cleared here, are assigned again.
   const previewShort =
-    nextShort !== "" ? nextShort : !nameChanged && identity ? identity.short : derivedShort;
+    nextShort !== ""
+      ? nextShort
+      : !nameChanged && !shortTouched && identity
+        ? identity.short
+        : derivedShort;
   const clash = environmentId !== null && nameChanged ? nameHolder(environmentId, next) : null;
   const looksChanged =
     identity !== null &&
