@@ -64,6 +64,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { RemoteFolderBrowser } from "../studio/RemoteFolderBrowser";
+import { DestinationReadiness } from "../machineTools/DestinationReadiness";
 import { AddToMachineConsolidate } from "./AddToMachineConsolidate";
 
 const INSPECT_DEBOUNCE_MS = 300;
@@ -541,6 +542,8 @@ function AddToMachineBody({
               }}
             />
           )}
+
+          {!blocker && <DestinationReadiness environmentId={destination} machineName={destName} />}
 
           {stage.kind === "started" && !error && (
             <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
