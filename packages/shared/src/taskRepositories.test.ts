@@ -113,6 +113,20 @@ describe("repositoriesNamedInTask", () => {
     expect(picked("Edit acme/tool/src/a.ts", owner)).toEqual(["acme/tool"]);
   });
 
+  it("reads a repository path with a space or bracket in it as one path", () => {
+    const spaced = [
+      { relativePath: "Client Work/app", name: "app" },
+      { relativePath: "Work/app", name: "app" },
+      { relativePath: "app (copy)", name: "app (copy)" },
+      { relativePath: "copy)", name: "copy)" },
+    ];
+    const pick = repositoriesNamedInTask("Fix Client Work/app/src/x.ts", spaced);
+    expect(pick.picked).toEqual([
+      { relativePath: "Client Work/app", name: "app", evidence: "Client Work/app/src/x.ts" },
+    ]);
+    expect(picked("Fix app (copy)/src/x.ts", spaced)).toEqual(["app (copy)"]);
+  });
+
   it("stays fast on a pasted blob with a short repository name", () => {
     const short = [
       { relativePath: "a", name: "a" },

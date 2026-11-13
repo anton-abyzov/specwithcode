@@ -75,13 +75,19 @@ interface Word {
   readonly scheme: boolean;
 }
 
-/** The word holding `at`. Each word is walked once per repository, so a long text stays linear. */
-function wordAround(text: string, at: number): Word {
+/**
+ * The word holding the path at `at`..`end`, both walks capped so a pasted blob stays linear:
+ * a word longer than WORD_LIMIT comes back `long`, never named.
+ */
+function wordAround(text: string, at: number, end: number): Word {
   let from = at;
   while (from > 0 && at - from <= WORD_LIMIT && !endsToken(text[from - 1]!)) from -= 1;
-  let to = at;
-  while (to < text.length && !endsToken(text[to]!)) to += 1;
-  const long = to - from > WORD_LIMIT || (from > 0 && !endsToken(text[from - 1]!));
+  let to = end;
+  while (to < text.length && to - end <= WORD_LIMIT && !endsToken(text[to]!)) to += 1;
+  const long =
+    to - from > WORD_LIMIT ||
+    (from > 0 && !endsToken(text[from - 1]!)) ||
+    (to < text.length && !endsToken(text[to]!));
   return { from, to, long, scheme: !long && text.slice(from, to).includes("://") };
 }
 
@@ -127,6 +133,8 @@ export function repositoriesNamedInTask(
   for (const repository of candidates) {
     const path = repository.relativePath;
     const oneSegment = !path.includes("/");
+    // A path with a space or bracket in it splits words, so its word is read per occurrence.
+    const splitsWords = [...path].some(endsToken);
     const blanks: Array<readonly [number, number]> = [];
     let word: Word | null = null;
     let index = scan.indexOf(path);
@@ -144,7 +152,7 @@ export function repositoriesNamedInTask(
         index = scan.indexOf(path, index + 1);
         continue;
       }
-      if (word === null || index >= word.to) word = wordAround(scan, index);
+      if (word === null || splitsWords || index >= word.to) word = wordAround(scan, index, end);
       if (word.long) {
         index = scan.indexOf(path, word.to);
         continue;
