@@ -7,7 +7,12 @@ import { reportKey } from "@specweave-studio/shared/threadReport";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
-import { readThreadReports, resolveReportIncrement, saveThreadReport } from "./ThreadReports.ts";
+import {
+  readThreadReports,
+  resolveReportIncrement,
+  saveReport,
+  saveThreadReport,
+} from "./ThreadReports.ts";
 
 const roots: string[] = [];
 const REPORT = [
@@ -329,5 +334,128 @@ describe("saveThreadReport", () => {
     expect(read.reports[0]!.path.startsWith(".specweave/increments/10025-work-55/reports/")).toBe(
       true,
     );
+  });
+});
+
+describe("saveReport", () => {
+  const IMPORTED = [
+    "# Release checklist: what is unfinished",
+    "",
+    "## Bottom line",
+    "",
+    "Nothing was lost.",
+  ].join("\n");
+  const ORIGINAL = "https://claude.ai/artifact/Xq7Lm2Rt9Vb4Nc8Pd3Kf6H";
+
+  it("imports another tool's document with its source and original as properties", async () => {
+    const root = await project(["1314-idle-scratch-copies", "1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-import", title: "Own reports of 1320", branch: null, home };
+    const saved = await saveReport(root, source, IMPORTED, new Date("2026-11-13T19:00:00Z"), {
+      increment: "none",
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(saved.alreadySaved).toBe(false);
+    expect(saved.title).toBe("Release checklist: what is unfinished");
+    expect(saved.report.path).toMatch(
+      /^\.specweave\/reports\/threads\/2026-11-13-release-checklist-what-is-unfinished-[0-9a-f]{6}-[0-9a-f]{6}\.md$/,
+    );
+    const content = await NodeFSP.readFile(NodePath.join(root, saved.report.path), "utf8");
+    expect(content).toContain('source: "Claude desktop"');
+    expect(content).toContain(`original: "${ORIGINAL}"`);
+    expect(content).not.toContain("increment:");
+    expect(content.trimEnd().endsWith("Nothing was lost.")).toBe(true);
+
+    const again = await saveReport(root, source, IMPORTED, new Date(), {
+      increment: "none",
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(again.alreadySaved).toBe(true);
+    expect(again.report).toEqual(saved.report);
+  });
+
+  it("saves into a named increment by number or folder, and the thread's otherwise", async () => {
+    const root = await project(["1314-idle-scratch-copies", "1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-named", title: "Own reports of 1320", branch: null, home };
+    const byNumber = await saveReport(root, source, "# One\n\nBody one.", new Date(), {
+      increment: "1314",
+    });
+    expect(
+      byNumber.report.path.startsWith(".specweave/increments/1314-idle-scratch-copies/reports/"),
+    ).toBe(true);
+    const byFolder = await saveReport(root, source, "# Two\n\nBody two.", new Date(), {
+      increment: "1320-own-reports",
+    });
+    expect(byFolder.report.path.startsWith(".specweave/increments/1320-own-reports/reports/")).toBe(
+      true,
+    );
+    const fromThread = await saveReport(
+      root,
+      { ...source, threadId: "t-thread" },
+      "# Three\n\nBody three.",
+    );
+    expect(
+      fromThread.report.path.startsWith(".specweave/increments/1320-own-reports/reports/"),
+    ).toBe(true);
+  });
+
+  it("keeps the text's own front matter in one block, the app's keys first", async () => {
+    const root = await project(["1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const text = [
+      "---",
+      "title: Release review",
+      "status: shipped",
+      "thread: someone-else",
+      "tags:",
+      "  - release",
+      "---",
+      "",
+      "# Release review",
+      "",
+      "All green.",
+    ].join("\n");
+    const saved = await saveReport(
+      root,
+      { threadId: "t-fm", title: "1320 review", branch: null, home },
+      text,
+      new Date("2026-11-13T19:00:00Z"),
+    );
+    const content = await NodeFSP.readFile(NodePath.join(root, saved.report.path), "utf8");
+    expect(content.match(/^---$/gm)).toHaveLength(2);
+    expect(content).toContain('title: "Release review"');
+    expect(content).toContain('thread: "t-fm"');
+    expect(content).not.toContain("someone-else");
+    expect(content).toContain("status: shipped");
+    expect(content).toContain("tags:\n  - release");
+    expect(content.trimEnd().endsWith("All green.")).toBe(true);
+  });
+
+  it("refuses an unknown increment, a bad original and a bad title", async () => {
+    const root = await project(["1320-own-reports"]);
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-bad", title: null, branch: null, home };
+    await expect(
+      saveReport(root, source, IMPORTED, new Date(), { increment: "9999" }),
+    ).rejects.toThrow("No increment 9999 in this project.");
+    for (const original of [
+      "http://claude.ai/artifact/x",
+      "not a url",
+      "https://u:p@claude.ai/x",
+    ]) {
+      await expect(
+        saveReport(root, source, IMPORTED, new Date(), {
+          provenance: { source: "Claude desktop", original },
+        }),
+      ).rejects.toThrow("The original link must be an https URL");
+    }
+    await expect(
+      saveReport(root, source, IMPORTED, new Date(), { provenance: { source: " " } }),
+    ).rejects.toThrow("The source names the tool");
+    await expect(saveReport(root, source, IMPORTED, new Date(), { title: "  " })).rejects.toThrow(
+      "The title must be 1-200 characters.",
+    );
+    expect(await readThreadReports(root, source)).toMatchObject({ reports: [] });
   });
 });

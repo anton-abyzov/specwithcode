@@ -15,6 +15,7 @@ import type {
   ProjectThreadReportsSnapshot,
 } from "@specweave-studio/contracts";
 import {
+  FRONTMATTER,
   MAX_SAVED_REPORT_BYTES,
   reportFileName,
   reportIncrementCandidates,
@@ -324,48 +325,179 @@ function frontMatterValue(value: string): string {
   return JSON.stringify(value.replace(/[\r\n]+/g, " "));
 }
 
+/** Where a document another tool made came from, kept as properties of the saved report. */
+export interface ReportProvenance {
+  /** The tool or app that made it: "Claude desktop", "Codex", "Cursor". */
+  readonly source: string;
+  /** Its https link there; the reply links the saved file, never this. */
+  readonly original?: string | undefined;
+}
+
+export interface SaveReportOptions {
+  /**
+   * Also match increment folders the report names. Off for a person's save,
+   * so the file lands where the card said it would.
+   */
+  readonly resolveFromText?: boolean;
+  /** The title to file it under; otherwise the report's own title or heading. */
+  readonly title?: string | undefined;
+  /** An increment number or folder to save in, or "none" for the project's thread reports. */
+  readonly increment?: string | undefined;
+  readonly provenance?: ReportProvenance | undefined;
+}
+
+export interface SavedReport {
+  readonly snapshot: ProjectThreadReportsSnapshot;
+  readonly report: ProjectThreadReport;
+  /** The title it is filed under, as its front matter says. */
+  readonly title: string;
+  /** The same text was saved before; `report` is that copy. */
+  readonly alreadySaved: boolean;
+  /** The saved file on this machine. */
+  readonly absolutePath: string;
+}
+
+/** The front-matter keys the app writes; the same keys in the text's own block give way. */
+const SAVED_KEYS = new Set([
+  "title",
+  "thread",
+  "threadTitle",
+  "increment",
+  "savedAt",
+  "source",
+  "original",
+]);
+
 /**
- * Saves the report once. Saving the same text again returns the copy that
- * is already there, wherever it was saved.
+ * The text's own front matter (a report written with flat front matter) and
+ * the body after it. Lines for keys the app writes are dropped, with the list
+ * items under them, so the saved file has one front-matter block.
  */
-export async function saveThreadReport(
+function ownFrontMatter(text: string): { readonly lines: string[]; readonly body: string } {
+  const match = FRONTMATTER.exec(text);
+  if (!match) return { lines: [], body: text };
+  const lines: string[] = [];
+  let dropping = false;
+  for (const line of match[1]!.split("\n")) {
+    const key = /^([A-Za-z][\w-]*)\s*:/.exec(line)?.[1];
+    if (key !== undefined) dropping = SAVED_KEYS.has(key);
+    else if (!/^\s/.test(line) && line.trim().length > 0) dropping = false;
+    if (!dropping && line.trim().length > 0) lines.push(line);
+  }
+  return { lines, body: text.slice(match[0].length).trim() };
+}
+
+function provenanceProblem(provenance: ReportProvenance): string | null {
+  const source = provenance.source.trim();
+  if (source.length === 0 || source.length > 60 || /[\r\n]/.test(source)) {
+    return "The source names the tool that made the document in at most 60 characters.";
+  }
+  if (provenance.original === undefined) return null;
+  try {
+    const url = new URL(provenance.original);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      provenance.original.length > 2048
+    ) {
+      return "The original link must be an https URL of at most 2048 characters.";
+    }
+  } catch {
+    return "The original link must be an https URL of at most 2048 characters.";
+  }
+  return null;
+}
+
+/** An increment named by number (`1314`) or folder, among the folders that exist here. */
+async function namedIncrement(root: string, name: string): Promise<string> {
+  const value = name.trim().toLowerCase();
+  const folders = await incrementFolders(root);
+  const match = /^\d{4,}[a-z]?$/.test(value)
+    ? folders.filter((folder) => folder.toLowerCase().startsWith(`${value}-`))
+    : folders.filter((folder) => folder.toLowerCase() === value);
+  // A number shared by two folders is ambiguous; never guess between them.
+  if (match.length !== 1) {
+    throw new ProjectLibraryProblem(
+      "invalid",
+      match.length === 0
+        ? `No increment ${name.trim()} in this project.`
+        : `Increment ${name.trim()} matches ${match.length} folders; name the folder.`,
+    );
+  }
+  return match[0]!;
+}
+
+/**
+ * Saves the report once and says where. Saving the same text again returns
+ * the copy that is already there, wherever it was saved.
+ */
+export async function saveReport(
   workspaceRoot: string,
   source: ThreadReportSource,
   text: string,
   now: Date = new Date(),
-  options: {
-    /**
-     * Also match increment folders the report names. Off for a person's save,
-     * so the file lands where the card said it would.
-     */
-    readonly resolveFromText?: boolean;
-  } = {},
-): Promise<ProjectThreadReportsSnapshot> {
+  options: SaveReportOptions = {},
+): Promise<SavedReport> {
   const root = NodePath.resolve(workspaceRoot);
-  const body = text.replace(/\r\n?/g, "\n").trim();
-  if (body.length === 0) throw new ProjectLibraryProblem("invalid", "The report is empty.");
-  if (Buffer.byteLength(body, "utf8") > MAX_SAVED_REPORT_BYTES) {
+  const normalizedText = text.replace(/\r\n?/g, "\n").trim();
+  if (normalizedText.length === 0)
+    throw new ProjectLibraryProblem("invalid", "The report is empty.");
+  if (Buffer.byteLength(normalizedText, "utf8") > MAX_SAVED_REPORT_BYTES) {
     throw new ProjectLibraryProblem("invalid", "The report is larger than 512 KiB.");
   }
+  const named = options.title?.replace(/\s+/g, " ").trim();
+  if (
+    options.title !== undefined &&
+    (named === undefined || named.length === 0 || named.length > 200)
+  ) {
+    throw new ProjectLibraryProblem("invalid", "The title must be 1-200 characters.");
+  }
+  const provenance = options.provenance;
+  const problem = provenance === undefined ? null : provenanceProblem(provenance);
+  if (problem !== null) throw new ProjectLibraryProblem("invalid", problem);
   if (!(await specweaveFolder(root))) {
     throw new ProjectLibraryProblem(
       "not_specweave",
       "This project has no .specweave folder. Run specweave init in it to save reports.",
     );
   }
+  const title = named ?? reportTitle(normalizedText, source.title ?? "Report");
+  // A named increment is checked before the duplicate lookup, so a wrong
+  // name is refused even when the same text is already saved.
+  const requested = options.increment?.trim();
+  const explicit =
+    requested === undefined || requested.length === 0
+      ? undefined
+      : requested.toLowerCase() === "none"
+        ? null
+        : await namedIncrement(root, requested);
   const before = await readThreadReports(root, source);
-  const key = reportKey(source.threadId, body);
-  if (before.reports.some((report) => report.key === key)) return before;
+  const key = reportKey(source.threadId, normalizedText);
+  const existing = before.reports.find((report) => report.key === key);
+  if (existing !== undefined) {
+    return {
+      snapshot: before,
+      report: existing,
+      title,
+      alreadySaved: true,
+      absolutePath: NodePath.join(root, ...existing.path.split("/")),
+    };
+  }
 
   const increment =
-    before.increment?.id ??
-    (options.resolveFromText ? await resolveReportIncrement(root, source, body) : null);
+    explicit !== undefined
+      ? explicit
+      : (before.increment?.id ??
+        (options.resolveFromText
+          ? await resolveReportIncrement(root, source, normalizedText)
+          : null));
   const relativeDir =
     increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
   const target = await ensureDirectoryWithin(root, relativeDir);
   const savedAt = now.toISOString();
-  const title = reportTitle(body, source.title ?? "Report");
-  const name = reportFileName({ savedAt, title, threadId: source.threadId, text: body });
+  const name = reportFileName({ savedAt, title, threadId: source.threadId, text: normalizedText });
+  const own = ownFrontMatter(normalizedText);
   const content = [
     "---",
     `title: ${frontMatterValue(title)}`,
@@ -373,9 +505,12 @@ export async function saveThreadReport(
     ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
     ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
     `savedAt: ${frontMatterValue(savedAt)}`,
+    ...(provenance ? [`source: ${frontMatterValue(provenance.source.trim())}`] : []),
+    ...(provenance?.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
+    ...own.lines,
     "---",
     "",
-    body,
+    own.body,
     "",
   ].join("\n");
   try {
@@ -387,5 +522,27 @@ export async function saveThreadReport(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
-  return readThreadReports(root, source);
+  const snapshot = await readThreadReports(root, source);
+  const path = posix(NodePath.join(relativeDir, name));
+  return {
+    snapshot,
+    report: snapshot.reports.find((report) => report.key === key) ?? { key, path, savedAt },
+    title,
+    alreadySaved: false,
+    absolutePath: NodePath.join(root, relativeDir, name),
+  };
+}
+
+/**
+ * Saves the report once. Saving the same text again returns the copy that
+ * is already there, wherever it was saved.
+ */
+export async function saveThreadReport(
+  workspaceRoot: string,
+  source: ThreadReportSource,
+  text: string,
+  now: Date = new Date(),
+  options: { readonly resolveFromText?: boolean } = {},
+): Promise<ProjectThreadReportsSnapshot> {
+  return (await saveReport(workspaceRoot, source, text, now, options)).snapshot;
 }

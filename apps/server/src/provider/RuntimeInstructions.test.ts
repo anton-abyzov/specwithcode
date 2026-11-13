@@ -11,6 +11,7 @@ import {
   STUDIO_MEDIA_INSTRUCTIONS,
   STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
   STUDIO_PRESENTATION_INSTRUCTIONS,
+  STUDIO_REPORTS_INSTRUCTIONS,
   STUDIO_WRITING_INSTRUCTIONS,
   withHeadlessBrowserEnvironment,
 } from "./RuntimeInstructions.ts";
@@ -262,18 +263,45 @@ describe("buildRuntimeInstructions", () => {
     expect(presentation.length).toBeLessThanOrEqual(920);
   });
 
+  it.each(["concise", "detailed"] as const)(
+    "keeps reports in SpecWithCode for every provider in %s mode",
+    (responseStyle) => {
+      for (const harness of ["Claude Code", "Codex", "Cursor", "OpenCode"]) {
+        expect(buildRuntimeInstructions({ harness, responseStyle })).toContain(
+          STUDIO_REPORTS_INSTRUCTIONS,
+        );
+      }
+    },
+  );
+
+  it("saves documents as reports and never links provider-hosted pages", () => {
+    const reports = STUDIO_REPORTS_INSTRUCTIONS;
+    expect(reports).toContain("live in SpecWithCode");
+    expect(reports).toContain("studio_report_save");
+    expect(reports).toContain("the increment's reports/ folder");
+    expect(reports).toContain("link the saved file");
+    // November 13, 2026: a claude.ai artifact link from a Claude desktop session reached a reply.
+    expect(reports).toContain("Never publish to or link a provider-hosted page");
+    expect(reports).toContain("claude.ai artifacts or docs");
+    expect(reports).toContain("import a document another tool made first");
+    expect(reports).toContain("its source and original link");
+    // About 90 tokens on every turn.
+    expect(reports.length).toBeLessThanOrEqual(420);
+  });
+
   it("keeps everything every turn carries within its budget", () => {
     // Bounded shared guidance includes 1130's assignment/goal and no-manual-relay rules.
     // The presentation block added about 190 tokens on purpose (October 21, 2026),
     // and the short-cell comparison rule about 10 more (October 27, 2026).
     // The heavy-check gate rule added about 60 (November 11, 2026).
+    // The reports rule added about 100 (November 13, 2026): 5,509 then.
     for (const responseStyle of ["concise", "detailed"] as const) {
       const instructions = buildRuntimeInstructions({
         harness: "Claude Code",
         model: "claude-opus-5-5",
         responseStyle,
       });
-      expect(instructions.length).toBeLessThanOrEqual(5_300);
+      expect(instructions.length).toBeLessThanOrEqual(5_550);
     }
   });
 

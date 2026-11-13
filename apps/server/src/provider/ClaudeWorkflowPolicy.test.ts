@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
+  CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS,
   claudeHumanMessageOrigin,
   ClaudeSubagentPromptFileError,
   compileClaudeWorkflowPolicy,
@@ -170,7 +171,11 @@ describe("Claude workflow policy", () => {
     });
     assert.deepEqual(policy.settings, { enableWorkflows: false, ultracode: false });
     assert.deepEqual(policy.allowedTools, ["Read"]);
-    assert.deepEqual(policy.disallowedTools, ["Bash", "Workflow"]);
+    assert.deepEqual(policy.disallowedTools, [
+      "Bash",
+      "Workflow",
+      ...CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS,
+    ]);
     assert.equal(policy.environment.CLAUDE_CODE_DISABLE_WORKFLOWS, "1");
     assert.equal(policy.environment.OTHER_SETTING, "keep");
     assert.equal(policy.extraArgs.effort, "xhigh");
@@ -217,8 +222,44 @@ describe("Claude workflow policy", () => {
     });
     assert.deepEqual(policy.settings, { enableWorkflows: true, ultracode: false });
     assert.deepEqual(policy.allowedTools, ["Read"]);
-    assert.deepEqual(policy.disallowedTools, ["Workflow(research)"]);
+    assert.deepEqual(policy.disallowedTools, [
+      "Workflow(research)",
+      ...CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS,
+    ]);
     assert.equal(policy.environment.CLAUDE_CODE_DISABLE_WORKFLOWS, "1");
+  });
+});
+
+describe("Claude provider-hosted documents", () => {
+  it("never lets a session publish a document to a provider's site", () => {
+    for (const mode of ["disabled", "on-request", "automatic"] as const) {
+      const policy = compileClaudeWorkflowPolicy({ mode, environment: {} });
+      for (const tool of [
+        "Artifact",
+        "mcp__claude_ai_Claude_Docs__batch",
+        "mcp__claude_ai_Claude_Docs__create",
+        "mcp__claude_ai_Claude_Docs__update",
+        "mcp__claude_ai_Claude_Docs__delete",
+      ]) {
+        assert.include(policy.disallowedTools, tool);
+      }
+    }
+  });
+
+  it("keeps the connector's read tools so a document can be imported", () => {
+    const policy = compileClaudeWorkflowPolicy({ environment: {} });
+    for (const tool of ["read", "query", "export", "guide"]) {
+      assert.notInclude(policy.disallowedTools, `mcp__claude_ai_Claude_Docs__${tool}`);
+    }
+    assert.notInclude(policy.disallowedTools, "mcp__claude_ai_Claude_Docs");
+  });
+
+  it("keeps a caller's own disallowed tools once each", () => {
+    const policy = compileClaudeWorkflowPolicy({
+      disallowedTools: ["Bash", "Artifact"],
+      environment: {},
+    });
+    assert.deepEqual(policy.disallowedTools, ["Bash", ...CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS]);
   });
 });
 

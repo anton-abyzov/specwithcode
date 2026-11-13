@@ -130,6 +130,22 @@ export function resolveClaudeUltracode(
   return effective !== "disabled" && (toggle ?? (launchUltracode || effective === "automatic"));
 }
 
+/**
+ * Tools that publish a document to a provider's site instead of the project:
+ * Claude Code's native Artifact tool and the write tools of the claude.ai Docs
+ * connector. A SpecWithCode report is a file in the project that opens in the
+ * app's viewer for every provider and machine; a claude.ai page opens only for
+ * the account that made it. Exact names, so the connector's read tools (read,
+ * query, export, guide) stay available to import a document another tool made.
+ */
+export const CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS = [
+  "Artifact",
+  "mcp__claude_ai_Claude_Docs__batch",
+  "mcp__claude_ai_Claude_Docs__create",
+  "mcp__claude_ai_Claude_Docs__update",
+  "mcp__claude_ai_Claude_Docs__delete",
+] as const;
+
 /** Native orchestration and reasoning effort are independent session choices. */
 export function compileClaudeWorkflowPolicy(input: {
   readonly mode?: ClaudeWorkflowMode | undefined;
@@ -182,10 +198,13 @@ export function compileClaudeWorkflowPolicy(input: {
   const allowedTools = input.allowedTools?.filter(
     (tool) => mode !== "disabled" || !/^Workflow(?:\(|$)/.test(tool),
   );
-  const disallowedTools =
-    mode === "disabled"
-      ? [...new Set([...(input.disallowedTools ?? []), "Workflow"])]
-      : input.disallowedTools;
+  const disallowedTools = [
+    ...new Set([
+      ...(input.disallowedTools ?? []),
+      ...(mode === "disabled" ? ["Workflow"] : []),
+      ...CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS,
+    ]),
+  ];
   return { mode, instructions, settings, extraArgs, environment, allowedTools, disallowedTools };
 }
 

@@ -182,6 +182,17 @@ The user's attention is scarce and tokens are cheap: give each result the form q
 - In Markdown files you write, separate paragraphs with a blank line, keep a space between a label and its value (HTTP 200), and put hashes, paths and commands in backticks.
 </presentation>`;
 
+/**
+ * Shared by both styles. Reports belong to SpecWithCode, whatever the provider:
+ * on November 13, 2026 a worker passed a claude.ai artifact link from a Claude
+ * desktop session straight into its reply, where it opened only for that Claude
+ * account. Saved reports open in the app's own viewer and list on the
+ * Artifacts shelf. RuntimeInstructions.test.ts caps its length.
+ */
+export const STUDIO_REPORTS_INSTRUCTIONS = `<reports>
+Documents you make or cite live in SpecWithCode: save each as a report with studio_report_save (or as Markdown in the increment's reports/ folder) and link the saved file. Never publish to or link a provider-hosted page (claude.ai artifacts or docs, ChatGPT canvases or shares); import a document another tool made first, with its source and original link.
+</reports>`;
+
 /** Shared by both styles: the app reads `**Blockers:**` to mark a thread Blocked. */
 const REPORT_RULES =
   "A blocker is a decision only the user can make or a step only they can take outside the app. Anything an agent can settle (another session's run, CI, a merge, a retry, a safe default) is not one: settle it or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Put long inventories, tables and logs in a file and give its full path. Never shorten errors, failing tests, security warnings or confirmations before destructive actions; quote errors exactly." +
@@ -199,14 +210,14 @@ export const STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode=
 - Reporting to a coordinator or parent thread, write a few plain sentences and the path or link that proves it; put more in a file, never compressed. Label paragraphs (**Outcome:**, **Evidence:**) only when needed.
 - ${REPORT_RULES}
 - Ask workers and subagents you brief to report the same way.
-</response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
+</response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_REPORTS_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
 
 export const STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode="detailed">
 - Lead with the result, then the evidence, trade-offs, open questions and the steps that help the reader check the work. Structure long answers with short headers or lists.
 - Reporting to a coordinator or parent thread, write the result as paragraphs that open with bold labels (**Outcome:**, **Evidence:**, **Blockers:**); **Blockers:** is none or the one question the user must answer.
 - ${REPORT_RULES}
 - Ask workers and subagents you brief to report the same way.
-</response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
+</response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_REPORTS_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
 
 /**
  * A Markdown image or video shows inline on every device, through the thread's

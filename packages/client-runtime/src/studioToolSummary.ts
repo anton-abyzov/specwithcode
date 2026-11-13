@@ -474,6 +474,9 @@ export function summarizeStudioToolCalls(
     case "html-visual":
       label = phrase("Made", "make", quantity(selected.length, "visual"));
       break;
+    case "report-save":
+      label = phrase("Saved", "save", quantity(selected.length, "report"));
+      break;
     case "design-read":
       label = phrase("Read", "read", `designs ${times}`);
       break;
