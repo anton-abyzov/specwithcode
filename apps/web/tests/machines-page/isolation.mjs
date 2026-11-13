@@ -15,10 +15,15 @@ const PAGE =
 const PAGE_MOCKED =
   /^@clerk\/react$|^@tanstack\/react-router$|\/(cloud\/(managedRelayState|publicConfig|useCloudLinkController|useRememberConnectChoice)|hooks\/useSettings|state\/(environments|session|use-atom-command)|studio\/machineNickname|teamRules\/useTeamRules|clerk\/useStudioConnectAuthPrompt|environments\/primary|RenameMachineDialog|useScopedSettings|ui\/toast)$/;
 
+// `?scene=work`: the grant cards, rendered from their list view with no server behind them.
+const GRANTS = /MachineWorkGrants\.tsx$/;
+const GRANTS_MOCKED = /\/(studio\/(fleet|machineNickname)|state\/session|confirmDialog)$/;
+
 /** The mock file, relative to this folder, that stands in for `id` when `importer` asks for it. */
 export function mockFor(id, importer = "") {
   if (importer.endsWith("MachinesSettings.tsx") && ROWS.test(id)) return "mocks.tsx";
   if (UPDATE_CARD.test(importer) && UPDATE_CARD_MOCKED.test(id)) return "mocks.tsx";
+  if (GRANTS.test(importer) && GRANTS_MOCKED.test(id)) return "mocks.tsx";
   if (PAGE.test(importer) && PAGE_MOCKED.test(id)) return "page-mocks.tsx";
   return null;
 }
