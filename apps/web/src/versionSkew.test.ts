@@ -16,6 +16,7 @@ import {
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   localBuildCommit,
+  newerRelease,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -72,8 +73,32 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("0.0.33")).toEqual({
       clientVersion: "0.0.34",
       serverVersion: "0.0.33",
+      targetVersion: "0.0.34",
       hint: MISMATCH_HINT,
     });
+  });
+
+  it("targets the newest release the feed has seen when it is newer than the app", () => {
+    expect(resolveVersionMismatch("0.0.33", null, "0.0.40")).toEqual({
+      clientVersion: "0.0.34",
+      serverVersion: "0.0.33",
+      targetVersion: "0.0.40",
+      hint: MISMATCH_HINT,
+    });
+    // On this app's version, but behind the newest release.
+    expect(resolveVersionMismatch("0.0.34", null, "0.0.40")?.targetVersion).toBe("0.0.40");
+    // Already on the newest release, ahead of it, or a nightly of it.
+    expect(resolveVersionMismatch("0.0.40", null, "0.0.40")).toBeNull();
+    expect(resolveVersionMismatch("0.0.41", null, "0.0.40")).toBeNull();
+    expect(resolveVersionMismatch("0.0.40-nightly.20260818.1124", null, "0.0.40")).toBeNull();
+  });
+
+  it("ignores a feed version that is a prerelease, not newer or unknown", () => {
+    expect(newerRelease("0.0.34", "0.0.40-nightly.20260818.1124")).toBeNull();
+    expect(newerRelease("0.0.34", "0.0.34")).toBeNull();
+    expect(newerRelease("0.0.34", "0.0.30")).toBeNull();
+    expect(newerRelease("0.0.34", null)).toBeNull();
+    expect(resolveVersionMismatch("0.0.33", null, "0.0.30")?.targetVersion).toBe("0.0.34");
   });
 
   it("does not warn when the server is ahead of the client", () => {
@@ -96,6 +121,7 @@ describe("versionSkew", () => {
       expect(resolveVersionMismatch(serverVersion)).toEqual({
         clientVersion: "0.0.34-nightly.20260824.1125",
         serverVersion,
+        targetVersion: "0.0.34-nightly.20260824.1125",
         hint: MISMATCH_HINT,
       });
     },
@@ -117,6 +143,7 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("0.0.34")).toEqual({
       clientVersion: "0.0.35-nightly.20260818.1124",
       serverVersion: "0.0.34",
+      targetVersion: "0.0.35-nightly.20260818.1124",
       hint: MISMATCH_HINT,
     });
   });
@@ -144,6 +171,7 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("dev")).toEqual({
       clientVersion: "0.0.34",
       serverVersion: "dev",
+      targetVersion: "0.0.34",
       hint: MISMATCH_HINT,
     });
 

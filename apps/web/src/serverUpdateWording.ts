@@ -6,6 +6,8 @@ export interface ServerUpdateWordingInput {
   readonly machine: string | null;
   readonly serverVersion: string;
   readonly clientVersion: string;
+  /** What Update installs there; this app's version unless a newer release is out. */
+  readonly targetVersion?: string;
   readonly selfUpdate: ServerSelfUpdateCapability;
   /** The server can continue running threads after its update restart. */
   readonly threadContinuation: boolean;
@@ -19,7 +21,10 @@ export interface ServerUpdateWordingInput {
  * which says "to" where the row shows the arrow.
  */
 export function serverUpdateRowText(
-  input: Pick<ServerUpdateWordingInput, "machine" | "serverVersion" | "clientVersion">,
+  input: Pick<
+    ServerUpdateWordingInput,
+    "machine" | "serverVersion" | "clientVersion" | "targetVersion"
+  >,
 ): {
   readonly name: string;
   readonly serverVersion: string;
@@ -27,11 +32,12 @@ export function serverUpdateRowText(
   readonly label: string;
 } {
   const name = input.machine ?? "Server";
+  const target = input.targetVersion ?? input.clientVersion;
   return {
     name,
     serverVersion: input.serverVersion,
-    clientVersion: input.clientVersion,
-    label: `${name} ${input.serverVersion} to ${input.clientVersion}`,
+    clientVersion: target,
+    label: `${name} ${input.serverVersion} to ${target}`,
   };
 }
 
@@ -45,13 +51,16 @@ export function describeServerUpdate(input: ServerUpdateWordingInput): string {
   const where = input.machine ?? "the server";
   // The threads sentence names the step the sentence before it describes.
   const pause = input.selfUpdate === "desktop-managed" ? "relaunch" : "restart";
+  const target = input.targetVersion ?? input.clientVersion;
   return [
-    `SpecWithCode on ${where} runs ${input.serverVersion}; this app runs ${input.clientVersion}.`,
+    target === input.clientVersion
+      ? `SpecWithCode on ${where} runs ${input.serverVersion}; this app runs ${input.clientVersion}.`
+      : `SpecWithCode on ${where} runs ${input.serverVersion}; the newest release is ${target}.`,
     input.selfUpdate === "desktop-managed"
       ? `Update installs the newest SpecWithCode release on ${where} and relaunches the app there.`
       : input.machine === null
-        ? `Update installs ${input.clientVersion} on the server and restarts it.`
-        : `Update installs ${input.clientVersion} on ${where} and restarts its server.`,
+        ? `Update installs ${target} on the server and restarts it.`
+        : `Update installs ${target} on ${where} and restarts its server.`,
     input.threadContinuation && input.continueThreadsAfterServerUpdate
       ? `Threads running there continue after the ${pause}.`
       : `Threads running there stop for the ${pause}.`,
