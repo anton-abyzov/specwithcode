@@ -13,6 +13,11 @@ import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorag
 export interface VersionMismatch {
   readonly clientVersion: string;
   readonly serverVersion: string;
+  /**
+   * The version an update there should install: the newest release this app's
+   * update feed has seen when it is newer than the app itself, else the app's.
+   */
+  readonly targetVersion: string;
   readonly hint: string;
 }
 
@@ -70,11 +75,25 @@ export function localBuildCommit(version: string | null | undefined): string | n
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,
   serverSourceCommit?: string | null,
+  newestRelease?: string | null,
 ): VersionMismatch | null {
   const normalizedClientVersion = normalizeVersion(APP_VERSION);
   const normalizedServerVersion = normalizeVersion(serverVersion);
   if (!normalizedClientVersion || !normalizedServerVersion) {
     return null;
+  }
+  const newer = newerRelease(normalizedClientVersion, newestRelease);
+  if (newer !== null) {
+    // A machine behind the newest release is offered that release, not this
+    // app's older one (an M4 on 1.0.279 offered the M5 1.0.279 while 1.0.284 was out).
+    const serverCore = versionCore(normalizedServerVersion);
+    if (parseSemver(serverCore) && compareSemverVersions(serverCore, newer) >= 0) return null;
+    return {
+      clientVersion: normalizedClientVersion,
+      serverVersion: normalizedServerVersion,
+      targetVersion: newer,
+      hint: "Version mismatch. Try syncing the client and server to the same SpecWithCode version.",
+    };
   }
   const clientCommit = localBuildCommit(normalizedClientVersion);
   const serverCommit = normalizeVersion(serverSourceCommit)?.toLowerCase();
@@ -101,17 +120,36 @@ export function resolveVersionMismatch(
   return {
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
+    targetVersion: normalizedClientVersion,
     hint: "Version mismatch. Try syncing the client and server to the same SpecWithCode version.",
   };
 }
 
 export function resolveServerConfigVersionMismatch(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+  newestRelease?: string | null,
 ): VersionMismatch | null {
   return resolveVersionMismatch(
     serverConfig?.environment.serverVersion,
     serverConfig?.environment.serverSourceCommit,
+    newestRelease,
   );
+}
+
+/**
+ * `candidate` when it is a plain release newer than this app's own version;
+ * null otherwise (unknown, a prerelease, or not newer).
+ */
+export function newerRelease(
+  clientVersion: string,
+  candidate: string | null | undefined,
+): string | null {
+  const release = normalizeVersion(candidate);
+  const parsed = release ? parseSemver(release) : null;
+  if (!release || !parsed || parsed.prerelease.length > 0) return null;
+  const clientCore = versionCore(clientVersion);
+  if (!parseSemver(clientCore)) return null;
+  return compareSemverVersions(release, clientCore) > 0 ? release : null;
 }
 
 /** The update path the connected server offers, or null when it only
@@ -144,9 +182,11 @@ export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): st
 
 export function buildVersionMismatchDismissalKey(
   environmentId: EnvironmentId,
-  mismatch: Pick<VersionMismatch, "clientVersion" | "serverVersion">,
+  mismatch: Pick<VersionMismatch, "clientVersion" | "serverVersion"> &
+    Partial<Pick<VersionMismatch, "targetVersion">>,
 ): string {
-  return `${environmentId}:${mismatch.clientVersion}:${mismatch.serverVersion}`;
+  // Keyed by what Update installs, so a newer release brings a dismissed row back.
+  return `${environmentId}:${mismatch.targetVersion ?? mismatch.clientVersion}:${mismatch.serverVersion}`;
 }
 
 function readVersionMismatchDismissals(): VersionMismatchDismissals {

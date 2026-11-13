@@ -5,7 +5,8 @@ import { useState } from "react";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { describeServerUpdate, serverUpdateRowText } from "../../serverUpdateWording";
 import { useServerConfigs } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useDesktopUpdateState } from "../../state/desktopUpdate";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { serverEnvironment } from "../../state/server";
 import {
@@ -81,7 +82,15 @@ function SidebarServerUpdateRow({
   );
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [dismissedState, setDismissedState] = useState<typeof state | null>(null);
-  const mismatch = resolveServerConfigVersionMismatch(config);
+  // Another machine is offered the newest release this app's feed has seen, not
+  // this app's own version. This machine's own server follows the app's update.
+  const desktopUpdate = useDesktopUpdateState();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const newestRelease =
+    environmentId === primaryEnvironmentId
+      ? null
+      : (desktopUpdate?.downloadedVersion ?? desktopUpdate?.availableVersion ?? null);
+  const mismatch = resolveServerConfigVersionMismatch(config, newestRelease);
   const selfUpdate = resolveServerSelfUpdateCapability(config);
   const desktopAppUpdate = supportsDesktopAppUpdate(config);
   const threadContinuation = supportsServerUpdateThreadContinuation(config);
@@ -92,6 +101,7 @@ function SidebarServerUpdateRow({
           machine,
           serverVersion: mismatch.serverVersion,
           clientVersion: mismatch.clientVersion,
+          targetVersion: mismatch.targetVersion,
           selfUpdate,
           threadContinuation,
           continueThreadsAfterServerUpdate,
@@ -175,7 +185,7 @@ function SidebarServerUpdateRow({
           installation={config.environment.capabilities.serverInstallation}
           desktopAppUpdate={desktopAppUpdate}
           threadContinuation={threadContinuation}
-          targetVersion={mismatch.clientVersion}
+          targetVersion={mismatch.targetVersion}
           label={state.status === "failed" ? "Retry" : "Update"}
           variant="ghost"
           description={state.status === "idle" ? description : undefined}

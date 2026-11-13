@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
   updates: new Map<string, unknown>(),
   session: null as unknown,
   continueThreadsAfterServerUpdate: false,
+  desktopUpdate: null as { availableVersion: string | null; downloadedVersion: string | null } | null,
+  primaryEnvironmentId: null as string | null,
   updateServer: vi.fn(),
   toast: vi.fn(),
 }));
@@ -49,6 +51,10 @@ vi.mock("../../hooks/useSettings", () => ({
 vi.mock("../../state/entities", () => ({ useServerConfigs: () => state.configs }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: state.environments }),
+  usePrimaryEnvironmentId: () => state.primaryEnvironmentId,
+}));
+vi.mock("../../state/desktopUpdate", () => ({
+  useDesktopUpdateState: () => state.desktopUpdate,
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../ui/spinner", () => ({ Spinner: () => null }));
@@ -162,6 +168,8 @@ beforeEach(() => {
   state.updates.clear();
   state.session = AsyncResult.success(currentSession);
   state.continueThreadsAfterServerUpdate = false;
+  state.desktopUpdate = null;
+  state.primaryEnvironmentId = null;
   state.updateServer.mockReset();
   state.toast.mockReset();
   resetConfirmDialogForTests();
@@ -196,6 +204,60 @@ describe("SidebarServerUpdate", () => {
     expect(update!.popup).toBe(description);
     expect(update!.trigger.props["aria-description"]).toBe(description);
     expect(text(row!)).not.toContain("Server update");
+  });
+
+  it("offers another machine the newest release the feed has seen, not this app's version", () => {
+    state.desktopUpdate = { availableVersion: "1.0.70", downloadedVersion: null };
+    server("m5", { label: "m5" });
+    render();
+
+    const [row] = rows();
+    const [label, update] = tooltips(row!);
+
+    expect(text(label!.trigger)).toBe("m5 1.0.65 → 1.0.70");
+    expect(update!.popup).toBe(
+      "SpecWithCode on m5 runs 1.0.65; the newest release is 1.0.70. " +
+        "Update installs 1.0.70 on m5 and restarts its server. " +
+        "Threads running there stop for the restart. " +
+        "Nothing else on m5 changes: no settings, no other software.",
+    );
+  });
+
+  it("asks that machine to install the newest release on Update", async () => {
+    state.desktopUpdate = { availableVersion: "1.0.70", downloadedVersion: null };
+    server("m5", { label: "m5" });
+    state.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "1.0.70", method: "boot-service" as const }),
+    );
+    render();
+
+    await act(async () => {
+      updateButton(rows()[0]!).props.onClick();
+    });
+    await flushPromises();
+
+    expect(state.updateServer).toHaveBeenCalledWith({
+      environmentId: "m5",
+      input: { targetVersion: "1.0.70" },
+    });
+  });
+
+  it("still offers the newest release to a machine already on this app's version", () => {
+    state.desktopUpdate = { availableVersion: "1.0.68", downloadedVersion: "1.0.70" };
+    server("m5", { label: "m5", serverVersion: "1.0.66" });
+    render();
+
+    expect(rows()).toHaveLength(1);
+    expect(text(tooltips(rows()[0]!)[0]!.trigger)).toBe("m5 1.0.66 → 1.0.70");
+  });
+
+  it("leaves this machine's own server to the app's update", () => {
+    state.desktopUpdate = { availableVersion: "1.0.70", downloadedVersion: null };
+    state.primaryEnvironmentId = "local";
+    server("local", { label: "m4", serverVersion: "1.0.66" });
+    render();
+
+    expect(rows()).toHaveLength(0);
   });
 
   it("reads the row's versions with 'to' and its description once, on Update", () => {
