@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { useClientSettings } from "../hooks/useSettings";
+import { useProjects } from "../state/entities";
 import {
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -18,7 +19,7 @@ import {
 } from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useStudioFleet } from "../studio/fleet";
+import { usePrimaryFleetSnapshot } from "../studio/fleet";
 import {
   readSkippedFleetEnvironments,
   setFleetEnvironmentSkipped,
@@ -29,40 +30,46 @@ import {
   CONNECT_NO_ANSWER_REASON,
   CONNECT_UNREACHABLE_REASON,
   REMOVED_HERE_REASON,
+  accountAutoConnectStates,
   grantedAccountMachinesToConnect,
   grantedMachinesMissingFromAccount,
+  onAccountMachineConnectRequest,
   publishAccountAutoConnectStates,
 } from "../studio/grantedAccountMachines";
-import { onConnectRouteRequest, readDeclinedConnectRoutes } from "./connectRoutePlan";
+import { linkedMachineIds } from "../studio/linkedMachines";
+import { readDeclinedConnectRoutes, setConnectRouteDeclined } from "./connectRoutePlan";
 
-// The fleet atom needs an id; one that matches no environment reads as no fleet.
-const NO_ENVIRONMENT = "" as EnvironmentId;
-/** Automatic tries per machine before it waits for Connect by hand. */
+/** Tries per machine before it waits for Connect by hand. */
 const MAX_ATTEMPTS = 3;
 /** Wait after a try before the next one, and between re-reads of the account list for one machine. */
 const RETRY_MS = 60_000;
-/** A Connect press stays in force this long, for the pass that acts on it. */
-const REQUEST_MS = 2 * RETRY_MS;
 /** Re-reads of the account list for one fleet machine it does not show, such as one on another account. */
 const MAX_LOOKUPS = 3;
+
+interface Attempt {
+  readonly count: number;
+  readonly at: number;
+}
 
 /**
  * Saves, with a SpecWithCode Connect route, each machine of this account that
  * let this one run work on it (so it is in this server's fleet) and has no
  * Tailscale address. The grant given there is the consent: nothing needs
- * pressing here. Runs while Connect automatically is on; Connect by hand
- * (`requestConnectRoutes`) saves one in any case, and lifts an earlier
- * removal. Publishes one state per machine for the move dialog, Settings >
- * Machines and the checking state. Mounted by the reconciler, per account; a
- * machine a shared project also names is saved here, not by its linked path.
+ * pressing here. Runs while Connect automatically is on, and always for a
+ * machine a shared project also names (which the reconciler's linked path
+ * leaves to this one). Connect by hand (`requestAccountMachineConnect`) saves
+ * one in any case, a tailnet machine too, and lifts an earlier removal.
+ *
+ * Publishes one state per machine for the move dialog, Settings > Machines
+ * and the checking state. Mounted by the reconciler, per account.
  */
 export function GrantedAccountMachines() {
   const { environments } = useEnvironments();
+  const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
   const autoConnect = useClientSettings((settings) => settings.autoConnectPrivateMachines);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const fleet = useStudioFleet(primaryEnvironmentId ?? NO_ENVIRONMENT);
-  const snapshot = primaryEnvironmentId === null ? null : fleet.snapshot;
+  const snapshot = usePrimaryFleetSnapshot(primaryEnvironmentId);
   const register = useAtomCommand(environmentCatalog.register, {
     label: "Add SpecWithCode Connect route",
     reportFailure: false,
@@ -72,11 +79,12 @@ export function GrantedAccountMachines() {
     reportFailure: false,
   });
   const inFlight = useRef(new Set<string>());
-  const attempts = useRef(new Map<string, { count: number; at: number }>());
+  const attempts = useRef(new Map<string, Attempt>());
   const failures = useRef(new Map<string, string>());
-  // Machines asked for by hand, with when.
+  // Machines asked for by hand, with when. A press is in force until the
+  // machine is saved; it overrides holds and the wait for one try.
   const requested = useRef(new Map<string, number>());
-  const lookedUp = useRef(new Map<string, { count: number; at: number }>());
+  const lookedUp = useRef(new Map<string, Attempt>());
   // The list belongs to this account only after a refresh that started once it was active.
   const sawRefresh = useRef(false);
   const [tick, setTick] = useState(0);
@@ -84,43 +92,47 @@ export function GrantedAccountMachines() {
 
   useEffect(
     () =>
-      onConnectRouteRequest((environmentIds) => {
+      onAccountMachineConnectRequest((environmentIds) => {
         const now = Date.now();
+        const shown = new Map(accountAutoConnectStates());
         for (const id of environmentIds) {
           requested.current.set(id, now);
-          attempts.current.delete(id);
-          failures.current.delete(id);
           // Connecting by hand undoes an earlier removal on this device.
           setFleetEnvironmentSkipped(id as EnvironmentId, false);
+          setConnectRouteDeclined(id, false);
+          shown.set(id, { phase: "connecting" });
         }
-        // The reconciler, which hears the same press, reads the account list again.
+        // Says so at once, also while the account list is being read.
+        publishAccountAutoConnectStates(shown);
         setTick((current) => current + 1);
+        // Only when this account's list was never read: refreshing empties
+        // every machine list for a moment.
+        if (!sawRefresh.current) void refresh();
       }),
-    [],
+    [refresh],
   );
 
-  // A fresh list for this account, and nothing left published once it signs out.
-  useEffect(() => {
-    void refresh();
-    return () => publishAccountAutoConnectStates(new Map());
-  }, [refresh]);
+  // Nothing stays published once this account signs out.
+  useEffect(() => () => publishAccountAutoConnectStates(new Map()), []);
 
   useEffect(() => {
+    // The list is empty while it is read again: keep what is published.
     if (discovery.refreshing) {
       sawRefresh.current = true;
       return;
     }
     const now = Date.now();
     const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
-    // A press acts once: dropped when the machine is saved or the press is old.
-    for (const [id, at] of requested.current)
-      if (savedEnvironmentIds.has(id) || now - at >= REQUEST_MS) requested.current.delete(id);
+    for (const id of requested.current.keys())
+      if (savedEnvironmentIds.has(id)) requested.current.delete(id);
+    const linked = linkedMachineIds(projects);
     const candidates = grantedAccountMachinesToConnect({
       snapshot,
       currentEnvironmentId: primaryEnvironmentId,
       savedEnvironmentIds,
       discovered: discovery.environments,
-      requested: new Set(requested.current.keys()),
+      // A linked tailnet machine stays with the reconciler's linked path.
+      requested: new Set([...requested.current.keys()].filter((id) => !linked.has(id))),
     });
     const removed = new Set<string>([
       ...readSkippedFleetEnvironments(),
@@ -128,36 +140,38 @@ export function GrantedAccountMachines() {
     ]);
     const unreachable = discovery.error._tag === "Some" || discovery.offline;
     const next = new Map<string, AccountAutoConnectState>();
-    // Some machine waits for its next try.
     let waiting = false;
     for (const machine of candidates) {
       const id = machine.environmentId;
-      const asked = requested.current.has(id);
       const tried = attempts.current.get(id);
+      const pressedAt = requested.current.get(id);
+      // A press made after the last try asks for one more, now.
+      const asked = pressedAt !== undefined && (tried === undefined || pressedAt > tried.at);
       const failure = failures.current.get(id);
       if (inFlight.current.has(id) || !sawRefresh.current) {
         next.set(id, { phase: "connecting" });
-        continue;
-      }
-      // A press that failed keeps saying why, also while saving is held.
-      if (!asked && (!autoConnect || removed.has(id))) {
-        next.set(
-          id,
-          failure !== undefined
-            ? { phase: "failed", reason: failure }
-            : {
-                phase: "held",
-                reason: autoConnect ? REMOVED_HERE_REASON : AUTO_CONNECT_OFF_REASON,
-              },
-        );
         continue;
       }
       if (unreachable) {
         next.set(id, { phase: "held", reason: CONNECT_UNREACHABLE_REASON });
         continue;
       }
-      // Each machine is tried at most MAX_ATTEMPTS times, a minute apart, also
-      // when a try reported success but the catalog has not shown it saved.
+      const automatic = autoConnect || linked.has(id);
+      if (!asked && pressedAt === undefined && (!automatic || removed.has(id))) {
+        // A failed try keeps saying why, also while saving is held.
+        next.set(
+          id,
+          failure !== undefined
+            ? { phase: "failed", reason: failure }
+            : {
+                phase: "held",
+                reason: removed.has(id) ? REMOVED_HERE_REASON : AUTO_CONNECT_OFF_REASON,
+              },
+        );
+        continue;
+      }
+      // At most MAX_ATTEMPTS tries a minute apart, also when a try reported
+      // success but the catalog has not shown the machine saved.
       if (
         !asked &&
         tried !== undefined &&
@@ -170,7 +184,6 @@ export function GrantedAccountMachines() {
         if (tried.count < MAX_ATTEMPTS) waiting = true;
         continue;
       }
-      requested.current.delete(id);
       attempts.current.set(id, { count: (tried?.count ?? 0) + 1, at: now });
       inFlight.current.add(id);
       next.set(id, { phase: "connecting" });
@@ -195,7 +208,8 @@ export function GrantedAccountMachines() {
     publishAccountAutoConnectStates(next);
     setRetryPending(waiting);
 
-    // A machine that joined a moment ago may be missing from the list read earlier.
+    // A machine that joined a moment ago may be missing from the list read
+    // earlier; one on another account never shows, so a few reads only.
     const missing = grantedMachinesMissingFromAccount({
       snapshot,
       currentEnvironmentId: primaryEnvironmentId,
@@ -205,7 +219,7 @@ export function GrantedAccountMachines() {
       const looked = lookedUp.current.get(id);
       return looked === undefined || (looked.count < MAX_LOOKUPS && now - looked.at >= RETRY_MS);
     });
-    if (missing.length > 0 && !unreachable) {
+    if (missing.length > 0 && sawRefresh.current && !unreachable) {
       for (const id of missing)
         lookedUp.current.set(id, { count: (lookedUp.current.get(id)?.count ?? 0) + 1, at: now });
       void refresh();
@@ -215,6 +229,7 @@ export function GrantedAccountMachines() {
     discovery,
     environments,
     primaryEnvironmentId,
+    projects,
     refresh,
     register,
     snapshot,

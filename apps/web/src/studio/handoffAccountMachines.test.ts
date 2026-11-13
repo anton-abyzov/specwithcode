@@ -46,8 +46,32 @@ describe("handoffAccountMachines", () => {
         answering: true,
         reason: CONNECTING_REASON,
         connecting: true,
+        canConnect: false,
       },
     ]);
+  });
+
+  it("keeps a machine's row while the account list is read again", () => {
+    expect(
+      handoffAccountMachines({
+        ...base,
+        discovered: [],
+        fleet: [connectOnly("m5")],
+        states: new Map([["m5", { phase: "connecting" }]]),
+      }).fallback.map((machine) => [machine.environmentId, machine.label, machine.connecting]),
+    ).toEqual([["m5", "M5", true]]);
+  });
+
+  it("offers no Connect while SpecWithCode Connect cannot be reached", () => {
+    const [row] = handoffAccountMachines({
+      ...base,
+      discovered: [found("m5", "M5")],
+      fleet: [connectOnly("m5")],
+      states: new Map<string, AccountAutoConnectState>([
+        ["m5", { phase: "held", reason: "SpecWithCode Connect cannot be reached right now." }],
+      ]),
+    }).fallback;
+    expect(row?.canConnect).toBe(false);
   });
 
   it("offers Connect with the reason when saving failed or is held", () => {

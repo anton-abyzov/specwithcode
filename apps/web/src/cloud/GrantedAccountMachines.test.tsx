@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   refresh: vi.fn(),
   skipped: [] as string[],
   declined: [] as string[],
+  projects: [] as unknown[],
   discoveryKey: "",
   discoveryValue: null as unknown,
 }));
@@ -35,12 +36,12 @@ vi.mock("../state/environments", () => ({
     return state.discoveryValue;
   },
 }));
-vi.mock("../state/entities", () => ({ useProjects: () => [] }));
+vi.mock("../state/entities", () => ({ useProjects: () => state.projects }));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: { autoConnectPrivateMachines: boolean }) => boolean) =>
     select({ autoConnectPrivateMachines: state.autoConnect }),
 }));
-vi.mock("../studio/fleet", () => ({ useStudioFleet: () => ({ snapshot: state.snapshot }) }));
+vi.mock("../studio/fleet", () => ({ usePrimaryFleetSnapshot: () => state.snapshot }));
 vi.mock("../state/relay", () => ({ relayEnvironmentDiscovery: { refresh: "refresh" } }));
 vi.mock("../connection/catalog", () => ({ environmentCatalog: { register: "register" } }));
 vi.mock("../state/use-atom-command", () => ({
@@ -54,11 +55,16 @@ vi.mock("../studio/fleetAutoConnect", async (importOriginal) => ({
 vi.mock("./connectRoutePlan", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./connectRoutePlan")>()),
   readDeclinedConnectRoutes: () => new Set(state.declined),
+  setConnectRouteDeclined: vi.fn(),
+}));
+vi.mock("../studio/linkedMachines", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../studio/linkedMachines")>()),
+  linkedMachineIds: () => new Set(state.projects.length > 0 ? ["m5"] : []),
 }));
 
 const { GrantedAccountMachines } = await import("./GrantedAccountMachines");
-const { requestConnectRoutes } = await import("./connectRoutePlan");
-const { accountAutoConnectStates } = await import("../studio/grantedAccountMachines");
+const { accountAutoConnectStates, requestAccountMachineConnect } =
+  await import("../studio/grantedAccountMachines");
 
 /** The M5 after it allowed m4: same account, Connect-only, no shared project, never saved here. */
 function m5InFleet() {
@@ -94,6 +100,7 @@ beforeEach(() => {
   state.autoConnect = true;
   state.skipped = [];
   state.declined = [];
+  state.projects = [];
   state.snapshot = null;
   state.discovered = new Map();
   state.discoveryValue = null;
@@ -133,8 +140,10 @@ describe("GrantedAccountMachines", () => {
       phase: "held",
       reason: "Connect automatically is off.",
     });
-    await act(async () => requestConnectRoutes(["m5"]));
+    await act(async () => requestAccountMachineConnect(["m5"]));
     expect(state.register).toHaveBeenCalledTimes(1);
+    // A press reads no list again: other machine lists stay put.
+    expect(state.refresh).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
   });
 
@@ -184,6 +193,44 @@ describe("GrantedAccountMachines", () => {
     const renderer = await mount();
     expect(state.register).not.toHaveBeenCalled();
     expect(accountAutoConnectStates().size).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it("saves a machine a shared project names even with Connect automatically off", async () => {
+    m5InFleet();
+    state.autoConnect = false;
+    state.projects = [{ id: "shared" }];
+    const renderer = await mount();
+    expect(state.register).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it("retries a failed machine at once when Connect is pressed", async () => {
+    m5InFleet();
+    state.register.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("Relay refused")),
+    });
+    const renderer = await mount();
+    await act(async () => renderer.update(<GrantedAccountMachines />));
+    expect(state.register).toHaveBeenCalledTimes(1);
+    await act(async () => requestAccountMachineConnect(["m5"]));
+    expect(state.register).toHaveBeenCalledTimes(2);
+    await act(async () => renderer.unmount());
+  });
+
+  it("keeps what it published while the account list is read again", async () => {
+    m5InFleet();
+    state.autoConnect = false;
+    const renderer = await mount();
+    state.refreshing = true;
+    state.discovered = new Map();
+    await act(async () => renderer.update(<GrantedAccountMachines />));
+    expect(accountAutoConnectStates().get("m5")).toEqual({
+      phase: "held",
+      reason: "Connect automatically is off.",
+    });
+    state.refreshing = false;
     await act(async () => renderer.unmount());
   });
 });

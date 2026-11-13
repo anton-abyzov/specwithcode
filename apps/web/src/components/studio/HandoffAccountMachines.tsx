@@ -1,15 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
-import { useEffect } from "react";
-
-import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
 import { useTx } from "../../i18n";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { usePrimaryFleetSnapshot } from "../../studio/fleet";
 import { readSkippedFleetEnvironments } from "../../studio/fleetAutoConnect";
-import { useAccountAutoConnectStates } from "../../studio/grantedAccountMachines";
+import {
+  requestAccountMachineConnect,
+  useAccountAutoConnectStates,
+} from "../../studio/grantedAccountMachines";
 import {
   handoffAccountMachines,
   handoffFleetOnlyMachines,
@@ -19,12 +19,7 @@ import {
   useFleetAutoConnectSettledVersion,
 } from "../../studio/machineChecking";
 import { useMachineNicknames } from "../../studio/machineNickname";
-import { usePrimaryFleet } from "../settings/usePrimaryFleet";
 import { Button } from "../ui/button";
-
-/** The account list is read again when a dialog opens, at most this often. */
-const REFRESH_EVERY_MS = 30_000;
-let lastRefreshAt = 0;
 
 /**
  * Under the move dialog's machine list. A machine of this SpecWithCode
@@ -41,23 +36,15 @@ export function HandoffAccountMachines({
 }) {
   const tx = useTx();
   const { environments } = useEnvironments();
-  const fleet = usePrimaryFleet();
+  const fleetSnapshot = usePrimaryFleetSnapshot(usePrimaryEnvironmentId());
   // Read from the atom, not the environments hook, so callers mocking that module still render.
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const states = useAccountAutoConnectStates();
   // A tailnet machine whose pairing just finished without saving it is offered at once.
   useFleetAutoConnectSettledVersion();
   const name = useMachineNicknames();
-  const refresh = useAtomCommand(relayEnvironmentDiscovery.refresh, { reportFailure: false });
-  // So a machine that just signed in is found at once, without a probe on every remount.
-  useEffect(() => {
-    const now = Date.now();
-    if (now - lastRefreshAt < REFRESH_EVERY_MS) return;
-    lastRefreshAt = now;
-    void refresh();
-  }, [refresh]);
   const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
-  const fleetMachines = fleet.snapshot?.machines ?? null;
+  const fleetMachines = fleetSnapshot?.machines ?? null;
   const { fallback, notAllowed: accountOnly } = handoffAccountMachines({
     discovered: discovery.environments.values(),
     savedEnvironmentIds,
@@ -97,11 +84,11 @@ export function HandoffAccountMachines({
               {tx(machine.reason)}
             </span>
           </span>
-          {machine.connecting ? null : (
+          {!machine.canConnect ? null : (
             <Button
               size="xs"
               variant="outline"
-              onClick={() => requestConnectRoutes([machine.environmentId])}
+              onClick={() => requestAccountMachineConnect([machine.environmentId])}
             >
               {tx("Connect")}
             </Button>

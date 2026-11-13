@@ -126,6 +126,34 @@ export function accountAutoConnectStates(): ReadonlyMap<string, AccountAutoConne
   return states;
 }
 
+const connectRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) => void>();
+
+/**
+ * Connect by hand for account machines that allowed this one: saves them over
+ * SpecWithCode Connect now, also while Connect automatically is off, and
+ * lifts an earlier removal here. Reads no list again, so other machine lists
+ * stay put.
+ */
+export function requestAccountMachineConnect(environmentIds: ReadonlyArray<string>): void {
+  for (const listener of connectRequestListeners) listener(environmentIds);
+}
+
+export function onAccountMachineConnectRequest(
+  listener: (environmentIds: ReadonlyArray<string>) => void,
+): () => void {
+  connectRequestListeners.add(listener);
+  return () => {
+    connectRequestListeners.delete(listener);
+  };
+}
+
+/** Whether Connect by hand can do anything now: not while Connect itself is unreachable. */
+export function accountConnectCanRetry(state: AccountAutoConnectState | undefined): boolean {
+  if (state === undefined) return true;
+  if (state.phase === "connecting") return false;
+  return !(state.phase === "held" && state.reason === CONNECT_UNREACHABLE_REASON);
+}
+
 /** {@link accountAutoConnectStates}, re-rendering when the reconciler publishes. */
 export function useAccountAutoConnectStates(): ReadonlyMap<string, AccountAutoConnectState> {
   return useSyncExternalStore(

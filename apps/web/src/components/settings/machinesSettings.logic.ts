@@ -16,7 +16,10 @@ import type {
 } from "@specweave-studio/contracts/studioFleet";
 
 import { fleetMachineHasTailnetAddress, fleetMachineSaved } from "../../studio/fleetAutoConnect";
-import type { AccountAutoConnectState } from "../../studio/grantedAccountMachines";
+import {
+  type AccountAutoConnectState,
+  accountConnectCanRetry,
+} from "../../studio/grantedAccountMachines";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
 import type { HostLimitBlock } from "../../studio/hostLimitsModel";
 import {
@@ -285,7 +288,8 @@ export function withAccountConnectState(
   return {
     ...row,
     seen: state ? { state: row.seen.state, text: state.reason } : row.seen,
-    connect: { enabled: true, label: "Connect" },
+    // Pressing it does nothing while Connect itself cannot be reached.
+    connect: { enabled: accountConnectCanRetry(state), label: "Connect" },
   };
 }
 

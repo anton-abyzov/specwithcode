@@ -9,7 +9,7 @@
  * @module handoffAccountMachines
  */
 import { fleetMachineHasTailnetAddress } from "./fleetAutoConnect";
-import type { AccountAutoConnectState } from "./grantedAccountMachines";
+import { type AccountAutoConnectState, accountConnectCanRetry } from "./grantedAccountMachines";
 
 export interface HandoffAccountMachine {
   readonly environmentId: string;
@@ -23,6 +23,8 @@ export interface HandoffConnectFallback extends HandoffAccountMachine {
   readonly reason: string;
   /** Being saved over SpecWithCode Connect now: Connect waits. */
   readonly connecting: boolean;
+  /** Connect by hand can do something now (not while Connect is unreachable). */
+  readonly canConnect: boolean;
 }
 
 interface Discovered {
@@ -38,6 +40,20 @@ interface FleetEntry {
 
 export const CONNECTING_REASON = "Connecting over SpecWithCode Connect…";
 export const NOT_CONNECTED_REASON = "Not connected to this app yet.";
+
+function withState(
+  machine: HandoffAccountMachine,
+  state: AccountAutoConnectState,
+): HandoffConnectFallback {
+  return state.phase === "connecting"
+    ? { ...machine, reason: CONNECTING_REASON, connecting: true, canConnect: false }
+    : {
+        ...machine,
+        reason: state.reason,
+        connecting: false,
+        canConnect: accountConnectCanRetry(state),
+      };
+}
 
 export function handoffAccountMachines(input: {
   readonly discovered: Iterable<Discovered>;
@@ -65,7 +81,9 @@ export function handoffAccountMachines(input: {
   const notAllowed: HandoffAccountMachine[] = [];
   if (input.fleet === null) return { fallback, notAllowed };
   const fleetById = new Map(input.fleet.map((machine) => [machine.environmentId, machine]));
+  const discoveredIds = new Set<string>();
   for (const { environment, availability } of input.discovered) {
+    discoveredIds.add(environment.environmentId);
     const id = environment.environmentId;
     if (id === input.sourceEnvironmentId || input.savedEnvironmentIds.has(id)) continue;
     const machine = {
@@ -79,13 +97,34 @@ export function handoffAccountMachines(input: {
       continue;
     }
     const state = input.states.get(id);
-    if (state?.phase === "connecting")
-      fallback.push({ ...machine, reason: CONNECTING_REASON, connecting: true });
-    else if (state) fallback.push({ ...machine, reason: state.reason, connecting: false });
+    if (state) fallback.push(withState(machine, state));
     // A tailnet machine is paired by the fleet; once that has finished without
     // saving it, Connect over SpecWithCode Connect is the way left.
     else if (fleetMachineHasTailnetAddress(inFleet) && input.fleetPairingSettled(id))
-      fallback.push({ ...machine, reason: NOT_CONNECTED_REASON, connecting: false });
+      fallback.push({
+        ...machine,
+        reason: NOT_CONNECTED_REASON,
+        connecting: false,
+        canConnect: true,
+      });
+  }
+  // The account list is empty while it is read again: a machine being saved
+  // keeps its row, named from the fleet.
+  const listed = new Set(fallback.map((machine) => machine.environmentId));
+  for (const [id, state] of input.states) {
+    const inFleet = fleetById.get(id);
+    if (!inFleet || listed.has(id) || discoveredIds.has(id)) continue;
+    if (id === input.sourceEnvironmentId || input.savedEnvironmentIds.has(id)) continue;
+    fallback.push(
+      withState(
+        {
+          environmentId: id,
+          label: input.name?.(id, inFleet.label) ?? inFleet.label,
+          answering: true,
+        },
+        state,
+      ),
+    );
   }
   const byLabel = (a: HandoffAccountMachine, b: HandoffAccountMachine) =>
     a.label.localeCompare(b.label);
