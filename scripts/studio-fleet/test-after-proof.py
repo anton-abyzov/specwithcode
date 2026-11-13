@@ -995,6 +995,88 @@ class EqualAutoVacuum(AutoVacuum, Equal):
             flow.kept.clear()
 
 
+    def shortened(self, **shape):
+        """An old service whose log holds frames of pages a later commit cut off the end of the
+        database: rows added, deleted, and an incremental_vacuum pass, each its own commit, as
+        scheduled maintenance does between two checkpoints."""
+        flow = Update(self, **shape)
+        flow.old.commit(('INSERT INTO checkpoint_diff_blobs(body) VALUES (randomblob(200000))', []))
+        flow.old.commit(('DELETE FROM checkpoint_diff_blobs WHERE length(body) = 200000', []))
+        flow.old.commit(('PRAGMA incremental_vacuum(1000)', []))
+        with after_proof.keeping(flow.database) as flow.kept:  # The read before the restart, after them.
+            before = update_read._read_state(flow.state, flow.include_auth, None, True)
+        flow.before = before[0]
+        flow.reference = {'position': None, 'since': flow.before, 'reads': (before[0], None, before[3])}
+        if flow.watermark is not None:
+            flow.taken = flow.watermark.take()
+        return flow
+
+    def test_a_log_with_frames_past_the_end_of_a_shortened_database_decides_by_pages(self):
+        for stop in ('close', 'kill'):
+            with self.subTest(stop=stop):
+                flow = self.shortened()
+                flow.around_restart(stop=stop)
+                self.assertNotIn('reason', flow.held)  # Was 'clone-differs-from-old-log' on M4's 1.0.258, 1.0.268 and 1.0.273.
+                self.assert_same(flow)
+
+    def test_without_a_reader_such_a_log_is_still_checked_against_the_clone(self):
+        flow = self.shortened(reader=False)
+        flow.around_restart()
+        self.assertNotIn('reason', flow.held)
+        reads, record, _ = flow.decide()
+        if reads is not None:
+            full = flow.full()
+            for index in (0, 2, 3):
+                self.assertEqual(encoded(reads[index]), encoded(full[index]))
+        flow.kept.clear()
+
+    def test_a_clone_that_does_not_end_where_the_shortened_database_does_is_refused(self):
+        flow = self.shortened()
+        flow.mark()
+        flow.stop()
+        pages = after_proof._pages_at
+        with patch.object(after_proof, '_pages_at', lambda fd, page_size, frame: pages(fd, page_size, frame) - 1):
+            self.assertEqual(flow.clone(), {'reason': 'clone-differs-from-old-log'})
+
+    def emptied(self):
+        """As test_an_old_log_its_close_checkpointed_and_emptied, with the database grown and
+        shortened again after the mark: the gap comes from the WAL index, cut at its size."""
+        flow = Update(self, reader=False)
+        flow.mark()
+        flow.old.commit(('INSERT INTO checkpoint_diff_blobs(body) VALUES (randomblob(200000))', []))
+        flow.old.commit(('DELETE FROM checkpoint_diff_blobs WHERE length(body) = 200000', []))
+        flow.old.commit(('PRAGMA incremental_vacuum(1000)', []))
+        flow.old.checkpoint('PASSIVE')
+        flow.stop('kill')
+        os.truncate(str(flow.database) + '-wal', 0)
+        return flow, os.stat(flow.database).st_size // 4096
+
+    def test_an_emptied_log_whose_gap_held_pages_past_the_end(self):
+        flow, pages = self.emptied()
+        seen, gap = [], after_proof._truncated_gap
+
+        def recorded(database, marked):
+            seen.append(gap(database, marked))
+            return seen[-1]
+        with patch.object(after_proof, '_truncated_gap', recorded):
+            held = flow.clone()
+        self.assertEqual(seen[0][1], pages)  # Pages were left out, so the clone must end there.
+        self.assertTrue(held['gap'], held)
+        self.assertLessEqual(max(held['gap']), pages)
+
+    def test_an_emptied_log_is_refused_when_the_clone_ends_elsewhere(self):
+        flow, pages = self.emptied()
+        gap = after_proof._truncated_gap
+        with patch.object(after_proof, '_truncated_gap', lambda *a: (gap(*a)[0], pages - 1)):
+            self.assertEqual(flow.clone(), {'reason': 'clone-differs-from-old-log'})
+
+    def test_frames_past_the_end_are_left_out_only_when_the_end_is_known(self):
+        latest = {1: 3, 5: 2, 9: 1}
+        self.assertEqual(after_proof._within([1, 9], latest, 0), ([1, 9], latest, None))
+        self.assertEqual(after_proof._within([1, 9], latest, 9), ([1, 9], latest, None))
+        self.assertEqual(after_proof._within([1, 9], latest, 5), ([1], {1: 3, 5: 2}, 5))
+
+
 class RefusesAutoVacuum(AutoVacuum, Refuses):
     def wrong_entry(self, entry):
         """The proof with the last entry in use of every pointer-map page read as `entry`; it reads

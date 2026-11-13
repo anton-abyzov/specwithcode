@@ -165,6 +165,15 @@ def _chain(fd, page_size, salt, big, start, running):
         frames.append((page, size, running))
 
 
+def _pages_at(fd, page_size, frame):
+    """The database's size in pages after commit frame `frame` (its header's second field), 0 for
+    a frame that ends no commit or for no frame."""
+    if not frame:
+        return 0
+    data = os.pread(fd, 8, WAL_HEADER_BYTES + (frame - 1) * (FRAME_HEADER_BYTES + page_size))
+    return struct.unpack_from('>I', data, 4)[0] if len(data) == 8 else 0
+
+
 def _frame_page(fd, page_size, frame):
     return struct.unpack_from('>I', os.pread(fd, 4, WAL_HEADER_BYTES + (frame - 1) * (FRAME_HEADER_BYTES + page_size)))[0]
 
@@ -428,9 +437,9 @@ def _stopped(marked, clone):
         present = None
     if present is not None and [present.st_dev, present.st_ino] != marked['wal']:
         return {'reason': 'old-log-replaced'}
-    header, latest = _log_header(fd), {}
+    header, latest, ends = _log_header(fd), {}, None
     if header is None and os.fstat(fd).st_size == 0:
-        gap = _truncated_gap(database, marked)
+        gap, ends = _truncated_gap(database, marked)
         if gap is None:
             return {'reason': 'old-log-reset'}
         present = None  # Checkpointed and emptied: the database file holds every frame.
@@ -443,11 +452,27 @@ def _stopped(marked, clone):
         gap = sorted({page for page, _, _ in tail[:commits[-1]]}) if commits else []
         for frame in range(1, committed + 1):
             latest[_frame_page(fd, page_size, frame)] = frame
-    return _checked(marked, clone, gap, latest, present is not None)
+        gap, latest, ends = _within(gap, latest, _pages_at(fd, page_size, committed))
+    return _checked(marked, clone, gap, latest, present is not None, ends)
 
 
-def _checked(marked, clone, gap, latest, present):
-    """The record `stopped` returns, once the clone holds every committed frame of the old log."""
+def _within(gap, latest, pages):
+    """`gap` and `latest` without the pages past the database's end at the old log's last commit
+    (`pages`; 0 when unknown, and nothing is left out). A commit that shortens the database (an
+    incremental_vacuum pass, as scheduled maintenance runs on an auto-vacuum database) leaves the
+    frames of the pages it cut off in the log; they are no part of the database, the fold that made
+    the clone did not write them and cut the file to that size, which _checked requires. Returns
+    (gap, latest, that size when pages were left out else None)."""
+    if not pages:
+        return gap, latest, None
+    kept = {page: frame for page, frame in latest.items() if page <= pages}
+    # With pages left out, _checked requires the clone to end at `pages`.
+    return [page for page in gap if page <= pages], kept, pages if len(kept) != len(latest) else None
+
+
+def _checked(marked, clone, gap, latest, present, ends=None):
+    """The record `stopped` returns, once the clone holds every committed frame of the old log, and
+    ends at `ends` pages when frames past the database's end were left out (_within)."""
     database, fd, page_size = marked['database'], marked['held'].fd, marked['pageSize']
     main = read_delta._main_file(database)
     if main[:2] != marked['main']:
@@ -456,6 +481,8 @@ def _checked(marked, clone, gap, latest, present):
     try:
         if _page_size(os.pread(clone_fd, 100, 0)) != page_size:
             return {'reason': 'page-size'}
+        if ends is not None and os.fstat(clone_fd).st_size != ends * page_size:
+            return {'reason': 'clone-differs-from-old-log'}
         for page, frame in latest.items():
             if os.pread(clone_fd, page_size, (page - 1) * page_size) != _frame_data(fd, page_size, frame):
                 return {'reason': 'clone-differs-from-old-log'}
@@ -503,8 +530,9 @@ def _stopped_held(marked, clone, clonefile):
         latest[page] = frame
         if frame <= start:
             snapshot[page] = frame
+    gap, latest, ends = _within(gap, latest, _pages_at(fd, page_size, committed))
     marked['logPages'] = sorted(latest)  # What _fold_live writes into the live file.
-    result = _checked(marked, clone, gap, latest, True)
+    result = _checked(marked, clone, gap, latest, True, ends)
     if 'clone' in result and marked.get('confirmed') and clonefile is not None:
         try:
             result['reference'] = _reference_image(marked, clone, clonefile, gap, snapshot)
@@ -631,14 +659,17 @@ def _truncated_gap(database, marked):
         index = _index_header(fd)
         if index is None or index['salt'] != marked['salt'] or index['pageSize'] != marked['pageSize'] \
                 or index['mxFrame'] < marked['published'] or index['nBackfill'] != index['mxFrame']:
-            return None
+            return None, None
         pages = set()
         for frame in range(marked['published'] + 1, index['mxFrame'] + 1):
             # The index's page-number array: 4062 entries after the header, then 4096 per 32 KiB block.
             block, slot = (0, frame - 1) if frame <= 4062 else divmod(frame - 4063, 4096)
             offset = INDEX_HEADER_BYTES + slot * 4 if frame <= 4062 else (block + 1) * 32768 + slot * 4
             pages.add(struct.unpack('=I', os.pread(fd, 4, offset))[0])
-        return sorted(pages)
+        # Pages a later commit cut off the end of the database are no part of it; with any left out,
+        # _checked requires the clone to end at the index's size, as _within does.
+        kept = sorted(page for page in pages if not index['nPage'] or page <= index['nPage'])
+        return kept, index['nPage'] if len(kept) != len(pages) else None
     finally:
         if probe is None:
             os.close(fd)
