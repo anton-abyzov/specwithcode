@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
+import { isDesktopLocalConnectionTarget, isWslConnectionTarget } from "../../connection/desktopLocal";
 import { selectProjectGroupingSettings } from "../../logicalProject";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
@@ -20,6 +21,17 @@ export function useSettingsProjectGroups() {
   const { environments } = useEnvironments();
   return useMemo(() => {
     const labels = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
+    // A sandbox on this device (desktop-local, WSL) is a copy here, not another machine.
+    const desktopLocal = new Set(
+      environments
+        .filter((entry) => entry.entry && isDesktopLocalConnectionTarget(entry.entry.target))
+        .map((entry) => entry.environmentId),
+    );
+    const wsl = new Set(
+      environments
+        .filter((entry) => entry.entry && isWslConnectionTarget(entry.entry.target))
+        .map((entry) => entry.environmentId),
+    );
     return buildSidebarProjectSnapshots({
       projects,
       settings,
@@ -28,6 +40,8 @@ export function useSettingsProjectGroups() {
         const label = labels.get(id);
         return label === undefined ? null : nickname(id, label);
       },
+      isDesktopLocalEnvironment: (id) => desktopLocal.has(id),
+      isWslEnvironment: (id) => wsl.has(id),
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [environments, nickname, primaryEnvironmentId, projects, settings]);
 }

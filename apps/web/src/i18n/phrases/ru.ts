@@ -2306,8 +2306,21 @@ export const ru: PhraseCatalog = {
   "provider order": "порядок провайдеров",
   "Providers for the recommended model": "Провайдеры для рекомендуемой модели",
   "Rename machine": "Переименовать машину",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "Короткое имя для {hostLabel}. Его показывают строки тредов, «Запустить на» и другие ваши устройства.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "Это имя показывают «Запуск на», строки тредов, боковая панель и другие ваши устройства.",
+  "Machine name": "Имя машины",
+  "Computer name: {hostLabel}, unchanged.": "Имя компьютера: {hostLabel}, не меняется.",
+  "Call it {name}": "Назвать {name}",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "Другая машина уже называется {name}. Если это старая копия этой машины, удалите её в разделе «Другие машины».",
+  "Use the computer name": "Использовать имя компьютера",
+  "Chip letters": "Буквы на чипе",
+  "Narrow chip": "Узкий чип",
+  "Customize chip letters, color and icon": "Настроить буквы на чипе, цвет и значок",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "2 или 3 символа для чипа, в который не помещается имя. Пусто — берутся из имени.",
+  "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
+  "Computer name {hostLabel}": "Имя компьютера {hostLabel}",
   "Use {defaultName}": "Использовать {defaultName}",
   "Waiting for sample": "Ожидание замера",
   "Updated {span}{value}": "Обновлено {span}{value}",
@@ -4886,4 +4899,5 @@ export const ru: PhraseCatalog = {
   "Review by another model family required": "Нужна проверка моделью другой семьи",
   "{family} review required": "Нужна проверка {family}",
   "Reviewed, model not recorded": "Проверено, модель не записана",
+  "On other machines": "На других компьютерах",
 };

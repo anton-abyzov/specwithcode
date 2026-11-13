@@ -11,6 +11,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { MachineNickname, MachineNicknames, ServerConfig } from "@specweave-studio/contracts";
 import {
+  machineNicknameHolder,
   mergeMachineNicknames,
   nextMachineNicknameStamp,
   normalizeMachineNickname,
@@ -18,7 +19,7 @@ import {
 } from "@specweave-studio/shared/machineNicknames";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -122,6 +123,32 @@ export function useMachineNickname(
 ): string {
   const resolve = useMachineNicknames();
   return environmentId ? resolve(environmentId, fallbackLabel) : (fallbackLabel?.trim() ?? "");
+}
+
+/**
+ * Finds another known machine already shown under a name (ignoring case), so a
+ * rename can say so before it duplicates one, such as an old record of the same
+ * computer. Returns that machine's id and the name it shows, or null.
+ */
+export function useMachineNameHolder(): (
+  environmentId: string,
+  name: string,
+) => { readonly environmentId: string; readonly name: string } | null {
+  const { nicknames, labels } = useMachineNameSources();
+  const shown = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const id of new Set([...Object.keys(nicknames), ...labels.keys()])) {
+      names.set(id, resolveMachineNickname(nicknames, id, labels.get(id)));
+    }
+    return names;
+  }, [nicknames, labels]);
+  return useCallback(
+    (environmentId, name) => {
+      const holder = machineNicknameHolder(shown, environmentId, name);
+      return holder === null ? null : { environmentId: holder, name: shown.get(holder) ?? name };
+    },
+    [shown],
+  );
 }
 
 /** The nickname the user set, or null when the machine shows its default name. */

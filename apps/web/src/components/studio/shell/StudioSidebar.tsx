@@ -77,9 +77,11 @@ import {
 import { isTerminalFocused } from "../../../lib/terminalFocus";
 import { isModelPickerOpen } from "../../../modelPickerVisibility";
 import { resolveAdjacentThreadId } from "../../Sidebar.logic";
-import type {
-  SidebarProjectGroupMember,
-  SidebarProjectSnapshot,
+import {
+  hasNoCopyHere,
+  localCopiesFirst,
+  type SidebarProjectGroupMember,
+  type SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
 import {
   useAllEnvironmentProjectSnapshotsReady,
@@ -129,8 +131,8 @@ import {
   moveProject,
   rememberPinnedMembers,
   resolveProjectOrder,
-  stepProject,
-  toggleProjectPin,
+  stepProjectInSection,
+  toggleProjectPinInSection,
   type ProjectDropTarget,
 } from "../../../studio/projectOrder";
 import { useSidebarProjectOrder } from "../../../studio/useSidebarProjectOrder";
@@ -879,11 +881,13 @@ export default function StudioSidebar() {
       (environmentId) => machineLabels.get(environmentId as EnvironmentId),
       environments.length,
     );
-  // Pinned projects lead, then the rest, both in the person's order.
-  const arranged = arrangeProjects(
+  // Pinned projects lead, then the rest, both in the person's order. Among the rest, the
+  // ones this device can run come first; projects only on other machines follow, labelled.
+  const ordered = arrangeProjects(
     listedProjects.filter((group) => !isPersonalGroup(group)),
     projectOrder,
   );
+  const arranged = { pinned: ordered.pinned, unpinned: localCopiesFirst(ordered.unpinned) };
   const codeProjects = [...arranged.pinned, ...arranged.unpinned];
   const nameHints = sameNameHints(codeProjects, (group) =>
     displayNameOf(group, displayedCheckouts.get(group.projectKey)),
@@ -894,6 +898,9 @@ export default function StudioSidebar() {
     unpinned: arranged.unpinned.map((group) => group.projectKey),
   };
   const pinnedKeys = new Set(listedKeys.pinned);
+  const elsewhereKeys = new Set(
+    codeProjects.filter(hasNoCopyHere).map((group) => group.projectKey),
+  );
   const folded = !showAllProjects && codeProjects.length > PROJECT_PAGE + 1;
   const shownWhenFolded = (group: SidebarProjectSnapshot, index: number) =>
     index < PROJECT_PAGE ||
@@ -902,19 +909,25 @@ export default function StudioSidebar() {
     (waitingByProject.get(group.projectKey) ?? 0) > 0;
   const visibleProjects = folded ? codeProjects.filter(shownWhenFolded) : codeProjects;
   const hiddenProjects = codeProjects.length - visibleProjects.length;
-  const moveProjectTo = (projectKey: string, target: ProjectDropTarget) => {
-    const next = moveProject(projectOrder, listedKeys, projectKey, target);
-    // A project moved into the folded part of the list unfolds it, so it stays in view.
+  // A project moved or unpinned into the folded part of the list unfolds it, so it
+  // stays in view. Its new place counts the section it shows in.
+  const saveRevealing = (projectKey: string, next: ReturnType<typeof moveProject>) => {
     if (folded) {
       const after = arrangeProjects(codeProjects, next);
-      const index = [...after.pinned, ...after.unpinned].findIndex(
-        (group) => group.projectKey === projectKey,
-      );
-      const group = codeProjects.find((entry) => entry.projectKey === projectKey);
-      if (!target.pinned && group && !shownWhenFolded(group, index)) setShowAllProjects(true);
+      const shown = [...after.pinned, ...localCopiesFirst(after.unpinned)];
+      const index = shown.findIndex((group) => group.projectKey === projectKey);
+      const pinnedAfter = after.pinned.some((group) => group.projectKey === projectKey);
+      const hidden =
+        index >= PROJECT_PAGE &&
+        !pinnedAfter &&
+        projectKey !== activeProjectKey &&
+        (waitingByProject.get(projectKey) ?? 0) === 0;
+      if (hidden) setShowAllProjects(true);
     }
     saveProjectOrder(next);
   };
+  const moveProjectTo = (projectKey: string, target: ProjectDropTarget) =>
+    saveRevealing(projectKey, moveProject(projectOrder, listedKeys, projectKey, target));
   // Another machine's assistant never stands in for this machine's own.
   const offerOwnAssistant =
     aideEnabled &&
@@ -1074,14 +1087,17 @@ export default function StudioSidebar() {
                 onOpen={closeMobile}
                 onMove={moveProjectTo}
                 onStep={(projectKey, direction) => {
-                  const target = stepProject(listedKeys, projectKey, direction);
+                  const target = stepProjectInSection(listedKeys, elsewhereKeys, projectKey, direction);
                   if (target) moveProjectTo(projectKey, target);
                 }}
                 canStep={(projectKey, direction) =>
-                  stepProject(listedKeys, projectKey, direction) !== null
+                  stepProjectInSection(listedKeys, elsewhereKeys, projectKey, direction) !== null
                 }
                 onPin={(projectKey) =>
-                  saveProjectOrder(toggleProjectPin(projectOrder, listedKeys, projectKey))
+                  saveRevealing(
+                    projectKey,
+                    toggleProjectPinInSection(projectOrder, listedKeys, elsewhereKeys, projectKey),
+                  )
                 }
                 onArchive={(group, archived) => void setGroupArchived(group, archived)}
                 onOriginChange={(group, origin) => void setGroupOrigin(group, origin)}

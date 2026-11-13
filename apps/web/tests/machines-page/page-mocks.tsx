@@ -63,6 +63,24 @@ export const useEnvironmentScope = () => !readOnlyWindow;
 export const readEnvironmentScope = () => !readOnlyWindow;
 export const useEnvironmentsWithScope = () => [];
 export const useMachineNickname = (_id: string, label?: string) => label ?? "";
+export const useCustomMachineNickname = () => null;
+export const useMachineNameHolder = () => () => null;
+export const useMachineIdentity = (environmentId: string | null) =>
+  environmentId === null
+    ? null
+    : {
+        environmentId,
+        name: "MacBook Air",
+        color: "teal",
+        icon: "laptop",
+        short: "MA",
+        derivedShort: "MA",
+      };
+export const useRenameMachine = () => ({
+  lock: null,
+  rename: () => true,
+  saveIdentity: () => true,
+});
 export const useTeamRules = () => ({ summary: undefined });
 export const RenameMachineDialog = () => null;
 

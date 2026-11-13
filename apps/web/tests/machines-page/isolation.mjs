@@ -13,7 +13,7 @@ const UPDATE_CARD_MOCKED =
 const PAGE =
   /(MachineSummary|AddDeviceDialog|PhoneConnectSettings|PhoneDevicesSettings|PairPhoneSettings|ThisMachineAdvanced|settingsLayout)\.tsx$/;
 const PAGE_MOCKED =
-  /^@clerk\/react$|^@tanstack\/react-router$|\/(cloud\/(managedRelayState|publicConfig|useCloudLinkController|useRememberConnectChoice)|hooks\/useSettings|state\/(environments|session|use-atom-command)|studio\/machineNickname|teamRules\/useTeamRules|clerk\/useStudioConnectAuthPrompt|environments\/primary|RenameMachineDialog|useScopedSettings|ui\/toast)$/;
+  /^@clerk\/react$|^@tanstack\/react-router$|\/(cloud\/(managedRelayState|publicConfig|useCloudLinkController|useRememberConnectChoice)|hooks\/useSettings|state\/(environments|session|use-atom-command)|studio\/(machineNickname|machineIdentity|useRenameMachine)|teamRules\/useTeamRules|clerk\/useStudioConnectAuthPrompt|environments\/primary|RenameMachineDialog|useScopedSettings|ui\/toast)$/;
 
 // `?scene=work`: the grant cards, rendered from their list view with no server behind them.
 const GRANTS = /MachineWorkGrants\.tsx$/;

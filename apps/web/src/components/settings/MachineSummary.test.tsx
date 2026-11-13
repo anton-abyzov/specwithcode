@@ -22,7 +22,23 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 vi.mock("../../state/environments", () => ({ useEnvironment: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
-vi.mock("../../studio/machineNickname", () => ({ useMachineNickname: vi.fn() }));
+const names = vi.hoisted(() => ({ holders: new Map<string, string>() }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: vi.fn(),
+  useCustomMachineNickname: vi.fn(),
+  useMachineNameHolder: () => (_id: string, name: string) => {
+    const holder = names.holders.get(name.toLowerCase());
+    return holder === undefined ? null : { environmentId: holder, name };
+  },
+}));
+vi.mock("../../studio/machineIdentity", () => ({
+  useMachineIdentity: (id: string | null) =>
+    id === null ? null : { environmentId: id, color: "teal", icon: "laptop" },
+}));
+const saveIdentity = vi.hoisted(() => vi.fn(() => true));
+vi.mock("../../studio/useRenameMachine", () => ({
+  useRenameMachine: () => ({ lock: null, saveIdentity }),
+}));
 vi.mock("../../teamRules/useTeamRules", () => ({ useTeamRules: vi.fn() }));
 vi.mock("../../teamRules/teamRulesView", () => ({ teamRulesReachLock: vi.fn() }));
 vi.mock("../../versionSkew", () => ({ resolveServerConfigVersionMismatch: vi.fn() }));
@@ -43,7 +59,7 @@ import { useCloudLinkController } from "../../cloud/useCloudLinkController";
 import { useRememberConnectChoice } from "../../cloud/useRememberConnectChoice";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { useCustomMachineNickname, useMachineNickname } from "../../studio/machineNickname";
 import { teamRulesReachLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
 import { resolveServerConfigVersionMismatch } from "../../versionSkew";
@@ -132,6 +148,7 @@ function world(input: World = {}) {
     },
   } as never);
   vi.mocked(useMachineNickname).mockReturnValue("Sam's MacBook Pro");
+  vi.mocked(useCustomMachineNickname).mockReturnValue(null);
   vi.mocked(resolveServerConfigVersionMismatch).mockReturnValue((input.mismatch ?? null) as never);
 }
 
@@ -251,6 +268,55 @@ describe("MachineSummary", () => {
     expect(byAttr(view.root, "data-rename-dialog")).toHaveLength(0);
     view.press("Rename");
     expect(textOf(byAttr(view.root, "data-rename-dialog")[0]!)).toBe("sams-mbp.local");
+  });
+});
+
+describe("the machine's short name", () => {
+  const named = (label: string) =>
+    vi.mocked(useEnvironment).mockReturnValue({
+      label,
+      serverConfig: {
+        environment: { platform: { machine: "laptop" }, serverVersion: "1.0.233" },
+      },
+    } as never);
+
+  beforeEach(() => {
+    names.holders.clear();
+    saveIdentity.mockClear();
+  });
+
+  it("offers the chip in the computer name in one click", () => {
+    world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
+    named("Anton M5MAX PROLED");
+    const view = page();
+    expect(view.buttons()).toEqual(["Add a device or machine", "Call it M5", "Rename"]);
+    view.press("Call it M5");
+    expect(saveIdentity).toHaveBeenCalledWith(here, {
+      name: "M5",
+      color: "teal",
+      icon: "laptop",
+      short: "",
+    });
+  });
+
+  it("leaves a name another machine already shows to the Rename dialog", () => {
+    world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
+    named("Anton M5MAX PROLED");
+    names.holders.set("m5", "stale-m5");
+    const view = page();
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename"]);
+  });
+
+  it("offers nothing once a name is chosen, and keeps the computer name in view", () => {
+    world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
+    named("Anton M5MAX PROLED");
+    vi.mocked(useCustomMachineNickname).mockReturnValue("M5");
+    vi.mocked(useMachineNickname).mockReturnValue("M5");
+    const view = page();
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename"]);
+    expect(textOf(byAttr(view.root, "data-machine-about")[0]!)).toContain(
+      "Computer name Anton M5MAX PROLED",
+    );
   });
 });
 
