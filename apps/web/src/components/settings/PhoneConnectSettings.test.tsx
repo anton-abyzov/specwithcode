@@ -8,7 +8,16 @@ vi.mock("~/state/environments", () => ({
   useEnvironment: vi.fn(),
   usePrimaryEnvironmentId: vi.fn(),
 }));
-vi.mock("~/studio/machineNickname", () => ({ useMachineNickname: vi.fn() }));
+vi.mock("~/studio/machineNickname", () => ({
+  useMachineNickname: vi.fn(),
+  useCustomMachineNickname: () => null,
+  useMachineNameHolder: () => () => null,
+}));
+// The summary's rename and identity hooks reach the app runtime; the card needs neither.
+vi.mock("~/studio/useRenameMachine", () => ({
+  useRenameMachine: () => ({ lock: "unsupported", rename: vi.fn(), saveIdentity: vi.fn() }),
+}));
+vi.mock("~/studio/machineIdentity", () => ({ useMachineIdentity: () => null }));
 vi.mock("../ui/qr-code", () => ({
   QRCodeSvg: (props: { value: string; size: number }) => (
     <i data-qr={props.value} data-size={props.size} />
