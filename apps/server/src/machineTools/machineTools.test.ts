@@ -6,7 +6,11 @@ import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { ChecksumMismatchError, makeNodeProvisionHost, type ProvisionHost } from "../provision/host.ts";
+import {
+  ChecksumMismatchError,
+  makeNodeProvisionHost,
+  type ProvisionHost,
+} from "../provision/host.ts";
 import { GH_VERSION, NODE_VERSION, nodeDownload } from "../provision/manifest.ts";
 import {
   checkMachineTools,
@@ -20,7 +24,11 @@ import {
   type MachineToolsContext,
 } from "./machineTools.ts";
 
-const posix = process.platform !== "win32";
+// oxlint-disable-next-line studio/no-global-process-runtime -- the tests install for the machine they run on.
+const HOST_PLATFORM = process.platform;
+// oxlint-disable-next-line studio/no-global-process-runtime -- as above.
+const HOST_ARCH = process.arch;
+const posix = HOST_PLATFORM !== "win32";
 const tempDir = (name: string) => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), `${name}-`));
 
 /** A host with an empty PATH and a download that hands over a prepared archive. */
@@ -96,7 +104,9 @@ describe("withPathDirs", () => {
   it("adds missing folders after the person's own, and leaves a complete PATH alone", () => {
     expect(withPathDirs("/usr/bin:/bin", ["/x/bin", "/bin"], "linux")).toBe("/usr/bin:/bin:/x/bin");
     expect(withPathDirs("/usr/bin:/x/bin", ["/x/bin"], "linux")).toBeUndefined();
-    expect(withPathDirs("C:\\Tools", ["c:\\tools", "D:\\Node"], "win32")).toBe("C:\\Tools;D:\\Node");
+    expect(withPathDirs("C:\\Tools", ["c:\\tools", "D:\\Node"], "win32")).toBe(
+      "C:\\Tools;D:\\Node",
+    );
   });
 });
 
@@ -106,10 +116,10 @@ describe.runIf(posix)("checkMachineTools", () => {
     const { host } = hostWith();
     const check = await checkMachineTools(context(host, home), "missing");
     expect(check).toMatchObject({ git: "missing", node: "missing", gh: "missing" });
-    const key = toolPlatformKey(process.platform, process.arch, true);
+    const key = toolPlatformKey(HOST_PLATFORM, HOST_ARCH, true);
     if (key !== null) expect(check.installable).toEqual(expect.arrayContaining(["node", "gh"]));
     // Git on a Mac comes from Apple's developer tools; on Linux it needs root.
-    expect(check.installable.includes("git")).toBe(process.platform === "darwin");
+    expect(check.installable.includes("git")).toBe(HOST_PLATFORM === "darwin");
   });
 
   it("counts a Node.js from a version manager or on PATH as present", async () => {
@@ -135,10 +145,10 @@ describe.runIf(posix)("checkMachineTools", () => {
   });
 });
 
-describe.runIf(posix && toolPlatformKey(process.platform, process.arch, true) !== null)(
+describe.runIf(posix && toolPlatformKey(HOST_PLATFORM, HOST_ARCH, true) !== null)(
   "installMachineTool",
   () => {
-    const key = toolPlatformKey(process.platform, process.arch, true)!;
+    const key = toolPlatformKey(HOST_PLATFORM, HOST_ARCH, true)!;
 
     it("unpacks Node.js into the app's home, checks it runs, and is then found", async () => {
       const home = await tempDir("machine-tools-home");
@@ -157,9 +167,9 @@ describe.runIf(posix && toolPlatformKey(process.platform, process.arch, true) !=
       ]);
       expect(await NodeFSP.readdir(NodePath.join(home, "provision", "downloads"))).toEqual([]);
       // The folder is one the server puts on its PATH, so the next check finds it.
-      expect(managedToolDirs({ home, platform: process.platform, arch: process.arch, glibc: true })).toContain(
-        outcome.pathDirs[0],
-      );
+      expect(
+        managedToolDirs({ home, platform: HOST_PLATFORM, arch: HOST_ARCH, glibc: true }),
+      ).toContain(outcome.pathDirs[0]);
       const after = await checkMachineTools(context(hostWith().host, home), "present");
       expect(after.node).toBe("present");
     });
@@ -203,7 +213,7 @@ describe.runIf(posix && toolPlatformKey(process.platform, process.arch, true) !=
     });
 
     it("asks macOS for its developer tools for Git, and says the install goes on there", async () => {
-      if (process.platform !== "darwin") return;
+      if (HOST_PLATFORM !== "darwin") return;
       const home = await tempDir("machine-tools-home");
       const ran: string[] = [];
       const { host } = hostWith({
@@ -216,5 +226,29 @@ describe.runIf(posix && toolPlatformKey(process.platform, process.arch, true) !=
       expect(ran).toEqual(["/usr/bin/xcode-select --install"]);
       expect(outcome.handedOff).toBe(true);
     });
+  },
+);
+
+// Downloads the real pinned builds. Off by default: STUDIO_MACHINE_TOOLS_LIVE=1 runs it.
+describe.runIf(posix && process.env.STUDIO_MACHINE_TOOLS_LIVE === "1")(
+  "live pinned installs",
+  () => {
+    it("installs the real Node.js and GitHub CLI into a new home and finds them", async () => {
+      const home = await tempDir("machine-tools-live");
+      const { host } = hostWith();
+      const ctx = context(host, home);
+      const lines: string[] = [];
+      for (const tool of ["node", "gh"] as const) {
+        const outcome = await installMachineTool(ctx, tool, "present", (line) => lines.push(line));
+        expect(outcome.handedOff).toBe(false);
+      }
+      const after = await checkMachineTools(
+        { ...context(makeNodeProvisionHost({ env: { ...process.env, PATH: "" } }), home) },
+        "present",
+      );
+      expect(after.node).toBe("present");
+      expect(after.gh).toBe("present");
+      console.log(lines.join("\n"));
+    }, 300_000);
   },
 );

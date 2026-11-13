@@ -21,6 +21,7 @@ import {
 
 import {
   createFailureDescription,
+  createFailureNeedsGit,
   nothingPushedDescription,
   notOpenedDescription,
   projectWhere,
@@ -30,6 +31,7 @@ import {
 import { isThisMachineTarget } from "../connection/desktopLocal";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { requestMachineToolInstall } from "~/components/machineTools/machineToolInstallRequest";
 import { useNamedEnvironments } from "~/components/settings/useNamedEnvironments";
 import { useProjects, waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
@@ -152,10 +154,27 @@ export function useNewProject() {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const failure = squashAtomCommandFailure(result);
+          // No Git there: the install is one click away, on that machine.
+          const needsGit = createFailureNeedsGit(failure);
           toastManager.add(
             stackedThreadToast({
               type: "error",
               title: "Could not create the project",
+              ...(needsGit
+                ? {
+                    timeout: 0,
+                    actionProps: {
+                      children: "Install Git",
+                      onClick: () =>
+                        requestMachineToolInstall({
+                          environmentId: input.environmentId,
+                          tool: "git",
+                          machineLabel: machine,
+                        }),
+                    },
+                    actionVariant: "outline" as const,
+                  }
+                : {}),
               // Machines keep their own Percy switch: name the one that refused.
               description: isPersonalAssistantDisabledError(failure)
                 ? personalAssistantDisabledMessage(
@@ -203,11 +222,29 @@ export function useNewProject() {
       if (input.specweave === true && input.kind !== "personal") {
         const { specweaveAdded } = result.value;
         if (specweaveError !== undefined) {
+          const needsNode = result.value.specweaveNeedsNode === true;
           toastManager.add(
             stackedThreadToast({
               type: "warning",
               title: "SpecWeave was not set up",
-              description: `${specweaveError.replace(/[.\s]*$/, ".")} You can retry from Project settings > General.`,
+              description: needsNode
+                ? "SpecWeave needs Node.js, which this machine does not have. Install it, then retry from Project settings > General."
+                : `${specweaveError.replace(/[.\s]*$/, ".")} You can retry from Project settings > General.`,
+              ...(needsNode
+                ? {
+                    timeout: 0,
+                    actionProps: {
+                      children: "Install Node.js",
+                      onClick: () =>
+                        requestMachineToolInstall({
+                          environmentId: input.environmentId,
+                          tool: "node",
+                          machineLabel: machine,
+                        }),
+                    },
+                    actionVariant: "outline" as const,
+                  }
+                : {}),
             }),
           );
         } else if (existing === true && specweaveAdded === true) {

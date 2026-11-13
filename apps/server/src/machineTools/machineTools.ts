@@ -56,7 +56,6 @@ export function toolPlatformKey(
 
 /** nodejs.org's Linux builds need glibc; Node reports the runtime's version when it has one. */
 export function runsOnGlibc(): boolean {
-  // oxlint-disable-next-line studio/no-global-process-runtime -- the running server's own libc.
   const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } };
   return typeof report?.header?.glibcVersionRuntime === "string";
 }
@@ -79,7 +78,11 @@ export function managedGhDir(home: string, key: ToolPlatformKey): string {
 
 /** Where Git for Windows puts the commands it adds to the system PATH. */
 const windowsGitDirs = (env: Readonly<Record<string, string | undefined>>) =>
-  [env["ProgramFiles"], env["ProgramW6432"], env["LOCALAPPDATA"] && `${env["LOCALAPPDATA"]}\\Programs`]
+  [
+    env["ProgramFiles"],
+    env["ProgramW6432"],
+    env["LOCALAPPDATA"] && `${env["LOCALAPPDATA"]}\\Programs`,
+  ]
     .filter((dir): dir is string => Boolean(dir))
     .map((dir) => NodePath.win32.join(dir, "Git", "cmd"));
 
@@ -103,7 +106,7 @@ const pathEntries = (env: Readonly<Record<string, string | undefined>>, platform
 };
 
 /** The first `name` in `dirs`, with Windows' executable extensions. */
-export async function findCommand(
+async function findCommand(
   host: Pick<ProvisionHost, "isExecutable" | "exists" | "env">,
   platform: string,
   name: string,
@@ -250,15 +253,19 @@ async function installPinned(
   await host.remove(archive);
   log(`Downloading ${input.pinned.url}`);
   let reported = 0;
-  await host.download(mirroredUrl(input.pinned.url, host.env["STUDIO_PROVISION_MIRROR_URL"]), archive, {
-    sha256: input.pinned.sha256,
-    maxBytes: input.pinned.maxBytes,
-    onProgress: (bytes) => {
-      if (bytes - reported < 8 * 1024 * 1024) return;
-      reported = bytes;
-      log(`Downloaded ${Math.round(bytes / 1048576)} MB`);
+  await host.download(
+    mirroredUrl(input.pinned.url, host.env["STUDIO_PROVISION_MIRROR_URL"]),
+    archive,
+    {
+      sha256: input.pinned.sha256,
+      maxBytes: input.pinned.maxBytes,
+      onProgress: (bytes) => {
+        if (bytes - reported < 8 * 1024 * 1024) return;
+        reported = bytes;
+        log(`Downloaded ${Math.round(bytes / 1048576)} MB`);
+      },
     },
-  });
+  );
   log(`SHA-256 ${input.pinned.sha256} matches the pinned build.`);
   try {
     await host.remove(staging);
@@ -279,7 +286,10 @@ async function installPinned(
       { timeoutMs: 10 * 60_000 },
     );
     if (unpacked.code !== 0)
-      throw new MachineToolInstallError("failed", `Unpacking ${input.name} failed: ${tail(unpacked)}`);
+      throw new MachineToolInstallError(
+        "failed",
+        `Unpacking ${input.name} failed: ${tail(unpacked)}`,
+      );
     // Most archives wrap one folder; the Windows gh zip has its files at the top.
     const entries = (await host.listDir(staging)).filter((entry) => !entry.startsWith("."));
     const root =
@@ -314,7 +324,7 @@ const WINGET_GIT_ARGS = [
   "--disable-interactivity",
 ] as const;
 /** What the Windows Git button runs, shown with its log. */
-export const WINGET_GIT_COMMAND = `winget ${WINGET_GIT_ARGS.slice(0, 6).join(" ")}`;
+const WINGET_GIT_COMMAND = `winget ${WINGET_GIT_ARGS.slice(0, 6).join(" ")}`;
 
 /** Installs one missing tool. Refuses one that is already there or that needs an admin password. */
 export async function installMachineTool(
@@ -376,7 +386,8 @@ export async function installMachineTool(
       pathDirs: windowsGitDirs(host.env),
     };
   }
-  if (key === null) throw new MachineToolInstallError("unsupported", "No pinned build fits this machine.");
+  if (key === null)
+    throw new MachineToolInstallError("unsupported", "No pinned build fits this machine.");
   const path = pathFor(host.platform);
   if (tool === "node") {
     const pinned = nodeDownload(key);
@@ -421,7 +432,8 @@ export function withPathDirs(
 ): string | undefined {
   const delimiter = platform === "win32" ? ";" : ":";
   const entries = (current ?? "").split(delimiter).filter((entry) => entry !== "");
-  const same = (a: string, b: string) => (platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const same = (a: string, b: string) =>
+    platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
   const missing = dirs.filter((dir) => !entries.some((entry) => same(entry, dir)));
   if (missing.length === 0) return undefined;
   return [...entries, ...missing].join(delimiter);

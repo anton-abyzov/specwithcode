@@ -4874,4 +4874,43 @@ export const es: PhraseCatalog = {
   Connecting: "Conectando",
   Disconnected: "Desconectado",
   "Signed out": "Sesión cerrada",
+  "Get {tool}": "Obtener {tool}",
+  "Recommended. SpecWeave runs on Node.js, and many agent tools need it.":
+    "Recomendado. SpecWeave funciona con Node.js, y muchas herramientas de agentes lo necesitan.",
+  "Publishes projects to GitHub and opens pull requests from the app.":
+    "Publica proyectos en GitHub y abre pull requests desde la app.",
+  "Installed. Sign in to GitHub with gh auth login when you want to publish.":
+    "Instalado. Inicia sesión en GitHub con gh auth login cuando quieras publicar.",
+  "Installing. Its log is below.": "Instalando. Su registro está abajo.",
+  "The install ended with an error. Its log is below.":
+    "La instalación terminó con un error. Su registro está abajo.",
+  "Not installed. One click installs it with winget, and Windows asks for your permission.":
+    "No instalado. Un clic lo instala con winget, y Windows te pide permiso.",
+  "Not installed. Download Git for Windows, install it, then press Check again.":
+    "No instalado. Descarga Git for Windows, instálalo y pulsa Volver a comprobar.",
+  "Not installed. Run this command in a terminal, then press Check again.":
+    "No instalado. Ejecuta este comando en un terminal y pulsa Volver a comprobar.",
+  "Not installed. Install Git with your system's package manager, then press Check again.":
+    "No instalado. Instala Git con el gestor de paquetes de tu sistema y pulsa Volver a comprobar.",
+  "Not installed. One click installs Node.js 22 in SpecWithCode's own folder, with no admin password. A Node.js you install yourself later still comes first.":
+    "No instalado. Un clic instala Node.js 22 en la carpeta propia de SpecWithCode, sin contraseña de administrador. Un Node.js que instales tú más adelante sigue teniendo prioridad.",
+  "Not installed. One click installs it in SpecWithCode's own folder, with no admin password.":
+    "No instalado. Un clic lo instala en la carpeta propia de SpecWithCode, sin contraseña de administrador.",
+  "Not installed. Get it from its own site, then press Check again.":
+    "No instalado. Obtenlo en su propio sitio y pulsa Volver a comprobar.",
+  "Install {tool}": "Instalar {tool}",
+  "Git, Node.js and GitHub CLI are ready.": "Git, Node.js y GitHub CLI están listos.",
+  "Git and Node.js are ready.": "Git y Node.js están listos.",
+  "Optional, for publishing to GitHub: GitHub CLI": "Opcional, para publicar en GitHub: GitHub CLI",
+  "Install log": "Registro de instalación",
+  "Starting…": "Iniciando…",
+  "Install {tool} on {machine}": "Instalar {tool} en {machine}",
+  "SpecWeave runs on Node.js. Once it is installed, set SpecWeave up again.":
+    "SpecWeave funciona con Node.js. Cuando esté instalado, vuelve a configurar SpecWeave.",
+  "A new project is a Git repository. Once Git is installed, create it again.":
+    "Un proyecto nuevo es un repositorio Git. Cuando Git esté instalado, vuelve a crearlo.",
+  "Publishing to GitHub uses the GitHub CLI.": "Publicar en GitHub usa la GitHub CLI.",
+  "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
+    "Este equipo ejecuta una versión antigua de SpecWithCode que no puede instalarlo. Actualiza SpecWithCode allí o instálalo tú.",
+  "{tool} is already on this machine.": "{tool} ya está en este equipo.",
 };

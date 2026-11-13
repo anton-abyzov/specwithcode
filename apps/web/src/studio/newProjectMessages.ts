@@ -36,6 +36,11 @@ function createFailureOf(error: unknown): ProjectCreateFailure | null {
     : null;
 }
 
+/** A create that failed because the machine has no Git, which the app can help install. */
+export function createFailureNeedsGit(error: unknown): boolean {
+  return createFailureOf(error)?.reason === "git_missing";
+}
+
 /** Why a project could not be created: the cause and the folder, on which machine. */
 export function createFailureDescription(error: unknown, machine: ProjectMachineName): string {
   const failure = createFailureOf(error);

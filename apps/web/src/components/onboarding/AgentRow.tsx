@@ -95,16 +95,23 @@ export function AgentCommand({
   command,
   note,
   flush = false,
+  open = false,
 }: {
   readonly command: string;
   readonly note?: ReactNode;
   /** Inside a row that already has its own padding. */
   readonly flush?: boolean;
+  /** Shown at once, for a command the person has to run themselves. */
+  readonly open?: boolean;
 }) {
   const tx = useTx();
   const [copied, setCopied] = useState(false);
   return (
-    <details className={flush ? "w-full text-xs" : "px-3 py-2 text-xs sm:px-4"} data-agent-command>
+    <details
+      className={flush ? "w-full text-xs" : "px-3 py-2 text-xs sm:px-4"}
+      data-agent-command
+      open={open || undefined}
+    >
       <summary className="cursor-default text-muted-foreground">{tx("Show command")}</summary>
       <div className="mt-2 flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
         <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-nowrap">

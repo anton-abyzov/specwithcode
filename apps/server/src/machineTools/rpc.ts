@@ -37,10 +37,9 @@ import {
  * Puts the folders the app installed tools into on this server's PATH, after
  * the person's own folders. Agents, terminals and Git spawns inherit it.
  */
-export function addToServerPath(dirs: ReadonlyArray<string>): void {
-  // oxlint-disable-next-line studio/no-global-process-runtime -- the server's own PATH is the point.
+function addToServerPath(dirs: ReadonlyArray<string>): void {
   const env = process.env;
-  // oxlint-disable-next-line studio/no-global-process-runtime -- as above.
+  // oxlint-disable-next-line studio/no-global-process-runtime -- the server's own PATH separator.
   const platform = process.platform;
   const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
   const next = withPathDirs(env[key], dirs, platform);
@@ -82,7 +81,10 @@ export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumenta
         nvmDir: env.NVM_DIR,
         voltaHome: env.VOLTA_HOME,
         xdgDataHome: env.XDG_DATA_HOME,
-      }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
       const git = yield* probeGit(env, host.platform as NodeJS.Platform).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );

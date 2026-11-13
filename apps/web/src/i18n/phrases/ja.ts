@@ -4851,4 +4851,43 @@ export const ja: PhraseCatalog = {
   Connecting: "接続中",
   Disconnected: "切断",
   "Signed out": "サインアウト済み",
+  "Get {tool}": "{tool} を入手",
+  "Recommended. SpecWeave runs on Node.js, and many agent tools need it.":
+    "おすすめです。SpecWeave は Node.js で動作し、多くのエージェントツールにも必要です。",
+  "Publishes projects to GitHub and opens pull requests from the app.":
+    "プロジェクトを GitHub に公開し、アプリからプルリクエストを作成します。",
+  "Installed. Sign in to GitHub with gh auth login when you want to publish.":
+    "インストール済みです。公開するときは gh auth login で GitHub にサインインしてください。",
+  "Installing. Its log is below.": "インストールしています。ログは下にあります。",
+  "The install ended with an error. Its log is below.":
+    "インストールがエラーで終了しました。ログは下にあります。",
+  "Not installed. One click installs it with winget, and Windows asks for your permission.":
+    "未インストールです。ワンクリックで winget を使ってインストールし、Windows が許可を求めます。",
+  "Not installed. Download Git for Windows, install it, then press Check again.":
+    "未インストールです。Git for Windows をダウンロードしてインストールし、「もう一度確認」を押してください。",
+  "Not installed. Run this command in a terminal, then press Check again.":
+    "未インストールです。ターミナルでこのコマンドを実行してから「もう一度確認」を押してください。",
+  "Not installed. Install Git with your system's package manager, then press Check again.":
+    "未インストールです。システムのパッケージマネージャーで Git をインストールしてから「もう一度確認」を押してください。",
+  "Not installed. One click installs Node.js 22 in SpecWithCode's own folder, with no admin password. A Node.js you install yourself later still comes first.":
+    "未インストールです。ワンクリックで Node.js 22 を SpecWithCode 専用のフォルダーにインストールします。管理者パスワードは不要です。後から自分でインストールした Node.js があれば、そちらが優先されます。",
+  "Not installed. One click installs it in SpecWithCode's own folder, with no admin password.":
+    "未インストールです。ワンクリックで SpecWithCode 専用のフォルダーにインストールします。管理者パスワードは不要です。",
+  "Not installed. Get it from its own site, then press Check again.":
+    "未インストールです。公式サイトから入手してから「もう一度確認」を押してください。",
+  "Install {tool}": "{tool} をインストール",
+  "Git, Node.js and GitHub CLI are ready.": "Git、Node.js、GitHub CLI の準備ができています。",
+  "Git and Node.js are ready.": "Git と Node.js の準備ができています。",
+  "Optional, for publishing to GitHub: GitHub CLI": "任意、GitHub への公開用: GitHub CLI",
+  "Install log": "インストールログ",
+  "Starting…": "開始しています…",
+  "Install {tool} on {machine}": "{machine} に {tool} をインストール",
+  "SpecWeave runs on Node.js. Once it is installed, set SpecWeave up again.":
+    "SpecWeave は Node.js で動作します。インストールが終わったら、SpecWeave をもう一度セットアップしてください。",
+  "A new project is a Git repository. Once Git is installed, create it again.":
+    "新しいプロジェクトは Git リポジトリです。Git をインストールしたら、もう一度作成してください。",
+  "Publishing to GitHub uses the GitHub CLI.": "GitHub への公開には GitHub CLI を使います。",
+  "This machine runs an older SpecWithCode that cannot install it. Update SpecWithCode there, or install it yourself.":
+    "このマシンでは、これをインストールできない古い SpecWithCode が動いています。そのマシンの SpecWithCode を更新するか、自分でインストールしてください。",
+  "{tool} is already on this machine.": "{tool} はこのマシンにすでにあります。",
 };

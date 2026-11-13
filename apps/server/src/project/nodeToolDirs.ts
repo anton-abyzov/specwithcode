@@ -82,11 +82,8 @@ const NVM_ALIAS_NAME = /^[\w*-]+(\/[\w*-]+)?$/;
 function managedNode(input: NodeToolDirsInput): ReadonlyArray<string> {
   if (!input.studioHome) return [];
   // oxlint-disable-next-line studio/no-global-process-runtime -- the running machine's own CPU.
-  const key = toolPlatformKey(
-    input.platform,
-    input.arch ?? process.arch,
-    input.glibc ?? runsOnGlibc(),
-  );
+  const arch = input.arch ?? process.arch;
+  const key = toolPlatformKey(input.platform, arch, input.glibc ?? runsOnGlibc());
   return key === null ? [] : [managedNodeDir(input.studioHome, key)];
 }
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -143,6 +143,10 @@ vi.mock("../settings/CodexSetupSection", () => ({
 }));
 // Each agent's row and the search for agents have their own tests.
 vi.mock("./AgentRows", () => ({ FoundAgentRow: () => null, ProviderAgentRow: () => null }));
+// Machine basics read their own RPC (MachineBasics.test.tsx); here a machine answers like an older server.
+vi.mock("./MachineBasics", () => ({
+  MachineBasics: ({ fallback }: { readonly fallback: ReactNode }) => fallback,
+}));
 vi.mock("../settings/FoundAgents", () => ({
   agentName: (agent: string) => agent,
   defaultAgentInstance: () => ({}),

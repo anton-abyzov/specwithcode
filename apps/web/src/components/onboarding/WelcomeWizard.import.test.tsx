@@ -169,6 +169,10 @@ vi.mock("../settings/CodexSetupSection", () => ({
 }));
 // Each agent's row and the search for agents have their own tests.
 vi.mock("./AgentRows", () => ({ FoundAgentRow: () => null, ProviderAgentRow: () => null }));
+// Machine basics read their own RPC (MachineBasics.test.tsx); here a machine answers like an older server.
+vi.mock("./MachineBasics", () => ({
+  MachineBasics: ({ fallback }: { readonly fallback: ReactNode }) => fallback,
+}));
 vi.mock("../settings/FoundAgents", () => ({
   agentName: (agent: string) => agent,
   defaultAgentInstance: () => ({}),

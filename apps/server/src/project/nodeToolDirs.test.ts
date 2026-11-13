@@ -62,7 +62,9 @@ describe("nodeToolDirs", () => {
         "bin",
       );
       expect(dirs).toContain(managed);
-      expect(dirs.indexOf(managed)).toBeGreaterThan(dirs.indexOf(NodePath.join(home, ".volta", "bin")));
+      expect(dirs.indexOf(managed)).toBeGreaterThan(
+        dirs.indexOf(NodePath.join(home, ".volta", "bin")),
+      );
       expect(dirs.at(-1)).toBe(NodePath.join(home, "service"));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
