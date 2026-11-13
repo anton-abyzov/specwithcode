@@ -645,6 +645,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 /* Left: projects and chats ------------------------------------------------ */
 
 .sws-sidebar {
+  /* Rows below ask the sidebar's width: Projects, Automated and Archived alike. */
+  container: sideprojects / inline-size;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -989,7 +991,6 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
    lands and the list keeps a divider between pinned projects and the rest. */
 .sws-project-list {
   position: relative;
-  container: sideprojects / inline-size;
 }
 .sws-project-list[data-dragging] {
   cursor: grabbing;
