@@ -375,6 +375,45 @@ describe("providerLimitStep", () => {
     },
   };
 
+  it("keeps a review on its reviewer's family: a limited Codex review never continues on Claude", () => {
+    const claudeFree: ServerProvider = {
+      ...withUsage(provider(claudeId, "claudeAgent", now), 10),
+      models: [
+        { slug: "opus", name: "Claude Opus", isCustom: false, isDefault: true, capabilities: null },
+      ],
+    };
+    const codexFull = withUsage(provider(codexId, "codex", now), 100);
+    const toClaude = {
+      ...rule,
+      providerLimitFallbackModelSelection: { instanceId: claudeId, model: "opus" },
+    };
+    const options = { resetAttempted: true };
+    expect(
+      providerLimitStep(codexLimited, [claudeFree, codexFull], toClaude, now, options),
+    ).toMatchObject({
+      type: "switch",
+      command: { modelSelection: { instanceId: claudeId, model: "opus" } },
+    });
+    const review = {
+      ...codexLimited,
+      routing: {
+        taskClass: "review" as const,
+        confidence: "high" as const,
+        moved: false,
+        tier: null,
+        selection: codexLimited.modelSelection,
+        baseline: { instanceId: claudeId, model: "opus" },
+        escalation: null,
+        billing: "unknown" as const,
+        reason: "Review by GPT-6 on codex; it stays on OpenAI models.",
+        signals: [],
+        reviewFamily: "openai" as const,
+        decidedAt: "2026-10-09T11:00:00.000Z",
+      },
+    };
+    expect(providerLimitStep(review, [claudeFree, codexFull], toClaude, now, options)).toBeNull();
+  });
+
   it("continues a Claude plan-limit stop on its own instance once that bills API credits", () => {
     // October 22, 2026: the CLI was signed in to the Claude Console after the stop.
     const claudeApi: ServerProvider = {

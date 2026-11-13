@@ -4933,4 +4933,12 @@ export const ru: PhraseCatalog = {
   "Sign in with {account}": "Войти через {account}",
   "Turn it on to use it in chat.": "Включите его, чтобы использовать в чате.",
   "On other machines": "На других компьютерах",
+  "Reviewed by {model}": "Проверено: {model}",
+  "Reviewed by {model} at {commit}": "Проверено: {model}, коммит {commit}",
+  ship: "можно выпускать",
+  "fix first": "сначала исправить",
+  "same family as the author": "та же семья моделей, что у автора",
+  "Review by another model family required": "Нужна проверка моделью другой семьи",
+  "{family} review required": "Нужна проверка {family}",
+  "Reviewed, model not recorded": "Проверено, модель не записана",
 };

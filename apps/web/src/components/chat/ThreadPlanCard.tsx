@@ -45,6 +45,7 @@ import {
   type ThreadPlanView,
 } from "../../studio/threadPlanProgress";
 import { criteriaSummary, ThreadPlanCriteria, verifiedCriteriaCount } from "./ThreadPlanCriteria";
+import { ThreadPlanReview } from "./ThreadPlanReview";
 
 /** Opens an https step link in the system browser, like the thread's other link cards. */
 function openStepLinkExternally(url: string) {
@@ -380,6 +381,12 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
                 </>
               ) : null}
             </p>
+          ) : null}
+          {bound ? (
+            <ThreadPlanReview
+              review={increment.review}
+              onOpenPath={(path) => openPath?.(path)?.()}
+            />
           ) : null}
           {plan.source === "todo" ? (
             <p className="mb-1.5 text-xs text-muted-foreground" data-plan-checklist-note>

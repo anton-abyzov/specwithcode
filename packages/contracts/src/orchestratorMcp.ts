@@ -383,6 +383,37 @@ const OrchestratorMcpThreadLink = Schema.String.annotate({
     "Ready-made Markdown link to this thread, [title](studio://thread/<encoded id>). Copy it verbatim when naming the thread to the user; never build a thread link by hand.",
 });
 
+export const OrchestratorMcpDelegateReview = Schema.Struct({
+  reviewer: Schema.String.annotate({
+    description: "The reviewing model and the provider serving it.",
+  }),
+  reviewerFamily: Schema.String,
+  authorFamily: Schema.String.annotate({
+    description: "Family of the calling thread's model, whose work is reviewed.",
+  }),
+  crossFamily: Schema.Boolean,
+  chosenBy: Schema.Literals(["review-order", "caller"]).annotate({
+    description:
+      "review-order: picked from the project's reviewer order (Settings > Adversarial review) and the increment's review policy; caller: the model named in target.",
+  }),
+  policy: Schema.optional(
+    Schema.String.annotate({ description: "The increment's spec.md `## Review` policy." }),
+  ),
+  skipped: Schema.Array(Schema.Struct({ reviewer: Schema.String, reason: Schema.String })).annotate(
+    {
+      description:
+        "Reviewers passed over before this one, with why. Tell the user when a preferred reviewer was skipped.",
+    },
+  ),
+  warning: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "Set when the review is the author's own family or not what the policy asks for; tell the user.",
+    }),
+  ),
+});
+export type OrchestratorMcpDelegateReview = typeof OrchestratorMcpDelegateReview.Type;
+
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   childThreadId: ThreadId,
@@ -423,6 +454,12 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   }),
   increment: Schema.optional(OrchestratorMcpLaunchIncrement),
   warning: Schema.optional(OrchestratorMcpLaunchWarning),
+  review: Schema.optional(
+    OrchestratorMcpDelegateReview.annotate({
+      description:
+        "Set for review tasks (taskClass review or role review): who reviews, whose work, and which reviewers were skipped.",
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 

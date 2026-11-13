@@ -4968,4 +4968,12 @@ export const de: PhraseCatalog = {
   "Sign in with {account}": "Mit {account} anmelden",
   "Turn it on to use it in chat.": "Schalte ihn ein, um ihn im Chat zu verwenden.",
   "On other machines": "Auf anderen Rechnern",
+  "Reviewed by {model}": "Geprüft von {model}",
+  "Reviewed by {model} at {commit}": "Geprüft von {model} bei {commit}",
+  ship: "freigabebereit",
+  "fix first": "erst beheben",
+  "same family as the author": "gleiche Modellfamilie wie der Autor",
+  "Review by another model family required": "Prüfung durch eine andere Modellfamilie erforderlich",
+  "{family} review required": "{family}-Prüfung erforderlich",
+  "Reviewed, model not recorded": "Geprüft, Modell nicht erfasst",
 };

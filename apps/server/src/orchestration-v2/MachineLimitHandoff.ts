@@ -393,7 +393,8 @@ export const make = Effect.gen(function* () {
     readonly thread: Pick<
       OrchestrationV2ThreadShell,
       "projectId" | "providerInstanceId" | "worktreePath"
-    >;
+    > &
+      Partial<Pick<OrchestrationV2ThreadShell, "routing">>;
     readonly rule: ServerSettingsValue;
     readonly source: ServerProvider | undefined;
     readonly projectTitle: string | null;
@@ -413,6 +414,11 @@ export const make = Effect.gen(function* () {
       const teamRules = yield* teamRulesForFolder(
         input.thread.worktreePath ?? Option.getOrUndefined(folderProject)?.workspaceRoot,
       );
+      // A review delegation (TaskRoutingDecision.reviewFamily) stays on this
+      // machine: a handoff does not carry its reviewer lock, so another
+      // machine's fallback could continue it on the author's family. It waits.
+      if (input.thread.routing?.reviewFamily !== undefined)
+        return [] as ReadonlyArray<MachineCandidateVerdict>;
       const targets = input.rule.providerLimitMachineTargets.filter(
         (target) =>
           teamRulesSelectionRefusal(teamRules, {

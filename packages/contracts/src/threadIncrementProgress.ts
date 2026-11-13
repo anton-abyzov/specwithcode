@@ -109,6 +109,39 @@ export const ThreadIncrementCriterion = Schema.Struct({
 });
 export type ThreadIncrementCriterion = typeof ThreadIncrementCriterion.Type;
 
+/** Who reviewed the increment's code and what its spec asks for, from its review records. */
+export const ThreadIncrementReview = Schema.Struct({
+  /** The spec's `## Review` section; null when it has none. */
+  policy: Schema.NullOr(
+    Schema.Struct({
+      /** `cross-family`, or a family: openai, claude, google, xai, meta. */
+      family: Schema.String,
+      model: Schema.NullOr(Schema.String),
+      depth: Schema.String,
+      required: Schema.Boolean,
+    }),
+  ),
+  /** The newest review report. */
+  latest: Schema.NullOr(
+    Schema.Struct({
+      /** The reviewing model, or the reviewer name when no model was recorded. */
+      model: Schema.NullOr(Schema.String),
+      /** Its family, or `unknown` for a report without a record line. */
+      family: Schema.String,
+      /** The commit it read. */
+      head: Schema.NullOr(Schema.String),
+      verdict: Schema.NullOr(Schema.Literals(["ship", "fix first"])),
+      at: Schema.String,
+      reportPath: Schema.String,
+    }),
+  ),
+  /** The family that finished most tasks, from the ledger. */
+  authorFamily: Schema.NullOr(Schema.String),
+  /** With a policy: whether a ship review by a family it accepts is on file. Closure also checks the commit. */
+  policySatisfied: Schema.NullOr(Schema.Boolean),
+});
+export type ThreadIncrementReview = typeof ThreadIncrementReview.Type;
+
 export const ThreadIncrementBinding = Schema.Literals([
   "manual",
   "claim",
@@ -146,6 +179,8 @@ export const ThreadIncrementProgress = Schema.Struct({
   criteria: Schema.Array(ThreadIncrementCriterion),
   /** The last `specweave verify` run. */
   verify: Schema.NullOr(Schema.Struct({ ok: Schema.Boolean, ranAt: Schema.String })),
+  /** Review records and policy; absent from older servers. */
+  review: Schema.optional(Schema.NullOr(ThreadIncrementReview)),
 });
 export type ThreadIncrementProgress = typeof ThreadIncrementProgress.Type;
 

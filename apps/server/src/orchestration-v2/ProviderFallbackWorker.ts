@@ -19,6 +19,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { reviewConstrainedRule } from "@specweave-studio/shared/reviewPolicy";
 import {
   canTakeTurn,
   FALLBACK_USAGE_MAX_AGE_MS,
@@ -493,7 +494,7 @@ const POSITIVE_BALANCE = /^\d{1,24}(?:\.\d{1,24})?$/;
 export function providerLimitStep(
   thread: FallbackThread,
   providers: ReadonlyArray<ServerProvider>,
-  rule: ProviderFallbackRule & { readonly snoozeLimitedThreads?: boolean },
+  threadRule: ProviderFallbackRule & { readonly snoozeLimitedThreads?: boolean },
   nowMs: number,
   options: {
     readonly resetAttempted: boolean;
@@ -528,6 +529,8 @@ export function providerLimitStep(
   | { readonly type: "resume-api"; readonly command: OrchestrationV2ServerCommand }
   | { readonly type: "switch"; readonly command: OrchestrationV2ServerCommand }
   | null {
+  // A review delegation moves only within its reviewer's family, never to the author's.
+  const rule = reviewConstrainedRule(threadRule, thread.routing, providers);
   if (options.unopenable != null && thread.latestRunId === options.unopenable.runId) {
     // A provider that cannot open has no reset to wait for or redeem and no
     // credits to spend: the only step is another provider.

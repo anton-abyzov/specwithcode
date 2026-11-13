@@ -265,6 +265,14 @@ export const TaskRoutingDecision = Schema.Struct({
   skipped: Schema.optionalKey(Schema.Array(RoutingText).check(Schema.isMaxLength(8))),
   /** The learned preference that applied, by id. */
   preferenceId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+  /**
+   * A review delegation's reviewer family. Limit fallback, preswitch and
+   * machine handoff continue the thread only on a model of this family, so a
+   * review never moves to the author's family; with none, it waits.
+   */
+  reviewFamily: Schema.optionalKey(Schema.Literals(["claude", "openai", "google", "xai", "meta"])),
+  /** The model the increment's review policy pins, when it pins one: recovery keeps to it too. */
+  reviewModel: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   decidedAt: IsoDateTime,
 });
 export type TaskRoutingDecision = typeof TaskRoutingDecision.Type;

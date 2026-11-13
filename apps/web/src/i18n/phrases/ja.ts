@@ -4935,4 +4935,12 @@ export const ja: PhraseCatalog = {
   "Sign in with {account}": "{account} でサインイン",
   "Turn it on to use it in chat.": "チャットで使うにはオンにしてください。",
   "On other machines": "他のマシン上",
+  "Reviewed by {model}": "{model} がレビュー済み",
+  "Reviewed by {model} at {commit}": "{model} が {commit} でレビュー済み",
+  ship: "リリース可",
+  "fix first": "先に修正",
+  "same family as the author": "作成者と同じモデル系統",
+  "Review by another model family required": "別のモデル系統によるレビューが必要",
+  "{family} review required": "{family} のレビューが必要",
+  "Reviewed, model not recorded": "レビュー済み、モデル未記録",
 };

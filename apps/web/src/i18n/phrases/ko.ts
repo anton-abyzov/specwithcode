@@ -4879,4 +4879,12 @@ export const ko: PhraseCatalog = {
   "Sign in with {account}": "{account} 계정으로 로그인",
   "Turn it on to use it in chat.": "채팅에서 사용하려면 켜세요.",
   "On other machines": "다른 컴퓨터에 있음",
+  "Reviewed by {model}": "{model} 검토 완료",
+  "Reviewed by {model} at {commit}": "{model}가 {commit}에서 검토",
+  ship: "출시 가능",
+  "fix first": "먼저 수정",
+  "same family as the author": "작성자와 같은 모델 계열",
+  "Review by another model family required": "다른 모델 계열의 검토 필요",
+  "{family} review required": "{family} 검토 필요",
+  "Reviewed, model not recorded": "검토됨, 모델 기록 없음",
 };

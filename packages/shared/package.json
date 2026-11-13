@@ -288,6 +288,10 @@
       "types": "./src/adversarialReview.ts",
       "import": "./src/adversarialReview.ts"
     },
+    "./reviewPolicy": {
+      "types": "./src/reviewPolicy.ts",
+      "import": "./src/reviewPolicy.ts"
+    },
     "./machineFallback": {
       "types": "./src/machineFallback.ts",
       "import": "./src/machineFallback.ts"
