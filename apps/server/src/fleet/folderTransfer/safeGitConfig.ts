@@ -37,7 +37,6 @@ const PLAIN_KEYS = new Set([
   "extensions.refstorage",
   "extensions.worktreeconfig",
   "extensions.preciousobjects",
-  "extensions.partialclone",
   "index.sparse",
   "index.version",
   "lfs.repositoryformatversion",
@@ -56,6 +55,8 @@ const SECTION_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
 const URL_KEYS = new Set(["remote.url", "submodule.url"]);
 /** Keys whose value names a remote, or may be a URL in its place. */
 const REMOTE_NAME_KEYS = new Set(["branch.remote", "branch.pushremote"]);
+/** Section-less keys whose value names a remote, or may be a URL in its place. */
+const REMOTE_NAME_PLAIN_KEYS = new Set(["extensions.partialclone"]);
 const SUBMODULE_UPDATE = new Set(["checkout", "rebase", "merge", "none"]);
 /** The filter Git LFS itself installs; any other filter command stays behind. */
 const LFS_FILTER: Readonly<Record<string, string>> = {
@@ -86,9 +87,10 @@ export function safeRemoteUrl(raw: string): string | null {
     const name = scheme[1]!.toLowerCase();
     if (!SCHEMES.has(name)) return null;
     const rest = value.slice(scheme[0].length);
-    const slash = rest.indexOf("/");
-    const authority = slash < 0 ? rest : rest.slice(0, slash);
-    let path = slash < 0 ? "" : rest.slice(slash);
+    // The authority ends at the first `/`, `?` or `#`, whichever comes first.
+    const end = rest.search(/[/?#]/);
+    const authority = end < 0 ? rest : rest.slice(0, end);
+    let path = end < 0 ? "" : rest.slice(end);
     const at = authority.lastIndexOf("@");
     const host = authority.slice(at + 1);
     if (host.length === 0 || host.startsWith("-") || /\s/.test(host)) return null;
@@ -96,6 +98,7 @@ export function safeRemoteUrl(raw: string): string | null {
     const user = name === "ssh" && at > 0 ? authority.slice(0, at).split(":")[0]! : "";
     if (user.startsWith("-")) return null;
     if (name === "https" || name === "http") path = path.replace(/[?#].*$/s, "");
+    if (/[?#]/.test(host)) return null;
     return `${name}://${user ? `${user}@` : ""}${host}${path}`;
   }
   // scp-like `[user@]host:path`, host at least two characters so a drive letter is not one.
@@ -114,6 +117,15 @@ export interface SafeGitConfigOptions {
   readonly keepWorktree?: (value: string) => boolean;
 }
 
+interface WorktreeCheck {
+  /** The config file being rewritten. */
+  readonly file: string;
+  /** The copied folder the worktree must stay inside. */
+  readonly root: string;
+  /** The live folder the copy mirrors: symlinks are resolved there. */
+  readonly sourceRoot: string;
+}
+
 /** Which entries of a copied config are kept, given `git config --list` pairs. */
 export function safeGitConfigEntries(
   entries: ReadonlyArray<readonly [string, string]>,
@@ -123,6 +135,11 @@ export function safeGitConfigEntries(
   for (const [rawKey, value] of entries) {
     const key = rawKey.trim();
     const lower = key.toLowerCase();
+    if (REMOTE_NAME_PLAIN_KEYS.has(lower)) {
+      const value_kept = isRemoteName(value) ? value : safeRemoteUrl(value);
+      if (value_kept !== null) kept.push([key, value_kept]);
+      continue;
+    }
     if (PLAIN_KEYS.has(lower)) {
       kept.push([key, value]);
       continue;
@@ -176,23 +193,36 @@ export function parseNullConfigList(output: string): Array<readonly [string, str
 
 /**
  * A `core.worktree` check for the config file at `file`: the value, read
- * relative to that Git directory, must stay inside `root`, the copied folder.
+ * relative to that Git directory, must stay inside `root`, the copied folder,
+ * with no link on the way (checked in `sourceRoot`, the live folder the copy
+ * mirrors).
  */
-export function worktreeInside(file: string, root: string): (value: string) => boolean {
-  return (value) => {
-    if (value.length === 0 || /[\\\u0000-\u001f]/.test(value)) return false;
-    if (NodePath.isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
-    const resolved = NodePath.resolve(NodePath.dirname(file), value);
-    const relative = NodePath.relative(NodePath.resolve(root), resolved);
-    return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
-  };
+export async function worktreeInside(check: WorktreeCheck, value: string): Promise<boolean> {
+  if (value.length === 0 || /[\\\u0000-\u001f]/.test(value)) return false;
+  if (NodePath.isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
+  // Climbing out of the Git directory, then down by name only: a `..` after a
+  // name would be read through whatever that name links to.
+  const segments = value.split("/");
+  let index = 0;
+  while (segments[index] === "..") index += 1;
+  if (segments.slice(index).some((part) => part === "" || part === "." || part === ".."))
+    return false;
+  const resolved = NodePath.resolve(NodePath.dirname(check.file), value);
+  const relative = NodePath.relative(NodePath.resolve(check.root), resolved);
+  if (relative === "" || relative.startsWith("..") || NodePath.isAbsolute(relative)) return false;
+  const sourceRoot = await NodeFSP.realpath(check.sourceRoot).catch(() => null);
+  if (sourceRoot === null) return false;
+  const lexical = NodePath.join(sourceRoot, relative);
+  const real = await NodeFSP.realpath(lexical).catch(() => null);
+  // Missing, or reached through a link: not kept.
+  return real === lexical;
 }
 
 /** Writes `target` holding only the safe entries of `source`, read without following includes. */
 async function writeSafeGitConfig(
   source: string,
   target: string,
-  options: SafeGitConfigOptions & { readonly signal?: AbortSignal },
+  options: { readonly worktree?: WorktreeCheck; readonly signal?: AbortSignal },
 ): Promise<void> {
   // Outside any repository, so Git reads no other config while it lists and writes this one.
   const cwd = NodeOS.tmpdir();
@@ -202,7 +232,16 @@ async function writeSafeGitConfig(
     ["config", "--file", source, "--no-includes", "--null", "--list"],
     signal,
   );
-  const kept = safeGitConfigEntries(parseNullConfigList(listed.stdout), options);
+  const entries = parseNullConfigList(listed.stdout);
+  const allowed = new Set<string>();
+  if (options.worktree !== undefined)
+    for (const [key, value] of entries)
+      if (
+        key.trim().toLowerCase() === "core.worktree" &&
+        (await worktreeInside(options.worktree, value))
+      )
+        allowed.add(value);
+  const kept = safeGitConfigEntries(entries, { keepWorktree: (value) => allowed.has(value) });
   await NodeFSP.rm(target, { force: true });
   await NodeFSP.writeFile(target, "", { mode: 0o600 });
   for (const [key, value] of kept)
@@ -215,7 +254,7 @@ async function writeSafeGitConfig(
  */
 export async function rewriteCopiedGitConfig(
   file: string,
-  options: SafeGitConfigOptions & { readonly signal?: AbortSignal } = {},
+  options: { readonly worktree?: WorktreeCheck; readonly signal?: AbortSignal } = {},
 ): Promise<void> {
   const exists = await NodeFSP.lstat(file).catch(() => null);
   if (!exists?.isFile()) return;
@@ -228,13 +267,21 @@ export async function rewriteCopiedGitConfig(
  * The bytes a copy would carry for a live config file, so a later drift check
  * compares like with like. `root` is the copied folder. Null when missing.
  */
-export async function safeGitConfigBytes(file: string, root: string): Promise<Buffer | null> {
+export async function safeGitConfigBytes(
+  file: string,
+  /** The live copied folder; null for a main repository's own configs, which keep no worktree. */
+  root: string | null,
+): Promise<Buffer | null> {
   const exists = await NodeFSP.lstat(file).catch(() => null);
   if (!exists?.isFile()) return null;
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-safe-config-"));
   try {
     const target = NodePath.join(directory, "config");
-    await writeSafeGitConfig(file, target, { keepWorktree: worktreeInside(file, root) });
+    await writeSafeGitConfig(
+      file,
+      target,
+      root === null ? {} : { worktree: { file, root, sourceRoot: root } },
+    );
     return await NodeFSP.readFile(target);
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });
@@ -242,6 +289,13 @@ export async function safeGitConfigBytes(file: string, root: string): Promise<Bu
 }
 
 const MAX_MODULE_DEPTH = 64;
+
+/** A Git directory has a HEAD file and an objects folder; a name prefix has neither. */
+async function isGitDirectory(dir: string): Promise<boolean> {
+  const head = await NodeFSP.lstat(NodePath.join(dir, "HEAD")).catch(() => null);
+  const objects = await NodeFSP.lstat(NodePath.join(dir, "objects")).catch(() => null);
+  return head?.isFile() === true && objects?.isDirectory() === true;
+}
 
 /**
  * Every Git directory in a repository's Git folder: the folder itself, then
@@ -259,7 +313,7 @@ export async function gitDirectoriesIn(gitDir: string): Promise<Array<string>> {
     for (const child of children) {
       if (!child.isDirectory()) continue;
       const nested = NodePath.join(dir, child.name);
-      if (await NodeFSP.lstat(NodePath.join(nested, "HEAD")).catch(() => null)) {
+      if (await isGitDirectory(nested)) {
         found.push(nested);
         await walk(NodePath.join(nested, "modules"), depth + 1);
       } else await walk(nested, depth + 1);
@@ -310,7 +364,11 @@ async function refuseCommandTodo(dir: string): Promise<void> {
 export async function sanitizeCopiedGitDir(
   gitDir: string,
   root: string,
-  options: { readonly signal?: AbortSignal } = {},
+  options: {
+    readonly signal?: AbortSignal;
+    /** The live folder the copy mirrors; defaults to `root`. */
+    readonly sourceRoot?: string;
+  } = {},
 ): Promise<void> {
   for (const dir of await gitDirectoriesIn(gitDir)) {
     await refuseCommandTodo(dir);
@@ -318,9 +376,11 @@ export async function sanitizeCopiedGitDir(
       await NodeFSP.rm(NodePath.join(dir, name), { recursive: true, force: true });
     for (const file of await gitConfigFilesOf(dir))
       await rewriteCopiedGitConfig(file, {
-        ...options,
+        ...(options.signal ? { signal: options.signal } : {}),
         // Only a submodule's own config names its working folder; the main one never needs to.
-        ...(dir === gitDir ? {} : { keepWorktree: worktreeInside(file, root) }),
+        ...(dir === gitDir
+          ? {}
+          : { worktree: { file, root, sourceRoot: options.sourceRoot ?? root } }),
       });
   }
 }

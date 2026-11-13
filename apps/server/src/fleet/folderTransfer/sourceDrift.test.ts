@@ -238,6 +238,26 @@ it("lists a changed Git setting or exclude rule as the repository's settings; ho
   expect(await changed()).toEqual([]);
 });
 
+it("compares Git settings as the copy carried them: submodule rules, no uncarried worktrees", async () => {
+  const gitDir = Path.join(folder, ".git");
+  // Git reads no config.worktree without the extension; the copy drops a main core.worktree.
+  write(Path.join(gitDir, "config.worktree"), "[core]\n\tworktree = ../docs\n");
+  const module = Path.join(gitDir, "modules/lib");
+  write(Path.join(module, "HEAD"), "ref: refs/heads/main\n");
+  await FSP.mkdir(Path.join(module, "objects"), { recursive: true });
+  write(Path.join(module, "config"), "[core]\n\tbare = false\n");
+  await committed();
+  const changed = async () => (await sources.driftSince(id)).rows.map((row) => row.path);
+  expect(await changed()).toEqual([]);
+  // A worktree admin folder the copy never carried is no change.
+  write(Path.join(gitDir, "worktrees/later/config.worktree"), "[core]\n\tautocrlf = input\n");
+  expect(await changed()).toEqual([]);
+  await FSP.rm(Path.join(gitDir, "worktrees"), { recursive: true });
+  // A submodule's sparse-checkout rules are a change.
+  write(Path.join(module, "info/sparse-checkout"), "/src/\n");
+  expect(await changed()).toEqual(["."]);
+});
+
 it.skipIf(process.platform === "win32")(
   "lists a folder holding a new file it cannot copy, not nothing",
   async () => {

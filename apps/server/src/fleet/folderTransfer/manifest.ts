@@ -598,7 +598,13 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
       if (gitChild) {
         try {
           const stat = await NodeFSP.lstat(NodePath.join(absolute, ".git"));
-          if (stat.isDirectory() || stat.isFile()) {
+          if (stat.isSymbolicLink()) {
+            // A linked `.git` would carry its target's config and hooks as plain files.
+            skipGitEntry = true;
+            warnings.push(
+              `${relativeOf(realRoot, absolute)} has a .git link; its Git data is not copied. Its other files are.`,
+            );
+          } else if (stat.isDirectory() || stat.isFile()) {
             const read = await readRepository(realRoot, absolute, stat);
             const inside = read.info.worktrees.filter((tree) => tree.path !== null);
             if (!options.keepLinkedWorktrees)

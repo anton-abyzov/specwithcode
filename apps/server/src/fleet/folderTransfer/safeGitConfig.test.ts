@@ -166,7 +166,8 @@ describe("copied repositories", () => {
     const main = repository(root);
     poison(root, main);
     const gitDir = NodePath.join(main, ".git");
-    NodeFS.mkdirSync(NodePath.join(gitDir, "modules/lib"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(gitDir, "modules/lib/objects"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(main, "lib"));
     write(NodePath.join(gitDir, "modules/lib/HEAD"), "ref: refs/heads/main\n");
     write(
       NodePath.join(gitDir, "modules/lib/config"),
@@ -235,6 +236,12 @@ describe("copied repositories", () => {
       NodePath.join(nested, "config"),
       "[core]\n\tfsmonitor = evil-fsmonitor\n\tworktree = ../../../../..\n",
     );
+    NodeFS.mkdirSync(NodePath.join(nested, "objects"));
+    // A submodule named `x/HEAD`: its parent folder holds a HEAD folder, not a Git directory.
+    const underHead = NodePath.join(gitDir, "modules/x/HEAD");
+    write(NodePath.join(underHead, "HEAD"), "ref: refs/heads/main\n");
+    NodeFS.mkdirSync(NodePath.join(underHead, "objects"));
+    write(NodePath.join(underHead, "config"), "[core]\n\tfsmonitor = evil-fsmonitor\n");
     write(NodePath.join(gitDir, "commondir"), "shadow\n");
     write(NodePath.join(gitDir, "shadow/config"), "[core]\n\tfsmonitor = evil-fsmonitor\n");
     write(NodePath.join(gitDir, "remotes/origin"), "URL: https://u:token@example.invalid/r.git\n");
@@ -257,6 +264,14 @@ describe("copied repositories", () => {
       "remote.web.url",
       "https://example.invalid/r.git?access_token=secret#x",
     );
+    git(
+      root,
+      "config",
+      "--file",
+      configFile,
+      "extensions.partialClone",
+      "https://u:token@example.invalid/r.git",
+    );
     git(root, "config", "--file", configFile, "filter.lfs.smudge", "git-lfs smudge -- %f");
     git(root, "config", "--file", configFile, "filter.lfs.process", "git-lfs filter-process");
     git(root, "config", "--file", configFile, "filter.lfs.clean", "evil-clean %f");
@@ -264,6 +279,7 @@ describe("copied repositories", () => {
     expect(NodeFS.existsSync(NodePath.join(gitDir, "commondir"))).toBe(false);
     expect(NodeFS.existsSync(NodePath.join(gitDir, "remotes"))).toBe(false);
     expect(NodeFS.existsSync(NodePath.join(nested, "hooks"))).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(underHead, "config"), "utf8")).not.toContain("evil");
     const nestedConfig = NodeFS.readFileSync(NodePath.join(nested, "config"), "utf8");
     expect(nestedConfig).not.toContain("evil");
     // A worktree outside the copied folder is dropped.
@@ -273,6 +289,7 @@ describe("copied repositories", () => {
     expect(read("branch.main.remote")).toEqual(["https://example.invalid/r.git"]);
     expect(read("branch.main.pushremote")).toEqual(["origin"]);
     expect(read("remote.web.url")).toEqual(["https://example.invalid/r.git"]);
+    expect(read("extensions.partialclone")).toEqual(["https://example.invalid/r.git"]);
     expect(read("filter.lfs.smudge")).toEqual(["git-lfs smudge -- %f"]);
     expect(read("filter.lfs.process")).toEqual(["git-lfs filter-process"]);
     expect(NodeFS.readFileSync(configFile, "utf8")).not.toContain("evil-clean");
@@ -289,6 +306,18 @@ describe("copied repositories", () => {
     await expect(sanitizeCopiedGitDir(gitDir, main)).rejects.toThrow(/exec lines/);
     write(NodePath.join(gitDir, "rebase-merge/git-rebase-todo"), "pick abc one\n");
     await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
+  });
+
+  it("does not copy a linked .git", async () => {
+    const root = tempRoot();
+    const folder = NodePath.join(root, "folder");
+    const elsewhere = repository(root);
+    write(NodePath.join(folder, "file.txt"), "kept\n");
+    NodeFS.symlinkSync(NodePath.join(elsewhere, ".git"), NodePath.join(folder, ".git"));
+    const scan = await scanFolder(folder);
+    expect(scan.entries.some((entry) => entry.path.startsWith(".git"))).toBe(false);
+    expect(scan.entries.some((entry) => entry.path === "file.txt")).toBe(true);
+    expect(scan.warnings.join(" ")).toContain("has a .git link");
   });
 
   it("does not copy a .git Git cannot read", async () => {
@@ -322,11 +351,31 @@ describe("remote URL forms", () => {
     },
   );
 
-  it("keeps a submodule worktree only inside the copied folder", () => {
-    const file = "/copy/.git/modules/lib/config";
-    expect(worktreeInside(file, "/copy")("../../../lib")).toBe(true);
-    expect(worktreeInside(file, "/copy")("../../../..")).toBe(false);
-    expect(worktreeInside(file, "/copy")("\\\\server\\share")).toBe(false);
-    expect(worktreeInside(file, "/copy")("C:lib")).toBe(false);
+  it.each([
+    ["https://u:token@host.example?access_token=x", "https://host.example"],
+    ["https://host.example#token", "https://host.example"],
+    ["http://u:pw@host.example?x=1/y", "http://host.example"],
+  ])("strips credentials and queries from %s", (raw, expected) => {
+    expect(safeRemoteUrl(raw)).toBe(expected);
+  });
+
+  it("keeps a submodule worktree only inside the copied folder, through no link", async () => {
+    const root = tempRoot();
+    const copy = NodePath.join(root, "copy");
+    NodeFS.mkdirSync(NodePath.join(copy, "lib"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(root, "outside"));
+    NodeFS.symlinkSync(NodePath.join(root, "outside"), NodePath.join(copy, "linked"));
+    const check = {
+      file: NodePath.join(copy, ".git/modules/lib/config"),
+      root: copy,
+      sourceRoot: copy,
+    };
+    expect(await worktreeInside(check, "../../../lib")).toBe(true);
+    expect(await worktreeInside(check, "../../../linked")).toBe(false);
+    expect(await worktreeInside(check, "../../../linked/../lib")).toBe(false);
+    expect(await worktreeInside(check, "../../../missing")).toBe(false);
+    expect(await worktreeInside(check, "../../../..")).toBe(false);
+    expect(await worktreeInside(check, "\\\\server\\share")).toBe(false);
+    expect(await worktreeInside(check, "C:lib")).toBe(false);
   });
 });

@@ -594,7 +594,10 @@ async function snapshotMain(
   });
   const after = await readRefs(context, sourceFolder);
   // Only plain settings travel: hooks, drivers, helpers and credentialed URLs stay here (1328).
-  await sanitizeCopiedGitDir(targetGit, snapshotRoot, { signal: context.signal });
+  await sanitizeCopiedGitDir(targetGit, snapshotRoot, {
+    signal: context.signal,
+    sourceRoot: scan.root,
+  });
   // Objects AFTER all HEAD/index/refs/reflogs are frozen: every object they
   // name existed before they were written.
   await copyObjects(
