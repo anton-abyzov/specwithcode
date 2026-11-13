@@ -94,6 +94,7 @@ vi.mock("../../state/environments", () => ({
     environments: runtime.discovered,
     refreshing: false,
     offline: false,
+    error: { _tag: "None" },
   }),
 }));
 vi.mock("../../connection/catalog", () => ({ environmentCatalog: {} }));

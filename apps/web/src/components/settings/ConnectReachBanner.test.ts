@@ -44,4 +44,22 @@ describe("connectReachCopy", () => {
     const m3 = { environmentId: "env-m3", label: "M3", onConnect: true, hasConnectRoute: true };
     expect(connectReachCopy([m3], true, new Set(["env-m3"]))).toBeNull();
   });
+
+  it("never tells an old record of a machine that joined again to link", () => {
+    const old = { environmentId: "env-m5-old", label: "m5", onConnect: false, replacedBy: "m5" };
+    const copy = connectReachCopy([old], true, new Set(["env-m5-new"]));
+    expect(copy?.title).toBe("An old record of m5 can't connect");
+    expect(copy?.description).toContain("m5 joined SpecWithCode again as a new machine");
+    expect(copy?.description).not.toContain("connect link");
+    expect(copy?.signIn).toBe(false);
+    // Signed out, it is not offered a sign-in either.
+    expect(connectReachCopy([old], false, new Set())?.signIn).toBe(false);
+  });
+
+  it("keeps the real advice for other machines next to an old record", () => {
+    const old = { environmentId: "env-m5-old", label: "m5", onConnect: false, replacedBy: "m5" };
+    expect(connectReachCopy([old, anna], true, new Set())?.title).toBe(
+      "Anna isn't on SpecWithCode Connect",
+    );
+  });
 });

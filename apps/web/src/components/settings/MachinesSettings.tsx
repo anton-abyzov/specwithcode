@@ -40,7 +40,16 @@ import {
   useMachineWorkGrants,
   useStudioFleet,
 } from "../../studio/fleet";
-import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
+import {
+  fleetMachineHasTailnetAddress,
+  setFleetEnvironmentSkipped,
+} from "../../studio/fleetAutoConnect";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@specweave-studio/client-runtime/state/runtime";
+import { environmentCatalog } from "~/connection/catalog";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   useAccountAutoConnectStates,
   requestAccountMachineConnect,
@@ -100,6 +109,9 @@ import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import { ThisMachineAdvanced } from "./ThisMachineAdvanced";
 import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
+import { useReplacedMachineRecords } from "./useReplacedMachineRecords";
+import { RemoveStudioConnectEnvironmentDialog } from "../clerk/RemoveStudioConnectEnvironmentDialog";
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 
 export type { MachineRowModel } from "./machinesSettings.logic";
 
@@ -161,6 +173,7 @@ export function MachinesSettingsPanel() {
 
   const accountStates = useAccountAutoConnectStates();
   const accountMachines = useRelayEnvironmentDiscovery().environments;
+  const replaced = useReplacedMachineRecords(fleet.snapshot, fleet.primaryEnvironmentId);
   const builtRows = useMemo(
     () =>
       buildMachineRows({
@@ -184,8 +197,9 @@ export function MachinesSettingsPanel() {
         workGrants: grants.snapshot,
         scratchRootFor: (id) => configs.get(id)?.scratchWorkspaceRoot,
         displayName: machineName,
+        replaced,
       }),
-    [environments, fleet, hostBlocks, projects, grants.snapshot, configs, machineName],
+    [environments, fleet, hostBlocks, projects, grants.snapshot, configs, machineName, replaced],
   );
   const savedIds = useMemo(
     () => new Set<string>(environments.map((environment) => environment.environmentId)),
@@ -831,6 +845,11 @@ export function MachineRow({
           <h3 className="text-sm break-words sm:truncate">
             {nickname}
             {hostNames ? <span className="text-muted-foreground"> · {hostNames}</span> : null}
+            {row.replacedBy ? (
+              <Badge variant="outline" size="sm" className="ml-2 align-middle">
+                {tx("Old record")}
+              </Badge>
+            ) : null}
           </h3>
           <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <span
@@ -881,6 +900,13 @@ export function MachineRow({
           </div>
         ) : null}
         {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+        {row.replacedBy ? (
+          <RemoveOldRecord
+            environmentId={row.environmentId}
+            name={nickname}
+            hostLabel={row.label}
+          />
+        ) : null}
       </div>
 
       {gone ? <div className="pl-7">{gone}</div> : null}
@@ -1370,5 +1396,89 @@ export function ConnectBothWaysView({
         </div>
       )}
     </DetailLine>
+  );
+}
+
+/**
+ * Removes an old record of a machine that joined again under a new id. It
+ * forgets this device's saved pairing for the dead id only; the machine's live
+ * record, its name and its Connect link are not touched.
+ */
+function RemoveOldRecord({
+  environmentId,
+  name,
+  hostLabel,
+}: {
+  environmentId: EnvironmentId;
+  name: string;
+  hostLabel: string;
+}) {
+  const tx = useTx();
+  const remove = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  const { environments } = useEnvironments();
+  // A record saved over Connect is removed through the Connect dialog, which says
+  // where its account registration can be deregistered, as Saved connections does.
+  const relayManaged =
+    hasCloudPublicConfig() &&
+    environments.some(
+      (environment) => environment.environmentId === environmentId && environment.relayManaged,
+    );
+  const [removing, setRemoving] = useState(false);
+  const [confirmingConnect, setConfirmingConnect] = useState(false);
+  async function removeRecord() {
+    setRemoving(true);
+    // Recorded first, so automatic connection cannot add the record back in between.
+    setFleetEnvironmentSkipped(environmentId, true);
+    const result = await remove(environmentId);
+    setRemoving(false);
+    if (result._tag !== "Failure") return;
+    setFleetEnvironmentSkipped(environmentId, false);
+    if (isAtomCommandInterrupted(result)) return;
+    const failure = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: tx("Could not remove the old record"),
+        description: failure instanceof Error ? failure.message : String(failure),
+      }),
+    );
+  }
+  async function onRemove() {
+    if (relayManaged) {
+      setConfirmingConnect(true);
+      return;
+    }
+    const confirmed = await requestConfirmDialog(
+      tx(
+        "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.",
+        { name, host: hostLabel },
+      ),
+      { variant: "destructive" },
+    );
+    if (confirmed) await removeRecord();
+  }
+  return (
+    <>
+      <Button
+        className="shrink-0"
+        size="xs"
+        variant="outline"
+        disabled={removing}
+        data-remove-old-record=""
+        onClick={() => void onRemove()}
+      >
+        {removing ? tx("Removing…") : tx("Remove old record")}
+      </Button>
+      {relayManaged ? (
+        <RemoveStudioConnectEnvironmentDialog
+          environmentLabel={confirmingConnect ? `${name} (${hostLabel})` : null}
+          onCancel={() => setConfirmingConnect(false)}
+          onConfirm={() => {
+            setConfirmingConnect(false);
+            void removeRecord();
+          }}
+        />
+      ) : null}
+    </>
   );
 }

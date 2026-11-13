@@ -2249,6 +2249,11 @@ export const zh: PhraseCatalog = {
     "自定义标签字母、颜色和图标",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "标签太窄放不下名称时显示的 2 或 3 个字符。留空则跟随名称。",
+  "Old record": "旧记录",
+  "Old record: this machine joined again as a new one": "旧记录：这台机器已作为新机器重新加入",
+  "Remove old record": "删除旧记录",
+  "Could not remove the old record": "无法删除旧记录",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
   "Use 2 or 3 characters.":
     "请使用 2 或 3 个字符。",
   "{name} wears {color}":

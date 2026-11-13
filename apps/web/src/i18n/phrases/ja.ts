@@ -2332,6 +2332,11 @@ export const ja: PhraseCatalog = {
     "チップの文字・色・アイコンをカスタマイズ",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "名前が入らない狭いチップに表示する2〜3文字。空欄なら名前から決まります。",
+  "Old record": "古い記録",
+  "Old record: this machine joined again as a new one": "古い記録: このマシンは新しいマシンとして再参加しました",
+  "Remove old record": "古い記録を削除",
+  "Could not remove the old record": "古い記録を削除できませんでした",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.":
     "2〜3文字にしてください。",
   "{name} wears {color}":

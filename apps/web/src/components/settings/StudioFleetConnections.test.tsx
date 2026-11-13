@@ -56,6 +56,7 @@ vi.mock("react", async (importOriginal) => {
     ...actual,
     useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
     useState: reactHookHarness.useState,
+    useMemo: <T,>(factory: () => T) => factory(),
   };
 });
 vi.mock("react/compiler-runtime", async () => ({
@@ -100,6 +101,12 @@ vi.mock("./MachineTerminal", () => ({
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
+  useRelayEnvironmentDiscovery: () => ({
+    environments: new Map(),
+    refreshing: false,
+    offline: false,
+    error: { _tag: "None" },
+  }),
 }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: { autoConnectPrivateMachines: boolean }) => unknown) =>

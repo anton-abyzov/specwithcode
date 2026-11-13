@@ -16,6 +16,7 @@ import {
   canAllowBack,
   connectBothWaysInstruction,
   pairingLinkBaseUrl,
+  replacedMachineRecords,
   sharedProjectRole,
   unseenFleetMachines,
   withAccountConnectState,
@@ -619,5 +620,120 @@ describe("withAccountConnectState", () => {
     );
     expect(failed.seen.text).toBe("Relay refused");
     expect(failed.connect?.enabled).toBe(true);
+  });
+});
+
+describe("old records of a machine that joined again", () => {
+  const oldM5 = EnvironmentId.make("env-m5-old");
+  const newM5 = EnvironmentId.make("env-m5-new");
+  const record = (environmentId: EnvironmentId, label: string, connected = false) => ({
+    environmentId,
+    label,
+    connected,
+  });
+  const M5 = "Anton M5MAX PROLED";
+  const liveM5 = { environmentId: newM5, machineName: M5, status: "reachable" as const };
+  const connect = (entries: Array<[string, string, boolean?]>) =>
+    new Map(entries.map(([id, label, online = true]) => [id, { label, online }]));
+  const base = {
+    saved: [record(m4, "M4MAX", true), record(oldM5, M5)],
+    fleet: [liveM5],
+    connect: connect([[newM5, M5]]),
+    primaryEnvironmentId: m4,
+  };
+
+  it("maps a dead record to the live machine with its computer name, by id", () => {
+    expect([...replacedMachineRecords(base)]).toEqual([[oldM5, newM5]]);
+  });
+
+  it("marks nothing until both lists are complete", () => {
+    expect(replacedMachineRecords({ ...base, fleet: null }).size).toBe(0);
+    expect(replacedMachineRecords({ ...base, connect: null }).size).toBe(0);
+    // Signed out, or a list cleared while it is read again.
+    expect(replacedMachineRecords({ ...base, connect: new Map() }).size).toBe(0);
+  });
+
+  it("leaves a record alone while anything still holds it", () => {
+    const old = record(oldM5, M5);
+    expect(replacedMachineRecords({ ...base, saved: [{ ...old, connected: true }] }).size).toBe(0);
+    expect(
+      replacedMachineRecords({
+        ...base,
+        fleet: [liveM5, { environmentId: oldM5, machineName: M5, status: "unreachable" }],
+      }).size,
+    ).toBe(0);
+    expect(
+      replacedMachineRecords({ ...base, connect: connect([[newM5, M5], [oldM5, M5, false]]) }).size,
+    ).toBe(0);
+  });
+
+  it("needs a successor that is alive", () => {
+    expect(
+      replacedMachineRecords({
+        ...base,
+        fleet: [{ ...liveM5, status: "unreachable" }],
+        connect: connect([[newM5, M5, false]]),
+      }).size,
+    ).toBe(0);
+    // Online on Connect alone is enough.
+    expect(
+      replacedMachineRecords({ ...base, fleet: [], connect: connect([[newM5, M5]]) }).get(oldM5),
+    ).toBe(newM5);
+  });
+
+  it("never guesses between two machines with one computer name, wherever they are listed", () => {
+    const other = EnvironmentId.make("env-other");
+    expect(
+      replacedMachineRecords({ ...base, connect: connect([[newM5, M5], [other, M5]]) }).size,
+    ).toBe(0);
+    expect(
+      replacedMachineRecords({
+        ...base,
+        fleet: [liveM5, { environmentId: other, machineName: M5, status: "unreachable" }],
+      }).size,
+    ).toBe(0);
+  });
+
+  it("matches the computer's own name, never a fleet label or a nickname", () => {
+    const office = EnvironmentId.make("env-office");
+    // A fleet entry labelled "MacBook Pro" whose machine reports "Office PC" claims nothing.
+    expect(
+      replacedMachineRecords({
+        saved: [record(oldM5, "MacBook Pro")],
+        fleet: [{ environmentId: office, machineName: "Office PC", status: "reachable" }],
+        connect: connect([[office, "Office PC"]]),
+        primaryEnvironmentId: m4,
+      }).size,
+    ).toBe(0);
+    // A fleet entry that has not reported its name yet claims nothing either.
+    expect(
+      replacedMachineRecords({
+        ...base,
+        fleet: [{ environmentId: newM5, status: "reachable" }],
+        connect: connect([[m1, "Mac mini"]]),
+      }).size,
+    ).toBe(0);
+  });
+
+  it("labels the old record's card and keeps the live one as it is", () => {
+    const rows = buildMachineRows({
+      environments: [
+        env(m4, "M4MAX"),
+        env(oldM5, "Anton M5MAX PROLED", "error"),
+        env(newM5, "Anton M5MAX PROLED"),
+      ],
+      primaryEnvironmentId: m4,
+      fleet: fleet([fleetMachine(newM5, "Anton M5MAX PROLED")]),
+      canPair: true,
+      projects: [],
+      hostBlocks: [],
+      replaced: new Map([[oldM5, newM5]]),
+    });
+    const old = rows.find((row) => row.environmentId === oldM5)!;
+    const live = rows.find((row) => row.environmentId === newM5)!;
+    expect(old.replacedBy).toBe(newM5);
+    expect(old.seen.text).toBe("Old record: this machine joined again as a new one");
+    expect(live.replacedBy).toBeNull();
+    expect(live.seen.state).toBe("connected");
   });
 });

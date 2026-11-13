@@ -17,19 +17,50 @@ export interface UnreachableMachine {
   readonly onConnect: boolean;
   /** This window already has a SpecWithCode Connect route for the machine. */
   readonly hasConnectRoute?: boolean;
+  /**
+   * An old record of a machine that joined again under a new id: the name it
+   * goes by now. Linking cannot help such a record, so it is never told to link.
+   */
+  readonly replacedBy?: string;
+}
+
+export interface ConnectReachCopy {
+  readonly title: string;
+  readonly description: string;
+  readonly signIn: boolean;
+  /** Machines to give a SpecWithCode Connect route from the banner's button. */
+  readonly addRoutes?: ReadonlyArray<UnreachableMachine>;
 }
 
 export function connectReachCopy(
   machines: ReadonlyArray<UnreachableMachine>,
   signedIn: boolean,
   discoveredIds: ReadonlySet<string> | ReadonlyMap<string, unknown>,
-): {
-  readonly title: string;
-  readonly description: string;
-  readonly signIn: boolean;
-  /** Machines to give a SpecWithCode Connect route from the banner's button. */
-  readonly addRoutes?: ReadonlyArray<UnreachableMachine>;
-} | null {
+): ConnectReachCopy | null {
+  const current = machines.filter((machine) => machine.replacedBy === undefined);
+  const replaced = machines.filter((machine) => machine.replacedBy !== undefined);
+  return currentMachinesCopy(current, signedIn, discoveredIds) ?? oldRecordsCopy(replaced);
+}
+
+/** Old records only: say the machine is fine and the record can go. */
+function oldRecordsCopy(replaced: ReadonlyArray<UnreachableMachine>): ConnectReachCopy | null {
+  if (replaced.length === 0) return null;
+  const now = [...new Set(replaced.map((machine) => machine.replacedBy ?? machine.label))];
+  const one = replaced.length === 1;
+  return {
+    title: one
+      ? `An old record of ${now[0]} can't connect`
+      : `${replaced.length} old machine records can't connect`,
+    description: `${listNames(now)} joined SpecWithCode again as a new machine and ${now.length === 1 ? "works" : "work"} as before. ${one ? "The old record has" : "The old records have"} nothing to reach; remove ${one ? "it" : "them"} from ${one ? "its card" : "their cards"} below.`,
+    signIn: false,
+  };
+}
+
+function currentMachinesCopy(
+  machines: ReadonlyArray<UnreachableMachine>,
+  signedIn: boolean,
+  discoveredIds: ReadonlySet<string> | ReadonlyMap<string, unknown>,
+): ConnectReachCopy | null {
   if (machines.length === 0) return null;
   if (!signedIn) {
     // Fleet work from this machine uses the keys each machine gave it, not this

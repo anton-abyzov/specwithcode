@@ -2344,6 +2344,11 @@ export const es: PhraseCatalog = {
     "Personalizar letras del chip, color e icono",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 o 3 caracteres para un chip demasiado estrecho para el nombre. Vacío sigue al nombre.",
+  "Old record": "Registro antiguo",
+  "Old record: this machine joined again as a new one": "Registro antiguo: esta máquina se unió de nuevo como una nueva",
+  "Remove old record": "Quitar registro antiguo",
+  "Could not remove the old record": "No se pudo quitar el registro antiguo",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "¿Quitar de este dispositivo el registro antiguo de {name} ({host})?\nLa máquina se unió de nuevo como una nueva y sigue funcionando; solo se van el registro muerto y sus hilos en caché aquí.",
   "Use 2 or 3 characters.":
     "Usa 2 o 3 caracteres.",
   "{name} wears {color}":
