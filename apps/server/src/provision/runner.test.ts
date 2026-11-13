@@ -13,7 +13,12 @@ import {
   NODE_VERSION,
   nodeDownload,
 } from "./manifest.ts";
-import { ProvisionRunError, runProvision, type ProvisionOptions } from "./runner.ts";
+import {
+  acquireProvisionLock,
+  ProvisionRunError,
+  runProvision,
+  type ProvisionOptions,
+} from "./runner.ts";
 import { checkTarget } from "./target.ts";
 
 const HOME = "/home/ada";
@@ -441,6 +446,18 @@ describe("runProvision", () => {
     host.files.set(`${SW}/provision/run.lock`, { text: `${process.ppid}\n`, mode: 0o600 });
     const error = await runProvision(host, options()).catch((caught: unknown) => caught);
     expect((error as ProvisionRunError).code).toBe("busy");
+  });
+
+  it("refuses a second holder in the same server process until the first releases", async () => {
+    const host = provisionedLinux();
+    const lock = `${SW}/provision/run.lock`;
+    const first = await acquireProvisionLock(host, lock);
+    expect(first).not.toBeNull();
+    expect(await acquireProvisionLock(host, lock)).toBeNull();
+    await first?.();
+    const again = await acquireProvisionLock(host, lock);
+    expect(again).not.toBeNull();
+    await again?.();
   });
 
   it("collects root steps into one line to run when sudo needs a password", async () => {
