@@ -1,0 +1,2 @@
+ALTER TABLE `relay_environment_links` ADD `hardware_identity` text;--> statement-breakpoint
+CREATE INDEX `idx_relay_environment_links_hardware` ON `relay_environment_links` (`user_id`,`hardware_identity`,`revoked_at`);

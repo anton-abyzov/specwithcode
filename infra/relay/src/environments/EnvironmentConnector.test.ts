@@ -238,6 +238,9 @@ function makeLinks(
       }),
     findActiveManagedForEnvironment: () => Effect.succeed([]),
     setHoldWebhooksWhileOffline: () => Effect.void,
+    findActiveForHardware: () => Effect.succeed([]),
+    listActiveWithoutHardware: () => Effect.succeed([]),
+    setHardwareIdentity: () => Effect.succeed(false),
     revokeForUser: () => Effect.succeed(false),
   };
 }

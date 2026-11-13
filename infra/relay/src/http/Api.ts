@@ -93,6 +93,7 @@ import {
   resolveConnectClientKeyThumbprint,
 } from "./requestCredentials.ts";
 import {
+  recordEnvironmentHardwareIdentity,
   revokeEnvironmentLinkRecord,
   unlinkEnvironmentRecord,
 } from "../environments/EnvironmentUnlink.ts";
@@ -1303,6 +1304,19 @@ export const layerServerApi = HttpApiBuilder.group(
             holdWebhooksWhileOffline: payload.holdWebhooksWhileOffline,
           });
           return payload;
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "recordHardwareIdentity",
+        Effect.fn("relay.api.server.recordHardwareIdentity")(function* ({ params, payload }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          return yield* recordEnvironmentHardwareIdentity({
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            hardwareIdentity: payload.hardwareIdentity,
+            userId: payload.userId,
+          });
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

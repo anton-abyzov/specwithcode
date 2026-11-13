@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, notExists, or, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, notExists, or, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/sqlite-core";
 
 import * as RelayDb from "../db.ts";
@@ -109,7 +109,42 @@ export class EnvironmentLinks extends Context.Service<
       readonly request: RelayEnvironmentLinkRequest;
       readonly proof: RelayEnvironmentLinkProofPayload;
       readonly endpoint: RelayManagedEndpoint;
+      /** Account-salted hardware identity; kept as stored when absent. */
+      readonly hardwareIdentity?: string | undefined;
+      /** Carries the webhook-hold opt-in over from a replaced link of the same machine. */
+      readonly inheritHoldWebhooksWhileOffline?: boolean | undefined;
     }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
+    /**
+     * The user's other active links made from the same machine (same
+     * account-salted hardware identity), excluding one environment.
+     */
+    readonly findActiveForHardware: (input: {
+      readonly userId: string;
+      readonly hardwareIdentity: string;
+      readonly excludeEnvironmentId: string;
+    }) => Effect.Effect<
+      ReadonlyArray<{
+        readonly environmentId: string;
+        readonly environmentPublicKey: string;
+        readonly holdWebhooksWhileOffline: boolean;
+      }>,
+      EnvironmentLinkLookupPersistenceError
+    >;
+    /** Active links proven by one environment key that have no hardware identity yet. */
+    readonly listActiveWithoutHardware: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly userId: string }>,
+      EnvironmentLinkEnvironmentLookupPersistenceError
+    >;
+    /** Sets the hardware identity on one active link that has none yet. */
+    readonly setHardwareIdentity: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly hardwareIdentity: string;
+    }) => Effect.Effect<boolean, EnvironmentLinkEnvironmentLookupPersistenceError>;
     readonly listDeliveryUsersForEnvironment: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -194,7 +229,9 @@ const make = Effect.gen(function* () {
       // link carries it over from the environment's other active links. Only
       // links proven by the same key count; an environment id is public, so
       // anyone can link one and switch the opt-in on for their own link.
-      const inheritedHoldWebhooks = sql<boolean>`EXISTS (
+      const inheritedHoldWebhooks = input.inheritHoldWebhooksWhileOffline
+        ? sql<boolean>`1`
+        : sql<boolean>`EXISTS (
         SELECT 1 FROM ${relayEnvironmentLinks} AS other
         WHERE other.environment_id = ${environmentId}
           AND other.environment_public_key = ${proof.environmentPublicKey}
@@ -217,6 +254,7 @@ const make = Effect.gen(function* () {
           liveActivitiesEnabled: request.liveActivitiesEnabled,
           managedTunnelsEnabled: request.managedTunnelsEnabled,
           createdByDeviceId: request.deviceId ?? null,
+          hardwareIdentity: input.hardwareIdentity ?? null,
           revokedAt: null,
           createdAt: now,
           updatedAt: now,
@@ -236,6 +274,9 @@ const make = Effect.gen(function* () {
             revokedAt: null,
             updatedAt: now,
             holdWebhooksWhileOffline: inheritedHoldWebhooks,
+            ...(input.hardwareIdentity === undefined
+              ? {}
+              : { hardwareIdentity: input.hardwareIdentity }),
           },
         })
         .pipe(
@@ -250,6 +291,89 @@ const make = Effect.gen(function* () {
           ),
         );
     }),
+
+    findActiveForHardware: Effect.fn("relay.environment_links.find_active_for_hardware")(
+      function* (input) {
+        return yield* db
+          .select({
+            environmentId: relayEnvironmentLinks.environmentId,
+            environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+            holdWebhooksWhileOffline: relayEnvironmentLinks.holdWebhooksWhileOffline,
+          })
+          .from(relayEnvironmentLinks)
+          .where(
+            and(
+              eq(relayEnvironmentLinks.userId, input.userId),
+              eq(relayEnvironmentLinks.hardwareIdentity, input.hardwareIdentity),
+              isNull(relayEnvironmentLinks.revokedAt),
+              ne(relayEnvironmentLinks.environmentId, input.excludeEnvironmentId),
+            ),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new EnvironmentLinkLookupPersistenceError({
+                  userId: input.userId,
+                  environmentId: input.excludeEnvironmentId,
+                  cause,
+                }),
+            ),
+          );
+      },
+    ),
+
+    listActiveWithoutHardware: Effect.fn("relay.environment_links.list_active_without_hardware")(
+      function* (input) {
+        return yield* db
+          .select({ userId: relayEnvironmentLinks.userId })
+          .from(relayEnvironmentLinks)
+          .where(
+            and(
+              eq(relayEnvironmentLinks.environmentId, input.environmentId),
+              eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+              isNull(relayEnvironmentLinks.revokedAt),
+              isNull(relayEnvironmentLinks.hardwareIdentity),
+            ),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new EnvironmentLinkEnvironmentLookupPersistenceError({
+                  environmentId: input.environmentId,
+                  cause,
+                }),
+            ),
+          );
+      },
+    ),
+
+    setHardwareIdentity: Effect.fn("relay.environment_links.set_hardware_identity")(
+      function* (input) {
+        const rows = yield* db
+          .update(relayEnvironmentLinks)
+          .set({ hardwareIdentity: input.hardwareIdentity })
+          .where(
+            and(
+              eq(relayEnvironmentLinks.userId, input.userId),
+              eq(relayEnvironmentLinks.environmentId, input.environmentId),
+              eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+              isNull(relayEnvironmentLinks.revokedAt),
+              isNull(relayEnvironmentLinks.hardwareIdentity),
+            ),
+          )
+          .returning({ environmentId: relayEnvironmentLinks.environmentId })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new EnvironmentLinkEnvironmentLookupPersistenceError({
+                  environmentId: input.environmentId,
+                  cause,
+                }),
+            ),
+          );
+        return rows.length > 0;
+      },
+    ),
 
     listDeliveryUsersForEnvironment: Effect.fn(
       "relay.environment_links.list_delivery_users_for_environment",

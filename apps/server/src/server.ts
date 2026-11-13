@@ -195,6 +195,7 @@ import * as CloudHttp from "./cloud/http.ts";
 import * as ConnectLinkWatch from "./cloud/ConnectLinkWatch.ts";
 import * as ConnectPhoneRevocation from "./cloud/ConnectPhoneRevocation.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
+import * as MachineHardwareIdentity from "./cloud/MachineHardwareIdentity.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -1568,7 +1569,12 @@ const layerMakeServer = Layer.unwrap(
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     return layerServerApplication.pipe(
       // The connect routes and the startup/shutdown link work share one instance.
-      Layer.provide(Layer.mergeAll(CloudLink.layer, ConnectPhoneRevocation.layer)),
+      Layer.provide(
+        Layer.mergeAll(CloudLink.layer, ConnectPhoneRevocation.layer).pipe(
+          // Shared with the link watch, which records it on older links.
+          Layer.provideMerge(MachineHardwareIdentity.layer),
+        ),
+      ),
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(
         McpSessionRegistry.layer.pipe(

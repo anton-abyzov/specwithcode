@@ -1,4 +1,7 @@
-import type { RelayAgentActivityState, RelayDeliveryResult } from "@specweave-studio/contracts/relay";
+import type {
+  RelayAgentActivityState,
+  RelayDeliveryResult,
+} from "@specweave-studio/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -96,6 +99,9 @@ function makeEnvironmentLinks(
     getForUser: () => Effect.succeed(null),
     findActiveManagedForEnvironment: () => Effect.succeed([]),
     setHoldWebhooksWhileOffline: () => Effect.void,
+    findActiveForHardware: () => Effect.succeed([]),
+    listActiveWithoutHardware: () => Effect.succeed([]),
+    setHardwareIdentity: () => Effect.succeed(false),
     revokeForUser: () => Effect.succeed(false),
     ...overrides,
   };

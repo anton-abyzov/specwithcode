@@ -7,6 +7,8 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import { HttpClient } from "effect/http";
 
@@ -15,7 +17,13 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { makeRelayEnvironmentHttpClient } from "../relay/relayEnvironmentClient.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as CloudLink from "./CloudLink.ts";
-import { readRelayConnection } from "./config.ts";
+import * as MachineHardwareIdentity from "./MachineHardwareIdentity.ts";
+import {
+  CLOUD_HARDWARE_IDENTITY_RECORDED,
+  CLOUD_LINKED_ENVIRONMENT_ID,
+  CLOUD_LINKED_USER_ID,
+  readRelayConnection,
+} from "./config.ts";
 
 const RELAY_REQUEST_TIMEOUT = "10 seconds";
 /** How often a linked machine asks whether it is still linked. */
@@ -61,9 +69,79 @@ export const checkLinkOnce: Effect.Effect<
   ),
 );
 
+/**
+ * Brings a link made by an older version up to date, once the relay has just
+ * accepted it: keeps the linked environment id locally (so a lost
+ * environment-id file is restored, not replaced) and records this machine's
+ * hardware identity on the relay (so a later reinstall replaces the record
+ * instead of adding a second). `true` when done or nothing is left to do;
+ * `false` to try again later. Never fails.
+ */
+export const recordHardwareIdentityOnce: Effect.Effect<
+  boolean,
+  never,
+  | ServerSecretStore.ServerSecretStore
+  | ServerEnvironment.ServerEnvironment
+  | MachineHardwareIdentity.MachineHardwareIdentity
+  | HttpClient.HttpClient
+> = Effect.gen(function* () {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const connection = yield* readRelayConnection;
+  if (connection === null) return false;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const environmentId = yield* environment.getEnvironmentId;
+  if (Option.isNone(yield* secrets.get(CLOUD_LINKED_ENVIRONMENT_ID))) {
+    yield* secrets.set(CLOUD_LINKED_ENVIRONMENT_ID, new TextEncoder().encode(environmentId));
+  }
+  const identity = yield* MachineHardwareIdentity.MachineHardwareIdentity;
+  const userId = yield* secrets.get(CLOUD_LINKED_USER_ID);
+  if (Option.isNone(userId)) return true;
+  const linkedUserId = new TextDecoder().decode(userId.value);
+  const hardwareIdentity = yield* identity.forAccount(linkedUserId);
+  if (hardwareIdentity === null) return true;
+  const recorded = yield* secrets.get(CLOUD_HARDWARE_IDENTITY_RECORDED);
+  if (Option.isSome(recorded) && new TextDecoder().decode(recorded.value) === hardwareIdentity) {
+    return true;
+  }
+  const client = yield* makeRelayEnvironmentHttpClient(connection);
+  yield* client.server
+    .recordHardwareIdentity({
+      params: { environmentId },
+      payload: { hardwareIdentity, userId: linkedUserId },
+    })
+    .pipe(Effect.timeout(RELAY_REQUEST_TIMEOUT));
+  yield* secrets.set(CLOUD_HARDWARE_IDENTITY_RECORDED, new TextEncoder().encode(hardwareIdentity));
+  return true;
+}).pipe(
+  Effect.catchCause((cause) =>
+    Effect.logDebug("Could not bring this machine's Connect link up to date", { cause }).pipe(
+      Effect.as(false),
+    ),
+  ),
+);
+
+/** Failed attempts to record the identity before waiting for the next restart or relink. */
+const IDENTITY_RECORD_ATTEMPTS = 3;
+
 /** {@link checkLinkOnce} once this server is active, then every {@link LINK_WATCH_INTERVAL}. */
 export const layerWatch = Layer.effectDiscard(
-  forkParked(
-    checkLinkOnce.pipe(Effect.repeat(Schedule.spaced(LINK_WATCH_INTERVAL)), Effect.asVoid),
-  ),
+  Effect.gen(function* () {
+    // Attempts left; 0 once recorded. An older relay has no route for it, so
+    // a few tries per run is enough until the relay is updated.
+    const attemptsLeft = yield* Ref.make(IDENTITY_RECORD_ATTEMPTS);
+    const watchOnce = Effect.gen(function* () {
+      const answer = yield* checkLinkOnce;
+      if (answer === "not_linked" || answer === "revoked") {
+        // A new link carries the identity itself; look again after a relink.
+        yield* Ref.set(attemptsLeft, IDENTITY_RECORD_ATTEMPTS);
+        return;
+      }
+      if (answer !== "linked" || (yield* Ref.get(attemptsLeft)) === 0) return;
+      const recorded = yield* recordHardwareIdentityOnce;
+      yield* Ref.update(attemptsLeft, (left) => (recorded ? 0 : Math.max(0, left - 1)));
+    });
+    return yield* forkParked(
+      watchOnce.pipe(Effect.repeat(Schedule.spaced(LINK_WATCH_INTERVAL)), Effect.asVoid),
+    );
+  }),
 );

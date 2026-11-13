@@ -22,6 +22,17 @@ export const CLOUD_MINT_PUBLIC_KEY = "cloud-mint-ed25519-public-key";
 export const CLOUD_ENDPOINT_RUNTIME_CONFIG = "cloud-endpoint-runtime-config";
 export const CLOUD_ENDPOINT_CONFIRMED_ORIGIN = "cloud-endpoint-confirmed-origin";
 export const CLOUD_LINKED_USER_ID = "cloud-linked-user-id";
+/**
+ * The environment id this link was made for. If the plain environment-id file
+ * is lost while the link survives, the server restores the id from here rather
+ * than minting a new one that the relay would list as another machine.
+ */
+export const CLOUD_LINKED_ENVIRONMENT_ID = "cloud-linked-environment-id";
+/**
+ * The account-salted hardware identity the relay last confirmed for this link,
+ * so the link watch records it on an older link once rather than every run.
+ */
+export const CLOUD_HARDWARE_IDENTITY_RECORDED = "cloud-hardware-identity-recorded";
 /** This environment's public SpecWithCode Connect origin (https://<managed host>), for fleet invitations. */
 export const CLOUD_ENDPOINT_PUBLIC_ORIGIN = "cloud-endpoint-public-origin";
 /**

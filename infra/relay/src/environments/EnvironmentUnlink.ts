@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
+import { accountHardwareIdentity } from "./HardwareIdentity.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
 export const revokeEnvironmentLinkRecord = Effect.fn(
@@ -80,3 +81,52 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     return unlinked;
   },
 );
+
+/**
+ * Fills in the hardware identity on this machine's links made before the
+ * machine sent one, so a later reinstall can replace them. Only links proven by
+ * the calling environment's key, and only where none is recorded yet.
+ */
+export const recordEnvironmentHardwareIdentity = Effect.fn(
+  "relay.api.server.recordEnvironmentHardwareIdentity",
+)(function* (input: {
+  readonly environmentId: string;
+  readonly environmentPublicKey: string;
+  readonly hardwareIdentity: string;
+  /** The account the machine salted the identity for. */
+  readonly userId?: string | undefined;
+}) {
+  const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const pending = yield* links.listActiveWithoutHardware(input);
+  // The machine salts its identity for one account. Stored for any other
+  // account it would never match that account's links, and would block a
+  // correct value later, so only the named account is filled in; without a
+  // name, only an unambiguous single account is.
+  const accounts =
+    input.userId === undefined
+      ? pending.length === 1
+        ? pending
+        : []
+      : pending.filter((row) => row.userId === input.userId);
+  let recorded = false;
+  for (const { userId } of accounts) {
+    const hardwareIdentity = yield* accountHardwareIdentity(userId, input.hardwareIdentity).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("could not hash a machine identity to record", {
+          environmentId: input.environmentId,
+          errorTag: error._tag,
+        }),
+      ),
+      Effect.option,
+    );
+    if (hardwareIdentity._tag === "None") continue;
+    const updated = yield* links.setHardwareIdentity({
+      userId,
+      environmentId: input.environmentId,
+      environmentPublicKey: input.environmentPublicKey,
+      hardwareIdentity: hardwareIdentity.value,
+    });
+    recorded = recorded || updated;
+  }
+  return { recorded };
+});

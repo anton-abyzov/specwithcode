@@ -10,6 +10,7 @@ import {
   verifyRelayJwt,
 } from "@specweave-studio/shared/relayJwt";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,6 +21,7 @@ import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as ConnectAccounts from "./ConnectAccounts.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
+import { accountHardwareIdentity } from "./HardwareIdentity.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 import * as RelayConfiguration from "../Config.ts";
 
@@ -68,6 +70,8 @@ export type EnvironmentLinkError =
   | EnvironmentLinkProofInvalid
   | DpopProofs.DpopProofReplayPersistenceError
   | EnvironmentLinks.EnvironmentLinkUpsertPersistenceError
+  | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
+  | EnvironmentLinks.EnvironmentLinkRevokePersistenceError
   | EnvironmentCredentials.EnvironmentCredentialCreatePersistenceError
   | ConnectAccounts.ConnectAccountPersistenceError
   | ManagedEndpointProvider.ManagedEndpointProviderError;
@@ -86,6 +90,8 @@ export class EnvironmentLinker extends Context.Service<
           | ManagedEndpointProvider.ManagedEndpointProvisioningResult["runtime"]
           | null;
         readonly environmentCredential: string;
+        /** The user's older links from the same machine that this link replaced and removed. */
+        readonly replacedEnvironmentIds: ReadonlyArray<string>;
       },
       EnvironmentLinkError
     >;
@@ -145,6 +151,7 @@ const make = Effect.gen(function* () {
   const relayTokens = yield* RelayTokens.RelayTokens;
   const config = yield* RelayConfiguration.RelayConfiguration;
   const connectAccounts = yield* ConnectAccounts.ConnectAccounts;
+  const cryptoService = yield* Crypto.Crypto;
 
   return EnvironmentLinker.of({
     link: Effect.fn("relay.environment_linker.link")(function* (input) {
@@ -290,6 +297,72 @@ const make = Effect.gen(function* () {
           stage: "validate_origin",
         });
       }
+      // A machine that lost its local state (reinstall, reset, wiped home)
+      // comes back with a new environment id. Its signed hardware identity
+      // says it is the same machine, so the account's older link for it is
+      // deregistered here instead of staying as a duplicate: link and
+      // credentials revoked, tunnel and DNS removed. Doing it before
+      // provisioning frees the old slot for the new tunnel, and doing all of
+      // it here means a later failure of this link leaves nothing behind that
+      // Deregister could no longer reach. The identity is self-asserted, so it
+      // only ever matches this user's links.
+      // Without it the link still goes ahead, only without replacing.
+      const hardwareIdentity =
+        verified.hardwareIdentity === undefined
+          ? undefined
+          : yield* accountHardwareIdentity(input.userId, verified.hardwareIdentity).pipe(
+              Effect.provideService(Crypto.Crypto, cryptoService),
+              Effect.tapError((error) =>
+                Effect.logWarning("could not hash the machine identity of a link", {
+                  environmentId: verified.environmentId,
+                  errorTag: error._tag,
+                }),
+              ),
+              Effect.orElseSucceed(() => undefined),
+            );
+      const replaced =
+        hardwareIdentity === undefined
+          ? []
+          : yield* links.findActiveForHardware({
+              userId: input.userId,
+              hardwareIdentity,
+              excludeEnvironmentId: verified.environmentId,
+            });
+      const replacedEnvironmentIds: Array<string> = [];
+      for (const previous of replaced) {
+        const key = { userId: input.userId, environmentId: previous.environmentId };
+        const target = yield* managedEndpointProvider
+          .prepareDeprovision(key)
+          .pipe(Effect.orElseSucceed(() => null));
+        const revoked = yield* links.revokeForUser({
+          ...key,
+          environmentPublicKey: previous.environmentPublicKey,
+        });
+        if (!revoked) continue;
+        replacedEnvironmentIds.push(previous.environmentId);
+        // Best effort, as on publish-only links below: a failure leaves only
+        // an offline tunnel, which the idle-tunnel sweep removes.
+        yield* managedEndpointProvider.deprovision({ ...key, target }).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("could not remove the tunnel of a replaced machine link", {
+              environmentId: previous.environmentId,
+              errorTag: error._tag,
+            }),
+          ),
+          Effect.ignore,
+        );
+      }
+      const inheritHoldWebhooksWhileOffline = replaced.some(
+        (previous) =>
+          previous.holdWebhooksWhileOffline &&
+          replacedEnvironmentIds.includes(previous.environmentId),
+      );
+      if (replacedEnvironmentIds.length > 0) {
+        yield* Effect.logInfo("environment link replaced an older link from the same machine", {
+          environmentId: verified.environmentId,
+          replacedEnvironmentIds,
+        });
+      }
       // Downgrading a managed link to publish-only must release the tunnel and
       // DNS that were provisioned for it — nothing else cleans them up until a
       // full unlink. Best effort: a cleanup failure must not block the link
@@ -331,7 +404,13 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      yield* links.upsert({ ...input, proof: verified, endpoint });
+      yield* links.upsert({
+        ...input,
+        proof: verified,
+        endpoint,
+        hardwareIdentity,
+        inheritHoldWebhooksWhileOffline,
+      });
       // Only a managed link that succeeded creates the Connect account and,
       // while seats remain, grants its founder number. A link refused at a cap
       // or failing in provisioning never takes a seat. The limit resolved
@@ -348,6 +427,7 @@ const make = Effect.gen(function* () {
         endpoint,
         endpointRuntime: provisioned?.runtime ?? null,
         environmentCredential,
+        replacedEnvironmentIds,
       };
     }),
   });

@@ -41,6 +41,7 @@ import {
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
   RELAY_HEALTH_RESPONSE_TYP,
+  decodeRelayJwt,
   RELAY_LINK_PROOF_TYP,
   RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
   RELAY_MINT_REQUEST_TYP,
@@ -89,6 +90,8 @@ import {
   CLOUD_ENDPOINT_PUBLIC_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED_ELSEWHERE_AT,
+  CLOUD_HARDWARE_IDENTITY_RECORDED,
+  CLOUD_LINKED_ENVIRONMENT_ID,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   decodeConfirmedOrigin,
@@ -105,6 +108,7 @@ import {
   RELAY_URL_SECRET,
 } from "./config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
+import * as MachineHardwareIdentity from "./MachineHardwareIdentity.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
@@ -635,6 +639,17 @@ export class CloudLink extends Context.Service<
   }
 >()("specweave-studio/cloud/CloudLink") {}
 
+
+/** The user id a relay link challenge is bound to, read without verifying it. */
+function challengeUserId(challenge: string): string | null {
+  try {
+    const sub = decodeRelayJwt(challenge).sub;
+    return typeof sub === "string" && sub.length > 0 ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
 const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -645,6 +660,7 @@ const make = Effect.gen(function* () {
   const httpServer = yield* HttpServer.HttpServer;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const crypto = yield* Crypto.Crypto;
+  const machineHardwareIdentity = yield* MachineHardwareIdentity.MachineHardwareIdentity;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -695,6 +711,16 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // Salted with the account the relay's challenge names, so the proof the
+  // signed-in client relays never carries a hash that matches across
+  // accounts. A forged challenge is refused by the relay anyway.
+  const linkHardwareIdentity = Effect.fn("environment.cloud.linkHardwareIdentity")(function* (
+    challenge: string,
+  ) {
+    const userId = challengeUserId(challenge);
+    return userId === null ? null : yield* machineHardwareIdentity.forAccount(userId);
+  });
+
   const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function* (
     request: RelayLinkProofRequest,
     requestUrl: string,
@@ -713,6 +739,7 @@ const make = Effect.gen(function* () {
     const expiresAt = DateTime.add(now, { minutes: 5 });
     const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
     const descriptor = yield* environment.getDescriptor;
+    const hardwareIdentity = yield* linkHardwareIdentity(request.challenge);
     const payload = {
       iss: `studio-env:${descriptor.environmentId}`,
       aud: normalizeRelayIssuer(request.relayIssuer),
@@ -727,6 +754,8 @@ const make = Effect.gen(function* () {
       endpoint: request.endpoint,
       origin: request.origin,
       scopes: linkProofScopes(request),
+      // Lets the relay replace this account's older record for this machine.
+      ...(hardwareIdentity === null ? {} : { hardwareIdentity }),
     } satisfies RelayEnvironmentLinkProofPayload;
     return yield* signRelayJwt({
       privateKey: keyPair.privateKey,
@@ -905,6 +934,10 @@ const make = Effect.gen(function* () {
         stringToBytes(payload.environmentCredential),
       );
       yield* secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
+      yield* secrets.set(
+        CLOUD_LINKED_ENVIRONMENT_ID,
+        stringToBytes(yield* environment.getEnvironmentId),
+      );
       yield* awarenessRelay.requestCatchUp();
       if (payload.endpointRuntime) {
         const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
@@ -1456,6 +1489,8 @@ const make = Effect.gen(function* () {
     yield* Effect.all(
       [
         secrets.remove(CLOUD_LINKED_USER_ID),
+        secrets.remove(CLOUD_LINKED_ENVIRONMENT_ID),
+        secrets.remove(CLOUD_HARDWARE_IDENTITY_RECORDED),
         secrets.remove(RELAY_URL_SECRET),
         secrets.remove(RELAY_ISSUER_SECRET),
         secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),

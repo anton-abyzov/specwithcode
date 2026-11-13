@@ -10,8 +10,15 @@ import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/h
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CloudLink from "./CloudLink.ts";
-import { RELAY_ENVIRONMENT_CREDENTIAL_SECRET, RELAY_URL_SECRET } from "./config.ts";
+import {
+  CLOUD_HARDWARE_IDENTITY_RECORDED,
+  CLOUD_LINKED_ENVIRONMENT_ID,
+  CLOUD_LINKED_USER_ID,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_URL_SECRET,
+} from "./config.ts";
 import * as ConnectLinkWatch from "./ConnectLinkWatch.ts";
+import * as MachineHardwareIdentity from "./MachineHardwareIdentity.ts";
 
 const environmentId = EnvironmentId.make("env-watch-test");
 const relayUrl = "https://relay.spec-weave.com";
@@ -33,6 +40,8 @@ const makeHarness = (input: {
   readonly respond: (request: HttpClientRequest.HttpClientRequest) => Response | "hang";
   /** What the link service answers; false is a link made since the refused request. */
   readonly forgets?: boolean;
+  /** This machine's hardware identity hash; none by default. */
+  readonly hardwareIdentity?: string | null;
 }) => {
   const values = new Map<string, Uint8Array>(
     input.linked === false
@@ -40,13 +49,16 @@ const makeHarness = (input: {
       : [
           [RELAY_URL_SECRET, new TextEncoder().encode(relayUrl)],
           [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("environment-credential")],
+          [CLOUD_LINKED_USER_ID, new TextEncoder().encode("user-123")],
         ],
   );
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   const forgotten: Array<string> = [];
   const layer = Layer.mergeAll(
+    MachineHardwareIdentity.layerTest(input.hardwareIdentity ?? null),
     Layer.mock(ServerSecretStore.ServerSecretStore)({
       get: (name) => Effect.sync(() => Option.fromNullishOr(values.get(name))),
+      set: (name, value) => Effect.sync(() => void values.set(name, value)),
     }),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getEnvironmentId: Effect.succeed(environmentId),
@@ -71,7 +83,7 @@ const makeHarness = (input: {
       }),
     ),
   );
-  return { layer, requests, forgotten };
+  return { layer, requests, forgotten, values };
 };
 
 describe("ConnectLinkWatch", () => {
@@ -161,5 +173,79 @@ describe("ConnectLinkWatch", () => {
       yield* TestClock.adjust(ConnectLinkWatch.LINK_WATCH_INTERVAL);
       expect(harness.requests).toHaveLength(3);
     }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("records this machine's identity on its existing link once, then only watches", () => {
+    const identity = "a".repeat(64);
+    const harness = makeHarness({
+      hardwareIdentity: identity,
+      respond: (request) =>
+        request.url.endsWith("/hardware-identity")
+          ? Response.json({ recorded: true })
+          : Response.json({ proofKeyThumbprints: [] }),
+    });
+    return Effect.gen(function* () {
+      yield* Layer.build(ConnectLinkWatch.layerWatch);
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust(ConnectLinkWatch.LINK_WATCH_INTERVAL);
+      const recordRequests = harness.requests.filter((request) =>
+        request.url.endsWith("/hardware-identity"),
+      );
+      expect(recordRequests.map((request) => [request.method, request.url])).toEqual([
+        ["POST", `${relayUrl}/v1/environments/${environmentId}/hardware-identity`],
+      ]);
+      expect(recordRequests[0]?.headers.authorization).toBe("Bearer environment-credential");
+      expect(harness.requests).toHaveLength(3);
+      // Kept locally: a link made before the id was saved can restore it now.
+      const linkedId = harness.values.get(CLOUD_LINKED_ENVIRONMENT_ID);
+      expect(linkedId && new TextDecoder().decode(linkedId)).toBe(environmentId);
+      const recorded = harness.values.get(CLOUD_HARDWARE_IDENTITY_RECORDED);
+      expect(recorded && new TextDecoder().decode(recorded)).toBe(identity);
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("does not record the identity again after a restart once the relay has it", () => {
+    const identity = "d".repeat(64);
+    const harness = makeHarness({
+      hardwareIdentity: identity,
+      respond: (request) =>
+        request.url.endsWith("/hardware-identity")
+          ? Response.json({ recorded: true })
+          : Response.json({ proofKeyThumbprints: [] }),
+    });
+    harness.values.set(CLOUD_HARDWARE_IDENTITY_RECORDED, new TextEncoder().encode(identity));
+    return Effect.gen(function* () {
+      expect(yield* ConnectLinkWatch.recordHardwareIdentityOnce).toBe(true);
+      expect(harness.requests).toEqual([]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("stops trying to record the identity after a few refusals from an older relay", () => {
+    const harness = makeHarness({
+      hardwareIdentity: "b".repeat(64),
+      respond: (request) =>
+        request.url.endsWith("/hardware-identity")
+          ? new Response("not found", { status: 404 })
+          : Response.json({ proofKeyThumbprints: [] }),
+    });
+    return Effect.gen(function* () {
+      yield* Layer.build(ConnectLinkWatch.layerWatch);
+      yield* TestClock.adjust("1 second");
+      for (let i = 0; i < 5; i++) {
+        yield* TestClock.adjust(ConnectLinkWatch.LINK_WATCH_INTERVAL);
+      }
+      const recordRequests = harness.requests.filter((request) =>
+        request.url.endsWith("/hardware-identity"),
+      );
+      expect(recordRequests).toHaveLength(3);
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("sends nothing extra when the machine has no hardware identity", () => {
+    const harness = makeHarness({ respond: () => Response.json({ proofKeyThumbprints: [] }) });
+    return Effect.gen(function* () {
+      expect(yield* ConnectLinkWatch.recordHardwareIdentityOnce).toBe(true);
+      expect(harness.requests).toEqual([]);
+    }).pipe(Effect.provide(harness.layer));
   });
 });

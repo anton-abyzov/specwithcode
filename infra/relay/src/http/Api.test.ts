@@ -612,6 +612,9 @@ function layerRelayUnlinkTest(input?: {
         getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
         findActiveManagedForEnvironment: () => Effect.die("unused findActiveManagedForEnvironment"),
         setHoldWebhooksWhileOffline: () => Effect.die("unused setHoldWebhooksWhileOffline"),
+        findActiveForHardware: () => Effect.succeed([]),
+        listActiveWithoutHardware: () => Effect.succeed([]),
+        setHardwareIdentity: () => Effect.succeed(false),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
       }),
     ),
@@ -1549,6 +1552,7 @@ describe("relay routing fallback", () => {
               Layer.mergeAll(
                 Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
                 Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+                NodeCryptoLayer.layer,
                 Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {}),
                 Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
                 layerPhoneRemovalsUnused,
@@ -1864,6 +1868,7 @@ describe("relay managed tunnel limit errors", () => {
         reconcileOrigin: () => Effect.fail(failure),
       }),
       Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {}),
+      NodeCryptoLayer.layer,
     );
     const layerRoutes = HttpApiBuilder.layer(
       HttpApi.make("RelayApi").add(RelayApi.groups.server),

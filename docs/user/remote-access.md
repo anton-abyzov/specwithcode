@@ -351,6 +351,15 @@ minutes while it is running, or when it next starts: it stops showing as linked,
 link it again. Removing an environment from a device's connection
 settings only forgets it on that device; it stays registered to your account.
 
+Reinstalling or resetting the app on a machine, or deleting its SpecWithCode folder, gives it a
+new environment ID. When it links again, SpecWithCode Connect replaces the account's older record
+for that same machine instead of listing it twice: the old record is deregistered and its
+tunnel removed. The machine is recognized by a hash of its hardware ID and its SpecWithCode
+folder; the raw hardware ID never leaves it. Separate SpecWithCode folders on one computer stay
+separate machines, and two computers with the same name stay apart. A machine linked by an
+older version is recognized from its first start on a version with this change. A record left
+behind by a machine that was wiped before that still needs **Deregister**.
+
 When idle tunnel cleanup is enabled, SpecWithCode Connect removes a linked environment's
 tunnel after it stays offline for several minutes. The environment stays linked
 and keeps the same address. When the host starts again or wakes, SpecWithCode Connect
