@@ -143,44 +143,47 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const isCopilotAgent =
     options.settings.source !== "local" && options.settings.agentId === COPILOT_USAGE_AGENT_ID;
   // Reads only extension folder names and plain `gh auth status` text, never a token.
-  const copilotExistingSignIns = isCopilotAgent
-    ? yield* Effect.cached(
-        options.findCopilotExistingSignIns ??
-          findCopilotExistingSignIns({
-            environment: options.environment,
-            join: (...segments) => path.join(...segments),
-            readDirectory: (directory) =>
-              fs
-                .readDirectory(directory)
-                .pipe(Effect.mapError((cause) => new CopilotProbeError({ cause }))),
-            exec: (command, args, environment) =>
-              Effect.gen(function* () {
-                const child = yield* spawner.spawn(
-                  ChildProcess.make(command, args, {
-                    env: environment,
-                    stdin: "ignore",
-                    shell: false,
-                    forceKillAfter: "1 second",
-                  }),
-                );
-                yield* Effect.addFinalizer(() =>
-                  child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
-                );
-                const [stdout, stderr] = yield* Effect.all(
-                  [
-                    collectUint8StreamText({ stream: child.stdout, maxBytes: 32_768 }),
-                    collectUint8StreamText({ stream: child.stderr, maxBytes: 32_768 }),
-                    child.exitCode,
-                  ],
-                  { concurrency: "unbounded" },
-                );
-                return `${stdout.text}\n${stderr.text}`;
-              }).pipe(
-                Effect.scoped,
-                Effect.mapError((cause) => new CopilotProbeError({ cause })),
-              ),
-          }),
-      )
+  // Sign-in probes afresh, so a gh login made since is used; the state the app
+  // shows reuses one probe for a short while.
+  const probeCopilotExistingSignIns = isCopilotAgent
+    ? (options.findCopilotExistingSignIns ??
+      findCopilotExistingSignIns({
+        environment: options.environment,
+        join: (...segments) => path.join(...segments),
+        readDirectory: (directory) =>
+          fs
+            .readDirectory(directory)
+            .pipe(Effect.mapError((cause) => new CopilotProbeError({ cause }))),
+        exec: (command, args, environment) =>
+          Effect.gen(function* () {
+            const child = yield* spawner.spawn(
+              ChildProcess.make(command, args, {
+                env: environment,
+                stdin: "ignore",
+                shell: false,
+                forceKillAfter: "1 second",
+              }),
+            );
+            yield* Effect.addFinalizer(() =>
+              child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore),
+            );
+            const [stdout, stderr] = yield* Effect.all(
+              [
+                collectUint8StreamText({ stream: child.stdout, maxBytes: 32_768 }),
+                collectUint8StreamText({ stream: child.stderr, maxBytes: 32_768 }),
+                child.exitCode,
+              ],
+              { concurrency: "unbounded" },
+            );
+            return `${stdout.text}\n${stderr.text}`;
+          }).pipe(
+            Effect.scoped,
+            Effect.mapError((cause) => new CopilotProbeError({ cause })),
+          ),
+      }))
+    : undefined;
+  const copilotExistingSignIns = probeCopilotExistingSignIns
+    ? yield* Effect.cachedWithTTL(probeCopilotExistingSignIns, "30 seconds")
     : undefined;
   // Discovery, sign-in and sign-out each start the agent, which rules can forbid.
   const refuseByTeamRules = (operation: string) =>
@@ -420,7 +423,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           copilotCliTooOldMessage(version, /(?:^|\s)--device-code(?:\s|$)/u.test(help)),
         );
       // One enterprise host among this machine's gh sign-ins: sign in there.
-      const existing = copilotExistingSignIns ? yield* copilotExistingSignIns : undefined;
+      const existing = probeCopilotExistingSignIns ? yield* probeCopilotExistingSignIns : undefined;
       const args = withCopilotLoginHost(
         deviceArgs,
         help,

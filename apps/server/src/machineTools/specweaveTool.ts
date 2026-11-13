@@ -153,6 +153,8 @@ export async function installSpecweave<C extends SpecweaveInstallContext>(
         staging,
         "--no-audit",
         "--no-fund",
+        // A person's npm config may turn command links off; the app needs the command.
+        "--bin-links=true",
         "--loglevel=error",
         pkg,
       ],
@@ -185,6 +187,15 @@ export async function installSpecweave<C extends SpecweaveInstallContext>(
       throw new SpecweaveInstallFailure(
         "failed",
         `npm installed SpecWeave ${version ?? "with no version"} instead of ${SPECWEAVE_VERSION}.`,
+      );
+    const command =
+      host.platform === "win32"
+        ? path.join(staging, "specweave.cmd")
+        : path.join(staging, "bin", "specweave");
+    if (!(await host.exists(command)))
+      throw new SpecweaveInstallFailure(
+        "failed",
+        "npm installed the SpecWeave package but not its specweave command.",
       );
     await host.remove(prefix);
     await host.mkdirp(path.dirname(prefix));

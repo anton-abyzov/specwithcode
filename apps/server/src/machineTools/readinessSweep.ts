@@ -178,6 +178,8 @@ export const layerStart = Layer.effectDiscard(
       },
       install: async (tool) => {
         const { ctx: now, git } = await fresh();
+        // Work may have started while the machine was read: check again just before.
+        if (await busy()) return "busy";
         const lines: string[] = [];
         const started = startInstall(now, tool, git, (line) => lines.push(line));
         if ("busyWith" in started) return "busy";

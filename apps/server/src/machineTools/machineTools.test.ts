@@ -495,6 +495,36 @@ describe.runIf(posix)("machine readiness", () => {
     );
   });
 
+  it("refuses an npm install that left no specweave command, and keeps nothing", async () => {
+    const home = await tempDir("machine-tools-home");
+    const node = await fakeNodeWithNpm(NODE_VERSION);
+    const real = hostWith({ path: node }).host;
+    const host: ProvisionHost = {
+      ...real,
+      exec: async (command, args, options) => {
+        if (args[1] !== "install") return real.exec(command, args, options);
+        // As with bin-links=false: the package lands, its command does not.
+        const staging = args[args.indexOf("--prefix") + 1]!;
+        const pkg = NodePath.join(staging, "lib", "node_modules", "specweave");
+        await NodeFSP.mkdir(pkg, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(pkg, "package.json"),
+          JSON.stringify({ version: SPECWEAVE_VERSION }),
+        );
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+    const error = await installMachineTool(
+      context(host, home),
+      "specweave",
+      "present",
+      () => {},
+    ).catch((caught: unknown) => caught);
+    expect((error as MachineToolInstallError).code).toBe("failed");
+    expect((error as Error).message).toContain("specweave command");
+    await expect(NodeFSP.access(managedSpecweavePrefix(home, HOST_PLATFORM))).rejects.toThrow();
+  });
+
   it("refuses SpecWeave without any Node.js and leaves nothing behind", async () => {
     const home = await tempDir("machine-tools-home");
     const error = await installMachineTool(
