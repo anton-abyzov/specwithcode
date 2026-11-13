@@ -2306,8 +2306,16 @@ export const ru: PhraseCatalog = {
   "provider order": "порядок провайдеров",
   "Providers for the recommended model": "Провайдеры для рекомендуемой модели",
   "Rename machine": "Переименовать машину",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "Короткое имя для {hostLabel}. Его показывают строки тредов, «Запустить на» и другие ваши устройства.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "Это имя показывают «Запуск на», строки тредов, боковая панель и другие ваши устройства.",
+  "Machine name":
+    "Имя машины",
+  "Computer name: {hostLabel}, unchanged.":
+    "Имя компьютера: {hostLabel}, не меняется.",
+  "Call it {name}":
+    "Назвать {name}",
+  "Computer name {hostLabel}":
+    "Имя компьютера {hostLabel}",
   "Use {defaultName}": "Использовать {defaultName}",
   "Waiting for sample": "Ожидание замера",
   "Updated {span}{value}": "Обновлено {span}{value}",

@@ -2290,8 +2290,16 @@ export const ko: PhraseCatalog = {
   "provider order": "제공업체 순서",
   "Providers for the recommended model": "추천 모델의 제공업체",
   "Rename machine": "컴퓨터 이름 변경",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "{hostLabel}의 짧은 이름입니다. 스레드 행, 실행 위치, 다른 기기에 표시됩니다.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "실행 위치, 스레드 행, 사이드바, 다른 기기에 이 이름이 표시됩니다.",
+  "Machine name":
+    "컴퓨터 이름",
+  "Computer name: {hostLabel}, unchanged.":
+    "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
+  "Call it {name}":
+    "{name}(으)로 부르기",
+  "Computer name {hostLabel}":
+    "시스템 이름 {hostLabel}",
   "Use {defaultName}": "{defaultName} 사용",
   "Waiting for sample": "샘플 대기 중",
   "Updated {span}{value}": "업데이트 {span}{value}",

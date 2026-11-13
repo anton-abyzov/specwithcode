@@ -5,17 +5,49 @@ import * as Schema from "effect/Schema";
 
 import {
   assignMachineColors,
+  fitMachineNickname,
+  machineNicknameHolder,
   mergeMachineNicknames,
   newerMachineNickname,
   nextMachineNicknameStamp,
   normalizeMachineNickname,
   normalizeMachineShortName,
   sameMachineNicknames,
+  suggestMachineNickname,
 } from "./machineNicknames.ts";
 
 const at = (name: string, updatedAt: string) => ({ name, updatedAt });
 
 describe("machine nicknames", () => {
+  it("fits a long computer name into the name field at a word boundary", () => {
+    expect(fitMachineNickname("Anton M5MAX PROLED")).toBe("Anton M5MAX");
+    expect(fitMachineNickname("MacBook M4MAX")).toBe("MacBook M4MAX");
+    expect(fitMachineNickname("averyveryverylongsinglename")).toBe("averyveryverylon");
+    expect(fitMachineNickname("  Mac   mini  ")).toBe("Mac mini");
+  });
+
+  it("offers the chip in a computer name as its short name", () => {
+    expect(suggestMachineNickname("Anton M5MAX PROLED")).toBe("M5");
+    expect(suggestMachineNickname("Anton's MacBook M4MAX")).toBe("M4");
+    expect(suggestMachineNickname("mac-mini-m2-pro")).toBe("M2");
+    expect(suggestMachineNickname("m1")).toBe("M1");
+    expect(suggestMachineNickname("linux-mini")).toBeNull();
+    expect(suggestMachineNickname("sams-mbp.local")).toBeNull();
+    expect(suggestMachineNickname("Anna's Macbook Air")).toBeNull();
+    expect(suggestMachineNickname("DESKTOP-M3XQ7")).toBeNull();
+  });
+
+  it("finds another machine already shown under a name, ignoring case", () => {
+    const names = new Map([
+      ["stale", "m5"],
+      ["live", "Anton M5MAX PROLED"],
+    ]);
+    expect(machineNicknameHolder(names, "live", "M5")).toBe("stale");
+    expect(machineNicknameHolder(names, "stale", "m5")).toBeNull();
+    expect(machineNicknameHolder(names, "live", "M4")).toBeNull();
+    expect(machineNicknameHolder(names, "live", "  ")).toBeNull();
+  });
+
   it("normalizes a typed name to at most 16 characters", () => {
     expect(normalizeMachineNickname("  Mac   mini  ")).toBe("Mac mini");
     expect(normalizeMachineNickname("A very long machine name")).toBe("A very long mach");

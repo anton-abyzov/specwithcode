@@ -2318,8 +2318,16 @@ export const pt: PhraseCatalog = {
   "provider order": "ordem dos provedores",
   "Providers for the recommended model": "Provedores do modelo recomendado",
   "Rename machine": "Renomear máquina",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "Um nome curto para {hostLabel}. Linhas de threads, Executar em e seus outros aparelhos mostram esse nome.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "Executar em, as linhas de thread, a barra lateral e seus outros dispositivos mostram este nome.",
+  "Machine name":
+    "Nome da máquina",
+  "Computer name: {hostLabel}, unchanged.":
+    "Nome do computador: {hostLabel}, sem alteração.",
+  "Call it {name}":
+    "Chamar de {name}",
+  "Computer name {hostLabel}":
+    "Nome do computador {hostLabel}",
   "Use {defaultName}": "Usar {defaultName}",
   "Waiting for sample": "Aguardando amostra",
   "Updated {span}{value}": "Atualizado {span}{value}",

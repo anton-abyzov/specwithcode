@@ -16,7 +16,9 @@ import { useTx } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { suggestMachineNickname } from "@specweave-studio/shared/machineNicknames";
+import { useCustomMachineNickname, useMachineNickname } from "../../studio/machineNickname";
+import { useRenameMachine } from "../../studio/useRenameMachine";
 import { teamRulesReachLock, type TeamRulesLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
 import { resolveServerConfigVersionMismatch } from "../../versionSkew";
@@ -214,6 +216,12 @@ export function MachineSummary({
   const tx = useTx();
   const environment = useEnvironment(environmentId);
   const name = useMachineNickname(environmentId, environment?.label) || tx("This machine");
+  const custom = useCustomMachineNickname(environmentId);
+  const { lock: renameLock, rename } = useRenameMachine();
+  const hostLabel = environment?.label?.trim() ?? "";
+  // A machine still showing its computer name is offered the short one in it ("M5").
+  const suggested =
+    custom === null && renameLock === null ? suggestMachineNickname(hostLabel) : null;
   const chosen = useClientSettings((settings) => settings.onboardingMachineRole);
   const [renaming, setRenaming] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -234,6 +242,10 @@ export function MachineSummary({
   });
   const about = [
     tx(ENVIRONMENT_MACHINE_KIND_LABELS[kind]),
+    // Named here: the computer's own name stays in view, since it no longer heads the card.
+    custom !== null && hostLabel !== "" && hostLabel !== custom
+      ? tx("Computer name {hostLabel}", { hostLabel })
+      : null,
     tx(role.text, role.values),
     version ? tx(version.text, version.values) : null,
   ].filter((part): part is string => part !== null);
@@ -282,6 +294,18 @@ export function MachineSummary({
           <PlusIcon aria-hidden className="size-3.5" />
           {tx("Add a device or machine")}
         </Button>
+        {suggested !== null ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            data-machine-name-suggestion={suggested}
+            title={tx("Runs on, thread rows, the sidebar and your other devices show this name.")}
+            onClick={() => rename(environmentId, suggested)}
+          >
+            {tx("Call it {name}", { name: suggested })}
+          </Button>
+        ) : null}
         <Button type="button" variant="ghost" size="xs" onClick={() => setRenaming(true)}>
           {tx("Rename")}
         </Button>

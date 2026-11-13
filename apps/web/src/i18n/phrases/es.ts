@@ -2324,8 +2324,16 @@ export const es: PhraseCatalog = {
   "provider order": "orden de proveedores",
   "Providers for the recommended model": "Proveedores para el modelo recomendado",
   "Rename machine": "Cambiar nombre del equipo",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "Un nombre corto para {hostLabel}. Lo muestran las filas de hilos, Ejecutar en y tus otros dispositivos.",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "Ejecutar en, las filas de hilos, la barra lateral y tus otros dispositivos muestran este nombre.",
+  "Machine name":
+    "Nombre del equipo",
+  "Computer name: {hostLabel}, unchanged.":
+    "Nombre del ordenador: {hostLabel}, sin cambios.",
+  "Call it {name}":
+    "Llamarlo {name}",
+  "Computer name {hostLabel}":
+    "Nombre del ordenador {hostLabel}",
   "Use {defaultName}": "Usar {defaultName}",
   "Waiting for sample": "Esperando muestra",
   "Updated {span}{value}": "Actualizado {span}{value}",

@@ -2312,8 +2312,16 @@ export const ja: PhraseCatalog = {
   "provider order": "プロバイダーの順序",
   "Providers for the recommended model": "推奨モデルのプロバイダー",
   "Rename machine": "マシン名を変更",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "{hostLabel} の短い名前です。スレッドの行、「実行先」、他のデバイスに表示されます。",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "実行先、スレッドの行、サイドバー、ほかのデバイスにこの名前が表示されます。",
+  "Machine name":
+    "マシン名",
+  "Computer name: {hostLabel}, unchanged.":
+    "コンピュータ名: {hostLabel}（変更されません）",
+  "Call it {name}":
+    "{name} と呼ぶ",
+  "Computer name {hostLabel}":
+    "コンピュータ名 {hostLabel}",
   "Use {defaultName}": "{defaultName} を使う",
   "Waiting for sample": "サンプルを待っています",
   "Updated {span}{value}": "更新: {span}{value}",

@@ -2229,8 +2229,16 @@ export const zh: PhraseCatalog = {
   "provider order": "提供方顺序",
   "Providers for the recommended model": "推荐模型的提供方",
   "Rename machine": "重命名电脑",
-  "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.":
-    "{hostLabel} 的简短名称。会话行、“运行于”和你的其他设备会显示它。",
+  "Runs on, thread rows, the sidebar and your other devices show this name.":
+    "“运行于”、线程行、侧边栏和你的其他设备都会显示这个名称。",
+  "Machine name":
+    "机器名称",
+  "Computer name: {hostLabel}, unchanged.":
+    "电脑名称：{hostLabel}，保持不变。",
+  "Call it {name}":
+    "命名为 {name}",
+  "Computer name {hostLabel}":
+    "电脑名称 {hostLabel}",
   "Use {defaultName}": "使用 {defaultName}",
   "Waiting for sample": "等待样本",
   "Updated {span}{value}": "已更新 {span}{value}",

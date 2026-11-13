@@ -29,6 +29,51 @@ export function normalizeMachineShortName(short: string): string {
   return out;
 }
 
+/**
+ * A computer name cut to fit the 16-character name field at a word boundary
+ * ("Anton M5MAX PROLED" becomes "Anton M5MAX"), so the rename dialog never
+ * opens over its limit. A single long word is cut at 16.
+ */
+export function fitMachineNickname(name: string): string {
+  const clean = name.trim().replace(/\s+/g, " ");
+  if (clean.length <= MACHINE_NICKNAME_MAX_LENGTH) return clean;
+  const cut = clean.slice(0, MACHINE_NICKNAME_MAX_LENGTH + 1).lastIndexOf(" ");
+  return (cut > 0 ? clean.slice(0, cut) : clean.slice(0, MACHINE_NICKNAME_MAX_LENGTH)).trim();
+}
+
+/**
+ * A short name to offer for a machine that has none yet, read from its
+ * computer name: the Apple chip in it ("Anton M5MAX PROLED" and "Anton's
+ * MacBook M4MAX" offer "M5" and "M4"). Null when the name holds no chip, so
+ * nothing is offered that the person would have to undo.
+ */
+export function suggestMachineNickname(hostLabel: string): string | null {
+  for (const word of hostLabel.split(/[\s\-_.'’]+/u)) {
+    const chip = /^m(\d{1,2})(?:max|pro|ultra)?$/iu.exec(word);
+    if (chip) return `M${chip[1]}`;
+  }
+  return null;
+}
+
+/**
+ * The id of another machine already shown under this name, compared without
+ * case, or null. `names` maps each known machine id to the name it shows.
+ */
+export function machineNicknameHolder(
+  names: ReadonlyMap<string, string>,
+  environmentId: string,
+  name: string,
+): string | null {
+  const wanted = normalizeMachineNickname(name).toLocaleLowerCase();
+  if (wanted === "") return null;
+  for (const [id, shown] of names) {
+    if (id !== environmentId && normalizeMachineNickname(shown).toLocaleLowerCase() === wanted) {
+      return id;
+    }
+  }
+  return null;
+}
+
 const stamp = (entry: MachineNickname): number => {
   const parsed = Date.parse(entry.updatedAt);
   return Number.isFinite(parsed) ? parsed : 0;
