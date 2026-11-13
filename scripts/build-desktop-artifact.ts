@@ -2960,6 +2960,8 @@ export function resolveStableDmgAssetName(version: string, arch: string): string
     : undefined;
 }
 
+export const DESKTOP_COPYRIGHT = "Copyright (c) 2026 Anton Abyzov";
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2986,6 +2988,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
+    // The app's Info.plist and Windows file properties name the LICENSE holder;
+    // electron-builder would otherwise derive "Copyright © <year> Studio Tools".
+    copyright: DESKTOP_COPYRIGHT,
     artifactName: "SpecWithCode-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
@@ -4143,7 +4148,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     packageManager: rootPackageJson.packageManager,
     description:
       "SpecWithCode is a desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
-    license: "UNLICENSED",
+    license: "MIT",
     // Required by the .deb control file.
     homepage: "https://studio.invalid",
     author: "Studio Tools",

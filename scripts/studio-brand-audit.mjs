@@ -163,6 +163,19 @@ check("project terms remain separate from inherited notices", () => {
       assert.ok(existsSync(join(root, dirname(manifest), "LICENSE")), `${manifest}: own LICENSE`);
     }
   }
+  // Generated and native package metadata state the same MIT terms.
+  for (const [file, pattern] of [
+    ["apps/desktop/resources/linux/com.specweave.studio.metainfo.xml", /<project_license>MIT<\/project_license>/],
+    ["apps/mobile/modules/studio-review-diff/StudioReviewDiffNative.podspec", /s\.license = \{ :type => 'MIT' \}/],
+    ["apps/mobile/modules/studio-terminal/StudioTerminalNative.podspec", /s\.license = \{ :type => 'MIT' \}/],
+    ["scripts/build-desktop-artifact.ts", /license: "MIT",/],
+    ["scripts/build-desktop-artifact.ts", /DESKTOP_COPYRIGHT = "Copyright \(c\) \d{4} Anton Abyzov"/],
+    ["scripts/studio-fleet/npm-package.mjs", /license: "MIT",/],
+    ["scripts/studio-fleet/runtime-package.mjs", /license: "MIT",/],
+  ]) {
+    assert.match(read(file), pattern, file);
+    assert.doesNotMatch(read(file), /UNLICENSED|LicenseRef-proprietary/, file);
+  }
   // The product is presented on its own terms, not as a fork of upstream.
   assert.doesNotMatch(read("README.md"), /independent MIT fork|\bfork of\b/i);
   const notices = JSON.parse(read("third-party-licenses.config.json")).customNotices;

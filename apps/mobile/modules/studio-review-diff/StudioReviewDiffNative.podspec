@@ -8,7 +8,7 @@ Pod::Spec.new do |s|
   s.summary = 'Native review diff debug surface for SpecWithCode mobile.'
   s.description = 'Native iOS review diff renderer used to prototype fast mobile review scrolling.'
   s.homepage = 'https://studio.invalid'
-  s.license = { :type => 'UNLICENSED' }
+  s.license = { :type => 'MIT' }
   s.author = { 'Studio Tools' => 'hello@studio.invalid' }
   s.platforms = { :ios => '16.1' }
   s.source = { :path => '.' }

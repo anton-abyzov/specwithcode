@@ -153,7 +153,7 @@ export function build({ archive, sha256, outputDir }) {
     name: NPM_PACKAGE_NAME,
     version: release.version,
     description: "SpecWithCode server and CLI: spec-driven coding agents across your machines.",
-    license: "UNLICENSED",
+    license: "MIT",
     type: "module",
     homepage: "https://github.com/anton-abyzov/specwithcode",
     repository: { type: "git", url: "git+https://github.com/anton-abyzov/specwithcode.git" },

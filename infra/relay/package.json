@@ -1,6 +1,7 @@
 {
   "name": "studio-relay",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "deploy": "alchemy deploy",
