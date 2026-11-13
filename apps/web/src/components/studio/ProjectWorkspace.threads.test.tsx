@@ -221,9 +221,11 @@ describe("switching the coordinator machine", () => {
     const status = container.querySelector("[data-orchestrator-status]")?.textContent ?? "";
     expect(status).toContain("laptop unreachable");
     expect(status).toContain("read-only");
-    expect(container.textContent).toContain(
-      "laptop is unreachable, so its coordinator cannot take messages.",
-    );
+    // One status line says it, once; the long sentence is gone from the page.
+    const line = container.querySelectorAll("[data-host-status]");
+    expect(line).toHaveLength(1);
+    expect(line[0]?.textContent).toContain("laptop is offline");
+    expect(container.textContent).not.toContain("cannot take messages");
     expect(state.send).not.toHaveBeenCalled();
     expect(state.savedMachines).toEqual({ atlas: "laptop:remote-project" });
   });

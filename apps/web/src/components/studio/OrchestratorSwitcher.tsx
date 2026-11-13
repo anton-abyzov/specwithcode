@@ -43,7 +43,6 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
   coordinator: "",
@@ -122,18 +121,24 @@ export function OrchestratorSwitcher({
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
   const tx = useTx();
+  const runsOn = tx("Runs on {machine}", { machine: label });
+  // The chip names the machine and shows its state by the dot alone: while it is not
+  // connected, the line above the message box says so once, with what happens next.
   const status = (
     <>
       <span className="sws-dot" data-tone={connected ? "resolved" : "failed"} aria-hidden />
-      <span className="sws-host-name">Runs on {label}</span>
-      <span className="sr-only">{connected ? ", connected" : `, ${statusDetail}`}</span>
-      {connected ? null : (
-        <span aria-hidden data-orchestrator-status="">
-          {" "}
-          · {statusDetail}
-        </span>
-      )}
-      {savedMachineMissing ? <span aria-hidden> · Last viewed machine not listed</span> : null}
+      <span
+        className="sws-host-name"
+        title={hostLabel && hostLabel !== label ? `${runsOn} (${hostLabel})` : runsOn}
+      >
+        {runsOn}
+      </span>
+      <span className="sr-only" data-orchestrator-status="">
+        {connected ? `, ${tx("connected")}` : `, ${statusDetail}`}
+      </span>
+      {savedMachineMissing ? (
+        <span aria-hidden> · {tx("Last viewed machine not listed")}</span>
+      ) : null}
     </>
   );
   const listed = copies.filter((copy) => isProjectFolder(copy.folder));
@@ -141,19 +146,12 @@ export function OrchestratorSwitcher({
   const machineActions = onAdd !== null || onMoveElsewhere !== null || onLeave !== null;
   if (!viewable && !machineActions)
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              className="project-muted sws-host sws-execution-control machine-chip"
-              {...machineColorProps(identity)}
-            />
-          }
-        >
-          {status}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{hostLabel ?? label}</TooltipPopup>
-      </Tooltip>
+      <span
+        className="project-muted sws-host sws-execution-control machine-chip"
+        {...machineColorProps(identity)}
+      >
+        {status}
+      </span>
     );
   // Two checkouts on one machine need their folders to tell them apart.
   const machines = listed.map((copy) => copy.machine);
@@ -170,42 +168,38 @@ export function OrchestratorSwitcher({
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                render={
-                  <Button
-                    variant="ghost-muted"
-                    size="xs"
-                    className="min-w-0 max-w-full machine-chip"
-                    {...machineColorProps(identity)}
-                    data-coordinator-machine=""
-                    aria-label={
-                      viewable
-                        ? `Viewing ${label}. Choose a machine to view`
-                        : `${label}: this project's machines`
-                    }
-                  />
-                }
-              />
-            }
-          >
-            {status}
-            <ChevronDownIcon aria-hidden />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {viewable
-              ? `Viewing ${label}. Work stays on ${label}. Adding or moving the project asks first.`
-              : `Runs on ${label}. Add it to another machine, or move it there.`}
-          </TooltipPopup>
-        </Tooltip>
+        {/* No tooltip: one opened from this chip covered the message box. What viewing
+            means is said inside the menu, which opens only when asked. */}
+        <MenuTrigger
+          render={
+            <Button
+              variant="ghost-muted"
+              size="xs"
+              className="min-w-0 max-w-full machine-chip"
+              {...machineColorProps(identity)}
+              data-coordinator-machine=""
+              aria-label={
+                viewable
+                  ? tx("Viewing {machine}. Choose a machine to view", { machine: label })
+                  : tx("{machine}: this project's machines", { machine: label })
+              }
+            />
+          }
+        >
+          {status}
+          <ChevronDownIcon aria-hidden />
+        </MenuTrigger>
       </span>
       <MenuPopup align="start" side="top" className="min-w-64">
         <AfterUnmount pending={pendingView} />
         {viewable && onView ? (
           <MenuGroup>
             <MenuGroupLabel>{tx("View this project on")}</MenuGroupLabel>
+            <p className="px-2 pb-1 text-muted-foreground text-xs" data-orchestrator-note="">
+              {tx(
+                "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
+              )}
+            </p>
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {

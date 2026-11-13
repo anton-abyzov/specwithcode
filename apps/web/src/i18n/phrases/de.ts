@@ -4837,4 +4837,44 @@ export const de: PhraseCatalog = {
   "{title} (automated)": "{title} (automatisiert)",
   "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
     "Diese App ist nicht mit {machine} verbunden und kann dessen Kopie nicht zeigen. Verbinde ihn unter Einstellungen > Rechner.",
+  "This window is signed out": "Dieses Fenster ist abgemeldet",
+  "Quit and reopen the app to sign in again.":
+    "Beende die App und öffne sie erneut, um dich wieder anzumelden.",
+  "SpecWithCode on this machine stopped answering":
+    "SpecWithCode auf diesem Rechner antwortet nicht mehr",
+  "Quit and reopen the app to continue.": "Beende die App und öffne sie erneut, um weiterzumachen.",
+  "SpecWithCode on this machine is busy": "SpecWithCode auf diesem Rechner ist ausgelastet",
+  "You can send once it catches up. Your draft stays here.":
+    "Du kannst senden, sobald es aufgeholt hat. Dein Entwurf bleibt hier.",
+  "Catching up…": "Holt auf…",
+  "Signed out of {machine}": "Von {machine} abgemeldet",
+  "Signed out of this host": "Von diesem Host abgemeldet",
+  "Reload the page to sign in again.": "Lade die Seite neu, um dich wieder anzumelden.",
+  "Connecting to {machine}…": "Verbinde mit {machine}…",
+  "Connecting to this host…": "Verbinde mit diesem Host…",
+  "This device is offline": "Dieses Gerät ist offline",
+  "Nothing is sent until it is back online. Your draft stays here.":
+    "Nichts wird gesendet, bis es wieder online ist. Dein Entwurf bleibt hier.",
+  "{machine} is offline": "{machine} ist offline",
+  "This host is offline": "Dieser Host ist offline",
+  "Reconnecting…": "Verbinde neu…",
+  "This page shows the copy synced here, read-only.":
+    "Diese Seite zeigt die hier synchronisierte Kopie, schreibgeschützt.",
+  "Never synced on this device.": "Auf diesem Gerät nie synchronisiert.",
+  "Last synced {age}.": "Zuletzt synchronisiert {age}.",
+  "Synced just now.": "Gerade eben synchronisiert.",
+  "Hide details": "Details ausblenden",
+  "Runs on {machine}": "Läuft auf {machine}",
+  connected: "verbunden",
+  "Last viewed machine not listed": "Zuletzt angesehener Rechner nicht aufgeführt",
+  "Viewing {machine}. Choose a machine to view":
+    "Ansicht von {machine}. Wähle einen Rechner zum Ansehen",
+  "{machine}: this project's machines": "{machine}: die Rechner dieses Projekts",
+  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
+    "Ansehen verschiebt nichts: Die Arbeit bleibt auf jedem Rechner. Hinzufügen oder Verschieben des Projekts fragt vorher.",
+  "Nothing is sent to another machine.": "Nichts wird an einen anderen Rechner gesendet.",
+  "Your draft stays here until it reconnects.":
+    "Dein Entwurf bleibt hier, bis die Verbindung wieder steht.",
+  "You can start these once it reconnects.":
+    "Du kannst sie starten, sobald die Verbindung wieder steht.",
 };

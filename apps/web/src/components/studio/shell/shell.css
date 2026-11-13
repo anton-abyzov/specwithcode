@@ -2276,6 +2276,107 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The one line above the message box while its machine is not connected: dot, name
+   and state, what happens next, Details. Only the machine's name ever ellipsizes;
+   the rest wraps, and Details opens in place under it, never over the message box. */
+.sws-composer > .sws-host-status-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding-inline: 4px;
+  min-width: 0;
+}
+.sws-host-status {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+.sws-host-status-live {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+}
+.sws-host-status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  color: var(--foreground);
+  font-weight: 500;
+}
+.sws-host-status[data-host-status="connecting"] .sws-dot,
+.sws-host-status[data-host-status="busy"] .sws-dot {
+  animation: sws-host-status-pulse 1.4s ease-in-out infinite;
+}
+@keyframes sws-host-status-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-host-status .sws-dot {
+    animation: none;
+  }
+}
+.sws-host-status-text {
+  display: inline-flex;
+  min-width: 0;
+  white-space: pre;
+}
+.sws-host-status-words {
+  flex: none;
+}
+.sws-host-status-machine {
+  flex: 0 1 auto;
+  min-width: 2ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sws-host-status-next {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sws-host-status-next::before {
+  content: "\00b7";
+  margin-inline-end: 6px;
+}
+.sws-host-status-toggle {
+  flex: none;
+  margin-inline-start: auto;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.sws-host-status-toggle:hover {
+  color: var(--foreground);
+}
+.sws-host-status-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sws-host-status-detail {
+  margin: 0;
+  padding-inline-start: 13px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
 .sws-state {
   flex: none;
   height: 24px;

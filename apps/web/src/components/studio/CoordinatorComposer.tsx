@@ -144,6 +144,8 @@ function CoordinatorComposerForm(props: {
   readonly meta: ReactNode;
   readonly controls: ReactNode;
   readonly modelFallback: boolean;
+  /** False while the coordinator's machine is not connected: Send then names no machine. */
+  readonly hostReachable?: boolean;
 }) {
   const {
     composer,
@@ -186,8 +188,12 @@ function CoordinatorComposerForm(props: {
   const hostEnvironment = useEnvironment(environmentId);
   const machine = useMachineIdentity(environmentId, hostEnvironment?.label);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // An unreachable machine takes nothing, so Send never names it; the status line says why.
   const sendsElsewhere =
-    machine !== null && primaryEnvironmentId !== null && environmentId !== primaryEnvironmentId;
+    props.hostReachable !== false &&
+    machine !== null &&
+    primaryEnvironmentId !== null &&
+    environmentId !== primaryEnvironmentId;
   const sendLabel = composerSendButtonLabel({ isPhoneKeyboard, sendShortcut, prompt });
   // One rule for the Send button and the Enter key.
   const sendDisabled =

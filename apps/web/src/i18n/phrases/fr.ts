@@ -4849,4 +4849,40 @@ export const fr: PhraseCatalog = {
   "{title} (automated)": "{title} (automatisé)",
   "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
     "Cette app n’est pas connectée à {machine} et ne peut donc pas afficher sa copie. Connectez-la dans Réglages > Machines.",
+  "This window is signed out": "Cette fenêtre est déconnectée",
+  "Quit and reopen the app to sign in again.": "Quittez puis rouvrez l’app pour vous reconnecter.",
+  "SpecWithCode on this machine stopped answering": "SpecWithCode sur cette machine ne répond plus",
+  "Quit and reopen the app to continue.": "Quittez puis rouvrez l’app pour continuer.",
+  "SpecWithCode on this machine is busy": "SpecWithCode sur cette machine est occupé",
+  "You can send once it catches up. Your draft stays here.":
+    "Vous pourrez envoyer une fois le retard rattrapé. Votre brouillon reste ici.",
+  "Catching up…": "Rattrapage en cours…",
+  "Signed out of {machine}": "Déconnecté de {machine}",
+  "Signed out of this host": "Déconnecté de cet hôte",
+  "Reload the page to sign in again.": "Rechargez la page pour vous reconnecter.",
+  "Connecting to {machine}…": "Connexion à {machine}…",
+  "Connecting to this host…": "Connexion à cet hôte…",
+  "This device is offline": "Cet appareil est hors ligne",
+  "Nothing is sent until it is back online. Your draft stays here.":
+    "Rien n’est envoyé avant le retour en ligne. Votre brouillon reste ici.",
+  "{machine} is offline": "{machine} est hors ligne",
+  "This host is offline": "Cet hôte est hors ligne",
+  "Reconnecting…": "Reconnexion…",
+  "This page shows the copy synced here, read-only.":
+    "Cette page affiche la copie synchronisée ici, en lecture seule.",
+  "Never synced on this device.": "Jamais synchronisé sur cet appareil.",
+  "Last synced {age}.": "Dernière synchronisation {age}.",
+  "Synced just now.": "Synchronisé à l’instant.",
+  "Hide details": "Masquer les détails",
+  "Runs on {machine}": "S’exécute sur {machine}",
+  connected: "connecté",
+  "Last viewed machine not listed": "Dernière machine consultée absente de la liste",
+  "Viewing {machine}. Choose a machine to view":
+    "Affichage de {machine}. Choisissez une machine à afficher",
+  "{machine}: this project's machines": "{machine} : les machines de ce projet",
+  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
+    "Afficher ne déplace rien : le travail reste sur chaque machine. Ajouter ou déplacer le projet demande d’abord.",
+  "Nothing is sent to another machine.": "Rien n’est envoyé à une autre machine.",
+  "Your draft stays here until it reconnects.": "Votre brouillon reste ici jusqu’à la reconnexion.",
+  "You can start these once it reconnects.": "Vous pourrez les lancer après la reconnexion.",
 };

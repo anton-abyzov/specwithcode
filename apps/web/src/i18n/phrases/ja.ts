@@ -4809,4 +4809,41 @@ export const ja: PhraseCatalog = {
   "{title} (automated)": "{title}（自動化）",
   "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
     "このアプリは {machine} に接続されていないため、そのコピーを表示できません。「設定 > マシン」で接続してください。",
+  "This window is signed out": "このウィンドウはサインアウトしています",
+  "Quit and reopen the app to sign in again.":
+    "アプリを終了して開き直し、もう一度サインインしてください。",
+  "SpecWithCode on this machine stopped answering":
+    "このマシンの SpecWithCode が応答しなくなりました",
+  "Quit and reopen the app to continue.": "続けるにはアプリを終了して開き直してください。",
+  "SpecWithCode on this machine is busy": "このマシンの SpecWithCode は処理中です",
+  "You can send once it catches up. Your draft stays here.":
+    "追いつけば送信できます。下書きはここに残ります。",
+  "Catching up…": "追いついています…",
+  "Signed out of {machine}": "{machine} からサインアウトしました",
+  "Signed out of this host": "このホストからサインアウトしました",
+  "Reload the page to sign in again.": "ページを再読み込みして、もう一度サインインしてください。",
+  "Connecting to {machine}…": "{machine} に接続しています…",
+  "Connecting to this host…": "このホストに接続しています…",
+  "This device is offline": "このデバイスはオフラインです",
+  "Nothing is sent until it is back online. Your draft stays here.":
+    "オンラインに戻るまで何も送信されません。下書きはここに残ります。",
+  "{machine} is offline": "{machine} はオフラインです",
+  "This host is offline": "このホストはオフラインです",
+  "Reconnecting…": "再接続しています…",
+  "This page shows the copy synced here, read-only.":
+    "このページにはここで同期したコピーが読み取り専用で表示されます。",
+  "Never synced on this device.": "このデバイスでは一度も同期していません。",
+  "Last synced {age}.": "最終同期: {age}。",
+  "Synced just now.": "たった今同期しました。",
+  "Hide details": "詳細を隠す",
+  "Runs on {machine}": "{machine} で実行",
+  connected: "接続済み",
+  "Last viewed machine not listed": "最後に表示したマシンが一覧にありません",
+  "Viewing {machine}. Choose a machine to view": "{machine} を表示中。表示するマシンを選択",
+  "{machine}: this project's machines": "{machine}: このプロジェクトのマシン",
+  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
+    "表示しても何も移動しません。作業は各マシンに残ります。プロジェクトの追加や移動は先に確認します。",
+  "Nothing is sent to another machine.": "他のマシンには何も送信されません。",
+  "Your draft stays here until it reconnects.": "再接続するまで下書きはここに残ります。",
+  "You can start these once it reconnects.": "再接続したら開始できます。",
 };
