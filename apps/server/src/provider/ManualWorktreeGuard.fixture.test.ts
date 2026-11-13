@@ -22,6 +22,10 @@ fixtureTest('permits disposable worktrees and refuses sandbox escapes', () => {
     const allowed = run(['-C', repo, 'worktree', 'add', '-b', 'allowed', join(base, 'allowed')]);
     assert.equal(allowed.status, 0, allowed.stderr);
     assert.equal(run(['worktree', 'add', '-qb', 'nested', join(base, 'new-parent', 'nested')]).status, 0);
+    // Server Git helpers and fixtures put config and lock options first.
+    const configured = run(['--no-optional-locks', '-c', 'core.hooksPath=/dev/null', '-c', 'user.name=t', '-C', repo, 'worktree', 'add', '--quiet', '-b', 'configured', join(base, 'configured')]);
+    assert.equal(configured.status, 0, configured.stderr);
+    assert.equal(run(['--no-optional-locks', '-c', 'user.name=t', 'worktree', 'add', '-b', 'configured-escape', join(other, 'escape')]).status, 128);
     assert.equal(run(['worktree', 'add', '-b', 'escape', join(other, 'escape')]).status, 128);
     symlinkSync(other, join(base, 'link'));
     assert.equal(run(['worktree', 'add', '-b', 'link', join(base, 'link', 'escape')]).status, 128);
@@ -34,6 +38,8 @@ fixtureTest('permits disposable worktrees and refuses sandbox escapes', () => {
       cwd: other, env: { ...process.env, CDPATH: base }, encoding: 'utf8',
     });
     assert.equal(redirected.status, 128, redirected.stderr);
+    // Config options do not let another sandbox's repository in.
+    assert.equal(run(['-c', 'user.name=t', '-C', otherRepo, 'worktree', 'add', '-b', 'configured-other', join(base, 'configured-other')]).status, 128);
     // Shell cd '-' means OLDPWD, but Git -C '-' names a literal directory.
     const dashRepo = join(other, '-'); mkdirSync(dashRepo);
     assert.equal(run(['init'], dashRepo).status, 0);
