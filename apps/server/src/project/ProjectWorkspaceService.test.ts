@@ -11,6 +11,9 @@ import {
   PROJECT_MEMORY_TOTAL_BYTES,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
+import { currentTimeLine } from "./currentTimeLine.ts";
+import { projectContextDelta } from "./ProjectContextSnapshot.ts";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -70,6 +73,30 @@ it.layer(layer)("ProjectWorkspaceService", (it) => {
         assert.include(context, "check the run before saying whether Google was reached");
         assert.isAtMost(context.length, PROJECT_CONTEXT_CHARACTER_LIMIT);
       }),
+  );
+  it.effect("gives only the coordinator a clock section that moves with every turn", () =>
+    Effect.gen(function* () {
+      const id = ProjectId.make("clock-project");
+      const coordinator = ThreadId.make("clock-coordinator");
+      yield* seed(id);
+      const sql = yield* SqlClient.SqlClient;
+      const settings = { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, coordinatorThreadId: coordinator };
+      yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify(settings)} WHERE project_id=${id}`;
+      const service = yield* Workspace.ProjectWorkspaceService;
+      yield* TestClock.setTime(Date.UTC(2026, 10, 13, 17, 41));
+      const first = yield* service.contextSnapshot(id, coordinator);
+      assert.equal(first[0]?.name, "clock");
+      assert.equal(first[0]?.value, currentTimeLine(Date.UTC(2026, 10, 13, 17, 41)));
+      yield* TestClock.adjust("1 minute");
+      const second = yield* service.contextSnapshot(id, coordinator);
+      assert.notEqual(second[0]?.revision, first[0]?.revision);
+      // Only the clock changed, so only it is delivered again.
+      const delta = projectContextDelta(id, second, first);
+      assert.include(delta, "[clock]");
+      assert.notInclude(delta, "[role]");
+      const worker = yield* service.contextSnapshot(id, ThreadId.make("clock-worker"));
+      assert.isFalse(worker.some((section) => section.name === "clock"));
+    }),
   );
   it.effect(
     "lists only sorted memory metadata and keeps UTF-8 totals current and project-scoped",
@@ -516,7 +543,8 @@ it("asks workers for short reports and the coordinator to relay only their outco
   assert.notInclude(coordinator, 'never "Studio"');
   assert.include(coordinator, "You coordinate this project's work and do none of it yourself");
   // Trivial questions stay with the coordinator; work still goes to workers.
-  assert.include(coordinator, "the local time each message opens with; no worker for that");
+  assert.include(coordinator, "the clock section or settled facts with no worker");
+  assert.include(coordinator, "current facts (versions, prices) need a web lookup");
   assert.include(coordinator, "running commands, web lookups");
   assert.include(coordinator, "starts the worker with delegate_task in mode async");
   assert.include(coordinator, "do not relay, summarize or repeat it here");

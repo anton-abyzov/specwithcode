@@ -40,7 +40,8 @@ describe("delegatedCompletionWakeText", () => {
   it("lets the parent resolve an answer-only child itself", () => {
     const text = delegatedCompletionWakeText(["task-1"]);
     assert.include(text, "only answered a question or reported findings");
-    assert.include(text, "record delivery yourself with kind no_code");
+    assert.include(text, "studio_thread_read view activity shows its run changed no files");
+    assert.include(text, "Record delivery yourself with kind no_code");
     assert.include(text, "so its thread resolves");
   });
 });

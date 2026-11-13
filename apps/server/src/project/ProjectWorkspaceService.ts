@@ -17,6 +17,7 @@ import {
   projectContextSnapshot,
   type ProjectContextSnapshot,
 } from "./ProjectContextSnapshot.ts";
+import { currentTimeLine } from "./currentTimeLine.ts";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   PROJECT_CONTEXT_CHARACTER_LIMIT,
@@ -46,6 +47,7 @@ import {
   type ProjectWorkspaceReadResult,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -185,7 +187,7 @@ export function projectContextText(input: {
   const coordinator = settings.coordinatorThreadId === input.threadId;
   const role = coordinator
     ? [
-        "You coordinate this project's work and do none of it yourself: you start, brief and route work to worker threads and track it. Workers do everything else, including research, reading files, settings or logs, running commands, web lookups and Gmail, Calendar or Drive reads, however small. Answer directly from this conversation, memory, the thread list, general knowledge and the local time each message opens with; no worker for that.",
+        "You coordinate this project's work and do none of it yourself: you start, brief and route work to worker threads and track it. Workers do everything else, including research, reading files, settings or logs, running commands, web lookups and Gmail, Calendar or Drive reads, however small. Answer from this chat, memory, the thread list, the clock section or settled facts with no worker; current facts (versions, prices) need a web lookup.",
         "Before starting work, call studio_thread_list and send a follow-up with studio_thread_send to the worker already owning that area; never duplicate an active assignment. Revive an idle worker only while its context is recent; otherwise start a fresh one.",
         "Route at once: after that check, your next call starts the worker with delegate_task in mode async and a title of a few words. The brief is the user's own words plus only what the worker cannot find itself: relevant memory, decisions made, and the default you chose where the request was ambiguous. Never add deliverables the user did not ask for. Pass a provider, model or effort the user names; otherwise leave them out and the app uses the project's worker model.",
         "Delegated workers share this checkout: give parallel workers separate files and have them leave branches and commits alone unless the user asked for them. Use studio_thread_launch with a worktree only when the user asks for separate branches or worktrees.",
@@ -507,6 +509,7 @@ const make = Effect.gen(function* () {
       if (settings.archived && !restoring) return yield* fail(projectId, "archived");
       if (!restoring && settings.paused && settings.coordinatorThreadId === threadId)
         return yield* fail(projectId, "paused");
+      const now = yield* Clock.currentTimeMillis;
       const files = yield* summaries(projectId);
       const view = yield* knowledgeView(projectId);
       if (
@@ -573,10 +576,20 @@ const make = Effect.gen(function* () {
         ],
         ["memory_index", memoryIndexSection((yield* file(projectId, "MEMORY.md"))?.content)],
       ]);
+      // The coordinator's clock: a fresh minute is a changed section, so it is
+      // delivered with every message and wake; workers read the time themselves.
+      const clock: ProjectContextSnapshot =
+        settings.coordinatorThreadId === threadId
+          ? (() => {
+              const value = currentTimeLine(now);
+              return [{ name: "clock", value, revision: contextDigest(value) }];
+            })()
+          : [];
       // Knowledge has its own allowance and comes last, after the sections every turn needs.
       return view === null
-        ? shared
+        ? [...clock, ...shared]
         : [
+            ...clock,
             ...shared,
             ...knowledgeSections(view, {
               coordinator: settings.coordinatorThreadId === threadId,

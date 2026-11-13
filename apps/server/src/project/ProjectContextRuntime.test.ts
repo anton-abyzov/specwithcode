@@ -8,14 +8,12 @@ import {
   ProviderDriverKind,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
-import * as TestClock from "effect/testing/TestClock";
 import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
 import { withProjectContext } from "./ProjectContextRuntime.ts";
-import { CURRENT_TIME_PREFIX, currentTimeLine } from "./currentTimeLine.ts";
 import { makeProjectContextHooks } from "./ProjectContextHooks.ts";
 
 const turn = (text = "Please implement the change."): ProviderAdapterV2TurnInput =>
@@ -54,11 +52,10 @@ it.effect(
           }),
         restore: () => Effect.succeed("restored"),
       });
-      yield* TestClock.setTime(Date.UTC(2026, 10, 13, 17, 41));
       yield* runtime.startTurn(turn());
       assert.equal(
         received[0]?.message.text,
-        `${currentTimeLine(Date.UTC(2026, 10, 13, 17, 41))}\n\nCURRENT SNAPSHOT\n\nCurrent user message:\nPlease implement the change.`,
+        "CURRENT SNAPSHOT\n\nCurrent user message:\nPlease implement the change.",
       );
       assert.equal(accepted, 0);
       yield* received[0]!.projectContext!.accepted;
@@ -285,50 +282,3 @@ it("Claude first goal gets context before native work, while cached-query goals 
   );
   assert.isTrue(hooks.canAcknowledge(next));
 });
-
-it.effect(
-  "starts every project turn with the current local time, also when no context changed",
-  () =>
-    Effect.gen(function* () {
-      const received: string[] = [];
-      const native = {
-        driver: ProviderDriverKind.make("claude"),
-        startTurn: (input: ProviderAdapterV2TurnInput) =>
-          Effect.sync(() => {
-            received.push(input.message.text);
-          }),
-      } as unknown as ProviderAdapterV2SessionRuntime;
-      const runtime = withProjectContext(native, {
-        prepare: () => Effect.succeed({ text: "", accepted: Effect.void }),
-        restore: () => Effect.succeed(""),
-      });
-      yield* TestClock.setTime(Date.UTC(2026, 10, 13, 17, 41));
-      yield* runtime.startTurn(turn("what time is it now?"));
-      yield* TestClock.adjust("2 hours");
-      yield* runtime.startTurn({ ...turn("and now?"), runId: RunId.make("second") });
-      assert.deepEqual(received, [
-        `${currentTimeLine(Date.UTC(2026, 10, 13, 17, 41))}\n\nCurrent user message:\nwhat time is it now?`,
-        `${currentTimeLine(Date.UTC(2026, 10, 13, 19, 41))}\n\nCurrent user message:\nand now?`,
-      ]);
-    }),
-);
-
-it.effect("keeps a native slash command first, with no clock line", () =>
-  Effect.gen(function* () {
-    let received = "";
-    const native = {
-      driver: ProviderDriverKind.make("claude"),
-      startTurn: (input: ProviderAdapterV2TurnInput) =>
-        Effect.sync(() => {
-          received = input.message.text;
-        }),
-    } as unknown as ProviderAdapterV2SessionRuntime;
-    const runtime = withProjectContext(native, {
-      prepare: () => Effect.succeed({ text: "", accepted: Effect.void }),
-      restore: () => Effect.succeed(""),
-    });
-    yield* runtime.startTurn(turn("/review"));
-    assert.equal(received, "/review");
-    assert.notInclude(received, CURRENT_TIME_PREFIX);
-  }),
-);

@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { CURRENT_TIME_PREFIX, currentTimeLine, machineTimeZone } from "./currentTimeLine.ts";
+import { CURRENT_TIME_PREFIX, currentTimeLine } from "./currentTimeLine.ts";
 
 const instant = Date.UTC(2026, 10, 13, 17, 41);
 
@@ -20,8 +20,4 @@ it("follows daylight saving and half-hour zones", () => {
 it("writes UTC as +00:00 and falls back to UTC for an unknown zone", () => {
   assert.include(currentTimeLine(instant, "UTC"), "5:41 PM UTC (UTC, UTC+00:00)");
   assert.include(currentTimeLine(instant, "Not/AZone"), "(UTC, UTC+00:00)");
-});
-
-it("reads the machine zone", () => {
-  assert.isAbove(machineTimeZone().length, 0);
 });

@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import {
   ProviderAdapterTurnStartError,
@@ -7,7 +6,6 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
 import type { ProjectContextDelivery } from "./ProjectContextDelivery.ts";
-import { currentTimeLine } from "./currentTimeLine.ts";
 
 /**
  * Drivers that confirm each delivered prompt, so the next turn sends only
@@ -46,15 +44,6 @@ export function withProjectContext(
             nativeThreadId: input.providerThread.nativeThreadRef?.nativeId ?? null,
             inlineKnowledge: RECEIPT_DRIVERS.has(session.driver) && !nativeCommand,
           });
-      // Native slash commands must stay at the start of the prompt, so only
-      // a turn that carries the user's words gets the clock line.
-      const clock =
-        nativeOnly || nativeCommand || input.message.text.trimStart().startsWith("/")
-          ? null
-          : currentTimeLine(yield* Clock.currentTimeMillis);
-      const context = [clock, prepared?.text && !nativeCommand ? prepared.text : null]
-        .filter((part): part is string => part !== null && part !== "")
-        .join("\n\n");
       const contextInput: ProviderAdapterV2TurnInput = {
         ...input,
         projectContext: {
@@ -71,10 +60,10 @@ export function withProjectContext(
             ) ?? Effect.void,
         },
         message:
-          context !== ""
+          prepared?.text && !nativeCommand
             ? {
                 ...input.message,
-                text: `${context}\n\nCurrent user message:\n${input.message.text}`,
+                text: `${prepared.text}\n\nCurrent user message:\n${input.message.text}`,
               }
             : input.message,
       };

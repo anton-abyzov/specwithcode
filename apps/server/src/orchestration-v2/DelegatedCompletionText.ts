@@ -13,7 +13,8 @@ export const DELEGATED_RESULT_VERIFY_SENTENCE =
   "After a follow-up, confirm the current completed run with studio_thread_read. Record only a current successful result with no newer work pending. Skip already settled threads. " +
   "A project coordinator routes verification to a worker. Reuse the existing independent verifier or include the receipt in work that already needs verification. " +
   "Do not start another worker just to verify a verifier's receipt. " +
-  "A child that only answered a question or reported findings and changed no files, commits, branch or pull request needs no verifier: once you have read its reply, record delivery yourself with kind no_code, push, merge and deployment not_applicable and no obligations, so its thread resolves.";
+  "A child that only answered a question or reported findings needs no verifier when studio_thread_read view activity shows its run changed no files and opened no pull request: its reply is the deliverable. " +
+  "Record delivery yourself with kind no_code, the reply as deliverable evidence, that activity check as verification, push, merge and deployment not_applicable (answer only) and no obligations, so its thread resolves.";
 
 export function delegatedCompletionWakeText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
