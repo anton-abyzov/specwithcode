@@ -62,4 +62,5 @@ export const useRenameMachine = () => ({
   saveIdentity: () => true,
 });
 export const useCustomMachineNickname = () => null;
+export const useMachineNameSources = () => ({ nicknames: {}, labels: new Map() });
 export const renameMachineLockText = () => null;

@@ -244,8 +244,9 @@ export function machineColorProps(identity: Pick<MachineIdentity, "color"> | nul
 
 /**
  * The patch that saves a machine's name, color and icon in one entry. An empty
- * name restores the default name. The color and icon are always written out,
- * so choosing the default again is a choice a later merge keeps.
+ * name restores the default name. The color is always written out, so choosing
+ * the default again is a choice a later merge keeps. The icon is written when
+ * given; without one the stored icon stays, or none, so the detected kind decides.
  */
 export function machineIdentityPatch(
   nicknames: MachineNicknames,
@@ -253,12 +254,14 @@ export function machineIdentityPatch(
   identity: {
     readonly name: string;
     readonly color: MachineColorId;
-    readonly icon: EnvironmentMachineKind;
+    /** Absent keeps the stored one, or none, so a detected kind still decides. */
+    readonly icon?: EnvironmentMachineKind | undefined;
     /** Absent keeps the stored one; empty goes back to the derived label. */
     readonly short?: string | undefined;
   },
   now?: number,
 ): { readonly machineNicknames: Record<string, MachineNickname> } {
+  const icon = identity.icon ?? nicknames[environmentId]?.icon;
   const short =
     identity.short === undefined
       ? nicknames[environmentId]?.short
@@ -269,7 +272,7 @@ export function machineIdentityPatch(
         name: normalizeMachineNickname(identity.name),
         updatedAt: nextMachineNicknameStamp(nicknames[environmentId], now ?? Date.now()),
         color: identity.color,
-        icon: identity.icon,
+        ...(icon === undefined ? {} : { icon }),
         ...(short === undefined ? {} : { short }),
       },
     },

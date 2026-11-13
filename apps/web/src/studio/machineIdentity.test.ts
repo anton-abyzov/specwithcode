@@ -151,6 +151,18 @@ describe("machineIdentityPatch", () => {
   });
 });
 
+describe("machineIdentityPatch without an icon", () => {
+  it("keeps the stored icon, or writes none so the detected kind still decides", () => {
+    const stored = {
+      "env-m1": { name: "M1", updatedAt: "2026-11-10T21:00:00.000Z", icon: "desktop" },
+    } as const;
+    const kept = machineIdentityPatch(stored, "env-m1", { name: "M1", color: "rose" }, NOW);
+    expect(kept.machineNicknames["env-m1"]).toMatchObject({ color: "rose", icon: "desktop" });
+    const none = machineIdentityPatch({}, "env-m4", { name: "", color: "amber" }, NOW);
+    expect(none.machineNicknames["env-m4"]).not.toHaveProperty("icon");
+  });
+});
+
 describe("machineColorProps", () => {
   it("names the palette id, never a hex", () => {
     expect(machineColorProps({ color: "teal" })).toEqual({ "data-machine-color": "teal" });

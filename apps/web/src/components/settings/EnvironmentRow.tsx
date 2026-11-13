@@ -99,7 +99,11 @@ export function EnvironmentRow({
       )}
     >
       {environmentId ? (
-        <MachineColorButton environmentId={environmentId} fallbackLabel={hostLabel ?? label} />
+        <MachineColorButton
+          environmentId={environmentId}
+          fallbackLabel={hostLabel ?? label}
+          kind={kind}
+        />
       ) : (
         <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
       )}

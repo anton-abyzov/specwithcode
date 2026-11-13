@@ -1,5 +1,9 @@
-import type { EnvironmentId, MachineColorId } from "@specweave-studio/contracts";
-import { useState } from "react";
+import type {
+  EnvironmentId,
+  EnvironmentMachineKind,
+  MachineColorId,
+} from "@specweave-studio/contracts";
+import { type KeyboardEvent, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { cn } from "~/lib/utils";
@@ -10,7 +14,11 @@ import {
   useMachineColorWearers,
   useMachineIdentity,
 } from "../../studio/machineIdentity";
-import { renameMachineLockText, useCustomMachineNickname } from "../../studio/machineNickname";
+import {
+  renameMachineLockText,
+  useCustomMachineNickname,
+  useMachineNameSources,
+} from "../../studio/machineNickname";
 import { useRenameMachine } from "../../studio/useRenameMachine";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
@@ -24,16 +32,23 @@ const TILE_SIZE = {
  * The machine's icon on its color, heading its card. Pressing it opens the eight
  * colors right there, each naming the machines that already wear it, so a
  * free one is easy to find. A pick saves at once and reaches the other devices
- * with the name; the name, chip letters and icon stay where they were.
+ * with the name; the name, chip letters and icon stay where they were. A machine
+ * with no icon chosen keeps none, so its detected kind still decides.
+ *
+ * The colors are a listbox: one Tab stop, arrows (and Home, End) move between
+ * them, Enter or Space picks. Arrows only move, since a pick saves.
  */
 export function MachineColorButton({
   environmentId,
   fallbackLabel,
+  kind,
   size = "md",
   className,
 }: {
   environmentId: EnvironmentId;
   fallbackLabel?: string | null;
+  /** The hardware this place detected, shown while no icon is chosen. */
+  kind?: EnvironmentMachineKind | undefined;
   size?: keyof typeof TILE_SIZE;
   className?: string;
 }) {
@@ -42,13 +57,14 @@ export function MachineColorButton({
   const custom = useCustomMachineNickname(environmentId);
   const wearers = useMachineColorWearers();
   const { lock, saveIdentity } = useRenameMachine();
+  const { nicknames } = useMachineNameSources();
   const [open, setOpen] = useState(false);
+  const choices = useRef<(HTMLButtonElement | null)[]>([]);
   if (!identity) return null;
   const dims = TILE_SIZE[size];
   const colorName = tx(MACHINE_COLOR_LABELS[identity.color]);
-  const icon = (
-    <EnvironmentMachineIcon aria-hidden kind={identity.icon} className={dims.icon} />
-  );
+  const shownKind = nicknames[environmentId]?.icon ?? kind ?? identity.icon;
+  const icon = <EnvironmentMachineIcon aria-hidden kind={shownKind} className={dims.icon} />;
   const tileClass = cn(
     "machine-tile inline-flex shrink-0 items-center justify-center",
     dims.tile,
@@ -69,7 +85,26 @@ export function MachineColorButton({
   const pick = (color: MachineColorId) => {
     setOpen(false);
     if (color === identity.color) return;
-    saveIdentity(environmentId, { name: custom ?? "", color, icon: identity.icon });
+    saveIdentity(environmentId, { name: custom ?? "", color });
+  };
+  const current = Math.max(0, MACHINE_COLOR_IDS.indexOf(identity.color));
+  const moveFocus = (event: KeyboardEvent<HTMLDivElement>) => {
+    const count = MACHINE_COLOR_IDS.length;
+    const at = choices.current.findIndex((choice) => choice === document.activeElement);
+    const from = at === -1 ? current : at;
+    const to =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? (from + 1) % count
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? (from - 1 + count) % count
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? count - 1
+              : null;
+    if (to === null) return;
+    event.preventDefault();
+    choices.current[to]?.focus();
   };
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -98,12 +133,14 @@ export function MachineColorButton({
           {tx("Color of {name}", { name: identity.name })}
         </PopoverTitle>
         <div
-          role="radiogroup"
+          role="listbox"
           aria-label={tx("Color of {name}", { name: identity.name })}
+          aria-orientation="horizontal"
           className="mt-2 grid grid-cols-4 gap-x-1 gap-y-2"
           data-machine-color-popover=""
+          onKeyDown={moveFocus}
         >
-          {MACHINE_COLOR_IDS.map((color) => {
+          {MACHINE_COLOR_IDS.map((color, index) => {
             const others = (wearers.get(color) ?? []).filter(
               (wearer) => wearer.environmentId !== environmentId,
             );
@@ -112,9 +149,13 @@ export function MachineColorButton({
             return (
               <button
                 key={color}
+                ref={(element) => {
+                  choices.current[index] = element;
+                }}
                 type="button"
-                role="radio"
-                aria-checked={identity.color === color}
+                role="option"
+                aria-selected={identity.color === color}
+                tabIndex={index === current ? 0 : -1}
                 aria-label={
                   others.length > 0
                     ? tx("{color}, also on {names}", {

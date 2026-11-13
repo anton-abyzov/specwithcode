@@ -32,9 +32,12 @@ vi.mock("../../studio/machineNickname", () => ({
   },
 }));
 vi.mock("../../studio/machineIdentity", () => ({
+  machineColorProps: (value: { color: string } | null | undefined) =>
+    value ? { "data-machine-color": value.color } : {},
   useMachineIdentity: (id: string | null) =>
     id === null ? null : { environmentId: id, color: "teal", icon: "laptop" },
 }));
+vi.mock("./MachineColor", () => ({ MachineColorButton: () => null }));
 const saveIdentity = vi.hoisted(() => vi.fn(() => true));
 vi.mock("../../studio/useRenameMachine", () => ({
   useRenameMachine: () => ({ lock: null, saveIdentity }),

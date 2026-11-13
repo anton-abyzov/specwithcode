@@ -89,6 +89,7 @@ vi.mock("../away/AwayAccessRequests", () => ({ AwayAccessRequestsAll: () => null
 vi.mock("./usePrimaryFleet", () => ({ usePrimaryFleet: () => runtime.fleet }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
+  usePrimaryEnvironmentId: () => null,
   useRelayEnvironmentDiscovery: () => ({
     environments: runtime.discovered,
     refreshing: false,
@@ -126,6 +127,24 @@ vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (environmentId: string, label?: string | null) =>
     runtime.nicknames[environmentId] ?? label ?? environmentId,
 }));
+vi.mock("../../studio/machineIdentity", () => {
+  const identity = (environmentId: string, name?: string | null) => ({
+    environmentId,
+    name: name ?? environmentId,
+    color: "teal",
+    icon: "laptop",
+    short: "AB",
+    derivedShort: "AB",
+  });
+  return {
+    machineColorProps: (value: { color: string } | null | undefined) =>
+      value ? { "data-machine-color": value.color } : {},
+    useMachineIdentity: (id: string | null, name?: string | null) => (id ? identity(id, name) : null),
+    useMachineIdentities: () => identity,
+    useKnownMachineIdentities: () => [],
+  };
+});
+vi.mock("./MachineColor", () => ({ MachineColorButton: () => null }));
 vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
 vi.mock("./AddProjectToMachine", () => ({
   AddProjectToMachine: ({

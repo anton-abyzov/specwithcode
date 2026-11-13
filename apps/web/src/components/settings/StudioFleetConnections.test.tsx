@@ -27,6 +27,24 @@ vi.mock("../../cloud/publicConfig", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../cloud/publicConfig")>()),
   hasCloudPublicConfig: () => runtime.cloud,
 }));
+vi.mock("../../studio/machineIdentity", () => {
+  const identity = (environmentId: string, name?: string | null) => ({
+    environmentId,
+    name: name ?? environmentId,
+    color: "teal",
+    icon: "laptop",
+    short: "AB",
+    derivedShort: "AB",
+  });
+  return {
+    machineColorProps: (value: { color: string } | null | undefined) =>
+      value ? { "data-machine-color": value.color } : {},
+    useMachineIdentity: (id: string | null, name?: string | null) => (id ? identity(id, name) : null),
+    useMachineIdentities: () => identity,
+    useKnownMachineIdentities: () => [],
+  };
+});
+vi.mock("./MachineColor", () => ({ MachineColorButton: () => null }));
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (id: string, label?: string | null) =>
     runtime.nicknames[id] ?? label ?? "",

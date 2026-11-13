@@ -271,7 +271,12 @@ export function MachineSummary({
       className="machine-card flex items-start gap-3 rounded-xl border border-border/60 bg-card/60 px-3 py-3 sm:px-4 sm:py-4"
     >
       {identity ? (
-        <MachineColorButton environmentId={environmentId} fallbackLabel={environment?.label} size="lg" />
+        <MachineColorButton
+          environmentId={environmentId}
+          fallbackLabel={environment?.label ?? null}
+          kind={kind}
+          size="lg"
+        />
       ) : (
         <EnvironmentMachineIcon
           aria-hidden
