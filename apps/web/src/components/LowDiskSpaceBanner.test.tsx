@@ -286,3 +286,49 @@ describe("storage category breakdown", () => {
     ).toContain("remaining categories 41 GB");
   });
 });
+
+describe("old app versions", () => {
+  const withVersions = (bytes: number) =>
+    homeUsage("ok", {
+      totalBytes: 82e9,
+      parts: [
+        { key: "app-versions", bytes },
+        { key: "worktrees", bytes: 8.1e9 },
+        { key: "scratch", bytes: 6.5e9 },
+      ],
+    });
+
+  it("names old app versions as their own line and offers a one-click removal", () => {
+    const notices = resolve([
+      {
+        environmentId: THIS_MAC,
+        os: "linux",
+        storage: { ...storage("low", 4.7e9), homeUsage: withVersions(48e9) },
+        canCleanOldAppVersions: true,
+      },
+    ]);
+    expect(notices[0]?.message).toContain("old app versions 48 GB");
+    expect(notices[0]?.oldAppVersionsBytes).toBe(48e9);
+    const markup = renderToStaticMarkup(
+      <LowDiskSpaceNoticeCard
+        notice={notices[0]!}
+        onDismiss={() => {}}
+        onReviewStorage={() => {}}
+        onCleanOldAppVersions={() => {}}
+      />,
+    );
+    expect(markup).toContain("Remove old app versions (48 GB)");
+    expect(markup).toContain("Review storage");
+  });
+
+  it("offers no removal on a machine that cannot do it, or for less than 1 GB", () => {
+    const status = (bytes: number, canCleanOldAppVersions: boolean) => ({
+      environmentId: THIS_MAC,
+      os: "linux",
+      storage: { ...storage("low", 4.7e9), homeUsage: withVersions(bytes) },
+      canCleanOldAppVersions,
+    });
+    expect(resolve([status(48e9, false)])[0]?.oldAppVersionsBytes).toBeUndefined();
+    expect(resolve([status(5e8, true)])[0]?.oldAppVersionsBytes).toBeUndefined();
+  });
+});

@@ -307,6 +307,7 @@ export const make = Effect.gen(function* () {
       threadSettlement: true,
       threadAutoSettlement: true,
       storageCleanup: true,
+      cleanOldAppVersions: true,
       projectWorktreeCleanup: true,
       threadHistoryRetention: true,
       threadHistoryHorizon: true,

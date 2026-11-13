@@ -3,8 +3,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { HardDriveIcon, XIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
+import { formatStorageFreeSpace } from "@specweave-studio/contracts";
+
 import { APP_BASE_NAME } from "../branding";
 import { isElectron } from "../env";
+import { useCleanOldAppVersions } from "../lib/oldAppVersions";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { environmentStorageStatusesAtom } from "../state/server";
 import {
@@ -45,10 +48,14 @@ export const LowDiskSpaceNoticeCard = memo(function LowDiskSpaceNoticeCard({
   notice,
   onDismiss,
   onReviewStorage,
+  onCleanOldAppVersions,
+  cleaning = false,
 }: {
   notice: LowDiskSpaceNotice;
   onDismiss: () => void;
   onReviewStorage?: () => void;
+  onCleanOldAppVersions?: () => void;
+  cleaning?: boolean;
 }) {
   return (
     <Alert
@@ -63,11 +70,30 @@ export const LowDiskSpaceNoticeCard = memo(function LowDiskSpaceNoticeCard({
       <AlertTitle>{notice.title}</AlertTitle>
       <AlertDescription>
         {notice.message}
-        {notice.action === "review-storage" && onReviewStorage !== undefined && (
-          <Button className="w-fit" onClick={onReviewStorage} size="xs" variant="outline">
-            Review storage
-          </Button>
-        )}
+        {(notice.oldAppVersionsBytes !== undefined && onCleanOldAppVersions !== undefined) ||
+        (notice.action === "review-storage" && onReviewStorage !== undefined) ? (
+          <span className="flex flex-wrap gap-2">
+            {notice.oldAppVersionsBytes !== undefined && onCleanOldAppVersions !== undefined && (
+              <Button
+                className="w-fit"
+                disabled={cleaning}
+                onClick={onCleanOldAppVersions}
+                size="xs"
+                variant="outline"
+                data-clean-old-app-versions=""
+              >
+                {cleaning
+                  ? "Removing old app versions…"
+                  : `Remove old app versions (${formatStorageFreeSpace(notice.oldAppVersionsBytes)})`}
+              </Button>
+            )}
+            {notice.action === "review-storage" && onReviewStorage !== undefined && (
+              <Button className="w-fit" onClick={onReviewStorage} size="xs" variant="outline">
+                Review storage
+              </Button>
+            )}
+          </span>
+        ) : null}
       </AlertDescription>
       <AlertAction>
         <Button
@@ -95,6 +121,7 @@ export function LowDiskSpaceBanner() {
   const { environments } = useEnvironments();
   const [dismissed, setDismissed] = useState(readDismissed);
   const navigate = useNavigate();
+  const oldAppVersions = useCleanOldAppVersions();
   const reviewStorage = useCallback(() => {
     void navigate({ to: "/settings/storage" });
   }, [navigate]);
@@ -148,6 +175,8 @@ export function LowDiskSpaceBanner() {
           notice={notice}
           onDismiss={() => dismiss(notice.key)}
           onReviewStorage={reviewStorage}
+          onCleanOldAppVersions={() => void oldAppVersions.clean(notice.environmentId)}
+          cleaning={oldAppVersions.isPending(notice.environmentId)}
         />
       ))}
     </div>

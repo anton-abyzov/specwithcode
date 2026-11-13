@@ -30,6 +30,8 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { repointShellLaunchersAfterServiceUpdate } from "./cli/shellLauncherRepoint.ts";
+import { withPinnedRuntimeInstallLock } from "./cloud/pinnedRuntime.ts";
+import { pruneRuntimeVersionsLogged } from "./cloud/runtimeVersionRetention.ts";
 import { flushCompileCache } from "./compileCache.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -824,6 +826,16 @@ const make = (options?: StartupOptions) =>
         baseDir: serverConfig.baseDir,
         outcome: updateOutcome,
       });
+      // The switch is durable and this server is healthy: old app versions can go. Runs on every
+      // start of a service-managed server, so a machine that piled them up is cleaned once.
+      if (launcher.managed) {
+        yield* withPinnedRuntimeInstallLock(
+          pruneRuntimeVersionsLogged({
+            baseDir: serverConfig.baseDir,
+            reason: updateOutcome?.status === "committed" ? "after-update" : "startup",
+          }),
+        ).pipe(Effect.forkScoped);
+      }
 
       yield* Effect.logDebug("startup phase: publishing welcome event", {
         environmentId: environment.environmentId,

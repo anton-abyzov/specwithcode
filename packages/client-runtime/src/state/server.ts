@@ -1454,6 +1454,11 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    cleanOldAppVersions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:clean-old-app-versions",
+      tag: WS_METHODS.serverCleanOldAppVersions,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
       tag: WS_METHODS.serverRetryResourceTelemetry,

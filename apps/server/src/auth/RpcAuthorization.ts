@@ -187,6 +187,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Lists which machines may read the owner's mail, calendar and files, and the log of it.
   [WS_METHODS.personalDataStatus]: AuthSettingsWriteScope,
   [WS_METHODS.personalDataSetAccess]: AuthSettingsWriteScope,
+  [WS_METHODS.serverCleanOldAppVersions]: AuthSettingsWriteScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,

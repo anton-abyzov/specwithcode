@@ -28,7 +28,9 @@ import {
   homeUsageLevel,
   homeUsageReport,
   measureTree,
+  withOldAppVersions,
 } from "./measure.ts";
+import { oldRuntimeVersionDirsSync } from "../cloud/runtimeVersionRetention.ts";
 import { runScratchRetention } from "./scratchRetention.ts";
 
 /** `home-usage.json` in the state folder: the last measurement. */
@@ -137,7 +139,7 @@ export const makeHomeUsageGuard = <E>(input: {
       }
       const walk = yield* measureTree({
         root: layout.root,
-        parts: layout.parts,
+        parts: withOldAppVersions(layout.parts, oldRuntimeVersionDirsSync(input.baseDir)),
         maxEntries: HOME_USAGE_MAX_ENTRIES,
         deadlineMs: HOME_USAGE_DEADLINE_MS,
       });

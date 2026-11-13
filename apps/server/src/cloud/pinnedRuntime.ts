@@ -556,3 +556,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 
 export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
   pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));
+
+/** Runs `effect` while no install in this process can publish a version. */
+export const withPinnedRuntimeInstallLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  pinnedRuntimeInstallLock.withPermit(effect);
