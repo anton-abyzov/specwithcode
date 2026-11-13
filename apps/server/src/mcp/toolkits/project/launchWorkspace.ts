@@ -200,7 +200,10 @@ export async function holdsSeparateClones(workspaceRoot: string): Promise<boolea
  * of `picked` and listed in `noCommit`: a worktree could not start from it,
  * and the thread would fail instead of starting.
  */
-export async function taskRepositoryPick(discovery: ProjectRepositoryDiscovery | null, text: string) {
+export async function taskRepositoryPick(
+  discovery: ProjectRepositoryDiscovery | null,
+  text: string,
+) {
   const available = availableRepositories(discovery);
   const { picked, named } = repositoriesNamedInTask(text, available);
   const checked = await Promise.all(
