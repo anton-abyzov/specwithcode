@@ -379,7 +379,7 @@ const SAVED_KEYS = new Set([
 ]);
 
 /** A top-level `key:` line, the key bare or quoted. */
-const KEY_LINE = /^(["']?)([A-Za-z][\w-]*)\1\s*:/;
+const KEY_LINE = /^(["']?)([A-Za-z][\w-]*)\1\s*:(\s|$)/;
 /** A list item or an indented line: part of the value above it. */
 const CONTINUATION = /^(\s|-(\s|$))/;
 
@@ -394,16 +394,22 @@ function ownFrontMatter(text: string): { readonly lines: string[]; readonly body
   const block = match[1]!.split("\n").map((line) => line.replace(LINE_BREAKS, " "));
   // A document that opens with a horizontal rule has prose between its rules,
   // not properties; it stays whole.
-  const properties = block.every(
-    (line) => line.trim().length === 0 || KEY_LINE.test(line) || CONTINUATION.test(line),
-  );
+  // It must name at least one property, so a block of list items or links stays prose too.
+  const properties =
+    block.some((line) => KEY_LINE.test(line)) &&
+    block.every(
+      (line) => line.trim().length === 0 || KEY_LINE.test(line) || CONTINUATION.test(line),
+    );
   if (!properties) return { lines: [], body: text };
   const lines: string[] = [];
   let dropping = false;
   for (const line of block) {
-    const key = KEY_LINE.exec(line)?.[2];
-    if (key !== undefined) dropping = SAVED_KEYS.has(key.toLowerCase());
-    if (!dropping && line.trim().length > 0) lines.push(line);
+    const found = KEY_LINE.exec(line);
+    if (found !== null) dropping = SAVED_KEYS.has(found[2]!.toLowerCase());
+    // The viewer reads bare keys only, so a quoted key is written bare.
+    const kept =
+      found !== null && found[1] !== "" ? `${found[2]}${line.slice(line.indexOf(":"))}` : line;
+    if (!dropping && line.trim().length > 0) lines.push(kept);
   }
   return { lines, body: text.slice(match[0].length).trim() };
 }
@@ -416,6 +422,9 @@ async function readSavedReport(file: string): Promise<{
   readonly content: string;
   readonly blockEnd: number;
 } | null> {
+  // Only a regular file is a saved report: never read or write through a link.
+  const stat = await NodeFSP.lstat(file).catch(() => null);
+  if (stat === null || !stat.isFile()) return null;
   const content = await NodeFSP.readFile(file, "utf8").catch(() => null);
   if (content === null) return null;
   const match = FRONTMATTER.exec(content);

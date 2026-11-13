@@ -571,4 +571,43 @@ describe("saveReport", () => {
     expect(both.map((saved) => saved.alreadySaved).sort()).toEqual([false, true]);
     expect((await readThreadReports(root, source)).reports).toHaveLength(1);
   });
+
+  it("keeps a leading block of list items or links whole, and writes quoted keys bare", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-lists", title: null, branch: null, home };
+    for (const text of [
+      "---\n- a\n- b\n---\n# Lists\n\nBody.",
+      "---\nhttps://x.com\n---\n# Link\n\nBody.",
+    ]) {
+      const saved = await saveReport(root, source, text, new Date("2026-11-13T19:00:00Z"));
+      const content = await NodeFSP.readFile(saved.absolutePath, "utf8");
+      expect(content).toContain(`\n\n${text}\n`);
+    }
+    const quoted = await saveReport(
+      root,
+      source,
+      '---\n"owner": Anton\n---\n# Quoted\n\nBody.',
+      new Date("2026-11-13T19:00:00Z"),
+    );
+    expect(await NodeFSP.readFile(quoted.absolutePath, "utf8")).toMatch(/\nowner: Anton\n---\n/);
+  });
+
+  it("never reads or writes through a link planted under a report's name", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const outside = await temp("studio-outside-");
+    const source = { threadId: "t-link", title: null, branch: null, home };
+    const target = NodePath.join(outside, "notes.md");
+    await NodeFSP.writeFile(target, `---\nthread: "t-link"\n---\n\n${IMPORTED}\n`);
+    const name = `2026-11-13-release-checklist-what-is-unfinished-${reportKey("t-link", IMPORTED)}.md`;
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/reports/threads"), { recursive: true });
+    await NodeFSP.symlink(target, NodePath.join(root, ".specweave/reports/threads", name));
+    const saved = await saveReport(root, source, IMPORTED, new Date("2026-11-13T19:00:00Z"), {
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(saved.alreadySaved).toBe(false);
+    expect(saved.report.path.endsWith(`-2-${reportKey("t-link", IMPORTED)}.md`)).toBe(true);
+    expect(await NodeFSP.readFile(target, "utf8")).not.toContain("Claude desktop");
+  });
 });

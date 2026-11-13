@@ -158,22 +158,25 @@ it.effect("asks for the source of an original link and refuses a plain-http one"
 
 it.effect("refuses a thread that plans or asks before it edits files", () =>
   Effect.gen(function* () {
-    const refused = {
+    const approval = liveThreadShell(caller.id, { runtimeMode: "approval-required" });
+    expect(
+      yield* save({ markdown: "# Plan\n\nNot yet." }).pipe(
+        Effect.provide(layerFor(scope, approval)),
+      ),
+    ).toMatchObject({
       code: "capability_denied",
-      message:
-        "This thread asks before it changes files. Write the report as Markdown in the increment's reports/ folder with your file tools, so the person can approve it.",
-    };
-    for (const modes of [
-      { runtimeMode: "approval-required" as const },
-      { runtimeMode: "full-access" as const, interactionMode: "plan" as const },
-    ]) {
-      const shell = liveThreadShell(caller.id, modes);
-      expect(
-        yield* save({ markdown: "# Plan\n\nNot yet." }).pipe(
-          Effect.provide(layerFor(scope, shell)),
-        ),
-      ).toMatchObject(refused);
-    }
+      message: expect.stringContaining("This thread asks before it changes files."),
+    });
+    const plan = liveThreadShell(caller.id, {
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+    });
+    expect(
+      yield* save({ markdown: "# Plan\n\nNot yet." }).pipe(Effect.provide(layerFor(scope, plan))),
+    ).toMatchObject({
+      code: "capability_denied",
+      message: expect.stringContaining("Plan mode cannot write files."),
+    });
     // Auto-accepted edits may save.
     const auto = liveThreadShell(caller.id, { runtimeMode: "auto-accept-edits" });
     expect(

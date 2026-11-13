@@ -28,13 +28,20 @@ export const layer = Access.toLayer(ReportToolkit, {
           message: "Reports are saved by an agent running in one of the project's threads.",
         });
       }
-      // Saving writes a file, so a thread that asks before each edit, or only plans, cannot
-      // save through this tool; its own file tools still ask the person first.
-      if (limits.interactionMode === "plan" || limits.runtimeMode === "approval-required") {
+      // Saving writes a file, so a thread that only plans, or asks before each edit,
+      // cannot save through this tool; its own file tools still ask the person first.
+      if (limits.interactionMode === "plan") {
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
           message:
-            "This thread asks before it changes files. Write the report as Markdown in the increment's reports/ folder with your file tools, so the person can approve it.",
+            "Plan mode cannot write files. Put the report in your reply, and save it once the plan is approved.",
+        });
+      }
+      if (limits.runtimeMode === "approval-required") {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "This thread asks before it changes files. Write the report as Markdown with your file tools, in the project folder's .specweave/increments/<increment>/reports/ (or .specweave/reports/threads/), so the person can approve it.",
         });
       }
       if (input.original !== undefined && input.source === undefined) {
