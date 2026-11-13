@@ -63,6 +63,7 @@ import { useMachineNicknames } from "../../studio/machineNickname";
 import { MachineColorButton } from "./MachineColor";
 import { ConnectDeregisterHint, fleetRemoveConnectNote } from "./ConnectDeregisterHint";
 import { ConnectReachBanner } from "./ConnectReachBanner";
+import { useReplacedMachineRecords } from "./useReplacedMachineRecords";
 import { FleetInviteArea, fleetInviteManagedMachines } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
 import {
@@ -536,6 +537,8 @@ export function StudioFleetConnections({
       setPending(null);
     }
   }
+  // Old records of machines that joined again are named as such, never told to link.
+  const replaced = useReplacedMachineRecords(rawSnapshot, environmentId);
   const unreachable = unreachableMachines(
     environments.filter(
       (environment) =>
@@ -549,6 +552,16 @@ export function StudioFleetConnections({
       environmentId: environment.environmentId,
       label: machine?.label ?? environment.label,
       onConnect: Boolean(machine?.connectUrl),
+      ...(replaced.has(environment.environmentId)
+        ? {
+            replacedBy: nickname(
+              replaced.get(environment.environmentId)!,
+              rawSnapshot?.machines.find(
+                (candidate) => candidate.environmentId === replaced.get(environment.environmentId),
+              )?.label ?? environment.label,
+            ),
+          }
+        : {}),
       // The window's own primary never takes a Connect route.
       hasConnectRoute:
         environment.entry.target._tag === "PrimaryConnectionTarget" ||

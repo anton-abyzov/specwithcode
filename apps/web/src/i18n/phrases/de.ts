@@ -2343,6 +2343,11 @@ export const de: PhraseCatalog = {
     "Chip-Buchstaben, Farbe und Symbol anpassen",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 oder 3 Zeichen für einen Chip, der für den Namen zu schmal ist. Leer folgt dem Namen.",
+  "Old record": "Alter Eintrag",
+  "Old record: this machine joined again as a new one": "Alter Eintrag: Diese Maschine ist neu beigetreten",
+  "Remove old record": "Alten Eintrag entfernen",
+  "Could not remove the old record": "Der alte Eintrag konnte nicht entfernt werden",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Den alten Eintrag von {name} ({host}) von diesem Gerät entfernen?\nDie Maschine ist neu beigetreten und läuft weiter; nur der tote Eintrag und seine zwischengespeicherten Threads hier verschwinden.",
   "Use 2 or 3 characters.":
     "Verwende 2 oder 3 Zeichen.",
   "{name} wears {color}":

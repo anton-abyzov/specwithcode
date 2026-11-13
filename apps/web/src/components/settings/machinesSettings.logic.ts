@@ -185,6 +185,11 @@ export interface MachineRowModel {
   readonly canAddForAgents: boolean;
   /** A connected machine this one has never let run work here; one click sets that direction up. */
   readonly canAllowBack: boolean;
+  /**
+   * Set on an old record of a machine that joined again under a new id: the id it
+   * lives on now. Its card says so and offers Remove; nothing is reached through it.
+   */
+  readonly replacedBy?: EnvironmentId | null;
 }
 
 const ROLE_LABELS: Readonly<Record<SharedProjectRole | "only-here", string>> = {
@@ -488,6 +493,8 @@ export function buildMachineRows(input: {
   readonly scratchRootFor?: (environmentId: EnvironmentId) => string | null | undefined;
   /** The name the person gave a machine; the rows' own label otherwise. */
   readonly displayName?: (environmentId: EnvironmentId, label: string) => string;
+  /** Old records of machines that joined again, by id (`replacedMachineRecords`). */
+  readonly replaced?: ReadonlyMap<string, string>;
 }): MachineRowModel[] {
   const fleetMachines = input.fleet?.machines ?? [];
   const fleetByEnvironment = new Map(
@@ -554,8 +561,14 @@ export function buildMachineRows(input: {
       ? null
       : (fleetByEnvironment.get(environment.environmentId) ?? null);
     const connected = environment.phase === "connected";
-    const seen = seenOf(environment.environmentId);
+    const replacedBy = isThisMachine
+      ? undefined
+      : (input.replaced?.get(environment.environmentId) as EnvironmentId | undefined);
+    const seen: MachineSeen = replacedBy
+      ? { state: "not-connected", text: "Old record: this machine joined again as a new one" }
+      : seenOf(environment.environmentId);
     return {
+      replacedBy: replacedBy ?? null,
       environmentId: environment.environmentId,
       label: environment.label,
       machineName:
@@ -692,4 +705,76 @@ export function pairingLinkBaseUrl(input: {
 /** Where to paste the link on the other machine. */
 export function connectBothWaysInstruction(machineLabel: string): string {
   return `On ${machineLabel}, open Settings > Machines > Advanced > Saved connections > Add connection > Remote link and paste this link.`;
+}
+
+/** A saved machine record, as `replacedMachineRecords` reads it. */
+export interface SavedMachineRecord {
+  readonly environmentId: string;
+  /** The computer name the record was saved under, not a nickname. */
+  readonly label: string;
+  readonly connected: boolean;
+}
+
+/** A machine on this account's Connect list: the computer name it linked with. */
+export interface ConnectListedMachine {
+  readonly label: string;
+  readonly online: boolean;
+}
+
+const computerNameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+/**
+ * Saved records of a machine that joined again under a new id (a reinstall, a
+ * reset or a new data folder mints a new environment id), each mapped to the id
+ * it lives on now. Every lookup stays by id: this only says which dead record a
+ * card or banner should call an old record and offer to remove, never which
+ * machine to reach.
+ *
+ * It answers only from complete lists: with no fleet answer, or a Connect list
+ * that is loading, failed, offline or empty (signed out), it marks nothing. A
+ * record counts as replaced only when it is not this machine, this app cannot
+ * connect to it, and neither list holds it; and exactly one machine anywhere
+ * goes by its computer name, that machine is alive (reachable from this
+ * machine, online on Connect or connected here), and its name is the computer's
+ * own name: the name the machine reported, or the one it linked to Connect with,
+ * never a fleet entry's label or a nickname.
+ */
+export function replacedMachineRecords(input: {
+  readonly saved: ReadonlyArray<SavedMachineRecord>;
+  /** This machine's list; null before it answers. */
+  readonly fleet: ReadonlyArray<
+    Pick<StudioFleetMachine, "environmentId" | "machineName" | "status">
+  > | null;
+  /** This account's Connect list, by environment id; null while it is not complete. */
+  readonly connect: ReadonlyMap<string, ConnectListedMachine> | null;
+  readonly primaryEnvironmentId: string | null;
+}): ReadonlyMap<string, string> {
+  const replaced = new Map<string, string>();
+  if (input.fleet === null || input.connect === null || input.connect.size === 0) return replaced;
+  const fleetIds = new Set<string>(input.fleet.map((machine) => machine.environmentId));
+  // Every machine whose computer name is known, by name, and which of them are alive.
+  const byName = new Map<string, Set<string>>();
+  const alive = new Set<string>();
+  const add = (environmentId: string, name: string | undefined, live: boolean) => {
+    if (name === undefined || name.trim() === "") return;
+    const key = computerNameKey(name);
+    byName.set(key, (byName.get(key) ?? new Set()).add(environmentId));
+    if (live) alive.add(environmentId);
+  };
+  for (const machine of input.fleet)
+    add(machine.environmentId, machine.machineName, machine.status === "reachable");
+  for (const [environmentId, machine] of input.connect)
+    add(environmentId, machine.label, machine.online);
+  for (const record of input.saved)
+    if (record.connected) add(record.environmentId, record.label, true);
+  for (const record of input.saved) {
+    const id = record.environmentId;
+    if (id === input.primaryEnvironmentId || record.connected) continue;
+    if (fleetIds.has(id) || input.connect.has(id) || record.label.trim() === "") continue;
+    const others = [...(byName.get(computerNameKey(record.label)) ?? [])].filter(
+      (other) => other !== id,
+    );
+    if (others.length === 1 && alive.has(others[0]!)) replaced.set(id, others[0]!);
+  }
+  return replaced;
 }

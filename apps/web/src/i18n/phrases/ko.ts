@@ -2310,6 +2310,11 @@ export const ko: PhraseCatalog = {
     "칩 글자, 색상, 아이콘 사용자 지정",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "이름이 들어가지 않는 좁은 칩에 표시할 2~3자입니다. 비워 두면 이름을 따릅니다.",
+  "Old record": "이전 기록",
+  "Old record: this machine joined again as a new one": "이전 기록: 이 머신은 새 머신으로 다시 참여했습니다",
+  "Remove old record": "이전 기록 제거",
+  "Could not remove the old record": "이전 기록을 제거하지 못했습니다",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
   "Use 2 or 3 characters.":
     "2~3자를 사용하세요.",
   "{name} wears {color}":

@@ -2326,6 +2326,11 @@ export const ru: PhraseCatalog = {
     "Настроить буквы на чипе, цвет и значок",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 или 3 символа для чипа, в который не помещается имя. Пусто — берутся из имени.",
+  "Old record": "Старая запись",
+  "Old record: this machine joined again as a new one": "Старая запись: эта машина подключилась заново как новая",
+  "Remove old record": "Удалить старую запись",
+  "Could not remove the old record": "Не удалось удалить старую запись",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
   "Use 2 or 3 characters.":
     "Используйте 2 или 3 символа.",
   "{name} wears {color}":
