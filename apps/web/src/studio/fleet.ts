@@ -210,7 +210,7 @@ export function useStudioFleet(environmentId: EnvironmentId) {
   const snapshot = Option.getOrNull(AsyncResult.value(result));
   // Machines known only from this list still count when colors are dealt out.
   useEffect(() => {
-    if (snapshot) noteFleetMachines(snapshot.machines.map((machine) => machine.environmentId));
+    if (snapshot) noteFleetMachines(snapshot.machines);
   }, [snapshot]);
   return {
     snapshot,

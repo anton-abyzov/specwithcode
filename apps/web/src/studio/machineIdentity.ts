@@ -37,7 +37,7 @@ import { Atom } from "effect/reactivity";
 import { createContext, useMemo } from "react";
 
 import { environmentServerConfigsAtom } from "../state/server";
-import { fleetMachineIdsAtom } from "./knownMachines";
+import { fleetMachinesAtom } from "./knownMachines";
 import { resolveMachineNickname, useMachineNameSources } from "./machineNickname";
 
 export const MACHINE_COLOR_LABELS: Record<MachineColorId, string> = {
@@ -165,15 +165,35 @@ export function resolveMachineIdentities(
 const kindsOf = (value: unknown): ReadonlyMap<string, EnvironmentMachineKind> =>
   value instanceof Map ? (value as ReadonlyMap<string, EnvironmentMachineKind>) : NO_KINDS;
 const NO_KINDS: ReadonlyMap<string, EnvironmentMachineKind> = new Map();
-const fleetOf = (value: unknown): ReadonlySet<string> =>
-  value instanceof Set ? (value as ReadonlySet<string>) : NO_FLEET;
-const NO_FLEET: ReadonlySet<string> = new Set();
+const fleetOf = (value: unknown): ReadonlyMap<string, string> =>
+  value instanceof Map ? (value as ReadonlyMap<string, string>) : NO_FLEET;
+const NO_FLEET: ReadonlyMap<string, string> = new Map();
+
+/**
+ * A fleet machine never connected here is named by the fleet list's computer
+ * name, as its card is; a connected machine's own label wins.
+ */
+export function withFleetLabels(
+  labels: ReadonlyMap<string, string>,
+  fleet: ReadonlyMap<string, string>,
+): ReadonlyMap<string, string> {
+  const missing = [...fleet].filter(([id, label]) => label !== "" && !labels.has(id));
+  return missing.length === 0 ? labels : new Map([...labels, ...missing]);
+}
 
 function useMachineIdentitySources(): MachineIdentitySources {
-  const { nicknames, labels } = useMachineNameSources();
+  const { nicknames, labels: connected } = useMachineNameSources();
   const kinds = kindsOf(useAtomValue(machineKindsAtom));
-  const fleet = fleetOf(useAtomValue(fleetMachineIdsAtom));
-  return useMemo(() => ({ nicknames, labels, kinds, fleet }), [nicknames, labels, kinds, fleet]);
+  const listed = fleetOf(useAtomValue(fleetMachinesAtom));
+  return useMemo(
+    () => ({
+      nicknames,
+      labels: withFleetLabels(connected, listed),
+      kinds,
+      fleet: [...listed.keys()],
+    }),
+    [nicknames, connected, kinds, listed],
+  );
 }
 
 /** Resolves any machine's identity; re-renders when a nickname, color or icon changes. */

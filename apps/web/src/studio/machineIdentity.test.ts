@@ -11,6 +11,7 @@ import {
   machineColorWearers,
   machineIdentityPatch,
   resolveMachineIdentities,
+  withFleetLabels,
 } from "./machineIdentity";
 
 const NOW = Date.parse("2026-11-10T21:00:00.000Z");
@@ -107,6 +108,24 @@ describe("machines known only from a fleet list", () => {
     const wearers = machineColorWearers(input);
     expect(wearers.get("teal")?.map((identity) => identity.name)).toEqual(["M1"]);
     expect([...wearers.values()].flat()).toHaveLength(4);
+  });
+
+  it("names a fleet machine never connected here by its computer name, as its card does", () => {
+    const listed = new Map([["env-remote-mini", "Living Room"]]);
+    const input = {
+      nicknames: {},
+      labels: withFleetLabels(labels, listed),
+      kinds,
+      fleet: [...listed.keys()],
+    };
+    const mini = [...machineColorWearers(input).values()]
+      .flat()
+      .find((identity) => identity.environmentId === "env-remote-mini");
+    expect(mini?.name).toBe("Living Room");
+    expect(mini?.short).toBe("LR");
+    // A connected machine's own label still wins over the fleet list's.
+    const first = [...labels.keys()][0]!;
+    expect(withFleetLabels(labels, new Map([[first, "Other"]])).get(first)).toBe(labels.get(first));
   });
 });
 
