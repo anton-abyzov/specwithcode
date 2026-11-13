@@ -23,6 +23,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ClaudeSignIn } from "../settings/ClaudeSignIn";
 import { ProviderAuthenticationSection } from "../settings/ProviderAuthenticationSection";
+import { noteChatGptSignInStarted } from "../settings/chatGptWelcomeState";
 import { getProviderSummary } from "../settings/providerStatus";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
@@ -84,6 +85,7 @@ function StartSignInOnce({
     }
     if (phase === undefined) return;
     if (phase === "idle" || phase === "failed" || phase === "cancelled") {
+      noteChatGptSignInStarted(environmentId, instanceId);
       void start({ environmentId, input: { instanceId } });
     }
     onDone();
