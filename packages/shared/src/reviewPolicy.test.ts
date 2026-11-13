@@ -251,6 +251,14 @@ describe("review policy evidence (Sol review, November 13, 2026)", () => {
     ).toEqual([".", "apps/web", "libs/core"]);
   });
 
+  it("reads legacy Files Affected lists (Sol round 4)", () => {
+    expect(
+      incrementReviewRepos(
+        "### T-001 API\n**Files Affected**:\n- `repositories/acme/api/a.ts`\n\n**Test Plan**:\n- `repositories/acme/other/not-a-file.ts`\n\n### T-002 App\n**Files Affected**:\n- `repositories/acme/app/b.ts`\n",
+      ),
+    ).toEqual(["repositories/acme/api", "repositories/acme/app"]);
+  });
+
   it("normalizes task paths and keeps registered sibling checkouts (Sol round 3)", () => {
     const registered = registeredReviewRepos(
       {

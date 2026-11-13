@@ -353,6 +353,28 @@ export function registeredReviewRepos(config: unknown, projectRoot: string): Rea
 }
 
 /**
+ * Every task Files entry in a spec or legacy tasks.md, read as `specweave`
+ * reads them: one-line `Files:` fields (bold or not) and legacy
+ * `**Files Affected**:` lists of `- \`path\`` lines.
+ */
+function taskFileEntries(tasks: string): ReadonlyArray<string> {
+  const entries: string[] = [];
+  for (const match of tasks.matchAll(/\**Files\**\s*:\s*\**\s*([^|\n]+)/giu))
+    entries.push(...(match[1] ?? "").split(","));
+  let inList = false;
+  for (const line of tasks.split(/\r?\n/u)) {
+    if (line.startsWith("**Files Affected**:")) {
+      inList = true;
+      continue;
+    }
+    if (line.startsWith("**") || line.startsWith("#")) inList = false;
+    const item = inList ? /^- `(.+)`/u.exec(line.trim()) : null;
+    if (item?.[1]) entries.push(item[1]);
+  }
+  return entries;
+}
+
+/**
  * The repositories an increment's task Files live in (`.` for the project
  * root), owned the way `specweave` owns them: the longest registered
  * repository path first, then `repositories/<organization>/<repository>`.
@@ -368,30 +390,28 @@ export function incrementReviewRepos(
   if (tasks === null) return [];
   const byLength = [...registered].sort((a, b) => b.length - a.length);
   const repos = new Set<string>();
-  for (const match of tasks.matchAll(/\**Files\**\s*:\s*\**\s*([^|\n]+)/giu)) {
-    for (const raw of (match[1] ?? "").split(",")) {
-      const written = raw.trim().replace(/`/gu, "");
-      if (written === "" || /^(none|n\/a|-)$/iu.test(written)) continue;
-      if (isAbsoluteReviewPath(written)) continue;
-      const file = normalizeReviewPath(written);
-      if (/(^|\/)\.specweave(\/|$)/u.test(file)) continue;
-      const owner = byLength.find((repo) => file === repo || file.startsWith(`${repo}/`));
-      if (owner !== undefined) {
-        repos.add(owner);
-        continue;
-      }
-      const glob = file.search(/[*?[\]{}]/u);
-      const literal = glob >= 0 ? file.slice(0, glob).replace(/[^/]*$/u, "") : "";
-      if (literal !== "" && byLength.some((repo) => repo.startsWith(literal))) continue;
-      if (file === ".." || file.startsWith("../")) continue;
-      if (!file.startsWith("repositories/")) {
-        repos.add(".");
-        continue;
-      }
-      const parts = file.split("/");
-      if (parts.length >= 3 && parts[2] && !/[*?[\]{}]/u.test(`${parts[1]}/${parts[2]}`))
-        repos.add(parts.slice(0, 3).join("/"));
+  for (const raw of taskFileEntries(tasks)) {
+    const written = raw.trim().replace(/`/gu, "");
+    if (written === "" || /^(none|n\/a|-)$/iu.test(written)) continue;
+    if (isAbsoluteReviewPath(written)) continue;
+    const file = normalizeReviewPath(written);
+    if (/(^|\/)\.specweave(\/|$)/u.test(file)) continue;
+    const owner = byLength.find((repo) => file === repo || file.startsWith(`${repo}/`));
+    if (owner !== undefined) {
+      repos.add(owner);
+      continue;
     }
+    const glob = file.search(/[*?[\]{}]/u);
+    const literal = glob >= 0 ? file.slice(0, glob).replace(/[^/]*$/u, "") : "";
+    if (literal !== "" && byLength.some((repo) => repo.startsWith(literal))) continue;
+    if (file === ".." || file.startsWith("../")) continue;
+    if (!file.startsWith("repositories/")) {
+      repos.add(".");
+      continue;
+    }
+    const parts = file.split("/");
+    if (parts.length >= 3 && parts[2] && !/[*?[\]{}]/u.test(`${parts[1]}/${parts[2]}`))
+      repos.add(parts.slice(0, 3).join("/"));
   }
   return [...repos].sort();
 }
