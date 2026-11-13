@@ -38,6 +38,10 @@ interface Rule {
 }
 
 const SEGMENT = "[A-Za-z0-9_-]{4,}";
+/** Chats, shares and projects on claude.ai and ChatGPT are named by UUID. */
+const UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+/** A Gemini chat id: hex, unlike its product pages (`/app/download`). */
+const HEX_ID = "[0-9a-f]{12,}";
 
 const RULES: ReadonlyArray<Rule> = [
   {
@@ -46,9 +50,9 @@ const RULES: ReadonlyArray<Rule> = [
     paths: [
       [new RegExp(`^/(?:code/)?artifact/[^/]*${SEGMENT}$`), "artifact"],
       [new RegExp(`^/public/artifacts/${SEGMENT}$`), "artifact"],
-      [new RegExp(`^/chat/${SEGMENT}$`), "chat"],
-      [new RegExp(`^/share/${SEGMENT}$`), "share"],
-      [new RegExp(`^/project/${SEGMENT}$`), "project"],
+      [new RegExp(`^/chat/${UUID}$`), "chat"],
+      [new RegExp(`^/share/${UUID}$`), "share"],
+      [new RegExp(`^/project/${UUID}$`), "project"],
       [new RegExp(`^/code/session_${SEGMENT}$`), "session"],
     ],
   },
@@ -56,10 +60,10 @@ const RULES: ReadonlyArray<Rule> = [
     hosts: ["chatgpt.com", "chat.openai.com"],
     provider: "ChatGPT",
     paths: [
-      [new RegExp(`^/c/${SEGMENT}$`), "chat"],
-      [new RegExp(`^/share/${SEGMENT}$`), "share"],
+      [new RegExp(`^/c/${UUID}$`), "chat"],
+      [new RegExp(`^/share/${UUID}$`), "share"],
       [new RegExp(`^/canvas/shared/${SEGMENT}$`), "canvas"],
-      [new RegExp(`^/g/${SEGMENT}/c/${SEGMENT}$`), "chat"],
+      [new RegExp(`^/g/${SEGMENT}/c/${UUID}$`), "chat"],
     ],
   },
   {
@@ -72,7 +76,7 @@ const RULES: ReadonlyArray<Rule> = [
     provider: "Gemini",
     paths: [
       [new RegExp(`^/share/${SEGMENT}$`), "share"],
-      [new RegExp(`^/app/${SEGMENT}$`), "chat"],
+      [new RegExp(`^/app/${HEX_ID}$`), "chat"],
       [new RegExp(`^/gemini/share/${SEGMENT}$`), "share"],
     ],
   },
@@ -87,6 +91,14 @@ const RULES: ReadonlyArray<Rule> = [
     paths: [[new RegExp(`^/sessions/${SEGMENT}$`), "session"]],
   },
 ];
+
+/** `[label](url)` with the brackets a label may hold escaped. */
+export function providerHostedDocumentMarkdown(
+  document: ProviderHostedDocument,
+  label: string,
+): string {
+  return `[${label.replace(/[[\]\\]/g, (char) => `\\${char}`)}](${document.url})`;
+}
 
 /** The provider page a link names, or null for any other link. */
 export function providerHostedDocument(
@@ -141,6 +153,5 @@ export function providerHostedDocumentImportRequest(
   label: string,
 ): string {
   const title = label.trim() || providerHostedDocumentNoun(document);
-  const escaped = title.replace(/[[\]\\]/g, (char) => `\\${char}`);
-  return `Save [${escaped}](${document.url}) into this project's reports with studio_report_save: read it with your access to ${document.provider}, keep its source and original link, and link the saved file here instead of the ${document.provider} page.`;
+  return `Save ${providerHostedDocumentMarkdown(document, title)} into this project's reports with studio_report_save: read it with your access to ${document.provider}, keep its source and original link, and link the saved file here instead of the ${document.provider} page.`;
 }

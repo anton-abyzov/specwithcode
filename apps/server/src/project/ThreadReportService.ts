@@ -98,6 +98,8 @@ export const make = Effect.gen(function* () {
         title: thread.title,
         branch: thread.branch,
       };
+      // Reports live in the project folder, not a thread's worktree: the thread's
+      // shelf, the Library and the report viewer all read them there.
       return { workspaceRoot: project.value.workspaceRoot, source };
     }).pipe(Effect.mapError(failure(projectId)));
 

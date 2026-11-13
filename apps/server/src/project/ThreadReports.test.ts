@@ -458,4 +458,117 @@ describe("saveReport", () => {
     );
     expect(await readThreadReports(root, source)).toMatchObject({ reports: [] });
   });
+
+  it("refuses an empty or oversized report and a project without .specweave", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-size", title: null, branch: null, home };
+    await expect(saveReport(root, source, " \n ", new Date())).rejects.toThrow(
+      "The report is empty.",
+    );
+    await expect(
+      saveReport(root, source, `# Big\n\n${"x".repeat(512 * 1024)}`, new Date()),
+    ).rejects.toThrow("The report is larger than 512 KiB.");
+    const plain = await temp("studio-plain-");
+    await expect(saveReport(plain, source, IMPORTED, new Date())).rejects.toThrow(
+      "This project has no .specweave folder.",
+    );
+  });
+
+  it("keeps provenance the app writes over the document's own, whatever the key's case or quotes", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-spoof", title: null, branch: null, home };
+    const text = [
+      "---",
+      "Source: Someone else",
+      '"original": "https://example.com/fake"',
+      "Title: Fake",
+      "owner: Anton",
+      "---",
+      "# Real",
+      "",
+      "Body.",
+    ].join("\n");
+    const saved = await saveReport(root, source, text, new Date("2026-11-13T19:00:00Z"), {
+      provenance: { source: "Codex", original: "https://chatgpt.com/codex/tasks/task_e_1" },
+    });
+    const content = await NodeFSP.readFile(saved.absolutePath, "utf8");
+    expect(content).not.toContain("Someone else");
+    expect(content).not.toContain("example.com/fake");
+    expect(content).not.toContain("Title: Fake");
+    expect(content).toContain('source: "Codex"');
+    expect(content).toContain("owner: Anton");
+  });
+
+  it("keeps a document that opens with a horizontal rule whole", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-rule", title: null, branch: null, home };
+    const text = "---\n# Heading\n\nParagraph.\ntitle: x\n---\nRest.";
+    const saved = await saveReport(root, source, text, new Date("2026-11-13T19:00:00Z"));
+    const content = await NodeFSP.readFile(saved.absolutePath, "utf8");
+    expect(content).toContain("\n\n---\n# Heading\n\nParagraph.\ntitle: x\n---\nRest.");
+  });
+
+  it("writes a title with a Unicode line separator on one line, so the report still lists", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-sep", title: null, branch: null, home };
+    const options = { title: 'Plan thread: "x"' };
+    const saved = await saveReport(root, source, IMPORTED, new Date(), options);
+    expect(await readThreadReports(root, source)).toMatchObject({
+      reports: [{ path: saved.report.path }],
+    });
+    expect((await saveReport(root, source, IMPORTED, new Date(), options)).alreadySaved).toBe(true);
+  });
+
+  it("adds an import's provenance to the same text saved before, and returns its title", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-again", title: null, branch: null, home };
+    const first = await saveReport(root, source, IMPORTED, new Date(), { title: "First name" });
+    const again = await saveReport(root, source, IMPORTED, new Date(), {
+      title: "Second name",
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(again).toMatchObject({ alreadySaved: true, title: "First name" });
+    expect(again.absolutePath).toBe(first.absolutePath);
+    const content = await NodeFSP.readFile(first.absolutePath, "utf8");
+    expect(content.match(/^---$/gm)).toHaveLength(2);
+    expect(content).toContain(`savedAt: `);
+    expect(content).toMatch(/savedAt: .+\nsource: "Claude desktop"\noriginal: ".+"\n---\n/);
+  });
+
+  it("never calls a different text with the same key already saved", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-clash", title: null, branch: null, home };
+    const at = new Date("2026-11-13T19:00:00Z");
+    // Another body under exactly the name this text would get.
+    const name = `2026-11-13-release-checklist-what-is-unfinished-${reportKey("t-clash", IMPORTED)}.md`;
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/reports/threads"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(root, ".specweave/reports/threads", name),
+      '---\ntitle: "Other"\nthread: "t-clash"\n---\n\nSomething else.\n',
+    );
+    const saved = await saveReport(root, source, IMPORTED, at);
+    expect(saved.alreadySaved).toBe(false);
+    expect(saved.report.path.endsWith(`-2-${reportKey("t-clash", IMPORTED)}.md`)).toBe(true);
+    expect(await NodeFSP.readFile(saved.absolutePath, "utf8")).toContain("Nothing was lost.");
+  });
+
+  it("saves one file when the same text is saved twice at once", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-race", title: null, branch: null, home };
+    const at = new Date("2026-11-13T19:00:00Z");
+    const both = await Promise.all([
+      saveReport(root, source, IMPORTED, at),
+      saveReport(root, source, IMPORTED, at),
+    ]);
+    expect(both[0].absolutePath).toBe(both[1].absolutePath);
+    expect(both.map((saved) => saved.alreadySaved).sort()).toEqual([false, true]);
+    expect((await readThreadReports(root, source)).reports).toHaveLength(1);
+  });
 });

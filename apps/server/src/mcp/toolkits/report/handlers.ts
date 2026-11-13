@@ -21,11 +21,20 @@ export function reportLink(title: string, path: string): string {
 export const layer = Access.toLayer(ReportToolkit, {
   studio_report_save: Access.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { caller } = yield* readCaller();
+      const { caller, limits } = yield* readCaller();
       if (caller === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
           message: "Reports are saved by an agent running in one of the project's threads.",
+        });
+      }
+      // Saving writes a file, so a thread that asks before each edit, or only plans, cannot
+      // save through this tool; its own file tools still ask the person first.
+      if (limits.interactionMode === "plan" || limits.runtimeMode === "approval-required") {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "This thread asks before it changes files. Write the report as Markdown in the increment's reports/ folder with your file tools, so the person can approve it.",
         });
       }
       if (input.original !== undefined && input.source === undefined) {

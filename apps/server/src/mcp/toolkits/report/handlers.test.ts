@@ -72,13 +72,16 @@ const reports = Layer.mock(ThreadReportService.ThreadReportService)({
         }),
     }),
 });
-const layerFor = (invocation: Context.McpInvocationScope) =>
+const layerFor = (
+  invocation: Context.McpInvocationScope,
+  shell: ReturnType<typeof liveThreadShell> = caller,
+) =>
   Access.HandlersLayer.layer(Handlers.layer).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         reports,
         Layer.mock(Threads.ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(caller),
+          getThreadShell: () => Effect.succeed(shell),
         }),
         Layer.succeed(Context.McpInvocationContext, invocation),
       ),
@@ -151,6 +154,32 @@ it.effect("asks for the source of an original link and refuses a plain-http one"
       message: "No increment 4242 in this project.",
     });
   }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("refuses a thread that plans or asks before it edits files", () =>
+  Effect.gen(function* () {
+    const refused = {
+      code: "capability_denied",
+      message:
+        "This thread asks before it changes files. Write the report as Markdown in the increment's reports/ folder with your file tools, so the person can approve it.",
+    };
+    for (const modes of [
+      { runtimeMode: "approval-required" as const },
+      { runtimeMode: "full-access" as const, interactionMode: "plan" as const },
+    ]) {
+      const shell = liveThreadShell(caller.id, modes);
+      expect(
+        yield* save({ markdown: "# Plan\n\nNot yet." }).pipe(
+          Effect.provide(layerFor(scope, shell)),
+        ),
+      ).toMatchObject(refused);
+    }
+    // Auto-accepted edits may save.
+    const auto = liveThreadShell(caller.id, { runtimeMode: "auto-accept-edits" });
+    expect(
+      yield* save({ markdown: "# Auto\n\nSaved." }).pipe(Effect.provide(layerFor(scope, auto))),
+    ).toMatchObject({ alreadySaved: false, title: "Auto" });
+  }),
 );
 
 it.effect("refuses an MCP client outside a thread", () =>

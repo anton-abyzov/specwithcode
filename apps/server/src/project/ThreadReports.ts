@@ -9,6 +9,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeTimers from "node:timers/promises";
 
 import type {
   ProjectThreadReport,
@@ -321,8 +322,14 @@ async function ensureDirectoryWithin(root: string, relative: string): Promise<st
   return current;
 }
 
+/**
+ * Every character a line-based reader takes as a line break. JavaScript's `m`
+ * flag breaks at U+2028 and U+2029 too, and `JSON.stringify` leaves them raw.
+ */
+const LINE_BREAKS = /[\r\n\u2028\u2029\u0085]+/g;
+
 function frontMatterValue(value: string): string {
-  return JSON.stringify(value.replace(/[\r\n]+/g, " "));
+  return JSON.stringify(value.replace(LINE_BREAKS, " "));
 }
 
 /** Where a document another tool made came from, kept as properties of the saved report. */
@@ -357,16 +364,24 @@ export interface SavedReport {
   readonly absolutePath: string;
 }
 
-/** The front-matter keys the app writes; the same keys in the text's own block give way. */
+/**
+ * The front-matter keys the app writes, lowercase; the same keys in the
+ * text's own block give way whatever their case or quotes.
+ */
 const SAVED_KEYS = new Set([
   "title",
   "thread",
-  "threadTitle",
+  "threadtitle",
   "increment",
-  "savedAt",
+  "savedat",
   "source",
   "original",
 ]);
+
+/** A top-level `key:` line, the key bare or quoted. */
+const KEY_LINE = /^(["']?)([A-Za-z][\w-]*)\1\s*:/;
+/** A list item or an indented line: part of the value above it. */
+const CONTINUATION = /^(\s|-(\s|$))/;
 
 /**
  * The text's own front matter (a report written with flat front matter) and
@@ -376,37 +391,82 @@ const SAVED_KEYS = new Set([
 function ownFrontMatter(text: string): { readonly lines: string[]; readonly body: string } {
   const match = FRONTMATTER.exec(text);
   if (!match) return { lines: [], body: text };
+  const block = match[1]!.split("\n").map((line) => line.replace(LINE_BREAKS, " "));
+  // A document that opens with a horizontal rule has prose between its rules,
+  // not properties; it stays whole.
+  const properties = block.every(
+    (line) => line.trim().length === 0 || KEY_LINE.test(line) || CONTINUATION.test(line),
+  );
+  if (!properties) return { lines: [], body: text };
   const lines: string[] = [];
   let dropping = false;
-  for (const line of match[1]!.split("\n")) {
-    const key = /^([A-Za-z][\w-]*)\s*:/.exec(line)?.[1];
-    if (key !== undefined) dropping = SAVED_KEYS.has(key);
-    else if (!/^\s/.test(line) && line.trim().length > 0) dropping = false;
+  for (const line of block) {
+    const key = KEY_LINE.exec(line)?.[2];
+    if (key !== undefined) dropping = SAVED_KEYS.has(key.toLowerCase());
     if (!dropping && line.trim().length > 0) lines.push(line);
   }
   return { lines, body: text.slice(match[0].length).trim() };
 }
 
-function provenanceProblem(provenance: ReportProvenance): string | null {
-  const source = provenance.source.trim();
-  if (source.length === 0 || source.length > 60 || /[\r\n]/.test(source)) {
-    return "The source names the tool that made the document in at most 60 characters.";
-  }
-  if (provenance.original === undefined) return null;
+/** The title and body of a saved report, or null when it cannot be read. */
+async function readSavedReport(file: string): Promise<{
+  readonly title: string | null;
+  readonly hasSource: boolean;
+  readonly body: string;
+  readonly content: string;
+  readonly blockEnd: number;
+} | null> {
+  const content = await NodeFSP.readFile(file, "utf8").catch(() => null);
+  if (content === null) return null;
+  const match = FRONTMATTER.exec(content);
+  const block = match?.[1] ?? "";
+  let title: string | null = null;
   try {
-    const url = new URL(provenance.original);
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      provenance.original.length > 2048
-    ) {
-      return "The original link must be an https URL of at most 2048 characters.";
-    }
+    const value: unknown = JSON.parse(/^title: (.+)$/m.exec(block)?.[1] ?? "null");
+    title = typeof value === "string" ? value : null;
   } catch {
-    return "The original link must be an https URL of at most 2048 characters.";
+    title = null;
   }
-  return null;
+  return {
+    title,
+    hasSource: /^source:/m.test(block),
+    body: match ? content.slice(match[0].length) : content,
+    content,
+    // Where the closing rule starts, for properties added later.
+    blockEnd: match && content.startsWith("---\n") ? 4 + block.length : -1,
+  };
+}
+
+/** Same words in the same order: whitespace and line endings aside. */
+function sameBody(left: string, right: string): boolean {
+  return left.replace(/\s+/g, " ").trim() === right.replace(/\s+/g, " ").trim();
+}
+
+/** The provenance as it is written: one-line source, normalized https link. */
+function checkedProvenance(provenance: ReportProvenance): ReportProvenance {
+  const source = provenance.source.trim();
+  if (source.length === 0 || source.length > 60 || /[\r\n\u2028\u2029\u0085]/.test(source)) {
+    throw new ProjectLibraryProblem(
+      "invalid",
+      "The source names the tool that made the document in at most 60 characters.",
+    );
+  }
+  if (provenance.original === undefined) return { source };
+  const refused = new ProjectLibraryProblem(
+    "invalid",
+    "The original link must be an https URL of at most 2048 characters.",
+  );
+  let url: URL;
+  try {
+    url = new URL(provenance.original);
+  } catch {
+    throw refused;
+  }
+  // href percent-encodes what the URL holds, so no character in it breaks a line.
+  if (url.protocol !== "https:" || url.username || url.password || url.href.length > 2048) {
+    throw refused;
+  }
+  return { source, original: url.href };
 }
 
 /** An increment named by number (`1314`) or folder, among the folders that exist here. */
@@ -453,9 +513,8 @@ export async function saveReport(
   ) {
     throw new ProjectLibraryProblem("invalid", "The title must be 1-200 characters.");
   }
-  const provenance = options.provenance;
-  const problem = provenance === undefined ? null : provenanceProblem(provenance);
-  if (problem !== null) throw new ProjectLibraryProblem("invalid", problem);
+  const provenance =
+    options.provenance === undefined ? undefined : checkedProvenance(options.provenance);
   if (!(await specweaveFolder(root))) {
     throw new ProjectLibraryProblem(
       "not_specweave",
@@ -474,15 +533,43 @@ export async function saveReport(
         : await namedIncrement(root, requested);
   const before = await readThreadReports(root, source);
   const key = reportKey(source.threadId, normalizedText);
-  const existing = before.reports.find((report) => report.key === key);
-  if (existing !== undefined) {
+  const own = ownFrontMatter(normalizedText);
+  const provenanceLines = provenance
+    ? [
+        `source: ${frontMatterValue(provenance.source)}`,
+        ...(provenance.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
+      ]
+    : [];
+  // The key is short, so a hit is the same report only when the words match.
+  // An import of a text saved before without provenance adds it there.
+  const already = async (relativePath: string): Promise<SavedReport | null> => {
+    const absolutePath = NodePath.join(root, ...relativePath.split("/"));
+    const stored = await readSavedReport(absolutePath);
+    if (stored === null || !sameBody(stored.body, own.body)) return null;
+    if (provenanceLines.length > 0 && !stored.hasSource && stored.blockEnd > 0) {
+      await NodeFSP.writeFile(
+        absolutePath,
+        `${stored.content.slice(0, stored.blockEnd)}\n${provenanceLines.join("\n")}${stored.content.slice(stored.blockEnd)}`,
+        "utf8",
+      );
+    }
+    const snapshot = await readThreadReports(root, source);
     return {
-      snapshot: before,
-      report: existing,
-      title,
+      snapshot,
+      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+        key,
+        path: relativePath,
+        savedAt: now.toISOString(),
+      },
+      title: stored.title ?? title,
       alreadySaved: true,
-      absolutePath: NodePath.join(root, ...existing.path.split("/")),
+      absolutePath,
     };
+  };
+  for (const report of before.reports) {
+    if (report.key !== key) continue;
+    const found = await already(report.path);
+    if (found !== null) return found;
   }
 
   const increment =
@@ -496,8 +583,6 @@ export async function saveReport(
     increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
   const target = await ensureDirectoryWithin(root, relativeDir);
   const savedAt = now.toISOString();
-  const name = reportFileName({ savedAt, title, threadId: source.threadId, text: normalizedText });
-  const own = ownFrontMatter(normalizedText);
   const content = [
     "---",
     `title: ${frontMatterValue(title)}`,
@@ -505,32 +590,52 @@ export async function saveReport(
     ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
     ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
     `savedAt: ${frontMatterValue(savedAt)}`,
-    ...(provenance ? [`source: ${frontMatterValue(provenance.source.trim())}`] : []),
-    ...(provenance?.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
+    ...provenanceLines,
     ...own.lines,
     "---",
     "",
     own.body,
     "",
   ].join("\n");
-  try {
-    await NodeFSP.writeFile(NodePath.join(target, name), content, {
-      encoding: "utf8",
-      flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
-      mode: 0o644,
-    });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  const first = reportFileName({ savedAt, title, threadId: source.threadId, text: normalizedText });
+  for (let attempt = 1; attempt <= 9; attempt += 1) {
+    // A second report under the same day, title and key gets a number before the key.
+    const name = attempt === 1 ? first : first.replace(`-${key}.md`, `-${attempt}-${key}.md`);
+    const relativePath = posix(NodePath.join(relativeDir, name));
+    try {
+      await NodeFSP.writeFile(NodePath.join(target, name), content, {
+        encoding: "utf8",
+        flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
+        mode: 0o644,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      // A save of the same text that ran alongside this one wrote it first; it
+      // may still be writing, so read again briefly before calling it different.
+      for (let read = 0; read < 5; read += 1) {
+        const found = await already(relativePath);
+        if (found !== null) return found;
+        await NodeTimers.setTimeout(20);
+      }
+      continue;
+    }
+    const snapshot = await readThreadReports(root, source);
+    return {
+      snapshot,
+      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+        key,
+        path: relativePath,
+        savedAt,
+      },
+      title,
+      alreadySaved: false,
+      absolutePath: NodePath.join(root, relativeDir, name),
+    };
   }
-  const snapshot = await readThreadReports(root, source);
-  const path = posix(NodePath.join(relativeDir, name));
-  return {
-    snapshot,
-    report: snapshot.reports.find((report) => report.key === key) ?? { key, path, savedAt },
-    title,
-    alreadySaved: false,
-    absolutePath: NodePath.join(root, relativeDir, name),
-  };
+  throw new ProjectLibraryProblem(
+    "conflict",
+    "Nine reports already share this title today; save this one under its own title.",
+  );
 }
 
 /**

@@ -147,7 +147,11 @@ import {
 } from "../studio/studioThreadLinks";
 import { DeadThreadLinkChip } from "./ThreadLinkChip";
 import { draftOutsideDocumentImport, OutsideDocumentLink } from "./chat/OutsideDocumentLink";
-import { providerHostedDocument, providerHostedDocumentNoun } from "../providerHostedDocument";
+import {
+  providerHostedDocument,
+  providerHostedDocumentMarkdown,
+  providerHostedDocumentNoun,
+} from "../providerHostedDocument";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
@@ -3415,7 +3419,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <OutsideDocumentLink
           document={hostedDocument}
           label={label}
-          copyMarkdown={`[${label}](${hostedDocument.url})`}
+          copyMarkdown={providerHostedDocumentMarkdown(hostedDocument, label)}
           onSaveToProject={
             threadRef
               ? () => draftOutsideDocumentImport(threadRef, hostedDocument, label)
