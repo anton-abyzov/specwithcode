@@ -1157,7 +1157,7 @@ const make = Effect.gen(function* () {
       yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
     );
     const { workspaceStrategy, notice } = yield* Effect.promise(() =>
-      emptyThreadFolderLaunch(input.workspaceStrategy, project),
+      emptyThreadFolderLaunch(input.workspaceStrategy, project, input.initialMessage?.text),
     );
     const message = input.initialMessage;
     if (notice === null || message === undefined) return { ...input, workspaceStrategy };

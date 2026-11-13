@@ -73,4 +73,33 @@ describe("incrementRepositoryCandidates", () => {
       { id: "site", path: at("/work/site") },
     ]);
   });
+
+  it("credits a task file to the deepest found clone in any layout", () => {
+    expect(
+      incrementRepositoryCandidates({
+        projectRoot: "/work/root",
+        checkouts,
+        clones: [
+          "/work/root/services/api",
+          "/work/root/services/api/plugins/auth",
+          "/work/root/repositories/acme/app",
+        ],
+        sources: {
+          declared: null,
+          files: [
+            "services/api/src/a.ts",
+            "services/api/plugins/auth/b.ts",
+            "repositories/acme/app/c.ts",
+            "services/README.md",
+          ],
+        },
+        rootEntries: new Set(["services", "repositories"]),
+      }),
+    ).toEqual([
+      { path: at("/work/root/services/api") },
+      { path: at("/work/root/services/api/plugins/auth") },
+      { id: "app", path: at("/work/root/repositories/acme/app") },
+      { path: at("/work/root") },
+    ]);
+  });
 });

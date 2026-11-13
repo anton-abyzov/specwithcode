@@ -9,6 +9,12 @@ import type {
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@specweave-studio/shared/git";
+import {
+  repositoriesNamedInTask,
+  TASK_REPOSITORIES_MAX,
+  taskRepositoryNames,
+  type TaskRepositoryPick,
+} from "@specweave-studio/shared/taskRepositories";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
@@ -470,12 +476,47 @@ export function toggleComposerRepository(
   return { repositories, baseBranch: only?.branch ?? only?.defaultBranch ?? null };
 }
 
-/** `Repositories: Agent decides`, `Repositories: api`, `Repositories: 3 picked`. */
+/**
+ * What "Agent decides" starts the thread with for this draft: the same pick
+ * the server makes from the message at launch.
+ */
+export function composerTaskPick(
+  prompt: string,
+  found: ReadonlyArray<ProjectFoundRepository>,
+): TaskRepositoryPick {
+  // Only a clone that is here can be checked out; the launch skips the rest too.
+  return repositoriesNamedInTask(
+    prompt,
+    found.filter((row) => row.state !== "absent" && row.state !== "missing"),
+  );
+}
+
+/** The line under "Agent decides": what the thread will start with, and why. */
+export function composerAgentDecidesHint(taskPick: TaskRepositoryPick | undefined): string {
+  const picked = taskPick?.picked ?? [];
+  const named = taskPick?.named ?? [];
+  if (picked.length > 0)
+    return `Starts with ${taskRepositoryNames(picked)}, named in your message. The agent adds others the task changes.`;
+  if (named.length > TASK_REPOSITORIES_MAX)
+    return `Your message names ${named.length} repositories, so it starts with none. The agent adds the ones the task changes.`;
+  return "It adds the repositories the task changes.";
+}
+
+/**
+ * `Repositories: Agent decides`, `Repositories: Agent decides · api` (named in
+ * the draft), `Repositories: api`, `Repositories: 3 picked`.
+ */
 export function composerRepositoriesLabel(
   pick: ComposerRepositoryPick,
   found: ReadonlyArray<ProjectFoundRepository>,
+  taskPick?: TaskRepositoryPick,
 ): string {
-  if (pick.repositories.length === 0) return "Repositories: Agent decides";
+  if (pick.repositories.length === 0) {
+    const named = taskPick?.picked ?? [];
+    if (named.length === 1) return `Repositories: Agent decides · ${named[0]!.name}`;
+    if (named.length > 1) return `Repositories: Agent decides · ${named.length} named`;
+    return "Repositories: Agent decides";
+  }
   if (pick.repositories.length === 1)
     return `Repositories: ${found.find((row) => row.relativePath === pick.repositories[0])?.name ?? pick.repositories[0]}`;
   return `Repositories: ${pick.repositories.length} picked`;

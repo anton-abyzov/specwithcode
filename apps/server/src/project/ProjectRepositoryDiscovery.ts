@@ -351,6 +351,10 @@ export function discoverProjectRepositories(input: {
   return value;
 }
 
+/** Whether a clone has a commit a worktree can start from; a fresh `git init` has none. */
+export const cloneHasCommit = (folder: string): Promise<boolean> =>
+  git(folder, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]).then((sha) => sha !== null);
+
 /** The clones a thread can get a worktree of now. */
 export const availableRepositories = (discovery: ProjectRepositoryDiscovery | null) =>
   (discovery?.found ?? []).filter((repository) => repository.state === "available");

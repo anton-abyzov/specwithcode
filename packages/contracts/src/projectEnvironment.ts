@@ -241,6 +241,11 @@ export const ProjectEnvironmentReadResult = Schema.Struct({
   /** True when the project folder is itself a Git repository ("." in a launch). */
   rootIsRepository: Schema.optionalKey(Schema.Boolean),
   /**
+   * True when the folder holds clones of their own, so a launch that names no
+   * repository starts in its own folder with the ones its message names.
+   */
+  separateClones: Schema.optionalKey(Schema.Boolean),
+  /**
    * Links left out of `found`, relative to the project folder: `target` is the listed
    * repository the link leads to, or null when it leads outside the project folder.
    */

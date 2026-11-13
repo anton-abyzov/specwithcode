@@ -23,8 +23,10 @@ import {
   shouldShowEnvironmentIndicator,
   addableThreadRepositories,
   AGENT_DECIDES,
+  composerAgentDecidesHint,
   composerRepositoriesLabel,
   composerRepositoryLaunch,
+  composerTaskPick,
   composerRepositoryPicks,
   toggleComposerRepository,
   threadRepositoriesLabel,
@@ -1036,6 +1038,18 @@ describe("composer repositories", () => {
 
   it("lets the agent decide until a repository is checked", () => {
     expect(composerRepositoriesLabel(AGENT_DECIDES, found)).toBe("Repositories: Agent decides");
+    // "Agent decides" names what the draft will start with: the server's own pick.
+    const typed = composerTaskPick("Fix repositories/a/web/src/app.tsx", found);
+    expect(typed.picked.map((mention) => mention.relativePath)).toEqual(["repositories/a/web"]);
+    expect(composerRepositoriesLabel(AGENT_DECIDES, found, typed)).toBe(
+      "Repositories: Agent decides · web",
+    );
+    expect(composerAgentDecidesHint(typed)).toBe(
+      "Starts with web, named in your message. The agent adds others the task changes.",
+    );
+    expect(composerAgentDecidesHint(composerTaskPick("Make the web faster", found))).toBe(
+      "It adds the repositories the task changes.",
+    );
     expect(composerRepositoryLaunch(AGENT_DECIDES)).toEqual({});
     expect(composerRepositoryLaunch(null)).toEqual({});
   });

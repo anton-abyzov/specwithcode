@@ -230,6 +230,7 @@ export const make = Effect.gen(function* () {
             foundMore: discovery.foundMore,
             foundTruncated: discovery.truncated,
             rootIsRepository: discovery.rootIsRepository,
+            separateClones: discovery.separateClones,
             skippedLinks: discovery.skippedLinks,
             redundantEntries: discovery.redundantEntries,
           }),

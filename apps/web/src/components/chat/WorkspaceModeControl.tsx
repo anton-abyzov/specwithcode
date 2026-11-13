@@ -10,11 +10,13 @@ import { vcsEnvironment } from "../../state/vcs";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   AGENT_DECIDES,
+  composerAgentDecidesHint,
   composerRepositoriesLabel,
   composerRepositoryPicks,
   toggleComposerRepository,
   type ComposerRepositoryPick,
 } from "../BranchToolbar.logic";
+import type { TaskRepositoryPick } from "@specweave-studio/shared/taskRepositories";
 
 /** The composer's pick for a draft; "Agent decides" until the person checks a repository. */
 export function useComposerRepositoryPick(threadId: string): ComposerRepositoryPick {
@@ -69,13 +71,17 @@ export function ComposerRepositoriesControl({
   environmentId,
   found,
   pick,
+  taskPick,
   onChange,
 }: {
   environmentId: EnvironmentId;
   found: ReadonlyArray<ProjectFoundRepository>;
   pick: ComposerRepositoryPick;
+  /** What "Agent decides" starts with for the draft as typed. */
+  taskPick?: TaskRepositoryPick | undefined;
   onChange: (pick: ComposerRepositoryPick) => void;
 }) {
+  const named = pick.repositories.length === 0 && (taskPick?.picked.length ?? 0) > 0;
   const only =
     pick.repositories.length === 1
       ? (found.find((row) => row.relativePath === pick.repositories[0]) ?? null)
@@ -86,12 +92,13 @@ export function ComposerRepositoriesControl({
         render={
           <button
             type="button"
-            className="inline-flex min-h-7 max-w-56 shrink items-center gap-1 truncate rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            className={`inline-flex min-h-7 max-w-64 shrink items-center gap-1 truncate rounded px-1.5 text-xs hover:bg-accent hover:text-foreground ${named ? "text-foreground" : "text-muted-foreground"}`}
             data-composer-repositories=""
+            {...(named ? { "data-composer-repositories-named": "" } : {})}
           />
         }
       >
-        <span className="truncate">{composerRepositoriesLabel(pick, found)}</span>
+        <span className="truncate">{composerRepositoriesLabel(pick, found, taskPick)}</span>
         <span aria-hidden>▾</span>
       </PopoverTrigger>
       <PopoverPopup width="sm" padding="compact" align="start" side="top">
@@ -105,8 +112,8 @@ export function ComposerRepositoriesControl({
             />
             <span>
               Agent decides
-              <span className="block text-muted-foreground">
-                It adds the repositories the task changes.
+              <span className="block text-muted-foreground" data-composer-agent-decides-hint="">
+                {composerAgentDecidesHint(taskPick)}
               </span>
             </span>
           </label>
@@ -157,6 +164,7 @@ export function WorkspaceModeControl({
         readonly environmentId: EnvironmentId;
         readonly found: ReadonlyArray<ProjectFoundRepository>;
         readonly pick: ComposerRepositoryPick;
+        readonly taskPick?: TaskRepositoryPick | undefined;
         readonly onChange: (pick: ComposerRepositoryPick) => void;
       }
     | undefined;

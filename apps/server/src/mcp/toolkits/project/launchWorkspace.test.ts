@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -323,4 +324,92 @@ it("gives an empty thread folder only to a folder of separate clones", async () 
       workspaceStrategy: strategy,
       notice: null,
     });
+});
+
+/** An umbrella whose clones under `committed` are real repositories with one commit. */
+function makeUmbrella(committed: ReadonlyArray<string>, fresh: ReadonlyArray<string> = []): string {
+  const root = makeFolder({
+    ".git": "dir",
+    ...Object.fromEntries(fresh.map((path) => [`${path}/.git`, "dir" as const])),
+  });
+  for (const path of committed) {
+    const folder = NodePath.join(root, path);
+    NodeFS.mkdirSync(folder, { recursive: true });
+    const git = (...args: ReadonlyArray<string>) =>
+      NodeChildProcess.execFileSync(
+        "git",
+        ["-C", folder, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args],
+        { stdio: "ignore" },
+      );
+    git("init", "-q");
+    git("commit", "-q", "--allow-empty", "-m", "init");
+  }
+  return root;
+}
+
+it("starts with the repositories the task names by path, and says why", async () => {
+  const umbrella = makeUmbrella(
+    ["repositories/acme/api", "repositories/acme/api-dev", "repositories/acme/web"],
+    ["repositories/acme/fresh"],
+  );
+  const worktree = { type: "worktree", baseRef: "main" } as const;
+  const project = { id: umbrella, workspaceRoot: umbrella };
+  const named = await emptyThreadFolderLaunch(
+    worktree,
+    project,
+    "Fix repositories/acme/api/src/a.ts. SpecWithCode and web need nothing.",
+  );
+  expect(named.workspaceStrategy).toEqual({ ...worktree, repositories: ["repositories/acme/api"] });
+  expect(named.notice).toContain(
+    "It starts with a worktree of api (repositories/acme/api), because its task names repositories/acme/api/src/a.ts.",
+  );
+  expect(named.notice).toContain("Before changing any other repository, add it");
+  // A path written on another machine, and a name in backticks.
+  const remote = await emptyThreadFolderLaunch(
+    worktree,
+    project,
+    "See /home/other/umb/repositories/acme/web/x.ts and `api-dev`",
+  );
+  expect(remote.workspaceStrategy).toEqual({
+    ...worktree,
+    repositories: ["repositories/acme/web", "repositories/acme/api-dev"],
+  });
+  expect(remote.notice).toContain(
+    "web (repositories/acme/web, named as /home/other/umb/repositories/acme/web/x.ts)",
+  );
+  // A repository this machine has not cloned is not picked and does not fail the launch.
+  const missing = await emptyThreadFolderLaunch(
+    worktree,
+    project,
+    "Fix repositories/acme/billing/a.ts",
+  );
+  expect(missing.workspaceStrategy).toEqual({ ...worktree, repositories: [] });
+  expect(missing.notice).toContain("with no repository yet");
+  // A clone with no commit cannot give a worktree: it is named in the notice, not picked.
+  const fresh = await emptyThreadFolderLaunch(
+    worktree,
+    project,
+    "Fix repositories/acme/fresh/a.ts and repositories/acme/web/b.ts",
+  );
+  expect(fresh.workspaceStrategy).toEqual({ ...worktree, repositories: ["repositories/acme/web"] });
+  expect(fresh.notice).toContain(
+    "Its task also names fresh, which has no commit to start a worktree from, so it was not added.",
+  );
+});
+
+it("treats more than four named repositories as a list and starts with none", async () => {
+  const names = ["a", "b", "c", "d", "e"];
+  const umbrella = makeFolder({
+    ".git": "dir",
+    ...Object.fromEntries(names.map((name) => [`repositories/acme/${name}/.git`, "dir" as const])),
+  });
+  const launch = await emptyThreadFolderLaunch(
+    { type: "worktree", baseRef: "main" },
+    { id: umbrella, workspaceRoot: umbrella },
+    names.map((name) => `- repositories/acme/${name}`).join("\n"),
+  );
+  expect(launch.workspaceStrategy).toEqual({ type: "worktree", baseRef: "main", repositories: [] });
+  expect(launch.notice).toContain(
+    "its task names 5 repositories (a, b and 3 more), which reads as a list",
+  );
 });
