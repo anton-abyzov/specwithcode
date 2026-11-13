@@ -2356,24 +2356,8 @@ export const fr: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Supprimer de cet appareil l'ancien enregistrement de {name} ({host}) ?\nLa machine a rejoint à nouveau comme une nouvelle et continue de fonctionner ; seuls l'enregistrement mort et ses fils en cache ici disparaissent.",
   "Use 2 or 3 characters.":
     "Utilisez 2 ou 3 caractères.",
-  "Coordinator here":
-    "Coordinateur ici",
-  "Coordinator here too":
-    "Coordinateur ici aussi",
-  "Workers only":
-    "Workers seulement",
-  "Moving coordinator":
-    "Coordinateur en transfert",
   "Not shared":
     "Non partagé",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "Le coordinateur du projet tourne sur cette copie, qu'il travaille en ce moment ou non. Les copies des autres machines reçoivent du travail de lui. Il s'agit du coordinateur, pas de la façon dont la copie a été faite.",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "Cette copie fait aussi tourner son propre coordinateur, comme chaque machine peut le faire, mais le coordinateur du projet est celui d'une autre copie. Transférer déplace le coordinateur et ne laisse ici que des workers.",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "Le coordinateur est passé sur une autre machine. Cette copie ne fait tourner que les workers qu'il envoie ici.",
-  "The project's coordinator is moving between machines right now.":
-    "Le coordinateur du projet passe d'une machine à l'autre en ce moment.",
   "No other machine has a copy of this project.":
     "Aucune autre machine n'a de copie de ce projet.",
   "Connect to see its role":
@@ -4653,8 +4637,6 @@ export const fr: PhraseCatalog = {
   "Machine access settings": "Réglages d’accès entre machines",
   "{machine} offline": "{machine} hors ligne",
   "workers only": "workers uniquement",
-  "move pending": "déplacement en attente",
-  "separate project": "projet séparé",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
   "Show only topics that need you in {project}":
     "Afficher seulement les sujets qui ont besoin de vous dans {project}",
@@ -5017,4 +4999,20 @@ export const fr: PhraseCatalog = {
   "1 week": "1 semaine",
   "Allow {machine} again for": "Autoriser de nouveau {machine} pendant",
   "How long {machine} may start work here": "Pendant combien de temps {machine} peut lancer du travail ici",
+  "Main":
+    "Principale",
+  "Moving main":
+    "Principale en déplacement",
+  "Copy · main on {machine}":
+    "Copie · principale sur {machine}",
+  "Separate project":
+    "Projet distinct",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "Le travail de ce projet démarre ici. Les copies sur d'autres machines reçoivent leur travail d'ici.",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "La principale est sur {machine}. Cette copie peut aussi démarrer son propre travail.",
+  "Work starts on {machine}. This copy takes work from there.":
+    "Le travail démarre sur {machine}. Cette copie reçoit son travail de là-bas.",
+  "Main is moving between machines right now.":
+    "La principale est en train de changer de machine.",
 };

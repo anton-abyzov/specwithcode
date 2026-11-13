@@ -2333,24 +2333,8 @@ export const ru: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
   "Use 2 or 3 characters.":
     "Используйте 2 или 3 символа.",
-  "Coordinator here":
-    "Координатор здесь",
-  "Coordinator here too":
-    "Тоже координатор",
-  "Workers only":
-    "Только воркеры",
-  "Moving coordinator":
-    "Координатор переезжает",
   "Not shared":
     "Не общий",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "Координатор проекта работает в этой копии, даже если сейчас он ничего не делает. Копии на других машинах берут работу у него. Речь о координаторе, а не о том, как копия была сделана.",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "В этой копии тоже работает свой координатор, как может быть на любой машине, но координатор проекта — в другой копии. «Передать» переносит координатора, и здесь остаются только воркеры.",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "Координатор переехал на другую машину. Эта копия только запускает воркеров, которых он сюда присылает.",
-  "The project's coordinator is moving between machines right now.":
-    "Координатор проекта прямо сейчас переезжает между машинами.",
   "No other machine has a copy of this project.":
     "Ни на одной другой машине нет копии этого проекта.",
   "Connect to see its role":
@@ -4610,8 +4594,6 @@ export const ru: PhraseCatalog = {
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
-  "move pending": "перенос не подтверждён",
-  "separate project": "отдельный проект",
   "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
   "Show only topics that need you in {project}":
     "Показать только темы, которые ждут вас в {project}",
@@ -4974,4 +4956,20 @@ export const ru: PhraseCatalog = {
   "1 week": "1 неделю",
   "Allow {machine} again for": "Снова разрешить {machine} на",
   "How long {machine} may start work here": "Как долго {machine} может запускать работу здесь",
+  "Main":
+    "Основная",
+  "Moving main":
+    "Основная переезжает",
+  "Copy · main on {machine}":
+    "Копия · основная на {machine}",
+  "Separate project":
+    "Отдельный проект",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "Работа над этим проектом начинается здесь. Копии на других машинах получают работу отсюда.",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "Основная на {machine}. Эта копия тоже может начинать свою работу.",
+  "Work starts on {machine}. This copy takes work from there.":
+    "Работа начинается на {machine}. Эта копия получает работу оттуда.",
+  "Main is moving between machines right now.":
+    "Основная прямо сейчас переезжает между машинами.",
 };

@@ -9,9 +9,15 @@
  */
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { LogicalProjectMember } from "@specweave-studio/contracts";
-import { COORDINATOR_PENDING_PROBLEM, logicalCoordinators } from "./projectDomain";
+import { COORDINATOR_PENDING_PROBLEM, copyRoles, logicalCoordinators } from "./projectDomain";
+import { copyRoleLabel, type CopyRoleText } from "./workersOnlyCopy";
 
-export { coordinatorCheckout, coordinatorElsewhere, workersOnlyProblem } from "./workersOnlyCopy";
+export {
+  coordinatorCheckout,
+  coordinatorElsewhere,
+  copyRoleLabel,
+  workersOnlyProblem,
+} from "./workersOnlyCopy";
 
 export interface CoordinatorMachineMember {
   readonly environmentId: string;
@@ -26,7 +32,7 @@ export function coordinatorMachineKey(member: CoordinatorMachineMember): string 
 export const SUPERSEDED_COORDINATOR_PROBLEM =
   "Another machine took over this coordinator. It gives way once its machine is reachable; view the newer coordinator to send messages.";
 export const WORKERS_ONLY_PROBLEM =
-  "This project now runs on another machine; the conversation here is kept as history. Switch to that machine above to send messages.";
+  "Work starts on another machine. This copy takes work from there. Switch to that machine above to send messages.";
 export const UNCONFIRMED_COORDINATOR_PROBLEM =
   "This copy has not confirmed its coordinator yet. Reconnect its machine to send messages.";
 
@@ -191,6 +197,10 @@ export interface OrchestratorCopy {
    * independent: the same repository, not linked, with its own orchestrator.
    */
   readonly role: "coordinator" | "workers" | "pending" | "independent";
+  /** This copy is the project's main (`copyRoles`), the one Settings also calls Main. */
+  readonly main: boolean;
+  /** The badge Settings shows for the same copy: "Main", "Copy · main on m4", "Moving main". */
+  readonly label: CopyRoleText;
   /** A coordinator can be started on this linked copy now. */
   readonly canStart: boolean;
 }
@@ -205,24 +215,33 @@ export function orchestratorCopies<T extends EnvironmentProject>(
   machineOf: (member: T) => string,
   startReady: (environmentId: T["environmentId"]) => boolean,
 ): OrchestratorCopy[] {
-  const roles = logicalCoordinators(members);
+  const roles = copyRoles(members);
+  const machineNamed = (environmentId: string) => {
+    const member = members.find((candidate) => candidate.environmentId === environmentId);
+    return member ? machineOf(member) : null;
+  };
   return members.map((member) => {
-    const linked = Boolean(member.workspaceSettings?.logicalProject);
-    const role: OrchestratorCopy["role"] =
-      !roles || !linked
-        ? members.length > 1
-          ? "independent"
-          : "coordinator"
-        : roles.coordinators.includes(member)
-          ? "coordinator"
-          : roles.pending.includes(member)
-            ? "pending"
-            : "workers";
+    const of = member.workspaceSettings?.logicalProject
+      ? roles.get(coordinatorMachineKey(member))
+      : undefined;
+    const role: OrchestratorCopy["role"] = !of
+      ? members.length > 1
+        ? "independent"
+        : "coordinator"
+      : of.role === "main" || of.role === "also-main"
+        ? "coordinator"
+        : of.role === "moving"
+          ? "pending"
+          : "workers";
     return {
       key: coordinatorMachineKey(member),
       machine: machineOf(member),
       folder: member.workspaceRoot,
       role,
+      main: of?.role === "main",
+      label: of
+        ? copyRoleLabel(of.role, of.mainEnvironmentId ? machineNamed(of.mainEnvironmentId) : null)
+        : { text: role === "independent" ? "Separate project" : "" },
       canStart:
         role === "workers" &&
         member.workspaceSettings?.coordinatorBinding?.state === "transferred" &&

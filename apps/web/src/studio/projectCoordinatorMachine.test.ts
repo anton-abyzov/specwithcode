@@ -227,14 +227,12 @@ describe("a workers-only copy whose coordinator is on another machine", () => {
 
   it("keeps the history wording only for a copy that had a conversation", () => {
     const fresh = workersOnlyProblem("Anton's MacBook", false);
-    expect(fresh).toBe(
-      "This copy runs workers only. Its coordinator is on Anton's MacBook. Start work for this copy from there.",
-    );
+    expect(fresh).toBe("Work starts on Anton's MacBook. This copy takes work from there.");
     expect(fresh).not.toContain("history");
     expect(workersOnlyProblem("Anton's MacBook", true)).toBe(
-      "This project now runs on Anton's MacBook. The conversation here is kept as history. Start work for this copy from Anton's MacBook.",
+      "Work starts on Anton's MacBook. This copy takes work from there. The conversation here is kept as history.",
     );
-    expect(workersOnlyProblem(null, false)).toContain("Its coordinator is on another machine.");
+    expect(workersOnlyProblem(null, false)).toContain("Work starts on another machine.");
   });
 });
 

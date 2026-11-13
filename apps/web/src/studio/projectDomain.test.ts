@@ -54,7 +54,8 @@ describe("logical project execution", () => {
     const both = [projects[2]!, m4];
     expect(logicalCoordinator(both)).toEqual({ member: projects[2], problem: null });
     expect(logicalCoordinators(both)?.coordinators).toEqual([projects[2], m4]);
-    expect(copyRolesSummary(both)).toBe("Machine: coordinator · Machine: coordinator");
+    // Each runs its own coordinator; the newest epoch, then the machine, names Main.
+    expect(copyRolesSummary(both)).toBe("Machine: Main · Machine: Copy");
   });
   it("keeps the transferring source mounted for retry but blocks sending", () => {
     const source = {
