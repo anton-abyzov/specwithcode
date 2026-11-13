@@ -133,7 +133,8 @@ export function repositoriesNamedInTask(
       const token = scan.slice(from, to);
       const named =
         opensPath(before) &&
-        startsPath(scan.slice(from, index)) &&
+        // A multi-segment path is specific enough anywhere in a word (`umb/repositories/o/r`).
+        (!oneSegment || startsPath(scan.slice(from, index))) &&
         !token.includes("://") &&
         (underIt || quoted || (!oneSegment && alone));
       if (named) {

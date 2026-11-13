@@ -49,6 +49,13 @@ describe("repositoriesNamedInTask", () => {
     expect(picked("C:\\work\\umb\\repositories\\anton-abyzov\\vskill\\src\\a.ts")).toEqual([
       "repositories/anton-abyzov/vskill",
     ]);
+    // A multi-segment path counts after any folder, a variable or `../`.
+    expect(picked("Edit specweave-umb/repositories/anton-abyzov/vskill/a.ts")).toEqual([
+      "repositories/anton-abyzov/vskill",
+    ]);
+    expect(picked("cd $UMB/repositories/anton-abyzov/specweave && npm test")).toEqual([
+      "repositories/anton-abyzov/specweave",
+    ]);
   });
 
   it("counts a repository path on its own, quoted or at the end of a sentence", () => {
