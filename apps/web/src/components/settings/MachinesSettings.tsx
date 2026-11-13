@@ -15,7 +15,7 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { PencilIcon, RefreshCwIcon } from "lucide-react";
+import { EllipsisIcon, RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
@@ -54,6 +54,7 @@ import {
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -66,8 +67,6 @@ import { RenameMachineDialog } from "./RenameMachineDialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildMachineRows,
-  connectBothWaysInstruction,
-  pairingLinkBaseUrl,
   type MachineProject,
   type MachineRowModel,
   type MachineSeen,
@@ -83,12 +82,20 @@ import {
 } from "./AddProjectToMachine";
 import { MachineSetupState, MachineSummary, type MachineSetup } from "./MachineSummary";
 import { MachineWorkGrants } from "./MachineWorkGrants";
-import { MachineLimits, MachineWorkSummary, machineLimitsOpen } from "./MachineWorkSummary";
+import { ConnectBothWays } from "./ConnectBothWays";
+import { DetailLine } from "./DetailLine";
+import {
+  DirectionRow,
+  IncomingButton,
+  OutgoingButton,
+  useWorkGrantChanges,
+  type WorkGrantChanges,
+} from "./MachineCardDirections";
+import { incomingLine, outgoingLine } from "./machineDirections.logic";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
 import { isPhoneConnectShown, PhoneConnectSettings } from "./PhoneConnectSettings";
-import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingHelp } from "./SettingHelp";
 import {
   scrollToSettingsTarget,
@@ -96,33 +103,14 @@ import {
   SettingsSection,
   TeamRulesLabel,
 } from "./settingsLayout";
-import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
+import { TeamRulesInert } from "./TeamRulesLock";
 import { ThisMachineAdvanced } from "./ThisMachineAdvanced";
-import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
 import { useReplacedMachineRecords } from "./useReplacedMachineRecords";
 import { RemoveOldRecord } from "./RemoveOldRecord";
 
 export type { MachineRowModel } from "./machinesSettings.logic";
-
-const NO_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
-
-// The desktop bridge is fixed for the window's lifetime, so the hook choice is too.
-const useDesktopAdvertisedEndpoints = isElectron
-  ? () => {
-      const result = useAtomValue(desktopNetworkAccessStateAtom);
-      return Option.getOrNull(AsyncResult.value(result))?.advertisedEndpoints ?? NO_ENDPOINTS;
-    }
-  : () => NO_ENDPOINTS;
-
-/** The server this window talks to, which is not always the page's own origin. */
-function currentServerOrigin(): string | null {
-  try {
-    return readPrimaryEnvironmentTarget()?.target.httpBaseUrl ?? window.location.origin;
-  } catch {
-    return null;
-  }
-}
+export { ConnectBothWaysView, type CreatedLink } from "./ConnectBothWays";
 
 /**
  * Settings > Machines, in one order: this machine and its one next step, your
@@ -144,6 +132,7 @@ export function MachinesSettingsPanel() {
     [rawGrants.snapshot, environments, machineName],
   );
   const grants = { ...rawGrants, snapshot: labeledSnapshot };
+  const grantChanges = useWorkGrantChanges(fleet.primaryEnvironmentId, grants);
   const hereLabel = fleet.primaryEnvironmentId
     ? machineName(
         fleet.primaryEnvironmentId,
@@ -246,6 +235,8 @@ export function MachinesSettingsPanel() {
       row={row}
       bare={bare}
       hereLabel={hereLabel}
+      grantChanges={grantChanges}
+      durations={grants.snapshot?.durations === true}
       workersControl={workersControl}
       actions={card?.actions}
       gone={card?.gone}
@@ -288,7 +279,7 @@ export function MachinesSettingsPanel() {
     />
   );
   const workGrants = fleet.primaryEnvironmentId ? (
-    <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
+    <MachineWorkGrants grants={grants} changes={grantChanges} />
   ) : null;
   // One card allows a machine of this SpecWithCode Connect account. It reads the grants itself.
   const joinCard = fleet.primaryEnvironmentId ? (
@@ -333,17 +324,7 @@ export function MachinesSettingsPanel() {
           const row = rows.find((item) => item.environmentId === environmentId);
           // This machine has its own fold above; the list holds the others.
           if (row && row === hereRow) return null;
-          return row
-            ? renderRow(
-                row,
-                <details className="pl-7 text-sm">
-                  <summary className="cursor-pointer">{tx("Connection details")}</summary>
-                  <ul>{controls}</ul>
-                </details>,
-                workersControl,
-                card,
-              )
-            : controls;
+          return row ? renderRow(row, <ul>{controls}</ul>, workersControl, card) : controls;
         }}
         renderLayout={(parts) => (
           <>
@@ -352,9 +333,6 @@ export function MachinesSettingsPanel() {
             ) : (
               parts.pairPhone
             )}
-            <p className="text-sm text-muted-foreground">
-              {tx("Each card shows who may start work where, both ways. Hover a line for details.")}
-            </p>
             {parts.otherMachines}
             {joinCard}
             <AwayAccessRequestsAll />
@@ -475,27 +453,6 @@ const SEEN_DOT: Readonly<Record<MachineRowModel["seen"]["state"], string>> = {
   reachable: "bg-success/60",
   "not-connected": "bg-muted-foreground/50",
 };
-
-function DetailLine({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  /** Shown on hover or tap beside the label. */
-  help?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="min-w-0 space-y-1 pl-7">
-      <p className="flex items-center gap-1 text-xs text-foreground/80">
-        {label}
-        {help ? <SettingHelp label={label}>{help}</SettingHelp> : null}
-      </p>
-      {children}
-    </div>
-  );
-}
 
 const ROLE_BADGE: Readonly<
   Record<NonNullable<MachineProject["role"]>, "info" | "secondary" | "warning" | "outline">
@@ -784,6 +741,40 @@ function ProjectList({
   );
 }
 
+/** The sign-ins a machine reports: on this machine's card, else in Connection details. */
+/** A card lists this many projects, then "Show N more". */
+const MAX_PROJECTS_SHOWN = 5;
+
+function AccountsLine({ accounts }: { accounts: MachineRowModel["accounts"] }) {
+  const tx = useTx();
+  return (
+    <DetailLine label={tx("Accounts")}>
+      {accounts === null ? (
+        <p className="text-xs text-muted-foreground">{tx("Connect to see its accounts.")}</p>
+      ) : accounts.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{tx("No account reported.")}</p>
+      ) : (
+        <ul className="space-y-0.5">
+          {accounts.map((account) => (
+            <li
+              key={account.key}
+              className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
+            >
+              <span className="min-w-0 truncate">
+                <span className="text-foreground/80">{account.provider}</span> ·{" "}
+                {account.identity === ACCOUNT_NOT_REPORTED
+                  ? tx(ACCOUNT_NOT_REPORTED)
+                  : account.identity}
+              </span>
+              {account.alsoOn.length > 0 ? <AccountAlsoOn names={account.alsoOn} /> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </DetailLine>
+  );
+}
+
 export function MachineRow({
   remoteControl,
   workersControl,
@@ -798,10 +789,22 @@ export function MachineRow({
   connectBothWays,
   allowBack,
   addProject,
+  grantChanges = null,
+  durations = false,
+  devices,
   bare = false,
 }: {
   /** Without the name line and Rename: this machine's card under the page's own summary. */
   bare?: boolean;
+  /** Stop and Allow… on the incoming row; null where the card only shows the grant. */
+  grantChanges?: WorkGrantChanges | null;
+  /** This machine takes a time limit on Allow. */
+  durations?: boolean;
+  /**
+   * Slot for "Devices that can use this machine" (increment 1327): the people plane,
+   * above the two agent direction rows. Nothing shows until that list exists.
+   */
+  devices?: ReactNode;
   remoteControl?: ReactNode;
   /** The Allow workers control for agents here; it sits on the first access line. */
   workersControl?: ReactNode;
@@ -830,8 +833,34 @@ export function MachineRow({
     .filter((name): name is string => name !== null)
     .join(" · ");
   const identity = useMachineIdentity(row.environmentId, row.label);
-  const hereEnvironmentId = usePrimaryEnvironmentId();
   const here = { environmentId: row.environmentId, name: nickname, seen: row.seen };
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [allProjects, setAllProjects] = useState(false);
+  const thisMachine = row.seen.state === "this-machine";
+  const incoming = incomingLine(
+    { there: nickname, workHere: row.workHere, durations, canSetUp: Boolean(allowBack) },
+    tx,
+  );
+  const outgoing = outgoingLine(
+    {
+      there: nickname,
+      workers: row.workers,
+      canSetUp: Boolean(addForAgents) || Boolean(row.workers && workersControl),
+    },
+    tx,
+  );
+  const message =
+    grantChanges && grantChanges.about === row.environmentId
+      ? grantChanges.error
+        ? { text: grantChanges.error, alert: true }
+        : // A stopped or ended row already says what happened in its note.
+          grantChanges.notice && incoming.note === null
+          ? { text: grantChanges.notice, alert: false }
+          : null
+      : null;
+  const shownProjects = allProjects
+    ? row.projects.own
+    : row.projects.own.slice(0, MAX_PROJECTS_SHOWN);
   return (
     <li
       {...(bare ? {} : machineColorProps(identity))}
@@ -866,16 +895,6 @@ export function MachineRow({
             </span>
           </p>
         </div>
-        <Button
-          className="shrink-0"
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label={`Rename ${nickname}`}
-          title={tx("Rename")}
-          onClick={() => setRenaming(true)}
-        >
-          <PencilIcon className="size-3" />
-        </Button>
         <RenameMachineDialog
           environmentId={row.environmentId}
           hostLabel={row.label}
@@ -903,7 +922,27 @@ export function MachineRow({
             ) : null}
           </div>
         ) : null}
-        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                className="shrink-0"
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={tx("More for {machine}", { machine: nickname })}
+                data-machine-more=""
+              />
+            }
+          >
+            <EllipsisIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={() => setRenaming(true)}>{tx("Rename…")}</MenuItem>
+            <MenuItem data-connection-details="" onClick={() => setDetailsOpen((open) => !open)}>
+              {detailsOpen ? tx("Hide connection details") : tx("Connection details")}
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
         {row.replacedBy ? (
           <RemoveOldRecord
             environmentId={row.environmentId}
@@ -920,50 +959,68 @@ export function MachineRow({
         </div>
       ) : null}
 
-      {row.workers || row.workHere || addForAgents || allowBack || connectBothWays || details ? (
-        <div className="flex min-w-0 flex-col gap-1.5 pl-7">
-          {row.workers || row.workHere || allowBack ? (
-            <MachineWorkSummary
-              hereLabel={hereLabel}
-              thereLabel={nickname}
-              hereId={hereEnvironmentId}
-              thereId={row.environmentId}
-              workers={row.workers}
-              workHere={row.workHere}
-            />
-          ) : null}
-          <MachineLimits
-            open={machineLimitsOpen({
-              workers: row.workers,
-              workHere: row.workHere,
-              addForAgents: Boolean(addForAgents),
-              allowBack: Boolean(allowBack),
-            })}
-          >
-            {row.workers ? (
-              workersControl ? (
-                <div className="min-w-0 space-y-1">
-                  <p className="text-foreground/80">
-                    {tx("Most access for agents from {hereLabel}", { hereLabel })}
-                  </p>
-                  {workersControl}
-                </div>
-              ) : null
-            ) : (
-              addForAgents
-            )}
-            {row.workHere ? (
-              <p className="text-muted-foreground">
-                {tx("What {thereLabel} may use here: under Who can run work here.", {
-                  thereLabel: nickname,
-                })}
-              </p>
-            ) : (
-              allowBack
-            )}
-            {details}
-          </MachineLimits>
+      {devices ? (
+        <div className="pl-7" data-slot="machine-devices">
+          {devices}
+        </div>
+      ) : null}
+
+      {thisMachine ? null : (
+        <div className="flex min-w-0 flex-col gap-1.5 pl-7" data-slot="machine-directions">
+          <DirectionRow
+            direction="incoming"
+            line={incoming}
+            message={message}
+            button={
+              <IncomingButton
+                line={incoming}
+                there={nickname}
+                coordinatorEnvironmentId={row.environmentId}
+                durations={durations}
+                changes={grantChanges}
+                onSetUp={() => setDetailsOpen(true)}
+              />
+            }
+          />
+          <DirectionRow
+            direction="outgoing"
+            line={outgoing}
+            button={<OutgoingButton line={outgoing} onOpen={() => setDetailsOpen(true)} />}
+          />
+        </div>
+      )}
+
+      {detailsOpen ? (
+        <div
+          className="ml-7 flex min-w-0 flex-col gap-3 rounded-lg border border-border/60 px-3 py-2.5 text-xs [&>.pl-7]:pl-0"
+          data-slot="connection-details"
+        >
+          <p className="flex items-center gap-1 font-medium text-foreground/80">
+            {tx("Connection details")}
+            <SettingHelp label={tx("Connection details")}>
+              {tx(
+                "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.",
+                { there: nickname },
+              )}
+            </SettingHelp>
+          </p>
+          {row.workers ? (
+            workersControl ? (
+              <div className="min-w-0 space-y-1">
+                <p className="text-foreground/80">
+                  {tx("Most access for agents from {hereLabel}", { hereLabel })}
+                </p>
+                {workersControl}
+              </div>
+            ) : null
+          ) : (
+            addForAgents
+          )}
+          {row.workHere ? null : allowBack}
           {connectBothWays}
+          {details}
+          {actions ? <div className="flex flex-wrap items-center gap-1">{actions}</div> : null}
+          <AccountsLine accounts={row.accounts} />
         </div>
       ) : null}
 
@@ -988,7 +1045,24 @@ export function MachineRow({
         help="This machine's projects. For a machine this app cannot see, only those it shares with one it can. Automated ones were made by checks or agents; archived ones are kept but out of your lists. Both stay collapsed, as in the sidebar."
       >
         {row.projects.own.length > 0 ? (
-          <ProjectList projects={row.projects.own} here={here} />
+          <>
+            <ProjectList projects={shownProjects} here={here} />
+            {row.projects.own.length > MAX_PROJECTS_SHOWN ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                className="-ml-2"
+                data-projects-more=""
+                onClick={() => setAllProjects((all) => !all)}
+              >
+                {allProjects
+                  ? tx("Show fewer")
+                  : tx("Show {count} more", {
+                      count: String(row.projects.own.length - MAX_PROJECTS_SHOWN),
+                    })}
+              </Button>
+            ) : null}
+          </>
         ) : (
           <p className="text-xs text-muted-foreground">
             {seen ? tx("No projects of your own here.") : tx("Connect to see its projects.")}
@@ -1011,30 +1085,7 @@ export function MachineRow({
         </ArchivedDisclosure>
       </DetailLine>
 
-      <DetailLine label={tx("Accounts")}>
-        {row.accounts === null ? (
-          <p className="text-xs text-muted-foreground">{tx("Connect to see its accounts.")}</p>
-        ) : row.accounts.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{tx("No account reported.")}</p>
-        ) : (
-          <ul className="space-y-0.5">
-            {row.accounts.map((account) => (
-              <li
-                key={account.key}
-                className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
-              >
-                <span className="min-w-0 truncate">
-                  <span className="text-foreground/80">{account.provider}</span> ·{" "}
-                  {account.identity === ACCOUNT_NOT_REPORTED
-                    ? tx(ACCOUNT_NOT_REPORTED)
-                    : account.identity}
-                </span>
-                {account.alsoOn.length > 0 ? <AccountAlsoOn names={account.alsoOn} /> : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </DetailLine>
+      {thisMachine ? <AccountsLine accounts={row.accounts} /> : null}
     </li>
   );
 }
@@ -1064,18 +1115,11 @@ export function AllowBack({
       "this machine",
   );
   const coordinatorLabel = name(row.environmentId, row.label);
+  // The card's row already says this direction is not set up; this is its setup.
   return (
-    <DetailLine
-      label={tx("Agents on {thereLabel} can start work on {hereLabel}", {
-        hereLabel,
-        thereLabel: coordinatorLabel,
-      })}
-    >
-      <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-        <Badge size="sm" variant="outline">
-          {tx("Not allowed")}
-        </Badge>
-        <span>{tx("Not set up yet.")}</span>
+    <div className="min-w-0 space-y-1" data-slot="allow-back">
+      <p className="text-foreground/80">
+        {tx("Let {thereLabel} start work here", { thereLabel: coordinatorLabel })}
       </p>
       <IncomingWorkerAction
         here={primaryEnvironmentId}
@@ -1091,7 +1135,7 @@ export function AllowBack({
         actionLabel={tx("Allow {coordinatorLabel}", { coordinatorLabel })}
         onGranted={onGranted}
       />
-    </DetailLine>
+    </div>
   );
 }
 
@@ -1211,194 +1255,6 @@ export function AddForAgentsView({
           {error}
         </p>
       ) : null}
-    </DetailLine>
-  );
-}
-
-export interface CreatedLink {
-  /** Null when no address another machine can open is known; the code still works. */
-  readonly link: string | null;
-  readonly code: string;
-  readonly expiresAt: string;
-}
-
-/**
- * The step this app cannot do for the other machine: app connections live in
- * each app, so the other machine's app must open a link made here. The link
- * stays in this component's state and is never logged.
- */
-function ConnectBothWays({
-  row,
-  primaryEnvironmentId,
-}: {
-  row: MachineRowModel;
-  primaryEnvironmentId: EnvironmentId;
-}) {
-  // The address the other machine's server already uses for this one, if it lists it.
-  const there = useStudioFleet(row.environmentId);
-  const configs = useServerConfigs();
-  const advertised = useDesktopAdvertisedEndpoints();
-  const canCreate = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
-  const nickname = useMachineNickname(row.environmentId, row.label);
-  const [creating, setCreating] = useState(false);
-  const [created, setCreated] = useState<CreatedLink | null>(null);
-
-  async function create() {
-    if (creating || !canCreate || row.connectLock !== null) return;
-    const scopes = AuthStandardClientScopes.filter((scope) =>
-      readEnvironmentScope(primaryEnvironmentId, scope),
-    );
-    if (scopes.length === 0) return;
-    setCreating(true);
-    try {
-      const result = await createServerPairingCredential({
-        label: `App on ${nickname}`,
-        coordinatorEnvironmentId: row.environmentId,
-        scopes,
-      });
-      const host = pairingLinkBaseUrl({
-        addressSeenThere:
-          there.snapshot?.machines.find((machine) => machine.environmentId === primaryEnvironmentId)
-            ?.url ?? null,
-        pageUrl: currentServerOrigin(),
-        directEndpoints: configs.get(primaryEnvironmentId)?.directEndpoints ?? [],
-        advertisedEndpoints: advertised,
-      });
-      setCreated({
-        link: host ? resolveDesktopPairingUrl(host, result.credential) : null,
-        code: result.credential,
-        expiresAt: new Date(DateTime.toEpochMillis(result.expiresAt)).toLocaleTimeString(
-          undefined,
-          { hour: "numeric", minute: "2-digit" },
-        ),
-      });
-    } catch (failure) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not create a pairing link",
-          description: failure instanceof Error ? failure.message : "Try again in a moment.",
-        }),
-      );
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  return (
-    <ConnectBothWaysView
-      machineLabel={nickname}
-      canCreate={canCreate}
-      creating={creating}
-      created={created}
-      teamRulesLock={row.connectLock}
-      onCreate={() => void create()}
-      onDone={() => setCreated(null)}
-    />
-  );
-}
-
-async function copyText(value: string, what: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-    toastManager.add(stackedThreadToast({ type: "success", title: `${what} copied` }));
-  } catch {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: `Could not copy the ${what.toLowerCase()}`,
-        description: "Select it and copy it by hand.",
-      }),
-    );
-  }
-}
-
-export function ConnectBothWaysView({
-  machineLabel,
-  canCreate,
-  creating,
-  created,
-  teamRulesLock = null,
-  onCreate,
-  onDone,
-}: {
-  machineLabel: string;
-  canCreate: boolean;
-  creating: boolean;
-  created: CreatedLink | null;
-  teamRulesLock?: TeamRulesLock | null;
-  onCreate: () => void;
-  onDone: () => void;
-}) {
-  const tx = useTx();
-  return (
-    <DetailLine
-      label={tx("Its app sees this machine")}
-      help="Whether the SpecWithCode app on that machine can open this machine's projects. It is about you, the person, not agents, so it does not change who may start work where."
-    >
-      {teamRulesLock !== null ? (
-        <TeamRulesLockNote lock={teamRulesLock} />
-      ) : created === null ? (
-        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-muted-foreground">
-            {tx(
-              "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.",
-              { machineLabel },
-            )}
-          </p>
-          <Button
-            className="shrink-0 self-start sm:self-auto"
-            size="xs"
-            variant="outline"
-            disabled={creating || !canCreate}
-            onClick={onCreate}
-          >
-            {creating
-              ? tx("Creating…")
-              : canCreate
-                ? tx("Make pairing link")
-                : tx("Manage access required")}
-          </Button>
-        </div>
-      ) : (
-        <div className="min-w-0 space-y-1.5">
-          <p className="text-xs text-foreground/80">
-            {created.link
-              ? connectBothWaysInstruction(machineLabel)
-              : `On ${machineLabel}, open Settings > Machines > Advanced > Saved connections > Add connection > Remote link, enter this machine's private address and this pairing code.`}
-          </p>
-          <div className="flex min-w-0 gap-2">
-            <Input
-              readOnly
-              size="sm"
-              className="min-w-0 flex-1 font-mono text-xs"
-              aria-label={created.link ? tx("Pairing link") : tx("Pairing code")}
-              value={created.link ?? created.code}
-              onFocus={(event) => event.currentTarget.select()}
-            />
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() =>
-                void copyText(created.link ?? created.code, created.link ? "Link" : "Pairing code")
-              }
-            >
-              {tx("Copy")}
-            </Button>
-            <Button size="xs" variant="ghost-muted" onClick={onDone}>
-              {tx("Done")}
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {renderRich(
-              tx(
-                "Works once, until {expiresAt}. Paste it only into SpecWithCode on {machineLabel}, not into a chat.",
-              ),
-              { expiresAt: created.expiresAt, machineLabel: machineLabel },
-            )}
-          </p>
-        </div>
-      )}
     </DetailLine>
   );
 }

@@ -4722,8 +4722,6 @@ export const de: PhraseCatalog = {
     "{label} konnte nicht über SpecWithCode Connect geöffnet werden. Prüfe, ob er online ist, und wähle ihn dann erneut.",
   "Could not read this machine's projects. The grant keeps its choices.":
     "Die Projekte dieses Rechners konnten nicht gelesen werden. Die Freigabe behält ihre Auswahl.",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "Jede Karte zeigt, wer wo Arbeit starten darf, in beide Richtungen. Fahre über eine Zeile für Details.",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "Jeder andere Rechner, den diese App kennt, steht schon unter „Wer hier Arbeit ausführen darf“ in Einstellungen > Rechner. Dort kannst du ihn ändern, widerrufen oder wiederherstellen.",
   "Expired: that machine must allow workers here again":
@@ -4831,8 +4829,6 @@ export const de: PhraseCatalog = {
     "Bis du es hier oder auf {coordinatorLabel} beendest. Es verlängert sich selbst.",
   "Until you stop it, here or on that machine.":
     "Bis du es beendest, hier oder auf diesem Rechner.",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "Was {thereLabel} hier nutzen darf: unter „Wer hier Arbeit ausführen darf“.",
   "When this machine wakes": "Wenn dieser Rechner aufwacht",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "Wohin „Abwesend“ deine Threads, Routinen und Koordinatoren schickt. Gilt auch, wenn dieser Rechner schläft; das Sperren des Bildschirms zählt nicht.",
@@ -5029,4 +5025,48 @@ export const de: PhraseCatalog = {
     "Die Kopie von SpecWithCode hat Version {version}, älter als die dieses Releases.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "Werkzeuge bleiben auf jedem Rechner und werden nicht kopiert. {machineName} braucht noch einige, bevor Agenten dort an diesem Projekt arbeiten können.",
+  "{there} can start work here":
+    "{there} kann hier Arbeit starten",
+  "{there} can't start work here":
+    "{there} kann hier keine Arbeit starten",
+  "This machine can start work on {there}":
+    "Dieser Rechner kann Arbeit auf {there} starten",
+  "This machine can't start work on {there}":
+    "Dieser Rechner kann keine Arbeit auf {there} starten",
+  "until you stop it":
+    "bis du es beendest",
+  "1 running thread stops at {time}.":
+    "1 laufender Thread stoppt um {time}.",
+  "{count} running threads stop at {time}.":
+    "{count} laufende Threads stoppen um {time}.",
+  "Its access ran out {date}.":
+    "Der Zugriff ist am {date} abgelaufen.",
+  "Its access ran out.":
+    "Der Zugriff ist abgelaufen.",
+  "Time limit ended {date}.":
+    "Zeitlimit endete am {date}.",
+  "Stopped {date}.":
+    "Am {date} gestoppt.",
+  "Stopped.":
+    "Gestoppt.",
+  "{there} stopped it.":
+    "{there} hat es gestoppt.",
+  "{there} has not allowed it yet.":
+    "{there} hat es noch nicht erlaubt.",
+  "Allow…":
+    "Erlauben…",
+  "Set up…":
+    "Einrichten…",
+  "Change…":
+    "Ändern…",
+  "Allow {there} to start work here for":
+    "{there} erlauben, hier Arbeit zu starten, für",
+  "More for {machine}":
+    "Mehr für {machine}",
+  "Hide connection details":
+    "Verbindungsdetails ausblenden",
+  "Let {thereLabel} start work here":
+    "{thereLabel} hier Arbeit starten lassen",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} kann hier Arbeit starten: Seine Agenten dürfen Threads in den Projekten dieses Rechners starten. Stoppen lehnt neue Arbeit sofort ab; laufende Threads stoppen 2 Minuten später. Dieser Rechner kann Arbeit auf {there} starten: Agenten hier dürfen dort Threads starten, bis zu dem Zugriff, den {there} erlaubt.",
 };

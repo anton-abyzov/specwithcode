@@ -12,6 +12,7 @@ import { buildMachineRows } from "../../src/components/settings/machinesSettings
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { AddDevicePage, MachinesPage } from "./page";
 import { WorkScene } from "./workScene";
+import { CardScene } from "./cardScene";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -173,6 +174,8 @@ createRoot(document.getElementById("root")!).render(
         />
       ) : scene === "work" ? (
         <WorkScene />
+      ) : scene === "card" ? (
+        <CardScene />
       ) : scene?.startsWith("update-pause") ? (
         <div className="mx-auto max-w-xl" data-scene={scene}>
           <UpdateCard label="M4" local os="darwin" support="supported" />

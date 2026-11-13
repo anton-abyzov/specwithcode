@@ -4702,8 +4702,6 @@ export const pt: PhraseCatalog = {
     "Não foi possível abrir {label} pelo SpecWithCode Connect. Verifique se ela está online e escolha-a de novo.",
   "Could not read this machine's projects. The grant keeps its choices.":
     "Não foi possível ler os projetos desta máquina. A permissão mantém as escolhas dela.",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "Cada cartão mostra quem pode iniciar trabalho onde, nos dois sentidos. Passe o mouse sobre uma linha para ver detalhes.",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "Todas as outras máquinas que este app conhece já estão em Quem pode executar trabalho aqui, em Configurações > Máquinas. Altere, revogue ou restaure lá.",
   "Expired: that machine must allow workers here again":
@@ -4809,8 +4807,6 @@ export const pt: PhraseCatalog = {
   "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
     "Até você parar aqui ou em {coordinatorLabel}. Renova sozinho.",
   "Until you stop it, here or on that machine.": "Até você parar, aqui ou naquela máquina.",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "O que {thereLabel} pode usar aqui: em Quem pode executar trabalho aqui.",
   "When this machine wakes": "Quando esta máquina acordar",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "Para onde Ausente envia suas threads, rotinas e coordenadores. Também é usado quando esta máquina dorme; bloquear a tela não conta.",
@@ -5001,4 +4997,48 @@ export const pt: PhraseCatalog = {
     "A cópia do SpecWithCode é a versão {version}, mais antiga que a usada por esta versão.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "As ferramentas ficam em cada máquina e não são copiadas. {machineName} ainda precisa de algumas antes que os agentes possam trabalhar neste projeto lá.",
+  "{there} can start work here":
+    "{there} pode iniciar trabalho aqui",
+  "{there} can't start work here":
+    "{there} não pode iniciar trabalho aqui",
+  "This machine can start work on {there}":
+    "Esta máquina pode iniciar trabalho em {there}",
+  "This machine can't start work on {there}":
+    "Esta máquina não pode iniciar trabalho em {there}",
+  "until you stop it":
+    "até você parar",
+  "1 running thread stops at {time}.":
+    "1 thread em execução para às {time}.",
+  "{count} running threads stop at {time}.":
+    "{count} threads em execução param às {time}.",
+  "Its access ran out {date}.":
+    "O acesso expirou em {date}.",
+  "Its access ran out.":
+    "O acesso expirou.",
+  "Time limit ended {date}.":
+    "O limite de tempo terminou em {date}.",
+  "Stopped {date}.":
+    "Parado em {date}.",
+  "Stopped.":
+    "Parado.",
+  "{there} stopped it.":
+    "{there} parou.",
+  "{there} has not allowed it yet.":
+    "{there} ainda não permitiu.",
+  "Allow…":
+    "Permitir…",
+  "Set up…":
+    "Configurar…",
+  "Change…":
+    "Alterar…",
+  "Allow {there} to start work here for":
+    "Permitir que {there} inicie trabalho aqui por",
+  "More for {machine}":
+    "Mais para {machine}",
+  "Hide connection details":
+    "Ocultar detalhes da conexão",
+  "Let {thereLabel} start work here":
+    "Deixar {thereLabel} iniciar trabalho aqui",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} pode iniciar trabalho aqui: seus agentes podem iniciar threads nos projetos desta máquina. Parar recusa trabalho novo na hora; as threads em execução param 2 minutos depois. Esta máquina pode iniciar trabalho em {there}: os agentes daqui podem iniciar threads lá, até o acesso que {there} permitir.",
 };

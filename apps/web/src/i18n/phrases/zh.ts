@@ -4511,8 +4511,6 @@ export const zh: PhraseCatalog = {
     "无法通过 SpecWithCode Connect 打开 {label}。请确认它在线，然后再次选择它。",
   "Could not read this machine's projects. The grant keeps its choices.":
     "无法读取这台电脑的项目。授权会保留其已有的选择。",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "每张卡片双向显示谁可以在哪里开始工作。将鼠标悬停在某一行上可查看详情。",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "此应用知道的其他所有电脑都已列在 设置 > 机器 的“谁可以在这里运行工作”下。请在那里更改、撤销或恢复。",
   "Expired: that machine must allow workers here again":
@@ -4614,8 +4612,6 @@ export const zh: PhraseCatalog = {
   "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
     "直到你在这里或在 {coordinatorLabel} 上停止它。它会自动续期。",
   "Until you stop it, here or on that machine.": "直到你在这里或那台电脑上停止它。",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "{thereLabel} 在这里可以使用的内容：见“谁可以在这里运行工作”。",
   "When this machine wakes": "这台电脑唤醒时",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "离开模式将你的会话、例行任务和协调者发送到哪里。这台电脑睡眠时也会使用；锁屏不算。",
@@ -4800,4 +4796,48 @@ export const zh: PhraseCatalog = {
     "SpecWithCode 的副本是 {version} 版，比此版本使用的旧。",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "工具留在各自的电脑上，不会被复制。{machineName} 还需要一些工具，智能体才能在那里处理这个项目。",
+  "{there} can start work here":
+    "{there} 可以在这里开始工作",
+  "{there} can't start work here":
+    "{there} 不能在这里开始工作",
+  "This machine can start work on {there}":
+    "此机器可以在 {there} 上开始工作",
+  "This machine can't start work on {there}":
+    "此机器不能在 {there} 上开始工作",
+  "until you stop it":
+    "直到你停止",
+  "1 running thread stops at {time}.":
+    "1 个运行中的线程将于 {time} 停止。",
+  "{count} running threads stop at {time}.":
+    "{count} 个运行中的线程将于 {time} 停止。",
+  "Its access ran out {date}.":
+    "访问权限已于 {date} 过期。",
+  "Its access ran out.":
+    "访问权限已过期。",
+  "Time limit ended {date}.":
+    "时限已于 {date} 结束。",
+  "Stopped {date}.":
+    "已于 {date} 停止。",
+  "Stopped.":
+    "已停止。",
+  "{there} stopped it.":
+    "{there} 已停止它。",
+  "{there} has not allowed it yet.":
+    "{there} 尚未允许。",
+  "Allow…":
+    "允许…",
+  "Set up…":
+    "设置…",
+  "Change…":
+    "更改…",
+  "Allow {there} to start work here for":
+    "允许 {there} 在这里开始工作的时长",
+  "More for {machine}":
+    "{machine} 的更多选项",
+  "Hide connection details":
+    "隐藏连接详情",
+  "Let {thereLabel} start work here":
+    "让 {thereLabel} 在这里开始工作",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} 可以在这里开始工作：它的代理可以在此机器的项目中启动线程。停止会立即拒绝新工作；正在运行的线程在 2 分钟后停止。此机器可以在 {there} 上开始工作：这里的代理可以在 {there} 允许的访问范围内在那里启动线程。",
 };
