@@ -108,6 +108,39 @@ try {
     await context.close();
   }
 
+  {
+    // Auto, the default: a tap keeps listening, a held chord is push-to-talk.
+    const { page, context } = await open("Linux x86_64", "mode=linux&dictation=auto");
+    await box(page, "thread").click();
+    await page.keyboard.press("Control+Shift+D");
+    await listening(page, "thread").waitFor();
+    await page.waitForTimeout(800);
+    assert.equal(await listening(page, "thread").count(), 1, "auto: a tap keeps listening");
+    await speak(page);
+    await page.waitForFunction(() =>
+      document.querySelector('[aria-label="Thread message"]').value.includes("merge"),
+    );
+    await page.screenshot({ path: `${out}/linux-auto-tap-listening.png` });
+    await page.keyboard.press("Control+Shift+D");
+    await bar(page, "thread").waitFor({ state: "detached" });
+    checks.push({ os: "linux", mode: "auto", tapKeepsListening: true, nextTapStops: true });
+
+    await page.keyboard.down("Control");
+    await page.keyboard.down("Shift");
+    await page.keyboard.down("D");
+    await listening(page, "thread").waitFor();
+    await page.waitForTimeout(700);
+    await speak(page);
+    await page.screenshot({ path: `${out}/linux-auto-hold-listening.png` });
+    await page.keyboard.up("D");
+    await page.keyboard.up("Shift");
+    await page.keyboard.up("Control");
+    await bar(page, "thread").waitFor({ state: "detached" });
+    await page.screenshot({ path: `${out}/linux-auto-hold-released.png` });
+    checks.push({ os: "linux", mode: "auto", holdReleaseStops: true });
+    await context.close();
+  }
+
   for (const mode of ["windows", "browser"]) {
     const { page, context } = await open(
       mode === "windows" ? "Win32" : "Linux x86_64",

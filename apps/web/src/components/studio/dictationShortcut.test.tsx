@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   settings: {
     voiceCallsAllowed: true,
     dictationLanguage: "",
-    dictationMode: "toggle" as "toggle" | "hold",
+    dictationMode: "toggle" as "auto" | "toggle" | "hold",
   },
   frame: null as null | ((frame: Float32Array) => void),
   openMicrophone: vi.fn(),
@@ -32,12 +32,17 @@ vi.mock("./VoiceCall", () => ({
   VoiceConsentDialog: () => null,
 }));
 import {
+  DICTATION_HOLD_MS,
   isVoiceCallLive,
   markVoiceCallLive,
   resetDictationTargetsForTest,
   useDictationShortcut,
 } from "./dictationShortcut";
-import { useVoiceDictation, type VoiceDictation } from "./VoiceDictation";
+import {
+  DICTATION_SILENCE_STOP_MS,
+  useVoiceDictation,
+  type VoiceDictation,
+} from "./VoiceDictation";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -209,6 +214,89 @@ describe("dictation shortcut", () => {
     expect(sessions.coordinator!.phase).toBe("listening");
     await press("keyup");
     expect(sessions.coordinator!.phase).not.toBe("listening");
+  });
+
+  it("in Auto mode a tap keeps listening until the next press", async () => {
+    state.settings.dictationMode = "auto";
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await mount();
+    box("coordinator").focus();
+    await press();
+    now += DICTATION_HOLD_MS - 100;
+    await press("keyup");
+    expect(sessions.coordinator!.phase).toBe("listening");
+    await speak();
+    expect(written.coordinator).toEqual(["hello there"]);
+    await press();
+    expect(sessions.coordinator!.phase).toBe("idle");
+  });
+
+  it("in Auto mode a held key is push-to-talk and stops on release", async () => {
+    state.settings.dictationMode = "auto";
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await mount();
+    box("thread").focus();
+    await press();
+    await press("keydown", { repeat: true });
+    now += DICTATION_HOLD_MS + 200;
+    await speak();
+    await press("keyup");
+    expect(sessions.thread!.active).toBe(false);
+    expect(written.thread).toEqual(["hello there"]);
+  });
+
+  it("in Auto mode the keyup of a key typed before the chord is not a tap", async () => {
+    state.settings.dictationMode = "auto";
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await mount();
+    box("thread").focus();
+    await press();
+    now += 50;
+    await press("keyup", { key: "a", code: "KeyA" });
+    expect(sessions.thread!.phase).toBe("listening");
+    now += DICTATION_HOLD_MS + 200;
+    await speak();
+    await press("keyup");
+    expect(sessions.thread!.active).toBe(false);
+    expect(written.thread).toEqual(["hello there"]);
+  });
+
+  it("letting go after the microphone already stopped leaves its message", async () => {
+    state.settings.dictationMode = "hold";
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await mount();
+    box("coordinator").focus();
+    await press();
+    const quiet = new Float32Array(1024);
+    now += DICTATION_SILENCE_STOP_MS + 1_000;
+    await act(async () => state.frame?.(quiet));
+    await flush();
+    expect(sessions.coordinator!.phase).toBe("error");
+    await press("keyup");
+    expect(sessions.coordinator!.phase).toBe("error");
+  });
+
+  it("stops a forgotten microphone after a minute of silence", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await mount();
+    box("coordinator").focus();
+    await press();
+    await speak();
+    expect(written.coordinator).toEqual(["hello there"]);
+    const quiet = new Float32Array(1024);
+    now += DICTATION_SILENCE_STOP_MS - 1_000;
+    await act(async () => state.frame?.(quiet));
+    await flush();
+    expect(sessions.coordinator!.phase).toBe("listening");
+    now += 2_000;
+    await act(async () => state.frame?.(quiet));
+    await flush();
+    expect(sessions.coordinator!.phase).toBe("idle");
   });
 
   it("follows a rebinding from Settings > Keybindings", async () => {

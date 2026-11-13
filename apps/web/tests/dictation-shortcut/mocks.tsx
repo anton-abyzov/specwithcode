@@ -5,7 +5,9 @@ export const mode = params.get("mode") ?? "darwin";
 const settings = {
   voiceCallsAllowed: true,
   dictationLanguage: params.get("language") ?? "",
-  dictationMode: params.get("dictation") === "hold" ? "hold" : "toggle",
+  dictationMode: (["auto", "hold"].includes(params.get("dictation") ?? "")
+    ? params.get("dictation")
+    : "toggle") as "auto" | "toggle" | "hold",
 };
 export const isElectron = mode !== "browser";
 export const primaryServerConfigAtom = {};

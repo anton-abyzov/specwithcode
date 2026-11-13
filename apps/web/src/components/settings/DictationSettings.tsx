@@ -49,8 +49,15 @@ export const DICTATION_LANGUAGES: ReadonlyArray<{
 ];
 
 const MODE_LABELS: Record<DictationMode, string> = {
+  auto: "Hold to talk, tap to keep on",
   toggle: "Press to start and stop",
   hold: "Hold to talk",
+};
+
+const MODE_HINTS: Record<DictationMode, string> = {
+  auto: "Hold it while you speak and let go to stop, or tap it once to keep listening until you tap again.",
+  toggle: "Press it once to start and again to stop.",
+  hold: "It listens only while you hold it.",
 };
 
 /** Select values cannot be empty, so System travels as this. */
@@ -121,7 +128,7 @@ export function DictationSettings() {
         description={
           <>
             {shortcut
-              ? `${shortcut} dictates into the message box you are in, the coordinator's or a thread's. `
+              ? `${shortcut} dictates into the message box you are in, the coordinator's or a thread's. ${MODE_HINTS[mode]} `
               : "No dictation shortcut is set. "}
             <Link to="/settings/keybindings" className="underline underline-offset-2">
               {tx("Change it in Keybindings")}
@@ -129,10 +136,10 @@ export function DictationSettings() {
           </>
         }
         resetAction={
-          mode !== "toggle" ? (
+          mode !== "auto" ? (
             <SettingResetButton
               label={tx("dictation mode")}
-              onClick={() => updateSettings({ dictationMode: "toggle" })}
+              onClick={() => updateSettings({ dictationMode: "auto" })}
             />
           ) : null
         }
@@ -140,7 +147,8 @@ export function DictationSettings() {
           <Select
             value={mode}
             onValueChange={(value) => {
-              if (value === "toggle" || value === "hold") updateSettings({ dictationMode: value });
+              if (value === "auto" || value === "toggle" || value === "hold")
+                updateSettings({ dictationMode: value });
             }}
           >
             <SelectTrigger
@@ -151,6 +159,9 @@ export function DictationSettings() {
               <SelectValue>{MODE_LABELS[mode]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="auto">
+                {MODE_LABELS.auto}
+              </SelectItem>
               <SelectItem hideIndicator value="toggle">
                 {MODE_LABELS.toggle}
               </SelectItem>

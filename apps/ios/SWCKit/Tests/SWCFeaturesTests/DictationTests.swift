@@ -44,6 +44,20 @@ struct DictationTests {
     #expect(draft == "Status: all green. ship")
   }
 
+  @Test func aForgottenMicStopsAfterSilence() async throws {
+    let engine = FakeSpeech()
+    let dictation = SpeechDictation(silenceLimit: .milliseconds(150), makeEngine: { engine })
+    var draft = ""
+    dictation.start(language: "", draft: Binding(get: { draft }, set: { draft = $0 }))
+    try await engine.started()
+    engine.emit(.partial("still talking"))
+    #expect(dictation.phase == .listening)
+    for _ in 0..<100 where dictation.phase != .idle { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(dictation.phase == .idle)
+    #expect(engine.stopped)
+    #expect(draft == "still talking")
+  }
+
   @Test func aRefusalShowsWhyAndStops() async throws {
     let engine = FakeSpeech(failure: DictationError.microphoneDenied)
     let dictation = SpeechDictation(makeEngine: { engine })
