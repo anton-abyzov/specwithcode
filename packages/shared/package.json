@@ -596,6 +596,10 @@
       "types": "./src/linkedPairSync.ts",
       "import": "./src/linkedPairSync.ts"
     },
+    "./assistantIcon": {
+      "types": "./src/assistantIcon.ts",
+      "import": "./src/assistantIcon.ts"
+    },
     "./personalAssistant": {
       "types": "./src/personalAssistant.ts",
       "import": "./src/personalAssistant.ts"

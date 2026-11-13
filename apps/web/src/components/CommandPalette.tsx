@@ -168,6 +168,11 @@ import {
   projectMachineUnavailableReason,
 } from "../studio/newProjectAvailability";
 import {
+  AssistantIconChoice,
+  suggestedAssistantIcon,
+  type AssistantLucideIcon,
+} from "./studio/AssistantIconChoice";
+import {
   projectCreationGroups,
   projectMachineGroup,
   ProjectCreationPreview,
@@ -1068,6 +1073,8 @@ function OpenCommandPaletteDialog(props: {
     /** The machine the step opened on, to say why it is the one selected. */
     readonly suggestedEnvironmentId: EnvironmentId | null;
   } | null>(null);
+  // The icon picked for a new assistant; null while the suggested one stands.
+  const [newAssistantIcon, setNewAssistantIcon] = useState<AssistantLucideIcon | null>(null);
   const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
   const [newProjectUsesSpecweave, setNewProjectUsesSpecweave] = useState(true);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
@@ -1960,6 +1967,7 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
       setNewProjectFlow({ environmentId, sourcesEnvironmentId, kind, suggestedEnvironmentId });
+      setNewAssistantIcon(null);
       setNewProjectPublishesToGitHub(false);
       setNewProjectUsesSpecweave(true);
       pushPaletteView({
@@ -3372,6 +3380,27 @@ function OpenCommandPaletteDialog(props: {
     !isCreatingNewProject &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
 
+  // Every assistant already listed, so a new one starts on an icon none of them uses.
+  const otherAssistants =
+    newProjectFlow?.kind === "personal"
+      ? projects.filter(isPersonalAssistantProject).map((project) => ({
+          icon: project.projectIcon,
+          label: assistantDisplayTitle(
+            project.title,
+            environmentLabelById.get(project.environmentId),
+            environmentLabelById.size,
+          ),
+        }))
+      : [];
+  const assistantIcon =
+    newProjectFlow?.kind === "personal"
+      ? (newAssistantIcon ??
+        suggestedAssistantIcon(
+          otherAssistants.map((other) => other.icon),
+          newProjectFlow.environmentId,
+        ))
+      : null;
+
   async function submitNewProject(): Promise<void> {
     if (newProjectFlow === null || !canSubmitNewProject || newProjectSubmittingRef.current) {
       return;
@@ -3391,6 +3420,7 @@ function OpenCommandPaletteDialog(props: {
         environmentId: newProjectFlow.environmentId,
         name: newProjectName,
         kind: newProjectFlow.kind,
+        ...(assistantIcon === null ? {} : { icon: assistantIcon }),
         // The machine's own default folder goes as no parent, so a server that has not
         // made it yet creates it instead of refusing a missing parent.
         ...(newProjectFlow.kind === "code" &&
@@ -4272,6 +4302,15 @@ function OpenCommandPaletteDialog(props: {
           path={newProjectPathPreview}
           root={newProjectsRoot}
           machine={newProjectEnvironmentLabel}
+          icon={assistantIcon}
+        />
+      ) : null}
+      {newProjectFlow !== null && assistantIcon !== null ? (
+        <AssistantIconChoice
+          value={assistantIcon}
+          onChange={setNewAssistantIcon}
+          others={otherAssistants}
+          seed={newProjectFlow.environmentId}
         />
       ) : null}
       {newProjectFlow !== null ? (

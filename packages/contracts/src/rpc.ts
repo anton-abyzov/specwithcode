@@ -409,6 +409,11 @@ import {
   AccessRequestError,
 } from "./accessRequest.ts";
 import {
+  PersonalDataAccessError,
+  PersonalDataAccessStatus,
+  PersonalDataSetAccessInput,
+} from "./personalDataAccess.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -634,6 +639,8 @@ export const WS_METHODS = {
   accessAnswerRequest: "access.answerRequest",
   accessListGrants: "access.listGrants",
   accessRevokeGrant: "access.revokeGrant",
+  personalDataStatus: "personalData.status",
+  personalDataSetAccess: "personalData.setAccess",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -2050,6 +2057,18 @@ const WsAccessRevokeGrantRpc = Rpc.make(WS_METHODS.accessRevokeGrant, {
   error: Schema.Union([AccessRequestError, EnvironmentAuthorizationError]),
 });
 
+const WsPersonalDataStatusRpc = Rpc.make(WS_METHODS.personalDataStatus, {
+  payload: Schema.Struct({}),
+  success: PersonalDataAccessStatus,
+  error: Schema.Union([PersonalDataAccessError, EnvironmentAuthorizationError]),
+});
+
+const WsPersonalDataSetAccessRpc = Rpc.make(WS_METHODS.personalDataSetAccess, {
+  payload: PersonalDataSetAccessInput,
+  success: PersonalDataAccessStatus,
+  error: Schema.Union([PersonalDataAccessError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
   WS_METHODS.scheduledTasksListWebhookDeliveries,
   {
@@ -2423,6 +2442,12 @@ export const WsGitHubSignInRpcGroup = RpcGroup.make(
   ...gitHubCredentialRpcs,
 ).middleware(RpcScopeAuthorization);
 
+/** Which machines may read the owner's personal data; its own group for the same depth reason. */
+export const WsPersonalDataRpcGroup = RpcGroup.make(
+  WsPersonalDataStatusRpc,
+  WsPersonalDataSetAccessRpc,
+).middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2444,4 +2469,5 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProvisionRpcGroup)
   .merge(WsGitHubSignInRpcGroup)
   .merge(WsDesignRpcGroup)
-  .merge(WsDesignSystemImportRpcGroup);
+  .merge(WsDesignSystemImportRpcGroup)
+  .merge(WsPersonalDataRpcGroup);

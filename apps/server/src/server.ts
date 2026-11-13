@@ -174,6 +174,8 @@ import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as CredentialFailureLimiter from "./auth/CredentialFailureLimiter.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as WorkerEpochStore from "./fleet/WorkerEpochStore.ts";
+import * as PersonalDataAccess from "./personalData/PersonalDataAccess.ts";
+import * as PersonalDataStatus from "./personalData/personalDataStatus.ts";
 import * as WorkGrants from "./fleet/WorkGrants.ts";
 import * as WorkGrantRevokeSweeper from "./fleet/workGrantRevokeSweeper.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
@@ -979,6 +981,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // thread tools and Settings, so it sits under all of them.
   // Coordinator epochs claimed here after an automatic takeover, read by the same tools.
   Layer.provideMerge(Layer.merge(WorkGrants.layer, WorkerEpochStore.layer)),
+  // Which of those machines may read the owner's mail, calendar and files here.
+  Layer.provideMerge(PersonalDataAccess.layer),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(
@@ -1016,6 +1020,8 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   // handlers live here because connections read handlers from the request context, and
   // registering them in ws.ts pushed its handler graph past TypeScript's instantiation limit.
   Layer.provideMerge(ComputerUseBroker.layerRpcHandlers),
+  // Registered here for the same reason; they read the grants and labels from the request context.
+  Layer.provideMerge(PersonalDataStatus.layerRpcHandlers),
   Layer.provideMerge(ComputerUseBroker.layer),
   Layer.provide(NetService.layer),
 );

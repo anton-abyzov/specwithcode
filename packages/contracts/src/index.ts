@@ -94,6 +94,7 @@ export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./secretRequest.ts";
 export * from "./accessRequest.ts";
+export * from "./personalDataAccess.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./studio.ts";
 

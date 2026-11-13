@@ -87,6 +87,7 @@ import {
   useThreadShells,
 } from "../../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
+import { useDistinctAssistantIcons } from "../../../hooks/useDistinctAssistantIcons";
 import { projectEnvironment } from "../../../state/projects";
 import { ChatFilterMenu } from "./ChatFilterMenu";
 import { threadLocation } from "../../../studio/threadLocation";
@@ -869,6 +870,8 @@ export default function StudioSidebar() {
   const assistantGroups = assistantGroupsOf(partition);
   const assistantMembers = assistantMembersOf(assistantGroups);
   const assistants = sortAssistantGroups(assistantGroups, assistantMembers, primaryEnvironmentId);
+  // Only while every machine answers, so each window works from the same list.
+  useDistinctAssistantIcons(assistantMembers, environments.length > 0 && unreachable.size === 0);
   const assistantHint = (group: SidebarProjectSnapshot) =>
     assistantGroupHint(
       group,

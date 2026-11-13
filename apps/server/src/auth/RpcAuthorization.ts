@@ -184,6 +184,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accessAnswerRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.accessListGrants]: AuthOrchestrationReadScope,
   [WS_METHODS.accessRevokeGrant]: AuthSettingsWriteScope,
+  // Lists which machines may read the owner's mail, calendar and files, and the log of it.
+  [WS_METHODS.personalDataStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.personalDataSetAccess]: AuthSettingsWriteScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
@@ -342,6 +345,30 @@ const requiredScopesForRpcCall = (
  * minted, which the HTTP check also lets through without an Origin. So a
  * socket from the owner's own app is the same-origin request HTTP asks for.
  */
+/**
+ * The owner's personal data and the accounts behind it: which machines may
+ * read mail, calendar and files here, the Google accounts and each project's
+ * use of them, and the Telegram chat that reaches the assistant. Another
+ * machine's key could otherwise allow itself, switch a project's Google use
+ * on, read the account addresses or re-point the chat.
+ */
+export const PERSONAL_DATA_RPC_METHODS: ReadonlyArray<string> = [
+  WS_METHODS.personalDataStatus,
+  WS_METHODS.personalDataSetAccess,
+  WS_METHODS.googleAccountStatus,
+  WS_METHODS.googleAccountConfigureClient,
+  WS_METHODS.googleAccountStartSignIn,
+  WS_METHODS.googleAccountCompleteSignIn,
+  WS_METHODS.googleAccountSetProjectAccess,
+  WS_METHODS.googleAccountDisconnect,
+  WS_METHODS.googleAccountRemove,
+  WS_METHODS.googleAccountSetLabel,
+  WS_METHODS.telegramChannelStatus,
+  WS_METHODS.telegramChannelConfigure,
+  WS_METHODS.telegramChannelUnpair,
+  WS_METHODS.telegramChannelRemove,
+];
+
 const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.awayDecideAccess,
   // Away moves this machine's threads, routines and coordinator to another
@@ -353,12 +380,15 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.awayUpdateConfig,
   // Run here anyway may let two machines run one coordinator: the owner's call alone.
   WS_METHODS.awayForceLocal,
+  ...PERSONAL_DATA_RPC_METHODS,
 ]);
 
 const ownerOnlyRpcMessage = (method: string) =>
   method === WS_METHODS.awayDecideAccess
     ? "Only this machine's owner can approve access here."
-    : "Only this machine's owner can start, stop or change Away here.";
+    : PERSONAL_DATA_RPC_METHODS.includes(method)
+      ? "Only this machine's owner can see or change personal data access here."
+      : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
