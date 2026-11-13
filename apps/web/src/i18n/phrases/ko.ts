@@ -1852,8 +1852,6 @@ export const ko: PhraseCatalog = {
     "작업을 제한할 수 있게 되기 전에 허용되었으므로, 변경할 때까지 여기의 모든 프로젝트와 로그인을 사용할 수 있습니다.",
   "Whose machine": "컴퓨터 소유자",
   "Whose machine is it": "이 컴퓨터의 소유자",
-  "Work from it may pass through {hopLimit} machine":
-    "이 컴퓨터의 작업은 최대 {hopLimit}대의 컴퓨터를 거칠 수 있습니다",
   "Projects it may run work in": "작업을 실행할 수 있는 프로젝트",
   "Sign-ins its work may use": "작업에서 사용할 수 있는 로그인",
   "Most access": "최대 액세스",
@@ -2828,8 +2826,6 @@ export const ko: PhraseCatalog = {
   "Reset to inherited value": "상속된 값으로 재설정",
   "Restore device defaults": "기기 기본값 복원",
   "Reconnect {label} to change its settings.": "설정을 변경하려면 {label}을(를) 다시 연결하세요.",
-  "Work from it may pass through {hopLimit} machines":
-    "이 컴퓨터의 작업은 최대 {hopLimit}대의 컴퓨터를 거칠 수 있습니다",
   "{length} empty placeholders": "빈 자리표시자 {length}개",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · 탭 {tabs}개 · 마지막 작업 {value2}",

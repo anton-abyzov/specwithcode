@@ -211,6 +211,11 @@ export const workGrantsSnapshot = (input: {
         label: provider.displayName ?? provider.instanceId,
         driver: provider.driver,
         account: Option.getOrNull(Option.fromNullishOr(provider.auth?.email)),
+        ...(provider.auth?.status === "authenticated"
+          ? { signedIn: true }
+          : provider.auth?.status === "unauthenticated"
+            ? { signedIn: false }
+            : {}),
       })),
     } satisfies StudioWorkGrantsSnapshot;
   });

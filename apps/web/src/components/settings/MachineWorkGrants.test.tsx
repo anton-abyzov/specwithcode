@@ -24,7 +24,14 @@ import {
   workGrantProjectsSummary,
   workGrantStatus,
 } from "./MachineWorkGrants";
-import { withReadableGrantLabels, workGrantMachineLabel } from "./machineWorkGrants.logic";
+import {
+  signInChoices,
+  withReadableGrantLabels,
+  workGrantAccessNote,
+  workGrantRoutinesNote,
+  workGrantHopPath,
+  workGrantMachineLabel,
+} from "./machineWorkGrants.logic";
 
 const m4 = EnvironmentId.make("env-m4");
 const friend = EnvironmentId.make("env-friend");
@@ -382,5 +389,98 @@ describe("who can run work on this Mac", () => {
           (children(element) as string).startsWith("No other machine can start work here"),
       ),
     ).not.toBeNull();
+  });
+
+  it("draws how far work from a machine may travel, in plain words", () => {
+    const own = workGrantHopPath({ machineLabel: "m4", hopLimit: 2 });
+    expect(own.stops.map((stop) => [stop.label, stop.kind])).toEqual([
+      ["m4", "sender"],
+      ["This machine", "here"],
+      ["1 more machine", "onward"],
+    ]);
+    expect(own.text).toContain("may itself start work on one more machine");
+    const shared = workGrantHopPath({ machineLabel: "Friend", hopLimit: 1 });
+    expect(shared.stops.at(-1)).toEqual({ label: "Another machine", kind: "blocked" });
+    expect(shared.text).toContain("stays here");
+  });
+
+  it("lists signed-in sign-ins first and keeps a chosen one the machine dropped", () => {
+    const account = (id: string, signedIn?: boolean) => ({
+      instanceId: ProviderInstanceId.make(id),
+      label: id,
+      driver: id,
+      account: null,
+      ...(signedIn === undefined ? {} : { signedIn }),
+    });
+    expect(
+      signInChoices(
+        [account("claude", false), account("codex", true), account("pi")],
+        ["codex", "gone"],
+      ).map((item) => item.instanceId),
+    ).toEqual(["codex", "pi", "claude", "gone"]);
+  });
+
+  it("marks a sign-in that is not signed in and explains an empty project choice", () => {
+    const tree = MachineWorkGrantRow({
+      grant: {
+        ...grant,
+        projects: { kind: "listed", projectIds: [] },
+        accounts: { kind: "listed", instanceIds: [] },
+      },
+      snapshot: {
+        ...snapshot,
+        projects: [],
+        accounts: [
+          {
+            instanceId: claude,
+            label: "Claude",
+            driver: "claudeAgent",
+            account: null,
+            signedIn: false,
+          },
+          {
+            instanceId: codex,
+            label: "Codex",
+            driver: "codex",
+            account: "a@example.com",
+            signedIn: true,
+          },
+        ],
+      },
+      canManage: true,
+      pending: false,
+      onChange: vi.fn(),
+    });
+    const list = (label: string) =>
+      visitElements(
+        tree,
+        (element) => element.props.label === label && Array.isArray(element.props.items),
+      );
+    expect(String(list("Projects M4MAX may use")?.props.empty)).toContain(
+      "This machine has no projects yet",
+    );
+    const items = list("Sign-ins M4MAX may use")?.props.items as ReadonlyArray<{
+      title: string;
+      note?: string;
+    }>;
+    expect(items.map((item) => [item.title, item.note])).toEqual([
+      ["Codex (a@example.com)", undefined],
+      ["Claude", "not signed in"],
+    ]);
+  });
+
+  it("says what the Routines switch does in each position and where the access limit is set", () => {
+    expect(workGrantRoutinesNote({ machineLabel: "m4", routines: true })).toContain(
+      "On: agents on m4 may create, change, run and delete scheduled routines",
+    );
+    expect(workGrantRoutinesNote({ machineLabel: "m4", routines: false })).toContain(
+      "Off: agents on m4 can start work here, but cannot create, change, run or delete scheduled routines",
+    );
+    expect(workGrantAccessNote({ machineLabel: "m4", runtimeCap: "full-access" })).toContain(
+      "Chosen on m4",
+    );
+    expect(workGrantAccessNote({ machineLabel: "m4", runtimeCap: null })).toContain(
+      "m4 sets it the next time",
+    );
   });
 });

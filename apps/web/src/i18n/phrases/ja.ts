@@ -1869,8 +1869,6 @@ export const ja: PhraseCatalog = {
     "作業を制限できるようになる前に許可されたため、変更するまでここのすべてのプロジェクトとサインインを使えます。",
   "Whose machine": "マシンの所有者",
   "Whose machine is it": "このマシンの所有者",
-  "Work from it may pass through {hopLimit} machine":
-    "このマシンからの作業は最大 {hopLimit} 台のマシンを経由できます",
   "Projects it may run work in": "作業を実行できるプロジェクト",
   "Sign-ins its work may use": "作業で使えるサインイン",
   "Most access": "最大アクセス",
@@ -2855,8 +2853,6 @@ export const ja: PhraseCatalog = {
   "Reset to inherited value": "継承値にリセット",
   "Restore device defaults": "デバイスのデフォルトに戻す",
   "Reconnect {label} to change its settings.": "設定を変更するには {label} を再接続してください。",
-  "Work from it may pass through {hopLimit} machines":
-    "このマシンからの作業は最大 {hopLimit} 台のマシンを経由できます",
   "{length} empty placeholders": "空のプレースホルダー {length} 件",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · {tabs} タブ · 最後の操作 {value2}",

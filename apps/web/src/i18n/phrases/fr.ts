@@ -1879,8 +1879,6 @@ export const fr: PhraseCatalog = {
     "Autorisé avant que le travail puisse être limité : il peut donc utiliser tous les projets et toutes les connexions ici jusqu’à ce que vous le changiez.",
   "Whose machine": "À qui appartient la machine",
   "Whose machine is it": "À qui appartient cette machine",
-  "Work from it may pass through {hopLimit} machine":
-    "Le travail venant d’elle peut passer par {hopLimit} machine",
   "Projects it may run work in": "Projets où elle peut exécuter du travail",
   "Sign-ins its work may use": "Connexions que son travail peut utiliser",
   "Most access": "Accès le plus large",
@@ -2877,8 +2875,6 @@ export const fr: PhraseCatalog = {
   "Reset to inherited value": "Revenir à la valeur héritée",
   "Restore device defaults": "Restaurer les valeurs par défaut de l’appareil",
   "Reconnect {label} to change its settings.": "Reconnectez {label} pour modifier ses réglages.",
-  "Work from it may pass through {hopLimit} machines":
-    "Le travail venant d’elle peut passer par {hopLimit} machines",
   "{length} empty placeholders": "{length} espaces réservés vides",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · {tabs} onglets · dernière action {value2}",

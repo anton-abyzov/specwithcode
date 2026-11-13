@@ -396,15 +396,22 @@ this Mac**. Each machine that may start work there has a row with:
   your own machine may pass through two machines in a row (main machine to this
   one to a third); work from someone else's machine only one. Switching a
   machine to someone else's also turns off its sign-ins until you choose them.
+  The row draws that path under the choice: the sender, this machine, and the
+  further machine it may or may not reach.
 - **Projects**: **Linked to it** (the default for new grants: projects that are
   part of a shared project with that machine), **Chosen projects**, or **All
   projects**. Work outside these is refused, and the other machine does not see
   those projects in its list.
 - **Sign-ins**: **All sign-ins**, **Chosen sign-ins** or **None**. A launch that
   asks for a sign-in outside the list is refused with a message naming the
-  allowed ones. With **None**, every launch is refused.
+  allowed ones. With **None**, every launch is refused. **Chosen sign-ins**
+  lists the agents set up on this machine, signed-in ones first; one that is
+  not signed in says so.
+- **Routines**: on, that machine's agents may create, change, run and delete
+  scheduled routines here, in the projects above. Off, they can still start
+  work here but not manage schedules.
 - **Most access**: the most a thread started from there may run with, as chosen
-  in **Allow workers** on the main machine.
+  in **Allow workers** on the main machine. It is shown here, and changed there.
 - When the grant expires, and how many threads it started here are running.
 
 That machine's own row in the list above it says **May run work here**,

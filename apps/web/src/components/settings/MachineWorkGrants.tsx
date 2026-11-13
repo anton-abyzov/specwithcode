@@ -1,7 +1,7 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
-import { useState } from "react";
-import { RefreshCwIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ArrowRightIcon, RefreshCwIcon } from "lucide-react";
 import {
   AuthAccessWriteScope,
   type EnvironmentId,
@@ -20,6 +20,10 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import {
   accountLabel,
   formatTime,
+  signInChoices,
+  workGrantAccessNote,
+  workGrantHopPath,
+  workGrantRoutinesNote,
   workGrantAccountsSummary,
   workGrantMachineLabel,
   workGrantProjectsSummary,
@@ -32,6 +36,7 @@ import { FLEET_WORKER_ACCESS_CHOICES } from "../../studio/fleetWorkers";
 import { useEnvironmentScope } from "../../state/session";
 import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { ProviderLogo, providerBrandFor, providerBrandForName } from "../ProviderLogo";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import {
@@ -63,12 +68,15 @@ const OWNER_LABELS: Record<StudioWorkGrantOwner, string> = {
 };
 
 function runtimeCapLabel(grant: StudioWorkGrant): string {
-  if (grant.runtimeCap === null) return "Set by that machine when it next starts work";
+  if (grant.runtimeCap === null) return "Not set yet";
   return (
     FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === grant.runtimeCap)?.label ??
     grant.runtimeCap
   );
 }
+
+/** Above this many choices the list gets a filter box. */
+const FILTER_FROM = 9;
 
 function CheckList<Id extends string>({
   label,
@@ -81,40 +89,116 @@ function CheckList<Id extends string>({
   label: string;
   /** What shows when there is nothing to choose. */
   empty?: string;
-  /** An item with `unavailable` is kept only while chosen: it can be cleared, never chosen. */
-  items: ReadonlyArray<{ readonly id: Id; readonly title: string; readonly unavailable?: string }>;
+  /**
+   * An item with `unavailable` is kept only while chosen: it can be cleared, never chosen.
+   * `note` is said beside an item that can still be chosen ("not signed in").
+   */
+  items: ReadonlyArray<{
+    readonly id: Id;
+    readonly title: string;
+    readonly unavailable?: string;
+    readonly note?: string | undefined;
+    readonly icon?: ReactNode;
+  }>;
   selected: ReadonlyArray<Id>;
   disabled: boolean;
   onChange: (next: ReadonlyArray<Id>) => void;
 }) {
+  const [filter, setFilter] = useState("");
   if (items.length === 0) return <p className="text-xs text-muted-foreground">{empty}</p>;
+  const needle = filter.trim().toLowerCase();
+  // A chosen item stays visible under any filter, so it can always be cleared.
+  const shown = needle
+    ? items.filter(
+        (item) => selected.includes(item.id) || item.title.toLowerCase().includes(needle),
+      )
+    : items;
   return (
-    <fieldset className="flex min-w-0 flex-wrap gap-x-4 gap-y-1" aria-label={label}>
-      {items.map((item) => {
-        const checked = selected.includes(item.id);
-        return (
-          <label
-            key={item.id}
-            className={`flex min-w-0 items-center gap-1.5 text-xs ${item.unavailable ? "text-muted-foreground" : ""}`}
-          >
-            <input
-              type="checkbox"
-              checked={checked}
-              disabled={disabled || (item.unavailable !== undefined && !checked)}
-              onChange={(event) =>
-                onChange(
-                  event.target.checked
-                    ? [...selected, item.id]
-                    : selected.filter((id) => id !== item.id),
-                )
-              }
-            />
-            <span className="truncate">{item.title}</span>
-            {item.unavailable ? <span className="shrink-0">({item.unavailable})</span> : null}
-          </label>
-        );
-      })}
-    </fieldset>
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {items.length >= FILTER_FROM ? (
+        <input
+          type="search"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder="Filter"
+          aria-label={`Filter: ${label}`}
+          className="w-40 max-w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
+        />
+      ) : null}
+      <fieldset className="flex min-w-0 flex-wrap gap-1.5" aria-label={label}>
+        {shown.map((item) => {
+          const checked = selected.includes(item.id);
+          const locked = disabled || (item.unavailable !== undefined && !checked);
+          return (
+            <label
+              key={item.id}
+              data-slot="grant-choice"
+              className={`flex min-w-0 max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${
+                checked ? "border-primary bg-accent/40" : "border-border"
+              } ${locked ? "opacity-60" : "cursor-pointer hover:bg-accent/40"} ${
+                item.unavailable || item.note ? "text-muted-foreground" : ""
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="shrink-0"
+                checked={checked}
+                disabled={locked}
+                onChange={(event) =>
+                  onChange(
+                    event.target.checked
+                      ? [...selected, item.id]
+                      : selected.filter((id) => id !== item.id),
+                  )
+                }
+              />
+              {item.icon}
+              <span className="truncate">{item.title}</span>
+              {item.unavailable ? <span className="shrink-0">({item.unavailable})</span> : null}
+              {item.note ? <span className="shrink-0">· {item.note}</span> : null}
+            </label>
+          );
+        })}
+        {shown.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nothing matches.</p>
+        ) : null}
+      </fieldset>
+    </div>
+  );
+}
+
+/**
+ * The path a launch from this machine may take, drawn as it runs: the sender,
+ * this machine, and whether it may go one machine further.
+ */
+function HopPath({ grant }: { grant: StudioWorkGrant }) {
+  const path = workGrantHopPath(grant);
+  return (
+    <span className="flex min-w-0 flex-col gap-1">
+      <span
+        className="flex min-w-0 flex-wrap items-center gap-1 text-muted-foreground"
+        data-slot="grant-hop-path"
+        aria-hidden
+      >
+        {path.stops.map((stop, index) => (
+          <span key={stop.label} className="flex min-w-0 items-center gap-1">
+            {index > 0 ? <ArrowRightIcon className="size-3 shrink-0" /> : null}
+            <span
+              className={`truncate rounded-md border px-1.5 py-0.5 ${
+                stop.kind === "blocked"
+                  ? "border-dashed line-through"
+                  : stop.kind === "here"
+                    ? "border-primary text-foreground"
+                    : "border-border"
+              }`}
+            >
+              {stop.label}
+            </span>
+          </span>
+        ))}
+      </span>
+      <span className="text-muted-foreground">{path.text}</span>
+    </span>
   );
 }
 
@@ -251,14 +335,10 @@ export function MachineWorkGrantRow({
             disabled={busy}
             onChange={(owner) => update({ owner })}
           />
-          <span className="text-muted-foreground">
-            {tx(
-              grant.hopLimit === 1
-                ? "Work from it may pass through {hopLimit} machine"
-                : "Work from it may pass through {hopLimit} machines",
-              { hopLimit: grant.hopLimit },
-            )}
-          </span>
+        </dd>
+        <dt aria-hidden />
+        <dd className="min-w-0">
+          <HopPath grant={grant} />
         </dd>
         <dt className="text-muted-foreground">{tx("Projects")}</dt>
         <dd className="flex min-w-0 flex-col gap-1.5">
@@ -292,7 +372,10 @@ export function MachineWorkGrantRow({
               label={`Projects ${grant.machineLabel} may use`}
               {...(snapshot.projectsUnreadable === true
                 ? { empty: "Could not read this machine's projects. The grant keeps its choices." }
-                : {})}
+                : {
+                    empty:
+                      "This machine has no projects yet, so there is nothing to choose and every launch is refused. Add a project folder here, or hand a project off to this machine, then choose it.",
+                  })}
               items={snapshot.projects.flatMap((project) =>
                 project.unavailable === undefined
                   ? [{ id: project.id, title: project.title }]
@@ -338,10 +421,18 @@ export function MachineWorkGrantRow({
           {grant.accounts.kind === "listed" ? (
             <CheckList<ProviderInstanceId>
               label={`Sign-ins ${grant.machineLabel} may use`}
-              items={snapshot.accounts.map((account) => ({
-                id: account.instanceId,
-                title: accountLabel(account),
-              }))}
+              empty="This machine has no agent sign-ins yet. Add one under Settings > Providers."
+              items={signInChoices(snapshot.accounts, listedAccounts).map((account) => {
+                const brand =
+                  providerBrandFor({ driverKind: account.driver }) ??
+                  providerBrandForName(account.label, account.driver);
+                return {
+                  id: account.instanceId,
+                  title: accountLabel(account),
+                  note: account.signedIn === false ? "not signed in" : undefined,
+                  icon: brand ? <ProviderLogo brand={brand} className="size-3.5" /> : null,
+                };
+              })}
               selected={listedAccounts}
               disabled={busy}
               onChange={(instanceIds) => update({ accounts: { kind: "listed", instanceIds } })}
@@ -349,25 +440,23 @@ export function MachineWorkGrantRow({
           ) : null}
         </dd>
         <dt className="text-muted-foreground">{tx("Routines")}</dt>
-        <dd className="flex min-w-0 flex-wrap items-center gap-2">
+        <dd className="flex min-w-0 items-start gap-2">
           <Switch
+            className="mt-0.5 shrink-0"
             aria-label={`Let ${grant.machineLabel} manage scheduled routines`}
             checked={grant.routines}
             disabled={busy}
             onCheckedChange={(checked) => update({ routines: Boolean(checked) })}
           />
-          <span className="min-w-0 text-muted-foreground">
-            {tx(
-              !grant.routines
-                ? "Manage scheduled routines: off"
-                : grant.kind === "own"
-                  ? "Manage scheduled routines: it may create, change, run and delete your routines in its projects here"
-                  : "Manage scheduled routines: it may create, change, run and delete routines in its projects here",
-            )}
+          <span className="min-w-0 text-muted-foreground" data-slot="grant-routines-note">
+            {workGrantRoutinesNote(grant)}
           </span>
         </dd>
         <dt className="text-muted-foreground">{tx("Most access")}</dt>
-        <dd className="text-muted-foreground">{runtimeCapLabel(grant)}</dd>
+        <dd className="flex min-w-0 flex-col gap-0.5" data-slot="grant-access-limit">
+          <span>{runtimeCapLabel(grant)}</span>
+          <span className="text-muted-foreground">{workGrantAccessNote(grant)}</span>
+        </dd>
       </dl>
     </li>
   );

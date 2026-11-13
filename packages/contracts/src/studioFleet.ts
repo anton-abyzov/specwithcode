@@ -483,6 +483,8 @@ export const StudioWorkGrantsSnapshot = Schema.Struct({
       driver: Schema.String,
       /** The signed-in account, when the provider reports one. */
       account: Schema.NullOr(Schema.String),
+      /** Whether the provider is signed in here. Absent when unknown and from older servers. */
+      signedIn: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   /**
