@@ -98,6 +98,51 @@ if (params.get("scenario") === "projects") {
   });
 }
 
+// `?scenario=elsewhere`: the list Anton saw on November 13, 2026, viewed from "host":
+// two projects have a copy here, the rest live only on other machines. Those sit
+// below an "On other machines" label, greyed, each with its machine's tag.
+if (params.get("scenario") === "elsewhere") {
+  const project = (key: string, name: string, machines: string[]) => {
+    const here = machines.includes("host");
+    return {
+      projectKey: `logical:${key}`,
+      displayName: name,
+      workspaceRoot: `/Users/me/Projects/${key}`,
+      environmentPresence: here
+        ? machines.length > 1
+          ? "mixed"
+          : "local-only"
+        : "remote-only",
+      allRemoteMembersAreDesktopLocal: false,
+      memberProjects: machines.map((environmentId) => ({
+        environmentId,
+        environmentLabel: environmentId,
+        id: `${key}-${environmentId}`,
+        title: name,
+        workspaceRoot: `/Users/me/Projects/${key}`,
+        workspaceSettings: { kind: "code", archived: false, revision: 1 },
+      })),
+    };
+  };
+  publish({
+    environments: [
+      { environmentId: "host", label: "M5" },
+      { environmentId: "m4", label: "m4" },
+      { environmentId: "m1", label: "m1" },
+      { environmentId: "linux-mini", label: "linux-mini" },
+    ],
+    groups: [
+      project("ai-com", "ai-company", ["linux-mini"]),
+      project("easychamp", "EasyChamp", ["m4", "m1"]),
+      project("firstproject", "firstproject", ["host"]),
+      project("fortnite", "fortnite-3js", ["m4", "m1"]),
+      project("hack-openai", "hack26-openai", ["m4"]),
+      project("specweave", "specweave", ["host", "m4"]),
+      project("sketchmate", "sketchmate_pro", ["m1"]),
+    ],
+  });
+}
+
 // `?scenario=automated-attention`: coordinators asking in the person's projects and in
 // checks' projects. Only a project nobody works in stays quiet; one merely named like a
 // check keeps its count, and a name that starts with a number gets real initials.

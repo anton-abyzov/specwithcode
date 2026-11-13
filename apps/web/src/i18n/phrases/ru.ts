@@ -4877,4 +4877,5 @@ export const ru: PhraseCatalog = {
   "Not signed in": "Вход не выполнен",
   "Sign in with {account}": "Войти через {account}",
   "Turn it on to use it in chat.": "Включите его, чтобы использовать в чате.",
+  "On other machines": "На других компьютерах",
 };

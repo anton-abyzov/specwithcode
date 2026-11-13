@@ -77,9 +77,10 @@ import {
 import { isTerminalFocused } from "../../../lib/terminalFocus";
 import { isModelPickerOpen } from "../../../modelPickerVisibility";
 import { resolveAdjacentThreadId } from "../../Sidebar.logic";
-import type {
-  SidebarProjectGroupMember,
-  SidebarProjectSnapshot,
+import {
+  localCopiesFirst,
+  type SidebarProjectGroupMember,
+  type SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
 import {
   useAllEnvironmentProjectSnapshotsReady,
@@ -879,11 +880,13 @@ export default function StudioSidebar() {
       (environmentId) => machineLabels.get(environmentId as EnvironmentId),
       environments.length,
     );
-  // Pinned projects lead, then the rest, both in the person's order.
-  const arranged = arrangeProjects(
+  // Pinned projects lead, then the rest, both in the person's order. Among the rest, the
+  // ones this device can run come first; projects only on other machines follow, labelled.
+  const ordered = arrangeProjects(
     listedProjects.filter((group) => !isPersonalGroup(group)),
     projectOrder,
   );
+  const arranged = { pinned: ordered.pinned, unpinned: localCopiesFirst(ordered.unpinned) };
   const codeProjects = [...arranged.pinned, ...arranged.unpinned];
   const nameHints = sameNameHints(codeProjects, (group) =>
     displayNameOf(group, displayedCheckouts.get(group.projectKey)),

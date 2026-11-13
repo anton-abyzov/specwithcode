@@ -4879,4 +4879,5 @@ export const ja: PhraseCatalog = {
   "Not signed in": "未サインイン",
   "Sign in with {account}": "{account} でサインイン",
   "Turn it on to use it in chat.": "チャットで使うにはオンにしてください。",
+  "On other machines": "他のマシン上",
 };

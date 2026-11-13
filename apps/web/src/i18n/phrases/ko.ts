@@ -4823,4 +4823,5 @@ export const ko: PhraseCatalog = {
   "Not signed in": "로그인 안 됨",
   "Sign in with {account}": "{account} 계정으로 로그인",
   "Turn it on to use it in chat.": "채팅에서 사용하려면 켜세요.",
+  "On other machines": "다른 컴퓨터에 있음",
 };

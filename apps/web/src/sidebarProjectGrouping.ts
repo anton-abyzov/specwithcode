@@ -253,6 +253,29 @@ export function withPendingMachineAdds<TProject extends Project>(
 }
 
 /**
+ * True when this device has no copy of the project: it opens and runs on another
+ * machine. A copy in a sandbox on this device counts as one here.
+ */
+export function hasNoCopyHere(
+  group: Pick<SidebarProjectSnapshot, "environmentPresence" | "allRemoteMembersAreDesktopLocal">,
+): boolean {
+  return group.environmentPresence === "remote-only" && !group.allRemoteMembersAreDesktopLocal;
+}
+
+/**
+ * Projects this device can run itself first, then the ones on other machines, each
+ * part in the person's order: the sidebar lists the second part under its own label.
+ */
+export function localCopiesFirst<
+  T extends Pick<SidebarProjectSnapshot, "environmentPresence" | "allRemoteMembersAreDesktopLocal">,
+>(groups: ReadonlyArray<T>): T[] {
+  return [
+    ...groups.filter((group) => !hasNoCopyHere(group)),
+    ...groups.filter((group) => hasNoCopyHere(group)),
+  ];
+}
+
+/**
  * The machines a project lives on when this device has no copy of it, in the
  * order the group lists them and each named once. Empty when this device has
  * a copy, or when the only other copies sit in a sandbox on this device: such a
@@ -265,9 +288,7 @@ export function remoteOnlyMachines(
   >,
   nameOf: (environmentId: EnvironmentId, fallbackLabel: string | null) => string,
 ): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly name: string }> {
-  if (group.environmentPresence !== "remote-only" || group.allRemoteMembersAreDesktopLocal) {
-    return [];
-  }
+  if (!hasNoCopyHere(group)) return [];
   const machines: Array<{ environmentId: EnvironmentId; name: string }> = [];
   for (const member of group.memberProjects) {
     if (machines.some((machine) => machine.environmentId === member.environmentId)) continue;

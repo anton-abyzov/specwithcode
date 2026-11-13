@@ -1,7 +1,11 @@
 import { EnvironmentId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remoteOnlyMachines, type SidebarProjectSnapshot } from "./sidebarProjectGrouping";
+import {
+  localCopiesFirst,
+  remoteOnlyMachines,
+  type SidebarProjectSnapshot,
+} from "./sidebarProjectGrouping";
 
 const m5 = EnvironmentId.make("env-m5");
 const m1 = EnvironmentId.make("env-m1");
@@ -51,5 +55,23 @@ describe("remoteOnlyMachines", () => {
         nameOf,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("localCopiesFirst", () => {
+  it("lists projects this device can run first, then the rest, each in the person's order", () => {
+    const row = (name: string, presence: SidebarProjectSnapshot["environmentPresence"], sandbox = false) => ({
+      name,
+      environmentPresence: presence,
+      allRemoteMembersAreDesktopLocal: sandbox,
+    });
+    const order = localCopiesFirst([
+      row("ai-com", "remote-only"),
+      row("easychamp", "mixed"),
+      row("firstproject", "local-only"),
+      row("sketchmate", "remote-only"),
+      row("sandboxed", "remote-only", true),
+    ]).map((item) => item.name);
+    expect(order).toEqual(["easychamp", "firstproject", "sandboxed", "ai-com", "sketchmate"]);
   });
 });

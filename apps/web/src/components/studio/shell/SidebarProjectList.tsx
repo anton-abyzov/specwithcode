@@ -50,6 +50,7 @@ import {
   Share2Icon,
 } from "lucide-react";
 import {
+  Fragment,
   lazy,
   Suspense,
   useCallback,
@@ -88,6 +89,7 @@ import {
   type ProjectNotificationLevel,
 } from "@specweave-studio/shared/projectNotifications";
 import {
+  hasNoCopyHere,
   remoteOnlyMachines,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
@@ -421,7 +423,24 @@ export function SidebarProjectList(props: {
               {visible.pinned.length === 0 ? <span>{tx("Drop here to pin")}</span> : null}
             </li>
           ) : null}
-          {visible.unpinned.map((group) => renderRow(group, false))}
+          {visible.unpinned.map((group, index) =>
+            // The list puts projects only on other machines last; a label starts them.
+            hasNoCopyHere(group) &&
+            (index === 0 || !hasNoCopyHere(visible.unpinned[index - 1]!)) ? (
+              <Fragment key={`elsewhere:${group.projectKey}`}>
+                <li
+                  role="presentation"
+                  className="sws-project-elsewhere-divider"
+                  data-project-elsewhere-divider
+                >
+                  <span>{tx("On other machines")}</span>
+                </li>
+                {renderRow(group, false)}
+              </Fragment>
+            ) : (
+              renderRow(group, false)
+            ),
+          )}
         </ul>
         {insertion ? (
           <div

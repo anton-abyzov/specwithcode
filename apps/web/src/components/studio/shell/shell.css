@@ -1115,12 +1115,35 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   opacity: 0.7;
 }
 /* No copy on this device: the project runs on its machine, named by the tag, so the
-   row reads quieter than the projects this device can run itself. It still opens. */
+   row reads clearly quieter than the projects this device can run itself: a grey
+   icon and a muted name (still the muted text color, so it stays readable). It still
+   opens, and hovering it brings its colors back. */
 .sws-project-row[data-elsewhere] .sws-side-row-label {
   color: var(--sidebar-muted-foreground);
 }
 .sws-project-row[data-elsewhere] .sws-side-row > :first-child {
-  opacity: 0.6;
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.sws-project-row[data-elsewhere] .sws-side-row:is(:hover, :focus-visible) > :first-child {
+  filter: none;
+  opacity: 0.85;
+}
+/* "On other machines": starts the projects this device has no copy of. */
+.sws-project-elsewhere-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 8px 2px;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  color: var(--sidebar-muted-foreground);
+}
+.sws-project-elsewhere-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
 }
 .sws-project-row .sws-row-machine.sws-project-elsewhere[data-machine-color] {
   width: auto;
