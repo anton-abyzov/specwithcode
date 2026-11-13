@@ -13,6 +13,7 @@ import {
   MessageSquareShareIcon,
   MoveRightIcon,
   PlayIcon,
+  RefreshCwIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
@@ -77,6 +78,7 @@ export function OrchestratorSwitcher({
   savedMachineMissing,
   onView,
   onMove,
+  onSync = null,
   onStart,
   onAllowWorkers,
   onMigrate = null,
@@ -101,6 +103,8 @@ export function OrchestratorSwitcher({
   onView: ((key: string) => void) | null;
   /** Opens the confirmed coordinator move; null when it cannot be offered. */
   onMove: ((key: string) => void) | null;
+  /** "Sync to X…": fill in what X's own copy is missing; the coordinator stays here. */
+  onSync?: ((key: string) => void) | null;
   onStart: ((key: string) => void) | null;
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
@@ -157,10 +161,21 @@ export function OrchestratorSwitcher({
     ambiguous(copy.machine) ? `${copy.machine} · ${copy.folder}` : copy.machine;
   const others = listed.filter((copy) => copy.key !== current);
   const starts = onStart ? others.filter((copy) => copy.canStart) : [];
-  const movable = onMove ? others.filter((copy) => copy.role !== "pending") : [];
+  // A copy running its own coordinator already has the project: moving this coordinator there
+  // is refused, so it offers Sync instead. Move stays for copies that run only workers.
+  const movable = onMove
+    ? others.filter((copy) => copy.role === "workers" || copy.role === "independent")
+    : [];
+  const syncable = onSync
+    ? others.filter((copy) => copy.role === "coordinator" || copy.role === "workers")
+    : [];
   // Add, the moves and Start act on this project; threads and Leave on the viewed machine.
   const projectActions =
-    onAdd !== null || onMoveElsewhere !== null || movable.length > 0 || starts.length > 0;
+    onAdd !== null ||
+    onMoveElsewhere !== null ||
+    movable.length > 0 ||
+    syncable.length > 0 ||
+    starts.length > 0;
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
@@ -265,6 +280,18 @@ export function OrchestratorSwitcher({
                   {tx("Move to {machine}…", { machine: nameOf(copy) })}
                 </MenuItem>
               ))}
+              {syncable.map((copy) => (
+                <MenuItem
+                  key={copy.key}
+                  data-orchestrator-sync={copy.key}
+                  onClick={() => {
+                    pendingView.current = () => onSync?.(copy.key);
+                  }}
+                >
+                  <RefreshCwIcon aria-hidden />
+                  {tx("Sync to {machine}…", { machine: nameOf(copy) })}
+                </MenuItem>
+              ))}
               {onMoveElsewhere ? (
                 <MenuItem
                   data-machine-action="move"
@@ -352,6 +379,7 @@ export function ProjectOrchestratorSwitcher({
   savedMachineMissing,
   onView,
   onMove,
+  onSync = null,
   onAdd = null,
   onMoveElsewhere = null,
 }: {
@@ -367,6 +395,7 @@ export function ProjectOrchestratorSwitcher({
   savedMachineMissing: boolean;
   onView: ((key: string) => void) | null;
   onMove: ((key: string) => void) | null;
+  onSync?: ((key: string) => void) | null;
   onAdd?: (() => void) | null;
   onMoveElsewhere?: (() => void) | null;
 }) {
@@ -389,6 +418,7 @@ export function ProjectOrchestratorSwitcher({
       savedMachineMissing={savedMachineMissing}
       onView={onView}
       onMove={onMove}
+      onSync={onSync}
       onAdd={onAdd}
       onMoveElsewhere={onMoveElsewhere}
       // Away mode runs on this device's machine, so it is offered only there.

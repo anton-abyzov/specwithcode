@@ -861,6 +861,62 @@ it("opens straight on the folder copy review, on the machine Run on picked", asy
   });
 });
 
+it("syncs into the copy chosen in the menu: its machine and folder, never a draft's", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [
+    source,
+    { ...target, id: "m3-other", environmentId: "m3", workspaceRoot: "/other" },
+    { ...target, id: "m3-target", environmentId: "m3", workspaceRoot: "/m3-target" },
+  ];
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={source as never}
+        coordinatorId={"coordinator" as never}
+        showTrigger={false}
+        openRequest={{ mode: "sync", seq: 1, target: "m3:m3-target" }}
+      />,
+    ),
+  );
+  expect(props().intent).toBe("copy");
+  expect(props().method).toBe("copy");
+  expect(props().sync).toEqual({ machine: "M3", folder: "/m3-target" });
+  const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
+  // Requested, so a saved draft or last copy cannot swap the machine or its folder.
+  expect(copy).toMatchObject({
+    preferredMachine: "m3",
+    machineRequested: true,
+    defaultMode: "copy-only",
+    canMove: false,
+  });
+  expect((copy.savedFolder as (id: string) => string | null)("m3")).toBe("/m3-target");
+  // Another machine chosen in the form is an ordinary copy there, not a sync.
+  await act(async () =>
+    (copy.onChoicesChange as (choices: Record<string, unknown>) => void)({
+      mode: "copy-only",
+      machine: "m1",
+      done: false,
+    }),
+  );
+  expect(props().sync).toBeNull();
+});
+
+it("refuses a sync whose copy is gone instead of guessing a folder", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [source];
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={source as never}
+        coordinatorId={"coordinator" as never}
+        showTrigger={false}
+        openRequest={{ mode: "sync", seq: 1, target: "m3:missing" }}
+      />,
+    ),
+  );
+  expect(props().open).toBe(false);
+});
+
 it("resumes an unfinished handoff instead of opening on sharing", async () => {
   localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
   await mount();
@@ -1188,7 +1244,7 @@ it("lets a running folder copy close, keeps it, and watches it app wide until th
   expect(currentCopyWatches().has("m4:source")).toBe(true);
 });
 
-it("opens Move coordinator to X as a move with X chosen for the copy and the Git move", async () => {
+it("opens Move coordinator to X with its own checkout as the Git move: nothing to copy", async () => {
   state.environments = machineEnvironments;
   state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
   localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m1" }));
@@ -1205,11 +1261,9 @@ it("opens Move coordinator to X as a move with X chosen for the copy and the Git
   expect(props().intent).toBe("move");
   expect(props().selected).toBe("m3:m3-target");
   expect(props().machine).toBe("m3");
-  const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
-  expect(copy.preferredMachine).toBe("m3");
-  // Requested, so a saved draft or last copy cannot swap the machine or the move.
-  expect(copy.machineRequested).toBe(true);
-  expect(copy.defaultMode).toBe("copy-and-move");
+  // X already has the project in its own folder: only the coordinator moves, through Git.
+  expect(props().method).toBe("folder");
+  expect(props().copyFlow).toBeUndefined();
 });
 
 it("says why Move project is off: a focusable button that describes the reason and does nothing", async () => {

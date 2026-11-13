@@ -94,6 +94,24 @@ it("moves the coordinator only from its own item", async () => {
   expect(calls.onView).not.toHaveBeenCalled();
 });
 
+it("offers Sync, not Move, for a machine that runs its own coordinator", async () => {
+  const calls = handlers();
+  const onSync = vi.fn<(key: string) => void>();
+  await renderSwitcher({
+    ...calls,
+    onSync,
+    copies: [copy("m4:p", "M4"), copy("mini:p", "Mini"), copy("minis:p", "Minis", "workers")],
+  });
+  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  expect(labels).not.toContain("Move to Mini…");
+  expect(labels).toContain("Sync to Mini…");
+  expect(labels).toContain("Move to Minis…");
+  expect(labels).toContain("Sync to Minis…");
+  await act(async () => item("menuitem", "Sync to Mini…")!.click());
+  await vi.waitFor(() => expect(onSync).toHaveBeenCalledWith("mini:p"));
+  expect(calls.onMove).not.toHaveBeenCalled();
+});
+
 it("starts a coordinator on a ready workers-only copy", async () => {
   const calls = handlers();
   await renderSwitcher(calls);

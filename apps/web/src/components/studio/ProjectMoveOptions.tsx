@@ -33,6 +33,8 @@ export interface ProjectMoveDialogContext {
   readonly machinesLoading?: boolean;
   /** Shown under every machine list: account machines this app has not saved. */
   readonly machinesExtra?: ReactNode;
+  /** Sync into a machine that already has the project: only files travel, nothing to hand off. */
+  readonly sync?: boolean;
 }
 
 export const ProjectMoveDialog = createContext<ProjectMoveDialogContext | null>(null);
@@ -53,6 +55,8 @@ export function MoveIntentToggle({
   readonly canMove: boolean;
   readonly disabled?: boolean;
 }) {
+  // A sync never hands off: the other machine already has this project and its coordinator.
+  if (useProjectMoveDialog()?.sync) return null;
   return (
     <ToggleGroup
       aria-label="What to do"

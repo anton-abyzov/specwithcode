@@ -19,6 +19,7 @@ import {
   AuthSettingsWriteScope,
   logicalProjectTitle,
   repositoryGroupingKeyOf,
+  repositoryRelativePathOf,
   type MachineHandoffPrepareResult,
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
@@ -112,9 +113,25 @@ const isInterruptedMessage = (message: string) => message.includes("fibers inter
  * Add to another machine… for a project with no Git remote, which has nothing to clone.
  */
 export interface MachineHandoffOpenRequest {
-  readonly mode: "add" | "move" | "copy";
+  /** "sync": a copy-only review into `machine`'s existing folder; the coordinator stays here. */
+  readonly mode: "add" | "move" | "copy" | "sync";
   readonly seq: number;
   readonly machine?: EnvironmentId;
+  /** "sync": the copy chosen in the menu, `${environmentId}:${projectId}`. */
+  readonly target?: string;
+}
+
+/**
+ * A project folder that is its repository's root, not a folder inside a larger one. Git
+ * reports the root with links resolved, so a home linked elsewhere (`/home/anton` to
+ * `/srv/work`) still counts as its own checkout. Without a known root, the folder is its own.
+ */
+function ownCheckout(item: {
+  readonly workspaceRoot: string;
+  readonly repositoryIdentity?: { readonly rootPath?: string | undefined } | null | undefined;
+}): boolean {
+  const root = item.repositoryIdentity?.rootPath;
+  return !root || repositoryRelativePathOf(item.workspaceRoot, root) === "";
 }
 
 export function ProjectMachineHandoff({
@@ -202,6 +219,8 @@ export function ProjectMachineHandoff({
   const [method, setMethod] = useState<HandoffFolderMethod>("copy");
   // Opening the dialog means moving the project; "Copy files only" is the other choice.
   const [intent, setIntent] = useState<MoveIntent>("move");
+  // "Sync to X…": X already has this project, so only files travel, into its own folder.
+  const [syncKey, setSyncKey] = useState<string | null>(null);
   // The copy flow's machine, so switching to Git keeps it.
   const [copyMachine, setCopyMachine] = useState<EnvironmentId | null>(null);
   const [copyDone, setCopyDone] = useState(false);
@@ -234,6 +253,9 @@ export function ProjectMachineHandoff({
     : null;
   // Sidebar grouping is presentation only. Shell projects omit deleted registrations;
   // transfers still require a known matching repository on another environment.
+  const logicalId = project.workspaceSettings?.logicalProject?.id ?? null;
+  // A linked copy of this project is a destination even when its repository reads differently
+  // there (or not yet); the destination still verifies the repository before anything moves.
   const candidates = useMemo(
     () =>
       projects.filter(
@@ -241,10 +263,11 @@ export function ProjectMachineHandoff({
           item.environmentId !== project.environmentId &&
           !isArchivedMember(item) &&
           isProjectFolder(item.workspaceRoot, item.id) &&
-          item.repositoryIdentity != null &&
-          repositoryGroupingKeyOf(item.repositoryIdentity) === repositoryKey,
+          ((logicalId !== null && item.workspaceSettings?.logicalProject?.id === logicalId) ||
+            (item.repositoryIdentity != null &&
+              repositoryGroupingKeyOf(item.repositoryIdentity) === repositoryKey)),
       ),
-    [projects, project.environmentId, repositoryKey],
+    [projects, project.environmentId, repositoryKey, logicalId],
   );
   const destinations = candidates.map((item) => {
     const environment = environments.find((entry) => entry.environmentId === item.environmentId);
@@ -438,8 +461,15 @@ export function ProjectMachineHandoff({
   );
   useEffect(() => {
     if (!requestedTarget) return;
-    // "Move coordinator to X": move, with X chosen whichever way the files travel.
+    // "Move coordinator to X": move, with X chosen whichever way the files travel. When X
+    // already has its own checkout, nothing needs copying: the Git handoff points the
+    // coordinator at that folder.
+    const existing = candidates.find(
+      (item) => `${item.environmentId}:${item.id}` === requestedTarget,
+    );
     setIntent("move");
+    setSyncKey(null);
+    setMethod(existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : "copy");
     setShareView(false);
     setSelected(requestedTarget);
     setPickerMachine(null);
@@ -755,6 +785,17 @@ export function ProjectMachineHandoff({
     !snapshot &&
     phase === "choose" &&
     project.workspaceSettings?.coordinatorBinding?.state !== "transferring";
+  // Sync names the machine's own folder, the one the copy fills in.
+  // The copy chosen in the menu, never another copy on the same machine.
+  const syncCopy = syncKey
+    ? candidates.find((item) => `${item.environmentId}:${item.id}` === syncKey)
+    : undefined;
+  const syncLabel = machines.find((item) => item.id === syncCopy?.environmentId)?.label;
+  // Choosing another machine in the copy form makes it an ordinary copy there.
+  const syncTo =
+    syncCopy && syncLabel && (copyMachine === null || copyMachine === syncCopy.environmentId)
+      ? { machine: syncLabel, folder: syncCopy.workspaceRoot }
+      : null;
   const shareConfig = gitMachine ? configs.get(gitMachine)?.environment.capabilities : undefined;
 
   /**
@@ -763,10 +804,23 @@ export function ProjectMachineHandoff({
    */
   const openDialog = (
     mode: MachineHandoffOpenRequest["mode"],
-    machine?: EnvironmentId | undefined,
+    requestedMachineId?: EnvironmentId | undefined,
+    syncTarget?: string | undefined,
   ) => {
     if (!sourceReady) return;
+    const syncCandidate =
+      mode === "sync"
+        ? candidates.find((item) => `${item.environmentId}:${item.id}` === syncTarget)
+        : undefined;
+    // A sync whose copy is gone has no folder to fill in; it never falls back to a guess.
+    if (mode === "sync" && !syncCandidate) {
+      toastManager.add({ type: "warning", title: "That machine's copy of this project is gone." });
+      return;
+    }
+    const machine = syncCandidate?.environmentId ?? requestedMachineId;
     changeOpen(true);
+    setSyncKey(syncCandidate ? syncTarget! : null);
+    if (syncCandidate) setCopyMachine(null);
     if (!snapshot) {
       setIntent("move");
       try {
@@ -785,15 +839,6 @@ export function ProjectMachineHandoff({
           (item) => item.environmentId === preferred && !item.unavailable,
         );
         // A project inside a larger repository has no checkout of its own to continue in.
-        const ownCheckout = (item: {
-          readonly workspaceRoot: string;
-          readonly repositoryIdentity?:
-            | { readonly rootPath?: string | undefined }
-            | null
-            | undefined;
-        }) =>
-          (item.repositoryIdentity?.rootPath ?? item.workspaceRoot).replaceAll("\\", "/") ===
-          item.workspaceRoot.replaceAll("\\", "/");
         const preferredProject = candidates.find(
           (item) => `${item.environmentId}:${item.id}` === preferredFolder?.key,
         );
@@ -824,7 +869,7 @@ export function ProjectMachineHandoff({
       setShareView(false);
       setIntent("move");
     }
-    if (mode === "copy" && !snapshot) {
+    if ((mode === "copy" || mode === "sync") && !snapshot) {
       setShareView(false);
       setIntent("copy");
       setMethod("copy");
@@ -843,7 +888,7 @@ export function ProjectMachineHandoff({
     // The menu has no tooltip to explain a refusal, so it says why here.
     const reason = latestBlockedReason.current;
     if (reason) toastManager.add({ type: "warning", title: reason });
-    else latestOpenDialog.current(openRequest.mode, openRequest.machine);
+    else latestOpenDialog.current(openRequest.mode, openRequest.machine, openRequest.target);
   }, [openRequest]);
 
   return (
@@ -875,6 +920,7 @@ export function ProjectMachineHandoff({
         }
         sourceLabel={source?.label ?? "This machine"}
         projectTitle={logicalProjectTitle(project)}
+        sync={syncTo}
         workspaceContext={workspaceContext}
         destinationCheckout={receipt?.workspacePath ?? previewCheckout}
         destinationWorktreeStorage={destinationDefaultWorktreeStorage(
@@ -1000,11 +1046,16 @@ export function ProjectMachineHandoff({
                   configs.get(item.id)?.environment.capabilities?.memoryThreeWay === true,
               }))}
               savedFolder={(environmentId) =>
-                candidates.find((item) => item.environmentId === environmentId)?.workspaceRoot ??
-                null
+                (syncCopy?.environmentId === environmentId
+                  ? syncCopy.workspaceRoot
+                  : candidates.find((item) => item.environmentId === environmentId)
+                      ?.workspaceRoot) ?? null
               }
-              preferredMachine={requestedMachine ?? gitMachine ?? suggestedMachine}
-              machineRequested={requestedMachine !== null}
+              preferredMachine={
+                requestedMachine ?? syncCopy?.environmentId ?? gitMachine ?? suggestedMachine
+              }
+              // Requested, so a saved draft or last copy cannot swap the machine or its folder.
+              machineRequested={requestedMachine !== null || syncCopy !== undefined}
               defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
               onChoicesChange={({ mode, machine, done }) => {
                 setIntent(mode === "copy-and-move" ? "move" : "copy");
@@ -1019,7 +1070,7 @@ export function ProjectMachineHandoff({
                     copyDestinationKey(environmentId, folder),
                 ) ?? null
               }
-              canMove={sourceReady}
+              canMove={sourceReady && !syncTo}
               onBusyChange={setCopyBusy}
               onCloseLockChange={setCopyLocked}
               onOpenProject={({ environmentId, projectId, folder }) => {
