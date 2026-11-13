@@ -2084,6 +2084,36 @@ it("copies in one click without secrets when What comes along leaves them on the
   );
 });
 
+it("clears another tab's Replace all when the review here changes the secrets choice", async () => {
+  const diverged = newRow("repos/app", {
+    status: "diverged",
+    choices: ["keep-mine", "take-theirs", "leave-both"],
+    needsDecision: true,
+  });
+  statuses = [
+    copyStatus("previewed", {
+      rows: [diverged],
+      totals: { filesToMove: 1, bytesToMove: 10, bytesPresent: 0, decisionsNeeded: 1 },
+    }),
+  ];
+  state.handlers.copyStatus = () => statuses[0] ?? copyStatus("previewed");
+  await mount();
+  await click("Copy to M3");
+  expect(container.querySelector('[data-slot="copy-preview"]')).not.toBeNull();
+  // Another tab clicks Replace all for the same copy and closes; its watcher waits to approve.
+  localStorage.setItem(
+    "specwithcode:folder-copy:m4:source",
+    JSON.stringify({ ...pointerNow(), replaceAll: true }),
+  );
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-secrets-include"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  expect(pointerNow()).toMatchObject({ secrets: { included: false } });
+  expect(pointerNow()).not.toHaveProperty("replaceAll");
+});
+
 it("keeps Replace all when the dialog closes during the re-compare and approves on reopen", async () => {
   measuredWithoutSecrets();
   const diverged = newRow("repos/app", {

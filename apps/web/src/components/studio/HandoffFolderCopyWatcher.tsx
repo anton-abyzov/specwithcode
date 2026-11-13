@@ -24,7 +24,6 @@ import {
   readPendingCopy,
   ALL_SECRETS,
   type PendingCopy,
-  type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import { sendableSecrets } from "./handoffCopySecrets";
 import {
@@ -266,13 +265,16 @@ export function HandoffFolderCopyWatcher({
         },
       });
       // Another tab may have changed the choice while it was sent: leave that copy to the person.
-      const after = readPendingCopy(key);
-      const same = (a?: SecretsChoice) => JSON.stringify(a ?? ALL_SECRETS);
+      return !stopped && sent._tag === "Success" && unchanged(saved);
+    };
+    /** The pointer still says what this run acted on: same copy, Replace all and secrets. */
+    const unchanged = (acted: PendingCopy) => {
+      const now = readPendingCopy(key);
+      const choice = (copy: PendingCopy) => JSON.stringify(copy.secrets ?? ALL_SECRETS);
       return (
-        !stopped &&
-        sent._tag === "Success" &&
-        after?.operationId === operationId &&
-        same(after.secrets) === same(saved.secrets)
+        now?.operationId === operationId &&
+        Boolean(now.replaceAll) === Boolean(acted.replaceAll) &&
+        choice(now) === choice(acted)
       );
     };
 
@@ -281,7 +283,10 @@ export function HandoffFolderCopyWatcher({
      * replaces nothing, or a plan answered with Replace all once nothing is left open.
      * Replace all sent its secrets when it was clicked; a one-click plan sends them here.
      */
-    const settle = async (saved: PendingCopy, previewed: FolderCopyStatus) => {
+    const settle = async (read: PendingCopy, previewed: FolderCopyStatus) => {
+      // Another tab may have changed the pointer while the status was read: act on the current one.
+      const saved = readPendingCopy(key);
+      if (stopped || saved?.operationId !== read.operationId) return "ask" as const;
       const { decide, approve, status } = latest.current.commands;
       const destination = saved.environmentId as EnvironmentId;
       if (saved.auto && saved.method === "clone" && !saved.cloneDecided) {
@@ -311,7 +316,7 @@ export function HandoffFolderCopyWatcher({
         return "ask" as const;
       }
       if (!saved.replaceAll && !(await stageSecrets(previewed))) return "ask" as const;
-      if (stopped) return "ask" as const;
+      if (stopped || !unchanged(saved)) return "ask" as const;
       const approved = await approve({ environmentId: destination, input: { operationId } });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.

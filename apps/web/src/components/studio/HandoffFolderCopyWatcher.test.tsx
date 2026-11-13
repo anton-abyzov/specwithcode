@@ -529,6 +529,36 @@ it("does not approve when another tab unticks secrets while they are being sent"
   }
 });
 
+it("does not approve a Replace all after another tab changes the secrets choice", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ replaceAll: true });
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // The other tab's review unticks secrets: its choice drops the old click's Replace all.
+    pointer({ secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer(
+        previewed([row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })]),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("waits for the person when the secrets choice cannot be sent", async () => {
   vi.useFakeTimers();
   try {

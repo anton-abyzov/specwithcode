@@ -894,7 +894,7 @@ export function HandoffFolderCopy({
   const chooseSecrets = (choice: SecretsChoice) => {
     setSecretsChoice(choice);
     const saved = latestPending.current;
-    if (saved) remember({ ...saved, secrets: choice });
+    if (saved) remember({ ...withoutReplaceAll(saved), secrets: choice }); // its staged list is stale
     else draft.keepDraft({ secrets: choice });
   };
   /** The copy's secrets choice goes to the source before every approval (see sendableSecrets). */
