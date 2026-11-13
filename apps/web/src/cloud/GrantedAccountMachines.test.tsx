@@ -342,4 +342,37 @@ describe("GrantedAccountMachines", () => {
     expect(taken).toBe(false);
     await act(async () => renderer.unmount());
   });
+
+  it("saves nothing for a machine whose grant here was revoked", async () => {
+    m5InFleet();
+    (state.snapshot as { machines: Array<Record<string, unknown>> }).machines[0]!.workers = {
+      status: "revoked",
+      access: null,
+      expiresAt: null,
+      renewable: false,
+      problem: null,
+    };
+    const renderer = await mount();
+    expect(state.register).not.toHaveBeenCalled();
+    expect(accountAutoConnectStates().size).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it("holds an earlier press to a later removal once its try has run", async () => {
+    m5InFleet();
+    state.register.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("Relay refused")),
+    });
+    const renderer = await mount();
+    await act(async () => renderer.update(<Subject />));
+    await act(async () => requestAccountMachineConnect(["m5"]));
+    await act(async () => renderer.update(<Subject />));
+    expect(state.register).toHaveBeenCalledTimes(2);
+    state.skipped = ["m5"];
+    state.autoConnect = false;
+    for (let pass = 0; pass < 3; pass += 1) await act(async () => renderer.update(<Subject />));
+    expect(state.register).toHaveBeenCalledTimes(2);
+    await act(async () => renderer.unmount());
+  });
 });

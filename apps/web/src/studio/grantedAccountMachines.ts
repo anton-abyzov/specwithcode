@@ -14,6 +14,18 @@ import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/r
 
 import { fleetMachineHasTailnetAddress } from "./fleetAutoConnect";
 
+/**
+ * Whether a fleet machine's grant to run work here is in force. A machine
+ * listed with a revoked, expired or never-given grant is no consent to save
+ * it; one from a server too old to report grants counts as allowed.
+ */
+export function fleetMachineGranted(machine: {
+  readonly workers?: { readonly status: string } | undefined;
+}): boolean {
+  const status = machine.workers?.status;
+  return status === undefined || status === "allowed" || status === "expiring";
+}
+
 /** Account machines in the fleet that this app should save with a Connect route now. */
 export function grantedAccountMachinesToConnect(input: {
   readonly snapshot: StudioFleetSnapshot | null;
@@ -35,6 +47,8 @@ export function grantedAccountMachinesToConnect(input: {
       seen.has(id) ||
       id === input.currentEnvironmentId ||
       machine.status === "identity-mismatch" ||
+      // Saved on its own only while its grant holds; Connect by hand saves it in any case.
+      (!fleetMachineGranted(machine) && !input.requested?.has(id)) ||
       // A machine with a tailnet address is paired by the fleet instead.
       (fleetMachineHasTailnetAddress(machine) && !input.requested?.has(id)) ||
       input.savedEnvironmentIds.has(id) ||
@@ -64,6 +78,7 @@ export function grantedMachinesMissingFromAccount(input: {
       (machine) =>
         machine.environmentId !== input.currentEnvironmentId &&
         machine.status !== "identity-mismatch" &&
+        fleetMachineGranted(machine) &&
         !fleetMachineHasTailnetAddress(machine) &&
         !input.savedEnvironmentIds.has(machine.environmentId) &&
         !input.discovered.has(machine.environmentId),
@@ -88,6 +103,7 @@ export const REMOVED_HERE_REASON = "Removed from this app.";
 export const CONNECT_UNREACHABLE_REASON = "SpecWithCode Connect cannot be reached right now.";
 export const CONNECT_NO_ANSWER_REASON = "SpecWithCode Connect did not answer for it.";
 export const CONNECT_FAILED_REASON = "Could not connect over SpecWithCode Connect.";
+export const CONNECT_NOT_ADDED_REASON = "SpecWithCode Connect took it, but it was not added here.";
 
 const addsInFlight = new Set<string>();
 const addListeners = new Set<() => void>();

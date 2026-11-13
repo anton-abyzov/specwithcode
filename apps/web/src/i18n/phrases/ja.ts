@@ -4624,4 +4624,6 @@ export const ja: PhraseCatalog = {
   "SpecWithCode Connect cannot be reached right now.":
     "現在 SpecWithCode Connect に接続できません。",
   "Could not connect over SpecWithCode Connect.": "SpecWithCode Connect で接続できませんでした。",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect は受け付けましたが、ここには追加されませんでした。",
 };

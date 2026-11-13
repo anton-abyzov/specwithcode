@@ -4651,4 +4651,6 @@ export const de: PhraseCatalog = {
     "SpecWithCode Connect ist gerade nicht erreichbar.",
   "Could not connect over SpecWithCode Connect.":
     "Verbindung über SpecWithCode Connect fehlgeschlagen.",
+  "SpecWithCode Connect took it, but it was not added here.":
+    "SpecWithCode Connect hat ihn angenommen, aber er wurde hier nicht hinzugefügt.",
 };

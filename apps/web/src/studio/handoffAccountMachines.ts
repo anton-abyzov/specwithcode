@@ -9,7 +9,11 @@
  * @module handoffAccountMachines
  */
 import { fleetMachineHasTailnetAddress } from "./fleetAutoConnect";
-import { type AccountAutoConnectState, accountConnectCanRetry } from "./grantedAccountMachines";
+import {
+  type AccountAutoConnectState,
+  accountConnectCanRetry,
+  fleetMachineGranted,
+} from "./grantedAccountMachines";
 
 export interface HandoffAccountMachine {
   readonly environmentId: string;
@@ -38,6 +42,7 @@ interface FleetEntry {
   readonly environmentId: string;
   readonly label: string;
   readonly url: string;
+  readonly workers?: { readonly status: string };
 }
 
 export const CONNECTING_REASON = "Connecting over SpecWithCode Connect…";
@@ -93,7 +98,13 @@ export function handoffAccountMachines(input: {
   const fleetById = new Map(input.fleet.map((machine) => [machine.environmentId, machine]));
   // Unknown while the source machine's fleet cannot be read: nobody is named.
   const allowedIds =
-    allowedFleet === null ? null : new Set(allowedFleet.map((machine) => machine.environmentId));
+    allowedFleet === null
+      ? null
+      : new Set(
+          allowedFleet
+            .filter((machine) => fleetMachineGranted(machine))
+            .map((machine) => machine.environmentId),
+        );
   const discoveredIds = new Set<string>();
   for (const { environment, availability } of input.discovered) {
     discoveredIds.add(environment.environmentId);
