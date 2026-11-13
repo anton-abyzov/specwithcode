@@ -723,6 +723,11 @@ process.exit(2);
       );
       assert.equal(report.results.length, DISCOVERED_AGENTS.length);
       assert.equal(report.searched[0], directory);
+      // A found agent comes with the file its command is; a missing one has none.
+      const found = (agent: string) => report.results.find((result) => result.agent === agent);
+      assert.equal(NodePath.dirname(found("muse")?.path ?? ""), directory);
+      assert.match(NodePath.basename(found("claudeAgent")?.path ?? ""), /^claude(\.\w+)?$/);
+      assert.isUndefined(found("codex")?.path);
 
       const enabled = yield* runProviderDiscovery.pipe(
         Effect.provideService(HostProcessEnvironment, { PATH: path }),

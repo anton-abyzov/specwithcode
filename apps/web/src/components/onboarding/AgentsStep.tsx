@@ -5,17 +5,13 @@ import type {
   ServerConfig,
   ServerProvider,
 } from "@specweave-studio/contracts";
-import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
   AuthOrchestrationReadScope,
   AuthEnvironmentMaintainScope,
   AuthProvidersManageScope,
-  AuthTerminalOperateScope,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
-  ThreadId,
 } from "@specweave-studio/contracts";
-import * as Schema from "effect/Schema";
 import { EllipsisIcon } from "lucide-react";
 import {
   lazy,
@@ -27,9 +23,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useMachineNicknames } from "../../studio/machineNickname";
-import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
   canInstallOnboardingAgent,
   DEVELOPER_TOOLS_INSTALL_COMMAND,
@@ -39,14 +33,12 @@ import {
   resolveOnboardingProviderInstallCommand,
   type OnboardingAgentRow,
 } from "../../onboarding/providerReadiness.logic";
-import { randomUUID } from "../../lib/utils";
 import { acpAgentIdForInstanceConfig } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
 import { useAgentReadiness } from "../../onboarding/useAgentReadiness";
 import { agentReadinessMessage } from "../../onboarding/agentReadiness.logic";
 import { serverEnvironment } from "../../state/server";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { terminalEnvironment } from "../../state/terminal";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
@@ -58,7 +50,6 @@ import {
 } from "../settings/FoundAgents";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { OpenAI } from "../Icons";
-import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
@@ -66,6 +57,12 @@ import { cn } from "../../lib/utils";
 import { useT, useTx } from "../../i18n";
 import { AgentCommand, AgentRow, AgentRowStatus } from "./AgentRow";
 import { FoundAgentRow, GitRow, InstallAgentRow, ProviderAgentRow } from "./AgentRows";
+import {
+  AGENT_CHECK_TIMEOUT_MS,
+  AgentSetupPanel,
+  agentSetupPanelKey,
+  useAgentSetupPanel,
+} from "./AgentSetupPanel";
 import { MachineBasics } from "./MachineBasics";
 import { StepShell, useHeldFor, WizardStepFooter } from "./WizardFrame";
 
@@ -75,53 +72,12 @@ const AddProviderInstanceDialog = lazy(() =>
   })),
 );
 
-const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-// Some providers report "not checked yet" for good, so checking cannot last forever.
-const AGENT_CHECK_TIMEOUT_MS = 15_000;
-/** While an agent's sign-in runs in the panel, its machine is asked this often. */
-const SIGN_IN_POLL_MS = 3_000;
 /** While macOS installs its developer tools, the machine is asked for Git this often. */
 const GIT_POLL_MS = 5_000;
 /** The developer tools download can take a while; asking stops after this many tries. */
 const GIT_POLL_LIMIT = 240;
 
-/** Setup values stay fixed while provider probes refresh the surrounding rows. */
-interface AgentTerminalSession {
-  readonly environmentId: EnvironmentId;
-  readonly agent: string;
-  readonly agentName: string;
-  /** Absent for a command that belongs to no agent, such as the Git install. */
-  readonly providerInstanceId?: ServerProvider["instanceId"] | undefined;
-  readonly cwd: string;
-  readonly command: string;
-  /**
-   * Each runs at once, and its output is the log. A sign-in's panel closes when
-   * it ends. An install's closes when it worked and stays open with the log
-   * when it did not. `tools` installs something agents need, such as Git.
-   */
-  readonly purpose: "signIn" | "install" | "tools";
-  readonly keybindings: ServerConfig["keybindings"];
-}
-
 /** Claude Code is the product name of the agent the driver list calls Claude. */
-/** Whether a read's own answer says that agent is signed in. */
-function readAsSignedIn(
-  result:
-    | {
-        readonly _tag: string;
-        readonly value?: { readonly providers?: ReadonlyArray<ServerProvider> } | undefined;
-      }
-    | undefined,
-  instanceId: ProviderInstanceId,
-): boolean {
-  if (result?._tag !== "Success") return false;
-  return (
-    result.value?.providers?.some(
-      (provider) => provider.instanceId === instanceId && provider.auth.status === "authenticated",
-    ) === true
-  );
-}
-
 function rowName(agent: string, provider?: ServerProvider): string {
   return provider?.displayName || (agent === "claudeAgent" ? "Claude Code" : agentName(agent));
 }
@@ -230,7 +186,6 @@ function ConnectedAgentsStep({
   });
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "Agent setup settings");
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
   const [addingAccount, setAddingAccount] = useState(false);
   const [addingAgent, setAddingAgent] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<{
@@ -238,7 +193,6 @@ function ConnectedAgentsStep({
     displayName: string;
     autoStart: boolean;
   } | null>(null);
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const canSearch = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const canMaintain = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
@@ -252,12 +206,6 @@ function ConnectedAgentsStep({
   const gitPolls = useRef(0);
   // "Sign in" on an agent that was still off: its sign-in starts once it is on.
   const [signInAfterTurnOn, setSignInAfterTurnOn] = useState<string | null>(null);
-  // The agent whose sign-in the app started and whose result is being read.
-  const [checkingInstance, setCheckingInstance] = useState<ProviderInstanceId | null>(null);
-  // The agent whose sign-in in the panel ended last, for a line on its row if it is still signed out.
-  const [endedInstance, setEndedInstance] = useState<ProviderInstanceId | null>(null);
-  const polling = useRef(false);
-  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
   // refresh; harmless when nothing changed (single-flighted per environment).
@@ -326,88 +274,28 @@ function ConnectedAgentsStep({
     return () => clearInterval(timer);
   }, [gitMissing, gitRequested, find]);
 
-  // A sign-in in the panel is done when the machine reads the agent as signed in.
-  const signInInstanceId =
-    terminalSession?.purpose === "signIn" ? terminalSession.providerInstanceId : null;
-  const panelSignedIn =
-    signInInstanceId !== null &&
-    providers?.find((provider) => provider.instanceId === signInInstanceId)?.auth.status ===
-      "authenticated";
-  if (panelSignedIn) setTerminalSession(null);
-  // The line about a sign-in that ended is about that sign-in only.
-  if (
-    endedInstance !== null &&
-    providers?.find((provider) => provider.instanceId === endedInstance)?.auth.status ===
-      "authenticated"
-  )
-    setEndedInstance(null);
-  useEffect(() => {
-    if (signInInstanceId === null) return;
-    const timer = setInterval(() => {
-      if (polling.current) return;
-      polling.current = true;
-      void Promise.resolve(
-        refreshProviders({ environmentId, input: { instanceId: signInInstanceId } }),
-      ).finally(() => {
-        polling.current = false;
-      });
-    }, SIGN_IN_POLL_MS);
-    return () => clearInterval(timer);
-  }, [signInInstanceId, environmentId, refreshProviders]);
-
-  const openPanel = (
-    session: Pick<AgentTerminalSession, "agent" | "agentName" | "command" | "purpose"> & {
-      readonly providerInstanceId?: ServerProvider["instanceId"];
+  const panel = useAgentSetupPanel({
+    environmentId,
+    providers,
+    serverConfig,
+    onInstallClosed: () => {
+      void refreshProviders({ environmentId, input: {} });
+      find();
     },
-  ) => {
-    if (serverConfig === null || !readEnvironmentScope(environmentId, AuthTerminalOperateScope))
-      return;
-    setEndedInstance(null);
-    setTerminalSession({
-      ...session,
-      environmentId,
-      cwd: serverConfig.cwd,
-      keybindings: serverConfig.keybindings,
-    });
-  };
+  });
+  const terminalSession = panel.session;
+  const canOperateTerminal = panel.canOperateTerminal;
+  const openPanel = panel.open;
 
   const closePanel = (installed = false) => {
     const closed = terminalSession;
-    setTerminalSession(null);
-    if (closed === null) return;
-    if (closed.purpose === "install") {
+    if (closed?.purpose === "install") {
       // The row gets its button back, and a sign-in nobody is waiting for never starts.
       setInstallFailed(null);
       if (!installed)
         setSignInAfterTurnOn((current) => (current === closed.agent ? null : current));
     }
-    if (closed.purpose !== "signIn") {
-      void refreshProviders({ environmentId, input: {} });
-      find();
-      return;
-    }
-    // The sign-in command has ended: read that agent now, and say so on its row.
-    const instanceId = closed.providerInstanceId;
-    if (instanceId === undefined) return;
-    const checked = () =>
-      setCheckingInstance((current) => (current === instanceId ? null : current));
-    setCheckingInstance(instanceId);
-    setEndedInstance(instanceId);
-    // A read already under way may have begun before the sign-in saved the account.
-    // So this one is asked for by itself, and a signed-out answer is read once more.
-    const read = (fresh: boolean) =>
-      Promise.resolve(
-        refreshProviders({
-          environmentId,
-          input: fresh ? { instanceId, fresh } : { instanceId },
-        }),
-      );
-    void read(true)
-      .then((result) => (readAsSignedIn(result, instanceId) ? undefined : read(false)))
-      .finally(checked);
-    // A check that never answers must not hold the row on "Checking…".
-    if (checkTimer.current !== null) clearTimeout(checkTimer.current);
-    checkTimer.current = setTimeout(checked, AGENT_CHECK_TIMEOUT_MS);
+    panel.close();
   };
 
   const turnOn = (agent: string) => {
@@ -505,7 +393,7 @@ function ConnectedAgentsStep({
           disabled={rechecking}
           onClick={() => {
             setRechecking(true);
-            setCheckingInstance(null);
+            panel.stopChecking();
             find();
             void Promise.resolve(refreshProviders({ environmentId, input: {} })).finally(() =>
               setRechecking(false),
@@ -616,7 +504,7 @@ function ConnectedAgentsStep({
                   : undefined
               }
               panelOpen={terminalSession !== null}
-              panelAvailable={serverConfig !== null && canOperateTerminal}
+              panelAvailable={panel.available}
               onOpenPanel={() => {
                 if (command === null) return;
                 openPanel({
@@ -627,8 +515,8 @@ function ConnectedAgentsStep({
                   purpose: "signIn",
                 });
               }}
-              checking={checkingInstance === provider.instanceId}
-              signInEnded={endedInstance === provider.instanceId}
+              checking={panel.checkingInstance === provider.instanceId}
+              signInEnded={panel.endedInstance === provider.instanceId}
               autoSignIn={signInAfterTurnOn === row.agent}
               onAutoSignInDone={autoSignInDone}
             />
@@ -698,10 +586,11 @@ function ConnectedAgentsStep({
       ) : null}
       {terminalSession !== null ? (
         <AgentSetupPanel
-          key={`${terminalSession.environmentId}:${terminalSession.agent}:${terminalSession.purpose}`}
+          key={agentSetupPanelKey(terminalSession)}
           session={terminalSession}
           onClose={() => closePanel()}
           onEnded={installEnded}
+          signInFollowsInstall
           onRetry={() => {
             setInstallFailed(null);
             if (terminalSession.purpose === "install") setSignInAfterTurnOn(terminalSession.agent);
@@ -783,228 +672,5 @@ function OnboardingCodexSetup({
       onboardingMenu={menu}
       onboardingSignedOutFooter={signedOutFooter}
     />
-  );
-}
-
-/**
- * The panel under the list, and the log of what it runs. Opens a PTY on the
- * connected environment under a synthetic onboarding thread id (terminals are
- * keyed by free-form thread id; the server validates only the cwd). The command
- * is the session's own: it runs at once and the session ends with it. A sign-in
- * closes the panel when it ends. An install closes it when it worked, and keeps
- * the log on screen with the exit code when it did not.
- */
-function AgentSetupPanel({
-  session,
-  onClose,
-  onEnded,
-  onRetry,
-}: {
-  readonly session: AgentTerminalSession;
-  readonly onClose: () => void;
-  /** An install's command has ended; `false` keeps this panel open on its log. */
-  readonly onEnded: (succeeded: boolean) => void;
-  /** The command is about to run again in a new session. */
-  readonly onRetry: () => void;
-}) {
-  const t = useT();
-  const tx = useTx();
-  const { agent, agentName, command, cwd, environmentId, keybindings, providerInstanceId } =
-    session;
-  const signIn = session.purpose === "signIn";
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  // Same terminal typography preference the thread drawer honors.
-  const [advancedTypography] = useLocalStorage(
-    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const openTerminal = useAtomCommand(terminalEnvironment.open, { reportFailure: false });
-  const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
-  const setupQueueRef = useRef(Promise.resolve());
-  const setupGenerationRef = useRef(0);
-  const activeSetupGenerationRef = useRef<number | null>(null);
-  const [setupAttempt, setSetupAttempt] = useState(0);
-  // A session that has ended cannot run again, so each try gets its own.
-  const terminalId = useMemo(
-    () => `onboarding-${agent}-${setupAttempt}-${randomUUID()}`,
-    [agent, setupAttempt],
-  );
-  const threadRef = useMemo(
-    () => scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID),
-    [environmentId],
-  );
-  const [setupState, setSetupState] = useState<"preparing" | "ready" | "openFailed" | "failed">(
-    "preparing",
-  );
-  const [exitCode, setExitCode] = useState<number | null>(null);
-  const terminalReady = setupState === "ready" || setupState === "failed";
-  const panelRef = useRef<HTMLDivElement | null>(null);
-
-  // The panel opens under a list that may be longer than the window.
-  useEffect(() => {
-    panelRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-  }, []);
-
-  // Keep each setup generation distinct. In Strict Mode, a canceled open can
-  // finish after the replacement setup starts; it must not close the
-  // replacement session.
-  useEffect(() => {
-    const generation = setupGenerationRef.current + 1;
-    setupGenerationRef.current = generation;
-    activeSetupGenerationRef.current = generation;
-    setSetupState("preparing");
-    setExitCode(null);
-
-    setupQueueRef.current = setupQueueRef.current.then(async () => {
-      if (activeSetupGenerationRef.current !== generation) return;
-      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-        setSetupState("openFailed");
-        return;
-      }
-      const opened = await openTerminal({
-        environmentId,
-        input: {
-          threadId: AGENT_ONBOARDING_THREAD_ID,
-          terminalId,
-          cwd,
-          ...(providerInstanceId !== undefined ? { providerInstanceId } : {}),
-          command,
-        },
-      });
-      if (activeSetupGenerationRef.current !== generation) return;
-      setSetupState(opened._tag === "Success" ? "ready" : "openFailed");
-    });
-
-    // Every exit path unmounts the drawer. Close the PTY only while this
-    // connection still has terminal access; revocation leaves it running.
-    return () => {
-      if (activeSetupGenerationRef.current === generation) {
-        activeSetupGenerationRef.current = null;
-      }
-      setupQueueRef.current = setupQueueRef.current.then(async () => {
-        if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) return;
-        await closeTerminal({
-          environmentId,
-          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, deleteHistory: true },
-        });
-      });
-    };
-  }, [closeTerminal, command, cwd, environmentId, openTerminal, providerInstanceId, terminalId]);
-
-  const sessionExited = (code: number | null) => {
-    if (signIn) {
-      onClose();
-      return;
-    }
-    if (code === 0) {
-      onEnded(true);
-      return;
-    }
-    setExitCode(code);
-    setSetupState("failed");
-    onEnded(false);
-  };
-
-  const running =
-    session.purpose === "signIn"
-      ? tx("{agent}'s sign-in is running here. Its row updates when it is done.", {
-          agent: agentName,
-        })
-      : session.purpose === "install"
-        ? tx("Installing {agent}. This is its log. Its sign-in opens when the install is done.", {
-            agent: agentName,
-          })
-        : tx("Asking macOS to install its developer tools, which carry Git. This is its log.");
-  const failed =
-    exitCode === null
-      ? tx("The install of {agent} stopped before it was done. Its log is below.", {
-          agent: agentName,
-        })
-      : tx("The install of {agent} ended with an error (exit code {code}). Its log is below.", {
-          agent: agentName,
-          code: exitCode,
-        });
-
-  return (
-    <div
-      ref={panelRef}
-      data-thread-terminal-drawer
-      data-agent-panel={session.purpose}
-      data-agent-panel-state={setupState}
-      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
-    >
-      <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-background/60 px-3 py-1.5">
-        <span
-          role="status"
-          className={cn(
-            "min-w-0 text-2xs font-medium",
-            setupState === "failed" || setupState === "openFailed"
-              ? "text-warning-foreground"
-              : "text-muted-foreground",
-          )}
-        >
-          {!canOperateTerminal
-            ? t("wizard.agents.noTerminal")
-            : setupState === "failed"
-              ? failed
-              : setupState === "ready"
-                ? running
-                : setupState === "openFailed"
-                  ? t("wizard.terminal.openFailed")
-                  : t("wizard.terminal.preparing")}
-        </span>
-        <div className="flex shrink-0 items-center gap-1">
-          {setupState === "openFailed" || setupState === "failed" ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={!canOperateTerminal}
-              onClick={() => {
-                if (readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-                  onRetry();
-                  setSetupAttempt((value) => value + 1);
-                }
-              }}
-            >
-              {t("wizard.retry")}
-            </Button>
-          ) : null}
-          <Button size="xs" variant="ghost-muted" onClick={onClose}>
-            {t("wizard.closeTerminal")}
-          </Button>
-        </div>
-      </div>
-      <details className="border-b border-border/60 px-3 py-1.5 text-2xs text-muted-foreground">
-        <summary className="cursor-default">{tx("Show command")}</summary>
-        <code className="mt-1 block overflow-x-auto font-mono whitespace-nowrap">{command}</code>
-      </details>
-      {/* Enter and Escape typed here belong to the terminal, not to setup. */}
-      <div className="h-64" data-wizard-keys="off">
-        {terminalReady ? (
-          <TerminalViewport
-            key={terminalId}
-            threadRef={threadRef}
-            threadId={AGENT_ONBOARDING_THREAD_ID}
-            terminalId={terminalId}
-            terminalLabel={
-              signIn
-                ? tx("Sign in to {agent}", { agent: agentName })
-                : t("wizard.terminal.label", { driver: agentName })
-            }
-            cwd={cwd}
-            {...(providerInstanceId !== undefined ? { providerInstanceId } : {})}
-            advancedTypography={advancedTypography}
-            onSessionExited={sessionExited}
-            focusRequestId={1}
-            autoFocus
-            visible
-            resizeEpoch={0}
-            drawerHeight={256}
-            keybindings={keybindings}
-          />
-        ) : null}
-      </div>
-    </div>
   );
 }

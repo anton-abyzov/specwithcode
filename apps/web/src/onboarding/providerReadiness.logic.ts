@@ -160,6 +160,25 @@ export function onboardingAgentUses(agent: string): string {
  */
 export const DEVELOPER_TOOLS_INSTALL_COMMAND = "xcode-select --install";
 
+/** The account each agent signs in with, as its sign-in button names it. */
+const AGENT_ACCOUNTS: Readonly<Record<string, string>> = {
+  codex: "ChatGPT",
+  claudeAgent: "Claude",
+  cursor: "Cursor",
+  grok: "Grok",
+  muse: "Meta",
+  opencode: "OpenCode",
+  pi: "Pi",
+  antigravity: "Google",
+  gemini: "Google",
+  "github-copilot-cli": "GitHub",
+};
+
+/** Null for an agent whose account has no name here: its button reads "Sign in". */
+export function agentSignInAccount(agent: string): string | null {
+  return Object.hasOwn(AGENT_ACCOUNTS, agent) ? AGENT_ACCOUNTS[agent]! : null;
+}
+
 export function canInstallOnboardingAgent(
   agent: string,
 ): agent is keyof typeof NATIVE_INSTALL_COMMANDS {

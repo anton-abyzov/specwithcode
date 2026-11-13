@@ -2148,9 +2148,6 @@ export const zh: PhraseCatalog = {
   "Plain text": "纯文本",
   "Sensitive values are stored separately and never returned to the app.":
     "敏感值单独存储，绝不会返回给应用。",
-  "Authenticated as {providerAuthEmail}{value}{value2}":
-    "已认证为 {providerAuthEmail}{value}{value2}",
-  "Signed in as {authLogin}{value}{value2}": "已登录为 {authLogin}{value}{value2}",
   Updating: "正在更新",
   "Update now": "立即更新",
   "{span}or, update manually using{span2}": "{span}或手动更新，使用{span2}",
@@ -2178,8 +2175,6 @@ export const zh: PhraseCatalog = {
   "Reset to built-in": "重置为内置值",
   custom: "自定义",
   "Add argument": "添加参数",
-  "Agent readiness": "智能体就绪状态",
-  "Agent runs on {environmentLabel}.": "智能体在 {environmentLabel} 上运行。",
   "No connected devices": "没有已连接的设备",
   "Loading devices": "正在加载设备",
   "Connect an execution environment before configuring providers.":
@@ -3554,8 +3549,6 @@ export const zh: PhraseCatalog = {
     "代理打开页面所用的 SpecWithCode 浏览器配置文件，包含其保存的登录信息。项目可以选择自己的配置文件。",
   "Change accent color for {name}": "更改 {name} 的强调色",
   "Add accent color for {name}": "为 {name} 添加强调色",
-  "Complete installation on {machine} or configure its executable below, then refresh provider status.":
-    "在 {machine} 上完成安装，或在下方配置其可执行文件，然后刷新提供方状态。",
   "{summary} · {count} project override": "{summary} · {count} 个项目覆盖",
   "{summary} · {count} project overrides": "{summary} · {count} 个项目覆盖",
   "{summary}. Show where this value comes from": "{summary}。显示此值的来源",
@@ -3752,9 +3745,6 @@ export const zh: PhraseCatalog = {
   "Claude Code plugins": "Claude Code 插件",
   "Claude user settings.json": "Claude 用户 settings.json",
   "Native configuration": "原生配置",
-  "Enable this agent below to use it in chat.": "在下方启用此代理即可在聊天中使用。",
-  "Refresh provider status to check installation, sign-in and models.":
-    "刷新提供方状态以检查安装、登录和模型。",
   "This agent is unavailable on this machine.": "此代理在此机器上不可用。",
   "Connect an agent": "连接一个代理",
   "Sign in to Claude, Codex or another provider.": "登录 Claude、Codex 或其他提供方。",
@@ -3775,19 +3765,8 @@ export const zh: PhraseCatalog = {
   "Gmail drafts": "Gmail 草稿",
   "Keybinding for {command}": "{command} 的快捷键",
   "Actions for {command}": "{command} 的操作",
-  "Complete sign-in in Setup below, then refresh provider status to load models.":
-    "请在下方“设置”中完成登录，然后刷新提供方状态以加载模型。",
-  "Complete sign-in using this agent on {machine}, then refresh provider status.":
-    "请在 {machine} 上使用此代理完成登录，然后刷新提供方状态。",
-  "Sign-in status is not reported. Review the agent settings below or refresh provider status.":
-    "未报告登录状态。请查看下方的代理设置或刷新提供方状态。",
-  "Review the provider status below before starting a chat.":
-    "开始聊天前，请先查看下方的提供方状态。",
   "No models reported yet. Refresh provider status after completing setup.":
     "尚未报告任何模型。完成设置后请刷新提供方状态。",
-  "Choose this agent and a model in the chat model picker.":
-    "在聊天的模型选择器中选择此代理和一个模型。",
-  "{count} reported": "已报告 {count} 个",
   "Pinned: {account} · ": "已固定：{account} · ",
   "Recommended: {label} · next reset {time}": "推荐：{label} · 下次重置 {time}",
   "Recommended: {label} · next reset unknown": "推荐：{label} · 下次重置时间未知",
@@ -3815,13 +3794,8 @@ export const zh: PhraseCatalog = {
   "Could not load the devices allowed on this machine.": "无法加载此机器上允许的设备。",
   "Project .claude/settings.json": "项目 .claude/settings.json",
   "Project .claude/settings.local.json": "项目 .claude/settings.local.json",
-  Integration: "集成",
-  Installation: "安装",
-  "Built-in SDK": "内置 SDK",
-  "Sign-in": "登录",
   "Signed in": "已登录",
   "Not reported": "未报告",
-  "None reported": "未报告任何内容",
   "Set up here": "在此设置",
   "Each machine has its own private assistant. Nothing transfers between them.":
     "每台机器都有自己的私人助手。它们之间不会传输任何内容。",
@@ -4399,6 +4373,7 @@ export const zh: PhraseCatalog = {
   "Install {agent} and sign in": "安装 {agent} 并登录",
   "An install is running. Wait for it to end, or close its log to stop it.":
     "正在安装。请等待安装结束，或关闭其日志以停止安装。",
+  "Installing {agent}. This is its log.": "正在安装 {agent}。以下是日志。",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "正在安装 {agent}。以下是日志。安装完成后会打开登录。",
   "Installing. Its log is below, and its sign-in opens when the install is done.":
@@ -4706,4 +4681,11 @@ export const zh: PhraseCatalog = {
   "Browse…": "浏览…",
   "Add to this machine…": "添加到此机器…",
   "Runs on {machine}. No copy on this device.": "在 {machine} 上运行。此设备上没有副本。",
+  "Agent status": "智能体状态",
+  "Last time it was not signed in.": "上次未登录。",
+  "Last time it was signed in as {account}.": "上次以 {account} 登录。",
+  "Last time it was signed in.": "上次已登录。",
+  "Not signed in": "未登录",
+  "Sign in with {account}": "使用 {account} 登录",
+  "Turn it on to use it in chat.": "开启后即可在聊天中使用。",
 };

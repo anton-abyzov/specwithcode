@@ -1,9 +1,11 @@
 import { englishPhrase, type TranslatePhrase } from "../../i18n";
 import type {
   ServerProvider,
+  ServerProviderAuth,
   ServerProviderVersionAdvisory,
   ServerProviderCompatibilityAdvisory,
 } from "@specweave-studio/contracts";
+import { getOnboardingProviderState } from "../../onboarding/providerReadiness.logic";
 
 /**
  * Visual treatment for each server-reported provider status. Centralized so
@@ -94,6 +96,127 @@ export function getProviderSummary(
     headline: tx("Available"),
     detail: provider.message ?? null,
   };
+}
+
+/** The one thing that moves an agent toward ready from where it is. */
+export type ProviderStatusAction = "turnOn" | "signIn" | "install" | "checkAgain";
+
+export interface ProviderStatusView {
+  readonly state:
+    | "off"
+    | "checking"
+    | "unavailable"
+    | "notInstalled"
+    | "signedOut"
+    | "noAnswer"
+    | "attention"
+    | "ready";
+  readonly tone: "ready" | "checking" | "quiet" | "attention";
+  readonly headline: string;
+  /** A second sentence, when it adds something the headline does not say. */
+  readonly detail: string | null;
+  /** The sign-in to name: the current one, or the last one read when a check gave no answer. */
+  readonly account: ServerProviderAuth | null;
+  readonly accountIsLastKnown: boolean;
+  readonly action: ProviderStatusAction | null;
+}
+
+/**
+ * Where the selected agent stands, for its status row in Settings > Providers:
+ * what to say, whose account to name and the one button that helps.
+ */
+export function getProviderStatusView(
+  provider: ServerProvider | undefined,
+  enabled: boolean,
+  tx: TranslatePhrase = englishPhrase,
+): ProviderStatusView {
+  const none = { detail: null, account: null, accountIsLastKnown: false, action: null } as const;
+  if (!enabled) {
+    return {
+      ...none,
+      state: "off",
+      tone: "quiet",
+      headline: tx("Off"),
+      detail: tx("Turn it on to use it in chat."),
+      action: "turnOn",
+    };
+  }
+  if (!provider) return { ...none, state: "checking", tone: "checking", headline: tx("Checking…") };
+  if (provider.availability === "unavailable") {
+    return {
+      ...none,
+      state: "unavailable",
+      tone: "attention",
+      headline: tx("Unavailable"),
+      detail: provider.unavailableReason ?? tx("This agent is unavailable on this machine."),
+    };
+  }
+  const state = getOnboardingProviderState(provider);
+  if (state === "checking" || state === "disabled") {
+    return { ...none, state: "checking", tone: "checking", headline: tx("Checking…") };
+  }
+  if (state === "install") {
+    return {
+      ...none,
+      state: "notInstalled",
+      tone: "attention",
+      headline: tx("Not installed"),
+      // Where the app cannot install it, the machine's words are the only lead.
+      detail: provider.message ?? null,
+      action: "install",
+    };
+  }
+  if (state === "signIn") {
+    // The machine's own words here say to run a command; the button does that.
+    return {
+      ...none,
+      state: "signedOut",
+      tone: "attention",
+      headline: tx("Not signed in"),
+      action: "signIn",
+    };
+  }
+  if (state === "ready") {
+    const signedIn = provider.auth.status === "authenticated";
+    return {
+      ...none,
+      state: "ready",
+      tone: "ready",
+      headline: signedIn ? tx("Signed in") : tx("Ready"),
+      detail:
+        provider.models.length === 0
+          ? tx("No models reported yet. Refresh provider status after completing setup.")
+          : null,
+      account: signedIn ? provider.auth : null,
+      action: provider.models.length === 0 ? "checkAgain" : null,
+    };
+  }
+  // Not ready, and not for want of an install or a sign-in. A check that gave
+  // no answer keeps the sign-in it read before, so the row can still name it.
+  const lastKnown = provider.auth.status === "unknown" ? provider.lastKnownAuth : undefined;
+  const signedIn = provider.auth.status === "authenticated";
+  return {
+    state: lastKnown ? "noAnswer" : "attention",
+    tone: "attention",
+    headline: provider.message ?? tx("Needs attention"),
+    detail: lastKnown?.status === "unauthenticated" ? tx("Last time it was not signed in.") : null,
+    account: signedIn ? provider.auth : lastKnown?.status === "authenticated" ? lastKnown : null,
+    accountIsLastKnown: !signedIn && lastKnown?.status === "authenticated",
+    action: "checkAgain",
+  };
+}
+
+/**
+ * Whether the status row shows the agent's own sign-in or install block, which
+ * then leaves the Setup section until the agent is ready. It stays under the
+ * row through every state on the way there, so a check in the middle of a
+ * sign-in never moves it and loses what was typed.
+ */
+export function statusRowShowsSetup(provider: ServerProvider | undefined, enabled: boolean) {
+  if (!provider) return false;
+  const { state } = getProviderStatusView(provider, enabled);
+  if (state === "notInstalled") return provider.setup?.canInstall === true;
+  return state !== "ready" && state !== "off" && state !== "unavailable";
 }
 
 /**

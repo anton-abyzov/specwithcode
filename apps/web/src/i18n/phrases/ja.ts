@@ -2231,9 +2231,6 @@ export const ja: PhraseCatalog = {
   "Plain text": "プレーンテキスト",
   "Sensitive values are stored separately and never returned to the app.":
     "機密の値は別に保存され、アプリに返されることはありません。",
-  "Authenticated as {providerAuthEmail}{value}{value2}":
-    "{providerAuthEmail} として認証済み{value}{value2}",
-  "Signed in as {authLogin}{value}{value2}": "{authLogin} としてサインイン中{value}{value2}",
   Updating: "更新中",
   "Update now": "今すぐ更新",
   "{span}or, update manually using{span2}": "{span}または次のコマンドで手動更新{span2}",
@@ -2261,8 +2258,6 @@ export const ja: PhraseCatalog = {
   "Reset to built-in": "組み込みに戻す",
   custom: "カスタム",
   "Add argument": "引数を追加",
-  "Agent readiness": "エージェントの準備状況",
-  "Agent runs on {environmentLabel}.": "エージェントは {environmentLabel} で実行されます。",
   "No connected devices": "接続済みのデバイスはありません",
   "Loading devices": "デバイスを読み込み中",
   "Connect an execution environment before configuring providers.":
@@ -3680,8 +3675,6 @@ export const ja: PhraseCatalog = {
     "エージェントがページを開く SpecWithCode ブラウザプロファイル（保存済みログインを含む）。プロジェクトごとに独自のものを選べます。",
   "Change accent color for {name}": "{name} のアクセントカラーを変更",
   "Add accent color for {name}": "{name} にアクセントカラーを追加",
-  "Complete installation on {machine} or configure its executable below, then refresh provider status.":
-    "{machine} でインストールを完了するか、下で実行ファイルを設定してから、プロバイダーの状態を更新してください。",
   "{summary} · {count} project override": "{summary} · プロジェクトの上書き {count} 件",
   "{summary} · {count} project overrides": "{summary} · プロジェクトの上書き {count} 件",
   "{summary}. Show where this value comes from": "{summary}。この値の出どころを表示",
@@ -3888,10 +3881,6 @@ export const ja: PhraseCatalog = {
   "Claude Code plugins": "Claude Code プラグイン",
   "Claude user settings.json": "Claude のユーザー settings.json",
   "Native configuration": "ネイティブ構成",
-  "Enable this agent below to use it in chat.":
-    "チャットで使うには、下でこのエージェントを有効にしてください。",
-  "Refresh provider status to check installation, sign-in and models.":
-    "インストール、サインイン、モデルを確認するには、プロバイダーの状態を更新してください。",
   "This agent is unavailable on this machine.": "このエージェントはこのマシンでは利用できません。",
   "Connect an agent": "エージェントを接続",
   "Sign in to Claude, Codex or another provider.":
@@ -3916,19 +3905,8 @@ export const ja: PhraseCatalog = {
   "Gmail drafts": "Gmail の下書き",
   "Keybinding for {command}": "{command} のキーバインド",
   "Actions for {command}": "{command} の操作",
-  "Complete sign-in in Setup below, then refresh provider status to load models.":
-    "下の「セットアップ」でサインインを完了してから、プロバイダーの状態を更新してモデルを読み込んでください。",
-  "Complete sign-in using this agent on {machine}, then refresh provider status.":
-    "{machine} でこのエージェントを使ってサインインを完了してから、プロバイダーの状態を更新してください。",
-  "Sign-in status is not reported. Review the agent settings below or refresh provider status.":
-    "サインイン状態が報告されていません。下のエージェント設定を確認するか、プロバイダーの状態を更新してください。",
-  "Review the provider status below before starting a chat.":
-    "チャットを始める前に、下のプロバイダーの状態を確認してください。",
   "No models reported yet. Refresh provider status after completing setup.":
     "まだモデルが報告されていません。セットアップの完了後にプロバイダーの状態を更新してください。",
-  "Choose this agent and a model in the chat model picker.":
-    "チャットのモデル選択でこのエージェントとモデルを選んでください。",
-  "{count} reported": "{count} 件を報告済み",
   "Pinned: {account} · ": "固定: {account} · ",
   "Recommended: {label} · next reset {time}": "推奨: {label} · 次回リセット {time}",
   "Recommended: {label} · next reset unknown": "推奨: {label} · 次回リセットは不明",
@@ -3958,13 +3936,8 @@ export const ja: PhraseCatalog = {
     "このマシンで許可されたデバイスを読み込めませんでした。",
   "Project .claude/settings.json": "プロジェクトの .claude/settings.json",
   "Project .claude/settings.local.json": "プロジェクトの .claude/settings.local.json",
-  Integration: "連携",
-  Installation: "インストール",
-  "Built-in SDK": "組み込み SDK",
-  "Sign-in": "サインイン",
   "Signed in": "サインイン済み",
   "Not reported": "報告なし",
-  "None reported": "報告されていません",
   "Set up here": "ここで設定",
   "Each machine has its own private assistant. Nothing transfers between them.":
     "各マシンには専用のプライベートアシスタントがあります。マシン間で何も転送されません。",
@@ -4577,6 +4550,7 @@ export const ja: PhraseCatalog = {
   "Install {agent} and sign in": "{agent} をインストールしてサインイン",
   "An install is running. Wait for it to end, or close its log to stop it.":
     "インストールを実行中です。終わるまで待つか、ログを閉じて停止してください。",
+  "Installing {agent}. This is its log.": "{agent} をインストールしています。これがそのログです。",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "{agent} をインストールしています。これがそのログです。インストールが終わるとサインインが開きます。",
   "Installing. Its log is below, and its sign-in opens when the install is done.":
@@ -4898,4 +4872,11 @@ export const ja: PhraseCatalog = {
   "Browse…": "参照…",
   "Add to this machine…": "このマシンに追加…",
   "Runs on {machine}. No copy on this device.": "{machine} で実行されます。このデバイスにはコピーがありません。",
+  "Agent status": "エージェントの状態",
+  "Last time it was not signed in.": "前回はサインインしていませんでした。",
+  "Last time it was signed in as {account}.": "前回は {account} としてサインインしていました。",
+  "Last time it was signed in.": "前回はサインインしていました。",
+  "Not signed in": "未サインイン",
+  "Sign in with {account}": "{account} でサインイン",
+  "Turn it on to use it in chat.": "チャットで使うにはオンにしてください。",
 };

@@ -9,7 +9,6 @@ import {
   ArrowUpCircleIcon,
   CopyIcon,
   DownloadIcon,
-  ExternalLinkIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -25,7 +24,6 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
-  type AcpRegistryUrlAuthAction,
   type EnvironmentId,
   type ProjectId,
   type ProviderDriverKind,
@@ -54,7 +52,6 @@ import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSe
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
-import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
   SettingsRow,
   SettingsSection,
@@ -195,21 +192,6 @@ export function deriveProviderModelsForDisplay(input: {
       entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
   }));
   return [...serverModels, ...customModels];
-}
-
-function ProviderAuthEmail(props: { readonly email: string | undefined }) {
-  const email = props.email?.trim();
-  if (!email) return null;
-
-  return (
-    <RedactedSensitiveText
-      value={email}
-      ariaLabel="Toggle account email visibility"
-      revealTooltip="Click to reveal email"
-      hideTooltip="Click to hide email"
-      className="max-w-full truncate"
-    />
-  );
 }
 
 export function readProviderEnvironmentVariable(
@@ -531,7 +513,6 @@ interface ProviderInstanceCardProps {
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
-  readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
   readonly environmentId?: EnvironmentId | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{
@@ -589,7 +570,6 @@ export function ProviderInstanceCard({
   onRunUpdate,
   onInstallRecommended,
   isUpdating = false,
-  onAcceptUrlAuth,
   environmentId,
   acpProjects = EMPTY_ACP_PROJECTS,
 }: ProviderInstanceCardProps) {
@@ -609,13 +589,6 @@ export function ProviderInstanceCard({
   const summary = enabled
     ? getProviderSummary(liveProvider, tx)
     : { headline: tx("Disabled"), detail: null };
-  const authEmail = liveProvider?.auth.email?.trim();
-  const authLogin = liveProvider?.auth.login?.trim();
-  const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
-  const authLabel =
-    enabled && liveProvider?.auth.status === "authenticated"
-      ? (liveProvider.auth.label ?? liveProvider.auth.type ?? null)
-      : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(
     liveProvider?.versionAdvisory,
@@ -637,7 +610,6 @@ export function ProviderInstanceCard({
     : versionAdvisory?.targetVersion
       ? onInstallRecommended
       : onRunUpdate;
-  const urlAuthAction = liveProvider?.auth.action;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
@@ -780,10 +752,6 @@ export function ProviderInstanceCard({
     <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">{headerAction}</span>
   ) : null;
 
-  const versionCodeNode = versionLabel ? (
-    <code className="text-xs text-muted-foreground">{versionLabel}</code>
-  ) : null;
-
   // Healthy and disabled rows read fine from their text; only trouble gets a dot.
   const statusDotNode =
     statusKey === "warning" || statusKey === "error" ? (
@@ -799,45 +767,6 @@ export function ProviderInstanceCard({
         ? "Unsupported"
         : "Limited support"
     : summary.detail;
-  const editorStatusNode =
-    isAuthenticated && authEmail ? (
-      <>
-        {needsAttention && statusDotNode ? (
-          <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
-        ) : null}
-        <span className="min-w-0 [overflow-wrap:anywhere]">
-          {renderRich(tx("Authenticated as {providerAuthEmail}{value}{value2}"), {
-            providerAuthEmail: <ProviderAuthEmail email={authEmail} />,
-            value: authLabel ? ` · ${authLabel}` : null,
-            value2: inlineStatusDetail ? ` · ${inlineStatusDetail}` : null,
-          })}
-        </span>
-      </>
-    ) : isAuthenticated && authLogin ? (
-      <>
-        {needsAttention && statusDotNode ? (
-          <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
-        ) : null}
-        <span className="min-w-0 [overflow-wrap:anywhere]">
-          {renderRich(tx("Signed in as {authLogin}{value}{value2}"), {
-            authLogin: authLogin,
-            value: authLabel ? ` · ${authLabel}` : null,
-            value2: inlineStatusDetail ? ` · ${inlineStatusDetail}` : null,
-          })}
-        </span>
-      </>
-    ) : (
-      <>
-        {/* The dot keeps its own column so a wrapped detail lines up under the headline. */}
-        {statusDotNode ? (
-          <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
-        ) : null}
-        <span className="min-w-0 [overflow-wrap:anywhere]">
-          {summary.headline}
-          {inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
-        </span>
-      </>
-    );
   const versionAdvisoryNode = versionAdvisory ? (
     <Popover>
       <Tooltip>
@@ -1034,7 +963,6 @@ export function ProviderInstanceCard({
           {driverOption.badgeLabel}
         </Badge>
       ) : null}
-      {versionCodeNode}
       {versionAdvisoryNode}
       <span
         inert={readOnly}
@@ -1094,42 +1022,7 @@ export function ProviderInstanceCard({
       >
         <SettingsRow
           title="Display name"
-          status={
-            <>
-              <ProviderStatusDiagnostic detail={statusDiagnostic}>
-                <div
-                  tabIndex={statusDiagnostic ? 0 : undefined}
-                  className="flex min-w-0 items-start gap-x-1.5"
-                >
-                  {editorStatusNode}
-                </div>
-              </ProviderStatusDiagnostic>
-              {autoEnabledNotice}
-              {urlAuthAction && onAcceptUrlAuth ? (
-                <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
-                  <p>{urlAuthAction.message}</p>
-                  <code className="break-all text-2xs">{urlAuthAction.url}</code>
-                  <Button
-                    render={
-                      <a
-                        href={urlAuthAction.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => onAcceptUrlAuth(urlAuthAction)}
-                      />
-                    }
-                    size="xs"
-                    variant="outline"
-                    className="w-fit"
-                    disabled={readOnly}
-                  >
-                    <ExternalLinkIcon />
-                    {tx("Continue authentication")}
-                  </Button>
-                </div>
-              ) : null}
-            </>
-          }
+          status={autoEnabledNotice}
           control={
             <div
               inert={readOnly}

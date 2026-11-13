@@ -88,7 +88,7 @@ describe("deriveProviderModelsForDisplay", () => {
     });
   });
 
-  it("shows a redacted provider email in the editor header status line", () => {
+  it("leaves the account to the status row above the editor", () => {
     const instanceId = ProviderInstanceId.make("codex");
     const driver = ProviderDriverKind.make("codex");
     const liveProvider: ServerProvider = {
@@ -122,48 +122,11 @@ describe("deriveProviderModelsForDisplay", () => {
       }),
     );
 
-    expect(markup).toContain("Authenticated as");
-    expect(markup).toContain('aria-label="Toggle account email visibility"');
-    expect(markup).toContain("blur-xs");
+    expect(markup).not.toContain("Authenticated");
+    expect(markup).not.toContain("Toggle account email visibility");
     expect(markup).not.toContain("developer@example.com");
   });
-  it("shows the GitHub login a Copilot instance is signed in as", () => {
-    const instanceId = ProviderInstanceId.make("acpRegistry_github_copilot_2");
-    const driver = ProviderDriverKind.make("acpRegistry");
-    const liveProvider: ServerProvider = {
-      instanceId,
-      driver,
-      enabled: true,
-      installed: true,
-      version: "1.0.0",
-      status: "ready",
-      auth: { status: "authenticated", login: "work-account" },
-      checkedAt: "2026-11-04T12:00:00.000Z",
-      models: [],
-      slashCommands: [],
-      skills: [],
-    };
-
-    const markup = renderToStaticMarkup(
-      createElement(ProviderInstanceCard, {
-        instanceId,
-        instance: { driver },
-        driverOption: undefined,
-        liveProvider,
-        mode: "editor",
-        onUpdate: () => undefined,
-        hiddenModels: [],
-        favoriteModels: [],
-        modelOrder: [],
-        onHiddenModelsChange: () => undefined,
-        onFavoriteModelsChange: () => undefined,
-        onModelOrderChange: () => undefined,
-      }),
-    );
-
-    expect(markup).toContain("Signed in as work-account");
-  });
-  it("surfaces a failed probe message in both the list row and the editor", () => {
+  it("surfaces a failed probe message in the list row, and leaves it to the status row in the editor", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const driver = ProviderDriverKind.make("codex");
     const message =
@@ -196,11 +159,15 @@ describe("deriveProviderModelsForDisplay", () => {
       onModelOrderChange: () => undefined,
     } as const;
 
-    for (const mode of ["list", "editor"] as const) {
-      const markup = renderToStaticMarkup(createElement(ProviderInstanceCard, { ...props, mode }));
-      expect(markup).toContain("Unavailable");
-      expect(markup).toContain("is not a symlink");
-    }
+    const list = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, { ...props, mode: "list" }),
+    );
+    expect(list).toContain("Unavailable");
+    expect(list).toContain("is not a symlink");
+    const editor = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, { ...props, mode: "editor" }),
+    );
+    expect(editor).not.toContain("is not a symlink");
   });
 
   it("says a provider was turned on automatically, with Undo, only while it is on", () => {

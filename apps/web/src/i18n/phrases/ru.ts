@@ -2225,9 +2225,6 @@ export const ru: PhraseCatalog = {
   "Plain text": "Обычный текст",
   "Sensitive values are stored separately and never returned to the app.":
     "Конфиденциальные значения хранятся отдельно и никогда не возвращаются в приложение.",
-  "Authenticated as {providerAuthEmail}{value}{value2}":
-    "Аутентифицирован как {providerAuthEmail}{value}{value2}",
-  "Signed in as {authLogin}{value}{value2}": "Вход выполнен как {authLogin}{value}{value2}",
   Updating: "Обновление",
   "Update now": "Обновить сейчас",
   "{span}or, update manually using{span2}": "{span}или обновите вручную командой{span2}",
@@ -2255,8 +2252,6 @@ export const ru: PhraseCatalog = {
   "Reset to built-in": "Сбросить на встроенные",
   custom: "своё",
   "Add argument": "Добавить аргумент",
-  "Agent readiness": "Готовность агентов",
-  "Agent runs on {environmentLabel}.": "Агент работает на {environmentLabel}.",
   "No connected devices": "Нет подключённых устройств",
   "Loading devices": "Загрузка устройств",
   "Connect an execution environment before configuring providers.":
@@ -3676,8 +3671,6 @@ export const ru: PhraseCatalog = {
     "Профиль браузера SpecWithCode, в котором агенты открывают страницы, с его сохранёнными входами. Проекты могут выбрать свой.",
   "Change accent color for {name}": "Изменить акцентный цвет для {name}",
   "Add accent color for {name}": "Добавить акцентный цвет для {name}",
-  "Complete installation on {machine} or configure its executable below, then refresh provider status.":
-    "Завершите установку на {machine} или укажите исполняемый файл ниже, затем обновите статус провайдера.",
   "{summary} · {count} project override": "{summary} · переопределений в проектах: {count}",
   "{summary} · {count} project overrides": "{summary} · переопределений в проектах: {count}",
   "{summary}. Show where this value comes from": "{summary}. Показать, откуда берётся это значение",
@@ -3885,10 +3878,6 @@ export const ru: PhraseCatalog = {
   "Claude Code plugins": "Плагины Claude Code",
   "Claude user settings.json": "Пользовательский settings.json Claude",
   "Native configuration": "Нативная конфигурация",
-  "Enable this agent below to use it in chat.":
-    "Включите этого агента ниже, чтобы использовать его в чате.",
-  "Refresh provider status to check installation, sign-in and models.":
-    "Обновите статус провайдера, чтобы проверить установку, вход и модели.",
   "This agent is unavailable on this machine.": "Этот агент недоступен на этой машине.",
   "Connect an agent": "Подключить агента",
   "Sign in to Claude, Codex or another provider.":
@@ -3912,19 +3901,8 @@ export const ru: PhraseCatalog = {
   "Gmail drafts": "Черновики Gmail",
   "Keybinding for {command}": "Сочетание клавиш для {command}",
   "Actions for {command}": "Действия для {command}",
-  "Complete sign-in in Setup below, then refresh provider status to load models.":
-    "Завершите вход в разделе «Настройка» ниже, затем обновите статус провайдера, чтобы загрузить модели.",
-  "Complete sign-in using this agent on {machine}, then refresh provider status.":
-    "Завершите вход с помощью этого агента на {machine}, затем обновите статус провайдера.",
-  "Sign-in status is not reported. Review the agent settings below or refresh provider status.":
-    "Статус входа не сообщается. Проверьте настройки агента ниже или обновите статус провайдера.",
-  "Review the provider status below before starting a chat.":
-    "Проверьте статус провайдера ниже, прежде чем начинать чат.",
   "No models reported yet. Refresh provider status after completing setup.":
     "Модели пока не сообщены. Обновите статус провайдера после завершения настройки.",
-  "Choose this agent and a model in the chat model picker.":
-    "Выберите этого агента и модель в выборе модели чата.",
-  "{count} reported": "Сообщено: {count}",
   "Pinned: {account} · ": "Закреплено: {account} · ",
   "Recommended: {label} · next reset {time}": "Рекомендуется: {label} · следующий сброс {time}",
   "Recommended: {label} · next reset unknown":
@@ -3955,13 +3933,8 @@ export const ru: PhraseCatalog = {
     "Не удалось загрузить устройства, разрешённые на этой машине.",
   "Project .claude/settings.json": "Файл проекта .claude/settings.json",
   "Project .claude/settings.local.json": "Файл проекта .claude/settings.local.json",
-  Integration: "Интеграция",
-  Installation: "Установка",
-  "Built-in SDK": "Встроенный SDK",
-  "Sign-in": "Вход",
   "Signed in": "Вход выполнен",
   "Not reported": "Не сообщается",
-  "None reported": "Не сообщено",
   "Set up here": "Настроить здесь",
   "Each machine has its own private assistant. Nothing transfers between them.":
     "У каждой машины свой личный ассистент. Между ними ничего не переносится.",
@@ -4573,6 +4546,7 @@ export const ru: PhraseCatalog = {
   "Install {agent} and sign in": "Установить {agent} и войти",
   "An install is running. Wait for it to end, or close its log to stop it.":
     "Идёт установка. Дождитесь её окончания или закройте журнал, чтобы остановить её.",
+  "Installing {agent}. This is its log.": "Устанавливается {agent}. Это лог установки.",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "Устанавливается {agent}. Это лог установки. Вход откроется, когда установка завершится.",
   "Installing. Its log is below, and its sign-in opens when the install is done.":
@@ -4896,4 +4870,11 @@ export const ru: PhraseCatalog = {
   "Browse…": "Обзор…",
   "Add to this machine…": "Добавить на этот компьютер…",
   "Runs on {machine}. No copy on this device.": "Работает на {machine}. На этом устройстве копии нет.",
+  "Agent status": "Статус агента",
+  "Last time it was not signed in.": "В прошлый раз вход не был выполнен.",
+  "Last time it was signed in as {account}.": "В прошлый раз вход был выполнен как {account}.",
+  "Last time it was signed in.": "В прошлый раз вход был выполнен.",
+  "Not signed in": "Вход не выполнен",
+  "Sign in with {account}": "Войти через {account}",
+  "Turn it on to use it in chat.": "Включите его, чтобы использовать в чате.",
 };

@@ -5,7 +5,12 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderSummary, getProviderVersionAdvisoryPresentation } from "./providerStatus";
+import {
+  getProviderStatusView,
+  getProviderSummary,
+  getProviderVersionAdvisoryPresentation,
+  statusRowShowsSetup,
+} from "./providerStatus";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -192,5 +197,165 @@ describe("provider status copy", () => {
       headline: "Not authenticated · Company login",
       detail: "Complete this authentication method on the server.",
     });
+  });
+});
+
+describe("the selected agent's status", () => {
+  const view = (patch: Partial<ServerProvider> = {}, enabled = true) =>
+    getProviderStatusView({ ...provider, ...patch }, enabled);
+
+  it("is Signed in with the account and no button when the agent is ready", () => {
+    const ready = view({ models: [{ slug: "gpt", name: "GPT", isCustom: false }] as never });
+    expect(ready).toMatchObject({
+      state: "ready",
+      tone: "ready",
+      headline: "Signed in",
+      detail: null,
+      action: null,
+      accountIsLastKnown: false,
+    });
+    expect(ready.account).toEqual(provider.auth);
+  });
+
+  it("is Ready, not Signed in, when the agent runs and its sign-in is not reported", () => {
+    const ready = view({ auth: { status: "unknown" } });
+    expect(ready.headline).toBe("Ready");
+    expect(ready.account).toBeNull();
+  });
+
+  it("offers Turn on for an agent that is off, whatever the machine last said", () => {
+    expect(view({ status: "error", auth: { status: "unauthenticated" } }, false)).toMatchObject({
+      state: "off",
+      headline: "Off",
+      action: "turnOn",
+    });
+    expect(getProviderStatusView(undefined, false).action).toBe("turnOn");
+  });
+
+  it("is Checking with no button until the machine has answered", () => {
+    expect(getProviderStatusView(undefined, true)).toMatchObject({
+      state: "checking",
+      headline: "Checking…",
+      action: null,
+    });
+    expect(view({ installed: false, status: "warning", auth: { status: "unknown" } }).state).toBe(
+      "checking",
+    );
+  });
+
+  it("offers Install for an agent that is not installed, with the machine's reason", () => {
+    expect(view({ installed: false, status: "error", auth: { status: "unknown" } })).toMatchObject({
+      state: "notInstalled",
+      headline: "Not installed",
+      detail: null,
+      action: "install",
+    });
+    expect(
+      view({
+        installed: false,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "CLI not detected on PATH.",
+      }).detail,
+    ).toBe("CLI not detected on PATH.");
+  });
+
+  it("offers Check again to a ready agent that has listed no models", () => {
+    expect(view({ models: [] })).toMatchObject({
+      state: "ready",
+      detail: "No models reported yet. Refresh provider status after completing setup.",
+      action: "checkAgain",
+    });
+  });
+
+  it("offers Sign in, and leaves out the machine's words that say to run a command", () => {
+    const signedOut = view({
+      status: "error",
+      auth: { status: "unauthenticated" },
+      message: "Grok CLI is installed but not logged in. Run `grok login`.",
+    });
+    expect(signedOut).toMatchObject({
+      state: "signedOut",
+      headline: "Not signed in",
+      detail: null,
+      action: "signIn",
+    });
+  });
+
+  it("keeps the last sign-in it read when a check gives no answer, with Check again", () => {
+    const lastKnown = { status: "authenticated", email: "ada@example.com", label: "Pro" } as const;
+    const noAnswer = view({
+      status: "warning",
+      auth: { status: "unknown" },
+      lastKnownAuth: lastKnown,
+      message: "Could not check Codex: no answer in 15 seconds.",
+    });
+    expect(noAnswer).toMatchObject({
+      state: "noAnswer",
+      headline: "Could not check Codex: no answer in 15 seconds.",
+      action: "checkAgain",
+      accountIsLastKnown: true,
+    });
+    expect(noAnswer.account).toEqual(lastKnown);
+    expect(
+      view({
+        status: "warning",
+        auth: { status: "unknown" },
+        lastKnownAuth: { status: "unauthenticated" },
+        message: "Could not check Codex: no answer in 15 seconds.",
+      }),
+    ).toMatchObject({ detail: "Last time it was not signed in.", account: null });
+  });
+
+  it("gives the machine's reason and Check again for a signed-in agent that is not ready", () => {
+    const failing = view({ status: "error", message: "Codex could not list its models." });
+    expect(failing).toMatchObject({
+      state: "attention",
+      headline: "Codex could not list its models.",
+      action: "checkAgain",
+      accountIsLastKnown: false,
+    });
+    expect(failing.account).toEqual(provider.auth);
+  });
+
+  it("names why an agent is unavailable and offers nothing to press", () => {
+    expect(
+      view({ availability: "unavailable", unavailableReason: "This build has no such driver." }),
+    ).toMatchObject({
+      state: "unavailable",
+      detail: "This build has no such driver.",
+      action: null,
+    });
+  });
+
+  it("shows the agent's own sign-in under its status only while it is needed", () => {
+    const signedOut = {
+      ...provider,
+      status: "error",
+      auth: { status: "unauthenticated" },
+    } as const;
+    expect(statusRowShowsSetup(signedOut, true)).toBe(true);
+    expect(statusRowShowsSetup(signedOut, false)).toBe(false);
+    expect(statusRowShowsSetup(provider, true)).toBe(false);
+    expect(statusRowShowsSetup(undefined, true)).toBe(false);
+    // A check in the middle of a sign-in must not move it back to Setup.
+    const noAnswer = { ...provider, status: "warning", auth: { status: "unknown" } } as const;
+    expect(statusRowShowsSetup(noAnswer, true)).toBe(true);
+    expect(statusRowShowsSetup({ ...provider, status: "error" }, true)).toBe(true);
+    expect(
+      statusRowShowsSetup({ ...provider, availability: "unavailable", status: "error" }, true),
+    ).toBe(false);
+    const missing = { ...provider, installed: false, status: "error" } as const;
+    expect(statusRowShowsSetup({ ...missing, auth: { status: "unknown" } }, true)).toBe(false);
+    expect(
+      statusRowShowsSetup(
+        {
+          ...missing,
+          auth: { status: "unknown" },
+          setup: { canAuthenticate: true, canInstall: true },
+        },
+        true,
+      ),
+    ).toBe(true);
   });
 });

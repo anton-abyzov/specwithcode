@@ -2209,9 +2209,6 @@ export const ko: PhraseCatalog = {
   "Plain text": "일반 텍스트",
   "Sensitive values are stored separately and never returned to the app.":
     "민감한 값은 별도로 저장되며 앱에 다시 반환되지 않습니다.",
-  "Authenticated as {providerAuthEmail}{value}{value2}":
-    "{providerAuthEmail}(으)로 인증됨{value}{value2}",
-  "Signed in as {authLogin}{value}{value2}": "{authLogin}(으)로 로그인됨{value}{value2}",
   Updating: "업데이트 중",
   "Update now": "지금 업데이트",
   "{span}or, update manually using{span2}": "{span}또는 다음으로 직접 업데이트{span2}",
@@ -2239,8 +2236,6 @@ export const ko: PhraseCatalog = {
   "Reset to built-in": "기본 제공 값으로 재설정",
   custom: "사용자 지정",
   "Add argument": "인수 추가",
-  "Agent readiness": "에이전트 준비 상태",
-  "Agent runs on {environmentLabel}.": "에이전트는 {environmentLabel}에서 실행됩니다.",
   "No connected devices": "연결된 기기 없음",
   "Loading devices": "기기를 불러오는 중",
   "Connect an execution environment before configuring providers.":
@@ -3649,8 +3644,6 @@ export const ko: PhraseCatalog = {
     "에이전트가 페이지를 여는 SpecWithCode 브라우저 프로필로, 저장된 로그인이 포함됩니다. 프로젝트마다 자체 프로필을 고를 수 있습니다.",
   "Change accent color for {name}": "{name}의 강조 색상 변경",
   "Add accent color for {name}": "{name}에 강조 색상 추가",
-  "Complete installation on {machine} or configure its executable below, then refresh provider status.":
-    "{machine}에서 설치를 완료하거나 아래에서 실행 파일을 구성한 다음 공급자 상태를 새로 고치세요.",
   "{summary} · {count} project override": "{summary} · 프로젝트 재정의 {count}개",
   "{summary} · {count} project overrides": "{summary} · 프로젝트 재정의 {count}개",
   "{summary}. Show where this value comes from": "{summary}. 이 값의 출처 보기",
@@ -3851,10 +3844,6 @@ export const ko: PhraseCatalog = {
   "Claude Code plugins": "Claude Code 플러그인",
   "Claude user settings.json": "Claude 사용자 settings.json",
   "Native configuration": "네이티브 구성",
-  "Enable this agent below to use it in chat.":
-    "채팅에서 사용하려면 아래에서 이 에이전트를 켜세요.",
-  "Refresh provider status to check installation, sign-in and models.":
-    "설치, 로그인, 모델을 확인하려면 공급자 상태를 새로 고치세요.",
   "This agent is unavailable on this machine.": "이 에이전트는 이 머신에서 사용할 수 없습니다.",
   "Connect an agent": "에이전트 연결",
   "Sign in to Claude, Codex or another provider.": "Claude, Codex 또는 다른 공급자에 로그인하세요.",
@@ -3877,19 +3866,8 @@ export const ko: PhraseCatalog = {
   "Gmail drafts": "Gmail 임시보관함",
   "Keybinding for {command}": "{command} 단축키",
   "Actions for {command}": "{command} 작업",
-  "Complete sign-in in Setup below, then refresh provider status to load models.":
-    "아래 설정에서 로그인을 완료한 다음 공급자 상태를 새로 고쳐 모델을 불러오세요.",
-  "Complete sign-in using this agent on {machine}, then refresh provider status.":
-    "{machine}에서 이 에이전트로 로그인을 완료한 다음 공급자 상태를 새로 고치세요.",
-  "Sign-in status is not reported. Review the agent settings below or refresh provider status.":
-    "로그인 상태가 보고되지 않습니다. 아래 에이전트 설정을 검토하거나 공급자 상태를 새로 고치세요.",
-  "Review the provider status below before starting a chat.":
-    "채팅을 시작하기 전에 아래 공급자 상태를 검토하세요.",
   "No models reported yet. Refresh provider status after completing setup.":
     "아직 보고된 모델이 없습니다. 설정을 완료한 후 공급자 상태를 새로 고치세요.",
-  "Choose this agent and a model in the chat model picker.":
-    "채팅 모델 선택기에서 이 에이전트와 모델을 선택하세요.",
-  "{count} reported": "{count}개 보고됨",
   "Pinned: {account} · ": "고정됨: {account} · ",
   "Recommended: {label} · next reset {time}": "추천: {label} · 다음 재설정 {time}",
   "Recommended: {label} · next reset unknown": "추천: {label} · 다음 재설정 알 수 없음",
@@ -3918,13 +3896,8 @@ export const ko: PhraseCatalog = {
     "이 머신에서 허용된 기기를 불러올 수 없습니다.",
   "Project .claude/settings.json": "프로젝트 .claude/settings.json",
   "Project .claude/settings.local.json": "프로젝트 .claude/settings.local.json",
-  Integration: "통합",
-  Installation: "설치",
-  "Built-in SDK": "기본 제공 SDK",
-  "Sign-in": "로그인",
   "Signed in": "로그인됨",
   "Not reported": "보고되지 않음",
-  "None reported": "보고된 항목 없음",
   "Set up here": "여기에서 설정",
   "Each machine has its own private assistant. Nothing transfers between them.":
     "각 컴퓨터에는 고유한 개인 어시스턴트가 있습니다. 서로 간에 아무것도 전송되지 않습니다.",
@@ -4524,6 +4497,7 @@ export const ko: PhraseCatalog = {
   "Install {agent} and sign in": "{agent} 설치하고 로그인",
   "An install is running. Wait for it to end, or close its log to stop it.":
     "설치가 진행 중입니다. 끝날 때까지 기다리거나 로그를 닫아 중지하세요.",
+  "Installing {agent}. This is its log.": "{agent}을(를) 설치하는 중입니다. 아래는 그 로그입니다.",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "{agent}을(를) 설치하는 중입니다. 아래는 그 로그입니다. 설치가 끝나면 로그인이 열립니다.",
   "Installing. Its log is below, and its sign-in opens when the install is done.":
@@ -4841,4 +4815,12 @@ export const ko: PhraseCatalog = {
   "Browse…": "찾아보기…",
   "Add to this machine…": "이 컴퓨터에 추가…",
   "Runs on {machine}. No copy on this device.": "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
+  "Agent status": "에이전트 상태",
+  "Last time it was not signed in.": "지난번에는 로그인되어 있지 않았습니다.",
+  "Last time it was signed in as {account}.":
+    "지난번에는 {account} 계정으로 로그인되어 있었습니다.",
+  "Last time it was signed in.": "지난번에는 로그인되어 있었습니다.",
+  "Not signed in": "로그인 안 됨",
+  "Sign in with {account}": "{account} 계정으로 로그인",
+  "Turn it on to use it in chat.": "채팅에서 사용하려면 켜세요.",
 };

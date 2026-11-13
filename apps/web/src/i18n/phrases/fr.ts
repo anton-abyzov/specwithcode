@@ -2242,9 +2242,6 @@ export const fr: PhraseCatalog = {
   "Plain text": "Texte brut",
   "Sensitive values are stored separately and never returned to the app.":
     "Les valeurs sensibles sont stockées à part et jamais renvoyées à l’app.",
-  "Authenticated as {providerAuthEmail}{value}{value2}":
-    "Authentifié en tant que {providerAuthEmail}{value}{value2}",
-  "Signed in as {authLogin}{value}{value2}": "Connecté en tant que {authLogin}{value}{value2}",
   Updating: "Mise à jour",
   "Update now": "Mettre à jour maintenant",
   "{span}or, update manually using{span2}": "{span}ou mettez à jour manuellement avec{span2}",
@@ -2274,8 +2271,6 @@ export const fr: PhraseCatalog = {
   "Reset to built-in": "Revenir aux valeurs intégrées",
   custom: "personnalisé",
   "Add argument": "Ajouter un argument",
-  "Agent readiness": "Disponibilité des agents",
-  "Agent runs on {environmentLabel}.": "L’agent s’exécute sur {environmentLabel}.",
   "No connected devices": "Aucun appareil connecté",
   "Loading devices": "Chargement des appareils",
   "Connect an execution environment before configuring providers.":
@@ -3710,8 +3705,6 @@ export const fr: PhraseCatalog = {
     "Le profil de navigateur SpecWithCode dans lequel les agents ouvrent des pages, avec ses connexions enregistrées. Les projets peuvent choisir le leur.",
   "Change accent color for {name}": "Modifier la couleur d’accent de {name}",
   "Add accent color for {name}": "Ajouter une couleur d’accent à {name}",
-  "Complete installation on {machine} or configure its executable below, then refresh provider status.":
-    "Terminez l’installation sur {machine} ou configurez son exécutable ci-dessous, puis actualisez l’état du fournisseur.",
   "{summary} · {count} project override": "{summary} · {count} remplacement dans un projet",
   "{summary} · {count} project overrides": "{summary} · {count} remplacements dans des projets",
   "{summary}. Show where this value comes from": "{summary}. Afficher d’où vient cette valeur",
@@ -3920,10 +3913,6 @@ export const fr: PhraseCatalog = {
   "Claude Code plugins": "Plugins Claude Code",
   "Claude user settings.json": "settings.json utilisateur de Claude",
   "Native configuration": "Configuration native",
-  "Enable this agent below to use it in chat.":
-    "Activez cet agent ci-dessous pour l’utiliser dans le chat.",
-  "Refresh provider status to check installation, sign-in and models.":
-    "Actualisez l’état du fournisseur pour vérifier l’installation, la connexion et les modèles.",
   "This agent is unavailable on this machine.": "Cet agent est indisponible sur cette machine.",
   "Connect an agent": "Connecter un agent",
   "Sign in to Claude, Codex or another provider.":
@@ -3948,19 +3937,8 @@ export const fr: PhraseCatalog = {
   "Gmail drafts": "Brouillons Gmail",
   "Keybinding for {command}": "Raccourci de {command}",
   "Actions for {command}": "Actions pour {command}",
-  "Complete sign-in in Setup below, then refresh provider status to load models.":
-    "Terminez la connexion dans Configuration ci-dessous, puis actualisez l’état du fournisseur pour charger les modèles.",
-  "Complete sign-in using this agent on {machine}, then refresh provider status.":
-    "Terminez la connexion avec cet agent sur {machine}, puis actualisez l’état du fournisseur.",
-  "Sign-in status is not reported. Review the agent settings below or refresh provider status.":
-    "L’état de connexion n’est pas signalé. Vérifiez les réglages de l’agent ci-dessous ou actualisez l’état du fournisseur.",
-  "Review the provider status below before starting a chat.":
-    "Vérifiez l’état du fournisseur ci-dessous avant de démarrer un chat.",
   "No models reported yet. Refresh provider status after completing setup.":
     "Aucun modèle signalé pour l’instant. Actualisez l’état du fournisseur après avoir terminé la configuration.",
-  "Choose this agent and a model in the chat model picker.":
-    "Choisissez cet agent et un modèle dans le sélecteur de modèles du chat.",
-  "{count} reported": "{count} signalés",
   "Pinned: {account} · ": "Épinglé : {account} · ",
   "Recommended: {label} · next reset {time}":
     "Recommandé : {label} · prochaine réinitialisation {time}",
@@ -3992,13 +3970,8 @@ export const fr: PhraseCatalog = {
     "Impossible de charger les appareils autorisés sur cette machine.",
   "Project .claude/settings.json": ".claude/settings.json du projet",
   "Project .claude/settings.local.json": ".claude/settings.local.json du projet",
-  Integration: "Intégration",
-  Installation: "Installation",
-  "Built-in SDK": "SDK intégré",
-  "Sign-in": "Connexion",
   "Signed in": "Connecté",
   "Not reported": "Non signalé",
-  "None reported": "Aucun signalé",
   "Set up here": "Configurer ici",
   "Each machine has its own private assistant. Nothing transfers between them.":
     "Chaque machine a son propre assistant privé. Rien n'est transféré entre eux.",
@@ -4616,6 +4589,7 @@ export const fr: PhraseCatalog = {
   "Install {agent} and sign in": "Installer {agent} et se connecter",
   "An install is running. Wait for it to end, or close its log to stop it.":
     "Une installation est en cours. Attendez qu'elle se termine ou fermez son journal pour l'arrêter.",
+  "Installing {agent}. This is its log.": "Installation de {agent}. Voici son journal.",
   "Installing {agent}. This is its log. Its sign-in opens when the install is done.":
     "Installation de {agent}. Voici son journal. La connexion s'ouvre une fois l'installation terminée.",
   "Installing. Its log is below, and its sign-in opens when the install is done.":
@@ -4938,4 +4912,12 @@ export const fr: PhraseCatalog = {
   "Browse…": "Parcourir…",
   "Add to this machine…": "Ajouter à cette machine…",
   "Runs on {machine}. No copy on this device.": "S’exécute sur {machine}. Aucune copie sur cet appareil.",
+  "Agent status": "État de l'agent",
+  "Last time it was not signed in.": "La dernière fois, il n'était pas connecté.",
+  "Last time it was signed in as {account}.":
+    "La dernière fois, il était connecté en tant que {account}.",
+  "Last time it was signed in.": "La dernière fois, il était connecté.",
+  "Not signed in": "Non connecté",
+  "Sign in with {account}": "Se connecter avec {account}",
+  "Turn it on to use it in chat.": "Activez-le pour l'utiliser dans le chat.",
 };
