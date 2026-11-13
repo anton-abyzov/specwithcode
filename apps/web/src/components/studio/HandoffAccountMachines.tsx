@@ -113,7 +113,7 @@ export function HandoffAccountMachines({
             "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in",
             { names: fleetOnly.map((machine) => machine.label).join(", ") },
           )}{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
+          <Link to="/settings/machines" className="underline underline-offset-2">
             {tx("Settings > Machines")}
           </Link>
           .

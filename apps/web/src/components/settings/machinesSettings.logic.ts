@@ -20,6 +20,7 @@ import {
   type AccountAutoConnectState,
   accountConnectCanRetry,
 } from "../../studio/grantedAccountMachines";
+import { CONNECTING_REASON } from "../../studio/handoffAccountMachines";
 import { fleetWorkersView } from "../../studio/fleetWorkers";
 import type { HostLimitBlock } from "../../studio/hostLimitsModel";
 import {
@@ -282,7 +283,7 @@ export function withAccountConnectState(
   if (state?.phase === "connecting")
     return {
       ...row,
-      seen: { state: "reachable", text: "Connecting over SpecWithCode Connect…" },
+      seen: { state: "reachable", text: CONNECTING_REASON },
       connect: { enabled: false, label: "Connecting…" },
     };
   return {
