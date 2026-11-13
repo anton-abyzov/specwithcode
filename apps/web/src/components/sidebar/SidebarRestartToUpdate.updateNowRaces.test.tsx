@@ -413,7 +413,7 @@ async function waitForIdleAfterNotAvailable() {
   await pressAbout();
   expect(readConfirmDialogState()).toMatchObject({
     status: "confirming",
-    confirmLabel: "Restart when idle",
+    confirmLabel: "Wait until quiet",
   });
   await answerDialog(true);
   expect(label()).toMatch(/^Restarts when idle, or in 2:0\d$/);
@@ -494,7 +494,8 @@ describe("Update now when answers and presses cross", () => {
       await advance(0);
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Stop and update now",
+        confirmLabel: "Restart now",
+        cancelLabel: "Later",
       });
       agent = { ...serviceWaiting, status: "installing", updatedAt: new Date().toISOString() };
       state.service = agent;
@@ -647,7 +648,7 @@ describe("Update now when answers and presses cross", () => {
       await failAsNotAvailable();
       checked = RUNNING;
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await answerDialog(false);
       // The failure stays, and with it the app's restart on the button.
       expect(state.closeToast).not.toHaveBeenCalled();
@@ -679,7 +680,7 @@ describe("Update now when answers and presses cross", () => {
       await pressAbout();
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Restart when idle",
+        confirmLabel: "Wait until quiet",
       });
       await answerDialog(false);
       expect(label()).toMatch(/^Restarts when idle/);
@@ -728,7 +729,7 @@ describe("Update now when answers and presses cross", () => {
       await failAsNotAvailable();
       checked = RUNNING;
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await otherWindowPressesUpdateNow();
       calls.length = 0;
       await answerDialog("alternate");
@@ -742,7 +743,7 @@ describe("Update now when answers and presses cross", () => {
     it("ends the wait once a service update that went live during the app's question takes its install", async () => {
       await waitForIdleAfterNotAvailable();
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await otherWindowPressesUpdateNow();
       calls.length = 0;
       await answerDialog("alternate");
@@ -860,7 +861,10 @@ describe("Update now when answers and presses cross", () => {
         await vi.advanceTimersByTimeAsync(3_000);
       });
       await advance(0);
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Stop and update now" });
+      expect(readConfirmDialogState()).toMatchObject({
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
+      });
       // The wait does not ask the service a second time: the app restarts as it came due.
       expect(calls.filter((call) => call !== "prepare:false")).toEqual([
         "prepare:true+hold:app-restart",
@@ -879,7 +883,10 @@ describe("Update now when answers and presses cross", () => {
       state.service = serviceWaiting;
       rerender();
       await advance(120_000);
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Stop and update now" });
+      expect(readConfirmDialogState()).toMatchObject({
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
+      });
       await answerDialog(false);
       expect(label()).toBe("Update now");
       // The work the user kept stays kept: nothing asks again.
@@ -890,7 +897,10 @@ describe("Update now when answers and presses cross", () => {
     it("stays when Settings' service update is cancelled at its question, and ends once one starts", async () => {
       await waitForIdleAfterNotAvailable();
       await pressAbout({ requireService: true });
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Stop and update now" });
+      expect(readConfirmDialogState()).toMatchObject({
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
+      });
       await answerDialog(false);
       expect(label()).toMatch(/^Restarts when idle/);
       checked = { idle: true, stoppedThreads: 0, blockers: [] };

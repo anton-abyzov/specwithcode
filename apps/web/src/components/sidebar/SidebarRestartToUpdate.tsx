@@ -4,7 +4,6 @@ import * as Schema from "effect/Schema";
 import { RotateCwIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { respondToConfirmDialog } from "../../confirmDialog";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { isElectron } from "../../env";
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
@@ -14,7 +13,9 @@ import { useStudioServiceUpdateState } from "../../state/serviceUpdate";
 import {
   confirmAppRestartForUpdate,
   drainWorkForAppRestart,
+  isServiceUpdateStopNeeded,
   isServiceWorkRunning,
+  readInterruptedWork,
   releaseAppRestartDrain,
 } from "../serviceUpdateCalls";
 import {
@@ -55,7 +56,7 @@ import {
   forceInstallAfterMinutes,
   holdWindowElapsed,
 } from "./restartHoldWindow";
-import { RestartDialogNotes, RestartRunningWorkList } from "./RestartRunningWorkList";
+import { LiveRestartRunningWorkList, RestartDialogNotes } from "./RestartRunningWorkList";
 import { onRestartToUpdateRequest } from "./restartToUpdateRequests";
 import { keepLiveQuestionBlockers, waitingKey } from "./liveQuestionThreads";
 import { useLiveWaitingThreads } from "./useLiveWaitingThreads";
@@ -136,6 +137,8 @@ function SidebarRestartToUpdateButton() {
   }, []);
   // That wait installs the app alone, as the press that started it did.
   const idleAppOnly = useRef<boolean | "lacking">(false);
+  // The wait for quiet was chosen at the service update's own question.
+  const idleForService = useRef(false);
   const [holdMinutes, setHoldMinutes] = useState(DEFAULT_FORCE_INSTALL_AFTER_MINUTES);
   const [now, setNow] = useState(() => Date.now());
   const [checkingWork, setCheckingWork] = useState(false);
@@ -145,6 +148,8 @@ function SidebarRestartToUpdateButton() {
   const environmentId = usePrimaryEnvironmentId();
   const watchdog = useRef<number | null>(null);
   const view = getRestartToUpdateView(appState, serviceState, { installOnQuit });
+  // An update of the app or the service waits here; the wait for quiet covers both.
+  const hasUpdate = Boolean(view?.app || view?.service);
   // An Update now run (0988): this window only follows it, in one toast.
   const runState = serviceState?.run ?? null;
   const liveRun = liveServiceUpdateRun(serviceState);
@@ -248,23 +253,22 @@ function SidebarRestartToUpdateButton() {
     [],
   );
 
-  // The dialog's list: a thread row opens that thread and closes the dialog.
+  // The dialog's live list: a thread row opens that thread and closes the dialog.
   const renderRunningWork = useCallback(
     (working: ReadonlyArray<ServiceUpdateBlocker>, all: ReadonlyArray<ServiceUpdateBlocker>) => (
       <div className="space-y-3">
-        <RestartRunningWorkList
-          blockers={working}
-          onOpenThread={
-            environmentId === null
-              ? undefined
-              : (threadId) => {
-                  respondToConfirmDialog("cancel");
-                  void navigate({
-                    to: "/$environmentId/$threadId",
-                    params: { environmentId, threadId },
-                  });
-                }
-          }
+        <LiveRestartRunningWorkList
+          initial={working}
+          poll={readInterruptedWork}
+          machine={{ environmentId, name: null }}
+          onOpenThread={(thread) => {
+            const target = thread.environmentId ?? environmentId;
+            if (target === null) return;
+            void navigate({
+              to: "/$environmentId/$threadId",
+              params: { environmentId: target, threadId: thread.threadId },
+            });
+          }}
         />
         <RestartDialogNotes
           lines={[describeReaskedRequests(all), restartWhenIdleNote(holdMinutes)]}
@@ -273,6 +277,32 @@ function SidebarRestartToUpdateButton() {
     ),
     [environmentId, holdMinutes, navigate],
   );
+
+  // Wait until quiet on a question that updates the service first: the same
+  // wait an app restart uses, which hands over to the service update once
+  // nothing runs (or the hold window has passed).
+  // Choosing it again during a wait keeps the wait's clock.
+  const waitForQuiet = useCallback(() => {
+    idleAppOnly.current = false;
+    idleForService.current = true;
+    setIdleSince(idleSinceRef.current ?? Date.now());
+  }, [setIdleSince]);
+
+  // The update went in on its own (or was withdrawn): the wait is over, so a
+  // later release asks again instead of inheriting an elapsed wait. Only once
+  // nothing is pending: a newer release being found or downloaded, or a run
+  // under way, only pauses the wait.
+  const appStatus = appState?.status ?? null;
+  const settled =
+    !hasUpdate &&
+    liveRun === null &&
+    (appStatus === null ||
+      appStatus === "idle" ||
+      appStatus === "up-to-date" ||
+      appStatus === "disabled");
+  useEffect(() => {
+    if (settled && idleSinceRef.current !== null) setIdleSince(null);
+  }, [settled, setIdleSince]);
 
   // Arms the check that the app really quit after an accepted install.
   const awaitRestart = useCallback(() => {
@@ -385,7 +415,15 @@ function SidebarRestartToUpdateButton() {
       if (progress !== null && !live && !appOnly) {
         // A failed or lapsed attempt: try again, keeping the app's install.
         // The service already on its version leaves only the app's install.
-        if ((await startServiceUpdateNow(serviceState, { thenInstallApp })) !== "app-only") return;
+        // A due wait ends here: Wait again starts a new one, Later ends it.
+        if (options.confirmed) setIdleSince(null);
+        const retried = await startServiceUpdateNow(serviceState, {
+          thenInstallApp,
+          renderDetails: renderRunningWork,
+          onWaitForQuiet: waitForQuiet,
+          ...(options.confirmed && idleForService.current ? { confirmed: true } : {}),
+        });
+        if (retried !== "app-only") return;
         appOnly = true;
       }
       if (live) {
@@ -447,6 +485,10 @@ function SidebarRestartToUpdateButton() {
         const started = await startService({
           targetVersion: serviceTarget(),
           thenInstallApp: view.app ? { appVersion } : null,
+          renderDetails: renderRunningWork,
+          onWaitForQuiet: waitForQuiet,
+          // A wait chosen at this question came due: it asks no second time.
+          ...(options.confirmed && idleForService.current ? { confirmed: true } : {}),
         });
         if (started === true) setIdleSince(null);
         // The service already runs that version: only the app's install is
@@ -469,6 +511,7 @@ function SidebarRestartToUpdateButton() {
         if (choice === "idle") {
           // The wait installs the app alone too, for the same reason.
           idleAppOnly.current = appOnly && lacking ? "lacking" : appOnly;
+          idleForService.current = false;
           setIdleSince(Date.now());
           // The app's install goes ahead, once idle: a failed service update is over.
           endFailedServiceUpdate();
@@ -492,6 +535,10 @@ function SidebarRestartToUpdateButton() {
         const started = await startService({
           targetVersion: handover,
           thenInstallApp: { appVersion },
+          renderDetails: renderRunningWork,
+          onWaitForQuiet: waitForQuiet,
+          // A wait chosen at this question came due: it asks no second time.
+          ...(options.confirmed && idleForService.current ? { confirmed: true } : {}),
         });
         if (started === true) setIdleSince(null);
         if (started !== "app-only") return;
@@ -565,6 +612,7 @@ function SidebarRestartToUpdateButton() {
       serviceState,
       setIdleSince,
       view,
+      waitForQuiet,
     ],
   );
 
@@ -604,7 +652,7 @@ function SidebarRestartToUpdateButton() {
   // hold window has passed: then the work is stopped for the update and
   // continues after the restart, so an install never waits forever.
   useEffect(() => {
-    if (idleSince === null || !view?.app) return;
+    if (idleSince === null || !hasUpdate) return;
     let active = true;
     let restarting: Promise<void> | null = null;
     const restartNow = () => {
@@ -622,7 +670,9 @@ function SidebarRestartToUpdateButton() {
         restartNow();
         return;
       }
-      void isServiceWorkRunning().then((running) => {
+      // A wait chosen at the service's question also waits for open terminals and copies.
+      const look = idleForService.current ? isServiceUpdateStopNeeded : isServiceWorkRunning;
+      void look().then((running) => {
         if (active && running === false) restartNow();
       });
     };
@@ -641,7 +691,7 @@ function SidebarRestartToUpdateButton() {
       window.clearInterval(tick);
       window.clearTimeout(deadline);
     };
-  }, [holdMinutes, idleSince, view?.app]);
+  }, [holdMinutes, hasUpdate, idleSince]);
 
   if (liveRun !== null) {
     const runView = describeServiceUpdateRun(liveRun, now, runBlockers);
@@ -714,12 +764,12 @@ function SidebarRestartToUpdateButton() {
                 ? "Checking running work…"
                 : pending
                   ? "Restarting…"
-                  : idleSince !== null && view?.app
+                  : idleSince !== null && hasUpdate
                     ? describeHoldCountdown(idleSince, now, holdMinutes)
                     : (shown?.label ?? "Restart to update");
   const description =
-    idleSince !== null && view?.app
-      ? `SpecWithCode restarts to install ${view.appVersion ?? "the update"} once running work finishes, or after ${forceInstallAfterLabel(holdMinutes)}: then the work is stopped for the update and continues after the restart. Click to restart now.`
+    idleSince !== null && hasUpdate
+      ? `SpecWithCode restarts to install ${view?.appVersion ?? view?.serviceVersion ?? "the update"} once running work finishes, or after ${forceInstallAfterLabel(holdMinutes)}: then the work is stopped for the update and continues after the restart. Click to restart now.`
       : (shown?.description ?? SERVICE_UPDATE_NOW_DESCRIPTION);
 
   const releaseUrl = view?.app ? getDesktopUpdateReleaseUrl(view.appVersion) : null;

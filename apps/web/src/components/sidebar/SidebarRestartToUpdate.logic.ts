@@ -1051,11 +1051,11 @@ export function describeAppRestartWarning(
 
 /** Under the restart warning: what "Restart when idle" does. */
 export const RESTART_WHEN_IDLE_NOTE =
-  "Restart when idle lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.";
+  "Wait until quiet lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.";
 
 /** Under the listed restart warning: what "Restart when idle" waits for, and how long. */
 export function restartWhenIdleNote(holdMinutes: number): string {
-  return `Restart when idle lets it finish first, for up to ${plural(holdMinutes, "minute", "minutes")}.`;
+  return `Wait until quiet restarts once nothing runs, at most ${plural(holdMinutes, "minute", "minutes")}.`;
 }
 
 /**

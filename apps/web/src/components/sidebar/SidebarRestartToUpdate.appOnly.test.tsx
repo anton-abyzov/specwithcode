@@ -370,7 +370,7 @@ async function waitForIdleAfterNotAvailable() {
   await pressAbout();
   expect(readConfirmDialogState()).toMatchObject({
     status: "confirming",
-    confirmLabel: "Restart when idle",
+    confirmLabel: "Wait until quiet",
   });
   await answerDialog(true);
   expect(label()).toMatch(/^Restarts when idle, or in 2:0\d$/);
@@ -459,7 +459,7 @@ describe("Update now once the service's agent lacks the release", () => {
       await click();
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Restart when idle",
+        confirmLabel: "Wait until quiet",
       });
     });
 
@@ -589,16 +589,17 @@ describe("Update now once the service's agent lacks the release", () => {
       await failAsNotAvailable();
       checked = RUNNING;
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await agentFindsRelease();
       calls.length = 0;
       await answerDialog("alternate");
       // The service update asks for itself before it stops the work.
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Stop and update now",
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
       });
-      await answerDialog(true);
+      await answerDialog("alternate");
       expect(calls).toEqual(STOP_AND_INSTALL);
     });
 
@@ -619,16 +620,17 @@ describe("Update now once the service's agent lacks the release", () => {
       expect(store.has(LACKED_RELEASE_KEY)).toBe(true);
       checked = RUNNING;
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await agentFindsRelease();
       expect(store.has(LACKED_RELEASE_KEY)).toBe(false);
       calls.length = 0;
       await answerDialog("alternate");
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Stop and update now",
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
       });
-      await answerDialog(true);
+      await answerDialog("alternate");
       expect(calls).toEqual(STOP_AND_INSTALL);
     });
 
@@ -653,7 +655,8 @@ describe("Update now once the service's agent lacks the release", () => {
       for (let step = 0; step < 26; step += 1) await advance(5_000);
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Stop and update now",
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
       });
       calls.length = 0;
       await answerDialog(false);
@@ -669,12 +672,13 @@ describe("Update now once the service's agent lacks the release", () => {
       await failAsNotAvailable();
       checked = RUNNING;
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await agentFindsRelease();
       await answerDialog("alternate");
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Stop and update now",
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
       });
       calls.length = 0;
       await answerDialog(false);
@@ -689,11 +693,14 @@ describe("Update now once the service's agent lacks the release", () => {
       await agentFindsRelease();
       checked = RUNNING;
       await press();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await answerDialog("alternate");
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Stop and update now" });
+      expect(readConfirmDialogState()).toMatchObject({
+        confirmLabel: "Wait until quiet",
+        alternateLabel: "Restart now",
+      });
       calls.length = 0;
-      await answerDialog(true);
+      await answerDialog("alternate");
       // Its look came before its question.
       expect(calls).toEqual(STOP_AND_INSTALL.slice(1));
       expect(label()).toBe("Updating…");
@@ -713,7 +720,7 @@ describe("Update now once the service's agent lacks the release", () => {
       await failAsNotAvailable();
       checked = RUNNING;
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       await serviceTakesRelease();
       calls.length = 0;
       await answerDialog("alternate");
@@ -738,7 +745,7 @@ describe("Update now once the service's agent lacks the release", () => {
       await failAsNotAvailable();
       checked = RUNNING;
       await pressAbout();
-      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Restart when idle" });
+      expect(readConfirmDialogState()).toMatchObject({ confirmLabel: "Wait until quiet" });
       // Try again asks the service meanwhile: its question waits for the open one.
       await pressTryAgain();
       state.closeToast.mockClear();
@@ -750,7 +757,8 @@ describe("Update now once the service's agent lacks the release", () => {
       // Its question answered, the Try again goes on.
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Stop and update now",
+        confirmLabel: "Restart now",
+        cancelLabel: "Later",
       });
       await answerDialog(true);
       expect(calls).toContain("installServiceUpdate:force");
@@ -763,7 +771,7 @@ describe("Update now once the service's agent lacks the release", () => {
       await pressAbout();
       expect(readConfirmDialogState()).toMatchObject({
         status: "confirming",
-        confirmLabel: "Restart when idle",
+        confirmLabel: "Wait until quiet",
       });
       // While the question is open, another window presses Update now: its agent has the release now.
       await otherWindowPressesUpdateNow();

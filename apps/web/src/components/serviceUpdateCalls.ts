@@ -4,7 +4,8 @@ import type {
   ServerPrepareServiceUpdateResult,
   StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
-import type { ReactNode } from "react";
+import { ClockIcon, HourglassIcon, RotateCwIcon } from "lucide-react";
+import { createElement, type ReactNode } from "react";
 
 import { requestChoiceDialog } from "../confirmDialog";
 import { ensureLocalApi } from "../localApi";
@@ -12,8 +13,68 @@ import { markRestartStep } from "./restartTrace";
 import {
   APP_RESTART_UNKNOWN,
   describeAppRestartWarning,
+  describeServiceUpdateStop,
   interruptedWork,
 } from "./sidebar/SidebarRestartToUpdate.logic";
+import { describeListedRestart, WAIT_UNTIL_QUIET } from "./sidebar/restartRunningWork.logic";
+
+/** What the person chose before a restart or update that would cut off work. */
+export type RestartWorkChoice = "wait" | "now" | "later";
+
+/** Renders the live list of what a restart cuts off, under the dialog's question. */
+export type RenderRestartWork = (
+  working: ReadonlyArray<ServiceUpdateBlocker>,
+  all: ReadonlyArray<ServiceUpdateBlocker>,
+) => ReactNode;
+
+const buttonIcon = (icon: typeof ClockIcon) => createElement(icon, { "aria-hidden": true });
+
+/**
+ * The one question every restart and update asks before it cuts off work:
+ * Wait until quiet (the default, the button Enter picks), Restart now, or
+ * Later. Without `canWait` it offers Restart now and Later. Undefined when no
+ * themed dialog host is mounted.
+ */
+export function askRestartForWork(
+  question: string,
+  options: {
+    readonly details?: ReactNode;
+    readonly canWait: boolean;
+    /** The label of the button that goes ahead now. */
+    readonly nowLabel?: string;
+  },
+): Promise<RestartWorkChoice> | undefined {
+  const nowLabel = options.nowLabel ?? "Restart now";
+  const details = options.details === undefined ? {} : { details: options.details };
+  const choice = options.canWait
+    ? requestChoiceDialog(question, {
+        confirmLabel: WAIT_UNTIL_QUIET,
+        confirmIcon: buttonIcon(HourglassIcon),
+        alternateLabel: nowLabel,
+        alternateIcon: buttonIcon(RotateCwIcon),
+        alternateVariant: "destructive-outline",
+        cancelLabel: "Later",
+        cancelIcon: buttonIcon(ClockIcon),
+        ...details,
+      })
+    : requestChoiceDialog(question, {
+        variant: "destructive",
+        confirmLabel: nowLabel,
+        confirmIcon: buttonIcon(RotateCwIcon),
+        cancelLabel: "Later",
+        cancelIcon: buttonIcon(ClockIcon),
+        ...details,
+      });
+  return choice?.then((picked) =>
+    picked === "cancel"
+      ? "later"
+      : options.canWait
+        ? picked === "confirm"
+          ? "wait"
+          : "now"
+        : "now",
+  );
+}
 
 /**
  * The calls "Update now" and an app restart make to the service (through the
@@ -145,11 +206,8 @@ export async function withdrawRequest(): Promise<{
 export async function confirmAppRestartForUpdate(
   options: {
     readonly version?: string | null;
-    /** The running work as the dialog shows it, under the summary. */
-    readonly renderDetails?: (
-      working: ReadonlyArray<ServiceUpdateBlocker>,
-      all: ReadonlyArray<ServiceUpdateBlocker>,
-    ) => ReactNode;
+    /** The running work as the dialog shows it, under the question. */
+    readonly renderDetails?: RenderRestartWork;
   } = {},
 ): Promise<AppRestartChoice> {
   const lookAt = Date.now();
@@ -157,33 +215,48 @@ export async function confirmAppRestartForUpdate(
   // Only copies run, or threads that only wait on a person: no work to list.
   const working = checked === null ? [] : interruptedWork(checked.blockers);
   const listed = working.length > 0 && options.renderDetails !== undefined;
-  const question =
+  const warning =
     checked === null
       ? APP_RESTART_UNKNOWN
       : describeAppRestartWarning(checked, { version: options.version ?? null, listed });
   markRestartStep("quick-look", {
     startedAt: lookAt,
-    detail: question === null ? "nothing runs" : "asks before the restart",
+    detail: warning === null ? "nothing runs" : "asks before the restart",
   });
-  if (question === null) return "now";
-  // Waiting is the default: the safe choice is the one Enter picks.
-  const choice = requestChoiceDialog(question, {
-    confirmLabel: "Restart when idle",
-    alternateLabel: "Restart now",
-    cancelLabel: "Cancel",
+  if (warning === null) return "now";
+  // The listed question is one title and one line: the list says the rest.
+  const question =
+    listed && checked !== null
+      ? describeListedRestart({
+          title: `Restart to install SpecWithCode ${options.version ?? "the update"}?`,
+          continues: working.every((blocker) => blocker.continuesAfterRestart === true),
+          folderCopies: checked.folderCopies ?? 0,
+        })
+      : warning;
+  const choice = askRestartForWork(question, {
+    canWait: true,
     ...(listed && checked !== null
       ? { details: options.renderDetails!(working, checked.blockers) }
       : {}),
   });
   if (choice === undefined) {
     const text =
-      checked === null ? question : (describeAppRestartWarning(checked, options) ?? question);
+      checked === null ? warning : (describeAppRestartWarning(checked, options) ?? warning);
     return (await ensureLocalApi().dialogs.confirm(text, { variant: "destructive" }))
       ? "now"
       : "cancel";
   }
   const picked = await choice;
-  return picked === "confirm" ? "idle" : picked === "alternate" ? "now" : "cancel";
+  return picked === "wait" ? "idle" : picked === "now" ? "now" : "cancel";
+}
+
+/**
+ * What runs now, for an open restart dialog's live list: the blockers a
+ * restart would cut off, or null when the service did not answer in time.
+ */
+export async function readInterruptedWork(): Promise<ReadonlyArray<ServiceUpdateBlocker> | null> {
+  const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
+  return checked === null ? null : interruptedWork(checked.blockers);
 }
 
 /** What the user chose before an update restart: now, once idle, or not at all. */
@@ -197,6 +270,16 @@ export async function isServiceWorkRunning(): Promise<boolean | null> {
   const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
   if (checked === null) return null;
   return describeAppRestartWarning(checked) !== null;
+}
+
+/**
+ * Whether a service update would still stop something (running work, open
+ * terminals or a folder copy): false when nothing, null when the service cannot say.
+ */
+export async function isServiceUpdateStopNeeded(): Promise<boolean | null> {
+  const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
+  if (checked === null) return null;
+  return describeServiceUpdateStop(checked) !== null;
 }
 
 /**
