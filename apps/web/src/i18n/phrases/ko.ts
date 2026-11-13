@@ -2292,34 +2292,56 @@ export const ko: PhraseCatalog = {
   "Rename machine": "컴퓨터 이름 변경",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "실행 위치, 스레드 행, 사이드바, 다른 기기에 이 이름이 표시됩니다.",
-  "Machine name": "컴퓨터 이름",
-  "Computer name: {hostLabel}, unchanged.": "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
-  "Call it {name}": "{name}(으)로 부르기",
+  "Machine name":
+    "컴퓨터 이름",
+  "Computer name: {hostLabel}, unchanged.":
+    "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
+  "Call it {name}":
+    "{name}(으)로 부르기",
   "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
     "다른 컴퓨터가 이미 {name}(이)라는 이름입니다. 이 컴퓨터의 오래된 사본이라면 다른 컴퓨터에서 제거하세요.",
-  "Use the computer name": "시스템 이름 사용",
-  "Chip letters": "칩 글자",
-  "Narrow chip": "좁은 칩",
-  "Customize chip letters, color and icon": "칩 글자, 색상, 아이콘 사용자 지정",
+  "Use the computer name":
+    "시스템 이름 사용",
+  "Chip letters":
+    "칩 글자",
+  "Narrow chip":
+    "좁은 칩",
+  "Customize chip letters, color and icon":
+    "칩 글자, 색상, 아이콘 사용자 지정",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "이름이 들어가지 않는 좁은 칩에 표시할 2~3자입니다. 비워 두면 이름을 따릅니다.",
-  "Use 2 or 3 characters.": "2~3자를 사용하세요.",
-  "{name} wears {color}": "{name}의 색은 {color}",
-  "Change the color of {name}, now {color}": "{name}의 색 변경, 현재 {color}",
-  "Change color": "색 변경",
-  "Color of {name}": "{name}의 색",
-  "{color}, also on {names}": "{color}, {names}에서도 사용 중",
+  "Use 2 or 3 characters.":
+    "2~3자를 사용하세요.",
+  "{name} wears {color}":
+    "{name}의 색은 {color}",
+  "Change the color of {name}, now {color}":
+    "{name}의 색 변경, 현재 {color}",
+  "Change color":
+    "색 변경",
+  "Color of {name}":
+    "{name}의 색",
+  "{color}, also on {names}":
+    "{color}, {names}에서도 사용 중",
   "Letters under a color name the machines that wear it.":
     "색 아래 글자는 그 색을 쓰는 머신을 나타냅니다.",
-  Violet: "바이올렛",
-  Teal: "틸",
-  Amber: "앰버",
-  Rose: "로즈",
-  Blue: "블루",
-  Green: "그린",
-  Orange: "오렌지",
-  Slate: "슬레이트",
-  "Computer name {hostLabel}": "시스템 이름 {hostLabel}",
+  "Violet":
+    "바이올렛",
+  "Teal":
+    "틸",
+  "Amber":
+    "앰버",
+  "Rose":
+    "로즈",
+  "Blue":
+    "블루",
+  "Green":
+    "그린",
+  "Orange":
+    "오렌지",
+  "Slate":
+    "슬레이트",
+  "Computer name {hostLabel}":
+    "시스템 이름 {hostLabel}",
   "Use {defaultName}": "{defaultName} 사용",
   "Waiting for sample": "샘플 대기 중",
   "Updated {span}{value}": "업데이트 {span}{value}",
@@ -4842,8 +4864,7 @@ export const ko: PhraseCatalog = {
     "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
   "Browse…": "찾아보기…",
   "Add to this machine…": "이 컴퓨터에 추가…",
-  "Runs on {machine}. No copy on this device.":
-    "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
+  "Runs on {machine}. No copy on this device.": "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
   "Agent status": "에이전트 상태",
   "Last time it was not signed in.": "지난번에는 로그인되어 있지 않았습니다.",
   "Last time it was signed in as {account}.":
@@ -4852,6 +4873,7 @@ export const ko: PhraseCatalog = {
   "Not signed in": "로그인 안 됨",
   "Sign in with {account}": "{account} 계정으로 로그인",
   "Turn it on to use it in chat.": "채팅에서 사용하려면 켜세요.",
+  "On other machines": "다른 컴퓨터에 있음",
   "Reviewed by {model}": "{model} 검토 완료",
   "Reviewed by {model} at {commit}": "{model}가 {commit}에서 검토",
   ship: "출시 가능",
@@ -4860,5 +4882,4 @@ export const ko: PhraseCatalog = {
   "Review by another model family required": "다른 모델 계열의 검토 필요",
   "{family} review required": "{family} 검토 필요",
   "Reviewed, model not recorded": "검토됨, 모델 기록 없음",
-  "On other machines": "다른 컴퓨터에 있음",
 };

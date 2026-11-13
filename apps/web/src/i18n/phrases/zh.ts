@@ -2231,34 +2231,56 @@ export const zh: PhraseCatalog = {
   "Rename machine": "重命名电脑",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "“运行于”、线程行、侧边栏和你的其他设备都会显示这个名称。",
-  "Machine name": "机器名称",
-  "Computer name: {hostLabel}, unchanged.": "电脑名称：{hostLabel}，保持不变。",
-  "Call it {name}": "命名为 {name}",
+  "Machine name":
+    "机器名称",
+  "Computer name: {hostLabel}, unchanged.":
+    "电脑名称：{hostLabel}，保持不变。",
+  "Call it {name}":
+    "命名为 {name}",
   "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
     "已有另一台机器叫 {name}。如果它是这台机器的旧副本，请在“其他机器”中移除。",
-  "Use the computer name": "使用电脑名称",
-  "Chip letters": "标签字母",
-  "Narrow chip": "窄标签",
-  "Customize chip letters, color and icon": "自定义标签字母、颜色和图标",
+  "Use the computer name":
+    "使用电脑名称",
+  "Chip letters":
+    "标签字母",
+  "Narrow chip":
+    "窄标签",
+  "Customize chip letters, color and icon":
+    "自定义标签字母、颜色和图标",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "标签太窄放不下名称时显示的 2 或 3 个字符。留空则跟随名称。",
-  "Use 2 or 3 characters.": "请使用 2 或 3 个字符。",
-  "{name} wears {color}": "{name} 的颜色是{color}",
-  "Change the color of {name}, now {color}": "更改 {name} 的颜色，当前为{color}",
-  "Change color": "更改颜色",
-  "Color of {name}": "{name} 的颜色",
-  "{color}, also on {names}": "{color}，{names} 也在用",
+  "Use 2 or 3 characters.":
+    "请使用 2 或 3 个字符。",
+  "{name} wears {color}":
+    "{name} 的颜色是{color}",
+  "Change the color of {name}, now {color}":
+    "更改 {name} 的颜色，当前为{color}",
+  "Change color":
+    "更改颜色",
+  "Color of {name}":
+    "{name} 的颜色",
+  "{color}, also on {names}":
+    "{color}，{names} 也在用",
   "Letters under a color name the machines that wear it.":
     "颜色下方的字母表示正在使用该颜色的机器。",
-  Violet: "紫罗兰",
-  Teal: "青绿",
-  Amber: "琥珀",
-  Rose: "玫瑰",
-  Blue: "蓝色",
-  Green: "绿色",
-  Orange: "橙色",
-  Slate: "石板灰",
-  "Computer name {hostLabel}": "电脑名称 {hostLabel}",
+  "Violet":
+    "紫罗兰",
+  "Teal":
+    "青绿",
+  "Amber":
+    "琥珀",
+  "Rose":
+    "玫瑰",
+  "Blue":
+    "蓝色",
+  "Green":
+    "绿色",
+  "Orange":
+    "橙色",
+  "Slate":
+    "石板灰",
+  "Computer name {hostLabel}":
+    "电脑名称 {hostLabel}",
   "Use {defaultName}": "使用 {defaultName}",
   "Waiting for sample": "等待样本",
   "Updated {span}{value}": "已更新 {span}{value}",
@@ -4716,6 +4738,7 @@ export const zh: PhraseCatalog = {
   "Not signed in": "未登录",
   "Sign in with {account}": "使用 {account} 登录",
   "Turn it on to use it in chat.": "开启后即可在聊天中使用。",
+  "On other machines": "在其他机器上",
   "Reviewed by {model}": "由 {model} 审查",
   "Reviewed by {model} at {commit}": "由 {model} 在 {commit} 审查",
   ship: "可以发布",
@@ -4724,5 +4747,4 @@ export const zh: PhraseCatalog = {
   "Review by another model family required": "需要其他模型系列审查",
   "{family} review required": "需要 {family} 审查",
   "Reviewed, model not recorded": "已审查，未记录模型",
-  "On other machines": "在其他机器上",
 };

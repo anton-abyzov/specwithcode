@@ -2308,34 +2308,56 @@ export const ru: PhraseCatalog = {
   "Rename machine": "Переименовать машину",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Это имя показывают «Запуск на», строки тредов, боковая панель и другие ваши устройства.",
-  "Machine name": "Имя машины",
-  "Computer name: {hostLabel}, unchanged.": "Имя компьютера: {hostLabel}, не меняется.",
-  "Call it {name}": "Назвать {name}",
+  "Machine name":
+    "Имя машины",
+  "Computer name: {hostLabel}, unchanged.":
+    "Имя компьютера: {hostLabel}, не меняется.",
+  "Call it {name}":
+    "Назвать {name}",
   "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
     "Другая машина уже называется {name}. Если это старая копия этой машины, удалите её в разделе «Другие машины».",
-  "Use the computer name": "Использовать имя компьютера",
-  "Chip letters": "Буквы на чипе",
-  "Narrow chip": "Узкий чип",
-  "Customize chip letters, color and icon": "Настроить буквы на чипе, цвет и значок",
+  "Use the computer name":
+    "Использовать имя компьютера",
+  "Chip letters":
+    "Буквы на чипе",
+  "Narrow chip":
+    "Узкий чип",
+  "Customize chip letters, color and icon":
+    "Настроить буквы на чипе, цвет и значок",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 или 3 символа для чипа, в который не помещается имя. Пусто — берутся из имени.",
-  "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
-  "{name} wears {color}": "У {name} цвет {color}",
-  "Change the color of {name}, now {color}": "Изменить цвет {name}, сейчас {color}",
-  "Change color": "Изменить цвет",
-  "Color of {name}": "Цвет {name}",
-  "{color}, also on {names}": "{color}, также у {names}",
+  "Use 2 or 3 characters.":
+    "Используйте 2 или 3 символа.",
+  "{name} wears {color}":
+    "У {name} цвет {color}",
+  "Change the color of {name}, now {color}":
+    "Изменить цвет {name}, сейчас {color}",
+  "Change color":
+    "Изменить цвет",
+  "Color of {name}":
+    "Цвет {name}",
+  "{color}, also on {names}":
+    "{color}, также у {names}",
   "Letters under a color name the machines that wear it.":
     "Буквы под цветом — машины, у которых он уже есть.",
-  Violet: "Фиолетовый",
-  Teal: "Бирюзовый",
-  Amber: "Янтарный",
-  Rose: "Розовый",
-  Blue: "Синий",
-  Green: "Зелёный",
-  Orange: "Оранжевый",
-  Slate: "Графитовый",
-  "Computer name {hostLabel}": "Имя компьютера {hostLabel}",
+  "Violet":
+    "Фиолетовый",
+  "Teal":
+    "Бирюзовый",
+  "Amber":
+    "Янтарный",
+  "Rose":
+    "Розовый",
+  "Blue":
+    "Синий",
+  "Green":
+    "Зелёный",
+  "Orange":
+    "Оранжевый",
+  "Slate":
+    "Графитовый",
+  "Computer name {hostLabel}":
+    "Имя компьютера {hostLabel}",
   "Use {defaultName}": "Использовать {defaultName}",
   "Waiting for sample": "Ожидание замера",
   "Updated {span}{value}": "Обновлено {span}{value}",
@@ -4897,8 +4919,7 @@ export const ru: PhraseCatalog = {
     "Не установлен. Скачайте его с официального сайта или попросите того, кто может обслуживать эту машину, установить его отсюда.",
   "Browse…": "Обзор…",
   "Add to this machine…": "Добавить на этот компьютер…",
-  "Runs on {machine}. No copy on this device.":
-    "Работает на {machine}. На этом устройстве копии нет.",
+  "Runs on {machine}. No copy on this device.": "Работает на {machine}. На этом устройстве копии нет.",
   "Agent status": "Статус агента",
   "Last time it was not signed in.": "В прошлый раз вход не был выполнен.",
   "Last time it was signed in as {account}.": "В прошлый раз вход был выполнен как {account}.",
@@ -4906,6 +4927,7 @@ export const ru: PhraseCatalog = {
   "Not signed in": "Вход не выполнен",
   "Sign in with {account}": "Войти через {account}",
   "Turn it on to use it in chat.": "Включите его, чтобы использовать в чате.",
+  "On other machines": "На других компьютерах",
   "Reviewed by {model}": "Проверено: {model}",
   "Reviewed by {model} at {commit}": "Проверено: {model}, коммит {commit}",
   ship: "можно выпускать",
@@ -4914,5 +4936,4 @@ export const ru: PhraseCatalog = {
   "Review by another model family required": "Нужна проверка моделью другой семьи",
   "{family} review required": "Нужна проверка {family}",
   "Reviewed, model not recorded": "Проверено, модель не записана",
-  "On other machines": "На других компьютерах",
 };

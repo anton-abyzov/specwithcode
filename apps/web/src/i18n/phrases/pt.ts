@@ -2320,34 +2320,56 @@ export const pt: PhraseCatalog = {
   "Rename machine": "Renomear máquina",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Executar em, as linhas de thread, a barra lateral e seus outros dispositivos mostram este nome.",
-  "Machine name": "Nome da máquina",
-  "Computer name: {hostLabel}, unchanged.": "Nome do computador: {hostLabel}, sem alteração.",
-  "Call it {name}": "Chamar de {name}",
+  "Machine name":
+    "Nome da máquina",
+  "Computer name: {hostLabel}, unchanged.":
+    "Nome do computador: {hostLabel}, sem alteração.",
+  "Call it {name}":
+    "Chamar de {name}",
   "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
     "Outra máquina já se chama {name}. Se for uma cópia antiga desta, remova-a em Outras máquinas.",
-  "Use the computer name": "Usar o nome do computador",
-  "Chip letters": "Letras do chip",
-  "Narrow chip": "Chip estreito",
-  "Customize chip letters, color and icon": "Personalizar letras do chip, cor e ícone",
+  "Use the computer name":
+    "Usar o nome do computador",
+  "Chip letters":
+    "Letras do chip",
+  "Narrow chip":
+    "Chip estreito",
+  "Customize chip letters, color and icon":
+    "Personalizar letras do chip, cor e ícone",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 ou 3 caracteres para um chip estreito demais para o nome. Vazio segue o nome.",
-  "Use 2 or 3 characters.": "Use 2 ou 3 caracteres.",
-  "{name} wears {color}": "{name} usa {color}",
-  "Change the color of {name}, now {color}": "Mudar a cor de {name}, agora {color}",
-  "Change color": "Mudar cor",
-  "Color of {name}": "Cor de {name}",
-  "{color}, also on {names}": "{color}, também em {names}",
+  "Use 2 or 3 characters.":
+    "Use 2 ou 3 caracteres.",
+  "{name} wears {color}":
+    "{name} usa {color}",
+  "Change the color of {name}, now {color}":
+    "Mudar a cor de {name}, agora {color}",
+  "Change color":
+    "Mudar cor",
+  "Color of {name}":
+    "Cor de {name}",
+  "{color}, also on {names}":
+    "{color}, também em {names}",
   "Letters under a color name the machines that wear it.":
     "As letras sob uma cor indicam as máquinas que a usam.",
-  Violet: "Violeta",
-  Teal: "Verde-azulado",
-  Amber: "Âmbar",
-  Rose: "Rosa",
-  Blue: "Azul",
-  Green: "Verde",
-  Orange: "Laranja",
-  Slate: "Ardósia",
-  "Computer name {hostLabel}": "Nome do computador {hostLabel}",
+  "Violet":
+    "Violeta",
+  "Teal":
+    "Verde-azulado",
+  "Amber":
+    "Âmbar",
+  "Rose":
+    "Rosa",
+  "Blue":
+    "Azul",
+  "Green":
+    "Verde",
+  "Orange":
+    "Laranja",
+  "Slate":
+    "Ardósia",
+  "Computer name {hostLabel}":
+    "Nome do computador {hostLabel}",
   "Use {defaultName}": "Usar {defaultName}",
   "Waiting for sample": "Aguardando amostra",
   "Updated {span}{value}": "Atualizado {span}{value}",
@@ -4904,8 +4926,7 @@ export const pt: PhraseCatalog = {
     "Não instalado. Baixe no site oficial ou peça a alguém que pode manter esta máquina para instalar daqui.",
   "Browse…": "Procurar…",
   "Add to this machine…": "Adicionar a esta máquina…",
-  "Runs on {machine}. No copy on this device.":
-    "É executado em {machine}. Não há cópia neste dispositivo.",
+  "Runs on {machine}. No copy on this device.": "É executado em {machine}. Não há cópia neste dispositivo.",
   "Agent status": "Status do agente",
   "Last time it was not signed in.": "Da última vez, não estava conectado.",
   "Last time it was signed in as {account}.": "Da última vez, estava conectado como {account}.",
@@ -4913,6 +4934,7 @@ export const pt: PhraseCatalog = {
   "Not signed in": "Não conectado",
   "Sign in with {account}": "Entrar com {account}",
   "Turn it on to use it in chat.": "Ative-o para usá-lo no chat.",
+  "On other machines": "Em outras máquinas",
   "Reviewed by {model}": "Revisado por {model}",
   "Reviewed by {model} at {commit}": "Revisado por {model} em {commit}",
   ship: "pronto para lançar",
@@ -4921,5 +4943,4 @@ export const pt: PhraseCatalog = {
   "Review by another model family required": "Revisão por outra família de modelos necessária",
   "{family} review required": "Revisão {family} necessária",
   "Reviewed, model not recorded": "Revisado, modelo não registrado",
-  "On other machines": "Em outras máquinas",
 };

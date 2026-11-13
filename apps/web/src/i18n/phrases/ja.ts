@@ -2314,34 +2314,56 @@ export const ja: PhraseCatalog = {
   "Rename machine": "マシン名を変更",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "実行先、スレッドの行、サイドバー、ほかのデバイスにこの名前が表示されます。",
-  "Machine name": "マシン名",
-  "Computer name: {hostLabel}, unchanged.": "コンピュータ名: {hostLabel}（変更されません）",
-  "Call it {name}": "{name} と呼ぶ",
+  "Machine name":
+    "マシン名",
+  "Computer name: {hostLabel}, unchanged.":
+    "コンピュータ名: {hostLabel}（変更されません）",
+  "Call it {name}":
+    "{name} と呼ぶ",
   "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
     "別のマシンがすでに {name} という名前です。このマシンの古いコピーなら、「ほかのマシン」で削除してください。",
-  "Use the computer name": "コンピュータ名を使う",
-  "Chip letters": "チップの文字",
-  "Narrow chip": "狭いチップ",
-  "Customize chip letters, color and icon": "チップの文字・色・アイコンをカスタマイズ",
+  "Use the computer name":
+    "コンピュータ名を使う",
+  "Chip letters":
+    "チップの文字",
+  "Narrow chip":
+    "狭いチップ",
+  "Customize chip letters, color and icon":
+    "チップの文字・色・アイコンをカスタマイズ",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "名前が入らない狭いチップに表示する2〜3文字。空欄なら名前から決まります。",
-  "Use 2 or 3 characters.": "2〜3文字にしてください。",
-  "{name} wears {color}": "{name} の色は {color}",
-  "Change the color of {name}, now {color}": "{name} の色を変更（現在は {color}）",
-  "Change color": "色を変更",
-  "Color of {name}": "{name} の色",
-  "{color}, also on {names}": "{color}（{names} も使用中）",
+  "Use 2 or 3 characters.":
+    "2〜3文字にしてください。",
+  "{name} wears {color}":
+    "{name} の色は {color}",
+  "Change the color of {name}, now {color}":
+    "{name} の色を変更（現在は {color}）",
+  "Change color":
+    "色を変更",
+  "Color of {name}":
+    "{name} の色",
+  "{color}, also on {names}":
+    "{color}（{names} も使用中）",
   "Letters under a color name the machines that wear it.":
     "色の下の文字は、その色を使っているマシンを示します。",
-  Violet: "バイオレット",
-  Teal: "ティール",
-  Amber: "アンバー",
-  Rose: "ローズ",
-  Blue: "ブルー",
-  Green: "グリーン",
-  Orange: "オレンジ",
-  Slate: "スレート",
-  "Computer name {hostLabel}": "コンピュータ名 {hostLabel}",
+  "Violet":
+    "バイオレット",
+  "Teal":
+    "ティール",
+  "Amber":
+    "アンバー",
+  "Rose":
+    "ローズ",
+  "Blue":
+    "ブルー",
+  "Green":
+    "グリーン",
+  "Orange":
+    "オレンジ",
+  "Slate":
+    "スレート",
+  "Computer name {hostLabel}":
+    "コンピュータ名 {hostLabel}",
   "Use {defaultName}": "{defaultName} を使う",
   "Waiting for sample": "サンプルを待っています",
   "Updated {span}{value}": "更新: {span}{value}",
@@ -4899,8 +4921,7 @@ export const ja: PhraseCatalog = {
     "未インストールです。公式サイトから入手するか、このマシンを管理できる人にここからインストールしてもらってください。",
   "Browse…": "参照…",
   "Add to this machine…": "このマシンに追加…",
-  "Runs on {machine}. No copy on this device.":
-    "{machine} で実行されます。このデバイスにはコピーがありません。",
+  "Runs on {machine}. No copy on this device.": "{machine} で実行されます。このデバイスにはコピーがありません。",
   "Agent status": "エージェントの状態",
   "Last time it was not signed in.": "前回はサインインしていませんでした。",
   "Last time it was signed in as {account}.": "前回は {account} としてサインインしていました。",
@@ -4908,6 +4929,7 @@ export const ja: PhraseCatalog = {
   "Not signed in": "未サインイン",
   "Sign in with {account}": "{account} でサインイン",
   "Turn it on to use it in chat.": "チャットで使うにはオンにしてください。",
+  "On other machines": "他のマシン上",
   "Reviewed by {model}": "{model} がレビュー済み",
   "Reviewed by {model} at {commit}": "{model} が {commit} でレビュー済み",
   ship: "リリース可",
@@ -4916,5 +4938,4 @@ export const ja: PhraseCatalog = {
   "Review by another model family required": "別のモデル系統によるレビューが必要",
   "{family} review required": "{family} のレビューが必要",
   "Reviewed, model not recorded": "レビュー済み、モデル未記録",
-  "On other machines": "他のマシン上",
 };

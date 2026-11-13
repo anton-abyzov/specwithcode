@@ -2331,34 +2331,56 @@ export const fr: PhraseCatalog = {
   "Rename machine": "Renommer la machine",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Exécuter sur, les lignes de fil, la barre latérale et vos autres appareils affichent ce nom.",
-  "Machine name": "Nom de la machine",
-  "Computer name: {hostLabel}, unchanged.": "Nom de l’ordinateur : {hostLabel}, inchangé.",
-  "Call it {name}": "L’appeler {name}",
+  "Machine name":
+    "Nom de la machine",
+  "Computer name: {hostLabel}, unchanged.":
+    "Nom de l’ordinateur : {hostLabel}, inchangé.",
+  "Call it {name}":
+    "L’appeler {name}",
   "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
     "Une autre machine s’appelle déjà {name}. S’il s’agit d’une ancienne copie de celle-ci, retirez-la sous Autres machines.",
-  "Use the computer name": "Utiliser le nom de l’ordinateur",
-  "Chip letters": "Lettres de la puce",
-  "Narrow chip": "Puce étroite",
-  "Customize chip letters, color and icon": "Personnaliser les lettres, la couleur et l’icône",
+  "Use the computer name":
+    "Utiliser le nom de l’ordinateur",
+  "Chip letters":
+    "Lettres de la puce",
+  "Narrow chip":
+    "Puce étroite",
+  "Customize chip letters, color and icon":
+    "Personnaliser les lettres, la couleur et l’icône",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 ou 3 caractères pour une puce trop étroite pour le nom. Vide suit le nom.",
-  "Use 2 or 3 characters.": "Utilisez 2 ou 3 caractères.",
-  "{name} wears {color}": "{name} porte {color}",
-  "Change the color of {name}, now {color}": "Changer la couleur de {name}, actuellement {color}",
-  "Change color": "Changer la couleur",
-  "Color of {name}": "Couleur de {name}",
-  "{color}, also on {names}": "{color}, aussi sur {names}",
+  "Use 2 or 3 characters.":
+    "Utilisez 2 ou 3 caractères.",
+  "{name} wears {color}":
+    "{name} porte {color}",
+  "Change the color of {name}, now {color}":
+    "Changer la couleur de {name}, actuellement {color}",
+  "Change color":
+    "Changer la couleur",
+  "Color of {name}":
+    "Couleur de {name}",
+  "{color}, also on {names}":
+    "{color}, aussi sur {names}",
   "Letters under a color name the machines that wear it.":
     "Les lettres sous une couleur indiquent les machines qui la portent.",
-  Violet: "Violet",
-  Teal: "Bleu canard",
-  Amber: "Ambre",
-  Rose: "Rose",
-  Blue: "Bleu",
-  Green: "Vert",
-  Orange: "Orange",
-  Slate: "Ardoise",
-  "Computer name {hostLabel}": "Nom de l’ordinateur {hostLabel}",
+  "Violet":
+    "Violet",
+  "Teal":
+    "Bleu canard",
+  "Amber":
+    "Ambre",
+  "Rose":
+    "Rose",
+  "Blue":
+    "Bleu",
+  "Green":
+    "Vert",
+  "Orange":
+    "Orange",
+  "Slate":
+    "Ardoise",
+  "Computer name {hostLabel}":
+    "Nom de l’ordinateur {hostLabel}",
   "Use {defaultName}": "Utiliser {defaultName}",
   "Waiting for sample": "En attente d’un échantillon",
   "Updated {span}{value}": "Mis à jour {span}{value}",
@@ -4939,8 +4961,7 @@ export const fr: PhraseCatalog = {
     "Non installé. Récupère-le sur son propre site, ou demande à une personne qui peut gérer cette machine de l'installer d'ici.",
   "Browse…": "Parcourir…",
   "Add to this machine…": "Ajouter à cette machine…",
-  "Runs on {machine}. No copy on this device.":
-    "S’exécute sur {machine}. Aucune copie sur cet appareil.",
+  "Runs on {machine}. No copy on this device.": "S’exécute sur {machine}. Aucune copie sur cet appareil.",
   "Agent status": "État de l'agent",
   "Last time it was not signed in.": "La dernière fois, il n'était pas connecté.",
   "Last time it was signed in as {account}.":
@@ -4949,6 +4970,7 @@ export const fr: PhraseCatalog = {
   "Not signed in": "Non connecté",
   "Sign in with {account}": "Se connecter avec {account}",
   "Turn it on to use it in chat.": "Activez-le pour l'utiliser dans le chat.",
+  "On other machines": "Sur d’autres machines",
   "Reviewed by {model}": "Relu par {model}",
   "Reviewed by {model} at {commit}": "Relu par {model} à {commit}",
   ship: "prêt à publier",
@@ -4957,5 +4979,4 @@ export const fr: PhraseCatalog = {
   "Review by another model family required": "Relecture par une autre famille de modèles requise",
   "{family} review required": "Relecture {family} requise",
   "Reviewed, model not recorded": "Relu, modèle non enregistré",
-  "On other machines": "Sur d’autres machines",
 };
