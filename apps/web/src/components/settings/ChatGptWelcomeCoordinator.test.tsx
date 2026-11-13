@@ -29,7 +29,7 @@ import {
   noteChatGptSignInStarted,
 } from "./chatGptWelcomeState";
 
-const machine = (label: string, profileId: string) => ({
+const machine = (label: string, profileId?: string) => ({
   connection: { phase: "connected" },
   entry: { target: { label } },
   serverConfig: {
@@ -37,7 +37,10 @@ const machine = (label: string, profileId: string) => ({
       {
         instanceId: "codex",
         displayName: "Codex",
-        auth: { status: "authenticated", subscriptionSharing: true, profileId },
+        auth:
+          profileId === undefined
+            ? { status: "unauthenticated" }
+            : { status: "authenticated", subscriptionSharing: true, profileId },
       },
     ],
   },
@@ -92,9 +95,14 @@ describe("ChatGptWelcomeCoordinator", () => {
   });
 
   it("shows once after a sign-in this window started, then never again", () => {
-    presentations = new Map([["env-m4", machine("M4", "profile-a")]]);
+    presentations = new Map([["env-m4", machine("M4")]]);
     render();
     act(() => noteChatGptSignInStarted("env-m4", "codex"));
+    expect(shown()).toBe(false);
+
+    // The sign-in finishes: the instance now has a ChatGPT profile.
+    presentations = new Map([["env-m4", machine("M4", "profile-a")]]);
+    render();
     expect(shown()).toBe(true);
     expect(container.textContent).toContain("Your ChatGPT plan is connected");
     expect(container.textContent).toContain("Codex on M4");
@@ -103,7 +111,11 @@ describe("ChatGptWelcomeCoordinator", () => {
     expect(shown()).toBe(false);
 
     // Signing in again to the same account does not repeat the welcome.
+    presentations = new Map([["env-m4", machine("M4")]]);
+    render();
     act(() => noteChatGptSignInStarted("env-m4", "codex"));
+    presentations = new Map([["env-m4", machine("M4", "profile-a")]]);
+    render();
     expect(shown()).toBe(false);
     act(() => root.unmount());
     root = createRoot(container);
@@ -111,33 +123,53 @@ describe("ChatGptWelcomeCoordinator", () => {
     expect(shown()).toBe(false);
   });
 
+  it("waits for a Change account sign-in to finish instead of greeting the old account", () => {
+    presentations = new Map([["env-m4", machine("M4", "old-profile")]]);
+    render();
+    act(() => noteChatGptSignInStarted("env-m4", "codex"));
+    expect(shown()).toBe(false);
+
+    presentations = new Map([["env-m4", machine("M4", "new-profile")]]);
+    render();
+    expect(shown()).toBe(true);
+    clickContinue();
+    expect(shown()).toBe(false);
+  });
+
   it("shows only for the machine this window signed in, not for other machines", () => {
+    presentations = new Map([
+      ["env-m4", machine("M4")],
+      ["env-m5", machine("M5", "m5-profile")],
+    ]);
+    render();
+    act(() => noteChatGptSignInStarted("env-m4", "codex"));
     presentations = new Map([
       ["env-m4", machine("M4", "m4-profile")],
       ["env-m5", machine("M5", "m5-profile")],
     ]);
     render();
-    act(() => noteChatGptSignInStarted("env-m4", "codex"));
     expect(container.textContent).toContain("Codex on M4");
     clickContinue();
     expect(shown()).toBe(false);
   });
 
   it("drops a cancelled or stale sign-in", () => {
-    presentations = new Map([["env-m4", machine("M4", "profile-a")]]);
+    presentations = new Map([["env-m4", machine("M4")]]);
     render();
     act(() => {
       noteChatGptSignInStarted("env-m4", "codex");
       clearChatGptSignIn("env-m4", "codex");
     });
+    presentations = new Map([["env-m4", machine("M4", "profile-a")]]);
+    render();
     expect(shown()).toBe(false);
 
+    presentations = new Map([["env-m4", machine("M4")]]);
+    render();
     vi.useFakeTimers({ toFake: ["Date"] });
     act(() => noteChatGptSignInStarted("env-m4", "codex"));
-    expect(shown()).toBe(true);
     vi.setSystemTime(Date.now() + CHATGPT_WELCOME_PENDING_TTL_MS + 1);
-    act(() => root.unmount());
-    root = createRoot(container);
+    presentations = new Map([["env-m4", machine("M4", "profile-a")]]);
     render();
     expect(shown()).toBe(false);
   });

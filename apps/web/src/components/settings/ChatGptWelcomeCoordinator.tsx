@@ -2,7 +2,7 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { environmentPresentations } from "../../state/presentation";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { OpenAI } from "../Icons";
@@ -18,8 +18,10 @@ import {
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
 import {
   acknowledgeChatGptProfile,
+  chatGptSignInPair,
   readAcknowledgedChatGptProfiles,
   readPendingChatGptSignIns,
+  recordChatGptSignInBaselines,
   subscribeChatGptWelcome,
   type PendingChatGptSignIn,
 } from "./chatGptWelcomeState";
@@ -41,9 +43,11 @@ export interface ChatGptWelcomeProfile {
 }
 
 /**
- * The welcome is for a sign-in this window started: a ChatGPT profile that is
+ * The welcome is for a sign-in this app started: a ChatGPT profile that is
  * connected on some machine is not enough, because another machine's sign-in
- * (or a synced or refreshed snapshot) also connects it here.
+ * (or a synced or refreshed snapshot) also connects it here. It also waits for
+ * that sign-in to finish: the profile must differ from the one the instance
+ * had when the sign-in started.
  */
 export function selectChatGptWelcome(
   profiles: readonly ChatGptWelcomeProfile[],
@@ -55,7 +59,10 @@ export function selectChatGptWelcome(
       !acknowledged.includes(profile.key) &&
       pending.some(
         (entry) =>
-          entry.environmentId === profile.environmentId && entry.instanceId === profile.instanceId,
+          entry.environmentId === profile.environmentId &&
+          entry.instanceId === profile.instanceId &&
+          entry.baselineKey !== undefined &&
+          entry.baselineKey !== profile.key,
       ),
   );
 }
@@ -65,7 +72,7 @@ export function ChatGptWelcomeCoordinator() {
   const tx = useTx();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const nickname = useMachineNicknames();
-  useSyncExternalStore(subscribe, getVersion, getVersion);
+  const storeVersion = useSyncExternalStore(subscribe, getVersion, getVersion);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
     presentation.connection.phase !== "connected"
       ? []
@@ -81,6 +88,22 @@ export function ChatGptWelcomeCoordinator() {
           providerName: provider.displayName ?? "Codex",
         })),
   );
+  const current = new Map<string, string | null>();
+  for (const [environmentId, presentation] of presentations) {
+    if (presentation.connection.phase !== "connected") continue;
+    for (const provider of presentation.serverConfig?.providers ?? []) {
+      current.set(chatGptSignInPair(String(environmentId), String(provider.instanceId)), null);
+    }
+  }
+  for (const profile of profiles) {
+    current.set(chatGptSignInPair(profile.environmentId, profile.instanceId), profile.key);
+  }
+  const currentSignature = JSON.stringify([...current]);
+  useEffect(() => {
+    recordChatGptSignInBaselines(
+      new Map(JSON.parse(currentSignature) as [string, string | null][]),
+    );
+  }, [currentSignature, storeVersion]);
   const next = selectChatGptWelcome(
     profiles,
     readPendingChatGptSignIns(),

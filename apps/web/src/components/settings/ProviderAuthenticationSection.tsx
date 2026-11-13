@@ -26,7 +26,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { noteChatGptSignInStarted } from "./chatGptWelcomeState";
+import { clearChatGptSignIn, noteChatGptSignInStarted } from "./chatGptWelcomeState";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -289,11 +289,12 @@ export function ProviderAuthenticationSection({
                 variant="ghost-muted"
                 aria-label={tx("Cancel sign-in")}
                 disabled={disabled}
-                onClick={() =>
+                onClick={() => {
+                  clearChatGptSignIn(environmentId, instanceId);
                   void run(() =>
                     cancel({ environmentId, input: { instanceId, flowId: auth.flowId! } }),
-                  )
-                }
+                  );
+                }}
               >
                 {tx("Cancel")}
               </Button>

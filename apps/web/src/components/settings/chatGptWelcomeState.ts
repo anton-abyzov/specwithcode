@@ -15,6 +15,13 @@ export interface PendingChatGptSignIn {
   readonly environmentId: string;
   readonly instanceId: string;
   readonly startedAt: number;
+  /**
+   * The ChatGPT profile this instance had when the sign-in started (null when
+   * it had none). Undefined until the welcome has seen the instance connected;
+   * the welcome only opens for a profile that differs from it, so it waits for
+   * the sign-in to finish instead of greeting the account already there.
+   */
+  readonly baselineKey?: string | null;
 }
 
 const listeners = new Set<() => void>();
@@ -48,6 +55,9 @@ export function readPendingChatGptSignIns(now = Date.now()): PendingChatGptSignI
       typeof (entry as PendingChatGptSignIn).environmentId === "string" &&
       typeof (entry as PendingChatGptSignIn).instanceId === "string" &&
       typeof (entry as PendingChatGptSignIn).startedAt === "number" &&
+      ((entry as PendingChatGptSignIn).baselineKey === undefined ||
+        (entry as PendingChatGptSignIn).baselineKey === null ||
+        typeof (entry as PendingChatGptSignIn).baselineKey === "string") &&
       now - (entry as PendingChatGptSignIn).startedAt < CHATGPT_WELCOME_PENDING_TTL_MS,
   );
 }
@@ -74,6 +84,29 @@ export function clearChatGptSignIn(environmentId: string, instanceId: string): v
     ),
   );
   notify();
+}
+
+/**
+ * Records the profile each pending sign-in started from. `current` maps an
+ * `environmentId\u0000instanceId` pair to its connected ChatGPT profile key, or
+ * null when it has none; pairs whose machine is not connected are absent.
+ */
+export function recordChatGptSignInBaselines(current: ReadonlyMap<string, string | null>): void {
+  const pending = readPendingChatGptSignIns();
+  let changed = false;
+  const updated = pending.map((entry) => {
+    const pair = chatGptSignInPair(entry.environmentId, entry.instanceId);
+    if (entry.baselineKey !== undefined || !current.has(pair)) return entry;
+    changed = true;
+    return { ...entry, baselineKey: current.get(pair) ?? null };
+  });
+  if (!changed) return;
+  write(PENDING_KEY, updated);
+  notify();
+}
+
+export function chatGptSignInPair(environmentId: string, instanceId: string): string {
+  return `${environmentId}\u0000${instanceId}`;
 }
 
 /** Records the welcome as seen for a profile and ends the sign-in that led to it. */
