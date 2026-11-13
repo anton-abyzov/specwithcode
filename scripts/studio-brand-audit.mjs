@@ -170,16 +170,31 @@ check("project terms remain separate from inherited notices", () => {
   }
   // Generated and native package metadata state the same MIT terms.
   for (const [file, pattern] of [
-    ["apps/desktop/resources/linux/com.specweave.studio.metainfo.xml", /<project_license>MIT<\/project_license>/],
-    ["apps/mobile/modules/studio-review-diff/StudioReviewDiffNative.podspec", /s\.license = \{ :type => 'MIT' \}/],
-    ["apps/mobile/modules/studio-terminal/StudioTerminalNative.podspec", /s\.license = \{ :type => 'MIT' \}/],
+    [
+      "apps/desktop/resources/linux/com.specweave.studio.metainfo.xml",
+      /<project_license>MIT<\/project_license>/,
+    ],
+    [
+      "apps/mobile/modules/studio-review-diff/StudioReviewDiffNative.podspec",
+      /s\.license = \{ :type => 'MIT' \}/,
+    ],
+    [
+      "apps/mobile/modules/studio-terminal/StudioTerminalNative.podspec",
+      /s\.license = \{ :type => 'MIT' \}/,
+    ],
     ["scripts/build-desktop-artifact.ts", /license: "MIT",/],
-    ["scripts/build-desktop-artifact.ts", /DESKTOP_COPYRIGHT = "Copyright \(c\) \d{4} Anton Abyzov"/],
+    [
+      "scripts/build-desktop-artifact.ts",
+      /DESKTOP_COPYRIGHT = "Copyright \(c\) \d{4} Anton Abyzov"/,
+    ],
     ["scripts/studio-fleet/npm-package.mjs", /license: "MIT",/],
     ["scripts/studio-fleet/runtime-package.mjs", /license: "MIT",/],
     // The runtime and npm packages' LICENSE starts with the project's own license text.
     ["scripts/studio-fleet/bundle.mjs", /readFileSync\(join\(root, "LICENSE"\), "utf8"\)/],
-    ["scripts/build-desktop-artifact.ts", /"LICENSE"\)\}=\/usr\/share\/doc\/specweave-studio\/LICENSE/],
+    [
+      "scripts/build-desktop-artifact.ts",
+      /"LICENSE"\)\}=\/usr\/share\/doc\/specweave-studio\/LICENSE/,
+    ],
   ]) {
     assert.match(read(file), pattern, file);
     assert.doesNotMatch(read(file), /UNLICENSED|LicenseRef-proprietary/, file);
