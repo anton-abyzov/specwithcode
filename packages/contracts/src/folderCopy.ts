@@ -475,6 +475,10 @@ export const FolderCopyStatus = Schema.Struct({
       }),
     ),
   ),
+  /** When the person approved the copy and files started to move. Older machines omit it. */
+  startedAt: Schema.optional(bounded(64)),
+  /** When Apply finished on this machine. Older machines omit it. */
+  finishedAt: Schema.optional(bounded(64)),
   createdAt: bounded(64),
   updatedAt: bounded(64),
 });

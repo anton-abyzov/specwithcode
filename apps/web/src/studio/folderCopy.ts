@@ -165,6 +165,52 @@ export function progressText(status: FolderCopyStatus): string | null {
   return `${phase}: ${progress.filesDone.toLocaleString()} of ${progress.filesTotal.toLocaleString()} files, ${formatBytes(progress.bytesDone)} of ${formatBytes(progress.bytesTotal)}${progress.bytesLocal > 0 ? ` (${formatBytes(progress.bytesLocal)} already here)` : ""}`;
 }
 
+/** "42 s", "3 min 05 s", "1 h 12 min". */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(Number.isFinite(ms) ? ms / 1000 : 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours} h ${minutes} min`;
+  if (minutes > 0) return `${minutes} min ${String(seconds % 60).padStart(2, "0")} s`;
+  return `${seconds} s`;
+}
+
+/** Wait this long before guessing what is left, so the first burst does not set the pace. */
+const ESTIMATE_AFTER_MS = 10_000;
+/** From approval to the end of Apply: the copy's clock runs. Apply sends no progress. */
+const CLOCK_STATES = new Set<FolderCopyStatus["state"]>([
+  "approved",
+  "transferring",
+  "verifying",
+  "applying",
+]);
+
+/**
+ * How long a running copy has taken since it was approved, and while files move, about how
+ * long is left at the pace so far. Files already on this machine do not count toward the pace.
+ */
+export function copyTimingText(status: FolderCopyStatus, nowMs: number): string | null {
+  const started = status.startedAt ? Date.parse(status.startedAt) : Number.NaN;
+  if (!Number.isFinite(started) || status.finishedAt || !CLOCK_STATES.has(status.state))
+    return null;
+  const elapsed = Math.max(0, nowMs - started);
+  const text = `${formatDuration(elapsed)} elapsed`;
+  // Only while files move: checking keeps the last counts, which would make the guess grow.
+  const progress = status.state === "transferring" ? status.progress : null;
+  if (!progress || progress.phase !== "files" || elapsed < ESTIMATE_AFTER_MS) return text;
+  const moved = progress.bytesDone - progress.bytesLocal;
+  const left = progress.bytesTotal - progress.bytesDone;
+  if (moved <= 0 || left <= 0) return text;
+  return `${text} · about ${formatDuration((left / moved) * elapsed)} left`;
+}
+
+/** How long a finished copy took, from approval to the end of Apply. */
+export function copyDurationText(status: FolderCopyStatus): string | null {
+  if (!status.startedAt || !status.finishedAt) return null;
+  const ms = Date.parse(status.finishedAt) - Date.parse(status.startedAt);
+  return Number.isFinite(ms) && ms >= 0 ? `Copied in ${formatDuration(ms)}` : null;
+}
+
 export function progressFraction(status: FolderCopyStatus): number | null {
   const progress = liveProgress(status);
   if (!progress || progress.phase === "manifest") return null;

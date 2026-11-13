@@ -268,6 +268,10 @@ describe("Apply backups", () => {
     await settle(copies, operationId, ["previewed"]);
     await copies.approve(operationId);
     await settle(copies, operationId, ["applied"]);
+    // The copy's clock: started at approval, stopped once when Apply finished.
+    const finished = await copies.read(operationId);
+    expect(finished?.startedAt).toBe("2026-10-20T12:00:00.000Z");
+    expect(finished?.finishedAt).toBe("2026-10-20T12:00:00.000Z");
     now = new Date("2026-11-02T12:00:00.000Z");
     expect(await copies.discardExpiredBackups()).toEqual([]);
     expect((await copies.undoPreview(operationId)).items.length).toBeGreaterThan(0);
@@ -282,6 +286,7 @@ describe("Apply backups", () => {
     const record = await copies.read(operationId);
     expect(record?.state).toBe("applied");
     expect(record?.backupsDiscardedAt).toBe(now.toISOString());
+    expect(record?.finishedAt).toBe("2026-10-20T12:00:00.000Z");
     expect(NodeFS.existsSync(NodePath.join(state, "folder-copies", operationId, "backups"))).toBe(
       false,
     );
