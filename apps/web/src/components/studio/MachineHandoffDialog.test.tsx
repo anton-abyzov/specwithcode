@@ -342,9 +342,9 @@ describe("machine handoff dialog", () => {
     await handoff({ destinations: [], machines: [], machine: null, selected: "" });
     expect(document.body.textContent).toContain("No other machine is connected.");
     // No machine picked: one filled primary, off, with what it waits for said beside it.
-    expect(button("Hand off").disabled).toBe(true);
+    expect(button("Move project").disabled).toBe(true);
     expect(document.body.textContent).toContain("Choose a machine above.");
-    await click(button("Hand off"));
+    await click(button("Move project"));
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
@@ -527,8 +527,11 @@ describe("shared handoff controls", () => {
         HandoffProps["sourceChanges"]
       >,
     });
-    // Nothing uncommitted: What comes along has nothing to say about it.
-    expect(document.querySelector('[data-slot="handoff-source-changes"]')).toBeNull();
+    // Nothing uncommitted: one checked line says so, with no Commit for me.
+    expect(document.querySelector('[data-slot="handoff-source-changes"]')?.textContent).toContain(
+      "No uncommitted changes on MacBook M4.",
+    );
+    expect(document.body.textContent).not.toContain("Commit for me");
   });
 
   it("saves the machine silently: there is no remember-this-machine control", async () => {

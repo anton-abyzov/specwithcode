@@ -140,24 +140,23 @@ try {
     await page.goto(`${origin}/?theme=${theme}`, { waitUntil: "networkidle" });
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
-    NodeAssert.ok(await dialog.getByRole("heading", { name: "Hand off EasyChamp" }).isVisible());
+    NodeAssert.ok(await dialog.getByRole("heading", { name: /^Move EasyChamp to / }).isVisible());
     NodeAssert.ok(
       await dialog
-        .getByText(
-          "From MacBook Pro M4 to another machine. Nothing there is replaced without asking.",
-        )
+        .getByText(/^From MacBook Pro M4\. Nothing on .+ is replaced without asking\.$/)
         .isVisible(),
     );
-    NodeAssert.equal(
+    // Git only always moves the coordinator: the question shows Move chosen.
+    NodeAssert.match(
       await dialog
-        .getByRole("group", { name: "What to do" })
-        .locator('button[aria-pressed="true"]')
-        .textContent(),
-      "Hand off and continue there",
+        .locator('[data-slot="handoff-coordinator"] [role="radio"][aria-checked="true"]')
+        .first()
+        .evaluate((radio) => radio.closest("label")?.textContent ?? ""),
+      /^Move to /,
     );
-    const m1 = dialog.getByRole("radio", { name: /Mac mini M1/ });
-    const m3 = dialog.getByRole("radio", { name: /MacBook Air M3/ });
-    const offline = dialog.getByRole("radio", { name: /Offline machine/ });
+    const m1 = dialog.getByRole("radio", { name: /^Mac mini M1/ });
+    const m3 = dialog.getByRole("radio", { name: /^MacBook Air M3/ });
+    const offline = dialog.getByRole("radio", { name: /^Offline machine/ });
     NodeAssert.equal(await m1.isChecked(), true);
     NodeAssert.equal(await offline.isDisabled(), true);
     NodeAssert.ok(await dialog.getByText("Connect this machine first.").isVisible());
@@ -177,12 +176,14 @@ try {
     );
     const layouts = { choose: await layout(page, dialog, "choose") };
     const screenshots = { choose: await screenshot(page, `${width}-${theme}-choose`) };
-    await dialog.getByRole("button", { name: "Hand off to MacBook Air M3", exact: true }).focus();
+    await dialog
+      .getByRole("button", { name: "Move project to MacBook Air M3", exact: true })
+      .focus();
     await page.keyboard.press("Enter");
     const review = dialog.locator('[data-slot="handoff-git-review"]');
     await review.waitFor();
     const continuation = dialog.getByRole("button", {
-      name: "Hand off to MacBook Air M3",
+      name: "Move project to MacBook Air M3",
       exact: true,
     });
     NodeAssert.equal(await continuation.isDisabled(), true, "publishing needs explicit consent");
@@ -199,7 +200,9 @@ try {
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
     await m3.waitFor();
     NodeAssert.equal(await m3.isChecked(), true, "Back keeps the chosen machine");
-    await dialog.getByRole("button", { name: "Hand off to MacBook Air M3", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Move project to MacBook Air M3", exact: true })
+      .click();
     await review.waitFor();
     const details = dialog.locator('[data-slot="handoff-commits"]');
     const summary = details.getByRole("button", { name: "Details" });

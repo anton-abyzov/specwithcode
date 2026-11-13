@@ -58,22 +58,24 @@ try {
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/?theme=${theme}`);
     await page.getByRole("dialog").waitFor();
-    // Screen 1: title, helper, segmented intent, machine rows, the folder, More options.
-    assert.equal(await page.getByRole("heading").last().textContent(), "Hand off EasyChamp");
+    // Screen 1: title, helper, the coordinator question, machine rows, the folder, Details.
+    assert.match(
+      await page.getByRole("dialog").getByRole("heading").first().textContent(),
+      /^Move EasyChamp to /,
+    );
     await page
-      .getByText(
-        "From MacBook Pro M4 to another machine. Nothing there is replaced without asking.",
-      )
+      .getByText(/^From MacBook Pro M4\. Nothing on .+ is replaced without asking\.$/)
       .waitFor();
-    assert.equal(
+    assert.match(
       await page
-        .getByRole("button", { name: "Hand off and continue there" })
-        .getAttribute("aria-pressed"),
-      "true",
+        .locator('[data-slot="handoff-coordinator"] [role="radio"][aria-checked="true"]')
+        .first()
+        .evaluate((radio) => radio.closest("label")?.textContent ?? ""),
+      /^Move to /,
     );
     assert.equal(await page.locator('[data-slot="machine-option"]').count(), 3);
     assert.equal(
-      await page.getByRole("radio", { name: "MacBook Pro M3" }).getAttribute("aria-checked"),
+      await page.getByRole("radio", { name: /^MacBook Pro M3/ }).getAttribute("aria-checked"),
       "true",
     );
     // M3 has no saved folder: the picker reads only M3 and fills the matching checkout.
@@ -85,7 +87,7 @@ try {
     await page.getByText("Found this project on MacBook Pro M3.", { exact: false }).waitFor();
     assert.equal(await page.locator("details").count(), 0);
     assert.equal(await page.locator("select").count(), 0);
-    await page.getByText("2 uncommitted files stay on MacBook Pro M4.", { exact: false }).waitFor();
+    await page.getByText("2 uncommitted files stay on MacBook Pro M4:", { exact: false }).waitFor();
     assert.equal(await page.getByRole("checkbox", { name: /Remember/ }).count(), 0);
     assert.equal(
       await page.getByRole("button", { name: "Move project to MacBook Pro M3" }).isDisabled(),

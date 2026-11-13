@@ -369,7 +369,7 @@ export function MachineHandoffDialog({
                     ? "Checking…"
                     : machineLabel
                       ? `Move project to ${machineLabel}`
-                      : "Hand off"}
+                      : "Move project"}
                 </Button>
               </>
             )}
@@ -679,7 +679,11 @@ function SourceChangesLine({
   readonly sourceLabel: string;
   readonly busy: boolean;
 }) {
-  if (changes?.state === "clean") return null;
+  // Clean, as after Commit for me: say so, so the commit visibly took effect.
+  if (changes?.state === "clean")
+    return (
+      <AlongLine slot="handoff-source-changes">No uncommitted changes on {sourceLabel}.</AlongLine>
+    );
   const count =
     changes?.state === "dirty"
       ? changes.fileCount === 1

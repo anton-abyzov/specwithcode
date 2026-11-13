@@ -189,7 +189,12 @@ const walker = (page, label, flow, viewport) => {
       `${label} ${flow} ${stage}: horizontal overflow`,
     );
     NodeAssert.equal(layout.stepsOutside, false, `${label} ${flow} ${stage}: step outside`);
-    if (steps) NodeAssert.equal(layout.steps, steps === NO_STEPS ? "" : steps, `${label} ${flow} ${stage}: step bar`);
+    if (steps)
+      NodeAssert.equal(
+        layout.steps,
+        steps === NO_STEPS ? "" : steps,
+        `${label} ${flow} ${stage}: step bar`,
+      );
     if (title) NodeAssert.equal(layout.title, title, `${label} ${flow} ${stage}: title`);
     if (primary === null)
       NodeAssert.deepEqual(layout.primaries, [], `${label} ${flow} ${stage}: no enabled primary`);
