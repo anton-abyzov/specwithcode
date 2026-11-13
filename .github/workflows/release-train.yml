@@ -1,5 +1,5 @@
 name: Release train
-run-name: Release train${{ inputs.hotfix_pr && format(' · hotfix #{0}', inputs.hotfix_pr) || '' }}${{ inputs.version && format(' · {0}', inputs.version) || '' }}
+run-name: "Release train${{ inputs.hotfix_pr && format(' · hotfix #{0}', inputs.hotfix_pr) || '' }}${{ inputs.version && format(' · {0}', inputs.version) || '' }}"
 
 # The daily stable train (docs/studio/release-train.md). Release macOS publishes every 1.1+ build as
 # an Insiders build (a GitHub prerelease, never Latest). Once a day at the cut time this promotes
