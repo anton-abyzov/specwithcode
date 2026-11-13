@@ -112,7 +112,10 @@ export interface MachineProjectCopy {
 
 export interface MachineSeen {
   readonly state: MachineSeenState;
+  /** An English phrase, translated where shown. */
   readonly text: string;
+  /** The relay's own words for a failure, shown untranslated after the text. */
+  readonly detail?: string;
 }
 
 /** A machine's projects, split as the sidebar splits them. */
@@ -291,10 +294,10 @@ export function withAccountConnectState(
     seen: state
       ? {
           state: row.seen.state,
-          text:
-            state.phase === "failed" && state.detail !== undefined
-              ? `${state.reason} (${state.detail})`
-              : state.reason,
+          text: state.reason,
+          ...(state.phase === "failed" && state.detail !== undefined
+            ? { detail: state.detail }
+            : {}),
         }
       : row.seen,
     // Pressing it does nothing while Connect itself cannot be reached.

@@ -50,20 +50,12 @@ export function HandoffAccountMachines({
   const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
   const fleetMachines = fleetSnapshot?.machines ?? null;
   const sourceMachines = sourceFleet?.machines ?? null;
-  const { fallback } = handoffAccountMachines({
+  const { fallback, notAllowed: accountOnly } = handoffAccountMachines({
     discovered: discovery.environments.values(),
     savedEnvironmentIds,
     sourceEnvironmentId,
     fleet: fleetMachines,
-    states,
-    fleetPairingSettled: fleetAutoConnectSettled,
-    name,
-  });
-  const { notAllowed: accountOnly } = handoffAccountMachines({
-    discovered: discovery.environments.values(),
-    savedEnvironmentIds,
-    sourceEnvironmentId,
-    fleet: sourceMachines,
+    sourceFleet: sourceMachines,
     states,
     fleetPairingSettled: fleetAutoConnectSettled,
     name,

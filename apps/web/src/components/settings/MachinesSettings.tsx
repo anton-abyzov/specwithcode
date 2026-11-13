@@ -793,7 +793,10 @@ export function MachineRow({
               aria-hidden
               className={`size-1.5 shrink-0 rounded-full ${SEEN_DOT[row.seen.state]}`}
             />
-            <span className="break-words text-foreground/80 sm:truncate">{row.seen.text}</span>
+            <span className="break-words text-foreground/80 sm:truncate">
+              {tx(row.seen.text)}
+              {row.seen.detail ? ` (${row.seen.detail})` : null}
+            </span>
           </p>
         </div>
         <Button
@@ -826,7 +829,7 @@ export function MachineRow({
                     disabled={pending !== null || !row.connect.enabled}
                     onClick={() => row.fleetMachine && onConnect(row.fleetMachine)}
                   >
-                    {pending === row.environmentId ? tx("Connecting…") : row.connect.label}
+                    {pending === row.environmentId ? tx("Connecting…") : tx(row.connect.label)}
                   </Button>
                 </TeamRulesInert>
               </>

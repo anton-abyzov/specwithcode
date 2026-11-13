@@ -282,16 +282,60 @@ describe("GrantedAccountMachines", () => {
 
   it("adds no second route while the reconciler's linked path is adding one", async () => {
     m5InFleet();
-    const { connectRouteAddsInFlight } = await import("../studio/grantedAccountMachines");
-    connectRouteAddsInFlight.add("m5");
+    const { setConnectRouteAddInFlight } = await import("../studio/grantedAccountMachines");
+    setConnectRouteAddInFlight("m5", true);
     const renderer = await mount();
     expect(state.register).not.toHaveBeenCalled();
     expect(accountAutoConnectStates().get("m5")).toEqual({ phase: "connecting" });
-    connectRouteAddsInFlight.delete("m5");
+    setConnectRouteAddInFlight("m5", false);
     await act(async () => renderer.unmount());
   });
 
   it("tells the caller when nothing listens, so Settings pairs instead", () => {
     expect(requestAccountMachineConnect(["m5"])).toBe(false);
+  });
+
+  it("reads the list for a granted machine it does not show, mounted after the sign-in read", async () => {
+    m5InFleet();
+    state.discovered = new Map();
+    let renderer: ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = create(<GrantedAccountMachines />);
+    });
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    await act(async () => renderer!.unmount());
+  });
+
+  it("reads no list for machines it would only hold", async () => {
+    m5InFleet();
+    state.autoConnect = false;
+    let renderer: ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = create(<GrantedAccountMachines />);
+    });
+    expect(state.refresh).not.toHaveBeenCalled();
+    await act(async () => renderer!.unmount());
+  });
+
+  it("acts once the reconciler's add for the machine ends without saving it", async () => {
+    m5InFleet();
+    const { setConnectRouteAddInFlight } = await import("../studio/grantedAccountMachines");
+    setConnectRouteAddInFlight("m5", true);
+    const renderer = await mount();
+    expect(state.register).not.toHaveBeenCalled();
+    await act(async () => setConnectRouteAddInFlight("m5", false));
+    expect(state.register).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it("does not take a press for a machine outside this app's fleet", async () => {
+    state.snapshot = { machines: [] };
+    const renderer = await mount();
+    let taken = true;
+    await act(async () => {
+      taken = requestAccountMachineConnect(["m9"]);
+    });
+    expect(taken).toBe(false);
+    await act(async () => renderer.unmount());
   });
 });

@@ -22,6 +22,7 @@ import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
 import {
   connectRouteAddsInFlight,
   grantedAccountMachinesToConnect,
+  setConnectRouteAddInFlight,
 } from "../studio/grantedAccountMachines";
 import { linkedMachinesToConnect } from "../studio/linkedMachines";
 import { GrantedAccountMachines } from "./GrantedAccountMachines";
@@ -92,9 +93,9 @@ export function ConnectRouteReconciler() {
         for (const environmentId of environmentIds) addAttemptsRef.current.delete(environmentId);
         for (const environmentId of environmentIds) requestedRef.current.add(environmentId);
         setRequests((current) => current + 1);
-        // A fresh listing only when this component missed the refresh that
-        // filled the current list: a refresh empties every machine list.
-        if (!sawRefreshRef.current) void refreshDiscovery();
+        // A fresh listing for this account, so the add runs even if this
+        // component missed the refresh that filled the current list.
+        void refreshDiscovery();
       }),
     [refreshDiscovery],
   );
@@ -163,12 +164,12 @@ export function ConnectRouteReconciler() {
         ...skip,
         ...readSkippedFleetEnvironments(),
         ...granted,
-        ...connectRouteAddsInFlight,
+        ...connectRouteAddsInFlight(),
       ]),
     });
     for (const machine of linked) {
       inFlightRef.current.add(machine.environmentId);
-      connectRouteAddsInFlight.add(machine.environmentId);
+      setConnectRouteAddInFlight(machine.environmentId, true);
       addAttemptsRef.current.set(
         machine.environmentId,
         (addAttemptsRef.current.get(machine.environmentId) ?? 0) + 1,
@@ -182,7 +183,7 @@ export function ConnectRouteReconciler() {
         }),
       ).then(() => {
         inFlightRef.current.delete(machine.environmentId);
-        connectRouteAddsInFlight.delete(machine.environmentId);
+        setConnectRouteAddInFlight(machine.environmentId, false);
       });
     }
   }, [
