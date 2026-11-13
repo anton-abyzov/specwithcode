@@ -140,6 +140,16 @@ describe("RenameMachineDialog", () => {
     expect(button("Save").disabled).toBe(false);
   });
 
+  it("lets the chip letters follow the computer name when going back to it", () => {
+    state.nicknames = { [live]: { name: "Studio", updatedAt: "2026-11-13T00:00:00Z", short: "MX" } };
+    open();
+    act(() => button("Use the computer name").click());
+    expect(state.saveIdentity).toHaveBeenCalledWith(
+      live,
+      expect.objectContaining({ name: "", short: "" }),
+    );
+  });
+
   it("keeps chip letters, color and icon under Customize", () => {
     open();
     expect(document.querySelector("[data-machine-short-input]")).toBeNull();

@@ -157,12 +157,12 @@ export function RenameMachineDialog({
     setValue(name);
     setNameTouched(true);
   };
-  const save = (name: string) => {
+  const save = (name: string, short: string = nextShort) => {
     // An untouched default is kept as "no nickname", so a host rename still shows through.
     const saved = name === defaultName && custom === null && !choosesCutName ? "" : name;
     if (
       environmentId === null ||
-      !saveIdentity(environmentId, { name: saved, color, icon, short: nextShort })
+      !saveIdentity(environmentId, { name: saved, color, icon, short })
     ) {
       return;
     }
@@ -373,7 +373,8 @@ export function RenameMachineDialog({
               variant="ghost"
               className="me-auto"
               disabled={lock !== null || !shortValid}
-              onClick={() => save("")}
+              // The letters follow the computer name too, as they follow any new name.
+              onClick={() => save("", "")}
             >
               {tx("Use the computer name")}
             </Button>
