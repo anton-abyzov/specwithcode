@@ -171,9 +171,9 @@ describe("folder copy helpers", () => {
     // Too early to guess, and no guess outside the files step.
     expect(copyTimingText(copying, started + 5_000)).toBe("5 s elapsed");
     // Apply sends no progress, and checking keeps stale counts: the clock runs, no guess.
-    expect(copyTimingText({ ...copying, state: "applying", progress: null }, started + 3_725_000)).toBe(
-      "1 h 2 min elapsed",
-    );
+    expect(
+      copyTimingText({ ...copying, state: "applying", progress: null }, started + 3_725_000),
+    ).toBe("1 h 2 min elapsed");
     expect(copyTimingText({ ...copying, state: "verifying" }, started + 60_000)).toBe(
       "1 min 00 s elapsed",
     );
