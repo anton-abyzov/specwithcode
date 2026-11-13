@@ -293,9 +293,10 @@ export function HandoffFolderCopyWatcher({
         ? replaceAllReady(previewed)
         : saved.auto === true && replacesNothing(previewed);
       if (!approvable) {
-        if (saved.replaceAll) {
+        const now = readPendingCopy(key);
+        if (now?.replaceAll && now.operationId === operationId) {
           // The re-compared plan needs the person: the old click no longer approves it.
-          const { replaceAll: _dropped, ...rest } = saved;
+          const { replaceAll: _dropped, ...rest } = now;
           writePointer(key, rest);
         }
         return "ask" as const;
@@ -338,7 +339,8 @@ export function HandoffFolderCopyWatcher({
         // Closed on the machine, by a person or a later finished copy: nothing to come back to.
         if (destination.value.state === "cancelled") {
           try {
-            localStorage.removeItem(key);
+            // Another tab may have started a newer copy meanwhile: keep its pointer.
+            if (readPendingCopy(key)?.operationId === operationId) localStorage.removeItem(key);
           } catch {
             /* A kept pointer only re-reads this closed copy at the next start. */
           }

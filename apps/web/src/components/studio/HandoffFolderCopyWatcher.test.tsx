@@ -732,6 +732,53 @@ it("never announces again a copy that finished before a reload", async () => {
   }
 });
 
+it("keeps a newer copy another tab saved while a closed copy's status was in flight", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    pointer({ operationId: "00000000-0000-4000-8000-000000000010" });
+    await act(async () => {
+      answer(copyStatus("cancelled"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(readPointer()).toMatchObject({ operationId: "00000000-0000-4000-8000-000000000010" });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("drops a stale Replace all without undoing a secrets choice another tab saved meanwhile", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ replaceAll: true });
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    pointer({ replaceAll: true, secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer(
+        previewed([row({ status: "diverged", choices: ["take-theirs"], needsDecision: true })], 1),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(readPointer()).toMatchObject({ secrets: { included: false, out: [] } });
+    expect(readPointer()).not.toHaveProperty("replaceAll");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("forgets a copy closed on the machine, so its banner stays gone after a restart", async () => {
   const key = "specwithcode:folder-copy:m4:source";
   localStorage.setItem(
