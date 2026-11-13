@@ -218,7 +218,9 @@ with installation_lock(home, create=True):
                    'STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD': 'false',
                    'STUDIO_LOG_LEVEL': 'Warn', 'STUDIO_ENABLE_HOSTED_SERVICES': 'false',
                    'STUDIO_DEV_ALLOWED_ORIGINS': ','.join(args.trusted_origin),
-                   'PWDEBUG': '0', 'PLAYWRIGHT_HTML_OPEN': 'never'}
+                   'PWDEBUG': '0', 'PLAYWRIGHT_HTML_OPEN': 'never',
+                   # A headless install keeps its tools current after updates, like the desktop app.
+                   'STUDIO_READINESS_SWEEP': 'on'}
     prefix = ['/usr/bin/env', '-i'] + [key + '=' + value for key, value in allowed_env.items()]
     prefix += [str(node), str(release / 'bin.mjs')]
     command = prefix + ['start', '--no-browser', '--host', '127.0.0.1',

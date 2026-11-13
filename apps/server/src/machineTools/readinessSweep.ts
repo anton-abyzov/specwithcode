@@ -122,20 +122,22 @@ export const BUSY_SQL = `
   AS count`;
 
 /**
- * Whether this server sweeps: an installed app does; a development server, CI
- * and test servers do not (they would download into throwaway homes), and
- * STUDIO_READINESS_SWEEP=off turns it off anywhere.
+ * Whether this server sweeps: the installed desktop app does, and a headless
+ * install turns it on with STUDIO_READINESS_SWEEP=on. Development, CI and test
+ * servers (web mode, throwaway homes) do not, and STUDIO_READINESS_SWEEP=off
+ * turns it off anywhere.
  */
 export function sweepEnabled(
   env: Readonly<Record<string, string | undefined>>,
   devUrl: URL | undefined,
+  mode: "web" | "desktop",
 ): boolean {
   const flag = env["STUDIO_READINESS_SWEEP"]?.trim().toLowerCase();
   if (flag === "off" || flag === "0" || flag === "false") return false;
   if (flag === "on" || flag === "1" || flag === "true") return true;
   const ci = env["CI"]?.trim().toLowerCase();
   if (ci !== undefined && ci !== "" && ci !== "0" && ci !== "false") return false;
-  return devUrl === undefined;
+  return devUrl === undefined && mode === "desktop";
 }
 
 /** Starts the sweep in the background; it ends once this version is checked. */
@@ -143,7 +145,7 @@ export const layerStart = Layer.effectDiscard(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     // oxlint-disable-next-line studio/no-global-process-runtime -- the server's own environment decides.
-    if (!sweepEnabled(process.env, config.devUrl)) return;
+    if (!sweepEnabled(process.env, config.devUrl, config.mode)) return;
     const sql = yield* SqlClient.SqlClient;
     const services = yield* Effect.context<MachineToolsContextServices>();
     const home = config.baseDir;

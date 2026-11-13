@@ -177,12 +177,14 @@ describe("sweepOnce", () => {
 });
 
 describe("sweepEnabled", () => {
-  it("runs in an installed app, not in development, CI or when turned off", () => {
-    expect(sweepEnabled({}, undefined)).toBe(true);
-    expect(sweepEnabled({}, new URL("http://localhost:5733"))).toBe(false);
-    expect(sweepEnabled({ CI: "true" }, undefined)).toBe(false);
-    expect(sweepEnabled({ CI: "false" }, undefined)).toBe(true);
-    expect(sweepEnabled({ STUDIO_READINESS_SWEEP: "off" }, undefined)).toBe(false);
-    expect(sweepEnabled({ STUDIO_READINESS_SWEEP: "on", CI: "1" }, undefined)).toBe(true);
+  it("runs in the installed desktop app or when turned on, not in development, CI or test servers", () => {
+    expect(sweepEnabled({}, undefined, "desktop")).toBe(true);
+    // Test and fixture servers run in web mode with a minimal environment.
+    expect(sweepEnabled({}, undefined, "web")).toBe(false);
+    expect(sweepEnabled({ STUDIO_READINESS_SWEEP: "on" }, undefined, "web")).toBe(true);
+    expect(sweepEnabled({}, new URL("http://localhost:5733"), "desktop")).toBe(false);
+    expect(sweepEnabled({ CI: "true" }, undefined, "desktop")).toBe(false);
+    expect(sweepEnabled({ CI: "false" }, undefined, "desktop")).toBe(true);
+    expect(sweepEnabled({ STUDIO_READINESS_SWEEP: "off" }, undefined, "desktop")).toBe(false);
   });
 });
