@@ -24,6 +24,7 @@ import {
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
+  DESKTOP_COPYRIGHT,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
@@ -383,6 +384,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "arm64",
         "acme/studio",
       ).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
+      // Info.plist and Windows file properties name the LICENSE holder.
+      assert.equal(mac.copyright, DESKTOP_COPYRIGHT);
+      assert.equal(DESKTOP_COPYRIGHT, "Copyright (c) 2026 Anton Abyzov");
       assert.deepInclude(mac.extraResources as ReadonlyArray<unknown>, {
         from: "apps/desktop/prod-resources/studio-updater",
         to: "studio-updater",

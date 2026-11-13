@@ -10,7 +10,7 @@ test("runtime bundle package registers both command names on the one entry", () 
   const pkg = runtimePackage("0.2.7");
   assert.equal(pkg.name, "specweave-studio");
   assert.equal(pkg.version, "0.2.7");
-  assert.equal(pkg.license, "UNLICENSED");
+  assert.equal(pkg.license, "MIT");
   assert.deepEqual(pkg.bin, { "specweave-studio": "./bin.mjs", specwithcode: "./bin.mjs" });
   verifyRuntimeBins(pkg);
 });

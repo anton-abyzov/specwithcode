@@ -113,7 +113,7 @@ test("a runtime archive becomes one npm tarball with both commands and no links 
     assert.equal(result.version, "1.2.3");
     const pkg = JSON.parse(readFileSync(join(result.packageDir, "package.json"), "utf8"));
     assert.equal(pkg.name, "specwithcode");
-    assert.equal(pkg.license, "UNLICENSED");
+    assert.equal(pkg.license, "MIT");
     assert.equal(readFileSync(join(result.packageDir, "LICENSE"), "utf8"), "MIT\n");
     assert.deepEqual(pkg.bin, { specwithcode: "bin.mjs", "specweave-studio": "bin.mjs" });
     assert.equal(pkg.dependencies, undefined);

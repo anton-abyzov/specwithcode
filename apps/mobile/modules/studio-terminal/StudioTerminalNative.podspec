@@ -8,7 +8,7 @@ Pod::Spec.new do |s|
   s.summary = 'Native terminal surface for SpecWithCode mobile.'
   s.description = 'Native terminal surface bridge used by the SpecWithCode React Native app.'
   s.homepage = 'https://studio.invalid'
-  s.license = { :type => 'UNLICENSED' }
+  s.license = { :type => 'MIT' }
   s.author = { 'Studio Tools' => 'hello@studio.invalid' }
   s.platforms = { :ios => '16.1' }
   s.source = { :path => '.' }
