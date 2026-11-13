@@ -446,6 +446,7 @@ describe("the agents step: install panel", () => {
       searched: [],
     };
     await enterRemoteAgents();
+    expect(text(renderer!.root)).toContain("Add it any time after setup in Settings > Providers.");
     expect(agentRows()[0]).toBe("claudeAgent");
     expect(text(renderer!.root)).toContain(
       "Not installed yet. One click installs it, then opens its sign-in.",

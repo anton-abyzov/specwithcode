@@ -4608,4 +4608,6 @@ export const ja: PhraseCatalog = {
     "開いた macOS のウインドウで確認してください。ダウンロードには数分かかることがあり、完了するとこの行が更新されます。",
   "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
     "インストールがエラーで終了しました。ログは下にあります。そこで「再試行」を押すか、ターミナルでコマンドを実行してください。",
+  "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
+    "Muse Code など、別のエージェントやカスタムプロバイダーを使いたい場合は、セットアップ後にいつでも「設定 > プロバイダー」から追加できます。",
 };

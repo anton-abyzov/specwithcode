@@ -4427,4 +4427,6 @@ export const zh: PhraseCatalog = {
     "请在打开的 macOS 窗口中确认。下载可能需要几分钟，完成后这一行会更新。",
   "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
     "安装出错结束。日志在下方。请在那里点击“重试”，或在终端中运行该命令。",
+  "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
+    "想用其他智能体或自定义提供方（例如 Muse Code）？设置完成后可随时在 设置 > 提供方 中添加。",
 };

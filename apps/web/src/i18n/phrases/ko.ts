@@ -4555,4 +4555,6 @@ export const ko: PhraseCatalog = {
     "열린 macOS 창에서 확인하세요. 다운로드에 몇 분 걸릴 수 있으며, 끝나면 이 행이 업데이트됩니다.",
   "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
     "설치가 오류로 끝났습니다. 로그는 아래에 있습니다. 거기서 다시 시도를 누르거나 터미널에서 명령을 실행하세요.",
+  "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
+    "Muse Code 같은 다른 에이전트나 사용자 지정 제공업체가 필요한가요? 초기 설정을 마친 뒤 언제든지 설정 > 제공업체에서 추가하세요.",
 };

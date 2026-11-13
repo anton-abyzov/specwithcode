@@ -4634,4 +4634,6 @@ export const de: PhraseCatalog = {
     "Bestätige es im geöffneten macOS-Fenster. Der Download kann ein paar Minuten dauern, und diese Zeile aktualisiert sich, sobald er fertig ist.",
   "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
     "Die Installation endete mit einem Fehler. Das Log siehst du unten. Klicke dort auf Erneut versuchen oder führe den Befehl in einem Terminal aus.",
+  "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
+    "Du möchtest einen anderen Agenten oder einen eigenen Anbieter, etwa Muse Code? Füge ihn jederzeit nach der Einrichtung unter Einstellungen > Anbieter hinzu.",
 };

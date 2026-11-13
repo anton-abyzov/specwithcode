@@ -639,6 +639,11 @@ function ConnectedAgentsStep({
           })}
         </p>
       ) : null}
+      <p className="mt-2 px-1 text-xs text-muted-foreground" data-agents-more-later>
+        {tx(
+          "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.",
+        )}
+      </p>
       {gitMissing || (gitWasMissing && git === "present") ? (
         <div className="mt-3">
           <GitRow

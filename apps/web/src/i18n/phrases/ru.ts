@@ -4604,4 +4604,6 @@ export const ru: PhraseCatalog = {
     "Подтвердите в открывшемся окне macOS. Загрузка может занять несколько минут, а эта строка обновится, когда всё будет готово.",
   "The install ended with an error. Its log is below. Press Retry there, or run the command in a terminal.":
     "Установка завершилась с ошибкой. Лог ниже. Нажмите там «Повторить» или выполните команду в терминале.",
+  "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
+    "Нужен другой агент или свой провайдер, например Muse Code? Добавьте его в любой момент после настройки в разделе Настройки > Провайдеры.",
 };
