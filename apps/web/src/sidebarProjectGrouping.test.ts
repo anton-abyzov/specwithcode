@@ -2,6 +2,7 @@ import { EnvironmentId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  hasNoCopyHere,
   localCopiesFirst,
   remoteOnlyMachines,
   type SidebarProjectSnapshot,
@@ -73,5 +74,15 @@ describe("localCopiesFirst", () => {
       row("sandboxed", "remote-only", true),
     ]).map((item) => item.name);
     expect(order).toEqual(["easychamp", "firstproject", "sandboxed", "ai-com", "sketchmate"]);
+  });
+});
+
+describe("hasNoCopyHere", () => {
+  it("counts a sandbox copy on this device even when other copies are on other machines", () => {
+    const presence = { environmentPresence: "remote-only" as const, allRemoteMembersAreDesktopLocal: false };
+    expect(hasNoCopyHere(presence)).toBe(true);
+    expect(hasNoCopyHere({ ...presence, someRemoteMembersAreDesktopLocal: true })).toBe(false);
+    expect(hasNoCopyHere({ ...presence, allRemoteMembersAreDesktopLocal: true })).toBe(false);
+    expect(hasNoCopyHere({ ...presence, environmentPresence: "mixed" })).toBe(false);
   });
 });

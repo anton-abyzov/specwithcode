@@ -159,9 +159,11 @@ export function stepProject(
 
 /**
  * One step up or down while the unpinned group shows in two sections: projects this
- * device can run, then projects only on other machines. A step stays inside the
- * project's own section, since the list puts each project back there; the first
- * project on other machines steps up into the pinned group.
+ * device can run, then projects only on other machines. `elsewhereKeys` names every
+ * project with no copy here, pinned or not. A step stays inside the project's own
+ * section, since the list puts each project back there; the first project on other
+ * machines steps up into the pinned group, and a pinned project steps down to the
+ * top of its own section.
  */
 export function stepProjectInSection(
   listedKeys: ArrangedProjects<string>,
@@ -178,6 +180,24 @@ export function stepProjectInSection(
     projectKey,
     direction,
   );
+}
+
+/** Pins at the end of the pinned group; unpins to the top of the project's own section. */
+export function toggleProjectPinInSection(
+  order: SidebarProjectOrder,
+  listedKeys: ArrangedProjects<string>,
+  elsewhereKeys: ReadonlySet<string>,
+  projectKey: string,
+): SidebarProjectOrder {
+  if (!listedKeys.pinned.includes(projectKey)) {
+    return toggleProjectPin(order, listedKeys, projectKey);
+  }
+  const elsewhere = elsewhereKeys.has(projectKey);
+  const section = listedKeys.unpinned.filter((key) => elsewhereKeys.has(key) === elsewhere);
+  return moveProject(order, listedKeys, projectKey, {
+    pinned: false,
+    beforeKey: section[0] ?? null,
+  });
 }
 
 export function sameProjectOrder(a: SidebarProjectOrder, b: SidebarProjectOrder): boolean {

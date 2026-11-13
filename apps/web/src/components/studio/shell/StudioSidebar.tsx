@@ -132,7 +132,7 @@ import {
   rememberPinnedMembers,
   resolveProjectOrder,
   stepProjectInSection,
-  toggleProjectPin,
+  toggleProjectPinInSection,
   type ProjectDropTarget,
 } from "../../../studio/projectOrder";
 import { useSidebarProjectOrder } from "../../../studio/useSidebarProjectOrder";
@@ -899,7 +899,7 @@ export default function StudioSidebar() {
   };
   const pinnedKeys = new Set(listedKeys.pinned);
   const elsewhereKeys = new Set(
-    arranged.unpinned.filter(hasNoCopyHere).map((group) => group.projectKey),
+    codeProjects.filter(hasNoCopyHere).map((group) => group.projectKey),
   );
   const folded = !showAllProjects && codeProjects.length > PROJECT_PAGE + 1;
   const shownWhenFolded = (group: SidebarProjectSnapshot, index: number) =>
@@ -909,19 +909,25 @@ export default function StudioSidebar() {
     (waitingByProject.get(group.projectKey) ?? 0) > 0;
   const visibleProjects = folded ? codeProjects.filter(shownWhenFolded) : codeProjects;
   const hiddenProjects = codeProjects.length - visibleProjects.length;
-  const moveProjectTo = (projectKey: string, target: ProjectDropTarget) => {
-    const next = moveProject(projectOrder, listedKeys, projectKey, target);
-    // A project moved into the folded part of the list unfolds it, so it stays in view.
+  // A project moved or unpinned into the folded part of the list unfolds it, so it
+  // stays in view. Its new place counts the section it shows in.
+  const saveRevealing = (projectKey: string, next: ReturnType<typeof moveProject>) => {
     if (folded) {
       const after = arrangeProjects(codeProjects, next);
-      const index = [...after.pinned, ...after.unpinned].findIndex(
-        (group) => group.projectKey === projectKey,
-      );
-      const group = codeProjects.find((entry) => entry.projectKey === projectKey);
-      if (!target.pinned && group && !shownWhenFolded(group, index)) setShowAllProjects(true);
+      const shown = [...after.pinned, ...localCopiesFirst(after.unpinned)];
+      const index = shown.findIndex((group) => group.projectKey === projectKey);
+      const pinnedAfter = after.pinned.some((group) => group.projectKey === projectKey);
+      const hidden =
+        index >= PROJECT_PAGE &&
+        !pinnedAfter &&
+        projectKey !== activeProjectKey &&
+        (waitingByProject.get(projectKey) ?? 0) === 0;
+      if (hidden) setShowAllProjects(true);
     }
     saveProjectOrder(next);
   };
+  const moveProjectTo = (projectKey: string, target: ProjectDropTarget) =>
+    saveRevealing(projectKey, moveProject(projectOrder, listedKeys, projectKey, target));
   // Another machine's assistant never stands in for this machine's own.
   const offerOwnAssistant =
     aideEnabled &&
@@ -1088,7 +1094,10 @@ export default function StudioSidebar() {
                   stepProjectInSection(listedKeys, elsewhereKeys, projectKey, direction) !== null
                 }
                 onPin={(projectKey) =>
-                  saveProjectOrder(toggleProjectPin(projectOrder, listedKeys, projectKey))
+                  saveRevealing(
+                    projectKey,
+                    toggleProjectPinInSection(projectOrder, listedKeys, elsewhereKeys, projectKey),
+                  )
                 }
                 onArchive={(group, archived) => void setGroupArchived(group, archived)}
                 onOriginChange={(group, origin) => void setGroupOrigin(group, origin)}

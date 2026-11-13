@@ -24,6 +24,10 @@ export interface SidebarProjectSnapshot extends Project {
   // "lives on a real remote" so the project header can pick a
   // local-device treatment instead of the generic remote treatment.
   allRemoteMembersAreDesktopLocal: boolean;
+  // True when at least one non-primary member lives in a desktop-local
+  // environment (a sandbox such as WSL on this device), so the project has
+  // a copy here even if its other copies are on other machines.
+  someRemoteMembersAreDesktopLocal?: boolean;
   allRemoteMembersAreWsl: boolean;
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
@@ -142,6 +146,9 @@ export function buildSidebarProjectSnapshots(input: {
     const allRemoteMembersAreDesktopLocal =
       remoteMembers.length > 0 &&
       remoteMembers.every((member) => isDesktopLocal(member.environmentId));
+    const someRemoteMembersAreDesktopLocal = remoteMembers.some((member) =>
+      isDesktopLocal(member.environmentId),
+    );
     const allRemoteMembersAreWsl =
       remoteMembers.length > 0 && remoteMembers.every((member) => isWsl(member.environmentId));
 
@@ -153,6 +160,7 @@ export function buildSidebarProjectSnapshots(input: {
       environmentPresence:
         hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",
       allRemoteMembersAreDesktopLocal,
+      someRemoteMembersAreDesktopLocal,
       allRemoteMembersAreWsl,
       memberProjects: members,
       memberProjectRefs: group.memberProjectRefs,
@@ -256,19 +264,24 @@ export function withPendingMachineAdds<TProject extends Project>(
  * True when this device has no copy of the project: it opens and runs on another
  * machine. A copy in a sandbox on this device counts as one here.
  */
-export function hasNoCopyHere(
-  group: Pick<SidebarProjectSnapshot, "environmentPresence" | "allRemoteMembersAreDesktopLocal">,
-): boolean {
-  return group.environmentPresence === "remote-only" && !group.allRemoteMembersAreDesktopLocal;
+type CopyPresence = Pick<
+  SidebarProjectSnapshot,
+  "environmentPresence" | "allRemoteMembersAreDesktopLocal" | "someRemoteMembersAreDesktopLocal"
+>;
+
+export function hasNoCopyHere(group: CopyPresence): boolean {
+  return (
+    group.environmentPresence === "remote-only" &&
+    !group.allRemoteMembersAreDesktopLocal &&
+    group.someRemoteMembersAreDesktopLocal !== true
+  );
 }
 
 /**
  * Projects this device can run itself first, then the ones on other machines, each
  * part in the person's order: the sidebar lists the second part under its own label.
  */
-export function localCopiesFirst<
-  T extends Pick<SidebarProjectSnapshot, "environmentPresence" | "allRemoteMembersAreDesktopLocal">,
->(groups: ReadonlyArray<T>): T[] {
+export function localCopiesFirst<T extends CopyPresence>(groups: ReadonlyArray<T>): T[] {
   return [
     ...groups.filter((group) => !hasNoCopyHere(group)),
     ...groups.filter((group) => hasNoCopyHere(group)),
@@ -282,10 +295,7 @@ export function localCopiesFirst<
  * project runs here, so the sidebar marks nothing.
  */
 export function remoteOnlyMachines(
-  group: Pick<
-    SidebarProjectSnapshot,
-    "environmentPresence" | "allRemoteMembersAreDesktopLocal" | "memberProjects"
-  >,
+  group: CopyPresence & Pick<SidebarProjectSnapshot, "memberProjects">,
   nameOf: (environmentId: EnvironmentId, fallbackLabel: string | null) => string,
 ): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly name: string }> {
   if (!hasNoCopyHere(group)) return [];

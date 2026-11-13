@@ -9,6 +9,7 @@ import {
   stepProject,
   toggleProjectPin,
   stepProjectInSection,
+  toggleProjectPinInSection,
 } from "./projectOrder";
 
 const groups = ["a", "b", "c", "d"].map((projectKey) => ({ projectKey }));
@@ -177,5 +178,27 @@ describe("pins across folder changes", () => {
       pinned: false,
       beforeKey: "a",
     });
+  });
+
+  it("steps a pinned project down to the top of its own section", () => {
+    const listed = { pinned: ["p"], unpinned: ["x", "y"] };
+    const elsewhere = new Set(["p", "x", "y"]);
+    expect(stepProjectInSection(listed, elsewhere, "p", "down")).toEqual({
+      pinned: false,
+      beforeKey: "x",
+    });
+    const local = { pinned: ["p"], unpinned: ["a", "x"] };
+    expect(stepProjectInSection(local, new Set(["x"]), "p", "down")).toEqual({
+      pinned: false,
+      beforeKey: "a",
+    });
+  });
+
+  it("unpins a project to the top of its own section", () => {
+    const listed = { pinned: ["p"], unpinned: ["a", "x"] };
+    const order = { pinned: ["p"], unpinned: ["a", "x"] };
+    const next = toggleProjectPinInSection(order, listed, new Set(["p", "x"]), "p");
+    expect(next.pinned).toEqual([]);
+    expect(next.unpinned).toEqual(["a", "p", "x"]);
   });
 });
