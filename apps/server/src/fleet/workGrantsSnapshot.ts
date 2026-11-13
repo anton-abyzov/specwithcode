@@ -152,6 +152,7 @@ export const workGrantsSnapshot = (input: {
         .map((entry) => DateTime.toEpochMillis(entry.session.expiresAt))
         .filter((expiresAt) => expiresAt > now);
       const expiresAt = live.length === 0 ? null : Math.max(...live);
+      const ended = WorkGrants.grantEnded(policy, now);
       return {
         coordinatorEnvironmentId: EnvironmentId.make(policy.coordinatorEnvironmentId),
         machineLabel:
@@ -163,7 +164,14 @@ export const workGrantsSnapshot = (input: {
         runtimeCap: policy.runtimeCap,
         expiresAt:
           expiresAt === null ? null : (DateTime.formatIso(DateTime.makeUnsafe(expiresAt)) as never),
-        status: policy.revokedAt !== null ? "revoked" : expiresAt === null ? "expired" : "active",
+        status:
+          policy.revokedAt !== null || ended
+            ? "revoked"
+            : expiresAt === null
+              ? "expired"
+              : "active",
+        endsAt: (policy.endsAt ?? null) as never,
+        ...(ended ? { ended: true } : {}),
         revokedAt: policy.revokedAt as never,
         interruptAt: policy.interruptedAt === null ? (policy.interruptAt as never) : null,
         runningThreads: origins.filter(
@@ -175,7 +183,8 @@ export const workGrantsSnapshot = (input: {
         routines:
           policy.legacy || WorkGrants.routinesAllowed(policy, grantKindOf(policy, managers)),
         kind: grantKindOf(policy.legacy ? { ...policy, owner: "self" } : policy, managers),
-        renews: policy.revokedAt === null && managers.has(policy.coordinatorEnvironmentId),
+        renews:
+          policy.revokedAt === null && !ended && managers.has(policy.coordinatorEnvironmentId),
       };
     });
     const projects = yield* ProjectService.ProjectService;
@@ -189,6 +198,7 @@ export const workGrantsSnapshot = (input: {
         : yield* Effect.filter(snapshot, (project) => isScratch(project.id));
     return {
       grants: rows.toSorted((left, right) => left.machineLabel.localeCompare(right.machineLabel)),
+      durations: true,
       projects: workGrantProjectChoices({
         projects: snapshot,
         ownEnvironmentId: input.ownEnvironmentId,

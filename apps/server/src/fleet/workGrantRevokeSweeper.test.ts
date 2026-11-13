@@ -128,4 +128,45 @@ describe("revoking a machine's work", () => {
       expect(interrupted.map((entry) => entry.threadId)).toEqual([CONTINUATION]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("ends a grant at its time limit like a Stop, and Allow starts a fresh period", () => {
+    const { layer, interrupted } = setup();
+    return Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      yield* grants.recordOrigin(ThreadId.make("from-m4-running"), {
+        coordinatorEnvironmentId: M4,
+        path: [M4],
+        hops: 1,
+      });
+      yield* grants.update({ coordinatorEnvironmentId: M4, duration: "1h" });
+      expect((yield* grants.forCoordinator(M4)).revoked).toBe(false);
+      yield* TestClock.adjust("59 minutes");
+      expect(yield* sweepRevoked).toBe(0);
+      expect((yield* grants.forCoordinator(M4)).revoked).toBe(false);
+      // Past the limit it is refused at once, before any sweep records it.
+      yield* TestClock.adjust("1 minute");
+      expect((yield* grants.forCoordinator(M4)).revoked).toBe(true);
+      // The sweep turns it into a revoke; its threads stop after the usual grace.
+      expect(yield* sweepRevoked).toBe(0);
+      const policy = (yield* grants.policies).find(
+        (entry) => entry.coordinatorEnvironmentId === M4,
+      );
+      expect(policy?.revokedAt).not.toBeNull();
+      expect(policy?.interruptAt).not.toBeNull();
+      yield* TestClock.adjust("121 seconds");
+      expect(yield* sweepRevoked).toBe(1);
+      expect(interrupted.map((entry) => entry.threadId)).toEqual(["from-m4-running"]);
+      // M1 had no limit and is untouched.
+      expect((yield* grants.forCoordinator(M1)).revoked).toBe(false);
+      // Restore lifts a Stop only; an ended grant needs a new limit.
+      const restored = yield* grants.restore(M4).pipe(Effect.flip);
+      expect(restored.reason).toBe("ended");
+      yield* grants.update({ coordinatorEnvironmentId: M4, duration: "1d" });
+      expect((yield* grants.forCoordinator(M4)).revoked).toBe(false);
+      yield* grants.update({ coordinatorEnvironmentId: M4, duration: "until-stopped" });
+      yield* TestClock.adjust("30 days");
+      expect(yield* sweepRevoked).toBe(0);
+      expect((yield* grants.forCoordinator(M4)).revoked).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
 });
