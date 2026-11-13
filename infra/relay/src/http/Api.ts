@@ -1315,6 +1315,7 @@ export const layerServerApi = HttpApiBuilder.group(
             environmentId: params.environmentId,
             environmentPublicKey: principal.environmentPublicKey,
             hardwareIdentity: payload.hardwareIdentity,
+            userId: payload.userId,
           });
         }, mapRelayCommonApiErrors("not_authorized")),
       )

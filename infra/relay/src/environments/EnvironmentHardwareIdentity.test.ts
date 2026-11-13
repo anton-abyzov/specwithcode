@@ -179,6 +179,7 @@ const layer = (deprovisioned: Array<string> = []) =>
   );
 
 const ALICE = "user_alice";
+const BOB = "user_bob";
 const M5 = machineHash("m5-platform-uuid\n/Users/anton/.specwithcode");
 
 describe("machine hardware identity on Connect links", () => {
@@ -276,6 +277,27 @@ describe("machine hardware identity on Connect links", () => {
       const failure = outcomes.find(Result.isFailure);
       expect(failure !== undefined && isProofInvalid(failure.failure)).toBe(true);
       expect(yield* activeIds(ALICE)).toEqual(["env-1"]);
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("a backfill fills in only the account the machine salted it for", () =>
+    Effect.gen(function* () {
+      const sharedKey = newKeyPair();
+      yield* link({ userId: ALICE, environmentId: "env-shared", keyPair: sharedKey });
+      yield* link({ userId: BOB, environmentId: "env-shared", keyPair: sharedKey });
+      const backfill = (userId: string | undefined) =>
+        recordEnvironmentHardwareIdentity({
+          environmentId: "env-shared",
+          environmentPublicKey: sharedKey.publicKey.trim(),
+          hardwareIdentity: M5,
+          userId,
+        });
+
+      // Two accounts and no name: ambiguous, so nothing is stored.
+      expect(yield* backfill(undefined)).toEqual({ recorded: false });
+      expect(yield* backfill(ALICE)).toEqual({ recorded: true });
+      // Bob's link is still open for its own, correctly salted value.
+      expect(yield* backfill(BOB)).toEqual({ recorded: true });
     }).pipe(Effect.provide(layer())),
   );
 

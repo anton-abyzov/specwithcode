@@ -1389,6 +1389,8 @@ export type RelayEnvironmentLinkPreferencesRequest =
 
 export const RelayEnvironmentHardwareIdentityRequest = Schema.Struct({
   hardwareIdentity: RelayEnvironmentHardwareIdentity,
+  /** The account the identity was salted for; only that account's link is filled in. */
+  userId: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
 });
 export type RelayEnvironmentHardwareIdentityRequest =
   typeof RelayEnvironmentHardwareIdentityRequest.Type;

@@ -93,11 +93,23 @@ export const recordEnvironmentHardwareIdentity = Effect.fn(
   readonly environmentId: string;
   readonly environmentPublicKey: string;
   readonly hardwareIdentity: string;
+  /** The account the machine salted the identity for. */
+  readonly userId?: string | undefined;
 }) {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const pending = yield* links.listActiveWithoutHardware(input);
+  // The machine salts its identity for one account. Stored for any other
+  // account it would never match that account's links, and would block a
+  // correct value later, so only the named account is filled in; without a
+  // name, only an unambiguous single account is.
+  const accounts =
+    input.userId === undefined
+      ? pending.length === 1
+        ? pending
+        : []
+      : pending.filter((row) => row.userId === input.userId);
   let recorded = false;
-  for (const { userId } of pending) {
+  for (const { userId } of accounts) {
     const hardwareIdentity = yield* accountHardwareIdentity(userId, input.hardwareIdentity).pipe(
       Effect.tapError((error) =>
         Effect.logWarning("could not hash a machine identity to record", {

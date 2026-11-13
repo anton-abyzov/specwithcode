@@ -96,7 +96,8 @@ export const recordHardwareIdentityOnce: Effect.Effect<
   const identity = yield* MachineHardwareIdentity.MachineHardwareIdentity;
   const userId = yield* secrets.get(CLOUD_LINKED_USER_ID);
   if (Option.isNone(userId)) return true;
-  const hardwareIdentity = yield* identity.forAccount(new TextDecoder().decode(userId.value));
+  const linkedUserId = new TextDecoder().decode(userId.value);
+  const hardwareIdentity = yield* identity.forAccount(linkedUserId);
   if (hardwareIdentity === null) return true;
   const recorded = yield* secrets.get(CLOUD_HARDWARE_IDENTITY_RECORDED);
   if (Option.isSome(recorded) && new TextDecoder().decode(recorded.value) === hardwareIdentity) {
@@ -104,7 +105,10 @@ export const recordHardwareIdentityOnce: Effect.Effect<
   }
   const client = yield* makeRelayEnvironmentHttpClient(connection);
   yield* client.server
-    .recordHardwareIdentity({ params: { environmentId }, payload: { hardwareIdentity } })
+    .recordHardwareIdentity({
+      params: { environmentId },
+      payload: { hardwareIdentity, userId: linkedUserId },
+    })
     .pipe(Effect.timeout(RELAY_REQUEST_TIMEOUT));
   yield* secrets.set(CLOUD_HARDWARE_IDENTITY_RECORDED, new TextEncoder().encode(hardwareIdentity));
   return true;
