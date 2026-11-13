@@ -1,19 +1,10 @@
 import type { FolderCopySourceStatus } from "@specweave-studio/contracts";
+import { relativeAge } from "../../lib/relativeAge";
 import { Button } from "../ui/button";
-
-const UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
-  ["day", 86_400_000],
-  ["hour", 3_600_000],
-  ["minute", 60_000],
-];
 
 /** "2 days ago", "5 minutes ago", or "just now". */
 export function measuredAgo(at: number, now = Date.now()): string {
-  const elapsed = Math.max(0, now - at);
-  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  for (const [unit, size] of UNITS)
-    if (elapsed >= size) return format.format(-Math.floor(elapsed / size), unit);
-  return "just now";
+  return relativeAge(at, now) ?? "just now";
 }
 
 /**

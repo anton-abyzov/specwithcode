@@ -140,13 +140,13 @@ it("lists a linked machine this app has no connection to as not connected", asyn
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
 });
 
-it("labels an unreachable viewed machine read-only, never as live", async () => {
+it("marks an unreachable viewed machine by its dot, never as live", async () => {
   await act(async () =>
     root.render(
       <OrchestratorSwitcher
         label="Minis"
         connected={false}
-        statusDetail="Minis unreachable · last synced 5 min ago · read-only"
+        statusDetail="Reconnecting"
         current="minis:p"
         copies={[copy("m4:p", "M4"), copy("minis:p", "Minis")]}
         unknown={[]}
@@ -155,9 +155,11 @@ it("labels an unreachable viewed machine read-only, never as live", async () => 
       />,
     ),
   );
-  expect(container.querySelector("[data-orchestrator-status]")?.textContent).toContain(
-    "Minis unreachable · last synced 5 min ago · read-only",
-  );
+  // The chip says the state in a word, for screen readers; the line above the
+  // message box says the rest. Nothing about it is drawn in the chip but the dot.
+  expect(container.querySelector("[data-orchestrator-status]")?.textContent).toBe(", Reconnecting");
+  expect(container.querySelector("[data-orchestrator-status]")?.className).toBe("sr-only");
+  expect(container.querySelector('.sws-dot[data-tone="failed"]')).not.toBeNull();
 });
 
 it("shows a nickname as typed, never trimming its owner", async () => {

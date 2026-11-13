@@ -16,17 +16,13 @@ import {
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { useNowMinute } from "../../hooks/useNowMinute";
 import { useTx } from "../../i18n";
-import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { highestEpoch, projectLink } from "../../studio/projectLink";
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
-import { remoteOrchestratorOfflineLabel } from "../../studio/projectWorkspaceModel";
 import { useMachineNickname } from "../../studio/machineNickname";
-import { nowFromMinute } from "../../studio/shellModel";
 import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { toastManager } from "../ui/toast";
@@ -43,7 +39,6 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
   coordinator: "",
@@ -96,7 +91,7 @@ export function OrchestratorSwitcher({
   /** Its full host label for the tooltip; defaults to `label`. */
   hostLabel?: string;
   connected: boolean;
-  /** Shown after the name while the viewed machine is not connected. */
+  /** One word for screen readers while the viewed machine is not connected ("Reconnecting"). */
   statusDetail: string;
   current: string;
   copies: readonly OrchestratorCopy[];
@@ -122,18 +117,24 @@ export function OrchestratorSwitcher({
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
   const tx = useTx();
+  const runsOn = tx("Runs on {machine}", { machine: label });
+  // The chip names the machine and shows its state by the dot alone: while it is not
+  // connected, the line above the message box says so once, with what happens next.
   const status = (
     <>
       <span className="sws-dot" data-tone={connected ? "resolved" : "failed"} aria-hidden />
-      <span className="sws-host-name">Runs on {label}</span>
-      <span className="sr-only">{connected ? ", connected" : `, ${statusDetail}`}</span>
-      {connected ? null : (
-        <span aria-hidden data-orchestrator-status="">
-          {" "}
-          · {statusDetail}
-        </span>
-      )}
-      {savedMachineMissing ? <span aria-hidden> · Last viewed machine not listed</span> : null}
+      <span
+        className="sws-host-name"
+        title={hostLabel && hostLabel !== label ? `${runsOn} (${hostLabel})` : runsOn}
+      >
+        {runsOn}
+      </span>
+      <span className="sr-only" data-orchestrator-status="">
+        {connected ? `, ${tx("connected")}` : `, ${tx(statusDetail)}`}
+      </span>
+      {savedMachineMissing ? (
+        <span aria-hidden> · {tx("Last viewed machine not listed")}</span>
+      ) : null}
     </>
   );
   const listed = copies.filter((copy) => isProjectFolder(copy.folder));
@@ -141,19 +142,12 @@ export function OrchestratorSwitcher({
   const machineActions = onAdd !== null || onMoveElsewhere !== null || onLeave !== null;
   if (!viewable && !machineActions)
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              className="project-muted sws-host sws-execution-control machine-chip"
-              {...machineColorProps(identity)}
-            />
-          }
-        >
-          {status}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{hostLabel ?? label}</TooltipPopup>
-      </Tooltip>
+      <span
+        className="project-muted sws-host sws-execution-control machine-chip"
+        {...machineColorProps(identity)}
+      >
+        {status}
+      </span>
     );
   // Two checkouts on one machine need their folders to tell them apart.
   const machines = listed.map((copy) => copy.machine);
@@ -170,42 +164,38 @@ export function OrchestratorSwitcher({
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                render={
-                  <Button
-                    variant="ghost-muted"
-                    size="xs"
-                    className="min-w-0 max-w-full machine-chip"
-                    {...machineColorProps(identity)}
-                    data-coordinator-machine=""
-                    aria-label={
-                      viewable
-                        ? `Viewing ${label}. Choose a machine to view`
-                        : `${label}: this project's machines`
-                    }
-                  />
-                }
-              />
-            }
-          >
-            {status}
-            <ChevronDownIcon aria-hidden />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {viewable
-              ? `Viewing ${label}. Work stays on ${label}. Adding or moving the project asks first.`
-              : `Runs on ${label}. Add it to another machine, or move it there.`}
-          </TooltipPopup>
-        </Tooltip>
+        {/* No tooltip: one opened from this chip covered the message box. What viewing
+            means is said inside the menu, which opens only when asked. */}
+        <MenuTrigger
+          render={
+            <Button
+              variant="ghost-muted"
+              size="xs"
+              className="min-w-0 max-w-full machine-chip"
+              {...machineColorProps(identity)}
+              data-coordinator-machine=""
+              aria-label={
+                viewable
+                  ? tx("Viewing {machine}. Choose a machine to view", { machine: label })
+                  : tx("{machine}: this project's machines", { machine: label })
+              }
+            />
+          }
+        >
+          {status}
+          <ChevronDownIcon aria-hidden />
+        </MenuTrigger>
       </span>
       <MenuPopup align="start" side="top" className="min-w-64">
         <AfterUnmount pending={pendingView} />
         {viewable && onView ? (
           <MenuGroup>
             <MenuGroupLabel>{tx("View this project on")}</MenuGroupLabel>
+            <p className="px-2 pb-1 text-muted-foreground text-xs" data-orchestrator-note="">
+              {tx(
+                "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
+              )}
+            </p>
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {
@@ -238,9 +228,7 @@ export function OrchestratorSwitcher({
                   title={row.hint}
                 >
                   <span className="flex w-full items-center gap-2">
-                    <span className="min-w-0 truncate">
-                      {row.name}
-                    </span>
+                    <span className="min-w-0 truncate">{row.name}</span>
                     {row.note ? (
                       <span className="shrink-0 text-muted-foreground text-xs">{tx(row.note)}</span>
                     ) : null}
@@ -348,8 +336,8 @@ export function OrchestratorSwitcher({
 /**
  * The switcher on a project page, with its actions wired: viewing changes only
  * what this page shows, starting runs another coordinator next to this one,
- * moving opens the confirmed handoff. A remote machine that is not connected
- * says when this device last synced it and that the page is read-only.
+ * moving opens the confirmed handoff. A machine that is not connected shows a
+ * red dot; the status line above the message box says what that means.
  */
 export function ProjectOrchestratorSwitcher({
   project,
@@ -387,18 +375,14 @@ export function ProjectOrchestratorSwitcher({
   const name = useMachineNickname(project.environmentId, label);
   const identity = useMachineIdentity(project.environmentId, label);
   const start = useStartCoordinator(members, copies);
-  useMachineLastSeenVersion();
-  const now = nowFromMinute(useNowMinute());
-  const statusDetail = isThisDevice
-    ? disconnectedLabel
-    : remoteOrchestratorOfflineLabel(name, machineLastSeenAt(project.environmentId), now);
   return (
     <OrchestratorSwitcher
       identity={identity}
       label={name}
       hostLabel={label}
       connected={connected}
-      statusDetail={statusDetail}
+      // The line above the message box says the rest once; the chip names the state.
+      statusDetail={disconnectedLabel}
       current={current}
       copies={copies}
       unknown={unknown}

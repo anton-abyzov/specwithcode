@@ -4804,4 +4804,48 @@ export const ru: PhraseCatalog = {
   "{title} (automated)": "{title} (автоматический)",
   "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
     "Это приложение не подключено к {machine}, поэтому его копию нельзя показать. Подключите его в Настройки > Машины.",
+  "This window is signed out": "Это окно вышло из аккаунта",
+  "Quit and reopen the app to sign in again.":
+    "Закройте и снова откройте приложение, чтобы войти заново.",
+  "SpecWithCode on this machine stopped answering":
+    "SpecWithCode на этом компьютере перестал отвечать",
+  "Quit and reopen the app to continue.": "Закройте и снова откройте приложение, чтобы продолжить.",
+  "SpecWithCode on this machine is busy": "SpecWithCode на этом компьютере занят",
+  "You can send once it catches up. Your draft stays here.":
+    "Отправить можно, когда он догонит. Черновик останется здесь.",
+  "Catching up…": "Догоняет…",
+  "Signed out of {machine}": "Выполнен выход на {machine}",
+  "Signed out of this host": "Выполнен выход на этом хосте",
+  "Reload the page to sign in again.": "Перезагрузите страницу, чтобы войти заново.",
+  "Connecting to {machine}…": "Подключение к {machine}…",
+  "Connecting to this host…": "Подключение к этому хосту…",
+  "This device is offline": "Это устройство не в сети",
+  "Nothing is sent until it is back online. Your draft stays here.":
+    "Ничего не отправится, пока устройство не вернётся в сеть. Черновик останется здесь.",
+  "{machine} is offline": "{machine} не в сети",
+  "This host is offline": "Этот хост не в сети",
+  "Reconnecting…": "Переподключение…",
+  "This page shows the copy synced here, read-only.":
+    "Эта страница показывает копию, синхронизированную здесь, только для чтения.",
+  "Never synced on this device.": "На этом устройстве ни разу не синхронизировался.",
+  "Last synced {age}.": "Последняя синхронизация: {age}.",
+  "Synced just now.": "Синхронизировано только что.",
+  "Hide details": "Скрыть подробности",
+  "Runs on {machine}": "Работает на {machine}",
+  connected: "подключён",
+  "Last viewed machine not listed": "Последний просмотренный компьютер не в списке",
+  "Viewing {machine}. Choose a machine to view":
+    "Просмотр {machine}. Выберите компьютер для просмотра",
+  "{machine}: this project's machines": "{machine}: компьютеры этого проекта",
+  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
+    "Просмотр ничего не переносит: работа остаётся на каждом компьютере. Добавление или перенос проекта сначала спросит.",
+  "Nothing is sent to another machine.": "На другой компьютер ничего не отправляется.",
+  "Your draft stays here until it reconnects.":
+    "Черновик останется здесь, пока связь не восстановится.",
+  "You can start these once it reconnects.": "Их можно запустить, когда связь восстановится.",
+  "If this does not clear, reload the page.": "Если это не пройдёт, перезагрузите страницу.",
+  "You can start these once it catches up.": "Их можно запустить, когда он догонит.",
+  Connecting: "Подключение",
+  Disconnected: "Отключено",
+  "Signed out": "Выполнен выход",
 };

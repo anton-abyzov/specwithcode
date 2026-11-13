@@ -53,12 +53,10 @@ it("says which nicknamed machine is unreachable", async () => {
       </UnreachableHostsContext.Provider>,
     ),
   );
-  expect(container.querySelector("[data-orchestrator-status]")?.textContent).toContain(
-    "Anna's Air unreachable",
+  expect(container.querySelector("[data-host-status]")?.textContent).toContain(
+    "Anna's Air is offline",
   );
-  expect(container.textContent).toContain(
-    "Anna's Air is unreachable, so its coordinator cannot take messages.",
-  );
+  expect(container.textContent).not.toContain("cannot take messages");
 });
 
 it("offers a missing checkout's replacement by nickname", async () => {

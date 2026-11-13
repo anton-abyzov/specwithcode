@@ -958,12 +958,16 @@ async function main() {
   ).runs.length;
   const lastSeen = Date.now();
   await stop(minis);
-  const status = page.locator("[data-orchestrator-status]").filter({ visible: true });
-  await status
-    .filter({ hasText: "Minis fixture unreachable · last synced" })
-    .waitFor({ timeout: 60000 });
-  const statusText = (await status.textContent()) ?? "";
-  assert.match(statusText, /last synced (just now|\d+ min ago) · read-only/, statusText);
+  // One status line above the message box says it; Details adds the sync age.
+  const status = page.locator("[data-host-status]").filter({ visible: true });
+  await status.filter({ hasText: "Minis fixture is offline" }).waitFor({ timeout: 60000 });
+  assert.equal(await status.count(), 1, "One status line");
+  await status.getByRole("button", { name: "Details" }).click();
+  const detail = page.locator("[data-host-status-detail]");
+  await detail.waitFor({ timeout: 15000 });
+  const statusText = (await detail.textContent()) ?? "";
+  assert.match(statusText, /(Synced just now|Last synced \d+ minutes? ago)\./, statusText);
+  assert.match(statusText, /read-only/, statusText);
   assert.ok(
     (await page
       .locator('.sws-host .sws-dot[data-tone="failed"]')
@@ -977,16 +981,14 @@ async function main() {
     0,
     "No silent stand-in",
   );
-  await page
-    .getByText(
-      "Minis fixture is unreachable, so its coordinator cannot take messages. Nothing is sent to another machine.",
-      {
-        exact: false,
-      },
-    )
-    .filter({ visible: true })
-    .first()
-    .waitFor({ timeout: 30000 });
+  assert.equal(
+    await page
+      .getByText("cannot take messages", { exact: false })
+      .filter({ visible: true })
+      .count(),
+    0,
+    "The long sentence is not repeated on the page",
+  );
   const offlineText = `Offline message must not move ${randomUUID().slice(0, 8)}`;
   await prompt().fill(offlineText);
   assert.equal(await page.getByRole("button", { name: "Send to coordinator" }).isDisabled(), true);

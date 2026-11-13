@@ -92,6 +92,7 @@ import {
   useProjectPaneSelection,
 } from "../../studio/useProjectPaneSelection";
 import {
+  composerHostStatus,
   createScopedProjectSendReceipt,
   hostDisconnectedLabel,
   projectAdmissionReason,
@@ -185,6 +186,8 @@ import { randomUUID } from "../../lib/utils";
 import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice } from "./CoordinatorBlockedNotice";
+import { ProjectComposerHostStatus } from "./ComposerHostStatus";
+import { useTx } from "../../i18n";
 import { type OrchestratorCopy, workersOnlyProblem } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
@@ -317,6 +320,7 @@ export function ProjectWorkspaceSurface({
     (project.workspaceSettings?.kind ?? snapshot?.settings.kind) === "personal";
   // Percy calls its threads topics, and itself Percy where a project says the coordinator.
   const say = paneWords(machinePrivate);
+  const tx = useTx();
   const coordinatorId = snapshot?.settings.coordinatorThreadId ?? null;
   // The project shell names the coordinator before the workspace read answers; the
   // panel needs it at once, so a link to the coordinator never lands there.
@@ -556,19 +560,25 @@ export function ProjectWorkspaceSurface({
     graceElapsed:
       waitingEnvironmentId === null || graceElapsedEnvironmentId === waitingEnvironmentId,
   };
+  const admissionContext = {
+    ...hostAdmission,
+    accessPending: operateAccess === "unknown",
+    ...(environment?.label || machineName !== project.environmentId
+      ? { machineLabel: machineName }
+      : {}),
+  };
   const admission = projectAdmissionReason(
     snapshot?.settings ?? null,
     connected,
     canOperate,
     environment?.connection,
-    {
-      ...hostAdmission,
-      accessPending: operateAccess === "unknown",
-      ...(environment?.label || machineName !== project.environmentId
-        ? { machineLabel: machineName }
-        : {}),
-    },
+    admissionContext,
   );
+  // Not connected, one short line says so above the message box, in place of the
+  // sentence `admission` holds (which a refused send still reports).
+  const hostStatus = connected
+    ? null
+    : composerHostStatus(environment?.connection, admissionContext);
   // A workers-only copy names where its work starts; only one that ran a coordinator keeps history.
   const workersOnly = coordinatorElsewhere
     ? workersOnlyProblem(
@@ -1394,8 +1404,16 @@ export function ProjectWorkspaceSurface({
       () => setStartingSuggestion(null),
     );
   }
+  // The status line above the message box already names the problem; the list says
+  // only when its starters work again, or the step that makes them work.
   const startersBlocked =
-    blocked ??
+    (hostStatus
+      ? hostStatus.action
+        ? tx(hostStatus.action)
+        : hostStatus.tone === "busy"
+          ? tx("You can start these once it catches up.")
+          : tx("You can start these once it reconnects.")
+      : blocked) ??
     (!model && !coordinatorId
       ? modelsLoading
         ? "Models are still loading from this host."
@@ -1899,8 +1917,11 @@ export function ProjectWorkspaceSurface({
                 placeholder={
                   coordinatorQuestion
                     ? say("Answer the coordinator: type, paste or attach, then send")
-                    : promptPlaceholder
+                    : hostStatus?.keepsDraft
+                      ? tx("Your draft stays here until it reconnects.")
+                      : promptPlaceholder
                 }
+                hostReachable={connected}
                 promptLabel={
                   coordinatorQuestion
                     ? machinePrivate
@@ -1929,7 +1950,13 @@ export function ProjectWorkspaceSurface({
                 onError={setError}
                 status={
                   <>
-                    {blocked && (
+                    {hostStatus ? (
+                      <ProjectComposerHostStatus
+                        status={hostStatus}
+                        environmentId={project.environmentId}
+                      />
+                    ) : null}
+                    {blocked && !hostStatus && (
                       <CoordinatorBlockedNotice
                         text={blocked}
                         coordinator={blocked === workersOnly ? coordinatorElsewhere : null}
@@ -1939,7 +1966,8 @@ export function ProjectWorkspaceSurface({
                         onOpen={onCheckout}
                       />
                     )}
-                    {error && (
+                    {/* A send refused for the host the line names would only repeat it. */}
+                    {error && !(hostStatus && error === blocked) && (
                       <p role="alert">
                         {nameMachineInText(say(error), knownMachine)}
                         {providerFix && !coordinatorFailure ? (

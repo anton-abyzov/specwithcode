@@ -246,26 +246,105 @@ export function remoteUnreachableAdmission(machineLabel: string | undefined): st
 }
 
 /**
- * The status of another machine's orchestrator while it is unreachable: the
- * page shows the copy this device last synced, read-only, and says how old it is.
+ * The one status line above the coordinator's message box while its machine is
+ * not connected. Every text is an English phrase for `useTx`; `{machine}` marks
+ * the machine's name, which the line ellipsizes alone. `action` stays on the
+ * line because the person has to do it; `detail` waits behind Details.
  */
-export function remoteOrchestratorOfflineLabel(
-  machineLabel: string,
-  lastSyncedAt: number | null,
-  now: number,
-): string {
-  if (lastSyncedAt === null)
-    return `${machineLabel} unreachable · last synced: Unknown · read-only`;
-  const minutes = Math.max(0, Math.round((now - lastSyncedAt) / 60_000));
-  const age =
-    minutes < 1
-      ? "just now"
-      : minutes < 60
-        ? `${minutes} min ago`
-        : minutes < 48 * 60
-          ? `${Math.round(minutes / 60)} h ago`
-          : `${Math.round(minutes / (24 * 60))} d ago`;
-  return `${machineLabel} unreachable · last synced ${age} · read-only`;
+export type ComposerHostStatus = {
+  readonly tone: "offline" | "connecting" | "busy" | "signed-out";
+  readonly headline: string;
+  readonly machine: string | null;
+  /** What happens next on its own ("Reconnecting…"), after a middle dot. */
+  readonly progress: string | null;
+  /** What the person must do, said on the line. */
+  readonly action: string | null;
+  /** Why sending is off and what is shown, behind Details. */
+  readonly detail: ReadonlyArray<string>;
+  /** The detail opens with when this device last synced the machine. */
+  readonly showsSync: boolean;
+  /** The message box says the draft is kept until the machine reconnects. */
+  readonly keepsDraft: boolean;
+};
+
+// The message box's placeholder says the draft is kept; the detail does not repeat it.
+const UNREACHABLE_DETAIL = [
+  "This page shows the copy synced here, read-only.",
+  "Nothing is sent to another machine.",
+] as const;
+
+export function composerHostStatus(
+  connection: HostConnection | null | undefined,
+  context: HostAdmissionContext = REMOTE_PAST_GRACE,
+): ComposerHostStatus {
+  const base = {
+    machine: context.machineLabel ?? null,
+    progress: null,
+    action: null,
+    detail: [],
+    showsSync: false,
+    keepsDraft: false,
+  } as const;
+  if (context.isThisDevice) {
+    if (connection?.blockedReason === "authentication")
+      return {
+        ...base,
+        tone: "signed-out",
+        headline: "This window is signed out",
+        action: "Quit and reopen the app to sign in again.",
+      };
+    if (connection?.phase === "error" || connection?.phase === "unsupported")
+      return {
+        ...base,
+        tone: "offline",
+        headline: "SpecWithCode on this machine stopped answering",
+        action: "Quit and reopen the app to continue.",
+      };
+    return context.graceElapsed
+      ? {
+          ...base,
+          tone: "busy",
+          headline: "SpecWithCode on this machine is busy",
+          detail: ["You can send once it catches up. Your draft stays here."],
+        }
+      : { ...base, tone: "busy", headline: "Catching up…" };
+  }
+  const named = context.machineLabel !== undefined;
+  if (connection?.blockedReason === "authentication")
+    return {
+      ...base,
+      tone: "signed-out",
+      headline: named ? "Signed out of {machine}" : "Signed out of this host",
+      action: "Reload the page to sign in again.",
+    };
+  if (connection?.phase === "connecting")
+    return {
+      ...base,
+      tone: "connecting",
+      headline: named ? "Connecting to {machine}…" : "Connecting to this host…",
+    };
+  if (connection?.phase === "offline")
+    return {
+      ...base,
+      tone: "offline",
+      headline: "This device is offline",
+      detail: ["Nothing is sent until it is back online. Your draft stays here."],
+    };
+  const reconnecting = connection?.phase === "reconnecting";
+  return {
+    ...base,
+    tone: "offline",
+    headline: named ? "{machine} is offline" : "This host is offline",
+    progress: reconnecting ? "Reconnecting…" : null,
+    detail: named
+      ? UNREACHABLE_DETAIL
+      : [
+          ...(reconnecting ? ["If this does not clear, reload the page."] : []),
+          "Nothing is sent to another machine.",
+        ],
+    showsSync: named,
+    keepsDraft: named,
+  };
 }
 
 export function projectAdmissionReason(
