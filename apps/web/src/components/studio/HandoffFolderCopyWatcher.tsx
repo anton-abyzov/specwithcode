@@ -24,6 +24,7 @@ import {
   readPendingCopy,
   ALL_SECRETS,
   type PendingCopy,
+  type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import { sendableSecrets } from "./handoffCopySecrets";
 import {
@@ -264,7 +265,15 @@ export function HandoffFolderCopyWatcher({
           destinationLabel: latest.current.machineLabel(saved.environmentId),
         },
       });
-      return !stopped && sent._tag === "Success";
+      // Another tab may have changed the choice while it was sent: leave that copy to the person.
+      const after = readPendingCopy(key);
+      const same = (a?: SecretsChoice) => JSON.stringify(a ?? ALL_SECRETS);
+      return (
+        !stopped &&
+        sent._tag === "Success" &&
+        after?.operationId === operationId &&
+        same(after.secrets) === same(saved.secrets)
+      );
     };
 
     /**

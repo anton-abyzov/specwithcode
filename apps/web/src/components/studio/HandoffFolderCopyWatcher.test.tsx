@@ -501,6 +501,34 @@ it("sends an empty secrets list before a one-click approval that left secrets on
   }
 });
 
+it("does not approve when another tab unticks secrets while they are being sent", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    state.handlers.copySecrets = () => {
+      pointer({ auto: true, secrets: { included: false, out: [] } });
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("waits for the person when the secrets choice cannot be sent", async () => {
   vi.useFakeTimers();
   try {
