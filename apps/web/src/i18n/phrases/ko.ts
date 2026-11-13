@@ -4511,7 +4511,6 @@ export const ko: PhraseCatalog = {
   "workers only": "워커 전용",
   "move pending": "이동 대기 중",
   "separate project": "별도 프로젝트",
-  "not synced here": "여기서 동기화되지 않음",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",
@@ -4753,4 +4752,6 @@ export const ko: PhraseCatalog = {
     "{machine}이(가) 다음에 여기서 작업을 시작할 때 설정합니다. 여기서 시작한 스레드가 묻지 않고 할 수 있는 최대 범위입니다.",
   "{title} (archived)": "{title} (보관됨)",
   "{title} (automated)": "{title} (자동화됨)",
+  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
+    "이 앱이 {machine}에 연결되어 있지 않아 해당 사본을 표시할 수 없습니다. 설정 > 컴퓨터에서 연결하세요.",
 };

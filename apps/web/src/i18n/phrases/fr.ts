@@ -4602,7 +4602,6 @@ export const fr: PhraseCatalog = {
   "workers only": "workers uniquement",
   "move pending": "déplacement en attente",
   "separate project": "projet séparé",
-  "not synced here": "non synchronisé ici",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
   "Show only topics that need you in {project}":
     "Afficher seulement les sujets qui ont besoin de vous dans {project}",
@@ -4848,4 +4847,6 @@ export const fr: PhraseCatalog = {
     "{machine} le définit la prochaine fois qu’elle lance du travail ici. C’est le maximum qu’un fil qu’elle lance ici peut faire sans demander.",
   "{title} (archived)": "{title} (archivé)",
   "{title} (automated)": "{title} (automatisé)",
+  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
+    "Cette app n’est pas connectée à {machine} et ne peut donc pas afficher sa copie. Connectez-la dans Réglages > Machines.",
 };

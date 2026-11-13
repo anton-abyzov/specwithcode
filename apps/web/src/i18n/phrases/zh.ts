@@ -4386,7 +4386,6 @@ export const zh: PhraseCatalog = {
   "workers only": "仅工作节点",
   "move pending": "移动待确认",
   "separate project": "独立项目",
-  "not synced here": "尚未在此同步",
   "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
   "New topic in {title}": "在 {title} 中新建主题",
@@ -4620,4 +4619,6 @@ export const zh: PhraseCatalog = {
     "{machine} 下次在这里开始工作时会设置它。这是它在这里启动的会话无需询问即可做的最多事情。",
   "{title} (archived)": "{title}（已归档）",
   "{title} (automated)": "{title}（自动项目）",
+  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
+    "此应用未连接到 {machine}，因此无法显示它的副本。请在“设置 > 电脑”中连接。",
 };

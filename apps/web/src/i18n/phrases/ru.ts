@@ -4559,7 +4559,6 @@ export const ru: PhraseCatalog = {
   "workers only": "только исполнители",
   "move pending": "перенос не подтверждён",
   "separate project": "отдельный проект",
-  "not synced here": "не синхронизировано здесь",
   "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
   "Show only topics that need you in {project}":
     "Показать только темы, которые ждут вас в {project}",
@@ -4803,4 +4802,6 @@ export const ru: PhraseCatalog = {
     "{machine} задаст это при следующем запуске работы здесь. Это максимум, что запущенный ею здесь тред может делать без запроса.",
   "{title} (archived)": "{title} (в архиве)",
   "{title} (automated)": "{title} (автоматический)",
+  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
+    "Это приложение не подключено к {machine}, поэтому его копию нельзя показать. Подключите его в Настройки > Машины.",
 };
