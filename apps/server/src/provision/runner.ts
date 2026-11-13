@@ -389,7 +389,7 @@ async function assemble(
   userSteps.push({
     id: "allow-workers",
     title:
-      'On your main machine, open Settings > Machines and choose Allow on this machine\'s card, on the line "Agents on … can start work on" followed by this machine\'s name.',
+      "On your main machine, open Settings > Machines and choose Allow on this machine's card, on the line \"Agents on … can start work on\" followed by this machine's name.",
     command: null,
     optional: false,
   });
@@ -456,8 +456,36 @@ async function readState(host: ProvisionHost, path: string): Promise<RunState | 
   }
 }
 
+/** Lock files this server process holds; the file's pid alone cannot tell two holders here apart. */
+const heldHere = new Set<string>();
+
 /** Held by one provisioning run, or one machine-tools install, at a time. */
 export async function acquireProvisionLock(
+  host: ProvisionHost,
+  path: string,
+): Promise<(() => Promise<void>) | null> {
+  if (heldHere.has(path)) return null;
+  heldHere.add(path);
+  try {
+    const release = await takeProvisionLockFile(host, path);
+    if (release === null) {
+      heldHere.delete(path);
+      return null;
+    }
+    return async () => {
+      try {
+        await release();
+      } finally {
+        heldHere.delete(path);
+      }
+    };
+  } catch (error) {
+    heldHere.delete(path);
+    throw error;
+  }
+}
+
+async function takeProvisionLockFile(
   host: ProvisionHost,
   path: string,
 ): Promise<(() => Promise<void>) | null> {
