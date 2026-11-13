@@ -95,9 +95,13 @@ export const grantKindOf = (
 ): StudioWorkGrantKind =>
   policy.owner === "self" && managers.has(policy.coordinatorEnvironmentId) ? "own" : "team";
 
-/** A coordinator's first grant: its linked projects; another person's gets no sign-ins. */
-export const newGrantDefaults = (owner: StudioWorkGrantOwner) => ({
-  projects: { kind: "linked" } as StudioWorkGrantProjects,
+/**
+ * A coordinator's first grant. The owner's own machine (one that manages this
+ * machine) may use every project; any other starts with its linked projects.
+ * Another person's gets no sign-ins.
+ */
+export const newGrantDefaults = (owner: StudioWorkGrantOwner, own = false) => ({
+  projects: (own ? { kind: "all" } : { kind: "linked" }) as StudioWorkGrantProjects,
   accounts: (owner === "self" ? { kind: "all" } : { kind: "none" }) as StudioWorkGrantAccounts,
   owner,
   routines: false,

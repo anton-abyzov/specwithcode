@@ -456,6 +456,11 @@ export const StudioWorkGrant = Schema.Struct({
   kind: Schema.optionalKey(StudioWorkGrantKind).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed("team" as const)),
   ),
+  /**
+   * Whether its coordinator manages this machine, so it renews the grant on
+   * its own before it lapses. Absent from older servers: the date shows.
+   */
+  renews: Schema.optionalKey(Schema.Boolean),
 });
 export type StudioWorkGrant = typeof StudioWorkGrant.Type;
 
