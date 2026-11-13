@@ -105,6 +105,29 @@ describe("repositoriesNamedInTask", () => {
     expect(picked("Fix api/src/server.ts then `web`", nested)).toEqual(["api", "web"]);
   });
 
+  it("never counts a path inside a link without a scheme", () => {
+    const owner = [{ relativePath: "acme/tool", name: "tool" }];
+    expect(picked("See github.com/acme/tool/pull/3", owner)).toEqual([]);
+    const mirror = "Mirror at gitlab.example.org:8443/acme/tool/-/merge_requests/9";
+    expect(picked(mirror, owner)).toEqual([]);
+    expect(picked("Edit acme/tool/src/a.ts", owner)).toEqual(["acme/tool"]);
+  });
+
+  it("stays fast on a pasted blob with a short repository name", () => {
+    const short = [
+      { relativePath: "a", name: "a" },
+      { relativePath: "ab", name: "ab" },
+    ];
+    const digits = Array.from({ length: 100_000 }, (_, i) => "0123456789abcdef"[(i * 7919) % 16]);
+    const hex = digits.join("");
+    const started = performance.now();
+    for (const text of ["xa".repeat(50_000), "/a".repeat(50_000), hex, "a/x ".repeat(25_000)]) {
+      repositoriesNamedInTask(text, short);
+    }
+    // Was over a minute for one of these; linear now.
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
   it("orders by first mention and treats a long list as an inventory", () => {
     const list = umbrella.map((repository) => `- ${repository.relativePath}`).join("\n");
     const pick = repositoriesNamedInTask(list, umbrella);

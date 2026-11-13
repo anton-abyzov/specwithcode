@@ -63,15 +63,26 @@ const startsPath = (prefix: string) =>
   ABSOLUTE_PREFIX.test(prefix);
 /** Where the word holding a mention stops, both ways. */
 const endsToken = (ch: string) => isSpace(ch) || "`'\"()[]<>{},;".includes(ch);
+/** A word longer than this is a pasted blob, never a path mention. */
+const WORD_LIMIT = 1024;
+/** `github.com/`, `gitlab.example.org:8443/`: a host, so what follows is a link, not a path. */
+const HOST_PREFIX = /^[\w-]+(?:\.[\w-]+)+(?::\d+)?\//u;
 
-function tokenBounds(text: string, start: number, end: number) {
-  let from = start;
-  while (from > 0 && !endsToken(text[from - 1]!)) from -= 1;
-  let to = end;
+interface Word {
+  readonly from: number;
+  readonly to: number;
+  readonly long: boolean;
+  readonly scheme: boolean;
+}
+
+/** The word holding `at`. Each word is walked once per repository, so a long text stays linear. */
+function wordAround(text: string, at: number): Word {
+  let from = at;
+  while (from > 0 && at - from <= WORD_LIMIT && !endsToken(text[from - 1]!)) from -= 1;
+  let to = at;
   while (to < text.length && !endsToken(text[to]!)) to += 1;
-  // A sentence's full stop or colon is not part of the path.
-  while (to > end && ".:!?".includes(text[to - 1]!)) to -= 1;
-  return { from, to };
+  const long = to - from > WORD_LIMIT || (from > 0 && !endsToken(text[from - 1]!));
+  return { from, to, long, scheme: !long && text.slice(from, to).includes("://") };
 }
 
 const evidenceOf = (text: string) =>
@@ -112,13 +123,12 @@ export function repositoriesNamedInTask(
       at,
     });
   };
-  const blank = (from: number, to: number) => {
-    scan = `${scan.slice(0, from)}${" ".repeat(to - from)}${scan.slice(to)}`;
-  };
 
   for (const repository of candidates) {
     const path = repository.relativePath;
     const oneSegment = !path.includes("/");
+    const blanks: Array<readonly [number, number]> = [];
+    let word: Word | null = null;
     let index = scan.indexOf(path);
     while (index !== -1) {
       const end = index + path.length;
@@ -129,19 +139,38 @@ export function repositoriesNamedInTask(
       const quoted = before === "`" && after === "`";
       const alone =
         closesPath(after) || (after === "." && (next === "" || isSpace(next) || next === "`"));
-      const { from, to } = tokenBounds(scan, index, end);
-      const token = scan.slice(from, to);
+      // The cheap checks first; most occurrences inside other words stop here.
+      if (!opensPath(before) || !(underIt || quoted || (!oneSegment && alone))) {
+        index = scan.indexOf(path, index + 1);
+        continue;
+      }
+      if (word === null || index >= word.to) word = wordAround(scan, index);
+      if (word.long) {
+        index = scan.indexOf(path, word.to);
+        continue;
+      }
+      // A sentence's full stop or colon is not part of the path.
+      let to = word.to;
+      while (to > end && ".:!?".includes(scan[to - 1]!)) to -= 1;
+      const prefix = scan.slice(word.from, index);
       const named =
-        opensPath(before) &&
         // A multi-segment path is specific enough anywhere in a word (`umb/repositories/o/r`).
-        (!oneSegment || startsPath(scan.slice(from, index))) &&
-        !token.includes("://") &&
-        (underIt || quoted || (!oneSegment && alone));
+        (!oneSegment || startsPath(prefix)) && !HOST_PREFIX.test(prefix) && !word.scheme;
       if (named) {
-        record(repository, index, token);
-        blank(from, to);
+        record(repository, index, scan.slice(word.from, to));
+        blanks.push([word.from, to]);
       }
       index = scan.indexOf(path, named ? to : index + 1);
+    }
+    // Blank what this repository named so a shorter path never matches inside it; one pass per repository.
+    if (blanks.length > 0) {
+      let blanked = "";
+      let at = 0;
+      for (const [from, to] of blanks) {
+        blanked += `${scan.slice(at, from)}${" ".repeat(to - from)}`;
+        at = to;
+      }
+      scan = `${blanked}${scan.slice(at)}`;
     }
   }
 
