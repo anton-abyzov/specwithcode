@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { formatBytes } from "../../studio/folderCopy";
 import { Checkbox } from "../ui/checkbox";
@@ -35,7 +35,8 @@ export function receivableSecretFiles<F extends SecretFileRow>(
  * Show lists each file with its own checkbox. Seeing the line checked is the consent: the
  * files go on Copy to the one machine named, readable only by your user there. Unticking
  * the line, or every file, leaves them on the source. Secrets kept in a vault or the
- * keychain are listed as not copied. Only paths and sizes show.
+ * keychain are listed as not copied. Only paths and sizes show. The parent owns the
+ * choice: it keeps the files the person unticked, so a new measure never ticks them again.
  */
 export function HandoffSecretsStep({
   files: allFiles,
@@ -46,11 +47,11 @@ export function HandoffSecretsStep({
   targetLabel,
   homeSupported,
   disabled,
-  onSelectedChange,
-  onIncludedChange,
+  onChange,
 }: {
   readonly files: ReadonlyArray<SecretFileRow>;
   readonly hints?: ReadonlyArray<SecretHintRow> | undefined;
+  /** The files that travel: every receivable file but the ones unticked, or none. */
   readonly selected: ReadonlyArray<string>;
   /** Secrets travel: on by default, from the setup screen's What comes along. */
   readonly included: boolean;
@@ -59,31 +60,21 @@ export function HandoffSecretsStep({
   /** The destination writes `~/` files into its home folder; older ones would not. */
   readonly homeSupported: boolean;
   readonly disabled: boolean;
-  readonly onSelectedChange: (paths: ReadonlyArray<string>) => void;
-  readonly onIncludedChange: (included: boolean) => void;
+  /** One choice: whether secrets travel, and which of the shown files. */
+  readonly onChange: (included: boolean, selected: ReadonlyArray<string>) => void;
 }) {
   const files = receivableSecretFiles(allFiles, homeSupported);
-  // Only files this step shows can be sent: a ticked file it hides is unticked.
+  // Only files this step shows can be sent.
   const selected = chosen.filter((path) => files.some((file) => file.path === path));
-  const hidden = chosen.length !== selected.length;
-  // Included with nothing picked yet: every file is ticked, as the line says.
-  const fill = included && chosen.length === 0 && files.length > 0;
-  useEffect(() => {
-    if (fill) onSelectedChange(files.map((file) => file.path));
-    else if (hidden) onSelectedChange(selected);
-  });
   const [shown, setShown] = useState(false);
   if (files.length === 0 && hints.length === 0) return null;
   const all = files.map((file) => file.path);
-  const choose = (paths: ReadonlyArray<string>) => {
-    const next = all.filter((path) => paths.includes(path));
-    onSelectedChange(next);
+  const toggle = (path: string, on: boolean) => {
+    const next = all.filter((item) => (item === path ? on : selected.includes(item)));
     // Unticking every file is leaving the secrets here.
-    if (next.length === 0) onIncludedChange(false);
+    onChange(next.length > 0, next);
   };
-  const toggle = (path: string, on: boolean) =>
-    choose(on ? [...selected, path] : selected.filter((item) => item !== path));
-  const count = fill ? files.length : selected.length;
+  const count = selected.length;
   const counted =
     included && count < files.length
       ? `${count} of ${files.length} files`
@@ -104,8 +95,7 @@ export function HandoffSecretsStep({
                   aria-label="Include secrets (.env, keys)"
                   onCheckedChange={(checked) => {
                     const on = checked === true;
-                    onIncludedChange(on);
-                    onSelectedChange(on ? all : []);
+                    onChange(on, on ? all : []);
                   }}
                 />
               </span>
@@ -136,16 +126,14 @@ export function HandoffSecretsStep({
                 <li key={file.path}>
                   <label className="flex min-w-0 cursor-pointer items-center gap-2">
                     <Checkbox
-                      checked={included && (fill || selected.includes(file.path))}
+                      checked={included && selected.includes(file.path)}
                       disabled={disabled}
-                      onCheckedChange={(checked) => {
-                        if (checked === true && !included) {
-                          onIncludedChange(true);
-                          onSelectedChange([file.path]);
-                          return;
-                        }
-                        toggle(file.path, checked === true);
-                      }}
+                      onCheckedChange={(checked) =>
+                        // Ticking one file while secrets stay here sends that file only.
+                        checked === true && !included
+                          ? onChange(true, [file.path])
+                          : toggle(file.path, checked === true)
+                      }
                       aria-label={`Send ${file.path}`}
                     />
                     <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>

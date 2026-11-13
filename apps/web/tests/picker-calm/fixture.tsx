@@ -582,7 +582,7 @@ function ComposerScene() {
 const NARROW_WIDTHS = [360, 240, 190, 160, 130, 110];
 function MachinesScene() {
   const identityOf = useMachineIdentities();
-  const machines = [identityOf("env-lm", "linux-box"), identityOf("env-m1"), identityOf("env-ww")];
+  const machines = [identityOf("env-lm", "linux-mini"), identityOf("env-m1"), identityOf("env-ww")];
   return (
     <main className="flex min-h-screen flex-col gap-3 p-4">
       <h1 className="text-sm text-muted-foreground">Machine chips at narrow widths.</h1>
@@ -612,7 +612,7 @@ function MachinesScene() {
         )),
       )}
       <div className="flex w-24 items-center gap-1" data-narrow-row="chip">
-        <MachineChip identity={machines[0]!} label="Runs on linux-box" className="shrink" />
+        <MachineChip identity={machines[0]!} label="Runs on linux-mini" className="shrink" />
       </div>
       <div className="flex items-center gap-2" data-send-row="">
         {machines.map((machine) => (

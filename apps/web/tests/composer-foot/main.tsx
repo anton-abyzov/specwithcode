@@ -1,6 +1,6 @@
 /*
  * Synthetic data only: the composer's bottom line as Anton reported it on November 13,
- * 2026. A project on m4 (rose) whose coordinator runs there, with a thread on linux-box
+ * 2026. A project on m4 (rose) whose coordinator runs there, with a thread on linux-mini
  * (blue) open beside it. The real CoordinatorComposer with the real machine chip, voice
  * menu and model picker, and the real ChatComposer with its machine chip, model chip,
  * voice, attach and skills, inside the real ComposerSurface.
@@ -165,7 +165,7 @@ function CoordinatorPane() {
                 },
                 {
                   key: "env-lm:specweave",
-                  machine: "linux-box",
+                  machine: "linux-mini",
                   folder: "/home/fixture/specweave",
                   role: "workers",
                   canStart: true,
@@ -177,14 +177,19 @@ function CoordinatorPane() {
               onMove={() => {}}
               onStart={null}
               onAllowWorkers={null}
-              onAdd={() => {}}
+              onCopy={() => {}}
             />
             <span className="sws-composer-aside" data-composer-aside="">
               <ComposerVoiceMenu dictation={dictation} call={call} shortcut={null} />
-              <Tip label={`${THREAD_TONE_LABELS[tone]}. Coordinator status: show its latest message`}>
+              <Tip
+                label={`${THREAD_TONE_LABELS[tone]}. Coordinator status: show its latest message`}
+              >
                 <button type="button" className="sws-state" data-tone={tone}>
                   <span className="sws-dot" data-tone={tone} aria-hidden />
-                  <span className={STATE_WORDS.has(tone) ? undefined : "sr-only"} data-state-label="">
+                  <span
+                    className={STATE_WORDS.has(tone) ? undefined : "sr-only"}
+                    data-state-label=""
+                  >
                     {THREAD_TONE_LABELS[tone]}
                   </span>
                 </button>
@@ -372,9 +377,9 @@ function ThreadComposer() {
             onFileOpen={() => {}}
             machine={{
               kind: "linux",
-              label: "linux-box",
+              label: "linux-mini",
               short: "LM",
-              tip: "Runs on linux-box (Ubuntu, Linux).",
+              tip: "Runs on linux-mini (Ubuntu, Linux).",
               warning: null,
               color: "blue",
               isThisMachine: false,

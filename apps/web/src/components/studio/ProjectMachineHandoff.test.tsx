@@ -916,6 +916,24 @@ it("resumes an unfinished Git handoff on Git, not on the copy", async () => {
   expect(props().intent).toBe("move");
 });
 
+it("resumes an unfinished Git handoff on Git when the menu asks for a copy", async () => {
+  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={source as never}
+        coordinatorId={"coordinator" as never}
+        showTrigger={false}
+        openRequest={{ mode: "copy", seq: 1 }}
+      />,
+    ),
+  );
+  // A handoff that may already be published is never replaced by a fresh copy flow.
+  expect(props().method).toBe("folder");
+  expect(props().intent).toBe("move");
+  expect(props().selected).toBe("m1:target");
+});
+
 it("asks a saved folder to update from Git, so uncommitted work never stops the move", async () => {
   state.environments = machineEnvironments;
   await mount();

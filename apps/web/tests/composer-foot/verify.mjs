@@ -193,10 +193,10 @@ function check(tag, facts, scene) {
   const { thread, coordinator } = facts;
   if (thread) {
     // AC-02: "Runs on <machine>" reads in full at every width.
-    assert.equal(thread.chipWords, "Runs on linux-box", `${tag}: chip says ${thread.chipWords}`);
+    assert.equal(thread.chipWords, "Runs on linux-mini", `${tag}: chip says ${thread.chipWords}`);
     assert.ok(!thread.chipCompact && thread.chipNameShows, `${tag}: the machine name is hidden`);
     assert.equal(thread.chipNameCut, false, `${tag}: the machine name is cut`);
-    assert.match(thread.chipLabel ?? "", /Runs on linux-box/, `${tag}: chip label`);
+    assert.match(thread.chipLabel ?? "", /Runs on linux-mini/, `${tag}: chip label`);
     // AC-03: the model's name reads in full, right beside the machine.
     assert.equal(thread.model, "Opus 5.5", `${tag}: model shows ${thread.model}`);
     assert.equal(thread.modelCut, false, `${tag}: the model name is cut`);

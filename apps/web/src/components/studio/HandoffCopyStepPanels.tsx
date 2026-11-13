@@ -34,7 +34,7 @@ import { CopyNextStep, CopyNoticesBlock, CopyWorkingHint } from "./HandoffCopyGu
 import { Button } from "../ui/button";
 
 /** Secret files outside the repositories left out of the copy: those stay here anyway. */
-function secretFilesCopied(
+export function secretFilesCopied(
   files: FolderCopySourceSummary["secretFiles"],
   copy: FolderCopyStatus,
   skip: ReadonlyArray<string>,
@@ -82,7 +82,7 @@ export function HandoffCopyStepPanels({
   replanning,
   secretPaths,
   includeSecrets,
-  onSecretPathsChange,
+  onSecretsChange,
   onIncludeSecretsChange,
   uncommittedFiles,
   details,
@@ -149,7 +149,8 @@ export function HandoffCopyStepPanels({
   readonly secretPaths: ReadonlyArray<string>;
   /** Secret files travel unless this is off; on by default, and seeing it on is the consent. */
   readonly includeSecrets: boolean;
-  readonly onSecretPathsChange: (paths: ReadonlyArray<string>) => void;
+  /** The review's secrets choice: whether they travel, and which files. */
+  readonly onSecretsChange: (included: boolean, paths: ReadonlyArray<string>) => void;
   readonly onIncludeSecretsChange: (include: boolean) => void;
   /** Uncommitted files in the source, for What comes along; null when unknown. */
   readonly uncommittedFiles: number | null;
@@ -339,8 +340,7 @@ export function HandoffCopyStepPanels({
                 machines.find((entry) => entry.id === machine)?.homeSecretFiles === true
               }
               disabled={busy}
-              onSelectedChange={onSecretPathsChange}
-              onIncludedChange={onIncludeSecretsChange}
+              onChange={onSecretsChange}
             />
           )}
         </>

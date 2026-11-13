@@ -83,11 +83,10 @@ import {
   newCopyComparison,
 } from "./handoffCopyScanRecovery";
 import { HandoffCopyScanFreshness } from "./HandoffCopyScanFreshness";
-import { HandoffCopyStepPanels } from "./HandoffCopyStepPanels";
+import { HandoffCopyStepPanels, secretFilesCopied } from "./HandoffCopyStepPanels";
 import {
   absolute,
   APPLYING,
-  insideSkipped,
   NOT_ABSOLUTE,
   openCopiedProject,
   POLL_MS,
@@ -98,7 +97,8 @@ import {
 import { useCopyLink } from "./useCopyLink";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
 import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
-import type { RepositoryChoices } from "./HandoffCopyPreview";
+import { planRepositoryChoices, type RepositoryChoices } from "./HandoffCopyPreview";
+import { receivableSecretFiles } from "./HandoffSecretsStep";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
 export type { CopyMachine };
@@ -197,9 +197,10 @@ export function HandoffFolderCopy({
   const [selection, setSelection] =
     useState<ReadonlyArray<FolderCopyFileClass>>(DEFAULT_COPY_SELECTION);
   const [copy, setCopy] = useState<FolderCopyStatus | null>(null);
-  const [secretPaths, setSecretPaths] = useState<ReadonlyArray<string>>([]);
   // Secrets travel by default; What comes along and the review show it and turn it off.
   const [includeSecrets, setIncludeSecrets] = useState(true);
+  // Secret files the person unticked: they stay out through a new measure or a reopen.
+  const [secretsOut, setSecretsOut] = useState<ReadonlyArray<string>>([]);
   const [pending, setPending] = useState<PendingCopy | null>(null);
   const [undoPreview, setUndoPreview] = useState<FolderCopyUndoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -478,15 +479,6 @@ export function HandoffFolderCopy({
       legacyOperation.current = measured.capturedAt === undefined ? saved.operationId : undefined;
       setScanStatus(measured);
       setSummary(measured.summary ?? null);
-      if (measured.summary) {
-        // A ticked file the source no longer lists is unticked, not sent and refused.
-        const listed = new Set(measured.summary.secretFiles.map((file) => file.path));
-        setSecretPaths((ticked) =>
-          ticked.every((path) => listed.has(path))
-            ? ticked
-            : ticked.filter((path) => listed.has(path)),
-        );
-      }
       return measured.summary;
     } catch {
       legacyOperation.current = undefined;
@@ -587,10 +579,10 @@ export function HandoffFolderCopy({
   const resume = (saved: PendingCopy) => {
     stepView.armRestore(saved);
     // Secret files and worktrees shown must be this copy's, never an earlier copy's.
-    if (latestPending.current?.operationId !== saved.operationId) {
-      setSummary(null);
-      setSecretPaths([]);
-    }
+    if (latestPending.current?.operationId !== saved.operationId) setSummary(null);
+    // The secrets choice made for this copy, as it was before the dialog closed.
+    setIncludeSecrets(saved.secrets?.included ?? true);
+    setSecretsOut(saved.secrets?.out ?? []);
     latestPending.current = saved;
     setPending(saved);
     // A copy linked before the dialog closed is not linked again.
@@ -729,7 +721,6 @@ export function HandoffFolderCopy({
     }
     const operationId = randomUUID();
     setSummary(null);
-    setSecretPaths([]);
     const projectFolder = copiedProjectFolder(folder, projectRelativePath);
     const projectId = destinationProjectId(machine, mode, projectFolder);
     const existing = mode === "copy-and-move" && knownProject(machine, projectFolder) !== null;
@@ -745,6 +736,7 @@ export function HandoffFolderCopy({
       projectRelativePath,
       projectId,
       selection,
+      secrets: { included: includeSecrets, out: secretsOut },
       method: choices.method,
       ...(choices.auto ? { auto: true } : {}),
       ...(existing ? { existingDestination: true } : {}),
@@ -837,10 +829,6 @@ export function HandoffFolderCopy({
   const changeRepositories = (next: RepositoryChoices) => {
     repositoryDraft.current = next;
     setRepositoryChoices(next);
-    // Secret files inside a repository left out stay here too.
-    setSecretPaths((ticked) =>
-      ticked.filter((path) => !insideSkipped(path, next.skip, copy?.rows ?? [])),
-    );
     if (repositoryTimer.current !== null) window.clearTimeout(repositoryTimer.current);
     repositoryTimer.current = window.setTimeout(() => {
       repositoryTimer.current = null;
@@ -882,7 +870,30 @@ export function HandoffFolderCopy({
     }
   };
 
-  const secretsTicked = secretPaths.length > 0 && includeSecrets;
+  // The secret files that travel: those the destination can take, in repositories still
+  // copied, but the ones unticked. Derived, so a new measure never ticks an unticked file.
+  const secretCandidates = summary
+    ? receivableSecretFiles(
+        copy
+          ? secretFilesCopied(
+              summary.secretFiles,
+              copy,
+              (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip,
+            )
+          : summary.secretFiles,
+        target?.homeSecretFiles === true,
+      ).map((file) => file.path)
+    : [];
+  const secretPaths = includeSecrets
+    ? secretCandidates.filter((path) => !secretsOut.includes(path))
+    : [];
+  const secretsTicked = secretPaths.length > 0;
+  const chooseSecrets = (included: boolean, out: ReadonlyArray<string>) => {
+    setIncludeSecrets(included);
+    setSecretsOut(out);
+    const saved = latestPending.current;
+    if (saved) remember({ ...saved, secrets: { included, out } });
+  };
   /** The ticked and confirmed secret files go to the source for this destination only. */
   const sendTickedSecrets = async (operationId: string) => {
     unwrap(
@@ -1173,7 +1184,7 @@ export function HandoffFolderCopy({
     setCancelledFor(null);
     if (!keepChoices) {
       setSelection(DEFAULT_COPY_SELECTION);
-      setSecretPaths([]);
+      setSecretsOut([]);
       setIncludeSecrets(true);
     }
     setStage("setup");
@@ -1236,7 +1247,6 @@ export function HandoffFolderCopy({
     stage === "done"
       ? secretsLeftText(secretsLeft(summary?.secretFiles, copy?.secrets), sourceLabel)
       : null;
-  const secretsUnconfirmed = secretPaths.length > 0 && !includeSecrets;
   const next = nextStepText({
     stage,
     auto,
@@ -1353,8 +1363,20 @@ export function HandoffFolderCopy({
             replanning={replanning}
             secretPaths={secretPaths}
             includeSecrets={includeSecrets}
-            onSecretPathsChange={setSecretPaths}
-            onIncludeSecretsChange={setIncludeSecrets}
+            onSecretsChange={(included, paths) =>
+              chooseSecrets(
+                included,
+                included
+                  ? [
+                      ...secretsOut.filter((path) => !secretCandidates.includes(path)),
+                      ...secretCandidates.filter((path) => !paths.includes(path)),
+                    ]
+                  : secretsOut,
+              )
+            }
+            onIncludeSecretsChange={(included) =>
+              chooseSecrets(included, included ? [] : secretsOut)
+            }
             uncommittedFiles={uncommittedFiles}
             details={
               <HandoffWorkspaceSummary
@@ -1444,7 +1466,6 @@ export function HandoffFolderCopy({
             setupBlocked={scope.loading || !machine || !!target?.unavailable || !folder.trim()}
             replaced={replaced}
             approveLabel={approveLabel}
-            secretsUnconfirmed={secretsUnconfirmed}
             failedBeforeApply={failedBeforeApply}
             undoPreview={undoPreview}
             copyAgain={offerCopyAgain}

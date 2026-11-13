@@ -68,7 +68,7 @@ describe("resolveMachineIdentities", () => {
     expect(chosen("env-m3").short).toBe("ST");
     // The rename dialog offers the label it would have with none chosen.
     expect(chosen("env-m3").derivedShort).not.toBe("ST");
-    expect(chosen("env-unknown", "linux-box").short).toBe("LM");
+    expect(chosen("env-unknown", "linux-mini").short).toBe("LM");
     // A machine resolved on its own never repeats a label another machine shows.
     const showing = new Set([...labels.keys()].map((id) => chosen(id).short));
     expect(showing.has(chosen("env-unknown", "Mac Studio M9").short)).toBe(false);

@@ -129,10 +129,10 @@ if (params.get("scenario") === "elsewhere") {
       { environmentId: "host", label: "M5" },
       { environmentId: "m4", label: "m4" },
       { environmentId: "m1", label: "m1" },
-      { environmentId: "linux-box", label: "linux-box" },
+      { environmentId: "linux-mini", label: "linux-mini" },
     ],
     groups: [
-      project("ai-com", "ai-company", ["linux-box"]),
+      project("ai-com", "ai-company", ["linux-mini"]),
       project("easychamp", "EasyChamp", ["m4", "m1"]),
       project("firstproject", "firstproject", ["host"]),
       project("fortnite", "fortnite-3js", ["m4", "m1"]),

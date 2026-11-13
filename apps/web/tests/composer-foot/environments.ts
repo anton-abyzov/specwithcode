@@ -1,10 +1,10 @@
 /* Two machines and this device's providers: m4 (this device, the coordinator) and
-   linux-box (the open thread). Every other export is the real one. */
+   linux-mini (the open thread). Every other export is the real one. */
 import type { EnvironmentId, ServerProvider } from "@specweave-studio/contracts";
 import { useEnvironment as useStoredEnvironment } from "../../src/state/environments";
 export * from "../../src/state/environments";
 
-const LABELS: Record<string, string> = { "env-m4": "m4", "env-lm": "linux-box" };
+const LABELS: Record<string, string> = { "env-m4": "m4", "env-lm": "linux-mini" };
 let providers: ReadonlyArray<ServerProvider> = [];
 
 export function fixtureProviders(list: ReadonlyArray<ServerProvider>) {

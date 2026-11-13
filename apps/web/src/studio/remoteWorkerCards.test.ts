@@ -85,7 +85,7 @@ it("follows the Threads pane machine filter", () => {
     "rwt:m4",
   ]);
   // Filtered to this machine, no worker elsewhere shows.
-  expect(visibleRemoteWorkers([worker, onM4], [], "env-linux-box")).toEqual([]);
+  expect(visibleRemoteWorkers([worker, onM4], [], "env-linux-mini")).toEqual([]);
 });
 
 it("opens a finished worker's archived thread while its machine is connected", () => {

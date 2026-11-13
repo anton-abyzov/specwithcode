@@ -29,6 +29,11 @@ export interface PendingCopy {
   /** What to copy, kept so a reopened dialog shows the same choice. */
   readonly selection?: ReadonlyArray<FolderCopyFileClass>;
   /**
+   * Whether secret files travel and the ones the person unticked, kept so a reopened or
+   * re-measured copy never ticks them again. Absent: all secret files travel.
+   */
+  readonly secrets?: { readonly included: boolean; readonly out: ReadonlyArray<string> };
+  /**
    * One-click copy: measuring, comparing and an approval that replaces nothing run
    * straight through. Absent for copies that stop to choose what to copy.
    */

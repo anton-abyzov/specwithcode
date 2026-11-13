@@ -31,7 +31,6 @@ const base = (): ComponentProps<typeof HandoffCopyFooter> => ({
   setupBlocked: false,
   replaced: null,
   approveLabel: "Copy to M3",
-  secretsUnconfirmed: false,
   failedBeforeApply: false,
   undoPreview: null,
   copyAgain: false,
@@ -73,7 +72,6 @@ afterEach(async () => {
 it.each([
   [{ busy: true }, "Wait for the current check"],
   [{ sourceChanged: true }, "The source changed"],
-  [{ secretsUnconfirmed: true }, "Confirm sending"],
   [{ copy: { ...base().copy, disk: { needed: 100, available: 0 } } }, "more disk space"],
   [{ copy: { ...base().copy, totals: null } }, "comparison totals"],
 ] as const)("explains and blocks copying for %j", async (overrides, reason) => {

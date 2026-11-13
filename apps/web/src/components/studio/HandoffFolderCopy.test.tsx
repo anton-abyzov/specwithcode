@@ -230,6 +230,75 @@ it("leaves secrets on the source when What comes along unticks them", async () =
   expect(names()).not.toContain("copySecrets");
 });
 
+/** The source lists two secret files, .env and .env.local. */
+const twoSecrets = () => {
+  const both = {
+    ...summary,
+    secretFiles: [
+      { path: ".env", size: 10 },
+      { path: ".env.local", size: 12 },
+    ],
+  };
+  const offer = state.handlers.copyOffer!;
+  state.handlers.copyOffer = (input) => ({
+    ...(offer(input) as object),
+    status: { state: "scanned", summary: both, error: null },
+  });
+  state.handlers.copySourceStatus = () => ({ state: "scanned", summary: both, error: null });
+};
+const sendBox = (path: string) =>
+  container.querySelector<HTMLElement>(`[aria-label="Send ${path}"]`);
+const showSecrets = async () => {
+  if (!sendBox(".env"))
+    await act(async () =>
+      container.querySelector<HTMLElement>('[data-slot="copy-secrets-show"]')!.click(),
+    );
+};
+const sentSecrets = () =>
+  state.calls
+    .filter(([name]) => name === "copySecrets")
+    .map(([, request]) => (request as { input: { paths: string[] } }).input.paths);
+
+it("keeps an unticked secret file out through Change setup and a new measure", async () => {
+  twoSecrets();
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await showSecrets();
+  await act(async () => sendBox(".env.local")!.click());
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 of 2 files, included");
+  await click("Change setup");
+  await click("Copy to M3");
+  await showSecrets();
+  // The new measure lists both files again; the one unticked stays unticked.
+  expect(sendBox(".env")!.getAttribute("aria-checked")).toBe("true");
+  expect(sendBox(".env.local")!.getAttribute("aria-checked")).toBe("false");
+  await click("Copy to M3");
+  expect(sentSecrets()).toEqual([[".env"]]);
+});
+
+it("keeps secrets left on the source when the dialog closes and reopens before Copy", async () => {
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-secrets-include"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
+  const pointer = JSON.parse(localStorage.getItem("specwithcode:folder-copy:m4:source")!);
+  expect(pointer.secrets).toEqual({ included: false, out: [] });
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
+  await click("Copy to M3");
+  expect(names()).toContain("copyApprove");
+  expect(names()).not.toContain("copySecrets");
+});
+
 it("keeps Apply disabled until every conflict has a decision", async () => {
   statuses = [
     copyStatus("previewed", {

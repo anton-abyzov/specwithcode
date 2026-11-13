@@ -799,6 +799,8 @@ export function ProjectMachineHandoff({
     changeOpen(true);
     setSyncKey(syncCandidate ? syncTarget! : null);
     if (syncCandidate) setCopyMachine(null);
+    // An unfinished Git handoff wins over the menu's Copy: it may already be published.
+    let gitPending = false;
     if (!snapshot) {
       try {
         const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
@@ -806,6 +808,7 @@ export function ProjectMachineHandoff({
         // unfinished copy in the current one; otherwise every opening starts fresh.
         const copyPending =
           localStorage.getItem(folderCopyStorageKey(project.environmentId, project.id)) !== null;
+        gitPending = pending !== null;
         setIntent(pending ? "move" : "copy");
         if (pending) setMethod("folder");
         else if (!copyPending) setMethod("copy");
@@ -830,7 +833,7 @@ export function ProjectMachineHandoff({
       }
     }
     if (mode === "move" && !snapshot) setIntent("move");
-    if ((mode === "copy" || mode === "sync") && !snapshot) {
+    if ((mode === "copy" || mode === "sync") && !snapshot && !gitPending) {
       setIntent("copy");
       setMethod("copy");
       if (machine) {
@@ -854,7 +857,7 @@ export function ProjectMachineHandoff({
   return (
     <>
       {showTrigger ? (
-        <Tip label={blockedReason ?? "Add this project to another machine, or move it there"}>
+        <Tip label={blockedReason ?? "Copy this project to another machine"}>
           {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
             tooltip and screen readers read the reason it describes. */}
           <span className="inline-flex" data-slot="handoff-trigger-wrap">

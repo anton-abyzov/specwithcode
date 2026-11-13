@@ -113,7 +113,7 @@ try {
             `${where}: only ${shown.toFixed(1)} characters of the name show`,
           );
         }
-        assert.ok(/linux-box|M1|Workstation W/.test(chip.name), `${where}: name`);
+        assert.ok(/linux-mini|M1|Workstation W/.test(chip.name), `${where}: name`);
       }
       const narrowest = chips.filter((chip) => chip.row === "110");
       assert.deepEqual(
@@ -131,7 +131,7 @@ try {
         sends,
         size === "390"
           ? ["LM", "M1", "WWW"]
-          : ["Send to linux-box", "Send to M1", "Send to Workstation W"],
+          : ["Send to linux-mini", "Send to M1", "Send to Workstation W"],
         `${tag}: send button labels`,
       );
       await page.screenshot({ path: join(output, `machine-chips-${tag}.png`), fullPage: true });
