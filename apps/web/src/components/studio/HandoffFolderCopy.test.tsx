@@ -172,6 +172,35 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
   });
 });
 
+/** The source lists two secret files, .env and .env.local. */
+const twoSecrets = () => {
+  const both = {
+    ...summary,
+    secretFiles: [
+      { path: ".env", size: 10 },
+      { path: ".env.local", size: 12 },
+    ],
+  };
+  const offer = state.handlers.copyOffer!;
+  state.handlers.copyOffer = (input) => ({
+    ...(offer(input) as object),
+    status: { state: "scanned", summary: both, error: null },
+  });
+  state.handlers.copySourceStatus = () => ({ state: "scanned", summary: both, error: null });
+};
+const sendBox = (path: string) =>
+  container.querySelector<HTMLElement>(`[aria-label="Send ${path}"]`);
+const showSecrets = async () => {
+  if (!sendBox(".env"))
+    await act(async () =>
+      container.querySelector<HTMLElement>('[data-slot="copy-secrets-show"]')!.click(),
+    );
+};
+const sentSecrets = () =>
+  state.calls
+    .filter(([name]) => name === "copySecrets")
+    .map(([, request]) => (request as { input: { paths: string[] } }).input.paths);
+
 it("sends secret files by default, shown as one included line that lists them on Show", async () => {
   statuses = [
     copyStatus("previewed"),
@@ -227,37 +256,32 @@ it("leaves secrets on the source when What comes along unticks them", async () =
   await click("Copy to M3");
   expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
   await click("Copy to M3");
-  expect(names()).not.toContain("copySecrets");
+  // An empty list before approval: nothing travels, and nothing sent earlier stays staged.
+  expect(sentSecrets()).toEqual([[]]);
+  expect(names().indexOf("copySecrets")).toBeLessThan(names().indexOf("copyApprove"));
 });
 
-/** The source lists two secret files, .env and .env.local. */
-const twoSecrets = () => {
-  const both = {
-    ...summary,
-    secretFiles: [
-      { path: ".env", size: 10 },
-      { path: ".env.local", size: 12 },
-    ],
+it("withdraws secrets sent before a refused approval when they are unticked for the retry", async () => {
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  let approvals = 0;
+  state.handlers.copyApprove = () => {
+    if (++approvals === 1) throw new Error("The connection dropped.");
+    return copyStatus("approved");
   };
-  const offer = state.handlers.copyOffer!;
-  state.handlers.copyOffer = (input) => ({
-    ...(offer(input) as object),
-    status: { state: "scanned", summary: both, error: null },
-  });
-  state.handlers.copySourceStatus = () => ({ state: "scanned", summary: both, error: null });
-};
-const sendBox = (path: string) =>
-  container.querySelector<HTMLElement>(`[aria-label="Send ${path}"]`);
-const showSecrets = async () => {
-  if (!sendBox(".env"))
-    await act(async () =>
-      container.querySelector<HTMLElement>('[data-slot="copy-secrets-show"]')!.click(),
-    );
-};
-const sentSecrets = () =>
-  state.calls
-    .filter(([name]) => name === "copySecrets")
-    .map(([, request]) => (request as { input: { paths: string[] } }).input.paths);
+  await mount();
+  await click("Copy to M3");
+  await click("Copy to M3");
+  expect(container.querySelector('[data-slot="copy-preview"]')).not.toBeNull();
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-secrets-include"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  await click("Copy to M3");
+  // The retry sends the current choice, an empty list, so the earlier .env does not travel.
+  expect(sentSecrets()).toEqual([[".env"], []]);
+  expect(approvals).toBe(2);
+});
 
 it("keeps an unticked secret file out through Change setup and a new measure", async () => {
   twoSecrets();
@@ -272,6 +296,26 @@ it("keeps an unticked secret file out through Change setup and a new measure", a
   await showSecrets();
   // The new measure lists both files again; the one unticked stays unticked.
   expect(sendBox(".env")!.getAttribute("aria-checked")).toBe("true");
+  expect(sendBox(".env.local")!.getAttribute("aria-checked")).toBe("false");
+  await click("Copy to M3");
+  expect(sentSecrets()).toEqual([[".env"]]);
+});
+
+it("keeps an unticked secret file out after Change setup, a close and a reopen", async () => {
+  twoSecrets();
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await showSecrets();
+  await act(async () => sendBox(".env.local")!.click());
+  await click("Change setup");
+  // Change setup dropped the pointer; the setup draft keeps the secrets choice.
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await click("Copy to M3");
+  await showSecrets();
   expect(sendBox(".env.local")!.getAttribute("aria-checked")).toBe("false");
   await click("Copy to M3");
   expect(sentSecrets()).toEqual([[".env"]]);
@@ -296,7 +340,7 @@ it("keeps secrets left on the source when the dialog closes and reopens before C
   expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
   await click("Copy to M3");
   expect(names()).toContain("copyApprove");
-  expect(names()).not.toContain("copySecrets");
+  expect(sentSecrets()).toEqual([[]]);
 });
 
 it("keeps Apply disabled until every conflict has a decision", async () => {
@@ -1980,16 +2024,35 @@ it("asks before copying over a folder an older destination cannot count", async 
   );
 });
 
-it("copies in one click with secret-like files left on the source, and says so when done", async () => {
-  // The default summary has a secret-like .env.
-  statuses = [copyStatus("previewed", { rows: [newRow(".")] }), copyStatus("applied")];
+it("copies in one click with the included secret files, sent before the approval", async () => {
+  // The default summary has a secret-like .env; What comes along shows it included.
+  statuses = [
+    copyStatus("previewed", { rows: [newRow(".")] }),
+    copyStatus("applied", {
+      secrets: [{ path: ".env", writtenAs: ".env", size: 10, state: "written" }],
+    }),
+  ];
   await mount();
   await click("Copy to M3");
   expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
-  expect(names()).not.toContain("copySecrets");
-  expect(container.querySelector('[data-slot="copy-secrets"]')).toBeNull();
-  expect(container.querySelector('[data-slot="copy-secrets-left"]')?.textContent).toBe(
-    "1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
+  expect(sentSecrets()).toEqual([[".env"]]);
+  expect(names().indexOf("copySecrets")).toBeLessThan(names().indexOf("copyApprove"));
+  expect(container.querySelector('[data-slot="copy-secrets-left"]')).toBeNull();
+});
+
+it("copies in one click without secrets when What comes along leaves them on the source", async () => {
+  statuses = [copyStatus("previewed", { rows: [newRow(".")] }), copyStatus("applied")];
+  await mount();
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-along-secrets"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  await click("Copy to M3");
+  expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
+  expect(sentSecrets()).toEqual([[]]);
+  expect(container.querySelector('[data-slot="copy-secrets-left"]')?.textContent).toContain(
+    "1 secret-like file (.env and similar) stayed on M4.",
   );
 });
 

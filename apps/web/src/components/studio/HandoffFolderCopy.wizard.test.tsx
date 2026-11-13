@@ -639,6 +639,7 @@ it("remembers the setup form while no copy has started", async () => {
     folder: "/home/anton/Elsewhere/project",
     mode: "copy-and-move",
     chooseFirst: true,
+    secrets: { included: true, out: [] },
   });
   await reopen();
   await settle();

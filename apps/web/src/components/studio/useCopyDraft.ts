@@ -13,6 +13,7 @@ import {
   type CopyDraft,
   type LastCopy,
   type PendingCopy,
+  type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import type { CopyMachine } from "./HandoffCopySetup";
 
@@ -26,6 +27,7 @@ interface CopyForm {
   } | null;
   readonly mode: FolderCopyMode;
   readonly chooseFirst: boolean;
+  readonly secrets: SecretsChoice;
 }
 
 /**
@@ -55,6 +57,7 @@ export function useCopyDraft({
     readonly folder: (value: string, environmentId: EnvironmentId, copyRoot?: string) => void;
     readonly mode: (mode: FolderCopyMode) => void;
     readonly chooseFirst: (chooseFirst: boolean) => void;
+    readonly secrets: (secrets: SecretsChoice) => void;
   };
   readonly onResume: (saved: PendingCopy) => void;
 }) {
@@ -70,11 +73,11 @@ export function useCopyDraft({
       if (!explicit.machine) setForm.machine(known.id);
       // A folder belongs to its machine, so it only shows when that machine is chosen.
       // A requested machine keeps its own saved folder; a draft never retargets it.
-      if (draft.folder && !explicit.machine)
-        setForm.folder(draft.folder, known.id, draft.copyRoot);
+      if (draft.folder && !explicit.machine) setForm.folder(draft.folder, known.id, draft.copyRoot);
     }
     if (!explicit.mode && (draft.mode === "copy-only" || canMove)) setForm.mode(draft.mode);
     setForm.chooseFirst(draft.chooseFirst);
+    if (draft.secrets) setForm.secrets(draft.secrets);
   };
 
   useEffect(() => {
@@ -112,6 +115,7 @@ export function useCopyDraft({
     readonly folder?: string;
     readonly mode?: FolderCopyMode;
     readonly chooseFirst?: boolean;
+    readonly secrets?: SecretsChoice;
   }) => {
     if (latestPending.current) return;
     const { machine, folderDraft } = form;
@@ -124,6 +128,7 @@ export function useCopyDraft({
       ...(copyRoot ? { copyRoot } : {}),
       mode: change.mode ?? form.mode,
       chooseFirst: change.chooseFirst ?? form.chooseFirst,
+      secrets: change.secrets ?? form.secrets,
     });
   };
 
@@ -142,6 +147,7 @@ export function useCopyDraft({
         ...(saved.copyRoot ? { copyRoot: saved.copyRoot } : {}),
         mode: saved.mode,
         chooseFirst: saved.auto !== true,
+        ...(saved.secrets ? { secrets: saved.secrets } : {}),
       }),
     /** A copy started: its pointer holds the choices from here. */
     dropDraft: () => writeCopyDraft(draftKey, null),

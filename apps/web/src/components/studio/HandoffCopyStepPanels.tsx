@@ -31,10 +31,12 @@ import { sourceProgressText, type CopyStage, type TransferBusy } from "./handoff
 import { replacesNothing } from "./handoffCopyAuto";
 import type { CopyNotices } from "./handoffCopyNotices";
 import { CopyNextStep, CopyNoticesBlock, CopyWorkingHint } from "./HandoffCopyGuide";
+import { receivableSecretFiles } from "./HandoffSecretsStep";
+import type { SecretsChoice } from "./handoffFolderCopyPending";
 import { Button } from "../ui/button";
 
 /** Secret files outside the repositories left out of the copy: those stay here anyway. */
-export function secretFilesCopied(
+function secretFilesCopied(
   files: FolderCopySourceSummary["secretFiles"],
   copy: FolderCopyStatus,
   skip: ReadonlyArray<string>,
@@ -45,6 +47,48 @@ export function secretFilesCopied(
   if (prefixes.length === 0) return files;
   return files.filter((file) => !prefixes.some((prefix) => file.path.startsWith(prefix)));
 }
+
+/**
+ * The secret files that can travel (receivable there, in repositories still copied) and
+ * those that do: all but the ones unticked, or none when the line is off. Derived from the
+ * choice, so a new measure never ticks a file the person unticked.
+ */
+export function travellingSecrets({
+  summary,
+  copy,
+  skip,
+  homeSupported,
+  choice,
+}: {
+  readonly summary: FolderCopySourceSummary | null;
+  readonly copy: FolderCopyStatus | null;
+  readonly skip: ReadonlyArray<string>;
+  readonly homeSupported: boolean;
+  readonly choice: SecretsChoice;
+}): { readonly candidates: ReadonlyArray<string>; readonly paths: ReadonlyArray<string> } {
+  if (!summary) return { candidates: [], paths: [] };
+  const files = copy ? secretFilesCopied(summary.secretFiles, copy, skip) : summary.secretFiles;
+  const candidates = receivableSecretFiles(files, homeSupported).map((file) => file.path);
+  const paths = choice.included ? candidates.filter((path) => !choice.out.includes(path)) : [];
+  return { candidates, paths };
+}
+
+/** The choice after the review's boxes change: the shown files left unticked join `out`. */
+export const reviewedSecrets = (
+  choice: SecretsChoice,
+  candidates: ReadonlyArray<string>,
+  included: boolean,
+  paths: ReadonlyArray<string>,
+): SecretsChoice =>
+  included
+    ? {
+        included,
+        out: [
+          ...choice.out.filter((path) => !candidates.includes(path)),
+          ...candidates.filter((path) => !paths.includes(path)),
+        ],
+      }
+    : { included, out: choice.out };
 
 /** The body of the live stage, from the setup form to Done. Actions live in the footer. */
 export function HandoffCopyStepPanels({
