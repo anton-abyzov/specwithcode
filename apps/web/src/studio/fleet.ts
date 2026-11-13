@@ -177,6 +177,13 @@ export function useProjectRemoteWorkers(environmentId: EnvironmentId, projectId:
   };
 }
 
+/** The primary server's fleet list, or null without a primary or before it loads. */
+export function usePrimaryFleetSnapshot(primaryEnvironmentId: EnvironmentId | null) {
+  // The fleet atom needs an id; one that matches no environment reads as no fleet.
+  const fleet = useStudioFleet(primaryEnvironmentId ?? ("" as EnvironmentId));
+  return primaryEnvironmentId === null ? null : fleet.snapshot;
+}
+
 export function useStudioFleet(environmentId: EnvironmentId) {
   const result = useAtomValue(fleetAtom(environmentId));
   return {

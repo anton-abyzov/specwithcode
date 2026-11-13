@@ -6,7 +6,6 @@ import {
   connectionRoutes,
   hasRelayRoute,
 } from "@specweave-studio/client-runtime/connection";
-import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useEffect, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -18,7 +17,7 @@ import {
 } from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useStudioFleet } from "../studio/fleet";
+import { usePrimaryFleetSnapshot } from "../studio/fleet";
 import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
 import { grantedAccountMachinesToConnect } from "../studio/grantedAccountMachines";
 import { linkedMachinesToConnect } from "../studio/linkedMachines";
@@ -37,8 +36,6 @@ const MAX_REORDER_ATTEMPTS = 3;
 const MAX_ADD_ATTEMPTS = 3;
 /** How often the Connect list is re-read while a saved machine can't be reached. */
 const UNREACHABLE_REFRESH_MS = 5 * 60_000;
-// The fleet atom needs an id; one that matches no environment reads as no fleet.
-const NO_ENVIRONMENT = "" as EnvironmentId;
 /**
  * While signed in to SpecWithCode Connect, keeps a Connect route on every
  * saved machine this account reaches, placed first when it is added so
@@ -55,8 +52,7 @@ export function ConnectRouteReconciler() {
   const projects = useProjects();
   const discovery = useRelayEnvironmentDiscovery();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const fleet = useStudioFleet(primaryEnvironmentId ?? NO_ENVIRONMENT);
-  const fleetSnapshot = primaryEnvironmentId === null ? null : fleet.snapshot;
+  const fleetSnapshot = usePrimaryFleetSnapshot(primaryEnvironmentId);
   const register = useAtomCommand(environmentCatalog.register, {
     label: "Add SpecWithCode Connect route",
     reportFailure: false,

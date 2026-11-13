@@ -1,4 +1,3 @@
-import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { ConnectionsSettings } from "./ConnectionsSettings";
@@ -38,7 +37,10 @@ import {
   useStudioFleet,
 } from "../../studio/fleet";
 import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
-import { useAccountAutoConnectStates } from "../../studio/grantedAccountMachines";
+import {
+  useAccountAutoConnectStates,
+  requestAccountMachineConnect,
+} from "../../studio/grantedAccountMachines";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
@@ -185,7 +187,8 @@ export function MachinesSettingsPanel() {
         withAccountConnectState(
           row,
           accountStates.get(row.environmentId),
-          accountMachines.has(row.environmentId),
+          // Also while the account list is read again and is empty for a moment.
+          accountMachines.has(row.environmentId) || accountStates.has(row.environmentId),
           savedIds.has(row.environmentId),
         ),
       ),
@@ -195,8 +198,12 @@ export function MachinesSettingsPanel() {
   async function connect(machine: StudioFleetMachine) {
     if (pending) return;
     // A Connect-only machine of this account is saved over Connect, not paired.
-    if (!fleetMachineHasTailnetAddress(machine) && accountMachines.has(machine.environmentId)) {
-      requestConnectRoutes([machine.environmentId]);
+    if (
+      !fleetMachineHasTailnetAddress(machine) &&
+      (accountMachines.has(machine.environmentId) || accountStates.has(machine.environmentId))
+    ) {
+      setError(null);
+      requestAccountMachineConnect([machine.environmentId]);
       return;
     }
     setPending(machine.environmentId);
