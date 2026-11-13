@@ -2237,6 +2237,20 @@ export const zh: PhraseCatalog = {
     "电脑名称：{hostLabel}，保持不变。",
   "Call it {name}":
     "命名为 {name}",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "已有另一台机器叫 {name}。如果它是这台机器的旧副本，请在“其他机器”中移除。",
+  "Use the computer name":
+    "使用电脑名称",
+  "Chip letters":
+    "标签字母",
+  "Narrow chip":
+    "窄标签",
+  "Customize chip letters, color and icon":
+    "自定义标签字母、颜色和图标",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "标签太窄放不下名称时显示的 2 或 3 个字符。留空则跟随名称。",
+  "Use 2 or 3 characters.":
+    "请使用 2 或 3 个字符。",
   "Computer name {hostLabel}":
     "电脑名称 {hostLabel}",
   "Use {defaultName}": "使用 {defaultName}",

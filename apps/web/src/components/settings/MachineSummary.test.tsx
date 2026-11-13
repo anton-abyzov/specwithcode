@@ -22,13 +22,22 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 vi.mock("../../state/environments", () => ({ useEnvironment: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
+const names = vi.hoisted(() => ({ holders: new Map<string, string>() }));
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNickname: vi.fn(),
   useCustomMachineNickname: vi.fn(),
+  useMachineNameHolder: () => (_id: string, name: string) => {
+    const holder = names.holders.get(name.toLowerCase());
+    return holder === undefined ? null : { environmentId: holder, name };
+  },
 }));
-const renameMachine = vi.hoisted(() => vi.fn());
+vi.mock("../../studio/machineIdentity", () => ({
+  useMachineIdentity: (id: string | null) =>
+    id === null ? null : { environmentId: id, color: "teal", icon: "laptop" },
+}));
+const saveIdentity = vi.hoisted(() => vi.fn(() => true));
 vi.mock("../../studio/useRenameMachine", () => ({
-  useRenameMachine: () => ({ lock: null, rename: renameMachine }),
+  useRenameMachine: () => ({ lock: null, saveIdentity }),
 }));
 vi.mock("../../teamRules/useTeamRules", () => ({ useTeamRules: vi.fn() }));
 vi.mock("../../teamRules/teamRulesView", () => ({ teamRulesReachLock: vi.fn() }));
@@ -271,13 +280,31 @@ describe("the machine's short name", () => {
       },
     } as never);
 
+  beforeEach(() => {
+    names.holders.clear();
+    saveIdentity.mockClear();
+  });
+
   it("offers the chip in the computer name in one click", () => {
     world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
     named("Anton M5MAX PROLED");
     const view = page();
     expect(view.buttons()).toEqual(["Add a device or machine", "Call it M5", "Rename"]);
     view.press("Call it M5");
-    expect(renameMachine).toHaveBeenCalledWith(here, "M5");
+    expect(saveIdentity).toHaveBeenCalledWith(here, {
+      name: "M5",
+      color: "teal",
+      icon: "laptop",
+      short: "",
+    });
+  });
+
+  it("leaves a name another machine already shows to the Rename dialog", () => {
+    world({ signedIn: true, link: { linked: true, managedTunnelActive: true }, phones: [{}] });
+    named("Anton M5MAX PROLED");
+    names.holders.set("m5", "stale-m5");
+    const view = page();
+    expect(view.buttons()).toEqual(["Add a device or machine", "Rename"]);
   });
 
   it("offers nothing once a name is chosen, and keeps the computer name in view", () => {

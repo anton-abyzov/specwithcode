@@ -19,6 +19,10 @@ vi.mock("../../studio/machineNickname", async (importOriginal) => {
 });
 vi.mock("../../studio/machineIdentity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../studio/machineIdentity")>()),
+  useMachineIdentities: () => (id: string) => ({
+    environmentId: id,
+    short: state.nicknames[id]?.short ?? id.slice(0, 2).toUpperCase(),
+  }),
   useMachineIdentity: (id: string | null) =>
     id === null
       ? null
@@ -84,7 +88,31 @@ describe("RenameMachineDialog", () => {
     expect(document.querySelector("[data-machine-host-name]")?.textContent).toBe(
       "Computer name: Anton M5MAX PROLED, unchanged.",
     );
+    expect(document.querySelector("[data-preview-name]")?.textContent).toBe("Anton M5MAX PROLED");
     expect(button("Save").disabled).toBe(true);
+  });
+
+  it("saves the cut computer name when it is typed on purpose", () => {
+    open();
+    type(nameInput(), "Anton M5MA");
+    type(nameInput(), "Anton M5MAX");
+    expect(button("Save").disabled).toBe(false);
+    act(() => button("Save").click());
+    expect(state.saveIdentity).toHaveBeenCalledWith(
+      live,
+      expect.objectContaining({ name: "Anton M5MAX" }),
+    );
+  });
+
+  it("keeps chosen chip letters while the name stays the same", () => {
+    state.nicknames = { [live]: { name: "Studio", updatedAt: "2026-11-13T00:00:00Z", short: "MX" } };
+    open();
+    type(nameInput(), "Studi");
+    type(nameInput(), "Studio");
+    expect(document.querySelector("[data-preview-short]")?.textContent).toBe("MX");
+    expect(button("Save").disabled).toBe(true);
+    type(nameInput(), "Desk");
+    expect(document.querySelector("[data-preview-short]")?.textContent).not.toBe("MX");
   });
 
   it("saves M5 in one step with the chip letters following the name", () => {
@@ -92,6 +120,7 @@ describe("RenameMachineDialog", () => {
     open();
     act(() => button("Use M5").click());
     expect(nameInput().value).toBe("M5");
+    expect(document.activeElement).toBe(nameInput());
     expect(document.querySelector("[data-preview-name]")?.textContent).toBe("M5");
     expect(document.querySelector("[data-preview-short]")?.textContent).toBe("M5");
     act(() => button("Save").click());

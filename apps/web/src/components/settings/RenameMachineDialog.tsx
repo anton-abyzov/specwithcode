@@ -8,28 +8,29 @@ import {
 } from "@specweave-studio/contracts";
 import {
   fitMachineNickname,
-  machineNicknameHolder,
   normalizeMachineNickname,
   normalizeMachineShortName,
   suggestMachineNickname,
 } from "@specweave-studio/shared/machineNicknames";
 import {
+  foldMachineShortLabel,
   graphemeLength,
   MACHINE_SHORT_LABEL_MIN_LENGTH,
   pickMachineShortLabel,
 } from "@specweave-studio/shared/machineShortLabel";
 import { ChevronRightIcon } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
   renameMachineLockText,
-  resolveMachineNickname,
   useCustomMachineNickname,
+  useMachineNameHolder,
   useMachineNameSources,
 } from "../../studio/machineNickname";
 import {
   MACHINE_COLOR_IDS,
   MACHINE_COLOR_LABELS,
+  useMachineIdentities,
   useMachineIdentity,
 } from "../../studio/machineIdentity";
 import { useRenameMachine } from "../../studio/useRenameMachine";
@@ -75,6 +76,9 @@ export function RenameMachineDialog({
   const hostId = useId();
   const shortId = useId();
   const shortHintId = useId();
+  const clashId = useId();
+  const customizeId = useId();
+  const nameRef = useRef<HTMLInputElement>(null);
   const colorId = useId();
   const iconId = useId();
   const custom = useCustomMachineNickname(environmentId);
@@ -82,20 +86,26 @@ export function RenameMachineDialog({
   const identity = useMachineIdentity(environmentId, hostLabel);
   const [color, setColor] = useState(identity?.color ?? MACHINE_COLOR_IDS[0]);
   const [icon, setIcon] = useState(identity?.icon ?? "server");
-  // The computer's name, cut to fit the field, so the dialog never opens over its limit.
-  const defaultName = fitMachineNickname(shortMachineName(hostLabel));
+  // What the machine shows with no name chosen, and that name cut to fit the field
+  // so the dialog never opens over its limit.
+  const fullDefaultName = shortMachineName(hostLabel);
+  const defaultName = fitMachineNickname(fullDefaultName);
   const current = custom ?? defaultName;
   const suggested = suggestMachineNickname(hostLabel);
   const [value, setValue] = useState(current);
+  const [nameTouched, setNameTouched] = useState(false);
   const { nicknames, labels } = useMachineNameSources();
+  const identities = useMachineIdentities();
+  const nameHolder = useMachineNameHolder();
   const storedShort = (environmentId ? nicknames[environmentId]?.short : undefined) ?? "";
   const [shortValue, setShortValue] = useState(storedShort);
-  // Until the letters are typed here, a new name brings its own letters.
+  // Until the letters are typed here, a changed name brings its own letters.
   const [shortTouched, setShortTouched] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   useEffect(() => {
     if (!open) return;
     setValue(current);
+    setNameTouched(false);
     setShortValue(storedShort);
     setShortTouched(false);
     setCustomizing(false);
@@ -108,41 +118,48 @@ export function RenameMachineDialog({
   }, [open]);
   const next = normalizeMachineNickname(value);
   const lockText = renameMachineLockText(lock);
-  const nextShort = normalizeMachineShortName(shortValue);
+  const nameChanged = next !== current;
+  // Letters typed here win; otherwise a changed name brings its own and an
+  // unchanged one keeps the stored pair. The preview shows which, before Save.
+  const nextShort = shortTouched
+    ? normalizeMachineShortName(shortValue)
+    : nameChanged
+      ? ""
+      : storedShort;
   const shortValid =
     nextShort === "" || graphemeLength(nextShort) >= MACHINE_SHORT_LABEL_MIN_LENGTH;
-  const previewName = next === "" ? defaultName : next;
-  const derivedShort = pickMachineShortLabel(previewName, undefined, new Set());
-  const previewShort = nextShort !== "" ? nextShort : derivedShort;
-  // Every other known machine's shown name, so a clash is said before it is saved.
-  const shownNames = useMemo(() => {
-    const names = new Map<string, string>();
+  // With nothing typed over it, the machine shows its whole computer name.
+  const previewName = next === "" || (!nameTouched && custom === null) ? fullDefaultName : next;
+  // Letters other machines already show, so the preview matches the chip it will get.
+  const takenShorts = useMemo(() => {
+    const taken = new Set<string>();
     for (const id of new Set([...Object.keys(nicknames), ...labels.keys()])) {
-      names.set(id, resolveMachineNickname(nicknames, id, labels.get(id)));
+      if (id !== environmentId) taken.add(foldMachineShortLabel(identities(id).short));
     }
-    return names;
-  }, [nicknames, labels]);
-  const clash =
-    environmentId !== null && next !== current
-      ? machineNicknameHolder(shownNames, environmentId, next)
-      : null;
+    return taken;
+  }, [nicknames, labels, identities, environmentId]);
+  const derivedShort = pickMachineShortLabel(previewName, undefined, takenShorts);
+  const previewShort = nextShort !== "" ? nextShort : derivedShort;
+  const clash = environmentId !== null && nameChanged ? nameHolder(environmentId, next) : null;
   const looksChanged =
     identity !== null &&
     (color !== identity.color || icon !== identity.icon || nextShort !== storedShort);
+  // Typing the cut computer name on purpose chooses it, though it matches the start value.
+  const choosesCutName =
+    custom === null && nameTouched && next === defaultName && defaultName !== fullDefaultName;
   const canSave =
     environmentId !== null &&
     lock === null &&
     next !== "" &&
     shortValid &&
-    (next !== current || looksChanged);
+    (nameChanged || looksChanged || choosesCutName);
   const typeName = (name: string) => {
     setValue(name);
-    // The letters follow the name: a stored pair made for the old name gives way.
-    if (!shortTouched) setShortValue("");
+    setNameTouched(true);
   };
   const save = (name: string) => {
-    // The default name is kept as "no nickname", so a host rename still shows through.
-    const saved = name === defaultName && custom === null ? "" : name;
+    // An untouched default is kept as "no nickname", so a host rename still shows through.
+    const saved = name === defaultName && custom === null && !choosesCutName ? "" : name;
     if (
       environmentId === null ||
       !saveIdentity(environmentId, { name: saved, color, icon, short: nextShort })
@@ -174,7 +191,10 @@ export function RenameMachineDialog({
               value={value}
               maxLength={MACHINE_NICKNAME_MAX_LENGTH}
               placeholder={suggested ?? defaultName}
-              aria-describedby={`${hostId} ${countId}`}
+              ref={nameRef}
+              aria-describedby={[hostId, countId, clash !== null ? clashId : null]
+                .filter(Boolean)
+                .join(" ")}
               autoComplete="off"
               spellCheck={false}
               autoFocus
@@ -195,22 +215,26 @@ export function RenameMachineDialog({
                 className="justify-self-start"
                 disabled={lock !== null}
                 data-machine-name-suggestion={suggested}
-                onClick={() => typeName(suggested)}
+                onClick={() => {
+                  typeName(suggested);
+                  // The button leaves once used; keep focus in the field it filled.
+                  nameRef.current?.focus();
+                }}
               >
                 {renderRich(tx("Use {defaultName}"), { defaultName: suggested })}
               </Button>
             ) : null}
             {clash !== null ? (
               <p
+                id={clashId}
                 className="rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground text-xs"
-                role="status"
-                data-machine-name-clash={clash}
+                data-machine-name-clash={clash.environmentId}
               >
                 {renderRich(
                   tx(
                     "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.",
                   ),
-                  { name: shownNames.get(clash) ?? next },
+                  { name: clash.name },
                 )}
               </p>
             ) : null}
@@ -247,6 +271,7 @@ export function RenameMachineDialog({
               type="button"
               className="text-muted-foreground hover:text-foreground mt-1 inline-flex items-center gap-1 justify-self-start text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-expanded={customizing}
+              aria-controls={customizeId}
               data-machine-customize=""
               onClick={() => setCustomizing((was) => !was)}
             >
@@ -257,14 +282,14 @@ export function RenameMachineDialog({
               {tx("Customize chip letters, color and icon")}
             </button>
             {customizing ? (
-              <div className="grid gap-1.5" data-machine-customize-panel="">
+              <div id={customizeId} className="grid gap-1.5" data-machine-customize-panel="">
                 <Label htmlFor={shortId} className="mt-1">
                   {tx("Chip letters")}
                 </Label>
                 <Input
                   id={shortId}
                   className="w-24"
-                  value={shortValue}
+                  value={shortTouched ? shortValue : nextShort}
                   maxLength={MACHINE_SHORT_NAME_MAX_LENGTH}
                   placeholder={derivedShort}
                   aria-describedby={shortHintId}

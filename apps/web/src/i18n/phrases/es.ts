@@ -2332,6 +2332,20 @@ export const es: PhraseCatalog = {
     "Nombre del ordenador: {hostLabel}, sin cambios.",
   "Call it {name}":
     "Llamarlo {name}",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "Otro equipo ya se llama {name}. Si es una copia antigua de este, quítala en Otros equipos.",
+  "Use the computer name":
+    "Usar el nombre del ordenador",
+  "Chip letters":
+    "Letras del chip",
+  "Narrow chip":
+    "Chip estrecho",
+  "Customize chip letters, color and icon":
+    "Personalizar letras del chip, color e icono",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "2 o 3 caracteres para un chip demasiado estrecho para el nombre. Vacío sigue al nombre.",
+  "Use 2 or 3 characters.":
+    "Usa 2 o 3 caracteres.",
   "Computer name {hostLabel}":
     "Nombre del ordenador {hostLabel}",
   "Use {defaultName}": "Usar {defaultName}",

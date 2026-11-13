@@ -17,7 +17,12 @@ import { cn } from "../../lib/utils";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { suggestMachineNickname } from "@specweave-studio/shared/machineNicknames";
-import { useCustomMachineNickname, useMachineNickname } from "../../studio/machineNickname";
+import {
+  useCustomMachineNickname,
+  useMachineNameHolder,
+  useMachineNickname,
+} from "../../studio/machineNickname";
+import { useMachineIdentity } from "../../studio/machineIdentity";
 import { useRenameMachine } from "../../studio/useRenameMachine";
 import { teamRulesReachLock, type TeamRulesLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
@@ -217,11 +222,18 @@ export function MachineSummary({
   const environment = useEnvironment(environmentId);
   const name = useMachineNickname(environmentId, environment?.label) || tx("This machine");
   const custom = useCustomMachineNickname(environmentId);
-  const { lock: renameLock, rename } = useRenameMachine();
+  const { lock: renameLock, saveIdentity } = useRenameMachine();
+  const identity = useMachineIdentity(environmentId, environment?.label);
+  const nameHolder = useMachineNameHolder();
   const hostLabel = environment?.label?.trim() ?? "";
-  // A machine still showing its computer name is offered the short one in it ("M5").
+  // A machine still showing its computer name is offered the short one in it ("M5")
+  // in one click, unless another machine already shows that name: Rename says so.
+  const candidate =
+    custom === null && renameLock === null && identity !== null
+      ? suggestMachineNickname(hostLabel)
+      : null;
   const suggested =
-    custom === null && renameLock === null ? suggestMachineNickname(hostLabel) : null;
+    candidate !== null && nameHolder(environmentId, candidate) === null ? candidate : null;
   const chosen = useClientSettings((settings) => settings.onboardingMachineRole);
   const [renaming, setRenaming] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -301,7 +313,16 @@ export function MachineSummary({
             size="xs"
             data-machine-name-suggestion={suggested}
             title={tx("Runs on, thread rows, the sidebar and your other devices show this name.")}
-            onClick={() => rename(environmentId, suggested)}
+            onClick={() =>
+              identity !== null &&
+              // As in the dialog: the chip letters follow the new name.
+              saveIdentity(environmentId, {
+                name: suggested,
+                color: identity.color,
+                icon: identity.icon,
+                short: "",
+              })
+            }
           >
             {tx("Call it {name}", { name: suggested })}
           </Button>

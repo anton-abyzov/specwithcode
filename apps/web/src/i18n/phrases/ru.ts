@@ -2314,6 +2314,20 @@ export const ru: PhraseCatalog = {
     "Имя компьютера: {hostLabel}, не меняется.",
   "Call it {name}":
     "Назвать {name}",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "Другая машина уже называется {name}. Если это старая копия этой машины, удалите её в разделе «Другие машины».",
+  "Use the computer name":
+    "Использовать имя компьютера",
+  "Chip letters":
+    "Буквы на чипе",
+  "Narrow chip":
+    "Узкий чип",
+  "Customize chip letters, color and icon":
+    "Настроить буквы на чипе, цвет и значок",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "2 или 3 символа для чипа, в который не помещается имя. Пусто — берутся из имени.",
+  "Use 2 or 3 characters.":
+    "Используйте 2 или 3 символа.",
   "Computer name {hostLabel}":
     "Имя компьютера {hostLabel}",
   "Use {defaultName}": "Использовать {defaultName}",

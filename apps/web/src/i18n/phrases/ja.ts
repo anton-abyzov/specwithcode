@@ -2320,6 +2320,20 @@ export const ja: PhraseCatalog = {
     "コンピュータ名: {hostLabel}（変更されません）",
   "Call it {name}":
     "{name} と呼ぶ",
+  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
+    "別のマシンがすでに {name} という名前です。このマシンの古いコピーなら、「ほかのマシン」で削除してください。",
+  "Use the computer name":
+    "コンピュータ名を使う",
+  "Chip letters":
+    "チップの文字",
+  "Narrow chip":
+    "狭いチップ",
+  "Customize chip letters, color and icon":
+    "チップの文字・色・アイコンをカスタマイズ",
+  "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
+    "名前が入らない狭いチップに表示する2〜3文字。空欄なら名前から決まります。",
+  "Use 2 or 3 characters.":
+    "2〜3文字にしてください。",
   "Computer name {hostLabel}":
     "コンピュータ名 {hostLabel}",
   "Use {defaultName}": "{defaultName} を使う",

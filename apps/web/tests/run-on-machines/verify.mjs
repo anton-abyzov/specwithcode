@@ -190,8 +190,10 @@ try {
     await shot(page, join(output, `${width}-${theme}-rename-list.png`));
     await page.getByRole("menuitem", { name: "Rename MacBook M4MAX" }).click();
     const dialog = page.getByTestId("rename-machine-dialog");
-    await dialog.getByText("A short name for Anton's MacBook M4MAX.", { exact: false }).waitFor();
-    const field = dialog.getByLabel("Name");
+    await dialog
+      .getByText("Computer name: Anton's MacBook M4MAX, unchanged.", { exact: false })
+      .waitFor();
+    const field = dialog.getByLabel("Machine name");
     await field.fill("M4 Max Studio Pro X");
     assert.equal(await field.inputValue(), "M4 Max Studio Pr", "16 characters at most");
     await field.fill("M4");
