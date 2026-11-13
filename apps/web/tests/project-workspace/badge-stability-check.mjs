@@ -44,11 +44,19 @@ try {
       }
       await row.hover();
       assert(await numeric.isVisible(), "hover hid the count");
-      assert.deepEqual(await row.locator(".sws-side-row-label").boundingBox(), before);
+      // The actions button takes its room only on hover: the name may give way, but
+      // it stays where it was and never grows.
+      const hovered = await row.locator(".sws-side-row-label").boundingBox();
+      assert.equal(hovered.x, before.x);
+      assert.equal(hovered.y, before.y);
+      assert(hovered.width <= before.width, "hover widened the name");
       await page.screenshot({ path: `${output}/${width}-${theme}-hover.png` });
       for (const scenario of ["cached", "offline", "synchronizing", "remote-unknown"]) {
         await page.getByRole("button", { name: scenario, exact: true }).click();
-        assert(await sidebar.locator(".sws-project-coverage").isVisible());
+        // No dot: the note is screen-reader text inside the row's link, and in its tooltip.
+        const note = sidebar.locator(".sws-side-row .sws-project-coverage.sr-only");
+        assert.equal(await note.count(), 1);
+        assert((await note.textContent()).trim().length > 0, "empty offline note");
         assert(!/[?+]/.test(await numeric.allTextContents().then((x) => x.join(""))));
       }
       await page.screenshot({ path: `${output}/${width}-${theme}-unavailable.png` });

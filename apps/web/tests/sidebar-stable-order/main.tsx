@@ -102,7 +102,7 @@ if (params.get("scenario") === "projects") {
 // two projects have a copy here, the rest live only on other machines. Those sit
 // below an "On other machines" label, greyed, each with its machine's tag.
 if (params.get("scenario") === "elsewhere") {
-  const project = (key: string, name: string, machines: string[]) => {
+  const project = (key: string, name: string, machines: string[], sharedWith: string[] = []) => {
     const here = machines.includes("host");
     return {
       projectKey: `logical:${key}`,
@@ -120,7 +120,21 @@ if (params.get("scenario") === "elsewhere") {
         id: `${key}-${environmentId}`,
         title: name,
         workspaceRoot: `/Users/me/Projects/${key}`,
-        workspaceSettings: { kind: "code", archived: false, revision: 1 },
+        workspaceSettings: {
+          kind: "code",
+          archived: false,
+          revision: 1,
+          ...(sharedWith.length > 0
+            ? {
+                logicalProject: {
+                  id: `logical-${key}`,
+                  members: [environmentId, ...sharedWith].map((member) => ({
+                    environmentId: member,
+                  })),
+                },
+              }
+            : {}),
+        },
       })),
     };
   };
@@ -133,11 +147,11 @@ if (params.get("scenario") === "elsewhere") {
     ],
     groups: [
       project("ai-com", "ai-company", ["linux-mini"]),
-      project("easychamp", "EasyChamp", ["m4", "m1"]),
+      project("easychamp", "EasyChamp", ["m4", "m1", "linux-mini"]),
       project("firstproject", "firstproject", ["host"]),
       project("fortnite", "fortnite-3js", ["m4", "m1"]),
       project("hack-openai", "hack26-openai", ["m4"]),
-      project("specweave", "specweave", ["host", "m4"]),
+      project("specweave", "specweave", ["host", "m4"], ["linux-mini"]),
       project("sketchmate", "sketchmate_pro", ["m1"]),
     ],
   });
