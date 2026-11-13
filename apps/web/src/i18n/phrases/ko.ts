@@ -4570,4 +4570,5 @@ export const ko: PhraseCatalog = {
   "Removed from this app.": "이 앱에서 제거되었습니다.",
   "SpecWithCode Connect cannot be reached right now.":
     "지금은 SpecWithCode Connect에 연결할 수 없습니다.",
+  "Could not connect over SpecWithCode Connect.": "SpecWithCode Connect로 연결하지 못했습니다.",
 };

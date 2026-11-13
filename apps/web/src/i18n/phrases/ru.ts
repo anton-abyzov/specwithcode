@@ -4617,4 +4617,6 @@ export const ru: PhraseCatalog = {
   "Not connected to this app yet.": "Ещё не подключена к этому приложению.",
   "Removed from this app.": "Удалена из этого приложения.",
   "SpecWithCode Connect cannot be reached right now.": "SpecWithCode Connect сейчас недоступен.",
+  "Could not connect over SpecWithCode Connect.":
+    "Не удалось подключиться через SpecWithCode Connect.",
 };

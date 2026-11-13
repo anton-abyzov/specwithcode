@@ -205,8 +205,8 @@ export function MachinesSettingsPanel() {
       (accountMachines.has(machine.environmentId) || accountStates.has(machine.environmentId))
     ) {
       setError(null);
-      requestAccountMachineConnect([machine.environmentId]);
-      return;
+      // Signed out of Connect, nothing saves it: the pairing below is tried.
+      if (requestAccountMachineConnect([machine.environmentId])) return;
     }
     setPending(machine.environmentId);
     setError(null);

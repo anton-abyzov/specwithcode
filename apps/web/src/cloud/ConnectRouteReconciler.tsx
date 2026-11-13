@@ -19,7 +19,10 @@ import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
 import { usePrimaryFleetSnapshot } from "../studio/fleet";
 import { readSkippedFleetEnvironments } from "../studio/fleetAutoConnect";
-import { grantedAccountMachinesToConnect } from "../studio/grantedAccountMachines";
+import {
+  connectRouteAddsInFlight,
+  grantedAccountMachinesToConnect,
+} from "../studio/grantedAccountMachines";
 import { linkedMachinesToConnect } from "../studio/linkedMachines";
 import { GrantedAccountMachines } from "./GrantedAccountMachines";
 import {
@@ -89,9 +92,9 @@ export function ConnectRouteReconciler() {
         for (const environmentId of environmentIds) addAttemptsRef.current.delete(environmentId);
         for (const environmentId of environmentIds) requestedRef.current.add(environmentId);
         setRequests((current) => current + 1);
-        // A fresh listing for this account, so the add runs even if this
-        // component missed the refresh that filled the current list.
-        void refreshDiscovery();
+        // A fresh listing only when this component missed the refresh that
+        // filled the current list: a refresh empties every machine list.
+        if (!sawRefreshRef.current) void refreshDiscovery();
       }),
     [refreshDiscovery],
   );
@@ -156,10 +159,16 @@ export function ConnectRouteReconciler() {
       projects,
       savedEnvironmentIds,
       discovered: discovery.environments,
-      skip: new Set([...skip, ...readSkippedFleetEnvironments(), ...granted]),
+      skip: new Set([
+        ...skip,
+        ...readSkippedFleetEnvironments(),
+        ...granted,
+        ...connectRouteAddsInFlight,
+      ]),
     });
     for (const machine of linked) {
       inFlightRef.current.add(machine.environmentId);
+      connectRouteAddsInFlight.add(machine.environmentId);
       addAttemptsRef.current.set(
         machine.environmentId,
         (addAttemptsRef.current.get(machine.environmentId) ?? 0) + 1,
@@ -171,7 +180,10 @@ export function ConnectRouteReconciler() {
             label: machine.label,
           }),
         }),
-      ).then(() => inFlightRef.current.delete(machine.environmentId));
+      ).then(() => {
+        inFlightRef.current.delete(machine.environmentId);
+        connectRouteAddsInFlight.delete(machine.environmentId);
+      });
     }
   }, [
     discovery,

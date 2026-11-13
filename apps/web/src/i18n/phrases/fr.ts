@@ -4662,4 +4662,6 @@ export const fr: PhraseCatalog = {
   "Removed from this app.": "Retirée de cette app.",
   "SpecWithCode Connect cannot be reached right now.":
     "SpecWithCode Connect est injoignable pour le moment.",
+  "Could not connect over SpecWithCode Connect.":
+    "Impossible de se connecter via SpecWithCode Connect.",
 };

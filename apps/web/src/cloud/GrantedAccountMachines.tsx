@@ -28,7 +28,9 @@ import {
 import {
   AUTO_CONNECT_OFF_REASON,
   type AccountAutoConnectState,
+  CONNECT_FAILED_REASON,
   CONNECT_NO_ANSWER_REASON,
+  connectRouteAddsInFlight,
   CONNECT_UNREACHABLE_REASON,
   REMOVED_HERE_REASON,
   accountAutoConnectStates,
@@ -49,7 +51,7 @@ const MAX_ATTEMPTS = 3;
 /** Wait after a try before the next one, and between re-reads of the account list for one machine. */
 const RETRY_MS = 60_000;
 /** Re-reads of the account list for a fleet machine it does not show; one on another account never shows. */
-const MAX_LOOKUPS = 1;
+const MAX_LOOKUPS = 2;
 
 interface Attempt {
   readonly count: number;
@@ -85,7 +87,7 @@ export function GrantedAccountMachines() {
   });
   const inFlight = useRef(new Set<string>());
   const attempts = useRef(new Map<string, Attempt>());
-  const failures = useRef(new Map<string, string>());
+  const failures = useRef(new Map<string, string | undefined>());
   // Machines asked for by hand, with when. A press is in force until the
   // machine is saved; it overrides holds and the wait for one try.
   const requested = useRef(new Map<string, number>());
@@ -116,19 +118,19 @@ export function GrantedAccountMachines() {
           );
           return linked.has(id) && (!inFleet || fleetMachineHasTailnetAddress(inFleet));
         });
-        if (viaLinked.length > 0) requestConnectRoutes(viaLinked);
         for (const id of environmentIds) {
-          if (viaLinked.includes(id)) continue;
-          requested.current.set(id, now);
-          unanswered.current.add(id);
           // Connecting by hand undoes an earlier removal on this device.
           setFleetEnvironmentSkipped(id as EnvironmentId, false);
           setConnectRouteDeclined(id, false);
+          if (viaLinked.includes(id)) continue;
+          requested.current.set(id, now);
+          unanswered.current.add(id);
           shown.set(id, { phase: "connecting" });
         }
         // Says so at once, also while the account list is being read.
         publishAccountAutoConnectStates(shown);
         setTick((current) => current + 1);
+        if (viaLinked.length > 0) requestConnectRoutes(viaLinked);
       }),
     [],
   );
@@ -171,8 +173,13 @@ export function GrantedAccountMachines() {
       const pressedAt = requested.current.get(id);
       // A press not acted on yet asks for one more try, now.
       const asked = unanswered.current.has(id);
-      const failure = failures.current.get(id);
-      if (inFlight.current.has(id)) {
+      const detail = failures.current.get(id);
+      const failure: AccountAutoConnectState | undefined = !failures.current.has(id)
+        ? undefined
+        : detail === undefined
+          ? { phase: "failed", reason: CONNECT_FAILED_REASON }
+          : { phase: "failed", reason: CONNECT_FAILED_REASON, detail };
+      if (inFlight.current.has(id) || connectRouteAddsInFlight.has(id)) {
         next.set(id, { phase: "connecting" });
         continue;
       }
@@ -186,7 +193,7 @@ export function GrantedAccountMachines() {
         next.set(
           id,
           failure !== undefined
-            ? { phase: "failed", reason: failure }
+            ? failure
             : {
                 phase: "held",
                 reason: removed.has(id) ? REMOVED_HERE_REASON : AUTO_CONNECT_OFF_REASON,
@@ -206,7 +213,7 @@ export function GrantedAccountMachines() {
         tried !== undefined &&
         (tried.count >= MAX_ATTEMPTS || now - tried.at < RETRY_MS)
       ) {
-        if (failure !== undefined) next.set(id, { phase: "failed", reason: failure });
+        if (failure !== undefined) next.set(id, failure);
         else if (tried.count >= MAX_ATTEMPTS)
           next.set(id, { phase: "failed", reason: CONNECT_NO_ANSWER_REASON });
         else next.set(id, { phase: "connecting" });
@@ -216,6 +223,7 @@ export function GrantedAccountMachines() {
       unanswered.current.delete(id);
       attempts.current.set(id, { count: (tried?.count ?? 0) + 1, at: now });
       inFlight.current.add(id);
+      connectRouteAddsInFlight.add(id);
       next.set(id, { phase: "connecting" });
       void register(
         new RelayConnectionRegistration({
@@ -223,13 +231,15 @@ export function GrantedAccountMachines() {
         }),
       ).then((result) => {
         inFlight.current.delete(id);
+        connectRouteAddsInFlight.delete(id);
         // An interrupted try counts as a try, so the wait and the cap still apply.
         if (result._tag === "Success") failures.current.delete(id);
         else if (!isAtomCommandInterrupted(result)) {
           const cause = squashAtomCommandFailure(result);
+          // The message is the relay's own, shown as a detail next to a translated reason.
           failures.current.set(
             id,
-            cause instanceof Error && cause.message ? cause.message : CONNECT_NO_ANSWER_REASON,
+            cause instanceof Error && cause.message ? cause.message : undefined,
           );
         }
         setTick((current) => current + 1);
