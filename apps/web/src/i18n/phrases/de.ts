@@ -4986,7 +4986,8 @@ export const de: PhraseCatalog = {
     "Nicht installiert. Hol es von seiner eigenen Website oder bitte jemanden, der diesen Rechner verwalten darf, es hier zu installieren.",
   "Browse…": "Durchsuchen…",
   "Add to this machine…": "Zu diesem Rechner hinzufügen…",
-  "Runs on {machine}. No copy on this device.": "Läuft auf {machine}. Keine Kopie auf diesem Gerät.",
+  "Runs on {machine}. No copy on this device.":
+    "Läuft auf {machine}. Keine Kopie auf diesem Gerät.",
   "Agent status": "Agentenstatus",
   "Last time it was not signed in.": "Beim letzten Mal war er nicht angemeldet.",
   "Last time it was signed in as {account}.": "Beim letzten Mal war er als {account} angemeldet.",
@@ -5021,18 +5022,43 @@ export const de: PhraseCatalog = {
   "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "Version {version} ist älter, als SpecWithCode braucht. Aktualisiere es dort, wo du es installiert hast.",
   "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "Die Kopie von SpecWithCode hat Version {version}. Ein Klick ersetzt sie durch die Version, die dieses Release nutzt.",
   "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "Nicht installiert. Ein Klick installiert es mit Node.js im eigenen Ordner von SpecWithCode, ohne Admin-Passwort.",
+  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
+    "GitHub Copilot CLI läuft mit Node.js. Melde dich nach der Installation erneut an.",
+  "Plans and tracks work in SpecWeave projects.":
+    "Plant und verfolgt die Arbeit in SpecWeave-Projekten.",
+  "Recommended. Plans and tracks work in SpecWeave projects.":
+    "Empfohlen. Plant und verfolgt die Arbeit in SpecWeave-Projekten.",
+  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.":
+    "Version {version} ist älter, als SpecWeave und Copilot brauchen (Node.js 20 oder neuer). Aktualisiere es dort, wo du es installiert hast.",
+  "Version {version} is older than SpecWithCode needs. Update it where you installed it.":
+    "Version {version} ist älter, als SpecWithCode braucht. Aktualisiere es dort, wo du es installiert hast.",
+  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.":
+    "Die Kopie von SpecWithCode hat Version {version}. Ein Klick ersetzt sie durch die Version, die dieses Release nutzt.",
+  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.":
+    "Nicht installiert. Ein Klick installiert es mit Node.js im eigenen Ordner von SpecWithCode, ohne Admin-Passwort.",
   "Update {tool}": "{tool} aktualisieren",
-  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.": "Nach dem Update auf {version} prüft SpecWithCode diese erneut, sobald auf diesem Rechner keine Arbeit läuft.",
-  "After the update to {version}, an install did not finish: {detail}": "Nach dem Update auf {version} wurde eine Installation nicht abgeschlossen: {detail}",
-  "After the update to {version}, SpecWithCode installed {tools}.": "Nach dem Update auf {version} hat SpecWithCode {tools} installiert.",
-  "Git, Node.js, SpecWeave and GitHub CLI are ready.": "Git, Node.js, SpecWeave und GitHub CLI sind bereit.",
+  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.":
+    "Nach dem Update auf {version} prüft SpecWithCode diese erneut, sobald auf diesem Rechner keine Arbeit läuft.",
+  "After the update to {version}, an install did not finish: {detail}":
+    "Nach dem Update auf {version} wurde eine Installation nicht abgeschlossen: {detail}",
+  "After the update to {version}, SpecWithCode installed {tools}.":
+    "Nach dem Update auf {version} hat SpecWithCode {tools} installiert.",
+  "Git, Node.js, SpecWeave and GitHub CLI are ready.":
+    "Git, Node.js, SpecWeave und GitHub CLI sind bereit.",
   "Git, Node.js and SpecWeave are ready.": "Git, Node.js und SpecWeave sind bereit.",
-  "{count} tools are missing or out of date on this machine.": "{count} Tools fehlen oder sind veraltet auf diesem Rechner.",
+  "{count} tools are missing or out of date on this machine.":
+    "{count} Tools fehlen oder sind veraltet auf diesem Rechner.",
   "Install everything missing": "Alles Fehlende installieren",
   "Already on {environmentLabel}": "Bereits auf {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot in VS Code",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI angemeldet als {account} auf {host}",
-  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.": "Copilot CLI hat eine eigene Anmeldung. Melde dich einmal mit demselben Konto an; der Code geht an {host}.",
-  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.": "Copilot CLI hat eine eigene Anmeldung, und SpecWithCode kopiert nie die einer anderen App. Melde dich einmal mit demselben Konto an.",
+  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
+    "Copilot CLI hat eine eigene Anmeldung. Melde dich einmal mit demselben Konto an; der Code geht an {host}.",
+  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.":
+    "Copilot CLI hat eine eigene Anmeldung, und SpecWithCode kopiert nie die einer anderen App. Melde dich einmal mit demselben Konto an.",
   "Machine basics": "Grundausstattung des Rechners",
+  "SpecWithCode's copy is version {version}, older than this release uses.":
+    "Die Kopie von SpecWithCode hat Version {version}, älter als die dieses Releases.",
+  "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
+    "Werkzeuge bleiben auf jedem Rechner und werden nicht kopiert. {machineName} braucht noch einige, bevor Agenten dort an diesem Projekt arbeiten können.",
 };

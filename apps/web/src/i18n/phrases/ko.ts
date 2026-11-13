@@ -4896,7 +4896,8 @@ export const ko: PhraseCatalog = {
     "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
   "Browse…": "찾아보기…",
   "Add to this machine…": "이 컴퓨터에 추가…",
-  "Runs on {machine}. No copy on this device.": "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
+  "Runs on {machine}. No copy on this device.":
+    "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
   "Agent status": "에이전트 상태",
   "Last time it was not signed in.": "지난번에는 로그인되어 있지 않았습니다.",
   "Last time it was signed in as {account}.":
@@ -4932,18 +4933,43 @@ export const ko: PhraseCatalog = {
   "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "버전 {version}은(는) SpecWithCode에 필요한 버전보다 오래되었습니다. 설치한 곳에서 업데이트하세요.",
   "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "SpecWithCode의 사본은 버전 {version}입니다. 클릭 한 번으로 이번 릴리스가 사용하는 버전으로 바꿉니다.",
   "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "설치되지 않음. 클릭 한 번으로 Node.js와 함께 SpecWithCode 전용 폴더에 설치합니다. 관리자 암호는 필요 없습니다.",
+  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
+    "GitHub Copilot CLI는 Node.js에서 실행됩니다. 설치가 끝나면 다시 로그인하세요.",
+  "Plans and tracks work in SpecWeave projects.":
+    "SpecWeave 프로젝트의 작업을 계획하고 추적합니다.",
+  "Recommended. Plans and tracks work in SpecWeave projects.":
+    "권장. SpecWeave 프로젝트의 작업을 계획하고 추적합니다.",
+  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.":
+    "버전 {version}은(는) SpecWeave와 Copilot에 필요한 버전(Node.js 20 이상)보다 오래되었습니다. 설치한 곳에서 업데이트하세요.",
+  "Version {version} is older than SpecWithCode needs. Update it where you installed it.":
+    "버전 {version}은(는) SpecWithCode에 필요한 버전보다 오래되었습니다. 설치한 곳에서 업데이트하세요.",
+  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.":
+    "SpecWithCode의 사본은 버전 {version}입니다. 클릭 한 번으로 이번 릴리스가 사용하는 버전으로 바꿉니다.",
+  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.":
+    "설치되지 않음. 클릭 한 번으로 Node.js와 함께 SpecWithCode 전용 폴더에 설치합니다. 관리자 암호는 필요 없습니다.",
   "Update {tool}": "{tool} 업데이트",
-  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.": "{version}(으)로 업데이트한 뒤, 이 컴퓨터에서 실행 중인 작업이 없으면 SpecWithCode가 다시 확인합니다.",
-  "After the update to {version}, an install did not finish: {detail}": "{version}(으)로 업데이트한 뒤 설치 하나가 완료되지 않았습니다: {detail}",
-  "After the update to {version}, SpecWithCode installed {tools}.": "{version}(으)로 업데이트한 뒤 SpecWithCode가 {tools}을(를) 설치했습니다.",
-  "Git, Node.js, SpecWeave and GitHub CLI are ready.": "Git, Node.js, SpecWeave, GitHub CLI가 준비되었습니다.",
+  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.":
+    "{version}(으)로 업데이트한 뒤, 이 컴퓨터에서 실행 중인 작업이 없으면 SpecWithCode가 다시 확인합니다.",
+  "After the update to {version}, an install did not finish: {detail}":
+    "{version}(으)로 업데이트한 뒤 설치 하나가 완료되지 않았습니다: {detail}",
+  "After the update to {version}, SpecWithCode installed {tools}.":
+    "{version}(으)로 업데이트한 뒤 SpecWithCode가 {tools}을(를) 설치했습니다.",
+  "Git, Node.js, SpecWeave and GitHub CLI are ready.":
+    "Git, Node.js, SpecWeave, GitHub CLI가 준비되었습니다.",
   "Git, Node.js and SpecWeave are ready.": "Git, Node.js, SpecWeave가 준비되었습니다.",
-  "{count} tools are missing or out of date on this machine.": "이 컴퓨터에 도구 {count}개가 없거나 오래되었습니다.",
+  "{count} tools are missing or out of date on this machine.":
+    "이 컴퓨터에 도구 {count}개가 없거나 오래되었습니다.",
   "Install everything missing": "없는 항목 모두 설치",
   "Already on {environmentLabel}": "이미 {environmentLabel}에 있음",
   "GitHub Copilot in VS Code": "VS Code의 GitHub Copilot",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI가 {host}에 {account}(으)로 로그인됨",
-  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.": "Copilot CLI는 자체 로그인을 사용합니다. 같은 계정으로 한 번 로그인하세요. 코드는 {host}(으)로 전송됩니다.",
-  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.": "Copilot CLI는 자체 로그인을 사용하며, SpecWithCode는 다른 앱의 로그인을 복사하지 않습니다. 같은 계정으로 한 번 로그인하세요.",
+  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
+    "Copilot CLI는 자체 로그인을 사용합니다. 같은 계정으로 한 번 로그인하세요. 코드는 {host}(으)로 전송됩니다.",
+  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.":
+    "Copilot CLI는 자체 로그인을 사용하며, SpecWithCode는 다른 앱의 로그인을 복사하지 않습니다. 같은 계정으로 한 번 로그인하세요.",
   "Machine basics": "컴퓨터 기본 도구",
+  "SpecWithCode's copy is version {version}, older than this release uses.":
+    "SpecWithCode의 사본은 버전 {version}으로, 이 릴리스가 사용하는 버전보다 오래되었습니다.",
+  "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
+    "도구는 각 컴퓨터에 남고 복사되지 않습니다. {machineName}에서 에이전트가 이 프로젝트를 작업하려면 아직 몇 가지가 필요합니다.",
 };

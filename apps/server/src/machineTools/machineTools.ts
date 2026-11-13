@@ -368,8 +368,9 @@ export async function checkMachineTools(
       specweaveFound,
       (version, managed) =>
         older(version, SPECWEAVE_MIN_VERSION) || (managed && older(version, SPECWEAVE_VERSION)),
-      // SpecWeave installs with the Node.js on the machine, or one the app installs first.
-      nodeFound !== null || installable.includes("node"),
+      // SpecWeave installs with a recent enough Node.js on the machine, or one the app installs first.
+      (nodeFound !== null && (nodeMajor(nodeFound.version) ?? NODE_MIN_MAJOR) >= NODE_MIN_MAJOR) ||
+        installable.includes("node"),
       true,
     ),
   ];
@@ -458,11 +459,19 @@ export const machineToolName = (tool: MachineReadinessToolId) =>
         ? "SpecWeave"
         : "Git";
 
-/** The Node.js an npm install runs with: the machine's own first, else the app's. */
+/** The Node.js an npm install runs with: the machine's own first, else the app's; never one older than SpecWeave supports. */
 async function findNodeForNpm(ctx: MachineToolsContext): Promise<string | null> {
-  return findCommand(ctx.host, ctx.host.platform, "node", [
+  const found = await locate(ctx, "node", [
     ...new Set([...searchDirs(ctx), ...ctx.nodeManagerDirs]),
   ]);
+  if (found === null) return null;
+  const major = found.version === null ? null : Number.parseInt(found.version, 10);
+  if (major !== null && major < NODE_MIN_MAJOR)
+    throw new MachineToolInstallError(
+      "unsupported",
+      `SpecWeave needs Node.js ${NODE_MIN_MAJOR} or newer, and the Node.js at ${found.path} is version ${found.version}. Update it where you installed it, then install SpecWeave.`,
+    );
+  return found.path;
 }
 
 async function installPinnedUnlocked(
@@ -581,11 +590,15 @@ export async function installMachineTool(
       `${machineToolName(tool)} is already on this machine, so nothing was changed.`,
     );
   if (tool === "specweave") {
-    if (!current?.canInstall)
+    if (!current?.canInstall) {
+      const node = before.tools?.find((entry) => entry.tool === "node");
       throw new MachineToolInstallError(
         "unsupported",
-        "SpecWeave runs on Node.js, which this machine does not have. Install Node.js first.",
+        node?.presence === "present" && node.outdated && !node.managed
+          ? `SpecWeave needs Node.js ${NODE_MIN_MAJOR} or newer, and this machine has Node.js ${node.version ?? "of an older version"}. Update it where you installed it, then install SpecWeave.`
+          : "SpecWeave runs on Node.js, which this machine does not have. Install Node.js first.",
       );
+    }
     return withInstallLock(ctx, () => installSpecweave(ctx, log, findNodeForNpm)).catch(
       (cause: unknown) => {
         throw cause instanceof SpecweaveInstallFailure
@@ -686,6 +699,46 @@ export async function installMachineTool(
  * Adds folders to the end of a PATH that lacks them, so the person's own
  * tools keep coming first. Returns the new value, or undefined when unchanged.
  */
+/**
+ * The PATH with `dirs` in place of the app's other copies of the same tools
+ * (another version under the same `runtime/node`, `tools/gh` or
+ * `tools/specweave` folder), at the place the old copy had, so an update takes
+ * effect without a restart. Other entries keep their order.
+ */
+export function swapManagedPathDirs(
+  current: string | undefined,
+  dirs: ReadonlyArray<string>,
+  home: string,
+  platform: string,
+): string | undefined {
+  const path = pathFor(platform);
+  const delimiter = platform === "win32" ? ";" : ":";
+  const fold = (value: string) => (platform === "win32" ? value.toLowerCase() : value);
+  const roots = [
+    path.join(home, "runtime", "node"),
+    path.join(home, "tools", "gh"),
+    path.join(home, "tools", "specweave"),
+  ].map((root) => fold(root) + path.sep);
+  const rootOf = (dir: string) => roots.find((root) => fold(dir).startsWith(root));
+  const replaced = new Set(dirs.map(rootOf).filter((root) => root !== undefined));
+  const wanted = new Set(dirs.map(fold));
+  const entries = (current ?? "").split(delimiter).filter((entry) => entry !== "");
+  const out: string[] = [];
+  let placed = false;
+  for (const entry of entries) {
+    const root = rootOf(entry);
+    const stale = (root !== undefined && replaced.has(root)) || wanted.has(fold(entry));
+    if (!stale) out.push(entry);
+    else if (!placed) {
+      out.push(...dirs);
+      placed = true;
+    }
+  }
+  if (!placed) out.push(...dirs);
+  const next = out.join(delimiter);
+  return next === entries.join(delimiter) ? undefined : next;
+}
+
 export function withPathDirs(
   current: string | undefined,
   dirs: ReadonlyArray<string>,

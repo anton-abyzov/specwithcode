@@ -4951,7 +4951,8 @@ export const ru: PhraseCatalog = {
     "Не установлен. Скачайте его с официального сайта или попросите того, кто может обслуживать эту машину, установить его отсюда.",
   "Browse…": "Обзор…",
   "Add to this machine…": "Добавить на этот компьютер…",
-  "Runs on {machine}. No copy on this device.": "Работает на {machine}. На этом устройстве копии нет.",
+  "Runs on {machine}. No copy on this device.":
+    "Работает на {machine}. На этом устройстве копии нет.",
   "Agent status": "Статус агента",
   "Last time it was not signed in.": "В прошлый раз вход не был выполнен.",
   "Last time it was signed in as {account}.": "В прошлый раз вход был выполнен как {account}.",
@@ -4986,18 +4987,44 @@ export const ru: PhraseCatalog = {
   "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "Версия {version} старее, чем нужно SpecWithCode. Обновите там, где устанавливали.",
   "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "Копия SpecWithCode имеет версию {version}. Один клик заменит её версией, которую использует этот релиз.",
   "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "Не установлено. Один клик установит вместе с Node.js в собственную папку SpecWithCode, без пароля администратора.",
+  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
+    "GitHub Copilot CLI работает на Node.js. После установки войдите снова.",
+  "Plans and tracks work in SpecWeave projects.":
+    "Планирует и отслеживает работу в проектах SpecWeave.",
+  "Recommended. Plans and tracks work in SpecWeave projects.":
+    "Рекомендуется. Планирует и отслеживает работу в проектах SpecWeave.",
+  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.":
+    "Версия {version} старее, чем нужно SpecWeave и Copilot (Node.js 20 или новее). Обновите там, где устанавливали.",
+  "Version {version} is older than SpecWithCode needs. Update it where you installed it.":
+    "Версия {version} старее, чем нужно SpecWithCode. Обновите там, где устанавливали.",
+  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.":
+    "Копия SpecWithCode имеет версию {version}. Один клик заменит её версией, которую использует этот релиз.",
+  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.":
+    "Не установлено. Один клик установит вместе с Node.js в собственную папку SpecWithCode, без пароля администратора.",
   "Update {tool}": "Обновить {tool}",
-  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.": "После обновления до {version} SpecWithCode проверит их снова, когда на этой машине не будет идущей работы.",
-  "After the update to {version}, an install did not finish: {detail}": "После обновления до {version} одна установка не завершилась: {detail}",
-  "After the update to {version}, SpecWithCode installed {tools}.": "После обновления до {version} SpecWithCode установил {tools}.",
-  "Git, Node.js, SpecWeave and GitHub CLI are ready.": "Git, Node.js, SpecWeave и GitHub CLI готовы.",
+  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.":
+    "После обновления до {version} SpecWithCode проверит их снова, когда на этой машине не будет идущей работы.",
+  "After the update to {version}, an install did not finish: {detail}":
+    "После обновления до {version} одна установка не завершилась: {detail}",
+  "After the update to {version}, SpecWithCode installed {tools}.":
+    "После обновления до {version} SpecWithCode установил {tools}.",
+  "Git, Node.js, SpecWeave and GitHub CLI are ready.":
+    "Git, Node.js, SpecWeave и GitHub CLI готовы.",
   "Git, Node.js and SpecWeave are ready.": "Git, Node.js и SpecWeave готовы.",
-  "{count} tools are missing or out of date on this machine.": "Инструментов отсутствует или устарело на этой машине: {count}.",
+  "{count} tools are missing or out of date on this machine.":
+    "Инструментов отсутствует или устарело на этой машине: {count}.",
   "Install everything missing": "Установить всё недостающее",
   "Already on {environmentLabel}": "Уже на {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot в VS Code",
-  "GitHub CLI signed in as {account} on {host}": "GitHub CLI: вход выполнен как {account} на {host}",
-  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.": "У Copilot CLI свой вход. Войдите один раз с тем же аккаунтом; код уйдёт на {host}.",
-  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.": "У Copilot CLI свой вход, и SpecWithCode никогда не копирует вход другого приложения. Войдите один раз с тем же аккаунтом.",
+  "GitHub CLI signed in as {account} on {host}":
+    "GitHub CLI: вход выполнен как {account} на {host}",
+  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
+    "У Copilot CLI свой вход. Войдите один раз с тем же аккаунтом; код уйдёт на {host}.",
+  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.":
+    "У Copilot CLI свой вход, и SpecWithCode никогда не копирует вход другого приложения. Войдите один раз с тем же аккаунтом.",
   "Machine basics": "Основа машины",
+  "SpecWithCode's copy is version {version}, older than this release uses.":
+    "Копия SpecWithCode имеет версию {version}, старее той, что использует этот релиз.",
+  "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
+    "Инструменты остаются на каждой машине и не копируются. {machineName} ещё нужны некоторые из них, чтобы агенты могли работать там над этим проектом.",
 };

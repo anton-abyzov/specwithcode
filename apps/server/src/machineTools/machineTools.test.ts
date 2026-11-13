@@ -26,6 +26,7 @@ import {
   managedNodeDir,
   managedToolDirs,
   toolPlatformKey,
+  swapManagedPathDirs,
   withPathDirs,
   type MachineToolsContext,
 } from "./machineTools.ts";
@@ -108,6 +109,41 @@ describe("toolPlatformKey", () => {
     expect(managedGhDir("/home/ada/.specwithcode", "linux-arm64")).toBe(
       `/home/ada/.specwithcode/tools/gh/${GH_VERSION}/bin`,
     );
+  });
+});
+
+describe("swapManagedPathDirs", () => {
+  it("puts a new pin where the app's older copy of that tool was, and leaves the rest", () => {
+    const old = "/h/tools/specweave/3.1.21/bin";
+    const node = "/h/runtime/node/node-v22.19.0-darwin-arm64/bin";
+    expect(
+      swapManagedPathDirs(
+        `/usr/bin:${old}:${node}:/bin`,
+        ["/h/tools/specweave/3.1.22/bin"],
+        "/h",
+        "darwin",
+      ),
+    ).toBe(`/usr/bin:/h/tools/specweave/3.1.22/bin:${node}:/bin`);
+    // Nothing older on the PATH: it goes after the person's own folders.
+    expect(swapManagedPathDirs("/usr/bin", ["/h/tools/gh/2.102.0/bin"], "/h", "linux")).toBe(
+      "/usr/bin:/h/tools/gh/2.102.0/bin",
+    );
+    expect(
+      swapManagedPathDirs(
+        "/usr/bin:/h/tools/gh/2.102.0/bin",
+        ["/h/tools/gh/2.102.0/bin"],
+        "/h",
+        "linux",
+      ),
+    ).toBeUndefined();
+    expect(
+      swapManagedPathDirs(
+        "C:\\Windows;C:\\H\\tools\\specweave\\3.1.21",
+        ["C:\\H\\tools\\specweave\\3.1.22"],
+        "c:\\h",
+        "win32",
+      ),
+    ).toBe("C:\\Windows;C:\\H\\tools\\specweave\\3.1.22");
   });
 });
 
@@ -348,6 +384,16 @@ describe.runIf(posix)("machine readiness", () => {
       managed: false,
       canInstall: false,
     });
+    // SpecWeave would run on that Node.js, so it is not offered, and an install refuses.
+    expect(check.tools?.find((tool) => tool.tool === "specweave")?.canInstall).toBe(false);
+    const error = await installMachineTool(
+      context(hostWith({ path: node }).host, home),
+      "specweave",
+      "present",
+      () => {},
+    ).catch((caught: unknown) => caught);
+    expect((error as MachineToolInstallError).code).toBe("unsupported");
+    expect((error as Error).message).toContain("Node.js 20 or newer");
   });
 
   it("keeps the app's older copy on the PATH until the current pin is installed", async () => {
@@ -395,11 +441,13 @@ describe.runIf(posix)("machine readiness", () => {
     const node = await fakeNodeWithNpm(NODE_VERSION);
     const real = hostWith({ path: node }).host;
     const calls: Array<ReadonlyArray<string>> = [];
+    const envs: Array<string | undefined> = [];
     const host: ProvisionHost = {
       ...real,
       exec: async (command, args, options) => {
         if (args[1] !== "install") return real.exec(command, args, options);
         calls.push(args);
+        envs.push(options?.env?.PATH ?? options?.env?.Path);
         const staging = args[args.indexOf("--prefix") + 1]!;
         const pkg = NodePath.join(staging, "lib", "node_modules", "specweave");
         await NodeFSP.mkdir(NodePath.join(pkg, "bin"), { recursive: true });
@@ -422,6 +470,10 @@ describe.runIf(posix)("machine readiness", () => {
     );
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain(`specweave@${SPECWEAVE_VERSION}`);
+    // npm's install scripts find node, and `sh` even when the server's PATH is empty.
+    const pathDirs = envs[0]?.split(NodePath.delimiter) ?? [];
+    expect(pathDirs[0]?.startsWith(node)).toBe(true);
+    if (process.platform !== "win32") expect(pathDirs).toContain("/bin");
     // npm's own script runs with the found Node.js; no npm.cmd and no shell.
     expect(calls[0]![0]).toMatch(/npm-cli\.js$/u);
     expect(outcome.pathDirs).toEqual([managedSpecweaveDir(home, HOST_PLATFORM)]);

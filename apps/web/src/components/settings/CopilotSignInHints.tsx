@@ -35,7 +35,9 @@ export function CopilotSignInHints({
 }) {
   const tx = useTx();
   const needsNode = copilotNeedsNode(message);
-  const enterprise = found?.ghAccounts.filter((account) => account.host !== "github.com") ?? [];
+  // The host device sign-in goes to: one enterprise host and no other, as on the server.
+  const hosts = [...new Set(found?.ghAccounts.map((account) => account.host) ?? [])];
+  const enterprise = hosts.length === 1 && hosts[0] !== "github.com" ? hosts : [];
   if (
     !needsNode &&
     (found === undefined || (!found.vscodeCopilot && found.ghAccounts.length === 0))
@@ -78,7 +80,7 @@ export function CopilotSignInHints({
             {enterprise.length === 1
               ? tx(
                   "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.",
-                  { host: enterprise[0]!.host },
+                  { host: enterprise[0]! },
                 )
               : tx(
                   "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.",

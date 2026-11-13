@@ -20,6 +20,7 @@ import {
   existingManagedToolDirs,
   installMachineTool,
   runsOnGlibc,
+  swapManagedPathDirs,
   type InstallLog,
   type InstallOutcome,
   type MachineToolsContext,
@@ -30,12 +31,16 @@ import {
  * Puts the folders the app installed tools into on this server's PATH, after
  * the person's own folders. Agents, terminals and Git spawns inherit it.
  */
-export function addToServerPath(dirs: ReadonlyArray<string>): void {
+export function addToServerPath(dirs: ReadonlyArray<string>, home?: string): void {
   const env = process.env;
   // oxlint-disable-next-line studio/no-global-process-runtime -- the server's own PATH separator.
   const platform = process.platform;
   const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
-  const next = withPathDirs(env[key], dirs, platform);
+  // A new pin takes the place of the app's older copy, so the update shows at once.
+  const next =
+    home === undefined
+      ? withPathDirs(env[key], dirs, platform)
+      : swapManagedPathDirs(env[key], dirs, home, platform);
   if (next !== undefined) env[key] = next;
 }
 
@@ -62,7 +67,7 @@ export function startInstall(
     installing = null;
   };
   const run = installMachineTool(ctx, tool, git, log).then((outcome) => {
-    addToServerPath(outcome.pathDirs);
+    addToServerPath(outcome.pathDirs, ctx.home);
     return outcome;
   });
   void run.then(release, release);

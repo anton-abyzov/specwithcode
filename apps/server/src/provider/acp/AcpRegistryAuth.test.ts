@@ -789,10 +789,7 @@ it.effect("shows existing sign-ins and signs in against the one enterprise gh ho
   Effect.gen(function* () {
     const existing = {
       vscodeCopilot: true,
-      ghAccounts: [
-        { host: "github.com", account: "octocat" },
-        { host: "aaby.ghe.com", account: "anton_aaby" },
-      ],
+      ghAccounts: [{ host: "aaby.ghe.com", account: "anton_aaby" }],
     };
     const h = yield* makeHarness(
       copilotMethod,

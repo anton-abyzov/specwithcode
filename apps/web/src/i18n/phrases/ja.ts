@@ -4953,7 +4953,8 @@ export const ja: PhraseCatalog = {
     "未インストールです。公式サイトから入手するか、このマシンを管理できる人にここからインストールしてもらってください。",
   "Browse…": "参照…",
   "Add to this machine…": "このマシンに追加…",
-  "Runs on {machine}. No copy on this device.": "{machine} で実行されます。このデバイスにはコピーがありません。",
+  "Runs on {machine}. No copy on this device.":
+    "{machine} で実行されます。このデバイスにはコピーがありません。",
   "Agent status": "エージェントの状態",
   "Last time it was not signed in.": "前回はサインインしていませんでした。",
   "Last time it was signed in as {account}.": "前回は {account} としてサインインしていました。",
@@ -4988,18 +4989,44 @@ export const ja: PhraseCatalog = {
   "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "バージョン {version} は SpecWithCode に必要なバージョンより古いです。インストールした場所で更新してください。",
   "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "SpecWithCode のコピーはバージョン {version} です。ワンクリックでこのリリースが使うバージョンに置き換えます。",
   "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "未インストール。ワンクリックで Node.js と一緒に SpecWithCode 専用フォルダーにインストールします。管理者パスワードは不要です。",
+  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
+    "GitHub Copilot CLI は Node.js で動作します。インストール後、もう一度サインインしてください。",
+  "Plans and tracks work in SpecWeave projects.":
+    "SpecWeave プロジェクトの作業を計画・追跡します。",
+  "Recommended. Plans and tracks work in SpecWeave projects.":
+    "推奨。SpecWeave プロジェクトの作業を計画・追跡します。",
+  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.":
+    "バージョン {version} は SpecWeave と Copilot に必要なバージョン (Node.js 20 以降) より古いです。インストールした場所で更新してください。",
+  "Version {version} is older than SpecWithCode needs. Update it where you installed it.":
+    "バージョン {version} は SpecWithCode に必要なバージョンより古いです。インストールした場所で更新してください。",
+  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.":
+    "SpecWithCode のコピーはバージョン {version} です。ワンクリックでこのリリースが使うバージョンに置き換えます。",
+  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.":
+    "未インストール。ワンクリックで Node.js と一緒に SpecWithCode 専用フォルダーにインストールします。管理者パスワードは不要です。",
   "Update {tool}": "{tool} を更新",
-  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.": "{version} への更新後、このマシンで作業が実行されていないときに SpecWithCode がこれらを再確認します。",
-  "After the update to {version}, an install did not finish: {detail}": "{version} への更新後、インストールが完了しませんでした: {detail}",
-  "After the update to {version}, SpecWithCode installed {tools}.": "{version} への更新後、SpecWithCode が {tools} をインストールしました。",
-  "Git, Node.js, SpecWeave and GitHub CLI are ready.": "Git、Node.js、SpecWeave、GitHub CLI の準備ができています。",
+  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.":
+    "{version} への更新後、このマシンで作業が実行されていないときに SpecWithCode がこれらを再確認します。",
+  "After the update to {version}, an install did not finish: {detail}":
+    "{version} への更新後、インストールが完了しませんでした: {detail}",
+  "After the update to {version}, SpecWithCode installed {tools}.":
+    "{version} への更新後、SpecWithCode が {tools} をインストールしました。",
+  "Git, Node.js, SpecWeave and GitHub CLI are ready.":
+    "Git、Node.js、SpecWeave、GitHub CLI の準備ができています。",
   "Git, Node.js and SpecWeave are ready.": "Git、Node.js、SpecWeave の準備ができています。",
-  "{count} tools are missing or out of date on this machine.": "このマシンで {count} 個のツールが不足しているか古くなっています。",
+  "{count} tools are missing or out of date on this machine.":
+    "このマシンで {count} 個のツールが不足しているか古くなっています。",
   "Install everything missing": "不足しているものをすべてインストール",
   "Already on {environmentLabel}": "{environmentLabel} にすでにあります",
   "GitHub Copilot in VS Code": "VS Code の GitHub Copilot",
-  "GitHub CLI signed in as {account} on {host}": "GitHub CLI は {host} で {account} としてサインイン済み",
-  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.": "Copilot CLI は独自のサインインを使います。同じアカウントで一度サインインしてください。コードは {host} に送られます。",
-  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.": "Copilot CLI は独自のサインインを使い、SpecWithCode が他のアプリのサインインをコピーすることはありません。同じアカウントで一度サインインしてください。",
+  "GitHub CLI signed in as {account} on {host}":
+    "GitHub CLI は {host} で {account} としてサインイン済み",
+  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
+    "Copilot CLI は独自のサインインを使います。同じアカウントで一度サインインしてください。コードは {host} に送られます。",
+  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.":
+    "Copilot CLI は独自のサインインを使い、SpecWithCode が他のアプリのサインインをコピーすることはありません。同じアカウントで一度サインインしてください。",
   "Machine basics": "マシンの基本ツール",
+  "SpecWithCode's copy is version {version}, older than this release uses.":
+    "SpecWithCode のコピーはバージョン {version} で、このリリースが使うものより古いです。",
+  "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
+    "ツールは各マシンに残り、コピーされません。{machineName} でエージェントがこのプロジェクトを扱うには、まだいくつか必要です。",
 };

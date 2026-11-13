@@ -4977,7 +4977,8 @@ export const es: PhraseCatalog = {
     "No está instalado. Descárgalo de su propio sitio o pide a alguien que pueda mantener esta máquina que lo instale desde aquí.",
   "Browse…": "Explorar…",
   "Add to this machine…": "Añadir a este equipo…",
-  "Runs on {machine}. No copy on this device.": "Se ejecuta en {machine}. No hay copia en este dispositivo.",
+  "Runs on {machine}. No copy on this device.":
+    "Se ejecuta en {machine}. No hay copia en este dispositivo.",
   "Agent status": "Estado del agente",
   "Last time it was not signed in.": "La última vez no tenía la sesión iniciada.",
   "Last time it was signed in as {account}.":
@@ -5013,18 +5014,44 @@ export const es: PhraseCatalog = {
   "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "La versión {version} es más antigua de lo que necesita SpecWithCode. Actualízalo donde lo instalaste.",
   "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "La copia de SpecWithCode tiene la versión {version}. Con un clic se reemplaza por la versión que usa esta release.",
   "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "No instalado. Con un clic se instala con Node.js en la carpeta propia de SpecWithCode, sin contraseña de administrador.",
+  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
+    "GitHub Copilot CLI funciona con Node.js. Cuando esté instalado, vuelve a iniciar sesión.",
+  "Plans and tracks work in SpecWeave projects.":
+    "Planifica y sigue el trabajo en proyectos de SpecWeave.",
+  "Recommended. Plans and tracks work in SpecWeave projects.":
+    "Recomendado. Planifica y sigue el trabajo en proyectos de SpecWeave.",
+  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.":
+    "La versión {version} es más antigua de lo que necesitan SpecWeave y Copilot (Node.js 20 o posterior). Actualízalo donde lo instalaste.",
+  "Version {version} is older than SpecWithCode needs. Update it where you installed it.":
+    "La versión {version} es más antigua de lo que necesita SpecWithCode. Actualízalo donde lo instalaste.",
+  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.":
+    "La copia de SpecWithCode tiene la versión {version}. Con un clic se reemplaza por la versión que usa esta release.",
+  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.":
+    "No instalado. Con un clic se instala con Node.js en la carpeta propia de SpecWithCode, sin contraseña de administrador.",
   "Update {tool}": "Actualizar {tool}",
-  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.": "Tras la actualización a {version}, SpecWithCode vuelve a comprobarlos cuando no haya trabajo en marcha en este equipo.",
-  "After the update to {version}, an install did not finish: {detail}": "Tras la actualización a {version}, una instalación no terminó: {detail}",
-  "After the update to {version}, SpecWithCode installed {tools}.": "Tras la actualización a {version}, SpecWithCode instaló {tools}.",
-  "Git, Node.js, SpecWeave and GitHub CLI are ready.": "Git, Node.js, SpecWeave y GitHub CLI están listos.",
+  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.":
+    "Tras la actualización a {version}, SpecWithCode vuelve a comprobarlos cuando no haya trabajo en marcha en este equipo.",
+  "After the update to {version}, an install did not finish: {detail}":
+    "Tras la actualización a {version}, una instalación no terminó: {detail}",
+  "After the update to {version}, SpecWithCode installed {tools}.":
+    "Tras la actualización a {version}, SpecWithCode instaló {tools}.",
+  "Git, Node.js, SpecWeave and GitHub CLI are ready.":
+    "Git, Node.js, SpecWeave y GitHub CLI están listos.",
   "Git, Node.js and SpecWeave are ready.": "Git, Node.js y SpecWeave están listos.",
-  "{count} tools are missing or out of date on this machine.": "Faltan {count} herramientas o están desactualizadas en este equipo.",
+  "{count} tools are missing or out of date on this machine.":
+    "Faltan {count} herramientas o están desactualizadas en este equipo.",
   "Install everything missing": "Instalar todo lo que falta",
   "Already on {environmentLabel}": "Ya está en {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot en VS Code",
-  "GitHub CLI signed in as {account} on {host}": "GitHub CLI con sesión iniciada como {account} en {host}",
-  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.": "Copilot CLI tiene su propio inicio de sesión. Inicia sesión una vez con la misma cuenta; el código va a {host}.",
-  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.": "Copilot CLI tiene su propio inicio de sesión, y SpecWithCode nunca copia el de otra app. Inicia sesión una vez con la misma cuenta.",
+  "GitHub CLI signed in as {account} on {host}":
+    "GitHub CLI con sesión iniciada como {account} en {host}",
+  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
+    "Copilot CLI tiene su propio inicio de sesión. Inicia sesión una vez con la misma cuenta; el código va a {host}.",
+  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.":
+    "Copilot CLI tiene su propio inicio de sesión, y SpecWithCode nunca copia el de otra app. Inicia sesión una vez con la misma cuenta.",
   "Machine basics": "Lo básico del equipo",
+  "SpecWithCode's copy is version {version}, older than this release uses.":
+    "La copia de SpecWithCode es la versión {version}, anterior a la que usa esta versión.",
+  "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
+    "Las herramientas se quedan en cada equipo y no se copian. {machineName} aún necesita algunas antes de que los agentes puedan trabajar allí en este proyecto.",
 };

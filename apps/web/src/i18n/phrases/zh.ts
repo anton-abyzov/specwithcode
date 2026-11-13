@@ -4791,24 +4791,42 @@ export const zh: PhraseCatalog = {
   "Allow {machine} again for": "再次允许 {machine} 的时长",
   "How long {machine} may start work here": "{machine} 可在此启动工作的时长",
   "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.": "GitHub Copilot CLI 依赖 Node.js 运行。安装完成后请重新登录。",
+  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
+    "GitHub Copilot CLI 依赖 Node.js 运行。安装完成后请重新登录。",
   "Plans and tracks work in SpecWeave projects.": "在 SpecWeave 项目中规划和跟踪工作。",
-  "Recommended. Plans and tracks work in SpecWeave projects.": "推荐。在 SpecWeave 项目中规划和跟踪工作。",
-  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.": "版本 {version} 低于 SpecWeave 和 Copilot 的要求（Node.js 20 或更高）。请在安装它的地方更新。",
-  "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "版本 {version} 低于 SpecWithCode 的要求。请在安装它的地方更新。",
-  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "SpecWithCode 的副本是 {version} 版。点一下即可替换为此版本发布所用的版本。",
-  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "未安装。点一下即可连同 Node.js 安装到 SpecWithCode 自己的文件夹，无需管理员密码。",
+  "Recommended. Plans and tracks work in SpecWeave projects.":
+    "推荐。在 SpecWeave 项目中规划和跟踪工作。",
+  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.":
+    "版本 {version} 低于 SpecWeave 和 Copilot 的要求（Node.js 20 或更高）。请在安装它的地方更新。",
+  "Version {version} is older than SpecWithCode needs. Update it where you installed it.":
+    "版本 {version} 低于 SpecWithCode 的要求。请在安装它的地方更新。",
+  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.":
+    "SpecWithCode 的副本是 {version} 版。点一下即可替换为此版本发布所用的版本。",
+  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.":
+    "未安装。点一下即可连同 Node.js 安装到 SpecWithCode 自己的文件夹，无需管理员密码。",
   "Update {tool}": "更新 {tool}",
-  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.": "更新到 {version} 后，SpecWithCode 会在这台电脑没有运行中的工作时重新检查这些工具。",
-  "After the update to {version}, an install did not finish: {detail}": "更新到 {version} 后，有一项安装未完成：{detail}",
-  "After the update to {version}, SpecWithCode installed {tools}.": "更新到 {version} 后，SpecWithCode 已安装 {tools}。",
-  "Git, Node.js, SpecWeave and GitHub CLI are ready.": "Git、Node.js、SpecWeave 和 GitHub CLI 已就绪。",
+  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.":
+    "更新到 {version} 后，SpecWithCode 会在这台电脑没有运行中的工作时重新检查这些工具。",
+  "After the update to {version}, an install did not finish: {detail}":
+    "更新到 {version} 后，有一项安装未完成：{detail}",
+  "After the update to {version}, SpecWithCode installed {tools}.":
+    "更新到 {version} 后，SpecWithCode 已安装 {tools}。",
+  "Git, Node.js, SpecWeave and GitHub CLI are ready.":
+    "Git、Node.js、SpecWeave 和 GitHub CLI 已就绪。",
   "Git, Node.js and SpecWeave are ready.": "Git、Node.js 和 SpecWeave 已就绪。",
-  "{count} tools are missing or out of date on this machine.": "这台电脑上有 {count} 个工具缺失或已过期。",
+  "{count} tools are missing or out of date on this machine.":
+    "这台电脑上有 {count} 个工具缺失或已过期。",
   "Install everything missing": "安装所有缺失项",
   "Already on {environmentLabel}": "已在 {environmentLabel} 上",
   "GitHub Copilot in VS Code": "VS Code 中的 GitHub Copilot",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI 已在 {host} 上以 {account} 登录",
-  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.": "Copilot CLI 使用独立登录。请用同一账号登录一次；代码会发送到 {host}。",
-  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.": "Copilot CLI 使用独立登录，SpecWithCode 从不复制其他应用的登录。请用同一账号登录一次。",
+  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
+    "Copilot CLI 使用独立登录。请用同一账号登录一次；代码会发送到 {host}。",
+  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.":
+    "Copilot CLI 使用独立登录，SpecWithCode 从不复制其他应用的登录。请用同一账号登录一次。",
   "Machine basics": "电脑基础工具",
+  "SpecWithCode's copy is version {version}, older than this release uses.":
+    "SpecWithCode 的副本是 {version} 版，比此版本使用的旧。",
+  "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
+    "工具留在各自的电脑上，不会被复制。{machineName} 还需要一些工具，智能体才能在那里处理这个项目。",
 };

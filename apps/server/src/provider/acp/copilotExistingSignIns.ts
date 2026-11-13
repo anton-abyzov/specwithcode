@@ -89,14 +89,17 @@ export function parseGhAuthStatus(text: string): ReadonlyArray<CopilotGhAccount>
   return accounts;
 }
 
-/** The enterprise host to sign in against: only when exactly one non-github.com host is signed in. */
+/**
+ * The enterprise host to sign in against: only when gh is signed in to that
+ * one host and nothing else. With github.com too, the Copilot seat may be on
+ * either, so sign-in keeps Copilot CLI's default.
+ */
 export function copilotEnterpriseHost(
   accounts: ReadonlyArray<CopilotGhAccount>,
 ): string | undefined {
-  const hosts = new Set(
-    accounts.map((account) => account.host).filter((host) => host !== "github.com"),
-  );
-  return hosts.size === 1 ? hosts.values().next().value : undefined;
+  const hosts = new Set(accounts.map((account) => account.host));
+  const only = hosts.size === 1 ? hosts.values().next().value : undefined;
+  return only === "github.com" ? undefined : only;
 }
 
 /** Never fails: anything it cannot check counts as "not found". */

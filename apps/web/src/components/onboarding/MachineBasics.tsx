@@ -137,6 +137,17 @@ export function MachineToolRow({
       <span className="text-warning-foreground">
         {tx("The install ended with an error. Its log is below.")}
       </span>
+    ) : updatable ? (
+      readOnly ? (
+        tx("SpecWithCode's copy is version {version}, older than this release uses.", {
+          version: version ?? "?",
+        })
+      ) : (
+        tx(
+          "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.",
+          { version: version ?? "?" },
+        )
+      )
     ) : readOnly && tool === "git" && os === "darwin" ? (
       tx("Not installed. Run this command in a terminal on that Mac, then press Check again.")
     ) : readOnly && linuxCommand === null ? (
@@ -155,11 +166,6 @@ export function MachineToolRow({
       tx("Not installed. Run this command in a terminal, then press Check again.")
     ) : tool === "git" ? (
       tx("Not installed. Install Git with your system's package manager, then press Check again.")
-    ) : updatable ? (
-      tx(
-        "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.",
-        { version: version ?? "?" },
-      )
     ) : tool === "specweave" && installable ? (
       tx(
         "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.",

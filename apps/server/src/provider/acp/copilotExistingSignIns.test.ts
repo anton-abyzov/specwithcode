@@ -68,8 +68,13 @@ describe("gh auth status parsing", () => {
     );
     assert.deepEqual(parseGhAuthStatus(""), []);
   });
-  it("picks a host only when exactly one enterprise host is signed in", () => {
-    assert.strictEqual(copilotEnterpriseHost(parseGhAuthStatus(NEW_WORDING)), "aaby.ghe.com");
+  it("picks a host only when gh is signed in to one enterprise host and nothing else", () => {
+    // Signed in to github.com as well: the Copilot seat may be on either.
+    assert.isUndefined(copilotEnterpriseHost(parseGhAuthStatus(NEW_WORDING)));
+    assert.strictEqual(
+      copilotEnterpriseHost([{ host: "aaby.ghe.com", account: "anton_aaby" }]),
+      "aaby.ghe.com",
+    );
     assert.isUndefined(copilotEnterpriseHost([{ host: "github.com", account: "a" }]));
     assert.isUndefined(
       copilotEnterpriseHost([

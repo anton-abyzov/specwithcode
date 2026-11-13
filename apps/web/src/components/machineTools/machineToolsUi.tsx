@@ -164,9 +164,14 @@ export function useMachineTools(environmentId: EnvironmentId, enabled = true) {
   // Install everything: one tool after another, each from a fresh check, until
   // one fails or the list is done. A closed view stops the queue, not the install.
   const [queue, setQueue] = useState<ReadonlyArray<MachineReadinessToolId>>([]);
-  const startAll = useCallback((tools: ReadonlyArray<MachineReadinessToolId>) => {
-    setQueue(tools);
-  }, []);
+  const startAll = useCallback(
+    (tools: ReadonlyArray<MachineReadinessToolId>) => {
+      // An earlier install's ending is not this queue's: a failed Node.js must not stop it.
+      if (install.status !== "running") setInstall(IDLE_MACHINE_TOOL_INSTALL);
+      setQueue(tools);
+    },
+    [install.status, setInstall],
+  );
   const queued = queue[0];
   useEffect(() => {
     if (queued === undefined || install.status === "running") return;

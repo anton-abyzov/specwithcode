@@ -159,9 +159,14 @@ export async function installSpecweave<C extends SpecweaveInstallContext>(
       {
         timeoutMs: 10 * 60_000,
         onLine: log,
-        // npm's lifecycle scripts look for `node` on the PATH.
+        // npm's lifecycle scripts look for `node` on the PATH, and run through
+        // `sh` outside Windows, which a service's narrow PATH may not reach.
         env: {
-          [pathKey]: [path.dirname(node), host.env[pathKey] ?? ""]
+          [pathKey]: [
+            path.dirname(node),
+            host.env[pathKey] ?? "",
+            ...(host.platform === "win32" ? [] : ["/usr/bin", "/bin"]),
+          ]
             .filter((entry) => entry !== "")
             .join(delimiter),
         },
