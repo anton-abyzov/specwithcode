@@ -41,9 +41,12 @@ function measurePicker(input: { clientWidth: number; flexGrow: string; maxWidth?
 
 afterEach(() => vi.unstubAllGlobals());
 
-function measureWithMachine(chipWidth: number, nameWidth = 0) {
+function measureWithMachine(chipWidth: number, name?: { shown: number; full: number }) {
   const box = (width: number) => ({ getBoundingClientRect: () => ({ width }) });
-  const chip = { ...box(chipWidth), querySelector: () => (nameWidth > 0 ? box(nameWidth) : null) };
+  const nameBox = name
+    ? { ...box(name.shown), clientWidth: name.shown, scrollWidth: name.full }
+    : null;
+  const chip = { ...box(chipWidth), querySelector: () => nameBox };
   const picker = { ...box(80), querySelector: () => null, querySelectorAll: () => [] };
   const nodes: Record<string, unknown> = {
     "[data-chat-provider-model-picker]": picker,
@@ -62,13 +65,24 @@ function measureWithMachine(chipWidth: number, nameWidth = 0) {
 }
 
 describe("measureRestingComposerControls", () => {
-  it("counts the machine chip at its icon, so its name gives way before any control folds", () => {
-    // A 90px chip whose name takes 56px plus the chip's 4px gap: 30px of icon and padding.
-    const shrinkable = measureWithMachine(90, 56);
-    expect(shrinkable.naturalFixedWidth).toBe(80 + 34 + 5);
-    // At 280px a chip counted whole folds a control; counted at its icon, nothing folds.
-    expect(resolveRestingComposerControlsLayout({ ...shrinkable, hostWidth: 280 })).toMatchObject({
-      hiddenCount: 0,
+  it("counts the machine chip with its whole name, so a control folds before the name is cut", () => {
+    // A 90px chip showing 56px of a 120px "Runs on <machine>": 64px of it is cut.
+    const cut = measureWithMachine(90, { shown: 56, full: 120 });
+    expect(cut.naturalFixedWidth).toBe(80 + 158 + 5);
+    // At 380px the whole chip, the model and one 140px control do not fit: the control folds.
+    expect(resolveRestingComposerControlsLayout({ ...cut, hostWidth: 380 })).toMatchObject({
+      hiddenCount: 1,
+      visible: true,
+    });
+    // A name that is not cut counts as the chip's own width.
+    expect(measureWithMachine(90, { shown: 56, full: 56 }).naturalFixedWidth).toBe(80 + 94 + 5);
+  });
+
+  it("keeps the machine and the model when only the machine's short label fits", () => {
+    // At its smallest the chip is its icon and padding: 90px less the 56px name and its gap.
+    const cut = measureWithMachine(90, { shown: 56, full: 120 });
+    expect(cut.minimumFixedWidth).toBe(52 + 34 + 5);
+    expect(resolveRestingComposerControlsLayout({ ...cut, hostWidth: 200 })).toMatchObject({
       visible: true,
     });
   });

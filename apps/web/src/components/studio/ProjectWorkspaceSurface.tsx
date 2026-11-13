@@ -97,7 +97,12 @@ import {
   hostDisconnectedLabel,
   projectAdmissionReason,
 } from "../../studio/projectWorkspaceModel";
-import { modelLabel, THREAD_TONE_LABELS, threadTone } from "../../studio/shellModel";
+import {
+  modelLabel,
+  THREAD_TONE_LABELS,
+  threadTone,
+  type ThreadTone,
+} from "../../studio/shellModel";
 import { isAutomatedMember } from "../../studio/projectListVisibility";
 import {
   projectNotificationLevel,
@@ -191,7 +196,6 @@ import { useTx } from "../../i18n";
 import { type OrchestratorCopy, workersOnlyProblem } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
-import { useClaimWindowMachine } from "../../studio/windowMachine";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
@@ -215,6 +219,8 @@ const QUEUED_NOTICE = "Queued for the coordinator.";
 const SENT_WITH_CONTEXT_NOTICE = "Sent to the coordinator with this thread as context.";
 /** Receipts for a send; the live working line replaces them while the coordinator runs. */
 const SEND_NOTICES: ReadonlySet<string> = new Set([QUEUED_NOTICE, SENT_WITH_CONTEXT_NOTICE]);
+/** Run states the coordinator's status says in words: the ones that need the person. */
+const STATE_WORDS: ReadonlySet<ThreadTone> = new Set<ThreadTone>(["waiting", "failed"]);
 
 /**
  * The group a project route names. Before a checkout's repository is known its
@@ -290,8 +296,6 @@ export function ProjectWorkspaceSurface({
   const environment = useEnvironment(project.environmentId);
   const machineName = useMachineNickname(project.environmentId, environment?.label);
   const machineIdentity = useMachineIdentity(project.environmentId, environment?.label);
-  // The window's top edge follows the machine this coordinator runs on.
-  useClaimWindowMachine(project.environmentId, "project");
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canOperate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
   // "Read-only" only once the host has answered; before that the grant is still loading.
@@ -502,6 +506,12 @@ export function ProjectWorkspaceSurface({
   });
   // A thread renames on its own machine, which need not be the viewed project's.
   const selectedThreadEnvironment = useEnvironment(selectedThread?.environmentId ?? null);
+  // Each pane wears the machine that runs it on its leading edge: the coordinator's here,
+  // the open thread's beside it, so two machines on screen never share one color.
+  const selectedThreadMachine = useMachineIdentity(
+    selectedThread?.environmentId ?? null,
+    selectedThreadEnvironment?.label,
+  );
   const canOperateSelectedThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -1690,7 +1700,8 @@ export function ProjectWorkspaceSurface({
         >
           <section
             ref={coordinatorPaneRef}
-            className="project-coordinator sws-coordinator"
+            className="project-coordinator sws-coordinator machine-pane"
+            {...machineColorProps(machineIdentity)}
             aria-label={machinePrivate ? "Percy" : "Project coordinator"}
             data-project-pane="coordinator"
           >
@@ -2043,6 +2054,9 @@ export function ProjectWorkspaceSurface({
                           : null
                       }
                     />
+                    {/* After the model, at the row's end: voice and the run state are icons,
+                        so the machine and the model keep the room. */}
+                    <span className="sws-composer-aside" data-composer-aside="">
                     <ComposerVoiceMenu
                       dictation={dictation}
                       call={voiceCall}
@@ -2059,8 +2073,8 @@ export function ProjectWorkspaceSurface({
                             : attention && chipOpens === "coordinator-review"
                               ? `${say(attention.message)} Review here`
                               : machinePrivate
-                                ? "Percy's status. Show its latest message"
-                                : "Coordinator status. Show its latest message"
+                                ? `${THREAD_TONE_LABELS[coordinatorTone]}. Percy's status: show its latest message`
+                                : `${THREAD_TONE_LABELS[coordinatorTone]}. Coordinator status: show its latest message`
                         }
                       >
                         <button
@@ -2077,7 +2091,14 @@ export function ProjectWorkspaceSurface({
                           }
                         >
                           <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
-                          {THREAD_TONE_LABELS[coordinatorTone]}
+                          {/* Words only when it needs the person; otherwise the dot and its
+                              tooltip say it, and the composer's line keeps its room. */}
+                          <span
+                            className={STATE_WORDS.has(coordinatorTone) ? undefined : "sr-only"}
+                            data-state-label=""
+                          >
+                            {THREAD_TONE_LABELS[coordinatorTone]}
+                          </span>
                           <span className="sr-only">
                             {chipOpens === "answer"
                               ? machinePrivate
@@ -2092,6 +2113,7 @@ export function ProjectWorkspaceSurface({
                         </button>
                       </Tip>
                     ) : null}
+                    </span>
                     {machinePrivate ? null : (
                       <ProjectMachineHandoff
                         key={`${project.environmentId}:${project.id}`}
@@ -2138,7 +2160,8 @@ export function ProjectWorkspaceSurface({
           {paneOpen ? (
             <aside
               id="project-threads-pane"
-              className="project-thread-pane sws-threads"
+              className="project-thread-pane sws-threads machine-pane"
+              {...(selectedThread ? machineColorProps(selectedThreadMachine) : {})}
               aria-label={
                 selectedThread
                   ? `${say("Thread")} ${selectedThread.title}`

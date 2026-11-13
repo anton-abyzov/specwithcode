@@ -18,11 +18,13 @@ import type { ThreadMachine } from "./threadMachine";
  * The machine a sent chat runs on, first in the composer's controls, the way
  * a draft's "Run on" picker sits there before the first message. It only
  * names the machine; moving a sent chat uses Move thread in its thread menu.
- * It wears the machine's color. Its name is the first thing in the toolbar to
- * give way: it shortens to an ellipsis, and once too little of the machine's
- * name shows, the icon and words give way to its short label ("M4", "LM") in
- * the same tint, before any other control folds into the overflow menu. It
- * never shrinks to the icon alone; the tooltip and accessible name stay full.
+ * It wears the machine's color. The machine and the model are the two things
+ * the toolbar keeps readable: the chip counts at its full width, so other
+ * controls fold into the overflow menu and the composer's foot wraps onto a
+ * second row before "Runs on <machine>" is cut. Only a name too long for its
+ * cap shortens, to an ellipsis and then to its short label ("M4", "LM") in
+ * the same tint. It never shrinks to the icon alone; the tooltip and
+ * accessible name stay full.
  */
 const RUNS_ON = "Runs on ";
 
@@ -81,7 +83,6 @@ function ThreadMachineLabel({
               className={cn(
                 "max-w-48 shrink cursor-default overflow-hidden",
                 machine.color ? "machine-chip font-semibold" : "hover:bg-transparent",
-                !machine.warning && "@max-[520px]/composer-surface:max-w-26",
               )}
             />
           }

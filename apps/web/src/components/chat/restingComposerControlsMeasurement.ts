@@ -92,26 +92,36 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
 }
 
 /**
- * The machine chip and its separator, each with the gap it takes in the row. The chip
- * counts at its smallest: its name is the first thing in the row to give way (it shrinks
- * to an ellipsis, then the chip shows the machine's short label at its minimum width), so
- * no control folds into the overflow menu while the name still shows.
+ * The machine chip and its separator, each with the gap it takes in the row, at two
+ * sizes. Natural: the whole "Runs on <machine>" up to the chip's cap, so blocks fold
+ * into the overflow menu and the model's chip steps down before the machine's name is
+ * cut. Minimum: the chip at its smallest (its name gone to an ellipsis, then to the
+ * machine's short label), so a row too narrow for the whole name still shows the
+ * machine and the model instead of hiding both.
  */
-function machineChipWidth(controls: HTMLElement, gap: number): number {
-  let width = 0;
+function machineChipWidths(
+  controls: HTMLElement,
+  gap: number,
+): { natural: number; minimum: number } {
+  let natural = 0;
+  let minimum = 0;
   for (const selector of ["[data-thread-machine-chip]", "[data-thread-machine-separator]"]) {
     const element = controls.querySelector<HTMLElement>(selector);
     const outer = element ? elementOuterWidth(element) : 0;
     if (outer <= 0) continue;
+    const style = getComputedStyle(element!);
     const name = element?.querySelector?.<HTMLElement>("[data-thread-machine-name]");
+    const cut = name ? name.scrollWidth - name.clientWidth : 0;
+    const maxWidth = Number.parseFloat(style.maxWidth);
+    const whole = outer + (Number.isFinite(cut) && cut > 0 ? cut : 0);
+    natural += (Number.isFinite(maxWidth) ? Math.min(maxWidth, whole) : whole) + gap;
     const nameWidth = name
-      ? name.getBoundingClientRect().width +
-        (Number.parseFloat(getComputedStyle(element!).columnGap) || 0)
+      ? name.getBoundingClientRect().width + (Number.parseFloat(style.columnGap) || 0)
       : 0;
-    const minWidth = Number.parseFloat(getComputedStyle(element!).minWidth) || 0;
-    width += Math.max(minWidth, outer - nameWidth) + gap;
+    const minWidth = Number.parseFloat(style.minWidth) || 0;
+    minimum += Math.max(minWidth, outer - nameWidth) + gap;
   }
-  return width;
+  return { natural, minimum };
 }
 
 /**
@@ -139,8 +149,8 @@ export function measureRestingComposerControls(
   const separatorWidth = separator ? elementOuterWidth(separator) : 0;
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
-  // The machine chip gives up its name before any block folds (see machineChipWidth).
-  const machineWidth = machineChipWidth(controls, gap);
+  // The machine chip keeps its whole name while anything else can give way (see machineChipWidths).
+  const machine = machineChipWidths(controls, gap);
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   const widths = blocks.map(controlBlockWidths);
   // Controls that ride in the picker's own group, such as the coordinator's effort,
@@ -158,7 +168,7 @@ export function measureRestingComposerControls(
             elementInlineMarginWidth(picker!) +
             groupWidth +
             separatorAndGapWidth +
-            machineWidth,
+            machine.natural,
         ]),
       ) as unknown as ModelChipFitWidths)
     : null;
@@ -169,13 +179,14 @@ export function measureRestingComposerControls(
       (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
         groupWidth +
         separatorAndGapWidth +
-        machineWidth,
+        machine.natural,
+    // The row hides only when even the machine's short label and the model's icon do not fit.
     minimumFixedWidth:
-      pickerFitWidths?.icon ??
-      (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
-        groupWidth +
-        separatorAndGapWidth +
-        machineWidth,
+      (pickerFitWidths
+        ? pickerFitWidths.icon - machine.natural
+        : (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
+          groupWidth +
+          separatorAndGapWidth) + machine.minimum,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow) : 0,

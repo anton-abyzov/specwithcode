@@ -326,25 +326,8 @@ try {
         };
       });
       assert.notEqual(colors.coordinator, colors.thread, "both machines draw the same edge");
-      // One bar along the top edge, in the color of the machine the view works on; no frame.
-      const tint = await page.evaluate(() => {
-        const node = document.querySelector("[data-machine-window-tint]");
-        const style = getComputedStyle(node);
-        return {
-          color: node.getAttribute("data-machine-color"),
-          clicks: style.pointerEvents,
-          shadow: style.boxShadow,
-          height: node.getBoundingClientRect().height,
-          top: node.getBoundingClientRect().top,
-          hidden: node.getAttribute("aria-hidden"),
-        };
-      });
-      assert.equal(tint.color, "violet");
-      assert.equal(tint.clicks, "none");
-      assert.equal(tint.hidden, "true");
-      assert.equal(tint.shadow, "none", "the window edge draws a frame");
-      assert.equal(tint.height, 3);
-      assert.equal(tint.top, 0);
+      // No window-wide bar: two machines on screen cannot share one.
+      assert.equal(await page.locator("[data-machine-window-tint]").count(), 0);
       assert.equal(colors.chip, "teal");
       assert.equal(
         await page.locator("[data-send-target]").getAttribute("aria-label"),
@@ -352,14 +335,43 @@ try {
       );
       await shot(`composer-machines-${tag}`);
 
-      // A window on M4 whose coordinator runs on M1: the top edge follows the coordinator.
+      // A window on M4: the coordinator on M1 and a thread on M4, side by side. Each pane
+      // draws its own machine on its leading edge; nothing spans the window.
       await page.goto(`${origin}/?scene=window&theme=${theme}`);
       await page.locator("[data-scene=window]").waitFor();
-      assert.equal(
-        await page.locator("[data-machine-window-tint]").getAttribute("data-machine-color"),
-        "teal",
-        "the window edge should show the coordinator's machine (M1), not the window's (M4)",
+      assert.equal(await page.locator("[data-machine-window-tint]").count(), 0);
+      const panes = await page.evaluate(() =>
+        Object.fromEntries(
+          ["coordinator", "thread"].map((name) => {
+            const pane = document.querySelector(`[data-pane=${name}]`);
+            const edge = getComputedStyle(pane, "::after");
+            const box = pane.getBoundingClientRect();
+            return [
+              name,
+              {
+                color: pane.getAttribute("data-machine-color"),
+                edge: edge.backgroundColor,
+                width: edge.width,
+                height: Number.parseFloat(edge.height),
+                paneHeight: box.height,
+                clicks: edge.pointerEvents,
+              },
+            ];
+          }),
+        ),
       );
+      assert.equal(panes.coordinator.color, "teal", "the coordinator pane wears M1");
+      assert.equal(panes.thread.color, "violet", "the thread pane wears M4");
+      assert.notEqual(panes.coordinator.edge, panes.thread.edge, "both panes draw one color");
+      // A phone-width window hides the thread pane, and its edge with it.
+      for (const pane of Object.values(panes).filter((pane) => pane.paneHeight > 0)) {
+        assert.equal(pane.width, "2px");
+        assert.equal(pane.clicks, "none");
+        assert.ok(
+          Math.abs(pane.height - pane.paneHeight) < 1,
+          `the edge is ${pane.height}px tall in a ${pane.paneHeight}px pane`,
+        );
+      }
       await shot(`window-edge-${tag}`);
     }
   }

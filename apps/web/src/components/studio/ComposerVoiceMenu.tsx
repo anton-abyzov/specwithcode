@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { AudioLinesIcon, ChevronDownIcon, MicIcon, PhoneIcon, SettingsIcon } from "lucide-react";
+import { AudioLinesIcon, MicIcon, PhoneIcon, SettingsIcon } from "lucide-react";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { VoiceConsentDialog, type VoiceCall } from "./VoiceCall";
 import type { VoiceDictation } from "./VoiceDictation";
@@ -25,16 +26,43 @@ export function ComposerVoiceMenu({
   const [settingsOpen, setSettingsOpen] = useState(false);
   if (!dictation.available && !call?.available) return null;
   const active = dictation.active || call?.active;
+  const voiceTip = call?.active
+    ? "Voice: in a call"
+    : dictation.active
+      ? "Voice: dictating"
+      : dictation.available && call?.available
+        ? "Voice: dictate or call the coordinator"
+        : call?.available
+          ? "Voice: call the coordinator"
+          : `Voice: dictate into the message${shortcut ? ` (${shortcut})` : ""}`;
   return (
     <>
       <Menu>
-        <MenuTrigger
-          render={<Button variant={active ? "secondary" : "ghost"} size="sm" />}
-          aria-label="Voice"
-          data-composer-voice-menu=""
-        >
-          <AudioLinesIcon aria-hidden /> Voice <ChevronDownIcon aria-hidden />
-        </MenuTrigger>
+        {/* An icon, not a labelled menu: the composer's line keeps its room for the
+            machine and the model. The tooltip and accessible name say what it holds. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <Button
+                    variant={active ? "secondary" : "ghost"}
+                    size="icon-sm"
+                    className="shrink-0"
+                    // A menu button, not a toggle: a running dictation or call is in its name.
+                    aria-label={
+                      call?.active ? "Voice, in a call" : dictation.active ? "Voice, dictating" : "Voice"
+                    }
+                    data-composer-voice-menu=""
+                  />
+                }
+              />
+            }
+          >
+            <AudioLinesIcon aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{voiceTip}</TooltipPopup>
+        </Tooltip>
         <MenuPopup align="start">
           {dictation.available ? (
             <MenuItem

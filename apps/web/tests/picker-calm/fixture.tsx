@@ -16,7 +16,6 @@ import { ProviderModelPicker } from "../../src/components/chat/ProviderModelPick
 import { ThreadMachineComposerChip } from "../../src/components/chat/ThreadMachineComposerChip";
 import { TraitsPicker } from "../../src/components/chat/TraitsPicker";
 import { MachineChip } from "../../src/components/MachineChip";
-import { MachineWindowTint } from "../../src/components/MachineWindowTint";
 import { ProjectModelsPopover } from "../../src/components/studio/shell/ProjectModelsPopover";
 import { MachineLimitsPanel } from "../../src/components/studio/shell/ProjectUsageIndicator";
 import { ModelOrderList } from "../../src/components/settings/FallbackOrderList";
@@ -24,7 +23,6 @@ import { CollapsibleSection } from "../../src/components/settings/CollapsibleSec
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { deriveProviderInstanceEntries } from "../../src/providerInstances";
 import { machineColorProps, useMachineIdentities } from "../../src/studio/machineIdentity";
-import { useClaimWindowMachine } from "../../src/studio/windowMachine";
 import { applyThemePalette } from "../../src/themePalette";
 import "../../src/components/studio/shell/usage.css";
 import "./fixture.css";
@@ -406,17 +404,15 @@ function ModelsScene() {
 }
 
 /**
- * A window on M4 whose coordinator runs on M1: the top edge, the header chip,
- * the composer and Send all wear M1's color; pane separators stay neutral.
+ * A window on M4 whose coordinator runs on M1, with a thread on M4 open beside it: each
+ * pane wears its own machine on its leading edge, and there is no window-wide bar.
  */
 function WindowScene() {
   const identityOf = useMachineIdentities();
   const m1 = identityOf("env-m1");
   const m4 = identityOf("env-m4");
-  useClaimWindowMachine("env-m1", "project");
   return (
     <div className="flex min-h-screen text-sm" data-scene="window">
-      <MachineWindowTint />
       <nav
         aria-label="Projects"
         className="hidden w-56 shrink-0 border-e border-border p-3 md:block"
@@ -429,7 +425,11 @@ function WindowScene() {
           easychamp <MachineChip identity={m4} label="Runs on M4" />
         </p>
       </nav>
-      <main className="flex min-w-0 flex-1 flex-col gap-4 p-4">
+      <main
+        className="machine-pane flex min-w-0 flex-1 flex-col gap-4 p-4"
+        data-pane="coordinator"
+        {...machineColorProps(m1)}
+      >
         <header className="flex items-center gap-2">
           <h1 className="text-base font-semibold">specweave</h1>
           <MachineChip identity={m1} label="Runs on M1" />
@@ -458,10 +458,14 @@ function WindowScene() {
         </section>
       </main>
       <aside
-        aria-label="Threads"
-        className="hidden w-64 shrink-0 border-s border-border p-3 md:block"
+        aria-label="Thread on M4"
+        className="machine-pane hidden w-64 shrink-0 border-s border-border p-3 md:block"
+        data-pane="thread"
+        {...machineColorProps(m4)}
       >
-        <p className="font-semibold">Threads</p>
+        <p className="flex items-center gap-2 font-semibold">
+          Polish the folder picker <MachineChip identity={m4} label="Runs on M4" />
+        </p>
       </aside>
     </div>
   );
@@ -474,7 +478,6 @@ function ComposerScene() {
   const m1 = identityOf("env-m1");
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-5 p-4">
-      <MachineWindowTint />
       <h1 className="text-sm text-muted-foreground">Machine colors (fictional machines).</h1>
       <section
         aria-label="Coordinator on M4"

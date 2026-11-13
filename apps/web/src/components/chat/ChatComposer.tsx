@@ -8097,6 +8097,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
                   "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",
+                  // Narrow, the machine and the model get the first row to themselves and
+                  // voice, attach, skills and Send move under them, so neither is cut.
+                  "@max-[560px]/composer-surface:flex-wrap @max-[560px]/composer-surface:gap-y-1",
                   pendingUserInputs.length > 0 && "pt-2",
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                   showMobilePendingAnswerActions && "hidden sm:flex",
@@ -8112,6 +8115,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-footer-controls="true"
                   className={cn(
                     "relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                    "@max-[560px]/composer-surface:basis-full",
                     isComposerResting && "hidden",
                   )}
                 >
@@ -8125,7 +8129,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-primary-actions-compact={
                     isComposerPrimaryActionsCompact ? "true" : "false"
                   }
-                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2 @max-[560px]/composer-surface:ms-auto"
                 >
                   {!isComposerResting ? (
                     <ComposerVoiceMenu
