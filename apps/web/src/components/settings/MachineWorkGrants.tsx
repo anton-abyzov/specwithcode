@@ -1,11 +1,7 @@
 import { useTx } from "../../i18n";
 import { useState, type ReactNode } from "react";
 import { ArrowRightIcon, ChevronRightIcon, InfoIcon, RefreshCwIcon, RouteIcon } from "lucide-react";
-import {
-  AuthAccessWriteScope,
-  type EnvironmentId,
-  type ProjectId,
-} from "@specweave-studio/contracts";
+import { type EnvironmentId, type ProjectId } from "@specweave-studio/contracts";
 import {
   type StudioWorkGrant,
   type StudioWorkGrantDuration,
@@ -14,7 +10,6 @@ import {
   type StudioWorkGrantsSnapshot,
   type StudioWorkGrantUpdateInput,
 } from "@specweave-studio/contracts/studioFleet";
-import { requestConfirmDialog } from "../../confirmDialog";
 import {
   WORK_GRANT_DURATION_CHOICES,
   formatTime,
@@ -23,7 +18,6 @@ import {
   workGrantAllowsNoProject,
   workGrantHopPath,
   workGrantRoutinesNote,
-  workGrantMachineLabel,
   workGrantProjectsSummary,
   workGrantSummary,
   workGrantUnavailableNote,
