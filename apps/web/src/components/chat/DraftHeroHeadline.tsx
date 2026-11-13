@@ -153,7 +153,7 @@ export function DraftHeroHeadline({
     [environments],
   );
   // A machine's "No project" folder stays, as its own item; archived projects and projects
-  // a check or agent made for itself are not destinations. Aide is never offered to
+  // a check or agent made for itself are not destinations. Percy is never offered to
   // another project's draft, but a draft that already targets it keeps it as its choice.
   const projectPickerEntries = useMemo(
     () =>

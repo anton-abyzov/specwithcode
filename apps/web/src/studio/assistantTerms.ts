@@ -5,10 +5,10 @@
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import type { ThreadPaneGroup } from "./shellModel";
 
-export const ASSISTANT_COMPOSER_PLACEHOLDER = "Ask Aide anything";
+export const ASSISTANT_COMPOSER_PLACEHOLDER = "Ask Percy anything";
 
 const REPLACEMENTS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\b[Tt]he coordinator\b/g, "Aide"],
+  [/\b[Tt]he coordinator\b/g, "Percy"],
   [/\bThreads\b/g, "Topics"],
   [/\bthreads\b/g, "topics"],
   [/\bThread\b/g, "Topic"],

@@ -318,7 +318,7 @@ export function ProjectMemory({
       <h2>{personal ? "About you" : "Project memory"}</h2>
       <p className="project-muted">
         {personal
-          ? "What Aide knows about you: who you are, the people and accounts in your life, and how you like things done. It stays on this machine. Open a file to read or correct it."
+          ? "What Percy knows about you: who you are, the people and accounts in your life, and how you like things done. It stays on this machine. Open a file to read or correct it."
           : "Agents save what they learn here, one topic per file, and every thread receives MEMORY.md as the index. Open a file to read it; edits are checked against its latest version so concurrent work is never overwritten."}
       </p>
       {(memory.files.length > 8 || filter !== "" || group !== null) && (

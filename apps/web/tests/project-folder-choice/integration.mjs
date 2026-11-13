@@ -315,7 +315,7 @@ try {
     await dialog.waitFor({ state: "hidden" });
     // Once set up, the sidebar entry carries the assistant's name.
     await page
-      .getByRole("link", { name: /^Aide\b/ })
+      .getByRole("link", { name: /^Percy\b/ })
       .first()
       .click();
     await page.waitForURL(/projects/);

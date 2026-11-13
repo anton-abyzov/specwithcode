@@ -8,7 +8,7 @@ import SWCWire
 @Suite("Routed message display")
 struct RoutedMessageDisplayTests {
   /// `routedMessageText` in the TypeScript: what the server stores.
-  static func routedText(title: String = "Aide", threadId: String = "project-coordinator:aide", messageId: String = "m:1", note: String? = nil, words: String) -> String {
+  static func routedText(title: String = "Percy", threadId: String = "project-coordinator:aide", messageId: String = "m:1", note: String? = nil, words: String) -> String {
     func oneLine(_ text: String, _ max: Int) -> String {
       let flat = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
       return flat.count > max ? String(flat.prefix(max - 1)) + "…" : flat
@@ -22,7 +22,7 @@ struct RoutedMessageDisplayTests {
   @Test func roundTripsTheUsersWordsUnchanged() throws {
     let words = "Audit EasyChamp's signup flow.\n\nKeep the \"beta\" label."
     let parsed = try #require(RoutedMessageDisplay.parseRoutedMessage(Self.routedText(words: words)))
-    #expect(parsed == .init(assistantTitle: "Aide", threadId: "project-coordinator:aide", messageId: "m:1", note: nil, words: words))
+    #expect(parsed == .init(assistantTitle: "Percy", threadId: "project-coordinator:aide", messageId: "m:1", note: nil, words: words))
   }
 
   @Test func keepsTheAssistantsNoteOnOneBoundedLine() throws {
@@ -34,8 +34,8 @@ struct RoutedMessageDisplayTests {
   }
 
   @Test func cannotBeBrokenByQuotesInTheAssistantsName() throws {
-    let parsed = try #require(RoutedMessageDisplay.parseRoutedMessage(Self.routedText(title: "My \"Aide\"", words: "w")))
-    #expect(parsed.assistantTitle == "My 'Aide'")
+    let parsed = try #require(RoutedMessageDisplay.parseRoutedMessage(Self.routedText(title: "My \"Percy\"", words: "w")))
+    #expect(parsed.assistantTitle == "My 'Percy'")
   }
 
   @Test func ignoresTextWithoutTheHeaderIncludingAQuote() {

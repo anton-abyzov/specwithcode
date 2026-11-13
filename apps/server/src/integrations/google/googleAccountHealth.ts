@@ -53,8 +53,8 @@ export const GoogleProjectStatus = Schema.Struct({
 });
 export type GoogleProjectStatus = typeof GoogleProjectStatus.Type;
 
-/** How refusals name the caller: Aide by name, any other project as "this project". */
-const googleCallerName = (assistant: boolean) => (assistant ? "Aide" : "this project");
+/** How refusals name the caller: Percy by name, any other project as "this project". */
+const googleCallerName = (assistant: boolean) => (assistant ? "Percy" : "this project");
 
 export const googleServiceOff = (label: string, assistant: boolean, which = "") =>
   `${label} is not turned on for ${googleCallerName(assistant)}${which}. The user can turn it on under Settings > Google account.`;
@@ -106,7 +106,7 @@ export function projectGoogleStatus(input: {
           ? "scope_missing"
           : "not_checked",
       message: !allowed.has(service)
-        ? `${input.assistant === true ? "Aide has" : "This project has"} no access to this service.`
+        ? `${input.assistant === true ? "Percy has" : "This project has"} no access to this service.`
         : input.connected && !granted.has(service)
           ? "Reconnect Google and approve this service."
           : null,

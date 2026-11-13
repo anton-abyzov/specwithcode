@@ -16,7 +16,7 @@ type OrderableProject = Parameters<typeof getProjectOrderKey>[0] & {
 /**
  * Where New thread lands with no chat or project in context (Cmd+N, the
  * palette on Overview): the first project in sidebar order. A personal assistant
- * is never it, on or off: Aide has its own entry, so a new chat never opens there.
+ * is never it, on or off: Percy has its own entry, so a new chat never opens there.
  */
 export function defaultNewThreadProjectRef<T extends OrderableProject>(input: {
   readonly projects: readonly T[];

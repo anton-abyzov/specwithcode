@@ -173,8 +173,8 @@ describe("studio_project_create in a parent folder", () => {
         });
         expect(result.existing).toBeUndefined();
         // A personal assistant keeps the app's own folder.
-        yield* create({ title: "Aide", kind: "personal" });
-        expect(named[1]).toEqual({ name: "Aide", kind: "personal" });
+        yield* create({ title: "Percy", kind: "personal" });
+        expect(named[1]).toEqual({ name: "Percy", kind: "personal" });
       });
     },
   );

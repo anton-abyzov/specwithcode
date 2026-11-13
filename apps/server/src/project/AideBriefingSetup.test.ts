@@ -64,7 +64,7 @@ describe("briefingSetupStep", () => {
   });
 
   it.each<[string, Partial<BriefingSetupInput>]>([
-    ["Aide is off", { aideEnabled: false }],
+    ["Percy is off", { aideEnabled: false }],
     ["no account is connected", { google: { ...base.google, email: null } }],
     [
       "it was set up before for this account",

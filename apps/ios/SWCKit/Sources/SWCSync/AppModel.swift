@@ -27,7 +27,7 @@ public struct ThreadRef: Hashable, Sendable, Codable {
   }
 }
 
-/// Where a message goes. Aide and projects talk to their coordinator.
+/// Where a message goes. Percy and projects talk to their coordinator.
 public enum ChatTarget: Hashable, Sendable, Codable {
   case aide(ProjectRef)
   case project(ProjectRef)
@@ -516,7 +516,7 @@ public final class ChatSession: Identifiable {
   /// Opening this chat may create the project's coordinator thread.
   public var startsCoordinator = true
 
-  /// The line under a thread's title. Each machine has its own Aide, so an Aide thread names the machine it runs on.
+  /// The line under a thread's title. Each machine has its own Percy, so an Percy thread names the machine it runs on.
   public static func threadSubtitle(_ projectTitle: String, machine: String, isPersonal: Bool) -> String {
     isPersonal && !machine.isEmpty ? "\(projectTitle) · \(machine)" : projectTitle
   }
@@ -738,8 +738,8 @@ public final class AppModel {
   public var machines: [MachineSummary] = []
   /// The personal assistant project, if one exists on any machine.
   public var aide: ProjectSummary?
-  /// Whether Aide is shown: true when any machine's settings turn it on.
-  /// While false, `aide` is nil and Aide's chats are left out of every list.
+  /// Whether Percy is shown: true when any machine's settings turn it on.
+  /// While false, `aide` is nil and Percy's chats are left out of every list.
   public var aideEnabled = false
   /// Code projects across machines, pinned first, then by title.
   public var projects: [ProjectSummary] = []
@@ -750,7 +750,7 @@ public final class AppModel {
   /// True until every enabled machine has answered once (or failed).
   public var isLoading = true
   /// False while a paired machine's projects and threads have not arrived
-  /// yet, so a missing Aide or project may only be missing for now.
+  /// yet, so a missing Percy or project may only be missing for now.
   public var allShellsLoaded = true
   /// Machines whose live projects and threads have not arrived, enabled or
   /// not: a thread missing from one of them may only be missing for now.

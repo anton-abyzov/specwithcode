@@ -784,7 +784,7 @@ it.effect("reuses one Personal assistant for concurrent requests without invokin
   ),
 );
 
-it.effect("refuses a new Personal assistant while Aide is off, leaving no folder", () =>
+it.effect("refuses a new Personal assistant while Percy is off, leaving no folder", () =>
   withScratch(() =>
     Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -793,7 +793,7 @@ it.effect("refuses a new Personal assistant while Aide is off, leaving no folder
       const settings = yield* ServerSettings.ServerSettingsService;
       yield* settings.updateSettings({ aideEnabled: false });
       const refused = yield* folders
-        .createNamedProject({ name: "Aide", kind: "personal" })
+        .createNamedProject({ name: "Percy", kind: "personal" })
         .pipe(Effect.flip);
       assert.equal(refused._tag, "PersonalAssistantDisabledError");
       assert.equal(
@@ -807,15 +807,15 @@ it.effect("refuses a new Personal assistant while Aide is off, leaving no folder
   ),
 );
 
-it.effect("still opens an existing Personal assistant while Aide is off", () =>
+it.effect("still opens an existing Personal assistant while Percy is off", () =>
   withScratch(() =>
     Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const settings = yield* ServerSettings.ServerSettingsService;
       yield* settings.updateSettings({ aideEnabled: true });
-      const created = yield* folders.createNamedProject({ name: "Aide", kind: "personal" });
+      const created = yield* folders.createNamedProject({ name: "Percy", kind: "personal" });
       yield* settings.updateSettings({ aideEnabled: false });
-      const reopened = yield* folders.createNamedProject({ name: "Aide", kind: "personal" });
+      const reopened = yield* folders.createNamedProject({ name: "Percy", kind: "personal" });
       assert.equal(reopened.projectId, created.projectId);
       assert.equal(reopened.workspaceRoot, created.workspaceRoot);
     }).pipe(Effect.provide(ServerSettings.layerTest())),

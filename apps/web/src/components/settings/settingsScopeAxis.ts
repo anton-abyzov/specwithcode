@@ -30,7 +30,7 @@ export const ALL_PROJECTS_VALUE = "all";
 /**
  * The projects the scope picker offers (see {@link projectPickerGroups}), and the current
  * scope when it is not one of them, which the picker shows as a row that cannot be chosen.
- * Aide has settings of its own, so it is a choice too, listed first.
+ * Percy has settings of its own, so it is a choice too, listed first.
  */
 export function settingsScopeProjectChoices<G extends ProjectListGroup>(
   groups: readonly G[],
@@ -43,7 +43,7 @@ export function settingsScopeProjectChoices<G extends ProjectListGroup>(
   };
 }
 
-/** Aide leads a list that offers it; the rest keep their order. */
+/** Percy leads a list that offers it; the rest keep their order. */
 export function assistantsFirst<G extends ProjectListGroup>(groups: readonly G[]): G[] {
   return groups.toSorted(
     (left, right) => Number(isAssistantGroup(right)) - Number(isAssistantGroup(left)),

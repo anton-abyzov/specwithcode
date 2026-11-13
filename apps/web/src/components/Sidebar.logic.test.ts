@@ -1069,7 +1069,7 @@ describe("sidebarProjectScopeItems", () => {
       },
     ],
   });
-  const groups = [group("Aide", "personal"), group("app")];
+  const groups = [group("Percy", "personal"), group("app")];
 
   it("never lists the personal assistant among projects", () => {
     expect(sidebarProjectScopeItems(groups, () => "/scratch", null)).toEqual([
@@ -1078,11 +1078,11 @@ describe("sidebarProjectScopeItems", () => {
     ]);
   });
 
-  it("shows Aide as the current scope without offering it", () => {
-    expect(sidebarProjectScopeItems(groups, () => "/scratch", "Aide")[1]).toEqual({
-      value: "Aide",
-      label: "Aide",
-      unavailable: "Aide is opened from its own entry, not as a project",
+  it("shows Percy as the current scope without offering it", () => {
+    expect(sidebarProjectScopeItems(groups, () => "/scratch", "Percy")[1]).toEqual({
+      value: "Percy",
+      label: "Percy",
+      unavailable: "Percy is opened from its own entry, not as a project",
     });
   });
 });

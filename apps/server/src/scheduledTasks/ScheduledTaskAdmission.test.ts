@@ -50,7 +50,7 @@ it.effect(
     }),
 );
 
-it.effect("suspends a personal assistant's routines while Aide is off, and only those", () =>
+it.effect("suspends a personal assistant's routines while Percy is off, and only those", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project");
     const admit = (kind: "personal" | "code", aideEnabled: boolean) =>

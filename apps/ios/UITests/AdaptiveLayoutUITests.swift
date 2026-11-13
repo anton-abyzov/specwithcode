@@ -266,7 +266,7 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     waitForHittable(specweave)
   }
 
-  /// Beside Aide's coordinator the screen lists Aide's threads, not every
+  /// Beside Percy's coordinator the screen lists Percy's threads, not every
   /// project; All projects stays one tap back, and Threads returns.
   func testAidesCoordinatorShowsItsOwnThreadsBeside() throws {
     launch(coordinatorBeside: true)
@@ -276,15 +276,15 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     let middle = app.frame.width / 2
     let threadsPane = app.staticTexts["threads-pane.header"]
     waitForHittable(threadsPane)
-    XCTAssertEqual(threadsPane.label, "Threads", "Beside Aide the list is Aide's threads")
+    XCTAssertEqual(threadsPane.label, "Threads", "Beside Percy the list is Percy's threads")
     XCTAssertGreaterThan(threadsPane.frame.minX, middle * 0.8)
-    saveShot("12 Aide and its threads")
+    saveShot("12 Percy and its threads")
 
     tapLow(app.buttons["sidebar.all-projects"])
     let threadsButton = app.buttons["chat.threads"]
     waitFor(threadsButton)
     settle()
-    saveShot("13 All projects beside Aide")
+    saveShot("13 All projects beside Percy")
     tapLow(threadsButton)
     waitForHittable(threadsPane)
     XCTAssertEqual(threadsPane.label, "Threads")

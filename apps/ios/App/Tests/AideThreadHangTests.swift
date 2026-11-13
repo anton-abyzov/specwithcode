@@ -4,7 +4,7 @@ import Weave
 import SWCSync
 @testable import SWCFeatures
 
-/// Build 38 hung an iPhone Duo in an Aide thread (scene-update watchdog, main
+/// Build 38 hung an iPhone Duo in an Percy thread (scene-update watchdog, main
 /// thread in layout). This opens the same shape of thread on the whole app,
 /// scrolls through the bottom of the transcript and fails when the main thread
 /// stops answering for longer than a frame budget allows.
@@ -51,7 +51,7 @@ nonisolated final class AideThreadHangTests: XCTestCase {
     defer { stalls.stop() }
 
     RunLoop.current.run(until: Date().addingTimeInterval(2))
-    attach(host, "Aide thread opened")
+    attach(host, "Percy thread opened")
     let scroll = try XCTUnwrap(transcriptScrollView(in: host.view), "no transcript scroll view")
     let bottom = max(0, scroll.contentSize.height + scroll.adjustedContentInset.bottom - scroll.bounds.height)
     // Rest at every point of the bottom 400 pt, where the scroll-to-latest
@@ -66,7 +66,7 @@ nonisolated final class AideThreadHangTests: XCTestCase {
     // At rest a settled layout leaves the main thread idle.
     stalls.reset()
     RunLoop.current.run(until: Date().addingTimeInterval(2))
-    attach(host, "Aide thread after scrolling")
+    attach(host, "Percy thread after scrolling")
     XCTAssertLessThan(stalls.longest, 0.5, "the main thread stalled for \(stalls.longest) s at rest")
     XCTAssertLessThan(stalls.busyRatio, 0.3, "the main thread stayed busy at rest (\(stalls.busyRatio) of pings late)")
   }

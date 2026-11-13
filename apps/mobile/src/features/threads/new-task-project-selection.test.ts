@@ -255,7 +255,7 @@ describe("new task destination eligibility", () => {
       newTaskProjectUnavailableReason({ ...selected, workspaceRoot: "/scratch" }, () => "/scratch"),
     ).toBeNull();
   });
-  it("keeps the personal assistant a destination, since mobile has no Aide entry of its own", () => {
+  it("keeps the personal assistant a destination, since mobile has no Percy entry of its own", () => {
     const assistant = {
       ...makeProject("aide", "a"),
       workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "personal" as const },

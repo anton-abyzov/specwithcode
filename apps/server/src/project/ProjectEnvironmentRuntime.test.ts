@@ -243,7 +243,7 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
       }),
   );
   it.effect(
-    "allows the Aide ACP coordinator's approved folders only with effective Full access",
+    "allows the Percy ACP coordinator's approved folders only with effective Full access",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

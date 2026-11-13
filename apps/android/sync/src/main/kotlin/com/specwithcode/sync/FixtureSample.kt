@@ -28,7 +28,7 @@ internal object FixtureSample {
 
     val aide = ProjectSummary(
         ref = ProjectRef(STUDIO, "aide"),
-        title = "Aide",
+        title = "Percy",
         icon = ProjectIcon.Symbol("concierge-bell", "violet"),
         kind = ProjectKind.Personal,
         machineLabel = "Office Mac",

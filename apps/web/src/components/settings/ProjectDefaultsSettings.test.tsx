@@ -192,7 +192,7 @@ describe("web workspace default presentation", () => {
       { displayName: "Beacon", memberProjects: [code("p-beacon")] },
       { displayName: "Comet", memberProjects: [code("p-comet")] },
       {
-        displayName: "Aide",
+        displayName: "Percy",
         memberProjects: [{ ...code("p-aide"), workspaceSettings: { kind: "personal" } }],
       },
     ];

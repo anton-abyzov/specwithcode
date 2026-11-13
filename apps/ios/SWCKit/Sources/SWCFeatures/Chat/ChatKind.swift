@@ -2,7 +2,7 @@ import SWCSync
 
 /// The line under a chat's title that says what kind of chat it is, as the
 /// desktop's coordinator pane and its "Threads ›" crumb do: a project's
-/// coordinator, or a thread working in a project. Aide's chat keeps its own
+/// coordinator, or a thread working in a project. Percy's chat keeps its own
 /// subtitle.
 struct ChatKindLine: Equatable {
   enum Kind: Equatable { case coordinator, thread }

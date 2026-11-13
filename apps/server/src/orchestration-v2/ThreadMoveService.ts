@@ -113,7 +113,7 @@ const make = Effect.gen(function* () {
     // The personal assistant's topics stay private to it, and it takes no
     // project's work in, so neither side of a move may be the assistant.
     if (Option.isSome(sourceProject) && isPersonalAssistantProject(sourceProject.value)) {
-      return yield* refuse("Aide's topics stay private, so they cannot move to a project.");
+      return yield* refuse("Percy's topics stay private, so they cannot move to a project.");
     }
     const targetProject = yield* projects
       .getById(command.targetProjectId)
@@ -123,7 +123,7 @@ const make = Effect.gen(function* () {
     }
     const target = targetProject.value;
     if (isPersonalAssistantProject(target)) {
-      return yield* refuse("A thread cannot move into Aide. Start a new topic there instead.");
+      return yield* refuse("A thread cannot move into Percy. Start a new topic there instead.");
     }
     if (target.workspaceSettings?.archived || target.workspaceSettings?.paused) {
       return yield* refuse(`Resume or restore ${target.title} before moving threads into it.`);

@@ -118,7 +118,7 @@ describe("settings scope project choices", () => {
     expect(settingsScopeProjectChoices(groups, scratchRootFor, "live").unavailable).toBeNull();
   });
 
-  it("offers Aide first, since it has settings of its own", () => {
+  it("offers Percy first, since it has settings of its own", () => {
     const aide = {
       projectKey: "aide",
       memberProjects: [

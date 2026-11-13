@@ -69,7 +69,7 @@ const projectsById = new Map([
   [archivedProjectId, projectRow(archivedProjectId, "Old", true)],
   [otherProjectId, projectRow(otherProjectId, "vskill")],
   [scratchProjectId, projectRow(scratchProjectId, "No project")],
-  [assistantProjectId, projectRow(assistantProjectId, "Aide", false, "personal")],
+  [assistantProjectId, projectRow(assistantProjectId, "Percy", false, "personal")],
 ]);
 
 const adapter = {
@@ -525,7 +525,7 @@ it.effect("keeps the personal assistant's topics in it and moves nothing into it
       );
     assert.include(
       yield* refused(moveCommand(topic, ThreadId.make("thread:move-aide-topic-target"))),
-      "Aide's topics stay private",
+      "Percy's topics stay private",
     );
     assert.include(
       yield* refused(
@@ -533,7 +533,7 @@ it.effect("keeps the personal assistant's topics in it and moves nothing into it
           targetProjectId: assistantProjectId,
         }),
       ),
-      "cannot move into Aide",
+      "cannot move into Percy",
     );
     const kept = yield* orchestrator.getThreadProjection(topic);
     assert.equal(kept.thread.archivedAt, null);

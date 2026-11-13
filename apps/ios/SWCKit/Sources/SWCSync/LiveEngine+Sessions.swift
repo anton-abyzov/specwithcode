@@ -65,7 +65,7 @@ final class SessionController {
 
   var environmentId: String { target.environmentId }
 
-  /// Aide or a project: the session shows a coordinator thread.
+  /// Percy or a project: the session shows a coordinator thread.
   var isCoordinator: Bool {
     if case .thread = target { return false }
     return true

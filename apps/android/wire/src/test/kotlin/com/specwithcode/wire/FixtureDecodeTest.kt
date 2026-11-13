@@ -35,7 +35,7 @@ class FixtureDecodeTest {
         assertFalse(Fixture.decode<ServerSettings>("serverSettings.default.json").aideEnabled)
         assertTrue(decodeJSON<ServerSettings>("""{"aideEnabled":true}""").aideEnabled)
         assertFalse(decodeJSON<ServerSettings>("""{"aideEnabled":false}""").aideEnabled)
-        // A malformed value hides Aide rather than failing the whole snapshot.
+        // A malformed value hides Percy rather than failing the whole snapshot.
         assertFalse(decodeJSON<ServerSettings>("""{"aideEnabled":"yes"}""").aideEnabled)
     }
 

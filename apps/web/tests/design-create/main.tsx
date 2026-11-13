@@ -46,7 +46,7 @@ const HARBOR = { id: "harbor-app" as ProjectId, title: "Harbor app", kind: "code
 const PROJECTS_HERE: GalleryProject[] = [
   ...(PROJECTS as unknown as GalleryProject[]),
   HARBOR,
-  { id: "aide" as ProjectId, title: "Aide", kind: "personal" },
+  { id: "aide" as ProjectId, title: "Percy", kind: "personal" },
 ];
 const ARCHIVED = {
   id: "old-site" as ProjectId,

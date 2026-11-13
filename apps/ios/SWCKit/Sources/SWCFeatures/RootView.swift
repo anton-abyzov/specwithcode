@@ -164,7 +164,7 @@ private struct RootContent: View {
       // A machine still on its first attempt is connecting, not offline.
       LoadingView()
     } else if !model.allMachinesLoaded {
-      // An offline machine may hold Aide and the projects.
+      // An offline machine may hold Percy and the projects.
       OfflineMachinesView()
     } else {
       SetUpAideView()
@@ -231,7 +231,7 @@ private struct LoadingView: View {
   }
 }
 
-/// Shown when machines are paired, none of them shows Aide or a project, and
+/// Shown when machines are paired, none of them shows Percy or a project, and
 /// at least one is offline, so they may be on that machine.
 private struct OfflineMachinesView: View {
   @Environment(AppModel.self) private var model
@@ -243,7 +243,7 @@ private struct OfflineMachinesView: View {
         EmptyState(
           systemName: "wifi.slash",
           title: title,
-          message: "Aide and your projects appear when \(offline.count == 1 ? "it reconnects" : "they reconnect").",
+          message: "Percy and your projects appear when \(offline.count == 1 ? "it reconnects" : "they reconnect").",
           actionTitle: model.connect != nil ? "SpecWithCode Connect" : offline.contains(where: \.canRetryConnection) ? "Reconnect" : nil,
           action: model.connect != nil ? { router.sheet = .globalSettings } : reconnect
         )
@@ -280,7 +280,7 @@ private struct OfflineMachinesView: View {
   }
 }
 
-/// Shown when every paired machine is online and none has Aide or a project yet.
+/// Shown when every paired machine is online and none has Percy or a project yet.
 private struct SetUpAideView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
@@ -290,9 +290,9 @@ private struct SetUpAideView: View {
     ScrollView {
       EmptyState(
         systemName: WeaveLucide.assistantSystemName,
-        title: "Set up Aide",
-        message: "Aide is your personal assistant. It answers questions and starts work in your projects on \(machineName).",
-        actionTitle: working ? nil : "Set up Aide",
+        title: "Set up Percy",
+        message: "Percy is your personal assistant. It answers questions and starts work in your projects on \(machineName).",
+        actionTitle: working ? nil : "Set up Percy",
         action: working ? nil : { setUp() }
       )
       .padding(.top, WeaveSpacing.s8 * 2)
@@ -300,7 +300,7 @@ private struct SetUpAideView: View {
       if working {
         ProgressView()
           .padding(.top, WeaveSpacing.s4)
-          .accessibilityLabel("Setting up Aide")
+          .accessibilityLabel("Setting up Percy")
       }
     }
     .screenChrome {
@@ -314,7 +314,7 @@ private struct SetUpAideView: View {
     }
   }
 
-  /// Aide goes on the machine with the lowest environment id, the same one
+  /// Percy goes on the machine with the lowest environment id, the same one
   /// every client picks.
   private var machineName: String {
     model.machines.min { $0.id < $1.id }?.displayName ?? "your machine"

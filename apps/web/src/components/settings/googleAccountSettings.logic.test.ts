@@ -25,7 +25,7 @@ const A = ProjectId.make("a");
 const B = ProjectId.make("b");
 
 describe("partitionGoogleProjects", () => {
-  it("puts Aide in its own group and keeps automated, archived and scratch projects apart", () => {
+  it("puts Percy in its own group and keeps automated, archived and scratch projects apart", () => {
     const { assistants, active, automated, archived } = partitionGoogleProjects(
       [
         project("code", "Beta"),
@@ -50,9 +50,9 @@ describe("partitionGoogleProjects", () => {
     expect(archived.map((entry) => entry.id)).toEqual(["old", "oldcheck"]);
   });
 
-  it("never counts an archived Aide among projects", () => {
+  it("never counts an archived Percy among projects", () => {
     const { assistants, archived } = partitionGoogleProjects(
-      [project("aide", "Aide", { kind: "personal", archived: true })],
+      [project("aide", "Percy", { kind: "personal", archived: true })],
       () => null,
     );
     expect(assistants.map((entry) => entry.id)).toEqual(["aide"]);
@@ -77,7 +77,7 @@ describe("googleBriefingAction", () => {
   const aide = { assistant: true, machineAssistant: true, aideEnabled: true };
   const regular = { assistant: false, machineAssistant: false, aideEnabled: true };
 
-  it("points Aide at its own Proactive briefing once it may read Gmail or Calendar", () => {
+  it("points Percy at its own Proactive briefing once it may read Gmail or Calendar", () => {
     expect(googleBriefingAction(["gmail"], aide)).toBe("proactive");
     expect(googleBriefingAction(["calendar", "drive"], aide)).toBe("proactive");
   });
@@ -88,7 +88,7 @@ describe("googleBriefingAction", () => {
     expect(googleBriefingAction(["gmail"], { ...aide, machineAssistant: false })).toBe("morning");
   });
 
-  it("offers nothing without access or for a hidden Aide", () => {
+  it("offers nothing without access or for a hidden Percy", () => {
     expect(googleBriefingAction([], aide)).toBeNull();
     expect(googleBriefingAction([], regular)).toBeNull();
     expect(googleBriefingAction(["gmail"], { ...aide, aideEnabled: false })).toBeNull();

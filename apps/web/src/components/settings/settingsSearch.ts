@@ -790,7 +790,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "aide-enabled",
     title: "Personal assistant",
     to: "/settings/general",
-    searchTerms: ["aide assistant private routines briefing show hide"],
+    searchTerms: ["percy aide assistant private routines briefing show hide"],
   },
   {
     id: "legacy-plan-mode",
@@ -1350,7 +1350,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Google account",
     to: "/settings/google",
     searchTerms: [
-      "gmail calendar drive google email aide assistant personal agent briefing proactive morning oauth sign in projects access",
+      "gmail calendar drive google email percy aide assistant personal agent briefing proactive morning oauth sign in projects access",
     ],
   },
   ...(DESIGN_FEATURES.designSystems

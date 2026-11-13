@@ -525,7 +525,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     expect(squashed.message).toContain("a space between every word");
     expect(sends).toBe(1);
 
-    // Neither a project worker nor coordinator can push unsolicited text into Aide.
+    // Neither a project worker nor coordinator can push unsolicited text into Percy.
     targetPersonal = true;
     for (const input of [
       { message: "A project worker finished." },

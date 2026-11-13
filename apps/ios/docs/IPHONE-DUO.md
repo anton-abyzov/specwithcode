@@ -28,7 +28,7 @@ A phone build made with an iOS 26 SDK runs on Duo as a compatibility layout, sca
 
 ## Coordinator beside a thread, November 2
 
-From `WeaveSize.sidebarBreakpoint`, with a project or Aide thread open, the column holds that thread's coordinator and the thread stays on the right. It opens at half the scene, on the hinge, and resizes up to 62% while leaving the thread 340 points; its width is stored apart from the list's (`swc.chatColumnWidth`). The column follows the project's active coordinator or else the thread's own machine, and its switcher changes only the column. "Show projects" in its header shows the list until the screen changes, and Settings > "Coordinator beside threads" turns it off (`swc.coordinatorBeside`). With no thread open the column is the list. A thread opened from a coordinator link lands on the right because the column chat uses the main stack's navigator. Upright at 669 points and folded, navigation stays the modal drawer.
+From `WeaveSize.sidebarBreakpoint`, with a project or Percy thread open, the column holds that thread's coordinator and the thread stays on the right. It opens at half the scene, on the hinge, and resizes up to 62% while leaving the thread 340 points; its width is stored apart from the list's (`swc.chatColumnWidth`). The column follows the project's active coordinator or else the thread's own machine, and its switcher changes only the column. "Show projects" in its header shows the list until the screen changes, and Settings > "Coordinator beside threads" turns it off (`swc.coordinatorBeside`). With no thread open the column is the list. A thread opened from a coordinator link lands on the right because the column chat uses the main stack's navigator. Upright at 669 points and folded, navigation stays the modal drawer.
 
 ## List beside a thread, November 3
 
@@ -71,7 +71,7 @@ For an expanded-layout surrogate on Xcode 26.3, create an owned iPad Pro 11-inch
 
 ## Required Duo matrix — open
 
-- Outer display: light/dark, Dynamic Type including accessibility sizes, pairing/sample welcome, projects, Aide, thread lists, long transcript/code, composer and attachments, menus and sheets.
+- Outer display: light/dark, Dynamic Type including accessibility sizes, pairing/sample welcome, projects, Percy, thread lists, long transcript/code, composer and attachments, menus and sheets.
 - Inner display: same flows in both rotations; persistent navigation and useful chat width; narrow Split View returns to modal navigation.
 - Fold/unfold with an unsent draft, keyboard open, pushed thread, scrolled history, streaming response, pending approval and presented sheet. Preserve selection, draft, scroll and approval state.
 - Partially folded and tent poses: no controls or text under hinge, camera or reserved system regions; vertical bars and asymmetric safe areas remain usable.

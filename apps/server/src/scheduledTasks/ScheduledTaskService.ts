@@ -254,7 +254,7 @@ export const layer = Layer.effect(
     const serverSettings = Option.getOrUndefined(
       yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
     );
-    // assertTaskAdmission reads Aide's switch from here.
+    // assertTaskAdmission reads Percy's switch from here.
     const withAideSetting = <A, E, R>(admission: Effect.Effect<A, E, R>) =>
       serverSettings === undefined
         ? admission

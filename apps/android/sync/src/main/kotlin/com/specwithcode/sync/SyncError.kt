@@ -17,14 +17,14 @@ sealed class SyncError(message: String) : Exception(message) {
 
     /** A paired machine is offline or has not listed its projects yet. */
     data object MachinesNotLoaded :
-        SyncError("Aide may already be on a computer that hasn't connected yet. Reconnect your computers, then try again.")
+        SyncError("Percy may already be on a computer that hasn't connected yet. Reconnect your computers, then try again.")
 
-    /** Aide is turned off in the desktop's settings. */
-    data object AideDisabled : SyncError("Aide is turned off. Turn it on in SpecWithCode's settings on your computer.")
+    /** Percy is turned off in the desktop's settings. */
+    data object AideDisabled : SyncError("Percy is turned off. Turn it on in SpecWithCode's settings on your computer.")
 
-    /** Aide is on elsewhere but turned off on the machine that would create it. */
+    /** Percy is on elsewhere but turned off on the machine that would create it. */
     data class AideDisabledOn(val label: String) :
-        SyncError("Aide is turned off on ${label.ifEmpty { "that computer" }}. Turn it on in SpecWithCode's settings there.")
+        SyncError("Percy is turned off on ${label.ifEmpty { "that computer" }}. Turn it on in SpecWithCode's settings there.")
 
     data object ProjectNotFound : SyncError("This project no longer exists on that computer.")
     data object NothingRunning : SyncError("Nothing is running.")

@@ -27,7 +27,7 @@ extension LiveEngine {
     }
   }
 
-  /// Saves the machine's Aide switch when it changes, for the next cold start.
+  /// Saves the machine's Percy switch when it changes, for the next cold start.
   func rememberAide(_ entry: MachineEntry) {
     guard let enabled = entry.settings?.aideEnabled, entry.cachedAideEnabled != enabled else { return }
     entry.cachedAideEnabled = enabled

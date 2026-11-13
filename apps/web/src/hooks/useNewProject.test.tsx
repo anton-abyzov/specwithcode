@@ -93,7 +93,7 @@ it("asks each machine for fingerprints, reporting which ones can link", async ()
   await expect(call.read("m4", { projectId: "ec" })).resolves.toBeNull();
 });
 
-it("names the machine that refused a personal assistant because Aide is off there", async () => {
+it("names the machine that refused a personal assistant because Percy is off there", async () => {
   // The server's own refusal, as an older client would show it.
   const refusal = Object.assign(
     new Error("The personal assistant is turned off. Turn it on in Settings > General."),
@@ -101,7 +101,7 @@ it("names the machine that refused a personal assistant because Aide is off ther
   );
   state.fingerprint.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(refusal) });
   await expect(
-    create({ environmentId: "m4" as never, name: "Aide", kind: "personal", github: null }),
+    create({ environmentId: "m4" as never, name: "Percy", kind: "personal", github: null }),
   ).resolves.toBe(false);
   expect(state.toast).toHaveBeenCalledWith(
     expect.objectContaining({

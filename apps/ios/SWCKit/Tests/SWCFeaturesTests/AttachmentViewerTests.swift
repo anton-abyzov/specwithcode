@@ -22,11 +22,11 @@ struct AttachmentViewerTests {
 @Suite("Thread subtitle")
 struct ThreadSubtitleTests {
   @Test func aideThreadNamesItsMachine() {
-    #expect(ChatSession.threadSubtitle("Aide", machine: "m1", isPersonal: true) == "Aide · m1")
+    #expect(ChatSession.threadSubtitle("Percy", machine: "m1", isPersonal: true) == "Percy · m1")
   }
 
   @Test func aideThreadWithoutAKnownMachineStaysPlain() {
-    #expect(ChatSession.threadSubtitle("Aide", machine: "", isPersonal: true) == "Aide")
+    #expect(ChatSession.threadSubtitle("Percy", machine: "", isPersonal: true) == "Percy")
   }
 
   @Test func projectThreadIsUnchanged() {

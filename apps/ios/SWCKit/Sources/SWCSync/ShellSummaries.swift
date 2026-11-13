@@ -57,7 +57,7 @@ public enum ShellSummaries {
   ///   - nicknames: The user's nicknames by environment id, for every machine.
   ///   - home: Machines whose projects are listed, as the desktop app lists
   ///     its own machine's (see `listedMachines`). Empty lists every machine.
-  ///   - includeAide: False hides Aide: no `aide`, and its chats are left out
+  ///   - includeAide: False hides Percy: no `aide`, and its chats are left out
   ///     of recents and `threadsByProject`. Nothing on the machines changes.
   ///   - cache: Each machine's rows from the previous build, reused for a
   ///     machine whose rows would come out the same.
@@ -111,10 +111,10 @@ public enum ShellSummaries {
       }
     }
 
-    // Aide is private to its machine, so it may live on one the desktop does
+    // Percy is private to its machine, so it may live on one the desktop does
     // not list (another person's home Mac, a worker no project links to).
     // Those machines are searched too, after the listed ones, so the phone
-    // never offers to set up a second Aide.
+    // never offers to set up a second Percy.
     var others: [ProjectSummary] = []
     var otherThreads: [ProjectRef: [ThreadSummary]] = [:]
     if includeAide {
@@ -131,12 +131,12 @@ public enum ShellSummaries {
         }
       }
     }
-    // An active Aide beats an archived one, then a listed machine's beats
+    // An active Percy beats an archived one, then a listed machine's beats
     // another's, then the lowest environment id wins (machines are visited in
     // that order), as the web's findPersonalAssistant.
     let aide = aides.first { !$0.archived } ?? others.first { !$0.archived } ?? aides.first ?? others.first
     if let aide, let threads = otherThreads[aide.ref] {
-      // Only the chosen Aide's chats come from a machine that is not listed.
+      // Only the chosen Percy's chats come from a machine that is not listed.
       threadsByProject[aide.ref] = threads
       all += threads
     }
@@ -642,7 +642,7 @@ public enum ShellSummaries {
     let title = project.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     var summary = ProjectSummary(
       ref: ProjectRef(environmentId: environmentId, projectId: project.id),
-      title: title.isEmpty ? (personal ? "Aide" : "Project") : title,
+      title: title.isEmpty ? (personal ? "Percy" : "Project") : title,
       icon: icon(project.projectIcon ?? (personal ? .personalAssistant : nil)),
       kind: personal ? .personal : .code,
       machineLabel: machineLabel,
@@ -781,7 +781,7 @@ public enum ProjectPinning {
   }
 }
 
-/// Which thread a project's or Aide's chat shows.
+/// Which thread a project's or Percy's chat shows.
 public enum CoordinatorRouting {
   public enum Resolution: Hashable, Sendable {
     /// The project names its coordinator thread.

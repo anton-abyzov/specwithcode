@@ -1,6 +1,6 @@
 # SpecWithCode for iPhone
 
-A native SwiftUI app for controlling SpecWithCode on your own machines from your phone. You can talk to Aide, follow project coordinators and threads, answer approvals and change a few settings. It talks to the server each machine already runs (orchestration protocol 2). It reaches that server in one of two ways: through SpecWithCode Connect, where you sign in with the same account as on the Mac and it works from anywhere, or through a direct pairing with a link or QR code.
+A native SwiftUI app for controlling SpecWithCode on your own machines from your phone. You can talk to Percy, follow project coordinators and threads, answer approvals and change a few settings. It talks to the server each machine already runs (orchestration protocol 2). It reaches that server in one of two ways: through SpecWithCode Connect, where you sign in with the same account as on the Mac and it works from anywhere, or through a direct pairing with a link or QR code.
 
 The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). In short, `App/` contains only the `@main` entry point, its scene-phase and device-name glue, assets, the privacy manifest and the shell's unit tests (`App/Tests`). Everything else lives in the local Swift package `SWCKit`:
 

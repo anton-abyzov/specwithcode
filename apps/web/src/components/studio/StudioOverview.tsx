@@ -181,9 +181,9 @@ export function StudioOverview() {
     [projectGroups, scratchRootFor],
   );
   const listedGroups = partition.listed;
-  // The assistants the sidebar's Aide block lists, an archived one included.
+  // The assistants the sidebar's Percy block lists, an archived one included.
   const assistantGroups = useMemo(() => assistantGroupsOf(partition), [partition]);
-  // Aide is its own space, not a project: it has its own entry and stays out of every project count.
+  // Percy is its own space, not a project: it has its own entry and stays out of every project count.
   const ownProjectGroups = useMemo(
     () => listedGroups.filter((group) => !isAssistantGroup(group)),
     [listedGroups],
@@ -954,7 +954,7 @@ export function StudioOverview() {
                   >
                     {railAssistants.map((card) => {
                       const member = card.memberProjects.find(isPersonalAssistantProject);
-                      // A new topic is a draft aimed at Aide, never the chooser of projects.
+                      // A new topic is a draft aimed at Percy, never the chooser of projects.
                       const target =
                         member !== undefined &&
                         member.workspaceSettings?.archived !== true &&

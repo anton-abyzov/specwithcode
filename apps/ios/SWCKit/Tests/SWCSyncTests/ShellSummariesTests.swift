@@ -546,7 +546,7 @@ import SWCWire
   }
 
   @Test func aideComesFromTheLowestEnvironmentId() throws {
-    var personal = try TestData.project(id: "aide", title: "Aide")
+    var personal = try TestData.project(id: "aide", title: "Percy")
     personal.workspaceSettings?.kind = .personal
     let output = ShellSummaries.build([
       machine("env_b", threads: [], projects: [personal, try TestData.project()]),
@@ -558,7 +558,7 @@ import SWCWire
   }
 
   @Test func activeAideBeatsAnArchivedOneOnALowerEnvironment() throws {
-    var personal = try TestData.project(id: "aide", title: "Aide")
+    var personal = try TestData.project(id: "aide", title: "Percy")
     personal.workspaceSettings?.kind = .personal
     var archived = personal
     archived.workspaceSettings?.archived = true
@@ -569,14 +569,14 @@ import SWCWire
     #expect(output.aide?.ref.environmentId == "b")
     #expect(output.aide?.archived == false)
 
-    // With no active one anywhere, the archived Aide is still returned.
+    // With no active one anywhere, the archived Percy is still returned.
     let only = ShellSummaries.build([machine("a", threads: [], projects: [archived])])
     #expect(only.aide?.ref == ProjectRef(environmentId: "a", projectId: "aide"))
     #expect(only.aide?.archived == true)
   }
 
   @Test func aideTurnedOffHidesAideAndItsChats() throws {
-    var personal = try TestData.project(id: "aide", title: "Aide", root: "/aide")
+    var personal = try TestData.project(id: "aide", title: "Percy", root: "/aide")
     personal.workspaceSettings?.kind = .personal
     let code = try TestData.project(id: "proj_1", title: "Web", root: "/web")
     let machines = [machine("m4", threads: [
@@ -597,9 +597,9 @@ import SWCWire
   }
 
   @Test func aideOnAMachineTheDesktopDoesNotListIsStillFound() throws {
-    // The #1123 regression: the phone's home is the M4, and Aide lives on the
+    // The #1123 regression: the phone's home is the M4, and Percy lives on the
     // M1, which no listed project links to. M1's own projects stay out.
-    var personal = try TestData.project(id: "aide", title: "Aide", root: "/aide")
+    var personal = try TestData.project(id: "aide", title: "Percy", root: "/aide")
     personal.workspaceSettings?.kind = .personal
     let m4 = machine("m4", threads: [try TestData.thread(id: "work", projectId: "web")], projects: [try TestData.project(id: "web", title: "Web", root: "/web")])
     let m1 = machine("m1", threads: [
@@ -614,18 +614,18 @@ import SWCWire
     #expect(output.threadsByProject[aideRef]?.map(\.ref.threadId) == ["ask"])
     #expect(Set(output.recentThreads.map(\.ref.threadId)) == ["work", "ask"])
 
-    // A listed machine's Aide wins over another machine's.
+    // A listed machine's Percy wins over another machine's.
     var homeAide = personal
     homeAide.id = "home-aide"
     let m4WithAide = machine("m4", threads: [], projects: [homeAide])
     #expect(ShellSummaries.build([m4WithAide, m1], home: ["m4"]).aide?.ref == ProjectRef(environmentId: "m4", projectId: "home-aide"))
 
-    // An active Aide elsewhere beats an archived one at home.
+    // An active Percy elsewhere beats an archived one at home.
     homeAide.workspaceSettings?.archived = true
     let archivedHome = machine("m4", threads: [], projects: [homeAide])
     #expect(ShellSummaries.build([archivedHome, m1], home: ["m4"]).aide?.ref == aideRef)
 
-    // Turned off, no machine's Aide is found.
+    // Turned off, no machine's Percy is found.
     let off = ShellSummaries.build([m4, m1], home: ["m4"], includeAide: false)
     #expect(off.aide == nil)
     #expect(off.recentThreads.map(\.ref.threadId) == ["work"])
@@ -828,12 +828,12 @@ import SWCWire
     #expect(AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false), M(environmentId: "b", displayName: "B", aideEnabled: true)], previous: false))
     #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false)], previous: true))
     #expect(!AideSetting.visible([], previous: true))
-    // A switched-off pairing has no say, even with Aide saved as on.
+    // A switched-off pairing has no say, even with Percy saved as on.
     #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false), M(environmentId: "b", displayName: "B", enabled: false, aideEnabled: nil, cachedAideEnabled: true)], previous: true))
   }
 
   @Test func coldStartUsesTheSavedSettingThenKeepsThePreviousAnswer() {
-    // Saved on the phone, no live settings yet: Aide shows at once.
+    // Saved on the phone, no live settings yet: Percy shows at once.
     #expect(AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: nil, cachedAideEnabled: true)], previous: false))
     // A live answer replaces the saved one.
     #expect(!AideSetting.visible([M(environmentId: "a", displayName: "A", aideEnabled: false, cachedAideEnabled: true)], previous: true))
@@ -861,7 +861,7 @@ import SWCWire
   @Test func targetNamesTheMachineThatRefuses() {
     let machines = [M(environmentId: "b", displayName: "Mac mini", aideEnabled: false), M(environmentId: "a", displayName: "M4", aideEnabled: false)]
     #expect(throws: SyncError.aideDisabledOn(label: "M4")) { try AideSetting.target(machines, readOnlyReason: "ro") }
-    #expect(SyncError.aideDisabledOn(label: "M4").localizedDescription == "Aide is turned off on M4. Turn it on in SpecWithCode's settings there.")
+    #expect(SyncError.aideDisabledOn(label: "M4").localizedDescription == "Percy is turned off on M4. Turn it on in SpecWithCode's settings there.")
     #expect(throws: SyncError.aideDisabled) { try AideSetting.target([], readOnlyReason: "ro") }
   }
 

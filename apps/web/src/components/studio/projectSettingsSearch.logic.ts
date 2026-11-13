@@ -83,7 +83,7 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     id: "project-coordinator-model",
     title: "Coordinator model",
     tab: "general",
-    anchors: ["Coordinator model", "Aide's model"],
+    anchors: ["Coordinator model", "Percy's model"],
     searchTerms: ["provider reasoning thinking effort advanced"],
   },
   {
@@ -120,7 +120,7 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     id: "project-auto-resume",
     title: "Auto-continue when limits reset",
     tab: "general",
-    anchors: ["Auto-continue this project's threads", "Auto-continue Aide's topics"],
+    anchors: ["Auto-continue this project's threads", "Auto-continue Percy's topics"],
     searchTerms: ["resume quota limit stop auto-continue recovery"],
   },
   {

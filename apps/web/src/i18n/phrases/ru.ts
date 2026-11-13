@@ -532,8 +532,8 @@ export const ru: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "Задайте, скрывает ли панель диффа по умолчанию изменения только в пробелах.",
   "Shared Codex config, sessions, and state.": "Общие конфигурация, сессии и состояние Codex.",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Показывать Aide, личного ассистента этой машины, на боковой панели и в палитре команд. «Выключено» скрывает его, не удаляя чаты.",
+  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Показывать Percy, личного ассистента этой машины, на боковой панели и в палитре команд. «Выключено» скрывает его, не удаляя чаты.",
   "Show a gentle cue on the captured window.": "Показывать мягкую подсказку на захваченном окне.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "Показывать всплывающее уведомление, когда другой тред завершается, падает или ждёт ввода либо одобрения, пока приложение в фокусе.",
@@ -1093,8 +1093,8 @@ export const ru: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Вы на {b}. Здесь настраивается Chrome на {b2}, другом компьютере; его код связывания не работает в Chrome здесь.",
   "Set up Chrome on {thisComputer}": "Настроить Chrome на {thisComputer}",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "Все чаты, треды проектов и Aide на {machine}, с любым провайдером, одновременно используют связанный профиль Chrome. Каждый работает в своих вкладках, в синей группе вкладок SpecWithCode. Треды на других ваших подключённых машинах тоже могут его использовать, когда вы разрешите это здесь для той машины.",
+  "Every chat, project thread and Percy on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "Все чаты, треды проектов и Percy на {machine}, с любым провайдером, одновременно используют связанный профиль Chrome. Каждый работает в своих вкладках, в синей группе вкладок SpecWithCode. Треды на других ваших подключённых машинах тоже могут его использовать, когда вы разрешите это здесь для той машины.",
   "Test connection": "Проверить подключение",
   Reconnect: "Переподключить",
   "This device can view {machine}'s Chrome but not pair or test it.":
@@ -1680,8 +1680,8 @@ export const ru: PhraseCatalog = {
   "Finish sign-in": "Завершить вход",
   "Projects that may read each account": "Проекты, которые могут читать каждый аккаунт",
   "Projects that may read it": "Проекты, которые могут его читать",
-  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
-    "Позвольте Aide и выбранным проектам читать ваши Gmail, Calendar и Drive, чтобы Aide мог рассказать о вашем дне, найти документ или проверить, кто придёт на встречу.",
+  "Let Percy and the projects you choose read your Gmail, Calendar and Drive, so Percy can brief you on your day, find a document or check who is coming to a meeting.":
+    "Позвольте Percy и выбранным проектам читать ваши Gmail, Calendar и Drive, чтобы Percy мог рассказать о вашем дне, найти документ или проверить, кто придёт на встречу.",
   "Agents in a project see only the services you turn on for it.":
     "Агенты в проекте видят только те сервисы, которые вы для него включили.",
   "Agents use the default account unless asked for another, and may read every account turned on here.":
@@ -1691,8 +1691,8 @@ export const ru: PhraseCatalog = {
   "Hidden on this machine. You can still turn its access off here.":
     "Скрыт на этой машине. Здесь всё ещё можно отключить его доступ.",
   "Proactive briefing": "Проактивная сводка",
-  "No projects yet. Aide above can already use this account.":
-    "Проектов пока нет. Aide выше уже может пользоваться этим аккаунтом.",
+  "No projects yet. Percy above can already use this account.":
+    "Проектов пока нет. Percy выше уже может пользоваться этим аккаунтом.",
   "No projects yet. Add one to let its agents read this account.":
     "Проектов пока нет. Добавьте проект, чтобы его агенты могли читать этот аккаунт.",
   "Enable {service} for all active projects": "Включить {service} для всех активных проектов",
@@ -1700,10 +1700,10 @@ export const ru: PhraseCatalog = {
   "{service} for {title}": "{service} для {title}",
   "Make {account} the default for {title}": "Сделать {account} основным для {title}",
   "this account": "этот аккаунт",
-  "Aide is opened from its own entry, not as a project":
-    "Aide открывается из своего раздела, а не как проект",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
-    "Агенты читают. Если включены черновики Gmail, они сохраняют черновики ответов и отправляют один, только когда вы нажмёте «Отправить» на карточке ответа; они ничего не меняют и не удаляют. SpecWithCode работает с Google с этой машины, хранит вход в закрытом файле на этой машине и не даёт проекту ничего, пока вы не включите это ниже. Доступ сразу есть только у Aide.",
+  "Percy is opened from its own entry, not as a project":
+    "Percy открывается из своего раздела, а не как проект",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Percy starts with access.":
+    "Агенты читают. Если включены черновики Gmail, они сохраняют черновики ответов и отправляют один, только когда вы нажмёте «Отправить» на карточке ответа; они ничего не меняют и не удаляют. SpecWithCode работает с Google с этой машины, хранит вход в закрытом файле на этой машине и не даёт проекту ничего, пока вы не включите это ниже. Доступ сразу есть только у Percy.",
   "Enable for all active projects": "Включить для всех активных проектов",
   "Not now": "Не сейчас",
   "{span} · {onCount} of {length} active": "{span} · {onCount} из {length} активных",
@@ -4571,11 +4571,11 @@ export const ru: PhraseCatalog = {
   "move pending": "перенос не подтверждён",
   "separate project": "отдельный проект",
   "not synced here": "не синхронизировано здесь",
-  "{value}Messages go to Aide. {value2}": "{value}Сообщения идут в Aide. {value2}",
+  "{value}Messages go to Percy. {value2}": "{value}Сообщения идут в Percy. {value2}",
   "Show only topics that need you in {project}":
     "Показать только темы, которые ждут вас в {project}",
   "New topic in {title}": "Новая тема в {title}",
-  Aide: "Aide",
+  Percy: "Percy",
   "Ask again": "Спросить снова",
   "Asking macOS to install its developer tools, which carry Git. This is its log.":
     "macOS просят установить инструменты разработчика, в которые входит Git. Это лог установки.",

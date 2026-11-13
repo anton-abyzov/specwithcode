@@ -71,15 +71,15 @@ describe("settings scope notice projects", () => {
     expect(archived).toEqual([]);
   });
 
-  it("lists Aide first, as itself", () => {
+  it("lists Percy first, as itself", () => {
     const aide = group(
       "aide",
-      "Aide",
+      "Percy",
       [member("aide", "/assistants/aide", laptop, { kind: "personal" })],
       { kind: "personal" },
     );
     const { listed } = settingsScopeNoticeProjects([...groups, aide], scratchRootFor, undefined);
-    expect(listed.map((entry) => entry.label)).toEqual(["Aide", "App", "Check"]);
+    expect(listed.map((entry) => entry.label)).toEqual(["Percy", "App", "Check"]);
     expect(listed[0]?.detail).toBe("Personal assistant");
   });
 
@@ -127,14 +127,14 @@ describe("settings scope notice checkouts", () => {
 });
 
 describe("machine project groups", () => {
-  it("keeps each project's checkouts on the machine and never lists Aide", () => {
+  it("keeps each project's checkouts on the machine and never lists Percy", () => {
     const aide = group(
       "aide",
-      "Aide",
+      "Percy",
       [member("aide", "/home/aide", laptop, { kind: "personal" })],
       { kind: "personal" },
     );
-    const archivedAide = group("aide-old", "Aide", [
+    const archivedAide = group("aide-old", "Percy", [
       member("aide-old", "/home/aide-old", laptop, { kind: "personal", archived: true }),
     ]);
     const onLaptop = machineProjectGroups([...groups, aide, archivedAide], laptop);

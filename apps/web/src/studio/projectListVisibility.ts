@@ -346,7 +346,7 @@ const INELIGIBLE_PROJECT_LABELS: Record<IneligibleProjectReason, string> = {
   archived: "Archived project, not available here",
   automated: "Automated project, not available here",
   "not-code": "Not a code project, not available here",
-  assistant: "Aide is opened from its own entry, not as a project",
+  assistant: "Percy is opened from its own entry, not as a project",
 };
 
 /** What a picker says beside a current selection it does not offer. */

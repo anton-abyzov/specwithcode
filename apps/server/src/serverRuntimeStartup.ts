@@ -48,6 +48,7 @@ import {
   normalizeProjectModelDefaultsWhenReady,
   normalizeProjects,
 } from "./project/ProjectSettingsNormalizer.ts";
+import { renameLegacyDefaultAssistants } from "./project/PersonalAssistantDefaultName.ts";
 import { refreshProjectUpstreams } from "./workspace/automaticPullSafety.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -725,6 +726,28 @@ const make = (options?: StartupOptions) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.interrupt
             : Effect.logWarning("Failed to normalize project settings", {
+                cause: Cause.pretty(cause),
+              }),
+        ),
+        forkParked,
+      );
+
+      // A personal assistant still called by an earlier default name ("Aide") takes the
+      // current one; a name the person chose stays. Parked, so it never holds readiness.
+      yield* runStartupPhase(
+        "projects.rename-default-assistant",
+        renameLegacyDefaultAssistants().pipe(
+          Effect.tap((summary) =>
+            summary.renamed === 0 && summary.failed === 0
+              ? Effect.void
+              : Effect.logInfo("Renamed default-named personal assistants", summary),
+          ),
+        ),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("Failed to rename default-named personal assistants", {
                 cause: Cause.pretty(cause),
               }),
         ),

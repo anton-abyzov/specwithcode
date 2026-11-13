@@ -166,9 +166,9 @@ extension ThreadSummary {
 }
 
 extension AppModel {
-  /// Every paired machine is online and has answered, so a missing Aide really
-  /// is missing. An offline machine may hold Aide; until it is back, offering
-  /// to set Aide up could create a second one.
+  /// Every paired machine is online and has answered, so a missing Percy really
+  /// is missing. An offline machine may hold Percy; until it is back, offering
+  /// to set Percy up could create a second one.
   var allMachinesLoaded: Bool {
     !isLoading && allShellsLoaded && !machines.isEmpty && machines.allSatisfy { $0.status.isOnline }
   }

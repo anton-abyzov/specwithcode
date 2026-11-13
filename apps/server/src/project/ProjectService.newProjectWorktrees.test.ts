@@ -98,7 +98,7 @@ it.effect("gives new projects Use worktrees from Settings, never changing existi
     yield* service.create({
       commandId: CommandId.make("assistant:aide"),
       projectId: ProjectId.make("project:aide"),
-      title: "Aide",
+      title: "Percy",
       kind: "personal",
       workspaceRoot: "/fixtures/example-household/aide",
     });

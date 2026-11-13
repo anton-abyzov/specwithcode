@@ -72,7 +72,7 @@ final class MobileReadabilityUITests: SWCUITestCase {
     attachScreenshot("Provider checklist remains conversation content")
     XCTAssertFalse(app.buttons["chat.increment"].exists, "A chat without a bound increment shows no increment pill")
     XCTAssertFalse(element(containing: "0970-phone-fleet-failover").exists)
-    attachScreenshot("Aide shows no SpecWeave increment pill without a binding")
+    attachScreenshot("Percy shows no SpecWeave increment pill without a binding")
   }
 
   func testThreadsButtonExposesProjectConversations() throws {

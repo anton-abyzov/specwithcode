@@ -119,15 +119,15 @@ extension LiveEngine {
     if enabled { await entry.connection.reconnect() }
   }
 
-  // MARK: - Aide
+  // MARK: - Percy
 
-  /// Creates Aide only once every paired machine is online with its projects
-  /// listed: a machine that has not answered may already hold Aide, and a
-  /// second one would split the conversation. Every client looks for Aide on
+  /// Creates Percy only once every paired machine is online with its projects
+  /// listed: a machine that has not answered may already hold Percy, and a
+  /// second one would split the conversation. Every client looks for Percy on
   /// the lowest environment id first, so that is where it goes.
-  /// While Aide is turned off it is never created, even by an old route.
+  /// While Percy is turned off it is never created, even by an old route.
   /// Machines can disagree on the switch, so it goes to the lowest id whose
-  /// own setting has Aide on; a machine whose settings have not arrived yet
+  /// own setting has Percy on; a machine whose settings have not arrived yet
   /// makes this wait rather than refuse.
   public func setupAide() async throws -> ProjectRef {
     if model?.aideEnabled == true, let aide = model?.aide { return aide.ref }
@@ -139,7 +139,7 @@ extension LiveEngine {
     let nicknames = fleetNicknames
     let targetId = try AideSetting.target(enabled.map { aideMachine($0, nicknames: nicknames) }, readOnlyReason: Self.readOnlyReason)
     guard let entry = machines[targetId] else { throw SyncError.unknownMachine }
-    let input = CreateNewProjectInput(name: "Aide", kind: .personal)
+    let input = CreateNewProjectInput(name: "Percy", kind: .personal)
     let result = try await withRetry(entry.environmentId) { socket in
       try await Self.decode(CreateNewProjectResult.self, from: socket.call(tag: RpcMethod.createNewProject.rawValue, payload: JSONValue.from(input)))
     }

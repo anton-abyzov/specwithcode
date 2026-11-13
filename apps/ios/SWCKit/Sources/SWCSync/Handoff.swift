@@ -93,7 +93,7 @@ extension LiveEngine {
     let shell = source.thread(thread.threadId)
     let project = model?.thread(thread)?.projectRef.flatMap { model?.project($0) }
     if project?.kind == .personal || (model?.aide?.ref.environmentId == thread.environmentId && shell != nil && shell?.projectId == model?.aide?.ref.projectId) {
-      return HandoffOptions(badge: nil, destinations: [], notices: ["Aide stays private to its machine and cannot be handed off."])
+      return HandoffOptions(badge: nil, destinations: [], notices: ["Percy stays private to its machine and cannot be handed off."])
     }
     var badge: String?
     var destinations: [HandoffDestination] = []
@@ -159,7 +159,7 @@ extension LiveEngine {
     if let pending = handoffJournal[thread] { throw HandoffUncertain(detail: pending) }
     let project = model?.thread(thread)?.projectRef.flatMap { model?.project($0) }
     if project?.kind == .personal || (model?.aide?.ref.environmentId == thread.environmentId && machines[thread.environmentId]?.thread(thread.threadId)?.projectId != nil && machines[thread.environmentId]?.thread(thread.threadId)?.projectId == model?.aide?.ref.projectId) {
-      return HandoffCheck(allowed: false, messages: ["Aide stays private to its machine and cannot be handed off."])
+      return HandoffCheck(allowed: false, messages: ["Percy stays private to its machine and cannot be handed off."])
     }
     guard let entry = machines[destination.id], entry.isOnline, entry.canOperate else { throw SyncError.unknownMachine }
     if destination.usesReplica {

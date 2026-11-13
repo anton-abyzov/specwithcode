@@ -538,8 +538,8 @@ export const es: PhraseCatalog = {
     "Define si el panel de diff ignora por defecto los cambios que solo afectan a espacios.",
   "Shared Codex config, sessions, and state.":
     "Configuración, sesiones y estado compartidos de Codex.",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "Mostrar Aide, un asistente privado de este equipo, en la barra lateral y en la paleta de comandos. Desactivado lo oculta sin borrar sus chats.",
+  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Mostrar Percy, un asistente privado de este equipo, en la barra lateral y en la paleta de comandos. Desactivado lo oculta sin borrar sus chats.",
   "Show a gentle cue on the captured window.":
     "Mostrar una señal discreta en la ventana capturada.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
@@ -1103,8 +1103,8 @@ export const es: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Estás en {b}. Esto configura Chrome en {b2}, otro equipo; su código de vinculación no funciona en el Chrome de aquí.",
   "Set up Chrome on {thisComputer}": "Configurar Chrome en {thisComputer}",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "Cada chat, hilo de proyecto y Aide en {machine}, con cualquier proveedor, usa a la vez el perfil de Chrome vinculado. Cada uno trabaja en sus propias pestañas, en el grupo de pestañas azul de SpecWithCode. Los hilos de tus otros equipos conectados también pueden usarlo, una vez que permitas ese equipo aquí.",
+  "Every chat, project thread and Percy on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "Cada chat, hilo de proyecto y Percy en {machine}, con cualquier proveedor, usa a la vez el perfil de Chrome vinculado. Cada uno trabaja en sus propias pestañas, en el grupo de pestañas azul de SpecWithCode. Los hilos de tus otros equipos conectados también pueden usarlo, una vez que permitas ese equipo aquí.",
   "Test connection": "Probar conexión",
   Reconnect: "Reconectar",
   "This device can view {machine}'s Chrome but not pair or test it.":
@@ -1691,8 +1691,8 @@ export const es: PhraseCatalog = {
   "Finish sign-in": "Terminar el inicio de sesión",
   "Projects that may read each account": "Proyectos que pueden leer cada cuenta",
   "Projects that may read it": "Proyectos que pueden leerla",
-  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
-    "Permite que Aide y los proyectos que elijas lean tu Gmail, Calendar y Drive, para que Aide pueda resumirte el día, encontrar un documento o ver quién viene a una reunión.",
+  "Let Percy and the projects you choose read your Gmail, Calendar and Drive, so Percy can brief you on your day, find a document or check who is coming to a meeting.":
+    "Permite que Percy y los proyectos que elijas lean tu Gmail, Calendar y Drive, para que Percy pueda resumirte el día, encontrar un documento o ver quién viene a una reunión.",
   "Agents in a project see only the services you turn on for it.":
     "Los agentes de un proyecto solo ven los servicios que actives para él.",
   "Agents use the default account unless asked for another, and may read every account turned on here.":
@@ -1702,8 +1702,8 @@ export const es: PhraseCatalog = {
   "Hidden on this machine. You can still turn its access off here.":
     "Oculto en este equipo. Aún puedes desactivar su acceso aquí.",
   "Proactive briefing": "Resumen proactivo",
-  "No projects yet. Aide above can already use this account.":
-    "Aún no hay proyectos. Aide, arriba, ya puede usar esta cuenta.",
+  "No projects yet. Percy above can already use this account.":
+    "Aún no hay proyectos. Percy, arriba, ya puede usar esta cuenta.",
   "No projects yet. Add one to let its agents read this account.":
     "Aún no hay proyectos. Añade uno para que sus agentes lean esta cuenta.",
   "Enable {service} for all active projects": "Activar {service} para todos los proyectos activos",
@@ -1711,10 +1711,10 @@ export const es: PhraseCatalog = {
   "{service} for {title}": "{service} para {title}",
   "Make {account} the default for {title}": "Hacer {account} predeterminada para {title}",
   "this account": "esta cuenta",
-  "Aide is opened from its own entry, not as a project":
-    "Aide se abre desde su propia entrada, no como proyecto",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
-    "Los agentes leen. Con los borradores de Gmail activados guardan borradores de respuesta, y envían uno solo cuando eliges Enviar en una tarjeta de respuesta; nunca cambian ni borran nada. SpecWithCode habla con Google desde este equipo, guarda el inicio de sesión en un archivo privado en este equipo y no da nada a un proyecto hasta que lo actives abajo. Solo Aide empieza con acceso.",
+  "Percy is opened from its own entry, not as a project":
+    "Percy se abre desde su propia entrada, no como proyecto",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Percy starts with access.":
+    "Los agentes leen. Con los borradores de Gmail activados guardan borradores de respuesta, y envían uno solo cuando eliges Enviar en una tarjeta de respuesta; nunca cambian ni borran nada. SpecWithCode habla con Google desde este equipo, guarda el inicio de sesión en un archivo privado en este equipo y no da nada a un proyecto hasta que lo actives abajo. Solo Percy empieza con acceso.",
   "Enable for all active projects": "Activar para todos los proyectos activos",
   "Not now": "Ahora no",
   "{span} · {onCount} of {length} active": "{span} · {onCount} de {length} activos",
@@ -4596,11 +4596,11 @@ export const es: PhraseCatalog = {
   "move pending": "traslado pendiente",
   "separate project": "proyecto aparte",
   "not synced here": "sin sincronizar aquí",
-  "{value}Messages go to Aide. {value2}": "{value}Los mensajes van a Aide. {value2}",
+  "{value}Messages go to Percy. {value2}": "{value}Los mensajes van a Percy. {value2}",
   "Show only topics that need you in {project}":
     "Mostrar solo los temas que te necesitan en {project}",
   "New topic in {title}": "Nuevo tema en {title}",
-  Aide: "Aide",
+  Percy: "Percy",
   "Ask again": "Preguntar de nuevo",
   "Asking macOS to install its developer tools, which carry Git. This is its log.":
     "Pidiendo a macOS que instale sus herramientas de desarrollo, que incluyen Git. Este es su registro.",

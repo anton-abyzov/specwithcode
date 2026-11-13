@@ -204,7 +204,7 @@ export function useThreadActionMenu(input: {
           ? (logicalProjectKeyByPhysicalKey.get(derivePhysicalProjectKey(menuProject)) ??
             deriveLogicalProjectKeyFromSettings(menuProject, projectGroupingSettings))
           : null;
-        // Aide calls its threads topics, in the menu and in what it reports.
+        // Percy calls its threads topics, in the menu and in what it reports.
         const personal = isPersonalAssistantProject(menuProject);
         const say = paneWords(personal);
         const items = buildThreadActionMenuItems({

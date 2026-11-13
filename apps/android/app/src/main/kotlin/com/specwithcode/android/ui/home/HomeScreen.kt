@@ -197,7 +197,7 @@ private fun LazyListScope.header(title: String) {
     }
 }
 
-/** The drawer: Aide, then pinned, other and automated projects, each with its threads. */
+/** The drawer: Percy, then pinned, other and automated projects, each with its threads. */
 @Composable
 private fun ProjectDrawer(overview: OverviewUi, onOpen: (ChatTarget) -> Unit, onNewThread: (ProjectRef) -> Unit) {
     val expanded = remember { mutableStateMapOf<ProjectRef, Boolean>() }

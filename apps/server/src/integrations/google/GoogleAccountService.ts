@@ -745,7 +745,7 @@ const make = Effect.gen(function* () {
       Effect.map(({ account }) =>
         callbackPage({
           ok: true,
-          message: `SpecWithCode can now read ${account.services.map((s) => SERVICE_LABEL[s]).join(", ") || "nothing yet"}${account.email ? ` for ${account.email}` : ""}. Aide can use it now; turn it on for projects under Settings > Google account. You can close this tab.`,
+          message: `SpecWithCode can now read ${account.services.map((s) => SERVICE_LABEL[s]).join(", ") || "nothing yet"}${account.email ? ` for ${account.email}` : ""}. Percy can use it now; turn it on for projects under Settings > Google account. You can close this tab.`,
         }),
       ),
       Effect.catch((error) => Effect.succeed(callbackPage({ ok: false, message: error.detail }))),

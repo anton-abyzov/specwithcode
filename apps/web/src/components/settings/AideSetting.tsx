@@ -1,5 +1,5 @@
 /**
- * "Personal assistant": shows or hides Aide, the machine's personal
+ * "Personal assistant": shows or hides Percy, the machine's personal
  * assistant, on every surface. Saved in this machine's server settings and on
  * by default. Off hides it and stops new setups; nothing is deleted.
  *
@@ -25,7 +25,7 @@ export function AideSetting() {
   return (
     <SettingsRow
       {...searchableSetting("aide-enabled")}
-      description="Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats."
+      description="Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats."
       control={
         <Switch
           checked={aideEnabled}

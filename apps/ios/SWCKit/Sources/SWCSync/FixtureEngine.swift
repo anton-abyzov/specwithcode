@@ -6,7 +6,7 @@ import SWCWire
 // change the summaries in memory, and settings live for the app session.
 
 public enum FixtureScenario: String, Sendable, CaseIterable {
-  /// Three machines, Aide, four projects and fourteen threads.
+  /// Three machines, Percy, four projects and fourteen threads.
   case `default`
   /// No machines yet, as on first launch.
   case empty
@@ -21,7 +21,7 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case m4Blip = "m4-blip"
   /// `fleet`, then Minis goes offline and comes back.
   case minisBlip = "minis-blip"
-  /// Like `default`, but Aide's chat holds a long history with links, for
+  /// Like `default`, but Percy's chat holds a long history with links, for
   /// scroll, link and app lifecycle checks on a simulator.
   case long
   /// Rich text, thread navigation and explicitly simulated ledger states.
@@ -82,7 +82,7 @@ public final class FixtureEngine: AppEngine {
   public var faultStep: Duration = .seconds(6)
   private var counter = 0
   private var continuedThreads: [ThreadRef: ThreadRef] = [:]
-  /// Whether the sample machines turn Aide on. On by default, so screenshots
+  /// Whether the sample machines turn Percy on. On by default, so screenshots
   /// and UI tests show it; `-SWCAide off` launches with it hidden.
   public let aideEnabled: Bool
   /// The Connect account's phones in the `connect` scenario.
@@ -477,19 +477,19 @@ public final class FixtureEngine: AppEngine {
     guard let model else { throw FixtureFailure("SpecWithCode isn't ready yet. Try again in a moment.") }
     guard aideEnabled else { throw SyncError.aideDisabled }
     if let aide = model.aide { return aide.ref }
-    // Every client puts Aide on the machine with the lowest environment id,
+    // Every client puts Percy on the machine with the lowest environment id,
     // offline ones included, and creates nothing while a machine is offline:
-    // that machine may already hold Aide.
+    // that machine may already hold Percy.
     guard let machine = model.machines.min(by: { $0.id < $1.id }) else {
-      throw FixtureFailure("Connect a machine before setting up Aide.")
+      throw FixtureFailure("Connect a machine before setting up Percy.")
     }
     guard model.machines.allSatisfy({ $0.status.isOnline }) else {
-      throw FixtureFailure("Aide may already be on a machine that's offline. Reconnect your machines, then try again.")
+      throw FixtureFailure("Percy may already be on a machine that's offline. Reconnect your machines, then try again.")
     }
     await pause(latency)
     let ref = ProjectRef(environmentId: machine.id, projectId: "aide")
-    model.aide = ProjectSummary(ref: ref, title: "Aide", icon: .symbol(name: "concierge-bell", color: "violet"), kind: .personal, machineLabel: machine.label, machineOnline: true)
-    transcripts[.aide(ref)] = [row("a", .assistant(markdown: "Hi, I'm Aide. Ask me anything, or tell me what to start. I can open threads in any project on \(machine.label).", streaming: false))]
+    model.aide = ProjectSummary(ref: ref, title: "Percy", icon: .symbol(name: "concierge-bell", color: "violet"), kind: .personal, machineLabel: machine.label, machineOnline: true)
+    transcripts[.aide(ref)] = [row("a", .assistant(markdown: "Hi, I'm Percy. Ask me anything, or tell me what to start. I can open threads in any project on \(machine.label).", streaming: false))]
     recompute()
     return ref
   }
@@ -971,7 +971,7 @@ private enum FixtureSample {
 
   static let aide = ProjectSummary(
     ref: ProjectRef(environmentId: studio, projectId: "aide"),
-    title: "Aide",
+    title: "Percy",
     icon: .symbol(name: "concierge-bell", color: "violet"),
     kind: .personal,
     machineLabel: "Office Mac",
@@ -1039,8 +1039,8 @@ private enum FixtureSample {
       thread("t-images", recipes, "Recipe app", "Build box", "Shrink the image cache", .idle, "Cache now capped at 200 MB", updated: 1500),
       thread("t-search-index", docs, "Docs site", "Travel laptop", "Rebuild the search index", .idle, "Index rebuilt; 1,284 pages", updated: 2880),
       thread("t-links", docs, "Docs site", "Travel laptop", "Fix broken links after the move", .idle, "12 links fixed; 3 need a decision", updated: 5760),
-      // Aide's own thread: a long research prompt and a reply with a table.
-      thread("t-aide-research", aide.ref, "Aide", "Office Mac", "Rail pass research", .idle, "Compared five rail passes", updated: 15),
+      // Percy's own thread: a long research prompt and a reply with a table.
+      thread("t-aide-research", aide.ref, "Percy", "Office Mac", "Rail pass research", .idle, "Compared five rail passes", updated: 15),
     ]
   }
 

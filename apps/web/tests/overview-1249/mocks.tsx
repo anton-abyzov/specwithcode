@@ -18,7 +18,7 @@ const projects = [
   { id: "sketch", environmentId: M1, title: "sketchmate_project" },
   { id: "swc", environmentId: M4, title: "specwithcode-dev" },
   // The personal assistant: its own entry in the rail, never a project card.
-  { id: "aide-m4", environmentId: M4, title: "Aide", workspaceSettings: { kind: "personal" } },
+  { id: "aide-m4", environmentId: M4, title: "Percy", workspaceSettings: { kind: "personal" } },
 ];
 const groups = [
   ["specweave", ["sw-m4", "sw-m1"]],
@@ -26,7 +26,7 @@ const groups = [
   ["EasyChamp", ["ec-m4", "ec-m1"]],
   ["sketchmate_project", ["sketch"]],
   ["specwithcode-dev", ["swc"]],
-  ["Aide", ["aide-m4"]],
+  ["Percy", ["aide-m4"]],
 ].map(([name, ids]) => {
   const members = projects.filter((p) => (ids as string[]).includes(p.id));
   return {
@@ -75,7 +75,7 @@ const running = { runtime: { status: "running" } } as Partial<EnvironmentThreadS
 const shells: EnvironmentThreadShell[] = [
   shell("a1", "Open-source SpecWithCode (MIT)", "sw-m4", 7, ask),
   shell("a2", "Rethink onboarding steps", "sw-m4", 28, ask),
-  shell("a3", "Aide missing on Ministorm", "sw-m4", 28, ask),
+  shell("a3", "Percy missing on Ministorm", "sw-m4", 28, ask),
   shell("a4", "Fix Sadiya Datadog role revert", "oly", 360, approve),
   shell("a5", "Set up Datadog On-Call profile", "oly", 420, approve),
   shell("a6", "Club RSVP decline notifications", "ec-m1", 420, ask),

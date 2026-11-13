@@ -241,7 +241,7 @@ class LiveEngine(
     override suspend fun startThread(request: NewThreadRequest): ThreadRef = sessions.startThread(request)
 
     override suspend fun setupAide(): ProjectRef =
-        throw SyncError.SendBlocked("Set up Aide in SpecWithCode on your computer.")
+        throw SyncError.SendBlocked("Set up Percy in SpecWithCode on your computer.")
 
     override suspend fun loadProjectSettings(project: ProjectRef): ProjectSettingsDraft =
         throw SyncError.SendBlocked("Project settings can be changed on your computer for now.")

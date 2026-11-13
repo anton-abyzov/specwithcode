@@ -265,7 +265,7 @@ final class AppRouter {
     }
   }
 
-  /// Aide for Aide's threads; otherwise the machine picked in the switcher, the
+  /// Percy for Percy's threads; otherwise the machine picked in the switcher, the
   /// project's active coordinator, or the thread's own machine. A group's
   /// leading copy is not used: it follows activity, so the chat could change
   /// machines under someone typing.
@@ -348,8 +348,8 @@ final class AppRouter {
   func sidebarScope(in model: AppModel) -> ProjectRef? {
     guard !sidebarShowsAllProjects else { return nil }
     if let project = followedProject(in: model) { return project }
-    // Aide's own chat shows the whole tree, except beside Aide's
-    // coordinator: there the screen holds Aide's own threads.
+    // Percy's own chat shows the whole tree, except beside Percy's
+    // coordinator: there the screen holds Percy's own threads.
     if showsCoordinatorBeside, !isDrawerSearching, case let .aide(ref)? = landingCoordinator(in: model) { return ref }
     return nil
   }
@@ -375,8 +375,8 @@ final class AppRouter {
     }
   }
 
-  /// The row a project's chats scope the list to. Aide's own chat is the
-  /// home screen and keeps the whole tree; one of its threads lists Aide's
+  /// The row a project's chats scope the list to. Percy's own chat is the
+  /// home screen and keeps the whole tree; one of its threads lists Percy's
   /// threads, as a project's thread lists the project's.
   private func listScope(of project: ProjectRef, aideThreads: Bool = false, in model: AppModel) -> ProjectRef? {
     guard let row = model.project(project) else { return nil }
@@ -425,8 +425,8 @@ final class AppRouter {
     }
   }
 
-  /// Opens Aide, or the composer of the current project when there is no
-  /// Aide, with the composer focused.
+  /// Opens Percy, or the composer of the current project when there is no
+  /// Percy, with the composer focused.
   func startNewChat(in model: AppModel) {
     let target: ChatTarget?
     if let aide = model.aide, !aide.archived {
@@ -452,7 +452,7 @@ final class AppRouter {
   func landing(in model: AppModel) -> ChatTarget? {
     if let root, Self.isValid(root, in: model) { return root }
     // A saved chat shows as soon as it is in, whatever else is still loading;
-    // until then the screen shows loading, not Aide.
+    // until then the screen shows loading, not Percy.
     if let saved = pendingRestore, model.isLoading {
       if case let .thread(ref) = saved.root { return model.thread(ref) != nil ? saved.root : nil }
       return Self.isValid(saved.root, in: model) ? saved.root : nil
@@ -460,7 +460,7 @@ final class AppRouter {
     return Self.defaultLanding(aide: model.aide, projects: model.projects)
   }
 
-  /// Aide when it exists, otherwise the first of the person's own projects.
+  /// Percy when it exists, otherwise the first of the person's own projects.
   static func defaultLanding(aide: ProjectSummary?, projects: [ProjectSummary]) -> ChatTarget? {
     if let aide, !aide.archived { return .aide(aide.ref) }
     if let first = projects.first(where: { !$0.archived && !$0.isAutomated }) {
@@ -629,7 +629,7 @@ final class AppRouter {
 
   private enum RestoreState { case ready, waiting, gone }
 
-  /// A saved project or Aide waits for loading to end; a saved thread, for its
+  /// A saved project or Percy waits for loading to end; a saved thread, for its
   /// machine to say whether it is still there.
   private static func restoreState(of target: ChatTarget, in model: AppModel) -> RestoreState {
     if case let .thread(ref) = target {

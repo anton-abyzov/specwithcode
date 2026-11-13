@@ -530,8 +530,8 @@ export const ko: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "diff 패널에서 공백만 바뀐 수정을 기본적으로 무시할지 설정합니다.",
   "Shared Codex config, sessions, and state.": "공유되는 Codex 구성, 세션, 상태입니다.",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "이 컴퓨터 전용 비서인 Aide를 사이드바와 명령 팔레트에 표시합니다. 끄면 채팅을 삭제하지 않고 숨깁니다.",
+  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "이 컴퓨터 전용 비서인 Percy를 사이드바와 명령 팔레트에 표시합니다. 끄면 채팅을 삭제하지 않고 숨깁니다.",
   "Show a gentle cue on the captured window.": "캡처한 창에 은은한 신호를 표시합니다.",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "이 앱에 포커스가 있을 때 다른 스레드가 끝나거나, 실패하거나, 입력이나 승인이 필요하면 토스트를 표시합니다.",
@@ -1085,8 +1085,8 @@ export const ko: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "지금은 {b}에 있습니다. 여기서는 다른 컴퓨터인 {b2}의 Chrome을 설정합니다. 그 페어링 코드는 이곳의 Chrome에서 작동하지 않습니다.",
   "Set up Chrome on {thisComputer}": "{thisComputer}에서 Chrome 설정",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "{machine}의 모든 채팅, 프로젝트 스레드, Aide는 제공업체와 관계없이 페어링된 Chrome 프로필을 동시에 사용합니다. 각각 파란색 SpecWithCode 탭 그룹 안의 자기 탭에서 작업합니다. 여기서 해당 컴퓨터를 허용하면 연결된 다른 컴퓨터의 스레드도 사용할 수 있습니다.",
+  "Every chat, project thread and Percy on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "{machine}의 모든 채팅, 프로젝트 스레드, Percy는 제공업체와 관계없이 페어링된 Chrome 프로필을 동시에 사용합니다. 각각 파란색 SpecWithCode 탭 그룹 안의 자기 탭에서 작업합니다. 여기서 해당 컴퓨터를 허용하면 연결된 다른 컴퓨터의 스레드도 사용할 수 있습니다.",
   "Test connection": "연결 테스트",
   Reconnect: "다시 연결",
   "This device can view {machine}'s Chrome but not pair or test it.":
@@ -1668,8 +1668,8 @@ export const ko: PhraseCatalog = {
   "Finish sign-in": "로그인 마치기",
   "Projects that may read each account": "각 계정을 읽을 수 있는 프로젝트",
   "Projects that may read it": "읽을 수 있는 프로젝트",
-  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
-    "Aide와 선택한 프로젝트가 Gmail, Calendar, Drive를 읽도록 허용하면, Aide가 하루 일정을 브리핑하고, 문서를 찾고, 회의 참석자를 확인할 수 있습니다.",
+  "Let Percy and the projects you choose read your Gmail, Calendar and Drive, so Percy can brief you on your day, find a document or check who is coming to a meeting.":
+    "Percy와 선택한 프로젝트가 Gmail, Calendar, Drive를 읽도록 허용하면, Percy가 하루 일정을 브리핑하고, 문서를 찾고, 회의 참석자를 확인할 수 있습니다.",
   "Agents in a project see only the services you turn on for it.":
     "프로젝트의 에이전트는 그 프로젝트에 켠 서비스만 볼 수 있습니다.",
   "Agents use the default account unless asked for another, and may read every account turned on here.":
@@ -1679,8 +1679,8 @@ export const ko: PhraseCatalog = {
   "Hidden on this machine. You can still turn its access off here.":
     "이 컴퓨터에서 숨겨져 있습니다. 여기에서 액세스를 끌 수는 있습니다.",
   "Proactive briefing": "프로액티브 브리핑",
-  "No projects yet. Aide above can already use this account.":
-    "아직 프로젝트가 없습니다. 위의 Aide는 이미 이 계정을 사용할 수 있습니다.",
+  "No projects yet. Percy above can already use this account.":
+    "아직 프로젝트가 없습니다. 위의 Percy는 이미 이 계정을 사용할 수 있습니다.",
   "No projects yet. Add one to let its agents read this account.":
     "아직 프로젝트가 없습니다. 프로젝트를 추가하면 해당 에이전트가 이 계정을 읽을 수 있습니다.",
   "Enable {service} for all active projects": "모든 활성 프로젝트에 {service} 사용",
@@ -1688,10 +1688,10 @@ export const ko: PhraseCatalog = {
   "{service} for {title}": "{title}의 {service}",
   "Make {account} the default for {title}": "{account}을(를) {title}의 기본값으로 설정",
   "this account": "이 계정",
-  "Aide is opened from its own entry, not as a project":
-    "Aide는 프로젝트가 아니라 전용 항목에서 엽니다",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
-    "에이전트는 읽기만 합니다. Gmail 초안을 켜면 답장 초안을 저장하고, 답장 카드에서 보내기를 선택했을 때만 하나를 보냅니다. 아무것도 변경하거나 삭제하지 않습니다. SpecWithCode는 이 컴퓨터에서 Google과 통신하고, 로그인 정보를 이 컴퓨터의 비공개 파일에 보관하며, 아래에서 켜기 전까지 프로젝트에 아무것도 주지 않습니다. 처음부터 액세스 권한이 있는 것은 Aide뿐입니다.",
+  "Percy is opened from its own entry, not as a project":
+    "Percy는 프로젝트가 아니라 전용 항목에서 엽니다",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Percy starts with access.":
+    "에이전트는 읽기만 합니다. Gmail 초안을 켜면 답장 초안을 저장하고, 답장 카드에서 보내기를 선택했을 때만 하나를 보냅니다. 아무것도 변경하거나 삭제하지 않습니다. SpecWithCode는 이 컴퓨터에서 Google과 통신하고, 로그인 정보를 이 컴퓨터의 비공개 파일에 보관하며, 아래에서 켜기 전까지 프로젝트에 아무것도 주지 않습니다. 처음부터 액세스 권한이 있는 것은 Percy뿐입니다.",
   "Enable for all active projects": "모든 활성 프로젝트에 사용",
   "Not now": "나중에",
   "{span} · {onCount} of {length} active": "{span} · 활성 {length}개 중 {onCount}개",
@@ -4523,10 +4523,10 @@ export const ko: PhraseCatalog = {
   "move pending": "이동 대기 중",
   "separate project": "별도 프로젝트",
   "not synced here": "여기서 동기화되지 않음",
-  "{value}Messages go to Aide. {value2}": "{value}메시지는 Aide에게 전달됩니다. {value2}",
+  "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
   "New topic in {title}": "{title}에서 새 주제",
-  Aide: "Aide",
+  Percy: "Percy",
   "Ask again": "다시 요청",
   "Asking macOS to install its developer tools, which carry Git. This is its log.":
     "macOS에 Git이 포함된 개발자 도구 설치를 요청하는 중입니다. 아래는 그 로그입니다.",

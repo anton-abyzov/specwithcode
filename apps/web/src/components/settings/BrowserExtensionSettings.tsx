@@ -392,7 +392,7 @@ export function BrowserExtensionCard({
             <p className="text-sm text-muted-foreground">
               {renderRich(
                 tx(
-                  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.",
+                  "Every chat, project thread and Percy on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.",
                 ),
                 { machine: machine },
               )}

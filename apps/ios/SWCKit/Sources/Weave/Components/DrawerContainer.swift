@@ -430,8 +430,8 @@ private struct DrawerContainerPreview: View {
           .padding(.horizontal, WeaveSpacing.gutter)
           .padding(.vertical, WeaveSpacing.s4)
         SectionHeader("Pinned").padding(.horizontal, WeaveSpacing.gutter)
-        WeaveRow("Aide", action: { open = false }) {
-          ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+        WeaveRow("Percy", action: { open = false }) {
+          ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Percy", size: 24, style: .plain)
         } trailing: {
           StatusDot(.working)
         }
@@ -448,7 +448,7 @@ private struct DrawerContainerPreview: View {
         HStack {
           WeaveIconButton("line.3.horizontal", label: "Menu") { open.toggle() }
           Spacer()
-          TitleCapsule(title: "Aide")
+          TitleCapsule(title: "Percy")
           Spacer()
           WeaveIconButton("checklist", label: "Overview") {}
         }

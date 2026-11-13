@@ -29,7 +29,7 @@ export function ProjectThreadsDeletion({
   project: EnvironmentProject;
   disabled: boolean;
 }) {
-  // Aide calls its threads topics.
+  // Percy calls its threads topics.
   const personal = isPersonalAssistantProject(project);
   const say = paneWords(personal);
   const deleteThreads = useAtomCommand(projectEnvironment.threadsDelete, { reportFailure: false });
@@ -94,7 +94,7 @@ export function ProjectThreadsDeletion({
       type: "success",
       title: say(`Deleted ${threadCountLabel(result.value.deletedThreadIds.length)}`),
       description: personal
-        ? "Aide's memory, plan and routines were kept."
+        ? "Percy's memory, plan and routines were kept."
         : "Project memory, plan and routines were kept.",
     });
     if (confirmed !== null) void worktrees.remove(target, confirmed);
@@ -104,12 +104,12 @@ export function ProjectThreadsDeletion({
       <h4>{say("Delete all threads")}</h4>
       <p>
         {say(
-          `Permanently delete ${threadCount === null ? "every thread" : threadCountLabel(threadCount)} ${personal ? "in Aide" : "in this project"}, archived ones and threads you started included. This cannot be undone.`,
+          `Permanently delete ${threadCount === null ? "every thread" : threadCountLabel(threadCount)} ${personal ? "in Percy" : "in this project"}, archived ones and threads you started included. This cannot be undone.`,
         )}
       </p>
       <p className="project-muted">
         {personal
-          ? "Aide and its own subagents, its memory, plan, routines and connections stay, so you can start fresh topics with what Aide already knows. Running topics must stop first."
+          ? "Percy and its own subagents, its memory, plan, routines and connections stay, so you can start fresh topics with what Percy already knows. Running topics must stop first."
           : "The coordinator and its own subagents, project memory, plan, routines and connections stay, so you can start fresh threads with what the project already knows. Running threads must stop first."}
       </p>
       <label>

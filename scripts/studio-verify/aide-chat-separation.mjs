@@ -143,7 +143,7 @@ try {
   }
   const projects = [];
   for (const [projectId, kind, title, prompt] of [
-    ["aide-separation", "personal", "Aide", "AIDE_ONLY: Help me plan my afternoon."],
+    ["aide-separation", "personal", "Percy", "AIDE_ONLY: Help me plan my afternoon."],
     [
       "code-separation",
       "code",

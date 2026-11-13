@@ -101,7 +101,7 @@ struct ScreenModelRuleTests {
     let (model, engine) = make()
     engine.removeMachine(id: "env-studio-mac")
     #expect(model.aide == nil)
-    // The travel laptop is offline and may hold Aide.
+    // The travel laptop is offline and may hold Percy.
     #expect(!model.allMachinesLoaded)
     await #expect(throws: (any Error).self) { try await engine.setupAide() }
     #expect(model.aide == nil)

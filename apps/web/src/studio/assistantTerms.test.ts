@@ -11,10 +11,10 @@ describe("paneWords", () => {
     expect(say("Threads")).toBe("Topics");
     expect(say("Find a thread (/)")).toBe("Find a topic (/)");
     expect(say("No threads yet. Ask the coordinator to start one.")).toBe(
-      "No topics yet. Ask Aide to start one.",
+      "No topics yet. Ask Percy to start one.",
     );
     expect(say("1 thread is waiting on you")).toBe("1 topic is waiting on you");
-    expect(say("The coordinator runs on this model.")).toBe("Aide runs on this model.");
+    expect(say("The coordinator runs on this model.")).toBe("Percy runs on this model.");
     expect(say("Close thread pane")).toBe("Close topic pane");
   });
 

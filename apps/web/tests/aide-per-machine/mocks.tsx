@@ -81,7 +81,7 @@ const allProjects = [
   project(
     "aide-anna",
     "anna",
-    "Aide",
+    "Percy",
     "/fixtures/assistants/annas-macbook",
     "2026-08-20T09:00:00.000Z",
     personal,
@@ -92,7 +92,7 @@ const allProjects = [
         project(
           "aide-m4",
           "m4",
-          "Aide",
+          "Percy",
           "/fixtures/assistants/studio-mac",
           "2026-09-01T09:00:00.000Z",
           personal,
@@ -104,7 +104,7 @@ const allProjects = [
         project(
           "aide-m4-older-rule",
           "m4",
-          "Aide",
+          "Percy",
           "/fixtures/assistants/studio-mac-2",
           "2026-09-15T09:00:00.000Z",
           personal,

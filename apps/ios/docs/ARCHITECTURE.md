@@ -1,6 +1,6 @@
 # SpecWithCode for iPhone: architecture
 
-A native SwiftUI client that controls SpecWithCode on your machines: Aide, project
+A native SwiftUI client that controls SpecWithCode on your machines: Percy, project
 coordinators, threads and the essential settings. It talks to the servers machines
 already run (orchestration protocol 2), reached through SpecWithCode Connect (sign in,
 managed tunnel) or a direct pairing.
@@ -80,7 +80,7 @@ Methods the app uses: `server.getConfig`, `orchestration.subscribeShell`,
 `run.interrupt{holdQueue:true}`, `runtime-request.respond`, `thread.pin|unpin|settle|unsettle|archive|delete|visit|mark-unread|metadata.update`),
 `orchestration.launchThread`, `projects.coordinatorSend`, `projects.coordinatorStart`,
 `projects.workspaceRead`, `projects.mutate` (`project.update` with `workspaceSettings.expectedRevision`),
-`projects.createNew` (Aide: `kind: "personal"`), `server.getSettings`, `server.updateSettings`.
+`projects.createNew` (Percy: `kind: "personal"`), `server.getSettings`, `server.updateSettings`.
 
 ## Connect route
 
@@ -112,14 +112,14 @@ hosted settings. `AppModel.connect` is nil only under `-SWCDirectOnly` and in fi
 
 ## Routing
 
-- Aide: the project whose `workspaceSettings.kind == "personal"`; lowest `environmentId` wins
+- Percy: the project whose `workspaceSettings.kind == "personal"`; lowest `environmentId` wins
   if several machines have one. Chat = its coordinator.
 - Project: `projects.coordinatorSend{projectId, commandId, prompt}`. Transcript from
   `subscribeThread(coordinatorThreadId ?? "project-coordinator:<projectId>")`.
 - Thread: `message.dispatch` on the thread's machine: `start_immediately` when idle,
   `queue_after_active` while a run is active.
 - Other machines: the app keeps one socket per paired machine and scopes everything by
-  `environmentId`. Aide and coordinators also reach machines through their own tools.
+  `environmentId`. Percy and coordinators also reach machines through their own tools.
 
 ## State
 
@@ -165,7 +165,7 @@ Weave tokens (light / dark): canvas `#f8f7f9`/`#16131d`, panel `#ffffff`/`#201c2
 control `#8c8399`/`#776d8a`, iris `#6d4fb5`/`#a88cf6`, iris-strong `#4a3678`/`#cbbcff`, iris-tint
 `#ece6f8`/`#2b2340`, on-iris `#ffffff`/`#1b1328`, pass/warn/fail from the Weave tokens.
 
-Layout follows a simple chat-first phone pattern: a drawer (Aide, pinned projects, recents, machines,
+Layout follows a simple chat-first phone pattern: a drawer (Percy, pinned projects, recents, machines,
 settings), a project that opens as its coordinator chat, an overview with threads grouped as
 Working and Idle, a thread view with a menu, a capsule composer with send, queue and stop, a
 project settings sheet and a short global settings sheet. Every tap target is at least 44 pt;

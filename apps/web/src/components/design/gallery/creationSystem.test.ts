@@ -202,7 +202,7 @@ describe("found system presentation", () => {
 describe("creation pickers offer only the person's own projects (AC-04)", () => {
   const projects = [
     { id: "a" as ProjectId, title: "Atlas", kind: "code" as const },
-    { id: "b" as ProjectId, title: "Aide", kind: "personal" as const },
+    { id: "b" as ProjectId, title: "Percy", kind: "personal" as const },
     { id: "c" as ProjectId, title: "Old", unavailable: "Archived project, not available here" },
     {
       id: "d" as ProjectId,

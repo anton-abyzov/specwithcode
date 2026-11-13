@@ -87,7 +87,7 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
       <div
         className="sws-pane-tabs"
         role="tablist"
-        aria-label={props.personal ? "Aide panel" : "Project panel"}
+        aria-label={props.personal ? "Percy panel" : "Project panel"}
         onKeyDown={onKeyDown}
       >
         {PROJECT_PANE_TABS.map((tab) => {

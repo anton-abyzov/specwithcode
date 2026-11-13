@@ -291,7 +291,7 @@ function PresetRow({
       ) : null}
       {state === "ready" && connection ? (
         <fieldset className="assistant-service-tools" disabled={blocked}>
-          <legend>What Aide may use</legend>
+          <legend>What Percy may use</legend>
           <small className="project-muted">
             This is what {preset.name} offers. Its first use confirms the token.
           </small>
@@ -349,7 +349,7 @@ export function AssistantServices({
     <section className="project-settings-section assistant-services">
       <h2>Services</h2>
       <p className="project-muted">
-        The accounts Aide may use for you. Sign-ins and tokens stay on this machine, and you choose
+        The accounts Percy may use for you. Sign-ins and tokens stay on this machine, and you choose
         what each one may do.
       </p>
       <h3>Google</h3>

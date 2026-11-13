@@ -342,7 +342,7 @@ describe("Found in this repository (AC-02)", () => {
     const onScan = vi.fn();
     const projects = [
       ...PROJECTS,
-      { id: "aide" as ProjectId, title: "Aide", kind: "personal" as const },
+      { id: "aide" as ProjectId, title: "Percy", kind: "personal" as const },
     ];
     act(() =>
       root.render(

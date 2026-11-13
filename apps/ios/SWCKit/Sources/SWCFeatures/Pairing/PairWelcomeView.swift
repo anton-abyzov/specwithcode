@@ -50,7 +50,7 @@ struct PairWelcomeView: View {
             .multilineTextAlignment(.center)
             .accessibilityAddTraits(.isHeader)
           if !needsSignIn {
-            Text("Talk to Aide, follow your projects and answer approvals while you're away from your desk.")
+            Text("Talk to Percy, follow your projects and answer approvals while you're away from your desk.")
               .weaveFont(.callout)
               .foregroundStyle(Color.weave.muted)
               .multilineTextAlignment(.center)

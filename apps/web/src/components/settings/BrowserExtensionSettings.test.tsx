@@ -58,7 +58,7 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useThreadShell: ({ threadId }: { threadId: string }) =>
-    ({ "thread-7": { title: "Publish the launch post" }, aide: { title: "Aide" } })[threadId] ??
+    ({ "thread-7": { title: "Publish the launch post" }, aide: { title: "Percy" } })[threadId] ??
     null,
 }));
 vi.mock("../../state/environments", () => ({
@@ -218,12 +218,12 @@ describe("BrowserExtensionCard", () => {
     expect(text()).toContain("Add to Chrome");
     // Servers that predate fromStore send no flag: no hand-loaded warning.
     expect(text()).not.toContain("Loaded by hand");
-    expect(text()).toContain("Every chat, project thread and Aide");
+    expect(text()).toContain("Every chat, project thread and Percy");
     expect(text()).toContain("Ready · 2 Chrome profiles paired");
     expect(text()).toContain("Marketing");
     // Threads by title, never by id.
     expect(text()).toContain("Publish the launch post");
-    expect(text()).toContain("Aide");
+    expect(text()).toContain("Percy");
     expect(text()).toContain("in use by 2 threads");
     expect(text()).not.toContain("Thread thread-7");
     // One Test button; Reconnect waits for a failed check.

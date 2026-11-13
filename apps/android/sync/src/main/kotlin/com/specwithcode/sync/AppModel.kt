@@ -10,7 +10,7 @@ data class AppState(
     val machines: List<MachineSummary> = emptyList(),
     /** The personal assistant project, if one exists on any machine. */
     val aide: ProjectSummary? = null,
-    /** Whether Aide is shown. While false, [aide] is null and Aide's chats are left out of every list. */
+    /** Whether Percy is shown. While false, [aide] is null and Percy's chats are left out of every list. */
     val aideEnabled: Boolean = false,
     /** Code projects across machines, pinned first, then by title. */
     val projects: List<ProjectSummary> = emptyList(),
@@ -188,7 +188,7 @@ class ChatSession(val id: ChatTarget, title: String, subtitle: String, machineLa
     val sendBlockedReason: String? get() = value.sendBlockedReason
 
     companion object {
-        /** The line under a thread's title. Each machine has its own Aide, so an Aide thread names its machine. */
+        /** The line under a thread's title. Each machine has its own Percy, so a Percy thread names its machine. */
         fun threadSubtitle(projectTitle: String, machine: String, isPersonal: Boolean): String =
             if (isPersonal && machine.isNotEmpty()) "$projectTitle · $machine" else projectTitle
     }

@@ -180,7 +180,7 @@ export function ProjectRow({
   onFilter: () => void;
   /** Absent where the row has no new chat button. */
   onNewChat?: (() => void) | undefined;
-  /** Aide's row: its chats are topics. */
+  /** Percy's row: its chats are topics. */
   personal?: boolean;
 }) {
   const tx = useTx();

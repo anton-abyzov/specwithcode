@@ -44,7 +44,7 @@ const createAssistant = (service: ProjectService.ProjectService["Service"], name
   service.create({
     commandId: CommandId.make(`assistant:${name}`),
     projectId: ProjectId.make(`project:${name}`),
-    title: "Aide",
+    title: "Percy",
     kind: "personal",
     workspaceRoot: `/fixtures/example-household/${name}`,
   });
@@ -163,11 +163,11 @@ it.effect("never changes a project's kind after creation", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("refuses a new assistant while Aide is off and keeps an existing one", () =>
+it.effect("refuses a new assistant while Percy is off and keeps an existing one", () =>
   Effect.gen(function* () {
     const service = yield* ProjectService.ProjectService;
     const settings = yield* ServerSettings.ServerSettingsService;
-    // Aide is on by default; this machine turned it off.
+    // Percy is on by default; this machine turned it off.
     yield* settings.updateSettings({ aideEnabled: false });
     const refused = yield* createAssistant(service, "aide-off").pipe(Effect.flip);
     assert.equal(reasonOf(refused), "assistant_disabled");

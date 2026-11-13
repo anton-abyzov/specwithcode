@@ -171,7 +171,7 @@ export function StarterSuggestions(props: {
   startingId: string | null;
   startedIds: ReadonlySet<string>;
   onStart: (suggestion: ProjectStarterSuggestion) => void;
-  /** The personal assistant says Aide where a project says the coordinator. */
+  /** The personal assistant says Percy where a project says the coordinator. */
   personal?: boolean;
 }) {
   const say = paneWords(props.personal);

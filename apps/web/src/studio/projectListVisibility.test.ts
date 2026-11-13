@@ -175,7 +175,7 @@ describe("project pickers", () => {
     id: id as ProjectId,
   });
 
-  it("offers only the person's own projects: no archived, automated, Aide or No project row", () => {
+  it("offers only the person's own projects: no archived, automated, Percy or No project row", () => {
     expect(projectPickerGroups(pickerGroups, scratchRootFor).map((g) => g.projectKey)).toEqual([
       "atlas",
       "shared",
@@ -245,7 +245,7 @@ describe("project pickers", () => {
     expect(ineligibleProjectLabel("scratch")).toBe("No project, not available here");
     expect(ineligibleProjectLabel("not-code")).toBe("Not a code project, not available here");
     expect(ineligibleProjectLabel("assistant")).toBe(
-      "Aide is opened from its own entry, not as a project",
+      "Percy is opened from its own entry, not as a project",
     );
   });
 
