@@ -4655,4 +4655,9 @@ export const zh: PhraseCatalog = {
   "Nothing is sent to another machine.": "不会发送到其他机器。",
   "Your draft stays here until it reconnects.": "重新连接前，草稿会保留在这里。",
   "You can start these once it reconnects.": "重新连接后即可开始。",
+  "If this does not clear, reload the page.": "如果一直这样，请重新加载页面。",
+  "You can start these once it catches up.": "追上进度后即可开始。",
+  Connecting: "正在连接",
+  Disconnected: "已断开",
+  "Signed out": "已退出登录",
 };

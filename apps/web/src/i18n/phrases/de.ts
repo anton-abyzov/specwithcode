@@ -4877,4 +4877,9 @@ export const de: PhraseCatalog = {
     "Dein Entwurf bleibt hier, bis die Verbindung wieder steht.",
   "You can start these once it reconnects.":
     "Du kannst sie starten, sobald die Verbindung wieder steht.",
+  "If this does not clear, reload the page.": "Wenn das so bleibt, lade die Seite neu.",
+  "You can start these once it catches up.": "Du kannst sie starten, sobald es aufgeholt hat.",
+  Connecting: "Verbinde",
+  Disconnected: "Getrennt",
+  "Signed out": "Abgemeldet",
 };

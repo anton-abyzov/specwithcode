@@ -246,29 +246,6 @@ export function remoteUnreachableAdmission(machineLabel: string | undefined): st
 }
 
 /**
- * The status of another machine's orchestrator while it is unreachable: the
- * page shows the copy this device last synced, read-only, and says how old it is.
- */
-export function remoteOrchestratorOfflineLabel(
-  machineLabel: string,
-  lastSyncedAt: number | null,
-  now: number,
-): string {
-  if (lastSyncedAt === null)
-    return `${machineLabel} unreachable · last synced: Unknown · read-only`;
-  const minutes = Math.max(0, Math.round((now - lastSyncedAt) / 60_000));
-  const age =
-    minutes < 1
-      ? "just now"
-      : minutes < 60
-        ? `${minutes} min ago`
-        : minutes < 48 * 60
-          ? `${Math.round(minutes / 60)} h ago`
-          : `${Math.round(minutes / (24 * 60))} d ago`;
-  return `${machineLabel} unreachable · last synced ${age} · read-only`;
-}
-
-/**
  * The one status line above the coordinator's message box while its machine is
  * not connected. Every text is an English phrase for `useTx`; `{machine}` marks
  * the machine's name, which the line ellipsizes alone. `action` stays on the
@@ -284,10 +261,10 @@ export type ComposerHostStatus = {
   readonly action: string | null;
   /** Why sending is off and what is shown, behind Details. */
   readonly detail: ReadonlyArray<string>;
-  /** When this device last synced the machine; null when it never did. */
-  readonly lastSyncedAt: number | null;
-  /** The detail opens with the last sync time. */
+  /** The detail opens with when this device last synced the machine. */
   readonly showsSync: boolean;
+  /** The message box says the draft is kept until the machine reconnects. */
+  readonly keepsDraft: boolean;
 };
 
 // The message box's placeholder says the draft is kept; the detail does not repeat it.
@@ -298,15 +275,15 @@ const UNREACHABLE_DETAIL = [
 
 export function composerHostStatus(
   connection: HostConnection | null | undefined,
-  context: HostAdmissionContext & { readonly lastSyncedAt?: number | null } = REMOTE_PAST_GRACE,
+  context: HostAdmissionContext = REMOTE_PAST_GRACE,
 ): ComposerHostStatus {
   const base = {
     machine: context.machineLabel ?? null,
     progress: null,
     action: null,
     detail: [],
-    lastSyncedAt: context.lastSyncedAt ?? null,
     showsSync: false,
+    keepsDraft: false,
   } as const;
   if (context.isThisDevice) {
     if (connection?.blockedReason === "authentication")
@@ -353,13 +330,20 @@ export function composerHostStatus(
       headline: "This device is offline",
       detail: ["Nothing is sent until it is back online. Your draft stays here."],
     };
+  const reconnecting = connection?.phase === "reconnecting";
   return {
     ...base,
     tone: "offline",
     headline: named ? "{machine} is offline" : "This host is offline",
-    progress: connection?.phase === "reconnecting" ? "Reconnecting…" : null,
-    detail: named ? UNREACHABLE_DETAIL : ["Nothing is sent to another machine."],
+    progress: reconnecting ? "Reconnecting…" : null,
+    detail: named
+      ? UNREACHABLE_DETAIL
+      : [
+          ...(reconnecting ? ["If this does not clear, reload the page."] : []),
+          "Nothing is sent to another machine.",
+        ],
     showsSync: named,
+    keepsDraft: named,
   };
 }
 

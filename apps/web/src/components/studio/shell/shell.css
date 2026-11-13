@@ -2298,45 +2298,46 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   line-height: 1.45;
   color: var(--muted-foreground);
 }
+/* What happens next sits after the headline in muted text, with no separator, so
+   a wrapped line never starts with one. */
 .sws-host-status-live {
   flex: 0 1 auto;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 6px;
+  gap: 2px 10px;
 }
 .sws-host-status-line {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   min-width: 0;
   max-width: 100%;
-  white-space: nowrap;
   color: var(--foreground);
   font-weight: 500;
 }
-.sws-host-status[data-host-status="connecting"] .sws-dot,
-.sws-host-status[data-host-status="busy"] .sws-dot {
-  animation: sws-host-status-pulse 1.4s ease-in-out infinite;
-}
-@keyframes sws-host-status-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .sws-host-status .sws-dot {
-    animation: none;
-  }
+.sws-host-status-line .sws-dot {
+  align-self: center;
 }
 .sws-host-status-text {
   display: inline-flex;
+  flex-wrap: wrap;
   min-width: 0;
+}
+/* A headline with no name wraps like any text; one with a name stays on one line
+   and the name, alone, gives way. */
+.sws-host-status-words {
+  min-width: 0;
+  white-space: pre-wrap;
+}
+.sws-host-status-text:has(.sws-host-status-machine) {
+  flex-wrap: nowrap;
   white-space: pre;
 }
-.sws-host-status-words {
+.sws-host-status-text:has(.sws-host-status-machine) .sws-host-status-words {
   flex: none;
+  white-space: pre;
 }
 .sws-host-status-machine {
   flex: 0 1 auto;
@@ -2347,10 +2348,6 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-host-status-next {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.sws-host-status-next::before {
-  content: "\00b7";
-  margin-inline-end: 6px;
 }
 .sws-host-status-toggle {
   flex: none;

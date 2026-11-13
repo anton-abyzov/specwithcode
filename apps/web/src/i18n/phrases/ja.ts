@@ -4846,4 +4846,9 @@ export const ja: PhraseCatalog = {
   "Nothing is sent to another machine.": "他のマシンには何も送信されません。",
   "Your draft stays here until it reconnects.": "再接続するまで下書きはここに残ります。",
   "You can start these once it reconnects.": "再接続したら開始できます。",
+  "If this does not clear, reload the page.": "解消しない場合は、ページを再読み込みしてください。",
+  "You can start these once it catches up.": "追いついたら開始できます。",
+  Connecting: "接続中",
+  Disconnected: "切断",
+  "Signed out": "サインアウト済み",
 };

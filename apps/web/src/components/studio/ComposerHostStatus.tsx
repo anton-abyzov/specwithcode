@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useLocale, useT, useTx, type Locale } from "../../i18n";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
+import { relativeAge } from "../../lib/relativeAge";
 import { nowFromMinute } from "../../studio/shellModel";
 import type { ComposerHostStatus as Status } from "../../studio/projectWorkspaceModel";
 
@@ -12,12 +13,6 @@ const DOT_TONE: Record<Status["tone"], string> = {
   busy: "waiting",
 };
 
-const UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
-  ["day", 86_400_000],
-  ["hour", 3_600_000],
-  ["minute", 60_000],
-];
-
 /** "Synced just now", "Last synced 12 minutes ago", in the interface language. */
 export function syncedAgoPhrase(
   lastSyncedAt: number | null,
@@ -25,15 +20,8 @@ export function syncedAgoPhrase(
   locale: Locale,
 ): { readonly phrase: string; readonly age?: string } {
   if (lastSyncedAt === null) return { phrase: "Never synced on this device." };
-  const elapsed = Math.max(0, now - lastSyncedAt);
-  const format = new Intl.RelativeTimeFormat(locale, { numeric: "always" });
-  for (const [unit, size] of UNITS)
-    if (elapsed >= size)
-      return {
-        phrase: "Last synced {age}.",
-        age: format.format(-Math.floor(elapsed / size), unit),
-      };
-  return { phrase: "Synced just now." };
+  const age = relativeAge(lastSyncedAt, now, locale);
+  return age === null ? { phrase: "Synced just now." } : { phrase: "Last synced {age}.", age };
 }
 
 /** A translated phrase with the machine's name as its own element, so only the name ellipsizes. */
@@ -45,7 +33,17 @@ function WithMachine({ text, machine }: { text: string; machine: string | null }
   return (
     <>
       {before ? <span className="sws-host-status-words">{before}</span> : null}
-      <span className="sws-host-status-machine" title={machine} data-machine-name="">
+      <span
+        className="sws-host-status-machine"
+        data-machine-name=""
+        // Its full name on hover, only when it is cut off: a native tooltip opens
+        // under the pointer, over the message box, so nothing else here has one.
+        onPointerEnter={(e) => {
+          const el = e.currentTarget;
+          if (el.scrollWidth > el.clientWidth) el.title = machine;
+          else el.removeAttribute("title");
+        }}
+      >
         {machine}
       </span>
       {after ? <span className="sws-host-status-words">{after}</span> : null}
@@ -58,7 +56,16 @@ function WithMachine({ text, machine }: { text: string; machine: string | null }
  * a dot, the machine and its state, what happens next, and Details for the rest.
  * Details opens in place, under the line: nothing here ever covers the message box.
  */
-export function ComposerHostStatus({ status, now }: { status: Status; now: number }) {
+export function ComposerHostStatus({
+  status,
+  now,
+  lastSyncedAt,
+}: {
+  status: Status;
+  now: number;
+  /** When this device last synced the machine; null when it never did. */
+  lastSyncedAt: number | null;
+}) {
   const tx = useTx();
   const t = useT();
   const locale = useLocale();
@@ -68,7 +75,7 @@ export function ComposerHostStatus({ status, now }: { status: Status; now: numbe
   const fill = (phrase: string, values?: Record<string, string>) =>
     tx(phrase, { ...values, ...(machine === null ? {} : { machine }) });
   const headline = tx(status.headline);
-  const synced = status.showsSync ? syncedAgoPhrase(status.lastSyncedAt, now, locale) : null;
+  const synced = status.showsSync ? syncedAgoPhrase(lastSyncedAt, now, locale) : null;
   const detail = [
     ...(synced ? [tx(synced.phrase, synced.age ? { age: synced.age } : undefined)] : []),
     ...status.detail.map((line) => fill(line)),
@@ -85,7 +92,7 @@ export function ComposerHostStatus({ status, now }: { status: Status; now: numbe
       <div className="sws-host-status" data-host-status={status.tone}>
         <span role="status" className="sws-host-status-live">
           <span className="sr-only">{full}</span>
-          <span className="sws-host-status-line" title={full} aria-hidden>
+          <span className="sws-host-status-line" aria-hidden>
             <span className="sws-dot" data-tone={DOT_TONE[status.tone]} />
             <span className="sws-host-status-text">
               <WithMachine text={headline} machine={machine} />
@@ -134,9 +141,6 @@ export function ProjectComposerHostStatus({
   useMachineLastSeenVersion();
   const now = nowFromMinute(useNowMinute());
   return (
-    <ComposerHostStatus
-      status={{ ...status, lastSyncedAt: machineLastSeenAt(environmentId) }}
-      now={now}
-    />
+    <ComposerHostStatus status={status} now={now} lastSyncedAt={machineLastSeenAt(environmentId)} />
   );
 }

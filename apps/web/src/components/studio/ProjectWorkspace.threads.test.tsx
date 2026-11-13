@@ -218,9 +218,6 @@ describe("switching the coordinator machine", () => {
         </UnreachableHostsContext.Provider>,
       ),
     );
-    const status = container.querySelector("[data-orchestrator-status]")?.textContent ?? "";
-    expect(status).toContain("laptop unreachable");
-    expect(status).toContain("read-only");
     // One status line says it, once; the long sentence is gone from the page.
     const line = container.querySelectorAll("[data-host-status]");
     expect(line).toHaveLength(1);

@@ -16,17 +16,13 @@ import {
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { useNowMinute } from "../../hooks/useNowMinute";
 import { useTx } from "../../i18n";
-import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { highestEpoch, projectLink } from "../../studio/projectLink";
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
-import { remoteOrchestratorOfflineLabel } from "../../studio/projectWorkspaceModel";
 import { useMachineNickname } from "../../studio/machineNickname";
-import { nowFromMinute } from "../../studio/shellModel";
 import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { toastManager } from "../ui/toast";
@@ -95,7 +91,7 @@ export function OrchestratorSwitcher({
   /** Its full host label for the tooltip; defaults to `label`. */
   hostLabel?: string;
   connected: boolean;
-  /** Shown after the name while the viewed machine is not connected. */
+  /** One word for screen readers while the viewed machine is not connected ("Reconnecting"). */
   statusDetail: string;
   current: string;
   copies: readonly OrchestratorCopy[];
@@ -134,7 +130,7 @@ export function OrchestratorSwitcher({
         {runsOn}
       </span>
       <span className="sr-only" data-orchestrator-status="">
-        {connected ? `, ${tx("connected")}` : `, ${statusDetail}`}
+        {connected ? `, ${tx("connected")}` : `, ${tx(statusDetail)}`}
       </span>
       {savedMachineMissing ? (
         <span aria-hidden> · {tx("Last viewed machine not listed")}</span>
@@ -342,8 +338,8 @@ export function OrchestratorSwitcher({
 /**
  * The switcher on a project page, with its actions wired: viewing changes only
  * what this page shows, starting runs another coordinator next to this one,
- * moving opens the confirmed handoff. A remote machine that is not connected
- * says when this device last synced it and that the page is read-only.
+ * moving opens the confirmed handoff. A machine that is not connected shows a
+ * red dot; the status line above the message box says what that means.
  */
 export function ProjectOrchestratorSwitcher({
   project,
@@ -381,18 +377,14 @@ export function ProjectOrchestratorSwitcher({
   const name = useMachineNickname(project.environmentId, label);
   const identity = useMachineIdentity(project.environmentId, label);
   const start = useStartCoordinator(members, copies);
-  useMachineLastSeenVersion();
-  const now = nowFromMinute(useNowMinute());
-  const statusDetail = isThisDevice
-    ? disconnectedLabel
-    : remoteOrchestratorOfflineLabel(name, machineLastSeenAt(project.environmentId), now);
   return (
     <OrchestratorSwitcher
       identity={identity}
       label={name}
       hostLabel={label}
       connected={connected}
-      statusDetail={statusDetail}
+      // The line above the message box says the rest once; the chip names the state.
+      statusDetail={disconnectedLabel}
       current={current}
       copies={copies}
       unknown={unknown}

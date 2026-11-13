@@ -7,7 +7,6 @@ import {
   hostDisconnectedLabel,
   projectAdmissionReason,
   projectThreadGroup,
-  remoteOrchestratorOfflineLabel,
   projectThreadReference,
   projectThreads,
   threadAttentionNote,
@@ -794,26 +793,6 @@ it("does not list native subagents of an independent user chat as project work",
   expect(
     projectThreads([independent, child, worker], "host-1", projectId, coordinator).map((t) => t.id),
   ).toEqual(["worker-1"]);
-});
-
-describe("remoteOrchestratorOfflineLabel", () => {
-  const now = Date.UTC(2026, 9, 20, 18, 0);
-  it("says how old the synced copy is and that it is read-only", () => {
-    expect(remoteOrchestratorOfflineLabel("Minis", now - 12 * 60_000, now)).toBe(
-      "Minis unreachable · last synced 12 min ago · read-only",
-    );
-    expect(remoteOrchestratorOfflineLabel("Minis", now - 3 * 3_600_000, now)).toBe(
-      "Minis unreachable · last synced 3 h ago · read-only",
-    );
-    expect(remoteOrchestratorOfflineLabel("Minis", now, now)).toBe(
-      "Minis unreachable · last synced just now · read-only",
-    );
-  });
-  it("says Unknown when nothing records a sync", () => {
-    expect(remoteOrchestratorOfflineLabel("Minis", null, now)).toBe(
-      "Minis unreachable · last synced: Unknown · read-only",
-    );
-  });
 });
 
 describe("attention project scope", () => {

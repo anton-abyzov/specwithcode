@@ -24,7 +24,6 @@ import {
   composerHostStatus,
   hostDisconnectedLabel,
   projectAdmissionReason,
-  remoteOrchestratorOfflineLabel,
 } from "../../src/studio/projectWorkspaceModel";
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
 import { isLocale, setLocalePreference, useTx } from "../../src/i18n";
@@ -79,6 +78,8 @@ function connectionOf(state: FixtureState) {
       return { phase: "error", blockedReason: "authentication" } as const;
     case "this-device":
       return { phase: "reconnecting" } as const;
+    case "this-device-stopped":
+      return { phase: "error" } as const;
     default:
       return { phase: "error" } as const;
   }
@@ -110,7 +111,7 @@ function Harness() {
   }, []);
   const connection = connectionOf(state);
   const connected = connection.phase === "connected";
-  const isThisDevice = state === "this-device";
+  const isThisDevice = state === "this-device" || state === "this-device-stopped";
   const hostAdmission = { isThisDevice, graceElapsed: true };
   const admission = projectAdmissionReason(SETTINGS, connected, true, connection as never, {
     ...hostAdmission,
@@ -121,9 +122,7 @@ function Harness() {
     ? null
     : composerHostStatus(connection as never, { ...hostAdmission, machineLabel: machine });
   const tx = useTx();
-  const statusDetail = isThisDevice
-    ? hostDisconnectedLabel(connection as never, hostAdmission)
-    : remoteOrchestratorOfflineLabel(machine, window.__lastSyncedAt ?? null, NOW);
+  const statusDetail = hostDisconnectedLabel(connection as never, hostAdmission);
   const width = params.get("width");
   return (
     <div
@@ -148,7 +147,7 @@ function Harness() {
         maxFileBytes={20 * 1024 * 1024}
         sending={false}
         placeholder={
-          hostStatus?.showsSync && hostStatus.machine
+          hostStatus?.keepsDraft
             ? tx("Your draft stays here until it reconnects.")
             : "Ask the coordinator a question or start a task…"
         }

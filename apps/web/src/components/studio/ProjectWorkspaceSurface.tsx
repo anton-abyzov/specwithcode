@@ -1404,9 +1404,16 @@ export function ProjectWorkspaceSurface({
       () => setStartingSuggestion(null),
     );
   }
-  // The status line above the message box already says the machine is offline.
+  // The status line above the message box already names the problem; the list says
+  // only when its starters work again, or the step that makes them work.
   const startersBlocked =
-    (hostStatus ? tx("You can start these once it reconnects.") : blocked) ??
+    (hostStatus
+      ? hostStatus.action
+        ? tx(hostStatus.action)
+        : hostStatus.tone === "busy"
+          ? tx("You can start these once it catches up.")
+          : tx("You can start these once it reconnects.")
+      : blocked) ??
     (!model && !coordinatorId
       ? modelsLoading
         ? "Models are still loading from this host."
@@ -1910,7 +1917,7 @@ export function ProjectWorkspaceSurface({
                 placeholder={
                   coordinatorQuestion
                     ? say("Answer the coordinator: type, paste or attach, then send")
-                    : hostStatus?.showsSync && hostStatus.machine
+                    : hostStatus?.keepsDraft
                       ? tx("Your draft stays here until it reconnects.")
                       : promptPlaceholder
                 }
@@ -1959,7 +1966,8 @@ export function ProjectWorkspaceSurface({
                         onOpen={onCheckout}
                       />
                     )}
-                    {error && (
+                    {/* A send refused for the host the line names would only repeat it. */}
+                    {error && !(hostStatus && error === blocked) && (
                       <p role="alert">
                         {nameMachineInText(say(error), knownMachine)}
                         {providerFix && !coordinatorFailure ? (

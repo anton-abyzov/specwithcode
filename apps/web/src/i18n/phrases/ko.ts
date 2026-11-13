@@ -4789,4 +4789,9 @@ export const ko: PhraseCatalog = {
   "Nothing is sent to another machine.": "다른 컴퓨터로는 아무것도 보내지 않습니다.",
   "Your draft stays here until it reconnects.": "다시 연결될 때까지 초안은 여기에 남습니다.",
   "You can start these once it reconnects.": "다시 연결되면 시작할 수 있습니다.",
+  "If this does not clear, reload the page.": "계속되면 페이지를 새로고침하세요.",
+  "You can start these once it catches up.": "따라잡으면 시작할 수 있습니다.",
+  Connecting: "연결 중",
+  Disconnected: "연결 끊김",
+  "Signed out": "로그아웃됨",
 };

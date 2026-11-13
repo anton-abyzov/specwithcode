@@ -24,6 +24,7 @@ describe("composerHostStatus", () => {
       progress: "Reconnecting…",
       action: null,
       showsSync: true,
+      keepsDraft: true,
     });
     expect(status.detail.join(" ")).not.toContain("cannot take messages");
     expect(composerHostStatus({ phase: "error" }, remote).progress).toBeNull();
@@ -66,6 +67,8 @@ describe("composerHostStatus", () => {
       headline: "This host is offline",
       machine: null,
       showsSync: false,
+      keepsDraft: false,
+      detail: ["If this does not clear, reload the page.", "Nothing is sent to another machine."],
     });
   });
 });
@@ -99,8 +102,9 @@ async function show(phase: string, context = remote, lastSyncedAt: number | null
   await act(async () =>
     root.render(
       <ComposerHostStatus
-        status={{ ...composerHostStatus({ phase }, context), lastSyncedAt }}
+        status={composerHostStatus({ phase }, context)}
         now={NOW}
+        lastSyncedAt={lastSyncedAt}
       />,
     ),
   );
@@ -126,12 +130,22 @@ describe("ComposerHostStatus", () => {
     await act(async () => toggle()!.click());
     expect(container.querySelector("[data-host-status-detail]")).toBeNull();
   });
-  it("gives the machine's name its own element, with its full name as the title", async () => {
+  it("gives the machine's name its own element, titled in full only when cut off", async () => {
     const name = "build-server-for-the-specwithcode-release-train-and-nightly-e2e-01";
     await show("error", { ...remote, machineLabel: name });
-    const machine = container.querySelector("[data-machine-name]");
-    expect(machine?.textContent).toBe(name);
-    expect(machine?.getAttribute("title")).toBe(name);
+    const machine = container.querySelector<HTMLElement>("[data-machine-name]")!;
+    expect(machine.textContent).toBe(name);
+    // Nothing on the line carries a title by default: a native tooltip would open
+    // under the pointer, over the message box.
+    expect(container.querySelectorAll("[title]")).toHaveLength(0);
+    const hover = () => machine.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    Object.defineProperty(machine, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(machine, "clientWidth", { configurable: true, value: 120 });
+    await act(async () => hover());
+    expect(machine.getAttribute("title")).toBe(name);
+    Object.defineProperty(machine, "scrollWidth", { configurable: true, value: 120 });
+    await act(async () => hover());
+    expect(machine.hasAttribute("title")).toBe(false);
   });
   it("moves through reconnecting, connected and back without a second line", async () => {
     await show("reconnecting");
@@ -152,6 +166,7 @@ describe("ComposerHostStatus", () => {
         <ComposerHostStatus
           status={composerHostStatus({ phase: "error", blockedReason: "authentication" }, remote)}
           now={NOW}
+          lastSyncedAt={NOW}
         />,
       ),
     );

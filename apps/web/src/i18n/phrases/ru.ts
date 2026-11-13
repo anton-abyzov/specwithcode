@@ -4843,4 +4843,9 @@ export const ru: PhraseCatalog = {
   "Your draft stays here until it reconnects.":
     "Черновик останется здесь, пока связь не восстановится.",
   "You can start these once it reconnects.": "Их можно запустить, когда связь восстановится.",
+  "If this does not clear, reload the page.": "Если это не пройдёт, перезагрузите страницу.",
+  "You can start these once it catches up.": "Их можно запустить, когда он догонит.",
+  Connecting: "Подключение",
+  Disconnected: "Отключено",
+  "Signed out": "Выполнен выход",
 };

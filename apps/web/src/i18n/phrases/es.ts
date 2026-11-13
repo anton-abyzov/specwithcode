@@ -4869,4 +4869,9 @@ export const es: PhraseCatalog = {
   "Nothing is sent to another machine.": "No se envía nada a otra máquina.",
   "Your draft stays here until it reconnects.": "Tu borrador se queda aquí hasta que se reconecte.",
   "You can start these once it reconnects.": "Podrás iniciarlos cuando se reconecte.",
+  "If this does not clear, reload the page.": "Si no se resuelve, recarga la página.",
+  "You can start these once it catches up.": "Podrás iniciarlos cuando se ponga al día.",
+  Connecting: "Conectando",
+  Disconnected: "Desconectado",
+  "Signed out": "Sesión cerrada",
 };

@@ -50,7 +50,14 @@ const browser = await chromium.launch({
 const LONG = "build-server-for-the-specwithcode-release-train-and-nightly-e2e-01";
 const CJK = "東京オフィスの開発用マシン二号機";
 const EMOJI = "🚀 Rocket Mac 🍎";
-const OFFLINE_STATES = ["offline", "reconnecting", "connecting", "signed-out", "this-device"];
+const OFFLINE_STATES = [
+  "offline",
+  "reconnecting",
+  "connecting",
+  "signed-out",
+  "this-device",
+  "this-device-stopped",
+];
 /** Everything this runner looks at in one composer, measured in the page. */
 async function measure(page) {
   return page.evaluate(() => {
@@ -77,7 +84,10 @@ async function measure(page) {
       if (s.overflowX === "visible" && s.overflow === "visible") continue;
       if (el.scrollWidth <= el.clientWidth + 1) continue;
       const ellipsis = s.textOverflow === "ellipsis";
-      const titled = el.closest("[title]")?.getAttribute("title")?.length > 0;
+      // A cut-off machine name gets its full name as a title on hover (checked below).
+      const titled =
+        el.closest("[title]")?.getAttribute("title")?.length > 0 ||
+        el.matches("[data-machine-name]");
       if (own && ellipsis && titled) continue;
       if (!own && !el.textContent.trim()) continue;
       clipped.push({
@@ -149,6 +159,16 @@ async function scenario({ id, query, width = 1100, theme = "light", expectOfflin
     await page.mouse.move(0, 0);
   }
   Object.assign(receipt.scenarios.at(-1), { measured: m, hoverCovering: hovered.covering, shot });
+  const name = page.locator("[data-machine-name]");
+  if ((await name.count()) && (await name.evaluate((el) => el.scrollWidth > el.clientWidth))) {
+    await name.hover();
+    check(
+      "a cut-off name shows in full on hover",
+      (await name.getAttribute("title")) === (await name.textContent()),
+      await name.getAttribute("title"),
+    );
+    await page.mouse.move(0, 0);
+  }
   check("no page errors", errors.length === 0, errors);
   check("no horizontal page scroll", m.scrollFits, { innerWidth: m.innerWidth });
   check("no clipped text", m.clipped.length === 0, m.clipped);
@@ -232,6 +252,16 @@ try {
         query: `state=reconnecting&synced=190&lang=${lang}`,
         width,
         theme: lang === "de" || lang === "ru" ? "dark" : "light",
+        expectOffline: true,
+      });
+  // The longest headlines, with no machine name to give way, at phone width.
+  for (const lang of ["de", "ru", "fr", "pt-BR"])
+    for (const state of ["this-device", "this-device-stopped", "signed-out"])
+      await scenario({
+        id: `lang-${lang}-${state}-390`,
+        query: `state=${state}&lang=${lang}`,
+        width: 390,
+        theme: "dark",
         expectOffline: true,
       });
   // Never synced.
