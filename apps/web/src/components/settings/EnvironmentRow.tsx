@@ -6,6 +6,7 @@ import {
 } from "@specweave-studio/client-runtime/connection";
 import type {
   DesktopSshEnvironmentTarget,
+  EnvironmentId,
   EnvironmentMachineKind,
 } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
@@ -15,6 +16,7 @@ import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { MachineColorButton } from "./MachineColor";
 
 export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): string {
   const authority = target.username ? `${target.username}@${target.hostname}` : target.hostname;
@@ -62,6 +64,7 @@ export function environmentTransportLabel(
  * uses this so the lists share one rhythm.
  */
 export function EnvironmentRow({
+  environmentId,
   kind,
   label,
   hostLabel,
@@ -72,6 +75,8 @@ export function EnvironmentRow({
   className,
   children,
 }: {
+  /** Given for a machine with a color: the icon wears it and opens the color choices. */
+  readonly environmentId?: EnvironmentId | undefined;
   readonly kind: EnvironmentMachineKind;
   readonly label: string;
   /** The machine's own name, shown muted after a nickname that differs from it. */
@@ -93,7 +98,15 @@ export function EnvironmentRow({
         className,
       )}
     >
-      <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
+      {environmentId ? (
+        <MachineColorButton
+          environmentId={environmentId}
+          fallbackLabel={hostLabel ?? label}
+          kind={kind}
+        />
+      ) : (
+        <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
+      )}
       <div className="min-w-0">
         <p className="truncate text-sm font-medium text-foreground">
           {label}

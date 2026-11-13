@@ -1671,6 +1671,7 @@ function SavedBackendListRow({
 
   return (
     <EnvironmentRow
+      environmentId={environmentId}
       kind={machineKind}
       label={nickname}
       hostLabel={environment.label}

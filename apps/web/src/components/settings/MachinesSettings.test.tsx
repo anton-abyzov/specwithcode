@@ -89,6 +89,7 @@ vi.mock("../away/AwayAccessRequests", () => ({ AwayAccessRequestsAll: () => null
 vi.mock("./usePrimaryFleet", () => ({ usePrimaryFleet: () => runtime.fleet }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
+  usePrimaryEnvironmentId: () => null,
   useRelayEnvironmentDiscovery: () => ({
     environments: runtime.discovered,
     refreshing: false,
@@ -125,6 +126,26 @@ vi.mock("../../studio/machineNickname", () => ({
     runtime.nicknames[environmentId] ?? label ?? "",
   useMachineNicknames: () => (environmentId: string, label?: string | null) =>
     runtime.nicknames[environmentId] ?? label ?? environmentId,
+}));
+vi.mock("../../studio/machineIdentity", () => {
+  const identity = (environmentId: string, name?: string | null) => ({
+    environmentId,
+    name: name ?? environmentId,
+    color: "teal",
+    icon: "laptop",
+    short: "AB",
+    derivedShort: "AB",
+  });
+  return {
+    machineColorProps: (value: { color: string } | null | undefined) =>
+      value ? { "data-machine-color": value.color } : {},
+    useMachineIdentity: (id: string | null, name?: string | null) => (id ? identity(id, name) : null),
+    useMachineIdentities: () => identity,
+    useKnownMachineIdentities: () => [],
+  };
+});
+vi.mock("./MachineColor", () => ({
+  MachineColorButton: () => <span data-machine-color-button="" />,
 }));
 vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
 vi.mock("./AddProjectToMachine", () => ({
@@ -449,9 +470,12 @@ describe("Settings > Machines", () => {
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     // One machine's card, up to the end of its closed disclosure.
-    const start = html.indexOf(
-      '<li class="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"',
-      html.indexOf('data-part="other-machines"'),
+    const start = html.lastIndexOf(
+      "<li",
+      html.indexOf(
+        'class="machine-card flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"',
+        html.indexOf('data-part="other-machines"'),
+      ),
     );
     const card = html.slice(start, html.indexOf("</details>", start));
     const details = card.indexOf("<details");
@@ -651,7 +675,7 @@ describe("Settings > Machines", () => {
     expect(here).toContain("Projects and accounts on this machine");
     expect(here).toContain('aria-label="M4MAX"');
     // Its name and Rename are the summary's; the card keeps its projects and accounts.
-    expect(here).toMatch(/<div class="hidden"><svg/);
+    expect(here).toMatch(/<div class="hidden"><span data-machine-color-button=""/);
     expect(here).toContain(">Projects<");
     const others = html.slice(html.indexOf('data-part="other-machines"'));
     expect(others).not.toContain('aria-label="M4MAX"');

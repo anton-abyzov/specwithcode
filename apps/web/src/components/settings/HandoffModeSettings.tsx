@@ -18,7 +18,7 @@ import { useProjects } from "../../state/entities";
 import { isArchivedMember } from "../../studio/projectListVisibility";
 import { handoffMode, runHandoffMode, useHandoffModeSnapshot } from "../../studio/handoffMode";
 import { requestHandOffMachine } from "../handoff/HandOffMachineDialog";
-import { destinationText, type HandoffDestination } from "../handoff/HandoffResults";
+import { HandoffDestinationName, type HandoffDestination } from "../handoff/HandoffResults";
 import { useHandoffDestinations } from "../handoff/useHandoffDestinations";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -152,7 +152,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
             <SelectTrigger size="sm" aria-label={tx("Away target")}>
               <SelectValue>
                 {sleepTarget
-                  ? destinationText(sleepTarget)
+                  ? <HandoffDestinationName destination={sleepTarget} />
                   : config.sleepTarget
                     ? tx("A removed machine")
                     : tx("Off")}
@@ -162,7 +162,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
               <SelectItem value="off">{tx("Off")}</SelectItem>
               {props.destinations.map((destination) => (
                 <SelectItem key={destination.environmentId} value={destination.environmentId}>
-                  {destinationText(destination)}
+                  <HandoffDestinationName destination={destination} />
                 </SelectItem>
               ))}
             </SelectPopup>

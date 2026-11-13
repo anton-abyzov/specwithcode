@@ -19,8 +19,17 @@ const PAGE_MOCKED =
 const GRANTS = /MachineWorkGrants\.tsx$/;
 const GRANTS_MOCKED = /\/(studio\/(fleet|machineNickname)|state\/session|confirmDialog)$/;
 
+// Machine colors: every Settings piece that wears one reads it from the same fixture,
+// so a machine has one color across the cards, chips, grant pills and header.
+const COLORED = /(MachineColor|MachineDot|MachineWorkSummary|MachinesSettings|MachineSummary)\.tsx$/;
+const COLORED_MOCKED = /\/studio\/(machineIdentity|useRenameMachine)$/;
+const COLOR_PICKER_MOCKED = /\/studio\/machineNickname$/;
+
 /** The mock file, relative to this folder, that stands in for `id` when `importer` asks for it. */
 export function mockFor(id, importer = "") {
+  if (COLORED.test(importer) && COLORED_MOCKED.test(id)) return "identity-mocks.tsx";
+  if (importer.endsWith("MachineColor.tsx") && COLOR_PICKER_MOCKED.test(id))
+    return "identity-mocks.tsx";
   if (importer.endsWith("MachinesSettings.tsx") && ROWS.test(id)) return "mocks.tsx";
   if (UPDATE_CARD.test(importer) && UPDATE_CARD_MOCKED.test(id)) return "mocks.tsx";
   if (GRANTS.test(importer) && GRANTS_MOCKED.test(id)) return "mocks.tsx";
