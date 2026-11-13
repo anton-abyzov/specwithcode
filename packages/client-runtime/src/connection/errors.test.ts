@@ -171,3 +171,30 @@ describe("mapRemoteEnvironmentError rate limits", () => {
     });
   });
 });
+
+describe("a machine waiting to approve this device (1327)", () => {
+  const refused = new EnvironmentAuthInvalidError({
+    code: "auth_invalid",
+    reason: "invalid_credential",
+    teamRulesMessage: "Open SpecWithCode on m4 and type this code: K7QX2M",
+    refusal: "device_not_approved",
+    approvalCode: "K7QX2M",
+    traceId: "trace-device",
+  });
+
+  it("keeps retrying with the code and the words, on any route, never asking to pair again", () => {
+    for (const mapped of [
+      mapRemoteEnvironmentError(refused),
+      mapRemoteEnvironmentError(refused, "relay"),
+      mapRemoteDpopEnvironmentError(refused),
+    ]) {
+      expect(mapped).toMatchObject({
+        _tag: "ConnectionTransientError",
+        detail: "Open SpecWithCode on m4 and type this code: K7QX2M",
+        deviceApprovalCode: "K7QX2M",
+        retryAfterMs: 4_000,
+      });
+      expect(mapped).not.toHaveProperty("reapprovalRequired");
+    }
+  });
+});

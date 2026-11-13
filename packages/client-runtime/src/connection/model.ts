@@ -86,6 +86,8 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
     machineOffline: Schema.optionalKey(Schema.Boolean),
     /** The machine refused this client for a while; no retry comes sooner. */
     retryAfterMs: Schema.optionalKey(Schema.Number),
+    /** The machine waits for its owner to type this code (1327); `detail` says where. */
+    deviceApprovalCode: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {

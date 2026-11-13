@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type {
+  ConnectionAttemptError,
   ConnectionBlockedReason,
   ConnectionTarget,
   SupervisorConnectionState,
@@ -26,6 +27,8 @@ export interface EnvironmentConnectionPresentation {
   readonly blockedReason?: ConnectionBlockedReason;
   /** The host no longer accepts this device's approval, such as after an update. */
   readonly reapprovalRequired?: boolean;
+  /** The host waits for its owner to type this code before this device may use it (1327). */
+  readonly deviceApprovalCode?: string;
 }
 
 export interface EnvironmentPresentation {
@@ -33,6 +36,11 @@ export interface EnvironmentPresentation {
   readonly connection: EnvironmentConnectionPresentation;
   readonly serverConfig: ServerConfig | null;
 }
+
+const approvalCodeOf = (failure: ConnectionAttemptError | null | undefined) =>
+  failure?._tag === "ConnectionTransientError" && failure.deviceApprovalCode !== undefined
+    ? { deviceApprovalCode: failure.deviceApprovalCode }
+    : {};
 
 export function presentConnectionState(
   state: SupervisorConnectionState,
@@ -47,6 +55,7 @@ export function presentConnectionState(
         phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...approvalCodeOf(state.lastFailure),
       };
     case "connected":
       return { phase: "connected", error: null, traceId: null };
@@ -55,6 +64,7 @@ export function presentConnectionState(
         phase: "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...approvalCodeOf(state.lastFailure),
       };
     case "blocked":
       return {
