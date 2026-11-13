@@ -476,7 +476,9 @@ export const make = Effect.gen(function* () {
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
     const allowsPrerelease = channel === "nightly";
-    yield* electronUpdater.setChannel(channel);
+    // Insiders builds ship `latest` manifests (docs/studio/release-train.md); the track only
+    // decides which releases count, through allowPrerelease and resolveUpdateFeed.
+    yield* electronUpdater.setChannel("latest");
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
     yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
     yield* electronUpdater.setFullChangelog(allowsPrerelease);

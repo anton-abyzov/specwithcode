@@ -581,8 +581,8 @@ export const ru: PhraseCatalog = {
   "Try again in a moment.": "Попробуйте ещё раз через минуту.",
   "Update this environment to manage Antigravity.":
     "Обновите это окружение, чтобы управлять Antigravity.",
-  "Use stable releases or nightly builds. Switch back anytime.":
-    "Используйте стабильные релизы или ночные сборки. Вернуться можно в любой момент.",
+  "Stable gets builds that ran a day on Insiders. Insiders gets every build first.":
+    "Stable получает сборки, которые день проработали в Insiders. Insiders получает каждую сборку первой.",
   "Use the repository's template for change request descriptions when available.":
     "Использовать шаблон репозитория для описаний запросов на изменение, если он есть.",
   "Use thinner grayscale text smoothing instead of the macOS default.":
@@ -2484,6 +2484,7 @@ export const ru: PhraseCatalog = {
   "What's new": "Что нового",
   Nightly: "Nightly",
   Stable: "Stable",
+  Insiders: "Insiders",
   Latest: "Latest",
   "Background Activity": "Фоновая активность",
   "Tune the shared power policy and the background intervals that feed it.":

@@ -512,7 +512,7 @@ function AboutVersionSection() {
       {hasDesktopBridge ? (
         <SettingsRow
           title="Update track"
-          description="Use stable releases or nightly builds. Switch back anytime."
+          description="Stable gets builds that ran a day on Insiders. Insiders gets every build first."
           control={
             <Select
               value={selectedUpdateChannel}
@@ -527,7 +527,7 @@ function AboutVersionSection() {
                 disabled={isChangingUpdateChannel}
               >
                 <SelectValue>
-                  {selectedUpdateChannel === "nightly" ? tx("Nightly") : tx("Stable")}
+                  {selectedUpdateChannel === "nightly" ? tx("Insiders") : tx("Stable")}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -535,7 +535,7 @@ function AboutVersionSection() {
                   {tx("Stable")}
                 </SelectItem>
                 <SelectItem hideIndicator value="nightly">
-                  {tx("Nightly")}
+                  {tx("Insiders")}
                 </SelectItem>
               </SelectPopup>
             </Select>

@@ -113,12 +113,22 @@ export function versionFromTag(tagName: string): string | null {
 }
 
 /**
+ * True for a release only the Insiders track takes: a suffixed version, or,
+ * from 1.1.0 on, a plain version GitHub flags as a prerelease (every 1.1+
+ * build is published that way until the daily train promotes it to stable,
+ * docs/studio/release-train.md). Before 1.1.0 the version alone decides: the
+ * 0.2.x alpha releases were published as prereleases, yet a plain `0.2.1` is a
+ * stable release, and 1.0.x plain versions were all published as Latest.
+ */
+export function isInsidersOnlyRelease(release: GitHubRelease, version: string): boolean {
+  if (version.includes("-")) return true;
+  return release.prerelease && compareSemverVersions(version, "1.1.0") >= 0;
+}
+
+/**
  * The newest release above `currentVersion` that carries `manifestName`.
- * Drafts never count. The version decides the track, not GitHub's
- * prerelease flag: the 0.2.x alpha releases were published as prereleases,
- * yet a plain `0.2.1` is a stable release, and from 1.0.0 plain versions are
- * published as Latest (scripts/studio-projects/release-flags.mjs). Suffixed
- * versions need `allowPrerelease`.
+ * Drafts never count. Insiders-only releases (isInsidersOnlyRelease) need
+ * `allowPrerelease`.
  */
 export function selectNewestRelease(input: {
   readonly releases: ReadonlyArray<GitHubRelease>;
@@ -131,7 +141,7 @@ export function selectNewestRelease(input: {
     if (release.draft) continue;
     const version = versionFromTag(release.tagName);
     if (version === null) continue;
-    if (!input.allowPrerelease && version.includes("-")) continue;
+    if (!input.allowPrerelease && isInsidersOnlyRelease(release, version)) continue;
     if (compareSemverVersions(version, input.currentVersion) <= 0) continue;
     const manifestAsset = release.assets.find((asset) => asset.name === input.manifestName);
     if (manifestAsset === undefined) continue;

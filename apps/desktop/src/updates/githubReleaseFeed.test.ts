@@ -108,6 +108,19 @@ describe("githubReleaseFeed", () => {
     expect(selected?.manifestAsset.name).toBe("latest-mac.yml");
   });
 
+  it("from 1.1.0 leaves GitHub prereleases to the Insiders track", () => {
+    const releases = [release("v1.1.0"), release("v1.1.4", { prerelease: true })];
+    const pick = (allowPrerelease: boolean) =>
+      selectNewestRelease({
+        releases,
+        currentVersion: "1.0.276",
+        allowPrerelease,
+        manifestName: "latest-mac.yml",
+      })?.version;
+    expect(pick(false)).toBe("1.1.0");
+    expect(pick(true)).toBe("1.1.4");
+  });
+
   it("accepts suffixed versions only when prereleases are allowed", () => {
     const releases = [release("v0.2.0"), release("v0.2.5-nightly.20261010.1")];
     expect(

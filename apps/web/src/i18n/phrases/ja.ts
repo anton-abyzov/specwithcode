@@ -579,8 +579,8 @@ export const ja: PhraseCatalog = {
   "Try again in a moment.": "少し待ってからもう一度お試しください。",
   "Update this environment to manage Antigravity.":
     "Antigravity を管理するには、この環境を更新してください。",
-  "Use stable releases or nightly builds. Switch back anytime.":
-    "安定版リリースかナイトリービルドを使います。いつでも戻せます。",
+  "Stable gets builds that ran a day on Insiders. Insiders gets every build first.":
+    "Stable には Insiders で 1 日動いたビルドが届きます。Insiders にはすべてのビルドが最初に届きます。",
   "Use the repository's template for change request descriptions when available.":
     "リポジトリにテンプレートがあれば、変更リクエストの説明に使います。",
   "Use thinner grayscale text smoothing instead of the macOS default.":
@@ -2490,6 +2490,7 @@ export const ja: PhraseCatalog = {
   "What's new": "新機能",
   Nightly: "Nightly",
   Stable: "Stable",
+  Insiders: "Insiders",
   Latest: "Latest",
   "Background Activity": "バックグラウンドアクティビティ",
   "Tune the shared power policy and the background intervals that feed it.":

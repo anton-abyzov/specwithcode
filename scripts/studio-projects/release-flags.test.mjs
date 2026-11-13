@@ -13,9 +13,14 @@ const script = NodePath.join(
   "release-flags.mjs",
 );
 
-test("a plain version is published as the Latest release", () => {
-  for (const version of ["1.0.0", "v1.0.0", "1.2.10", "2.0.0"])
+test("a plain 1.0.x version is published as the Latest release", () => {
+  for (const version of ["1.0.0", "v1.0.0", "1.0.276"])
     assert.deepEqual(releaseFlags(version), ["--latest", "--prerelease=false"]);
+});
+
+test("from 1.1.0 every build is an insiders pre-release; only the train makes it stable", () => {
+  for (const version of ["1.1.0", "v1.1.7", "1.2.10", "2.0.0"])
+    assert.deepEqual(releaseFlags(version), ["--prerelease", "--latest=false"]);
 });
 
 test("a plain 0.x alpha never takes Latest from a stable release", () => {
@@ -42,4 +47,8 @@ test("the command line prints the flags for gh", () => {
     encoding: "utf8",
   });
   assert.equal(failed.status, 1);
+  assert.equal(
+    NodeChildProcess.execFileSync(process.execPath, [script, "1.1.0"], { encoding: "utf8" }),
+    "--prerelease --latest=false\n",
+  );
 });

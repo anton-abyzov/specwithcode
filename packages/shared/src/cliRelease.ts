@@ -224,10 +224,17 @@ export function cliReleaseAssetsHaveArchive(
  * workflow, and some releases never got them. A release listed without its
  * assets is not judged.
  */
+/** Plain versions from 1.1.0 on, where GitHub's prerelease flag marks an Insiders build. */
+function isOnReleaseTrain(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= 1);
+}
+
 export function newestCliReleaseVersion(
   releases: ReadonlyArray<{
     readonly tag_name: string;
     readonly draft?: boolean | undefined;
+    readonly prerelease?: boolean | undefined;
     readonly assets?: ReadonlyArray<{ readonly name: string }> | undefined;
   }>,
   channel: CliReleaseChannel,
@@ -238,6 +245,9 @@ export function newestCliReleaseVersion(
     const version = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name)?.[1];
     if (version === undefined) continue;
     if (cliReleaseChannelOf(version) !== channel) continue;
+    // From 1.1.0 every build is an Insiders prerelease until the daily train promotes it
+    // (docs/studio/release-train.md); stable follows only promoted ones.
+    if (channel === "stable" && release.prerelease === true && isOnReleaseTrain(version)) continue;
     if (
       platformKey !== undefined &&
       release.assets !== undefined &&

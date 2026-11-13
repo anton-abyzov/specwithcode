@@ -14,6 +14,14 @@
 #       main the request saw, and exits 1 when a run fails. A run can end green without it (it
 #       finished an older release first), so --wait then asks again, three runs at most. A
 #       release takes about 25 minutes, longer behind another, so run --wait in the background.
+#   bash scripts/release/request-release.sh --hotfix PR [--by NAME]
+#       Ships merged pull request PR to stable now (docs/studio/release-train.md). PR must carry the
+#       `hotfix` label, which only Anton's yes puts there. When no release holds its merge commit
+#       yet, this first requests one and waits for it (about 25 minutes, so run it in the
+#       background); then it runs the Release train with hotfix_pr, which promotes the newest
+#       complete Insiders build holding PR to stable without the 24-hour soak.
+#   From 1.1.0 on every release is an Insiders build (a prerelease); only the daily Release train
+#   (.github/workflows/release-train.yml) or a hotfix makes one stable.
 #   bash scripts/release/request-release.sh --dry-run
 #       Prints what a run dispatched now would decide. Dispatches nothing.
 #   bash scripts/release/request-release.sh --released COMMIT
@@ -26,7 +34,7 @@
 set -euo pipefail
 
 REPO="${RELEASE_REPO:-anton-abyzov/specwithcode}"
-REF=main BY="" COMMIT="" MODE=request WAIT=0
+REF=main BY="" COMMIT="" MODE=request WAIT=0 HOTFIX=""
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 die() { printf 'request-release.sh: %s\n' "$*" >&2; exit 1; }
@@ -37,6 +45,7 @@ while [ $# -gt 0 ]; do
     --ref) [ $# -ge 2 ] || die "--ref needs a branch"; REF="$2"; shift ;;
     --released) [ $# -ge 2 ] || die "--released needs a commit"; MODE=released; COMMIT="$2"; shift ;;
     --wait) WAIT=1 ;;
+    --hotfix) [ $# -ge 2 ] || die "--hotfix needs a pull request number"; HOTFIX="${2#\#}"; shift ;;
     --dry-run) MODE=dry ;;
     -h | --help) awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
@@ -80,6 +89,24 @@ if [ "$MODE" = released ]; then
     if holds "${tags[$middle]}"; then high=$middle; else low=$((middle + 1)); fi
   done
   echo "$COMMIT is released in v${tags[$low]}"
+  exit 0
+fi
+
+if [ -n "$HOTFIX" ]; then
+  [[ $HOTFIX =~ ^[0-9]+$ ]] || die "--hotfix takes a pull request number"
+  state="$(gh pr view "$HOTFIX" -R "$REPO" --json state,mergeCommit,labels \
+    --jq '"\(.state) \(.mergeCommit.oid // "") \([.labels[].name] | index("hotfix") != null)"')" ||
+    die "cannot read pull request #$HOTFIX on $REPO"
+  read -r pr_state merge labelled <<< "$state"
+  [ "$pr_state" = MERGED ] || die "pull request #$HOTFIX is $pr_state, not merged"
+  [ "$labelled" = true ] || die "pull request #$HOTFIX has no hotfix label; a hotfix needs Anton's yes first"
+  if ! bash "$0" --released "$merge" > /dev/null 2>&1; then
+    echo "No release holds #$HOTFIX yet; requesting one and waiting for it."
+    bash "$0" --by "${BY:-hotfix #$HOTFIX}" --ref "$REF" --wait
+  fi
+  gh workflow run release-train.yml -R "$REPO" --ref "$REF" -f hotfix_pr="$HOTFIX" > /dev/null
+  echo "Asked the Release train to promote the newest build holding #$HOTFIX to stable:"
+  echo "  gh run list -R $REPO --workflow release-train.yml --limit 1"
   exit 0
 fi
 

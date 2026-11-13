@@ -7,6 +7,13 @@
 // becomes Latest. Signed builds that update through electron-updater
 // (`releaseType: release`) never see pre-releases at all.
 //
+// From 1.1.0 on every build is an Insiders build (docs/studio/release-train.md):
+// a pre-release that never takes Latest, so only Insiders installs see it. Only
+// the daily train (scripts/release/release_train.py) makes a release stable, by
+// promoting that same release once it has soaked, or at once for a hotfix. No
+// flag here can publish a 1.1+ build as stable. 1.0.x is the frozen first line
+// and keeps the flags it always had.
+//
 // Usage: gh release create "v$V" ... $(node scripts/studio-projects/release-flags.mjs "$V")
 // Use it for both the private repo and the public specwithcode repo.
 import * as NodeURL from "node:url";
@@ -15,13 +22,20 @@ const STABLE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 const SUFFIXED =
   /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-[0-9A-Za-z][0-9A-Za-z.-]*$/;
 
+/** True for plain versions on the train: 1.1.0 and above. */
+export function onTrain(plain) {
+  const [major, minor] = plain.split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= 1);
+}
+
 export function releaseFlags(version) {
   if (typeof version !== "string") throw new Error("A release version is required.");
   const plain = version.replace(/^v/, "");
-  if (STABLE.test(plain))
-    return plain.startsWith("0.")
-      ? ["--latest=false", "--prerelease=false"]
-      : ["--latest", "--prerelease=false"];
+  if (STABLE.test(plain)) {
+    if (plain.startsWith("0.")) return ["--latest=false", "--prerelease=false"];
+    if (onTrain(plain)) return ["--prerelease", "--latest=false"];
+    return ["--latest", "--prerelease=false"];
+  }
   if (SUFFIXED.test(plain)) return ["--prerelease", "--latest=false"];
   throw new Error(`Not a release version: ${version}`);
 }

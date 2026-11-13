@@ -142,6 +142,9 @@ if (-not $version) {
     param($wanted)
     ($releases | Where-Object {
         -not $_.draft -and $_.tag_name -match $tagPattern -and
+        # From 1.1.0 an Insiders build is a prerelease with a plain version; stable skips it
+        # until the daily train promotes it (docs/studio/release-train.md).
+        ($channel -ne "stable" -or -not $_.prerelease) -and
         (@($_.assets | ForEach-Object { $_.name }) -contains "studio-$($_.tag_name.Substring(1))-win32-$wanted.zip")
       } | Select-Object -First 1).tag_name
   }

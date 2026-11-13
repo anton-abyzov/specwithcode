@@ -570,7 +570,8 @@ describe("attachState", () => {
 
 /**
  * A `gh` on PATH that serves releases from files: `<root>/<repo>.json` as the release (none: HTTP
- * 404), `<root>/<repo>-assets/<id>` as asset contents, and `releases/latest` as v<VERSION>.
+ * 404), `<root>/<repo>-assets/<id>` as asset contents, and `releases/latest` or the newest
+ * release in `releases?per_page=N` as v<VERSION>.
  */
 const stubGh = (
   root: string,
@@ -604,6 +605,7 @@ ROOT="$(cygpath -u "$STUB_GH_ROOT" 2>/dev/null || printf '%s' "$STUB_GH_ROOT")"
 for last; do :; done
 case "$last" in
   */releases/latest) echo v${VERSION}; exit 0 ;;
+  */releases\?per_page=*) echo v${VERSION}; exit 0 ;;
   .tag_name) echo v${VERSION}; exit 0 ;;
 esac
 path="$last"

@@ -204,7 +204,11 @@ jobs:
             # when both releases hold a complete, consistent attach (release-state: every asset
             # uploaded, digests matching the release's own checksum file, feeds for this version),
             # builds when neither holds any of it, and fails with how to repair anything between.
-            tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+            # The newest published release, Insiders prereleases included: from 1.1.0 every build is
+            # one until the daily train promotes it, and the train needs its Windows and Linux feeds.
+            tag="$(gh api --jq '[.[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+[.][0-9]+[.][0-9]+$"))][0].tag_name // empty' \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=20")"
+            [ -n "$tag" ] || { echo "::error::no published release found on $GITHUB_REPOSITORY"; exit 1; }
             version="${tag#v}" dry_run=false replace=false ref=""
             states=""
             for repo in $RELEASE_REPOSITORIES; do
@@ -1081,7 +1085,9 @@ jobs:
           done
           if [ "$DRY_RUN" != true ]; then
             latest="$(gh api "repos/$FEED_REPOSITORY/releases/latest" --jq .tag_name 2> /dev/null || true)"
-            if [ "$latest" != "v$VERSION" ]; then
+            prerelease="$(gh api "repos/$FEED_REPOSITORY/releases/tags/v$VERSION" --jq .prerelease 2> /dev/null || true)"
+            # An Insiders build (a prerelease) is never Latest until the daily train promotes it.
+            if [ "$latest" != "v$VERSION" ] && [ "$prerelease" != true ]; then
               echo "::warning::The Latest release on $FEED_REPOSITORY is ${latest:-none}, not v$VERSION; installs only update from the Latest release."
             fi
           fi

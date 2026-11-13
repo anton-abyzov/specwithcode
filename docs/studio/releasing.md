@@ -470,8 +470,10 @@ A worker's app alone is updated by hand with the commands in
 
 ## Versions
 
-The 0.1.x and 0.2.x releases were the alpha line. 1.0.0 is the first stable release and 1.x.y
-follows it. `scripts/studio-projects/version.mjs` and `scripts/studio-fleet/release_policy.py`
+The 0.1.x and 0.2.x releases were the alpha line. 1.0.x was the first line; it is frozen at its last
+release once 1.1.0 exists, and 1.1.0 is the first stable release of the
+[daily release train](./release-train.md): from 1.1.0 every build is an Insiders build and only the
+train or a labelled hotfix makes one stable. `scripts/studio-projects/version.mjs` and `scripts/studio-fleet/release_policy.py`
 accept exactly these; 0.3.x, 2.x and suffixed versions such as `1.0.0-rc.1` are refused by the
 service installer and updater. The update agent runs the incoming release's own helpers, so a
 release that widens the gate can install itself.
@@ -488,9 +490,11 @@ leaves out `.github/workflows`, so no workflow runs there:
 node scripts/studio-projects/release-flags.mjs 1.0.37   # --latest --prerelease=false
 ```
 
-A plain `X.Y.Z` gets `--latest --prerelease=false`, so `releases/latest` and the
+A plain `1.0.x` gets `--latest --prerelease=false`, so `releases/latest` and the
 `releases/latest/download/SpecWithCode-arm64.dmg` link in the README and on the website resolve to
-it. A suffixed version gets `--prerelease --latest=false`. Drafts are ignored by every updater.
+it. From 1.1.0 a plain version gets `--prerelease --latest=false`: it is an Insiders build until
+`scripts/release/release_train.py` promotes the same release to stable and Latest
+([release train](./release-train.md)). A suffixed version gets `--prerelease --latest=false`. Drafts are ignored by every updater.
 Signed builds that update through electron-updater never see pre-releases.
 
 ### npm

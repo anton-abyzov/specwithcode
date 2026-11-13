@@ -89,6 +89,18 @@ describe("cliRelease", () => {
     expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
   });
 
+  it("keeps stable on promoted releases once the 1.1 train flags builds as prereleases", () => {
+    const releases = [
+      { tag_name: "v1.1.4", prerelease: true },
+      { tag_name: "v1.1.0", prerelease: false },
+      { tag_name: "v1.0.276", prerelease: false },
+    ];
+    expect(newestCliReleaseVersion(releases, "stable")).toBe("1.1.0");
+    expect(newestCliReleaseVersion([{ tag_name: "v1.0.9", prerelease: true }], "stable")).toBe(
+      "1.0.9",
+    );
+  });
+
   it("pages through the release index at the largest page GitHub allows", () => {
     expect(cliReleaseIndexPageUrl(1)).toBe(
       "https://api.github.com/repos/anton-abyzov/specwithcode/releases?per_page=100&page=1",
