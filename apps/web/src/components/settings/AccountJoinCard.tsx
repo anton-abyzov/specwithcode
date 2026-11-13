@@ -322,13 +322,13 @@ export function AccountJoinCardBody({
       <p className="mt-1 text-xs text-muted-foreground">
         {onAccount && account
           ? tx(
-              "These machines are signed in to {account}, like this machine. Pick the one whose agents may start work here. Nothing to copy or paste.",
+              "These machines are signed in to {account}, like this one. Pick whose agents may start work here.",
               { account },
             )
           : connect.kind !== "signed-in"
             ? tx("Pick the machine whose agents may start work here.")
             : tx(
-                "Pick the machine whose agents may start work here. Machines on your SpecWithCode Connect account are listed by themselves. Nothing to copy or paste.",
+                "Pick the machine whose agents may start work here. Machines on your SpecWithCode Connect account show up by themselves.",
               )}
       </p>
       {connect.kind === "signed-in" && connect.connectOn === false ? (

@@ -1,16 +1,13 @@
-import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { useState, type ReactNode } from "react";
-import { ArrowRightIcon, RefreshCwIcon } from "lucide-react";
+import { ArrowRightIcon, ChevronRightIcon, InfoIcon, RefreshCwIcon, RouteIcon } from "lucide-react";
 import {
   AuthAccessWriteScope,
   type EnvironmentId,
   type ProjectId,
-  type ProviderInstanceId,
 } from "@specweave-studio/contracts";
 import {
   type StudioWorkGrant,
-  type StudioWorkGrantAccounts,
   type StudioWorkGrantOwner,
   type StudioWorkGrantProjects,
   type StudioWorkGrantsSnapshot,
@@ -18,26 +15,26 @@ import {
 } from "@specweave-studio/contracts/studioFleet";
 import { requestConfirmDialog } from "../../confirmDialog";
 import {
-  accountLabel,
   formatTime,
-  signInChoices,
+  workGrantAccessName,
   workGrantAccessNote,
+  workGrantAllowsNoProject,
   workGrantHopPath,
   workGrantRoutinesNote,
-  workGrantAccountsSummary,
   workGrantMachineLabel,
   workGrantProjectsSummary,
-  workGrantStatus,
+  workGrantSummary,
   workGrantUnavailableNote,
 } from "./machineWorkGrants.logic";
 import { changeMachineWorkGrant, type useMachineWorkGrants } from "../../studio/fleet";
 import { machineNickname } from "../../studio/machineNickname";
-import { FLEET_WORKER_ACCESS_CHOICES } from "../../studio/fleetWorkers";
 import { useEnvironmentScope } from "../../state/session";
 import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { ProviderLogo, providerBrandFor, providerBrandForName } from "../ProviderLogo";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { GrantSignInPicker } from "./GrantSignInPicker";
 import { Switch } from "../ui/switch";
 import {
   Select,
@@ -67,14 +64,6 @@ const OWNER_LABELS: Record<StudioWorkGrantOwner, string> = {
   other: "Someone else's machine",
 };
 
-function runtimeCapLabel(grant: StudioWorkGrant): string {
-  if (grant.runtimeCap === null) return "Not set yet";
-  return (
-    FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === grant.runtimeCap)?.label ??
-    grant.runtimeCap
-  );
-}
-
 /** Above this many choices the list gets a filter box. */
 const FILTER_FROM = 9;
 
@@ -84,11 +73,14 @@ function CheckList<Id extends string>({
   selected,
   disabled,
   onChange,
-  empty = "Nothing to choose on this machine yet.",
+  empty,
+  nothingChosen,
 }: {
   label: string;
   /** What shows when there is nothing to choose. */
   empty?: string;
+  /** What shows under the list while nothing is ticked. */
+  nothingChosen?: string;
   /**
    * An item with `unavailable` is kept only while chosen: it can be cleared, never chosen.
    * `note` is said beside an item that can still be chosen ("not signed in").
@@ -104,8 +96,14 @@ function CheckList<Id extends string>({
   disabled: boolean;
   onChange: (next: ReadonlyArray<Id>) => void;
 }) {
+  const tx = useTx();
   const [filter, setFilter] = useState("");
-  if (items.length === 0) return <p className="text-xs text-muted-foreground">{empty}</p>;
+  if (items.length === 0)
+    return (
+      <p className="text-xs text-muted-foreground">
+        {empty ?? tx("Nothing to choose on this machine yet.")}
+      </p>
+    );
   const needle = filter.trim().toLowerCase();
   // A chosen item stays visible under any filter, so it can always be cleared.
   const shown = needle
@@ -120,8 +118,8 @@ function CheckList<Id extends string>({
           type="search"
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
-          placeholder="Filter"
-          aria-label={`Filter: ${label}`}
+          placeholder={tx("Filter")}
+          aria-label={tx("Filter: {label}", { label })}
           className="w-40 max-w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
         />
       ) : null}
@@ -160,45 +158,71 @@ function CheckList<Id extends string>({
           );
         })}
         {shown.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Nothing matches.</p>
+          <p className="text-xs text-muted-foreground">{tx("Nothing matches.")}</p>
         ) : null}
       </fieldset>
+      {nothingChosen && selected.length === 0 ? (
+        <p className="text-xs text-warning-foreground">{nothingChosen}</p>
+      ) : null}
     </div>
   );
 }
 
 /**
  * The path a launch from this machine may take, drawn as it runs: the sender,
- * this machine, and whether it may go one machine further.
+ * this machine, and whether it may go one machine further. It sits in a
+ * tooltip on the route icon beside the machine's name.
  */
 function HopPath({ grant }: { grant: StudioWorkGrant }) {
-  const path = workGrantHopPath(grant);
+  const tx = useTx();
+  const path = workGrantHopPath(grant, tx);
   return (
-    <span className="flex min-w-0 flex-col gap-1">
-      <span
-        className="flex min-w-0 flex-wrap items-center gap-1 text-muted-foreground"
-        data-slot="grant-hop-path"
-        aria-hidden
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center text-muted-foreground hover:text-foreground"
+            aria-label={path.text}
+            data-slot="grant-hop-path"
+          />
+        }
       >
-        {path.stops.map((stop, index) => (
-          <span key={stop.label} className="flex min-w-0 items-center gap-1">
-            {index > 0 ? <ArrowRightIcon className="size-3 shrink-0" /> : null}
-            <span
-              className={`truncate rounded-md border px-1.5 py-0.5 ${
-                stop.kind === "blocked"
-                  ? "border-dashed line-through"
-                  : stop.kind === "here"
-                    ? "border-primary text-foreground"
-                    : "border-border"
-              }`}
-            >
-              {stop.label}
-            </span>
+        <RouteIcon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        <span className="flex flex-col gap-1">
+          <span className="flex flex-wrap items-center gap-1" aria-hidden>
+            {path.stops.map((stop, index) => (
+              <span key={stop.label} className="flex items-center gap-1">
+                {index > 0 ? <ArrowRightIcon className="size-3 shrink-0" /> : null}
+                <span className={stop.kind === "blocked" ? "line-through opacity-70" : ""}>
+                  {stop.label}
+                </span>
+              </span>
+            ))}
           </span>
-        ))}
-      </span>
-      <span className="text-muted-foreground">{path.text}</span>
-    </span>
+          <span>{path.text}</span>
+        </span>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** A short label with its longer explanation in a tooltip. */
+function Hint({ label, hint }: { label: string; hint: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex min-w-0 cursor-help items-center gap-1 text-muted-foreground" />
+        }
+      >
+        <span className="truncate">{label}</span>
+        <InfoIcon aria-hidden className="size-3 shrink-0" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{hint}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -244,6 +268,11 @@ function ChoiceSelect<Value extends string>({
   );
 }
 
+/**
+ * One machine that may start work here: its name, one summary line
+ * ("All projects, All sign-ins, up to Full access, renews automatically"),
+ * Revoke, and the limits folded under Limits.
+ */
 export function MachineWorkGrantRow({
   grant,
   snapshot,
@@ -259,6 +288,7 @@ export function MachineWorkGrantRow({
 }) {
   const tx = useTx();
   const coordinatorEnvironmentId = grant.coordinatorEnvironmentId;
+  const machine = grant.machineLabel;
   const revoked = grant.status === "revoked";
   const busy = pending || !canManage || revoked;
   const update = (input: Omit<StudioWorkGrantUpdateInput, "coordinatorEnvironmentId">) =>
@@ -274,22 +304,29 @@ export function MachineWorkGrantRow({
             snapshot.projects.some((project) => project.id === id),
         )
       : [];
-  const listedAccounts = grant.accounts.kind === "listed" ? grant.accounts.instanceIds : [];
+  const noProject = workGrantAllowsNoProject(grant, snapshot);
+  const access = workGrantAccessName(grant, tx);
   return (
     <li
-      className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"
-      aria-label={`Work from ${grant.machineLabel}`}
+      className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:px-4"
+      aria-label={tx("Work from {machine}", { machine })}
     >
       <div className="flex min-w-0 items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="flex min-w-0 items-center gap-2 text-sm">
-            <span className="truncate">{grant.machineLabel}</span>
-            <span className="shrink-0 rounded-full border border-border px-1.5 text-2xs text-muted-foreground">
-              {tx(grant.kind === "own" ? "Your machine" : "Shared")}
-            </span>
+          <h3 className="flex min-w-0 items-center gap-1.5 text-sm">
+            <span className="truncate">{machine}</span>
+            {grant.kind === "own" ? null : (
+              <span className="shrink-0 rounded-full border border-border px-1.5 text-2xs text-muted-foreground">
+                {tx("Shared")}
+              </span>
+            )}
+            <HopPath grant={grant} />
           </h3>
-          <p className={`text-xs ${revoked ? "text-warning-foreground" : "text-muted-foreground"}`}>
-            {workGrantStatus(grant)}
+          <p
+            className={`text-xs ${revoked ? "text-warning-foreground" : "text-muted-foreground"}`}
+            data-slot="grant-summary"
+          >
+            {workGrantSummary(grant, snapshot, tx)}
           </p>
         </div>
         {revoked ? (
@@ -303,17 +340,45 @@ export function MachineWorkGrantRow({
             {tx("Allow again")}
           </Button>
         ) : (
-          <Button
-            className="shrink-0"
-            size="xs"
-            variant="destructive-outline"
-            disabled={pending || !canManage}
-            onClick={() => onChange({ action: "revoke", input: { coordinatorEnvironmentId } })}
-          >
-            {tx("Revoke")}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  className="shrink-0"
+                  size="xs"
+                  variant="destructive-outline"
+                  disabled={pending || !canManage}
+                  onClick={() =>
+                    onChange({ action: "revoke", input: { coordinatorEnvironmentId } })
+                  }
+                />
+              }
+            >
+              {tx("Revoke")}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {tx(
+                "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.",
+              )}
+            </TooltipPopup>
+          </Tooltip>
         )}
       </div>
+      {noProject ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2" data-slot="grant-no-projects">
+          <Badge size="sm" variant="warning">
+            {tx("No projects allowed")}
+          </Badge>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={busy}
+            onClick={() => update({ projects: { kind: "all" } })}
+          >
+            {tx("Allow all projects")}
+          </Button>
+        </div>
+      ) : null}
       {grant.legacy ? (
         <p className="text-xs text-muted-foreground">
           {tx(
@@ -321,143 +386,128 @@ export function MachineWorkGrantRow({
           )}
         </p>
       ) : null}
-      <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 text-xs">
-        <dt className="text-muted-foreground">{tx("Whose machine")}</dt>
-        <dd className="flex min-w-0 flex-wrap items-center gap-2">
-          <ChoiceSelect
-            label={`Whose machine ${grant.machineLabel} is`}
-            heading={tx("Whose machine is it")}
-            value={grant.owner}
-            choices={(["self", "other"] as const).map((value) => ({
-              value,
-              label: OWNER_LABELS[value],
-            }))}
-            disabled={busy}
-            onChange={(owner) => update({ owner })}
+      <details className="group text-xs" data-slot="limits">
+        <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3 transition-transform group-open:rotate-90"
           />
-        </dd>
-        <dt aria-hidden />
-        <dd className="min-w-0">
-          <HopPath grant={grant} />
-        </dd>
-        <dt className="text-muted-foreground">{tx("Projects")}</dt>
-        <dd className="flex min-w-0 flex-col gap-1.5">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <ChoiceSelect<StudioWorkGrantProjects["kind"]>
-              label={`Projects ${grant.machineLabel} may use`}
-              heading={tx("Projects it may run work in")}
-              value={grant.projects.kind}
-              choices={[
-                { value: "linked", label: "Linked to it" },
-                { value: "listed", label: "Chosen projects" },
-                { value: "all", label: "All projects" },
-              ]}
-              disabled={busy}
-              onChange={(kind) =>
-                update({
-                  projects: kind === "listed" ? { kind, projectIds: listedProjects } : { kind },
-                })
-              }
-            />
-            <span className="min-w-0 truncate text-muted-foreground">
-              {workGrantProjectsSummary(
-                grant,
-                snapshot.projects,
-                snapshot.projectsUnreadable === true,
+          {tx("Limits")}
+        </summary>
+        <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
+          {grant.kind === "own" ? null : (
+            <>
+              <dt className="text-muted-foreground">{tx("Who is it for")}</dt>
+              <dd className="min-w-0">
+                <ChoiceSelect
+                  label={tx("Whose machine {machine} is", { machine })}
+                  heading={tx("Whose machine is it")}
+                  value={grant.owner}
+                  choices={(["self", "other"] as const).map((value) => ({
+                    value,
+                    label: tx(OWNER_LABELS[value]),
+                  }))}
+                  disabled={busy}
+                  onChange={(owner) => update({ owner })}
+                />
+              </dd>
+            </>
+          )}
+          <dt className="self-start pt-0.5 text-muted-foreground">{tx("Projects")}</dt>
+          <dd className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <ChoiceSelect<StudioWorkGrantProjects["kind"]>
+                label={tx("Projects {machine} may use", { machine })}
+                heading={tx("Projects it may run work in")}
+                value={grant.projects.kind}
+                choices={[
+                  { value: "all", label: tx("All projects") },
+                  { value: "listed", label: tx("Chosen projects") },
+                  { value: "linked", label: tx("Linked to it") },
+                ]}
+                disabled={busy}
+                onChange={(kind) =>
+                  update({
+                    projects: kind === "listed" ? { kind, projectIds: listedProjects } : { kind },
+                  })
+                }
+              />
+              {grant.projects.kind === "listed" ? null : (
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {workGrantProjectsSummary(
+                    grant,
+                    snapshot.projects,
+                    snapshot.projectsUnreadable === true,
+                    tx,
+                  )}
+                </span>
               )}
-            </span>
-          </div>
-          {grant.projects.kind === "listed" ? (
-            <CheckList<ProjectId>
-              label={`Projects ${grant.machineLabel} may use`}
-              {...(snapshot.projectsUnreadable === true
-                ? { empty: "Could not read this machine's projects. The grant keeps its choices." }
-                : {
-                    empty:
-                      "This machine has no projects yet, so there is nothing to choose and every launch is refused. Add a project folder here, or hand a project off to this machine, then choose it.",
-                  })}
-              items={snapshot.projects.flatMap((project) =>
-                project.unavailable === undefined
-                  ? [{ id: project.id, title: project.title }]
-                  : listedProjects.includes(project.id)
-                    ? [
-                        {
-                          id: project.id,
-                          title: project.title,
-                          unavailable: workGrantUnavailableNote(project.unavailable),
-                        },
-                      ]
-                    : [],
-              )}
-              selected={listedProjects}
+            </div>
+            {grant.projects.kind === "listed" ? (
+              <CheckList<ProjectId>
+                label={tx("Projects {machine} may use", { machine })}
+                empty={
+                  snapshot.projectsUnreadable === true
+                    ? tx("Could not read this machine's projects. The grant keeps its choices.")
+                    : tx(
+                        "This machine has no projects yet. Add a project folder here, or hand a project off to it, then tick it.",
+                      )
+                }
+                nothingChosen={tx("Nothing allowed yet: tick a project or pick All projects")}
+                items={snapshot.projects.flatMap((project) =>
+                  project.unavailable === undefined
+                    ? [{ id: project.id, title: project.title }]
+                    : listedProjects.includes(project.id)
+                      ? [
+                          {
+                            id: project.id,
+                            title: project.title,
+                            unavailable: workGrantUnavailableNote(project.unavailable, tx),
+                          },
+                        ]
+                      : [],
+                )}
+                selected={listedProjects}
+                disabled={busy}
+                onChange={(projectIds) => update({ projects: { kind: "listed", projectIds } })}
+              />
+            ) : null}
+          </dd>
+          <dt className="text-muted-foreground">{tx("Sign-ins")}</dt>
+          <dd className="min-w-0">
+            <GrantSignInPicker
+              machineLabel={machine}
+              accounts={grant.accounts}
+              available={snapshot.accounts}
               disabled={busy}
-              onChange={(projectIds) => update({ projects: { kind: "listed", projectIds } })}
+              onChange={(accounts) => update({ accounts })}
             />
-          ) : null}
-        </dd>
-        <dt className="text-muted-foreground">Sign-ins</dt>
-        <dd className="flex min-w-0 flex-col gap-1.5">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <ChoiceSelect<StudioWorkGrantAccounts["kind"]>
-              label={`Sign-ins ${grant.machineLabel} may use`}
-              heading={tx("Sign-ins its work may use")}
-              value={grant.accounts.kind}
-              choices={[
-                { value: "all", label: "All sign-ins" },
-                { value: "listed", label: "Chosen sign-ins" },
-                { value: "none", label: "None" },
-              ]}
+          </dd>
+          <dt className="text-muted-foreground">{tx("Routines")}</dt>
+          <dd className="flex min-w-0 items-center gap-2">
+            <Switch
+              className="shrink-0"
+              aria-label={tx("Let {machine} manage scheduled routines", { machine })}
+              checked={grant.routines}
               disabled={busy}
-              onChange={(kind) =>
-                update({
-                  accounts: kind === "listed" ? { kind, instanceIds: listedAccounts } : { kind },
-                })
+              onCheckedChange={(checked) => update({ routines: Boolean(checked) })}
+            />
+            <Hint
+              label={grant.routines ? tx("Can manage routines") : tx("Cannot manage routines")}
+              hint={workGrantRoutinesNote(grant, tx)}
+            />
+          </dd>
+          <dt className="text-muted-foreground">{tx("Access")}</dt>
+          <dd className="min-w-0" data-slot="grant-access-limit">
+            <Hint
+              label={
+                access ? tx("up to {access}", { access }) : tx("Set when it first starts work")
               }
+              hint={workGrantAccessNote(grant, tx)}
             />
-            <span className="min-w-0 truncate text-muted-foreground">
-              {workGrantAccountsSummary(grant.accounts, snapshot.accounts)}
-            </span>
-          </div>
-          {grant.accounts.kind === "listed" ? (
-            <CheckList<ProviderInstanceId>
-              label={`Sign-ins ${grant.machineLabel} may use`}
-              empty="This machine has no agent sign-ins yet. Add one under Settings > Providers."
-              items={signInChoices(snapshot.accounts, listedAccounts).map((account) => {
-                const brand =
-                  providerBrandFor({ driverKind: account.driver }) ??
-                  providerBrandForName(account.label, account.driver);
-                return {
-                  id: account.instanceId,
-                  title: accountLabel(account),
-                  note: account.signedIn === false ? "not signed in" : undefined,
-                  icon: brand ? <ProviderLogo brand={brand} className="size-3.5" /> : null,
-                };
-              })}
-              selected={listedAccounts}
-              disabled={busy}
-              onChange={(instanceIds) => update({ accounts: { kind: "listed", instanceIds } })}
-            />
-          ) : null}
-        </dd>
-        <dt className="text-muted-foreground">{tx("Routines")}</dt>
-        <dd className="flex min-w-0 items-start gap-2">
-          <Switch
-            className="mt-0.5 shrink-0"
-            aria-label={`Let ${grant.machineLabel} manage scheduled routines`}
-            checked={grant.routines}
-            disabled={busy}
-            onCheckedChange={(checked) => update({ routines: Boolean(checked) })}
-          />
-          <span className="min-w-0 text-muted-foreground" data-slot="grant-routines-note">
-            {workGrantRoutinesNote(grant)}
-          </span>
-        </dd>
-        <dt className="text-muted-foreground">{tx("Most access")}</dt>
-        <dd className="flex min-w-0 flex-col gap-0.5" data-slot="grant-access-limit">
-          <span>{runtimeCapLabel(grant)}</span>
-          <span className="text-muted-foreground">{workGrantAccessNote(grant)}</span>
-        </dd>
-      </dl>
+          </dd>
+        </dl>
+      </details>
     </li>
   );
 }
@@ -526,14 +576,9 @@ export function MachineWorkGrantsList({
               )}
         </p>
       )}
-      {snapshot?.grants.length ? (
+      {snapshot?.grants.length && !canManage ? (
         <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-          {renderRich(
-            tx(
-              "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}",
-            ),
-            { value: canManage ? null : " Changing this needs Manage access on this machine." },
-          )}
+          {tx("Changing this needs Manage access on this machine.")}
         </p>
       ) : null}
       {notice || error ? (

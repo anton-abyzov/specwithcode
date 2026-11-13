@@ -3,8 +3,13 @@ import type {
   StudioWorkGrantAccounts,
   StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
+import { englishPhrase, type TranslatePhrase } from "../../i18n";
+import { FLEET_WORKER_ACCESS_CHOICES } from "../../studio/fleetWorkers";
 
-/** Words for "Who can run work here", shared by its section and the machine rows. */
+/**
+ * Words for "Who can run work here", shared by its section and the machine rows.
+ * Each takes the screen's `tx` last; without one it says it in English.
+ */
 
 export function formatTime(value: string): string {
   return new Date(value).toLocaleString(undefined, {
@@ -58,16 +63,23 @@ const UNAVAILABLE_NOTES: Record<WorkGrantProjectUnavailable, string> = {
 };
 
 /** What a "Chosen projects" row says beside a project it keeps but no longer offers. */
-export function workGrantUnavailableNote(reason: WorkGrantProjectUnavailable): string {
-  return UNAVAILABLE_NOTES[reason];
+export function workGrantUnavailableNote(
+  reason: WorkGrantProjectUnavailable,
+  tx: TranslatePhrase = englishPhrase,
+): string {
+  return tx(UNAVAILABLE_NOTES[reason]);
 }
 
 /** A project's name in a grant summary, with why it is not offered when it is not. */
-function summaryTitle(project: StudioWorkGrantsSnapshot["projects"][number]): string {
-  if (project.unavailable === "scratch") return "No project folder (chats)";
-  return project.unavailable === "archived" || project.unavailable === "automated"
-    ? `${project.title} (${project.unavailable})`
-    : project.title;
+function summaryTitle(
+  project: StudioWorkGrantsSnapshot["projects"][number],
+  tx: TranslatePhrase,
+): string {
+  if (project.unavailable === "scratch") return tx("No project folder (chats)");
+  if (project.unavailable === "archived") return tx("{title} (archived)", { title: project.title });
+  if (project.unavailable === "automated")
+    return tx("{title} (automated)", { title: project.title });
+  return project.title;
 }
 
 /** One line on which projects a coordinator may run work in. */
@@ -76,52 +88,144 @@ export function workGrantProjectsSummary(
   projects: StudioWorkGrantsSnapshot["projects"],
   /** The machine could not read its projects (`projectsUnreadable`). */
   projectsUnreadable = false,
+  tx: TranslatePhrase = englishPhrase,
 ): string {
+  const machine = grant.machineLabel;
   switch (grant.projects.kind) {
     case "all":
-      return "All projects";
+      return tx("All projects");
     case "linked": {
       if (projectsUnreadable)
-        return `Projects linked to ${grant.machineLabel} (could not read this machine's projects)`;
+        return tx("Projects linked to {machine} (could not read this machine's projects)", {
+          machine,
+        });
       // Every project linked to it, archived or automated ones included: the grant still covers them.
       const linked = projects.filter((project) =>
         project.linkedTo.includes(grant.coordinatorEnvironmentId),
       );
       return linked.length === 0
-        ? `Projects linked to ${grant.machineLabel} (none yet)`
-        : `Projects linked to ${grant.machineLabel}: ${linked.map(summaryTitle).join(", ")}`;
+        ? tx("Projects linked to {machine} (none yet)", { machine })
+        : tx("Projects linked to {machine}: {projects}", {
+            machine,
+            projects: linked.map((project) => summaryTitle(project, tx)).join(", "),
+          });
     }
     case "listed": {
       const count = grant.projects.projectIds.length;
       // The grant keeps its choices when the machine could not read its projects.
       if (projectsUnreadable && count > 0)
-        return `${count} chosen ${count === 1 ? "project" : "projects"} (could not read this machine's projects)`;
+        return count === 1
+          ? tx("1 chosen project (could not read this machine's projects)")
+          : tx("{count} chosen projects (could not read this machine's projects)", { count });
       // An id the snapshot no longer lists (a deleted project, the assistant) covers nothing.
       const titles = grant.projects.projectIds.flatMap((id) => {
         const project = projects.find((candidate) => candidate.id === id);
-        return project ? [summaryTitle(project)] : [];
+        return project ? [summaryTitle(project, tx)] : [];
       });
-      return titles.length === 0 ? "No projects" : titles.join(", ");
+      return titles.length === 0 ? tx("No projects") : titles.join(", ");
     }
   }
+}
+
+/**
+ * True when the grant lets its machine start work in no project here: linked
+ * with none linked yet, or chosen with nothing chosen. Unknown when the
+ * machine could not read its projects, so false then.
+ */
+export function workGrantAllowsNoProject(
+  grant: Pick<StudioWorkGrant, "projects" | "coordinatorEnvironmentId" | "status">,
+  snapshot: Pick<StudioWorkGrantsSnapshot, "projects" | "projectsUnreadable">,
+): boolean {
+  if (grant.status === "revoked" || snapshot.projectsUnreadable === true) return false;
+  if (grant.projects.kind === "linked")
+    return !snapshot.projects.some((project) =>
+      project.linkedTo.includes(grant.coordinatorEnvironmentId),
+    );
+  if (grant.projects.kind === "listed")
+    return !grant.projects.projectIds.some((id) =>
+      snapshot.projects.some((project) => project.id === id),
+    );
+  return false;
+}
+
+/** The access ceiling's own name ("Full access"), or null before the sender set one. */
+export function workGrantAccessName(
+  grant: Pick<StudioWorkGrant, "runtimeCap">,
+  tx: TranslatePhrase = englishPhrase,
+): string | null {
+  if (grant.runtimeCap === null) return null;
+  const label = FLEET_WORKER_ACCESS_CHOICES.find(
+    (choice) => choice.value === grant.runtimeCap,
+  )?.label;
+  return label === undefined ? grant.runtimeCap : tx(label);
+}
+
+/**
+ * The grant card's one line: projects, sign-ins, access and how long it lasts,
+ * e.g. "All projects, All sign-ins, up to Full access, renews automatically".
+ * A revoked or expired grant says only that, as its status line does.
+ */
+export function workGrantSummary(
+  grant: StudioWorkGrant,
+  snapshot: Pick<StudioWorkGrantsSnapshot, "projects" | "accounts" | "projectsUnreadable">,
+  tx: TranslatePhrase = englishPhrase,
+): string {
+  if (grant.status !== "active") return workGrantStatus(grant, tx);
+  const projects = workGrantAllowsNoProject(grant, snapshot)
+    ? null
+    : grant.projects.kind === "linked"
+      ? tx("Linked projects")
+      : workGrantProjectsSummary(
+          grant,
+          snapshot.projects,
+          snapshot.projectsUnreadable === true,
+          tx,
+        );
+  const accounts =
+    grant.accounts.kind === "all"
+      ? tx("All sign-ins")
+      : grant.accounts.kind === "none" || grant.accounts.instanceIds.length === 0
+        ? tx("No sign-ins")
+        : grant.accounts.instanceIds
+            .map(
+              (id) => snapshot.accounts.find((account) => account.instanceId === id)?.label ?? id,
+            )
+            .join(", ");
+  const access = workGrantAccessName(grant, tx);
+  const lasts =
+    grant.renews === true
+      ? tx("renews automatically")
+      : grant.expiresAt
+        ? tx("until {date}", { date: formatTime(grant.expiresAt) })
+        : null;
+  const running =
+    grant.runningThreads === 0
+      ? null
+      : grant.runningThreads === 1
+        ? tx("1 running thread")
+        : tx("{count} running threads", { count: grant.runningThreads });
+  return [projects, accounts, access ? tx("up to {access}", { access }) : null, lasts, running]
+    .filter((part): part is string => part !== null)
+    .join(", ");
 }
 
 /** One line on which of this machine's sign-ins its work may use. */
 export function workGrantAccountsSummary(
   accounts: StudioWorkGrantAccounts,
   available: StudioWorkGrantsSnapshot["accounts"],
+  tx: TranslatePhrase = englishPhrase,
 ): string {
   switch (accounts.kind) {
     case "all":
-      return "All sign-ins on this machine";
+      return tx("All sign-ins on this machine");
     case "none":
-      return "No sign-ins: every launch is refused";
+      return tx("No sign-ins: every launch is refused");
     case "listed": {
       const labels = accounts.instanceIds.map((id) => {
         const account = available.find((candidate) => candidate.instanceId === id);
         return account ? accountLabel(account) : id;
       });
-      return labels.length === 0 ? "No sign-ins: every launch is refused" : labels.join(", ");
+      return labels.length === 0 ? tx("No sign-ins: every launch is refused") : labels.join(", ");
     }
   }
 }
@@ -131,25 +235,38 @@ export function accountLabel(account: StudioWorkGrantsSnapshot["accounts"][numbe
 }
 
 /** The status line: active until a date, revoked with its grace, or lapsed. */
-export function workGrantStatus(grant: StudioWorkGrant): string {
-  const running =
-    grant.runningThreads === 0
-      ? null
-      : `${grant.runningThreads} running thread${grant.runningThreads === 1 ? "" : "s"}`;
+export function workGrantStatus(
+  grant: StudioWorkGrant,
+  tx: TranslatePhrase = englishPhrase,
+): string {
+  const count = grant.runningThreads;
   if (grant.status === "revoked")
     return [
-      `Revoked${grant.revokedAt ? ` ${formatTime(grant.revokedAt)}` : ""}. New work is refused`,
-      grant.interruptAt && running ? `${running} stop at ${formatTime(grant.interruptAt)}` : null,
+      grant.revokedAt
+        ? tx("Revoked {time}. New work is refused", { time: formatTime(grant.revokedAt) })
+        : tx("Revoked. New work is refused"),
+      grant.interruptAt && count > 0
+        ? count === 1
+          ? tx("1 running thread stops at {time}", { time: formatTime(grant.interruptAt) })
+          : tx("{count} running threads stop at {time}", {
+              count,
+              time: formatTime(grant.interruptAt),
+            })
+        : null,
     ]
       .filter(Boolean)
       .join(" · ");
   const parts = [
     grant.status === "expired"
-      ? "Expired: that machine must allow workers here again"
+      ? tx("Expired: that machine must allow workers here again")
       : grant.expiresAt
-        ? `Active until ${formatTime(grant.expiresAt)}`
-        : "Active",
-    running,
+        ? tx("Active until {time}", { time: formatTime(grant.expiresAt) })
+        : tx("Active"),
+    count === 0
+      ? null
+      : count === 1
+        ? tx("1 running thread")
+        : tx("{count} running threads", { count }),
   ];
   return parts.filter(Boolean).join(" · ");
 }
@@ -190,25 +307,45 @@ export interface WorkGrantHopStop {
  * The hop limit counts machines after the sender: 1 ends here, 2 lets the work
  * it starts here start work on one more machine.
  */
-export function workGrantHopPath(grant: Pick<StudioWorkGrant, "machineLabel" | "hopLimit">): {
+export function workGrantHopPath(
+  grant: Pick<StudioWorkGrant, "machineLabel" | "hopLimit">,
+  tx: TranslatePhrase = englishPhrase,
+): {
   readonly stops: ReadonlyArray<WorkGrantHopStop>;
   readonly text: string;
 } {
+  const machine = grant.machineLabel;
   const further = Math.max(0, grant.hopLimit - 1);
-  const sender: WorkGrantHopStop = { label: grant.machineLabel, kind: "sender" };
-  const here: WorkGrantHopStop = { label: "This machine", kind: "here" };
+  const sender: WorkGrantHopStop = { label: machine, kind: "sender" };
+  const here: WorkGrantHopStop = { label: tx("This machine"), kind: "here" };
   if (further === 0)
     return {
-      stops: [sender, here, { label: "Another machine", kind: "blocked" }],
-      text: `Work ${grant.machineLabel} starts here stays here: it cannot start work on another machine from this one.`,
+      stops: [sender, here, { label: tx("Another machine"), kind: "blocked" }],
+      text: tx(
+        "Work {machine} starts here stays here: it cannot start work on another machine from this one.",
+        { machine },
+      ),
     };
   return {
     stops: [
       sender,
       here,
-      { label: further === 1 ? "1 more machine" : `${further} more machines`, kind: "onward" },
+      {
+        label:
+          further === 1 ? tx("1 more machine") : tx("{count} more machines", { count: further }),
+        kind: "onward",
+      },
     ],
-    text: `Work ${grant.machineLabel} starts here may itself start work on ${further === 1 ? "one more machine" : `${further} more machines`}, and no further. It can never loop back to ${grant.machineLabel}.`,
+    text:
+      further === 1
+        ? tx(
+            "Work {machine} starts here may itself start work on one more machine, and no further. It can never loop back to {machine}.",
+            { machine },
+          )
+        : tx(
+            "Work {machine} starts here may itself start work on {count} more machines, and no further. It can never loop back to {machine}.",
+            { machine, count: further },
+          ),
   };
 }
 
@@ -219,10 +356,18 @@ export function workGrantHopPath(grant: Pick<StudioWorkGrant, "machineLabel" | "
  */
 export function workGrantRoutinesNote(
   grant: Pick<StudioWorkGrant, "machineLabel" | "routines">,
+  tx: TranslatePhrase = englishPhrase,
 ): string {
+  const machine = grant.machineLabel;
   return grant.routines
-    ? `On: agents on ${grant.machineLabel} may create, change, run and delete scheduled routines on this machine, in the projects chosen above. Turn it off to let them start work here but leave the schedules alone.`
-    : `Off: agents on ${grant.machineLabel} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if ${grant.machineLabel} should set up recurring work here.`;
+    ? tx(
+        "On: agents on {machine} may create, change, run and delete scheduled routines on this machine, in the projects it may use. Turn it off to let them start work here but leave the schedules alone.",
+        { machine },
+      )
+    : tx(
+        "Off: agents on {machine} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if {machine} should set up recurring work here.",
+        { machine },
+      );
 }
 
 /**
@@ -231,8 +376,16 @@ export function workGrantRoutinesNote(
  */
 export function workGrantAccessNote(
   grant: Pick<StudioWorkGrant, "machineLabel" | "runtimeCap">,
+  tx: TranslatePhrase = englishPhrase,
 ): string {
+  const machine = grant.machineLabel;
   return grant.runtimeCap === null
-    ? `${grant.machineLabel} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.`
-    : `The most a thread ${grant.machineLabel} starts here may do without asking. A thread can run with less, never more. Chosen on ${grant.machineLabel}, under Allow workers for this machine; change it there.`;
+    ? tx(
+        "{machine} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.",
+        { machine },
+      )
+    : tx(
+        "The most a thread {machine} starts here may do without asking. A thread can run with less, never more. Chosen on {machine}, on this machine's card; change it there.",
+        { machine },
+      );
 }

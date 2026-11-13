@@ -257,7 +257,7 @@ describe("the machines the join card lists", () => {
     world({ discovered: [discoveredMachine(m5, "M5")] });
     const account = await mount(body());
     expect(account.text()).toContain(
-      "These machines are signed in to anton@example.com, like this machine.",
+      "These machines are signed in to anton@example.com, like this one.",
     );
     await account.unmount();
     world({ saved: [savedMachine(m1, "M1")], discovered: [discoveredMachine(m5, "M5")] });

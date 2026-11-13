@@ -1196,7 +1196,7 @@ export function StudioFleetRoster({
             <span className="block text-sm">{tx("Connect automatically")}</span>
             <span className="block text-xs text-muted-foreground">
               {tx(
-                "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.",
+                "Connects this app to your machines that answer, so their projects show here. Off: you connect each one yourself. Changes no permissions. This device only.",
               )}
             </span>
           </span>

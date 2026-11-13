@@ -24,8 +24,11 @@ import {
   workGrantProjectsSummary,
   workGrantStatus,
 } from "./MachineWorkGrants";
+import { grantSignInRows } from "./GrantSignInPicker";
 import {
   signInChoices,
+  workGrantAllowsNoProject,
+  workGrantSummary,
   withReadableGrantLabels,
   workGrantAccessNote,
   workGrantRoutinesNote,
@@ -134,8 +137,13 @@ describe("who can run work on this Mac", () => {
     const onChange = vi.fn();
     const row = (value: StudioWorkGrant) =>
       MachineWorkGrantRow({ grant: value, snapshot, canManage: true, pending: false, onChange });
+    // Revoke sits in a tooltip trigger that renders the button.
+    const clickOf = (element: { props: Record<string, unknown> } | null) =>
+      (element?.props.onClick ??
+        (element?.props.render as { props: Record<string, unknown> } | undefined)?.props
+          .onClick) as () => void;
     const revoke = visitElements(row(grant), (element) => children(element) === "Revoke");
-    (revoke!.props.onClick as () => void)();
+    clickOf(revoke)();
     expect(onChange).toHaveBeenLastCalledWith({
       action: "revoke",
       input: { coordinatorEnvironmentId: m4 },
@@ -173,11 +181,13 @@ describe("who can run work on this Mac", () => {
     });
     const accounts = visitElements(
       tree,
-      (element) =>
-        element.props.label === "Sign-ins M4MAX may use" && Array.isArray(element.props.items),
+      (element) => element.props.machineLabel === "M4MAX" && element.props.accounts !== undefined,
     );
-    expect(accounts?.props.selected).toEqual([claude]);
-    (accounts!.props.onChange as (ids: ReadonlyArray<string>) => void)([claude, codex]);
+    expect(accounts?.props.accounts).toEqual({ kind: "listed", instanceIds: [claude] });
+    (accounts!.props.onChange as (next: unknown) => void)({
+      kind: "listed",
+      instanceIds: [claude, codex],
+    });
     expect(onChange).toHaveBeenLastCalledWith({
       action: "update",
       input: {
@@ -459,14 +469,112 @@ describe("who can run work on this Mac", () => {
     expect(String(list("Projects M4MAX may use")?.props.empty)).toContain(
       "This machine has no projects yet",
     );
-    const items = list("Sign-ins M4MAX may use")?.props.items as ReadonlyArray<{
-      title: string;
-      note?: string;
-    }>;
-    expect(items.map((item) => [item.title, item.note])).toEqual([
-      ["Codex (a@example.com)", undefined],
-      ["Claude", "not signed in"],
+    expect(String(list("Projects M4MAX may use")?.props.nothingChosen)).toBe(
+      "Nothing allowed yet: tick a project or pick All projects",
+    );
+    const picker = visitElements(
+      tree,
+      (element) => element.props.machineLabel === "M4MAX" && element.props.available !== undefined,
+    );
+    const rows = grantSignInRows(
+      picker?.props.available as StudioWorkGrantsSnapshot["accounts"],
+      [],
+    );
+    expect(rows.map((row) => [row.label, row.notSignedIn])).toEqual([
+      ["Codex", false],
+      ["Claude", true],
     ]);
+  });
+
+  it("sums a grant up in one line: projects, sign-ins, access and whether it renews", () => {
+    const own: StudioWorkGrant = {
+      ...grant,
+      projects: { kind: "all" },
+      runtimeCap: "full-access",
+      kind: "own",
+      renews: true,
+    };
+    expect(workGrantSummary(own, snapshot)).toBe(
+      "All projects, All sign-ins, up to Full access, renews automatically",
+    );
+    // No renewal: the date it lapses instead.
+    expect(workGrantSummary({ ...own, renews: false }, snapshot)).toMatch(
+      /^All projects, All sign-ins, up to Full access, until .+$/,
+    );
+    expect(
+      workGrantSummary(
+        { ...own, accounts: { kind: "listed", instanceIds: [claude] }, runtimeCap: null },
+        snapshot,
+      ),
+    ).toBe("All projects, Claude, renews automatically");
+    // Revoked says only that.
+    expect(workGrantSummary({ ...own, status: "revoked" }, snapshot)).toContain(
+      "New work is refused",
+    );
+  });
+
+  it("flags a grant stuck on no project and allows every project in one click", () => {
+    const onChange = vi.fn();
+    const stuck = { ...grant, coordinatorEnvironmentId: friend, machineLabel: "M1" };
+    expect(workGrantAllowsNoProject(stuck, snapshot)).toBe(true);
+    expect(workGrantAllowsNoProject(grant, snapshot)).toBe(false);
+    expect(
+      workGrantAllowsNoProject(
+        { ...grant, projects: { kind: "listed", projectIds: [] } },
+        snapshot,
+      ),
+    ).toBe(true);
+    // Unknown when the machine could not read its projects: no flag.
+    expect(workGrantAllowsNoProject(stuck, { ...snapshot, projectsUnreadable: true })).toBe(false);
+    const tree = MachineWorkGrantRow({
+      grant: stuck,
+      snapshot,
+      canManage: true,
+      pending: false,
+      onChange,
+    });
+    expect(
+      visitElements(tree, (element) => children(element) === "No projects allowed"),
+    ).not.toBeNull();
+    const allowAll = visitElements(tree, (element) => children(element) === "Allow all projects");
+    (allowAll!.props.onClick as () => void)();
+    expect(onChange).toHaveBeenLastCalledWith({
+      action: "update",
+      input: { coordinatorEnvironmentId: friend, projects: { kind: "all" } },
+    });
+    const fine = MachineWorkGrantRow({
+      grant,
+      snapshot,
+      canManage: true,
+      pending: false,
+      onChange,
+    });
+    expect(visitElements(fine, (element) => children(element) === "Allow all projects")).toBeNull();
+  });
+
+  it("asks whose machine it is only for someone else's grant", () => {
+    const select = (value: StudioWorkGrant) =>
+      visitElements(
+        MachineWorkGrantRow({
+          grant: value,
+          snapshot,
+          canManage: true,
+          pending: false,
+          onChange: vi.fn(),
+        }),
+        (element) => element.props.label === "Whose machine M4MAX is",
+      );
+    expect(select({ ...grant, kind: "own" })).toBeNull();
+    expect(select({ ...grant, kind: "team" })).not.toBeNull();
+  });
+
+  it("searches sign-ins by name and account, keeping chosen ones in view", () => {
+    const rows = grantSignInRows(snapshot.accounts, [codex], "me@");
+    expect(rows.map((row) => [row.label, row.checked])).toEqual([
+      ["Claude", false],
+      ["Codex", true],
+    ]);
+    expect(grantSignInRows(snapshot.accounts, [], "zzz")).toEqual([]);
   });
 
   it("says what the Routines switch does in each position and where the access limit is set", () => {

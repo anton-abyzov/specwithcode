@@ -11,6 +11,7 @@ import { isAutomatedProject } from "@specweave-studio/shared/projectOrigin";
 import type {
   StudioFleetMachine,
   StudioFleetSnapshot,
+  StudioFleetWorkers,
   StudioWorkGrant,
   StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
@@ -138,6 +139,8 @@ export interface MachineWorkerGrant {
   readonly status: "allowed" | "expiring" | "not-allowed";
   readonly label: string;
   readonly detail: string;
+  /** The grant itself, so the summary line can say it in the screen's language. */
+  readonly workers: StudioFleetWorkers;
 }
 
 /** What a machine may run on this one, from this machine's own grant to it. */
@@ -145,6 +148,10 @@ export interface MachineWorkHere {
   readonly status: StudioWorkGrant["status"];
   readonly label: string;
   readonly detail: string;
+  readonly grant: StudioWorkGrant;
+  /** This machine's projects as the grant list reads them. */
+  readonly projects: StudioWorkGrantsSnapshot["projects"];
+  readonly projectsUnreadable: boolean;
 }
 
 export interface MachineConnectAction {
@@ -216,9 +223,10 @@ function workerGrant(machine: StudioFleetMachine): MachineWorkerGrant | null {
   const workers = machine.workers;
   if (!workers) return null;
   const detail = fleetWorkersView(workers).summary;
-  if (workers.status === "allowed") return { status: "allowed", label: "Allowed", detail };
-  if (workers.status === "expiring") return { status: "expiring", label: "Expiring", detail };
-  return { status: "not-allowed", label: "Not allowed", detail };
+  if (workers.status === "allowed") return { status: "allowed", label: "Allowed", detail, workers };
+  if (workers.status === "expiring")
+    return { status: "expiring", label: "Expiring", detail, workers };
+  return { status: "not-allowed", label: "Not allowed", detail, workers };
 }
 
 const WORK_HERE_LABELS: Readonly<Record<StudioWorkGrant["status"], string>> = {
@@ -239,6 +247,9 @@ function workHereFor(
     status: grant.status,
     label: WORK_HERE_LABELS[grant.status],
     detail: `${workGrantProjectsSummary(grant, grants.projects, grants.projectsUnreadable === true)} · ${workGrantStatus(grant)}`,
+    grant,
+    projects: grants.projects,
+    projectsUnreadable: grants.projectsUnreadable === true,
   };
 }
 

@@ -59,8 +59,6 @@ import {
   type MachineProject,
   type MachineRowModel,
   type MachineSeen,
-  type MachineWorkerGrant,
-  type MachineWorkHere,
   ACCOUNT_NOT_REPORTED,
   withAccountConnectState,
 } from "./machinesSettings.logic";
@@ -73,6 +71,7 @@ import {
 } from "./AddProjectToMachine";
 import { MachineSetupState, MachineSummary, type MachineSetup } from "./MachineSummary";
 import { MachineWorkGrants } from "./MachineWorkGrants";
+import { MachineLimits, MachineWorkSummary } from "./MachineWorkSummary";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
@@ -338,9 +337,7 @@ export function MachinesSettingsPanel() {
               parts.pairPhone
             )}
             <p className="text-sm text-muted-foreground">
-              {tx(
-                "Each card says, in both directions, whose agents may start work on which machine. Open projects lets you use that machine's projects yourself and needs no worker permission.",
-              )}
+              {tx("Each card shows who may start work where, both ways. Hover a line for details.")}
             </p>
             {parts.otherMachines}
             {joinCard}
@@ -461,22 +458,6 @@ const SEEN_DOT: Readonly<Record<MachineRowModel["seen"]["state"], string>> = {
   elsewhere: "bg-warning",
   reachable: "bg-success/60",
   "not-connected": "bg-muted-foreground/50",
-};
-
-const WORK_HERE_BADGE: Readonly<
-  Record<MachineWorkHere["status"], "success" | "warning" | "secondary">
-> = {
-  active: "success",
-  revoked: "secondary",
-  expired: "warning",
-};
-
-const WORKER_BADGE: Readonly<
-  Record<MachineWorkerGrant["status"], "success" | "warning" | "secondary">
-> = {
-  allowed: "success",
-  expiring: "warning",
-  "not-allowed": "secondary",
 };
 
 function DetailLine({
@@ -840,53 +821,55 @@ export function MachineRow({
       </div>
 
       {gone ? <div className="pl-7">{gone}</div> : null}
-      {details}
       {row.connect && row.connectLock ? (
         <div className="pl-7">
           <p className="text-xs text-muted-foreground">{row.connectLock.message}</p>
         </div>
       ) : null}
 
-      {row.workers ? (
-        <DetailLine
-          label={tx("Agents on {hereLabel} can start work on {thereLabel}", {
-            hereLabel,
-            thereLabel: nickname,
-          })}
-          help="Whether coordinators on this machine, and the workers they start, may start work on that machine. You set it here, for each machine."
-        >
-          <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <Badge size="sm" variant={WORKER_BADGE[row.workers.status]}>
-              {tx(row.workers.label)}
-            </Badge>
-            <span>{row.workers.detail}</span>
-          </p>
-          {workersControl}
-        </DetailLine>
-      ) : (
-        addForAgents
-      )}
-
-      {row.workHere ? (
-        <DetailLine
-          label={tx("Agents on {thereLabel} can start work on {hereLabel}", {
-            hereLabel,
-            thereLabel: nickname,
-          })}
-          help="Whether that machine's coordinators may start work on this machine. Its project and sign-in limits are under Who can run work here, below."
-        >
-          <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <Badge size="sm" variant={WORK_HERE_BADGE[row.workHere.status]}>
-              {tx(row.workHere.label)}
-            </Badge>
-            <span>{row.workHere.detail}</span>
-          </p>
-        </DetailLine>
-      ) : (
-        allowBack
-      )}
-
-      {connectBothWays}
+      {row.workers || row.workHere || addForAgents || allowBack || details ? (
+        <div className="flex min-w-0 flex-col gap-1.5 pl-7">
+          {row.workers || row.workHere || allowBack ? (
+            <MachineWorkSummary
+              hereLabel={hereLabel}
+              thereLabel={nickname}
+              workers={row.workers}
+              workHere={row.workHere}
+            />
+          ) : null}
+          <MachineLimits
+            open={
+              Boolean(addForAgents && !row.workers) ||
+              Boolean(allowBack && !row.workHere) ||
+              row.workers?.status === "not-allowed"
+            }
+          >
+            {row.workers ? (
+              workersControl ? (
+                <div className="min-w-0 space-y-1">
+                  <p className="text-foreground/80">
+                    {tx("Most access for agents from {hereLabel}", { hereLabel })}
+                  </p>
+                  {workersControl}
+                </div>
+              ) : null
+            ) : (
+              addForAgents
+            )}
+            {row.workHere ? (
+              <p className="text-muted-foreground">
+                {tx("What {thereLabel} may use here: under Who can run work here.", {
+                  thereLabel: nickname,
+                })}
+              </p>
+            ) : (
+              allowBack
+            )}
+            {connectBothWays}
+            {details}
+          </MachineLimits>
+        </div>
+      ) : null}
 
       {row.teamRules ? (
         <DetailLine label={tx("Team rules")}>

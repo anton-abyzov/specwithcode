@@ -99,7 +99,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
     >
       <SettingsRow
         title={tx("Keep threads ready to move")}
-        description="Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens."
+        description="After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens."
         control={
           <Switch
             aria-label={tx("Keep threads ready to move")}
@@ -138,7 +138,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
       <SettingsRow
         {...searchableSetting("handoff-sleep-target")}
         title="Away target"
-        description="Where Away leaves your threads, routines and coordinators. When this machine sleeps and Away doesn't leave, running threads that are ready to move still go here. Locking the screen doesn't count."
+        description="Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count."
         control={
           <Select
             value={config.sleepTarget ?? "off"}
