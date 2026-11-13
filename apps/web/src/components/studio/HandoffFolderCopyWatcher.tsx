@@ -243,9 +243,11 @@ export function HandoffFolderCopyWatcher({
      * approval here. Whether that machine takes `~/` files is unknown here, so they stay on
      * the source. False when the source's list cannot be read or the send failed.
      */
-    const stageSecrets = async (saved: PendingCopy, previewed: FolderCopyStatus) => {
+    const stageSecrets = async (previewed: FolderCopyStatus) => {
       const summary = await readSummary();
-      if (!summary) return false;
+      // Read the pointer again: a reopened dialog owns the choice and the approval from here.
+      const saved = readPendingCopy(key);
+      if (stopped || !summary || saved?.operationId !== operationId) return false;
       const paths = sendableSecrets({
         summary,
         plan: previewed,
@@ -262,7 +264,7 @@ export function HandoffFolderCopyWatcher({
           destinationLabel: latest.current.machineLabel(saved.environmentId),
         },
       });
-      return sent._tag === "Success";
+      return !stopped && sent._tag === "Success";
     };
 
     /**
@@ -295,7 +297,8 @@ export function HandoffFolderCopyWatcher({
         }
         return "ask" as const;
       }
-      if (!saved.replaceAll && !(await stageSecrets(saved, previewed))) return "ask" as const;
+      if (!saved.replaceAll && !(await stageSecrets(previewed))) return "ask" as const;
+      if (stopped) return "ask" as const;
       const approved = await approve({ environmentId: destination, input: { operationId } });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.

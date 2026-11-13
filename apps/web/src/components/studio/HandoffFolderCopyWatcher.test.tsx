@@ -528,6 +528,47 @@ it("waits for the person when the secrets choice cannot be sent", async () => {
   }
 });
 
+it("leaves secrets and the approval to a reopened dialog while the source summary is in flight", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copySourceStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // The dialog reopens (the watcher unmounts) and the person leaves the secrets on the source.
+    await act(async () => root.render(<></>));
+    pointer({ auto: true, secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer({
+        state: "ready",
+        summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+        progress: null,
+        error: null,
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(sent).toEqual([]);
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("never approves a one-click copy whose unchanged folder would overwrite files", async () => {
   vi.useFakeTimers();
   try {
