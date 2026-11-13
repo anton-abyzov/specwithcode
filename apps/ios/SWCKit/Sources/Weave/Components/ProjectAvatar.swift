@@ -156,7 +156,7 @@ public struct ProjectAvatar: View {
 
 /// Maps the Lucide icon names SpecWithCode stores for projects to SF Symbols.
 public nonisolated enum WeaveLucide {
-  /// Aide's glyph. SpecWithCode stores Aide's icon as Lucide "concierge-bell";
+  /// Percy's glyph. SpecWithCode stores Percy's icon as Lucide "concierge-bell";
   /// SF Symbols has no concierge bell, and a plain bell reads as notifications,
   /// so the personal assistant gets a person with a check instead.
   public static let assistantSystemName = "person.crop.circle.badge.checkmark"
@@ -251,7 +251,7 @@ private struct ProjectAvatarPreview: View {
   var body: some View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s4) {
       HStack(spacing: WeaveSpacing.s3) {
-        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide")
+        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Percy")
         ProjectAvatar(icon: .lucide(name: "dna", tint: "amber"), title: "specweave")
         ProjectAvatar(icon: .lucide(name: "globe", tint: "violet"), title: "Site")
         ProjectAvatar(icon: .lucide(name: "wrench", tint: "red"), title: "Tools")

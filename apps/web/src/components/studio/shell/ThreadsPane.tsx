@@ -664,7 +664,7 @@ export function ThreadsPane({
           <p role="status">
             {offerStarters && !props.attention
               ? props.personal
-                ? "No topics yet. Ask Aide for a new topic, or pick one below."
+                ? "No topics yet. Ask Percy for a new topic, or pick one below."
                 : "No threads yet. Pick a first task, or ask the coordinator for one."
               : say(
                   threadsSummary(
@@ -694,7 +694,7 @@ export function ThreadsPane({
               }
             >
               <span className="sws-dot" data-tone="waiting" aria-hidden />
-              {props.personal ? "Aide" : machine ? `${machine} coordinator` : "Coordinator"} ·{" "}
+              {props.personal ? "Percy" : machine ? `${machine} coordinator` : "Coordinator"} ·{" "}
               {attentionActionWord(action.reason)}
             </button>
           ))}

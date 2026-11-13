@@ -2,7 +2,7 @@ import SwiftUI
 import SWCSync
 import Weave
 
-/// Name, goal, instructions and pause for a project or Aide.
+/// Name, goal, instructions and pause for a project or Percy.
 struct ProjectSettingsSheet: View {
   let project: ProjectRef
 

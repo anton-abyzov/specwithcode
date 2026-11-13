@@ -7,8 +7,8 @@ import type { LegacySidebarAssistantLink } from "./LegacySidebar.logic";
 import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "./ui/sidebar";
 
 /**
- * Aide in the opt-in sidebars: one link row per assistant above the Projects list, to
- * the same page the studio sidebar's Aide row opens. Aide is never a project row there.
+ * Percy in the opt-in sidebars: one link row per assistant above the Projects list, to
+ * the same page the studio sidebar's Percy row opens. Percy is never a project row there.
  */
 export function LegacySidebarAssistantLinks({
   links,

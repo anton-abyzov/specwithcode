@@ -53,7 +53,7 @@ function partition<G extends ProjectListGroup>(
 }
 
 /**
- * The projects a scope notice offers, Aide first. A machine's "No project" folder is not
+ * The projects a scope notice offers, Percy first. A machine's "No project" folder is not
  * a project, so it is never a row. Archived projects are kept apart, unless one is the selected
  * project, which stays in the main list.
  */
@@ -80,7 +80,7 @@ export function settingsScopeNoticeProjects<G extends ScopeNoticeGroup<ScopeNoti
     };
   };
   const { listed, archived } = partition(groups, scratchRootFor, selectedProjectKey);
-  // Aide has settings of its own: it leads, named as itself.
+  // Percy has settings of its own: it leads, named as itself.
   return { listed: assistantsFirst(listed).map(entry), archived: archived.map(entry) };
 }
 
@@ -118,7 +118,7 @@ export function settingsScopeNoticeCheckouts<M extends ScopeNoticeMember>(
 
 /**
  * A machine's own projects for its remote sheet: each group's checkouts on that machine.
- * Aide is its own space, not a project, so it is never a row nor counted.
+ * Percy is its own space, not a project, so it is never a row nor counted.
  */
 export function machineProjectGroups<G extends ScopeNoticeGroup<ScopeNoticeMember>>(
   groups: ReadonlyArray<G>,

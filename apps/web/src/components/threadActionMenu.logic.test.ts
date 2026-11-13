@@ -403,7 +403,7 @@ describe("buildThreadActionMenuItems", () => {
   });
 });
 
-describe("buildThreadActionMenuItems for an Aide topic", () => {
+describe("buildThreadActionMenuItems for a Percy topic", () => {
   const labels = (state: ThreadActionMenuState): string[] => {
     const flatten = (items: ReturnType<typeof buildThreadActionMenuItems>): string[] =>
       items.flatMap((item) => [item.label, ...(item.children ? flatten(item.children) : [])]);

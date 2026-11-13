@@ -101,7 +101,7 @@ describe("the project panel's header row", () => {
     await act(async () => restore.click());
     expect(bar.onToggleExpanded).toHaveBeenCalledTimes(1);
   });
-  it("says topics and Aide for the personal assistant", async () => {
+  it("says topics and Percy for the personal assistant", async () => {
     await render(
       props({ personal: true, counts: { threads: { value: 1, label: "threads need you" } } }),
     );
@@ -112,8 +112,8 @@ describe("the project panel's header row", () => {
       ),
     ].join("\n");
     expect(words).toContain("Topics");
-    expect(container.querySelector('[aria-label="Ask Aide for a topic"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Aide panel"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Ask Percy for a topic"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Percy panel"]')).not.toBeNull();
     expect(words).not.toMatch(/\bthreads?\b|coordinator/i);
   });
 });

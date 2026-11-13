@@ -37,7 +37,7 @@ final class PairingUITests: SWCUITestCase {
     launch(fixture: "empty")
     tap(button("Explore with sample data"))
     waitForHome()
-    XCTAssertTrue(button(startingWith: "Aide, Coordinator").exists, "Sample data should open on Aide")
+    XCTAssertTrue(button(startingWith: "Percy, Coordinator").exists, "Sample data should open on Percy")
     waitForHittable(button("Exit sample data"), "Sample data should say so on every screen")
     attachScreenshot("Sample data")
 

@@ -29,7 +29,7 @@ export function newTaskDestinationProjects(
   selected: EnvironmentProject | null,
   scratchRootFor: ScratchRootLookup,
 ): EnvironmentProject[] {
-  // Mobile has no Aide entry of its own, so it stays a destination here.
+  // Mobile has no Percy entry of its own, so it stays a destination here.
   return projectPickerMembers(projects, scratchRootFor, "any").filter(
     (project) => resolveEnvironmentProjectMatch([project], selected) !== null,
   );

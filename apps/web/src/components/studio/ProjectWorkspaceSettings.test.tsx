@@ -464,20 +464,20 @@ describe("project folder placement", () => {
     expect(text.indexOf("Project folder")).toBeLessThan(text.indexOf("Use worktrees"));
     expect(text.indexOf("Use worktrees")).toBeLessThan(text.indexOf("Goal"));
   });
-  it("says topics and Aide for the personal assistant, threads and the coordinator for a project", async () => {
+  it("says topics and Percy for the personal assistant, threads and the coordinator for a project", async () => {
     await render("general", true, { kind: "personal" });
     const aide = container.textContent ?? "";
     for (const text of [
-      "Aide's model",
-      "Aide runs on this model.",
+      "Percy's model",
+      "Percy runs on this model.",
       "Recommended model for topics",
-      "Topics Aide starts, including the ones a routine needs",
-      "Auto-continue Aide's topics when limits reset",
-      "Blocks new work from Aide and its routines.",
+      "Topics Percy starts, including the ones a routine needs",
+      "Auto-continue Percy's topics when limits reset",
+      "Blocks new work from Percy and its routines.",
       "Running topics are preserved.",
-      "Permanently delete Aide and all of its topics.",
-      "Delete Aide and topics",
-      "Standing context supplied to Aide.",
+      "Permanently delete Percy and all of its topics.",
+      "Delete Percy and topics",
+      "Standing context supplied to Percy.",
     ])
       expect(aide, text).toContain(text);
     for (const text of ["Coordinator model", "model for threads", "Delete project and threads"])
@@ -512,7 +512,7 @@ describe("project folder placement", () => {
     );
     expect(rendered.map((index) => rows[index]!.id)).toEqual(rows.map((row) => row.id));
   });
-  it("finds Aide's renamed model and auto-continue rows from settings search", async () => {
+  it("finds Percy's renamed model and auto-continue rows from settings search", async () => {
     await render("general", true, { kind: "personal" });
     for (const id of ["project-coordinator-model", "project-worker-model", "project-auto-resume"]) {
       const row = PROJECT_SETTINGS_SEARCH_ROWS.find((candidate) => candidate.id === id)!;

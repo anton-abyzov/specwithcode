@@ -85,7 +85,7 @@ export function MessagingSettingsPanel() {
         aideEnabled,
         [savedProjectId, projectDraft],
       )
-        // Aide first: it is the natural home for a phone agent.
+        // Percy first: it is the natural home for a phone agent.
         .toSorted(
           (left, right) =>
             Number(right.workspaceSettings?.kind === "personal") -
@@ -283,7 +283,7 @@ export function MessagingSettingsPanel() {
                 <span className="text-muted-foreground text-xs">
                   {renderRich(
                     selectedProject?.workspaceSettings?.kind === "personal"
-                      ? tx("{value}Messages go to Aide. {value2}")
+                      ? tx("{value}Messages go to Percy. {value2}")
                       : tx("{value}Messages go to this project's coordinator. {value2}"),
                     {
                       value: unavailableProject

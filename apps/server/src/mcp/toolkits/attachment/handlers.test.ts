@@ -21,7 +21,7 @@ import { layer as handlers } from "./handlers.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 for (const direction of ["into", "out of"] as const) {
-  it.effect(`refuses attachments ${direction} Aide before claiming files or sending`, () => {
+  it.effect(`refuses attachments ${direction} Percy before claiming files or sending`, () => {
     const callerId = ThreadId.make("source");
     const targetId = ThreadId.make("target");
     const sourceProject = ProjectId.make("source-project");

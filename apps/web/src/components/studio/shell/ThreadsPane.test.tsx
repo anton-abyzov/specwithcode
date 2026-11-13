@@ -159,7 +159,7 @@ describe("the personal assistant's topics pane", () => {
   it("invites a first topic while there is none", async () => {
     await render(true, [], true);
     expect(container.textContent).toContain(
-      "No topics yet. Ask Aide for a new topic, or pick one below.",
+      "No topics yet. Ask Percy for a new topic, or pick one below.",
     );
     expect(words([])).not.toMatch(/\bthreads?\b|coordinator/i);
     await render(false, [], true);

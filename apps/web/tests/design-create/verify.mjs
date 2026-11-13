@@ -230,7 +230,7 @@ try {
         const titles = await page.getByRole("option").allTextContents();
         assert.equal(titles.filter((title) => title.includes("Old marketing site")).length, 1);
         assert.ok(
-          !titles.some((title) => title.startsWith("Aide")) || scene.startsWith("new-design"),
+          !titles.some((title) => title.startsWith("Percy")) || scene.startsWith("new-design"),
         );
         await shot(page, `${scene}-open`, theme, wide);
         await page.close();

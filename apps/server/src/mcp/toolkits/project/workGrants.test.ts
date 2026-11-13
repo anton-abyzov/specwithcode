@@ -725,8 +725,8 @@ describe("a personal assistant here, seen by another machine's work", () => {
       world.addThread(workerThread, linkedProject, codex);
       for (const scope of [world.clientScope(M4), world.threadScope(workerThread)]) {
         for (const params of [
-          { title: "Second Aide", kind: "personal" },
-          { title: "Second Aide", kind: "personal", workspaceRoot: "/fictional/assistant" },
+          { title: "Second Percy", kind: "personal" },
+          { title: "Second Percy", kind: "personal", workspaceRoot: "/fictional/assistant" },
         ]) {
           const refused = yield* world.call("studio_project_create", scope, params);
           expect(refused).toMatchObject({ code: "outside_grant_scope" });
@@ -871,7 +871,7 @@ describe("a personal assistant here, seen by another machine's work", () => {
       return Effect.gen(function* () {
         const listed = yield* world.call("studio_project_list", localScope, {});
         const ids = (listed.projects as ReadonlyArray<{ id: string }>).map((project) => project.id);
-        // Aide is not a project: a caller with no project of its own never lists it.
+        // Percy is not a project: a caller with no project of its own never lists it.
         expect(ids).toEqual(expect.arrayContaining([linkedProject, otherProject]));
         expect(ids).not.toContain(householdProject);
         expect(

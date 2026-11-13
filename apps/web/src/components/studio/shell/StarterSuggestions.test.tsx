@@ -137,7 +137,7 @@ describe("useCoordinatorPlaceholder", () => {
     return null;
   }
 
-  it("asks Aide anything, with or without topics", () => {
+  it("asks Percy anything, with or without topics", () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     for (const hasThreads of [false, true]) {
       const root = createRoot(document.createElement("div"));
@@ -152,7 +152,7 @@ describe("useCoordinatorPlaceholder", () => {
     }
   });
 
-  it("says a sent starter went to Aide in the personal assistant", () => {
+  it("says a sent starter went to Percy in the personal assistant", () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -170,7 +170,7 @@ describe("useCoordinatorPlaceholder", () => {
       />
     );
     act(() => root.render(list(true)));
-    expect(container.textContent).toContain("Sent to Aide.");
+    expect(container.textContent).toContain("Sent to Percy.");
     expect(container.textContent).not.toMatch(/coordinator/i);
     act(() => root.render(list(false)));
     expect(container.textContent).toContain("Sent to the coordinator.");

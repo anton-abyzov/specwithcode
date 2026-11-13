@@ -3,7 +3,7 @@
 // Runs the real server in a new private home with STUDIO_GOOGLE_API_URL
 // pointed at a local fake Google (consent screen, token, revoke). Saves an
 // OAuth client from Settings > Google account, signs in through the fake consent
-// redirect, checks Aide (the personal assistant) is listed apart from projects
+// redirect, checks Percy (the personal assistant) is listed apart from projects
 // with its Proactive briefing, turns Gmail on for a regular project, opens the
 // morning briefing template, signs in again by pasting the redirect address, adds a second
 // account with a label and makes it a project's default, removes it again,
@@ -434,9 +434,9 @@ try {
     null,
     { timeout: 15000 },
   );
-  // Aide has its own group, without a "(personal)" suffix, and its row opens the routine the
+  // Percy has its own group, without a "(personal)" suffix, and its row opens the routine the
   // host sets up for it instead of proposing a second briefing.
-  const aideGroup = page.getByRole("region", { name: "Aide", exact: true });
+  const aideGroup = page.getByRole("region", { name: "Percy", exact: true });
   NodeAssert.equal(await aideGroup.getByRole("switch", { name: "Gmail for Errands" }).count(), 1);
   NodeAssert.equal(await aideGroup.getByText("(personal)", { exact: false }).count(), 0);
   const proactive = aideGroup.getByRole("link", { name: "Proactive briefing", exact: true });

@@ -96,7 +96,7 @@ object ShellSummaries {
     }
 
     /**
-     * [includeAide] false hides Aide: no `aide`, and its chats are left out of recents and `threadsByProject`.
+     * [includeAide] false hides Percy: no `aide`, and its chats are left out of recents and `threadsByProject`.
      * [cache] reuses unchanged machines' thread rows; the output is the same with or without it.
      */
     fun build(machines: List<Machine>, includeAide: Boolean = true, cache: Cache? = null): Output {
@@ -440,7 +440,7 @@ object ShellSummaries {
         val title = project.displayTitle.trim()
         return ProjectSummary(
             ref = ProjectRef(environmentId, project.id),
-            title = title.ifEmpty { if (personal) "Aide" else "Project" },
+            title = title.ifEmpty { if (personal) "Percy" else "Project" },
             icon = icon(project.projectIcon ?: if (personal) ProjectIconOverride.PersonalAssistant else null),
             kind = if (personal) ProjectKind.Personal else ProjectKind.Code,
             machineLabel = machineLabel,
@@ -549,7 +549,7 @@ object ProjectPinning {
     }
 }
 
-/** Which thread a project's or Aide's chat shows. */
+/** Which thread a project's or Percy's chat shows. */
 object CoordinatorRouting {
     sealed interface Resolution {
         data class Known(val threadId: String) : Resolution

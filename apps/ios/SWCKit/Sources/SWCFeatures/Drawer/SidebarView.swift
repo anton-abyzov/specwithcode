@@ -15,7 +15,7 @@ extension EnvironmentValues {
 }
 
 /// The expanded layout's navigation column, a native sidebar list on two
-/// levels: all projects with Aide, recent threads and machines, or one
+/// levels: all projects with Percy, recent threads and machines, or one
 /// project's coordinator and threads. Going into a project brings its
 /// coordinator up beside the list unless one of its chats is already there, so
 /// both columns are about the same project. Every thread row leads with its
@@ -352,15 +352,15 @@ struct SidebarView: View {
     }
   }
 
-  // MARK: Aide
+  // MARK: Percy
 
   @ViewBuilder private var aideSection: some View {
-    // Aide stays hidden, set-up offer included, until its switch is on.
+    // Percy stays hidden, set-up offer included, until its switch is on.
     if !model.aideEnabled {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       Section {
-        SidebarRow(title: "Aide", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel) {
+        SidebarRow(title: "Percy", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel) {
           ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
         } trailing: {
           ProjectStatusGlyphs(project: aide)
@@ -371,8 +371,8 @@ struct SidebarView: View {
     } else if model.allMachinesLoaded {
       Section {
         Button(action: setUpAide) {
-          SidebarRow(title: "Set up Aide", subtitle: "Your personal assistant") {
-            ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+          SidebarRow(title: "Set up Percy", subtitle: "Your personal assistant") {
+            ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Percy", size: 24, style: .plain)
           } trailing: {
             if settingUpAide { ProgressView().controlSize(.small) }
           }

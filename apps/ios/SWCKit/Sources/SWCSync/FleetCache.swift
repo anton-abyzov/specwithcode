@@ -24,7 +24,7 @@ public actor FleetCache {
     /// machine's: ones paired by hand and ones that served a fleet roster.
     /// Optional so a file saved before it existed still decodes.
     var home: Set<String>?
-    /// Each machine's last known `aideEnabled`, so a cold start shows Aide as
+    /// Each machine's last known `aideEnabled`, so a cold start shows Percy as
     /// it was before the machines answer. Optional for older files.
     var aide: [String: Bool]?
   }

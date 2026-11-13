@@ -232,7 +232,7 @@ struct SidebarSelectionTests {
     router.main.path = [.chat(.thread(thread.ref))]
     #expect(router.sidebarScope(in: model) == aide.ref)
 
-    // Aide's own chat is home and keeps the whole tree.
+    // Percy's own chat is home and keeps the whole tree.
     let home = AppRouter()
     home.showsCoordinatorBeside = false
     home.open(.aide(aide.ref))
@@ -247,7 +247,7 @@ struct SidebarSelectionTests {
     #expect(router.sidebarScope(in: model) == aide.ref)
     #expect(router.showsThreadsBeside(in: model))
 
-    // All projects is one tap back, and leaves Aide on the right.
+    // All projects is one tap back, and leaves Percy on the right.
     router.sidebarShowsAllProjects = true
     #expect(router.sidebarScope(in: model) == nil)
     #expect(router.besideCoordinator(in: model) == nil)

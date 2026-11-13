@@ -516,8 +516,8 @@ export const zh: PhraseCatalog = {
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "设置差异面板是否默认忽略仅空白的修改。",
   "Shared Codex config, sessions, and state.": "共享的 Codex 配置、会话和状态。",
-  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
-    "在侧边栏和命令面板中显示 Aide（这台电脑的私人助手）。“关闭”会隐藏它，但不删除其聊天。",
+  "Show Percy, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "在侧边栏和命令面板中显示 Percy（这台电脑的私人助手）。“关闭”会隐藏它，但不删除其聊天。",
   "Show a gentle cue on the captured window.": "在截取的窗口上显示轻微提示。",
   "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
     "当此应用处于焦点时，若其他会话完成、失败或需要输入或批准，显示一条提示。",
@@ -1058,8 +1058,8 @@ export const zh: PhraseCatalog = {
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "你当前在 {b} 上。这里设置的是另一台电脑 {b2} 上的 Chrome；它的配对码在这里的 Chrome 中无效。",
   "Set up Chrome on {thisComputer}": "在 {thisComputer} 上设置 Chrome",
-  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
-    "{machine} 上的每个对话、项目会话和 Aide，无论使用哪个提供方，都同时使用已配对的 Chrome 配置文件。每个都在自己的标签页中工作，位于蓝色的 SpecWithCode 标签组内。在这里允许你的其他已连接电脑后，那些电脑上的会话也可以使用它。",
+  "Every chat, project thread and Percy on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.":
+    "{machine} 上的每个对话、项目会话和 Percy，无论使用哪个提供方，都同时使用已配对的 Chrome 配置文件。每个都在自己的标签页中工作，位于蓝色的 SpecWithCode 标签组内。在这里允许你的其他已连接电脑后，那些电脑上的会话也可以使用它。",
   "Test connection": "测试连接",
   Reconnect: "重新连接",
   "This device can view {machine}'s Chrome but not pair or test it.":
@@ -1626,8 +1626,8 @@ export const zh: PhraseCatalog = {
   "Finish sign-in": "完成登录",
   "Projects that may read each account": "可读取每个账户的项目",
   "Projects that may read it": "可读取它的项目",
-  "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.":
-    "让 Aide 和你选择的项目读取你的 Gmail、Calendar 和 Drive，这样 Aide 就能为你简报当天安排、查找文档或查看谁会参加会议。",
+  "Let Percy and the projects you choose read your Gmail, Calendar and Drive, so Percy can brief you on your day, find a document or check who is coming to a meeting.":
+    "让 Percy 和你选择的项目读取你的 Gmail、Calendar 和 Drive，这样 Percy 就能为你简报当天安排、查找文档或查看谁会参加会议。",
   "Agents in a project see only the services you turn on for it.":
     "项目中的智能体只能看到你为它开启的服务。",
   "Agents use the default account unless asked for another, and may read every account turned on here.":
@@ -1637,8 +1637,8 @@ export const zh: PhraseCatalog = {
   "Hidden on this machine. You can still turn its access off here.":
     "已在这台电脑上隐藏。你仍可以在这里关闭它的访问权限。",
   "Proactive briefing": "主动简报",
-  "No projects yet. Aide above can already use this account.":
-    "还没有项目。上方的 Aide 已经可以使用这个账户。",
+  "No projects yet. Percy above can already use this account.":
+    "还没有项目。上方的 Percy 已经可以使用这个账户。",
   "No projects yet. Add one to let its agents read this account.":
     "还没有项目。添加一个项目，让它的智能体读取这个账户。",
   "Enable {service} for all active projects": "为所有活跃项目启用 {service}",
@@ -1646,9 +1646,10 @@ export const zh: PhraseCatalog = {
   "{service} for {title}": "{title} 的 {service}",
   "Make {account} the default for {title}": "将 {account} 设为 {title} 的默认账户",
   "this account": "这个账户",
-  "Aide is opened from its own entry, not as a project": "Aide 从它自己的入口打开，而不是作为项目",
-  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.":
-    "智能体只读取。开启 Gmail 草稿后，它们会保存回复草稿，只有当你在回复卡片上选择“发送”时才会发送；它们从不更改或删除任何内容。SpecWithCode 从这台电脑与 Google 通信，将登录信息保存在这台电脑上的私有文件中，在你于下方开启之前不会向任何项目提供访问。只有 Aide 一开始就有访问权限。",
+  "Percy is opened from its own entry, not as a project":
+    "Percy 从它自己的入口打开，而不是作为项目",
+  "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Percy starts with access.":
+    "智能体只读取。开启 Gmail 草稿后，它们会保存回复草稿，只有当你在回复卡片上选择“发送”时才会发送；它们从不更改或删除任何内容。SpecWithCode 从这台电脑与 Google 通信，将登录信息保存在这台电脑上的私有文件中，在你于下方开启之前不会向任何项目提供访问。只有 Percy 一开始就有访问权限。",
   "Enable for all active projects": "为所有活跃项目启用",
   "Not now": "暂不",
   "{span} · {onCount} of {length} active": "{span} · {length} 个活跃中的 {onCount} 个",
@@ -4395,10 +4396,10 @@ export const zh: PhraseCatalog = {
   "move pending": "移动待确认",
   "separate project": "独立项目",
   "not synced here": "尚未在此同步",
-  "{value}Messages go to Aide. {value2}": "{value}消息会发送给 Aide。{value2}",
+  "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
   "New topic in {title}": "在 {title} 中新建主题",
-  Aide: "Aide",
+  Percy: "Percy",
   "Ask again": "再次询问",
   "Asking macOS to install its developer tools, which carry Git. This is its log.":
     "正在请求 macOS 安装其开发者工具，其中包含 Git。以下是日志。",

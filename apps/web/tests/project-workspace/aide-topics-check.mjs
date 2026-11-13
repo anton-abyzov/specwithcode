@@ -51,7 +51,7 @@ try {
   await page.goto(`${origin}/`);
   await page.getByRole("tab", { name: /Threads/ }).waitFor({ timeout: 90_000 });
   assert.equal(await page.getByRole("tab", { name: /Topics/ }).count(), 0);
-  assert.equal(await page.getByRole("button", { name: "Ask Aide for a topic" }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Ask Percy for a topic" }).count(), 0);
   // A project's pane and open thread still say thread.
   assert.match(await paneWords(page), THREAD_WORD);
   await page.locator(".sws-thread-open").first().click();
@@ -66,7 +66,7 @@ try {
   await page.goto(`${origin}/?personal`);
   await page.getByRole("tab", { name: /Topics/ }).waitFor({ timeout: 90_000 });
   assert.equal(await page.getByRole("tab", { name: /Threads/ }).count(), 0);
-  assert.equal(await page.getByRole("button", { name: "Ask Aide for a topic" }).count(), 1);
+  assert.equal(await page.getByRole("button", { name: "Ask Percy for a topic" }).count(), 1);
   await shot(page, "aide-topics");
   // No word in the list pane says thread or the coordinator.
   await page.locator(".sws-thread-open").first().waitFor();
@@ -88,7 +88,7 @@ try {
   assert.equal(await page.getByRole("button", { name: "Back to topics" }).count(), 1);
   await shot(page, "aide-open-topic");
   await page.locator(".sws-thread-crumb").click();
-  // The composer asks Aide, never the coordinator.
+  // The composer asks Percy, never the coordinator.
   const prompt = page.locator("#project-prompt");
   const promptWords = [
     (await prompt.getAttribute("aria-label")) ?? "",
@@ -131,7 +131,7 @@ try {
   );
   await shot(page, "aide-service-connect");
   await notion.getByRole("button", { name: "Connect Notion" }).click();
-  await notion.getByText("What Aide may use").waitFor();
+  await notion.getByText("What Percy may use").waitFor();
   const calls = await page.evaluate(() => window.__projectCalls);
   const ofKind = (name) => calls.filter((call) => call.command === name);
   assert.equal(ofKind("connectionCredentialSet").length, 1);

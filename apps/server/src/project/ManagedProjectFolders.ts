@@ -121,7 +121,7 @@ export class NamedProjectCreateError extends Schema.TaggedError<NamedProjectCrea
   }
 }
 
-/** A new personal assistant while Settings keeps Aide off. */
+/** A new personal assistant while Settings keeps Percy off. */
 export class PersonalAssistantDisabledError extends Schema.TaggedError<PersonalAssistantDisabledError>()(
   "PersonalAssistantDisabledError",
   {},
@@ -218,7 +218,7 @@ export class ManagedProjectFolders extends Context.Service<
      * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
      * README, an icon, and a first commit, then creates the project. Personal
      * projects return this machine's assistant when it has one; a new one is
-     * refused while Settings keeps Aide off, and otherwise claims a private
+     * refused while Settings keeps Percy off, and otherwise claims a private
      * managed folder without invoking Git. With `specweave`, a new code
      * project also runs `specweave init` before the first commit, so its
      * files land in that commit; a failed init keeps the project and returns

@@ -222,12 +222,12 @@ final class SwitchedConnector: WebSocketConnector {
       await cache.saveSnapshot(try TestData.shell(), for: FakeMachine.environmentId)
       await cache.setAideEnabled(true, for: FakeMachine.environmentId)
     }, startOn: false)
-    // Offline with no live settings: Aide stays as it was, and setup waits instead of refusing.
+    // Offline with no live settings: Percy stays as it was, and setup waits instead of refusing.
     #expect(await until { rows(h).count == 1 })
     #expect(h.model.aideEnabled)
     await #expect(throws: SyncError.noMachineConnected) { try await h.engine.setupAide() }
 
-    // The machine answers with Aide off: the live setting wins and is saved.
+    // The machine answers with Percy off: the live setting wins and is saved.
     h.power.set(true)
     h.engine.reconnect(machineId: env)
     #expect(await until { h.model.machines.first?.status == .connected && !h.model.aideEnabled })

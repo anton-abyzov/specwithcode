@@ -49,7 +49,7 @@ import { ProjectToolkit } from "./tools.ts";
 
 /**
  * The real routing tools and the real coordinator service over an in-memory
- * environment: Aide (personal), two projects inside its approved folders, one
+ * environment: Percy (personal), two projects inside its approved folders, one
  * outside them, one archived. Folders, real paths and attachment bytes are
  * real files in a temporary directory.
  */
@@ -113,7 +113,7 @@ function world(
   });
   const projects = new Map<string, ProjectRecord>(
     [
-      make("aide", "Aide", aideRoot, {
+      make("aide", "Percy", aideRoot, {
         kind: "personal",
         coordinatorThreadId: aideCoordinator,
         environment: {
@@ -147,7 +147,7 @@ function world(
     [
       aideCoordinator,
       shell(aideCoordinator, "aide", {
-        title: "Aide coordinator",
+        title: "Percy coordinator",
         activeRunId: turnRun,
         status: "running",
         runtimeMode: options.callerRuntimeMode ?? "full-access",
@@ -348,7 +348,7 @@ function world(
   );
   const services = Coordinator.layer.pipe(Layer.provideMerge(dependencies));
 
-  /** Stores the user's screenshot the way the app claims it into Aide's thread. */
+  /** Stores the user's screenshot the way the app claims it into Percy's thread. */
   const seed = Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     config.attachmentsDir = serverConfig.attachmentsDir;
@@ -424,7 +424,7 @@ const run = <A, E>(
   );
 
 it.effect(
-  "lists only the projects inside Aide's approved folders, with reasons for the rest",
+  "lists only the projects inside Percy's approved folders, with reasons for the rest",
   () => {
     const w = world();
     return run(
@@ -460,7 +460,7 @@ it.effect(
           "Old tool",
         ]);
         expect(unavailable.find((entry) => entry.title === "Hackathon")!.reason).toContain(
-          "outside Aide's approved folders",
+          "outside Percy's approved folders",
         );
         expect(unavailable.find((entry) => entry.title === "Old tool")!.reason).toContain(
           "archived",
@@ -502,7 +502,7 @@ it.effect(
           senderThreadId: w.aideCoordinator,
         });
         expect(parseRoutedMessage(delivered.text)).toEqual({
-          assistantTitle: "Aide",
+          assistantTitle: "Percy",
           threadId: w.aideCoordinator,
           messageId: w.requestId,
           note: "Yours: the signup audit.",
@@ -593,7 +593,7 @@ it.effect(
           userAsked: ASKED,
         });
         expect(missing).toMatchObject({ code: "invalid_request" });
-        // Aide's approvals are unchanged: routing never grants itself a folder.
+        // Percy's approvals are unchanged: routing never grants itself a folder.
         expect(
           w.projects.get("aide")!.workspaceSettings!.environment.additionalFolders,
         ).toHaveLength(2);
@@ -621,7 +621,7 @@ it.effect("routes only what the user wrote", () => {
   );
 });
 
-it.effect("never hands work to a coordinator running in broader modes than Aide", () => {
+it.effect("never hands work to a coordinator running in broader modes than Percy", () => {
   const w = world({ callerRuntimeMode: "approval-required" });
   return run(
     w,

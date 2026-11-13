@@ -966,7 +966,7 @@ function OpenCommandPaletteDialog(props: {
     () => threadsVisibleWithAide(allThreads, allProjects, aideEnabled),
     [allThreads, allProjects, aideEnabled],
   );
-  // Commands on a thread of Aide's say "topic".
+  // Commands on a thread of Percy's say "topic".
   const threadWords = paneWords(
     activeThread != null &&
       allProjects.some(
@@ -2129,7 +2129,7 @@ function OpenCommandPaletteDialog(props: {
   const newProjectEnvironmentOptions = addProjectEnvironmentOptions.filter(
     (option) => option.isConnected && newProjectsRootFor(option.environmentId) !== null,
   );
-  // Each machine saves its own Aide switch and they can disagree, so Set up is
+  // Each machine saves its own Percy switch and they can disagree, so Set up is
   // gated by the target machine's own settings, not only this device's.
   const aideEnabledOnMachine = (environmentId: EnvironmentId): boolean =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
@@ -2606,12 +2606,12 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-  // Each machine's own Aide is one go-to entry of its own, never a project row.
+  // Each machine's own Percy is one go-to entry of its own, never a project row.
   const paletteAssistantList = paletteAssistants(projects, primaryEnvironmentId);
   const assistantItems: CommandPaletteActionItem[] = paletteAssistantList.map((assistant) => ({
     kind: "action",
     value: `assistant:${assistant.environmentId}:${assistant.id}`,
-    searchTerms: [assistant.title, "aide", "personal assistant", "assistant", "topics"],
+    searchTerms: [assistant.title, "percy", "aide", "personal assistant", "assistant", "topics"],
     title: assistantDisplayTitle(
       assistant.title,
       environmentLabelById.get(assistant.environmentId),

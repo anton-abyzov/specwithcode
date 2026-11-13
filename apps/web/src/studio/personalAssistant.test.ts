@@ -123,9 +123,9 @@ describe("Set up", () => {
   });
 
   it("names each machine's assistant once more than one machine is connected", () => {
-    expect(assistantDisplayTitle("Aide", "Anna's MacBook", 2)).toBe("Aide · Anna's MacBook");
-    expect(assistantDisplayTitle("Aide", "Anna's MacBook", 1)).toBe("Aide");
-    expect(assistantDisplayTitle("Aide", null, 3)).toBe("Aide");
+    expect(assistantDisplayTitle("Percy", "Anna's MacBook", 2)).toBe("Percy · Anna's MacBook");
+    expect(assistantDisplayTitle("Percy", "Anna's MacBook", 1)).toBe("Percy");
+    expect(assistantDisplayTitle("Percy", null, 3)).toBe("Percy");
   });
 });
 
@@ -166,13 +166,13 @@ describe("hiding the personal assistant from a picker with a saved choice", () =
   });
 });
 
-describe("machines that disagree on the Aide switch", () => {
+describe("machines that disagree on the Percy switch", () => {
   const aideOnM1 = { id: "a1", environmentId: "m1", workspaceSettings: { kind: "personal" } };
-  it("offers Set up only where the machine's own settings turn Aide on", () => {
+  it("offers Set up only where the machine's own settings turn Percy on", () => {
     expect(
       machineOffersAssistant({ environmentId: "m4", aideEnabledOnMachine: true, projects: [] }),
     ).toBe(true);
-    // This device shows Aide on, but M3 still has it off: no setup there.
+    // This device shows Percy on, but M3 still has it off: no setup there.
     expect(
       machineOffersAssistant({ environmentId: "m3", aideEnabledOnMachine: false, projects: [] }),
     ).toBe(false);

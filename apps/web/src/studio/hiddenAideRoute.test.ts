@@ -17,7 +17,7 @@ const aide = { memberProjects: [{ workspaceSettings: { kind: "personal" } }] };
 const code = { memberProjects: [{ workspaceSettings: { kind: "code" } }] };
 
 describe("isHiddenAideRoute", () => {
-  it("sends a personal assistant's page away only once Aide is known to be off", () => {
+  it("sends a personal assistant's page away only once Percy is known to be off", () => {
     expect(isHiddenAideRoute({ group: aide, aideEnabled: false, settled: true })).toBe(true);
     // Settings still loading: off may only mean "not loaded yet", so the link stays.
     expect(isHiddenAideRoute({ group: aide, aideEnabled: false, settled: false })).toBe(false);
@@ -32,7 +32,7 @@ describe("isHiddenAideRoute", () => {
 
 describe("isHiddenAideThread", () => {
   const personal = { workspaceSettings: { kind: "personal" } };
-  it("sends a personal assistant's chat away only once Aide is known to be off", () => {
+  it("sends a personal assistant's chat away only once Percy is known to be off", () => {
     expect(isHiddenAideThread({ project: personal, aideEnabled: false, settled: true })).toBe(true);
     expect(isHiddenAideThread({ project: personal, aideEnabled: false, settled: false })).toBe(
       false,

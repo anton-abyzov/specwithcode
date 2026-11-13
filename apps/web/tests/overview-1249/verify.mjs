@@ -89,7 +89,7 @@ try {
         unnamed.length === 0,
         unnamed.join(" | "),
       );
-      // Aide is its own entry above Projects, out of the project cards and counts.
+      // Percy is its own entry above Projects, out of the project cards and counts.
       const rail = await page.evaluate(() => {
         const entry = document.querySelector('[aria-labelledby="studio-assistant-title"]');
         const projects = document.querySelector('[aria-labelledby="studio-projects-title"]');
@@ -109,31 +109,31 @@ try {
         };
       });
       check(
-        `${label}: Aide has its own entry above Projects`,
-        JSON.stringify(rail.entryRows) === '["Aide"]' && rail.entryFirst,
+        `${label}: Percy has its own entry above Projects`,
+        JSON.stringify(rail.entryRows) === '["Percy"]' && rail.entryFirst,
         JSON.stringify(rail),
       );
       check(
-        `${label}: Aide is not a project card or counted`,
-        !rail.projectTitles.includes("Aide") && rail.projectCount === "5",
+        `${label}: Percy is not a project card or counted`,
+        !rail.projectTitles.includes("Percy") && rail.projectCount === "5",
         JSON.stringify(rail),
       );
-      // Its "+" starts a new topic aimed at Aide, and its waiting pill names topics.
+      // Its "+" starts a new topic aimed at Percy, and its waiting pill names topics.
       const aideRow = page.locator('[aria-labelledby="studio-assistant-title"] .studio-project');
       check(
-        `${label}: Aide's pill shows only its topics`,
+        `${label}: Percy's pill shows only its topics`,
         (await aideRow
-          .getByRole("button", { name: "Show only topics that need you in Aide" })
+          .getByRole("button", { name: "Show only topics that need you in Percy" })
           .count()) === 1,
       );
-      const newTopic = aideRow.getByRole("button", { name: "New topic in Aide", exact: true });
-      check(`${label}: Aide row offers a new topic`, (await newTopic.isEnabled()) === true);
+      const newTopic = aideRow.getByRole("button", { name: "New topic in Percy", exact: true });
+      check(`${label}: Percy row offers a new topic`, (await newTopic.isEnabled()) === true);
       // Clicked once, where no keyboard check follows on the same page.
       if (theme === "dark" && width === 1440) {
         await newTopic.click();
         const started = await page.evaluate(() => window.__newThreads ?? []);
         check(
-          `${label}: a new topic is a draft aimed at Aide`,
+          `${label}: a new topic is a draft aimed at Percy`,
           JSON.stringify(started) ===
             JSON.stringify([
               {
@@ -170,7 +170,7 @@ try {
       await page.close();
     }
   }
-  // The rail with Aide's own section, at 1280x900 in both themes.
+  // The rail with Percy's own section, at 1280x900 in both themes.
   for (const theme of ["light", "dark"]) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(`${origin}/?theme=${theme}`);

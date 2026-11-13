@@ -18,7 +18,7 @@ const state = vi.hoisted(() => ({
   retryNow: vi.fn(async (_environmentId: string) => ({ _tag: "Success" })),
   refreshAtom: vi.fn(),
   workerArchived: false,
-  /** The worker project is a personal assistant, and whether Settings shows Aide. */
+  /** The worker project is a personal assistant, and whether Settings shows Percy. */
   workerPersonal: false,
   aideEnabled: true,
   shells: [] as EnvironmentThreadShell[],
@@ -698,7 +698,7 @@ describe("deliberate native session entry", () => {
     expect(workerMac?.textContent).toContain("0 projects");
 
     const entry = container.querySelector('[aria-labelledby="studio-assistant-title"]')!;
-    expect(container.querySelector("#studio-assistant-title")?.textContent).toBe("Aide");
+    expect(container.querySelector("#studio-assistant-title")?.textContent).toBe("Percy");
     // The entry sits above Projects in the rail.
     expect(
       entry.compareDocumentPosition(projectsPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -715,7 +715,7 @@ describe("deliberate native session entry", () => {
     expect(
       rows[0]!.querySelector('[aria-label="Show only topics that need you in Worker project"]'),
     ).not.toBeNull();
-    // Its "+" starts a new topic aimed at Aide, not the chooser of projects.
+    // Its "+" starts a new topic aimed at Percy, not the chooser of projects.
     state.newThread.mockClear();
     const newTopic = rows[0]!.querySelector<HTMLButtonElement>(
       '[aria-label="New topic in Worker project"]',
@@ -748,7 +748,7 @@ describe("deliberate native session entry", () => {
         ?.disabled,
     ).toBe(true);
   });
-  it("shows no assistant entry while Aide is off or none exists", async () => {
+  it("shows no assistant entry while Percy is off or none exists", async () => {
     await render();
     expect(container.querySelector("#studio-assistant-title")).toBeNull();
     state.workerPersonal = true;

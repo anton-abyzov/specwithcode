@@ -100,11 +100,11 @@ try {
       await page.locator(".sws-side-actions .sws-project-row").nth(1).waitFor();
       const rows = await assistantRows(page);
       assert.deepEqual(rows, [
-        { key: "m4:/fixtures/assistants/studio-mac", label: "Aide", hint: "Studio Mac" },
-        { key: "anna:/fixtures/assistants/annas-macbook", label: "Aide", hint: "Anna's MacBook" },
+        { key: "m4:/fixtures/assistants/studio-mac", label: "Percy", hint: "Studio Mac" },
+        { key: "anna:/fixtures/assistants/annas-macbook", label: "Percy", hint: "Anna's MacBook" },
       ]);
       const listed = await projectRows(page);
-      assert.ok(listed.includes("Example Household") && !listed.includes("Aide"), listed);
+      assert.ok(listed.includes("Example Household") && !listed.includes("Percy"), listed);
       const path = await shot(page, `${size}-sidebar-two-machines`);
       record("sidebar-two-machines", size, { assistantRows: rows, projects: listed }, errors, path);
       await page.close();
@@ -148,7 +148,7 @@ try {
       await page.locator(".sws-side-actions .sws-project-row").first().waitFor();
       const rows = await assistantRows(page);
       assert.deepEqual(rows, [
-        { key: "m4:/fixtures/assistants/studio-mac", label: "Aide", hint: null },
+        { key: "m4:/fixtures/assistants/studio-mac", label: "Percy", hint: null },
       ]);
       const path = await shot(page, `${size}-sidebar-one-machine`);
       record("sidebar-one-machine", size, { assistantRows: rows }, errors, path);
@@ -163,7 +163,7 @@ try {
       assert.equal(await setup.locator(".sws-side-row-hint").textContent(), "Set up here");
       const rows = await assistantRows(page);
       assert.deepEqual(rows, [
-        { key: "anna:/fixtures/assistants/annas-macbook", label: "Aide", hint: "Anna's MacBook" },
+        { key: "anna:/fixtures/assistants/annas-macbook", label: "Percy", hint: "Anna's MacBook" },
       ]);
       const setupLeads = await setup.evaluate((button, row) => {
         const other = document.querySelector(row);
@@ -206,7 +206,7 @@ try {
       const { page, errors } = await open(width, height, "view=menu&project=personal");
       await page.getByRole("button", { name: "Run on: Studio Mac" }).click();
       const menu = page.getByRole("menu");
-      await menu.getByText("Machines with Aide").waitFor();
+      await menu.getByText("Machines with Percy").waitFor();
       const machines = await menuMachines(menu);
       assert.deepEqual(machines, ["Studio Mac"]);
       const addItems = await menu

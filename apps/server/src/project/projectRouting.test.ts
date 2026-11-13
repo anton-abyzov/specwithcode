@@ -58,7 +58,10 @@ describe("project routing access", () => {
   });
 
   it("tells the assistant the user adds folders, never itself", () => {
-    const message = routeRefusalMessage("outside_folders", { assistant: "Aide", target: "Vskill" });
+    const message = routeRefusalMessage("outside_folders", {
+      assistant: "Percy",
+      target: "Vskill",
+    });
     expect(message).toContain("The user can add that folder");
     expect(message).toContain("do not ask for or add it yourself");
   });

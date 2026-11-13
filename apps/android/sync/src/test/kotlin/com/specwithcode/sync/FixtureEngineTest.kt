@@ -370,7 +370,7 @@ class ContractTest {
         assertEquals("That computer is offline. Try again when it reconnects.", SyncError.MachineOffline("").message)
         assertEquals(SyncError.UnreadableAnswer, SyncError.wrap(kotlinx.serialization.SerializationException("bad")))
         assertEquals("ok", ChatSession.threadSubtitle("ok", "M4", isPersonal = false))
-        assertEquals("Aide · M4", ChatSession.threadSubtitle("Aide", "M4", isPersonal = true))
+        assertEquals("Percy · M4", ChatSession.threadSubtitle("Percy", "M4", isPersonal = true))
     }
 
 }

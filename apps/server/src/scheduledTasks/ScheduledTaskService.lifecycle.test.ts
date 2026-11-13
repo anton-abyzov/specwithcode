@@ -219,7 +219,7 @@ it.effect("refuses manual and due routines for paused, archived or deleted proje
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 
-it.effect("stops a personal assistant's routines while Aide is off on this machine", () =>
+it.effect("stops a personal assistant's routines while Percy is off on this machine", () =>
   Effect.gen(function* () {
     const { state, runWithAide, sql } = yield* harness;
     state.kind = "personal";
@@ -237,7 +237,7 @@ it.effect("stops a personal assistant's routines while Aide is off on this machi
           enabled: number;
         }>`SELECT run_count,enabled FROM scheduled_tasks`;
         assert.equal(row?.run_count, 0);
-        // Still on: it runs again once Aide is turned back on.
+        // Still on: it runs again once Percy is turned back on.
         assert.equal(row?.enabled, 1);
       }),
     );

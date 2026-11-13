@@ -926,7 +926,7 @@ describe("projects and chats sidebar", () => {
       ...state.groups,
       {
         projectKey: "host:/aide",
-        displayName: "Aide",
+        displayName: "Percy",
         memberProjects: [
           { environmentId: "host", id: "p3", workspaceSettings: { kind: "personal" } },
         ],
@@ -940,10 +940,10 @@ describe("projects and chats sidebar", () => {
     ).toBe(false);
     expect(
       container.querySelector('.sws-side-actions [aria-label="Personal assistant"]')?.textContent,
-    ).toContain("Aide");
+    ).toContain("Percy");
     expect(
       container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent,
-    ).not.toContain("Aide");
+    ).not.toContain("Percy");
     expect(
       container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent,
     ).not.toContain("Personal assistant");
@@ -958,7 +958,7 @@ describe("projects and chats sidebar", () => {
       })),
       {
         projectKey: "host:/aide",
-        displayName: "Aide",
+        displayName: "Percy",
         memberProjects: [
           { environmentId: "host", id: "aide", workspaceSettings: { kind: "personal" } },
         ],
@@ -966,19 +966,19 @@ describe("projects and chats sidebar", () => {
     ];
     await render();
     const pinned = container.querySelector('.sws-side-actions [aria-label="Personal assistant"]');
-    expect(pinned?.textContent).toContain("Aide");
+    expect(pinned?.textContent).toContain("Percy");
     const projects = container.querySelector('[aria-labelledby="sws-side-projects"]')!;
-    expect(projects.textContent).not.toContain("Aide");
+    expect(projects.textContent).not.toContain("Percy");
     expect(projects.querySelectorAll(".sws-project-row")).toHaveLength(7);
     expect(projects.textContent).toContain("Show 3 more");
   });
-  it("hides the personal assistant, its chats and the setup row while Aide is off", async () => {
+  it("hides the personal assistant, its chats and the setup row while Percy is off", async () => {
     state.aideEnabled = false;
     state.groups = [
       ...state.groups,
       {
         projectKey: "host:/aide",
-        displayName: "Aide",
+        displayName: "Percy",
         memberProjects: [
           { environmentId: "host", id: "aide", workspaceSettings: { kind: "personal" } },
         ],
@@ -995,14 +995,14 @@ describe("projects and chats sidebar", () => {
         b.textContent?.startsWith("Personal assistant"),
       ),
     ).toBe(false);
-    expect(container.textContent).not.toContain("Aide");
+    expect(container.textContent).not.toContain("Percy");
     expect(chats()).toEqual(["Chat atlas"]);
     // Turning it back on shows the same assistant and its chat: nothing was deleted.
     state.aideEnabled = true;
     await render();
     expect(
       container.querySelector('.sws-side-actions [aria-label="Personal assistant"]')?.textContent,
-    ).toContain("Aide");
+    ).toContain("Percy");
     expect(chats()).toContain("Chat private");
   });
   it("starts an independent chat even when several projects are available", async () => {
@@ -1479,7 +1479,7 @@ describe("cleaning up the projects list", () => {
   it("lists an archived personal assistant only in its own entry, with no count", async () => {
     state.groups.push({
       projectKey: "host:/aide",
-      displayName: "Aide",
+      displayName: "Percy",
       memberProjects: [
         {
           environmentId: "host",
@@ -1498,12 +1498,12 @@ describe("cleaning up the projects list", () => {
     const labels = [...container.querySelectorAll("button")].map((b) => b.textContent ?? "");
     expect(labels.some((label) => label.startsWith("Archived ("))).toBe(false);
     const entry = container.querySelector('.sws-side-actions [aria-label="Personal assistant"]')!;
-    expect(entry.textContent).toContain("Aide");
+    expect(entry.textContent).toContain("Percy");
     expect(entry.querySelector(".sws-project-row")?.hasAttribute("data-archived")).toBe(true);
     expect(entry.querySelector(".sws-count-waiting")).toBeNull();
     expect(
       container.querySelector('[aria-labelledby="sws-side-projects"]')?.textContent,
-    ).not.toContain("Aide");
+    ).not.toContain("Percy");
   });
 
   it("opens Automated while one of its projects is open", async () => {

@@ -16,7 +16,7 @@ import java.time.Instant
  * `team-rules` scenarios come with the features they show.
  */
 enum class FixtureScenario(val rawValue: String) {
-    /** Three machines, Aide, four projects and fourteen threads. */
+    /** Three machines, Percy, four projects and fourteen threads. */
     Default("default"),
 
     /** No machines yet, as on first launch. */
@@ -25,7 +25,7 @@ enum class FixtureScenario(val rawValue: String) {
     /** Like [Default], but every opened chat is mid-run with one queued message. */
     Running("running"),
 
-    /** Like [Default], but Aide's chat holds a long history with links. */
+    /** Like [Default], but Percy's chat holds a long history with links. */
     Long("long"),
     ;
 
@@ -47,7 +47,7 @@ class FixtureFailure(message: String) : Exception(message)
  */
 class FixtureEngine(
     val scenario: FixtureScenario = FixtureScenario.Default,
-    /** Whether the sample machines turn Aide on. On by default, so screenshots show it. */
+    /** Whether the sample machines turn Percy on. On by default, so screenshots show it. */
     val aideEnabled: Boolean = true,
     private val scope: CoroutineScope,
     private val clock: () -> Instant = Instant::now,
@@ -343,23 +343,23 @@ class FixtureEngine(
         val model = requireModel()
         if (!aideEnabled) throw SyncError.AideDisabled
         model.aide?.let { return it.ref }
-        // Every client puts Aide on the machine with the lowest environment id, offline ones
-        // included, and creates nothing while a machine is offline: that machine may hold Aide.
-        val machine = model.machines.minByOrNull { it.id } ?: throw FixtureFailure("Connect a machine before setting up Aide.")
+        // Every client puts Percy on the machine with the lowest environment id, offline ones
+        // included, and creates nothing while a machine is offline: that machine may hold Percy.
+        val machine = model.machines.minByOrNull { it.id } ?: throw FixtureFailure("Connect a machine before setting up Percy.")
         if (!model.machines.all { it.status.isOnline }) {
-            throw FixtureFailure("Aide may already be on a machine that's offline. Reconnect your machines, then try again.")
+            throw FixtureFailure("Percy may already be on a machine that's offline. Reconnect your machines, then try again.")
         }
         pause(latencyMs)
         val ref = ProjectRef(machine.id, "aide")
         model.update {
             it.copy(
                 aide = ProjectSummary(
-                    ref, "Aide", ProjectIcon.Symbol("concierge-bell", "violet"), ProjectKind.Personal, machine.label, machineOnline = true,
+                    ref, "Percy", ProjectIcon.Symbol("concierge-bell", "violet"), ProjectKind.Personal, machine.label, machineOnline = true,
                 ),
             )
         }
         transcripts[ChatTarget.Aide(ref)] = mutableListOf(
-            row("a", Kind.Assistant("Hi, I'm Aide. Ask me anything, or tell me what to start. I can open threads in any project on ${machine.label}.", streaming = false)),
+            row("a", Kind.Assistant("Hi, I'm Percy. Ask me anything, or tell me what to start. I can open threads in any project on ${machine.label}.", streaming = false)),
         )
         recompute()
         return ref

@@ -143,7 +143,7 @@ class SWCUITestCase: XCTestCase {
 
   /// Opens the drawer from the menu button of the root chat and waits for
   /// `firstRow`, its top row.
-  func openDrawer(firstRow: String = "Aide", file: StaticString = #filePath, line: UInt = #line) {
+  func openDrawer(firstRow: String = "Percy", file: StaticString = #filePath, line: UInt = #line) {
     let menu = button("Menu")
     waitFor(menu, file: file, line: line)
     // On SDK 27.1 Duo, isHittable can be false at accessibility XXXL even

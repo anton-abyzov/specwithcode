@@ -192,7 +192,7 @@ export function ProjectWorkspaceSettings({
     !project.workspaceSettings?.logicalProject ||
     project.workspaceSettings.coordinatorBinding?.state === "active";
   const personal = snapshot.settings.kind === "personal";
-  // Aide calls its threads topics, and itself Aide where a project says the coordinator.
+  // Percy calls its threads topics, and itself Percy where a project says the coordinator.
   const say = paneWords(personal);
   const [goal, setGoal] = useState(snapshot.settings.goal);
   const [instructions, setInstructions] = useState(snapshot.settings.instructions);
@@ -304,7 +304,7 @@ export function ProjectWorkspaceSettings({
     if (titleEdited && title.trim() !== projectTitle && !ownsName) {
       setError(
         personal
-          ? "Rename Aide from the machine it runs on."
+          ? "Rename Percy from the machine it runs on."
           : "Open the active coordinator to rename this project. This checkout does not own its name.",
       );
       return false;
@@ -546,8 +546,8 @@ export function ProjectWorkspaceSettings({
                   </label>
                   <ProjectModels
                     environmentId={project.environmentId}
-                    label={personal ? "Aide's model" : "Coordinator model"}
-                    title={personal ? "Aide's model" : "Coordinator model"}
+                    label={personal ? "Percy's model" : "Coordinator model"}
+                    title={personal ? "Percy's model" : "Coordinator model"}
                     coordinator
                     recommendedTraits={COORDINATOR_RECOMMENDED_TRAITS}
                     value={coordinator ?? inheritedCoordinator}
@@ -558,7 +558,7 @@ export function ProjectWorkspaceSettings({
                     {coordinator
                       ? say("The coordinator runs on this model.")
                       : personal
-                        ? "No override saved: Aide keeps the model it runs on now, and a new Aide starts on the recommended model for topics, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."
+                        ? "No override saved: Percy keeps the model it runs on now, and a new Percy starts on the recommended model for topics, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."
                         : "No override saved: an existing coordinator keeps its thread model, and a new one starts on the recommended model for threads, then the Settings > Defaults model or, without either, this host's default (Opus 5.5 on a Claude subscription when it is signed in). Pick a model to pin it."}
                   </p>
                   <ProjectModels
@@ -601,7 +601,7 @@ export function ProjectWorkspaceSettings({
                       onChange={(e) => change(setAutoResume, e.target.checked)}
                     />
                     {personal
-                      ? "Auto-continue Aide's topics when limits reset"
+                      ? "Auto-continue Percy's topics when limits reset"
                       : "Auto-continue this project's threads when limits reset"}
                   </label>
                   <p className="project-muted">
@@ -628,7 +628,7 @@ export function ProjectWorkspaceSettings({
                       <h3>{snapshot.settings.paused ? "Resume project" : "Pause new work"}</h3>
                       <p className="project-muted">
                         {personal
-                          ? "Blocks new work from Aide and its routines. Running native turns retain their existing controls."
+                          ? "Blocks new work from Percy and its routines. Running native turns retain their existing controls."
                           : "Blocks new coordinator and routine dispatch. Running native turns retain their existing controls."}
                       </p>
                     </div>
@@ -668,7 +668,7 @@ export function ProjectWorkspaceSettings({
                     <h4>Delete project</h4>
                     <p>
                       {personal
-                        ? "Permanently delete Aide and all of its topics. This cannot be undone."
+                        ? "Permanently delete Percy and all of its topics. This cannot be undone."
                         : "Permanently delete this project and all of its threads. This cannot be undone."}
                     </p>
                     <p className="project-muted">
@@ -698,7 +698,7 @@ export function ProjectWorkspaceSettings({
                       }
                       onClick={() => void deleteProject()}
                     >
-                      {personal ? "Delete Aide and topics" : "Delete project and threads"}
+                      {personal ? "Delete Percy and topics" : "Delete project and threads"}
                     </button>
                   </section>
                 </section>
@@ -708,7 +708,7 @@ export function ProjectWorkspaceSettings({
                   <h2>Project instructions</h2>
                   <p className="project-muted">
                     {personal
-                      ? "Standing context supplied to Aide. Native topic histories and compaction stay with each provider."
+                      ? "Standing context supplied to Percy. Native topic histories and compaction stay with each provider."
                       : "Standing context supplied to coordinator turns. Native thread histories and compaction stay with each provider."}
                   </p>
                   <textarea

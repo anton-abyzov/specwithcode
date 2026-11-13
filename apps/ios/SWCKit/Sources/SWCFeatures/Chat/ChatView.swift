@@ -15,7 +15,7 @@ extension EnvironmentValues {
   }
 }
 
-/// A conversation with Aide, a project coordinator or a thread.
+/// A conversation with Percy, a project coordinator or a thread.
 struct ChatView: View {
   let target: ChatTarget
   var isPushed = false
@@ -410,7 +410,7 @@ private struct ChatScreen: View {
 
   private var emptyMessage: String {
     switch target {
-    case .aide: "Ask a question or tell Aide what to start on your machines."
+    case .aide: "Ask a question or tell Percy what to start on your machines."
     case .project: "Tell the coordinator what to work on. It plans the work and starts threads."
     case .thread: "Messages you send here go to this thread on \(session.machineLabel)."
     }
@@ -567,7 +567,7 @@ private struct ChatScreen: View {
     return false
   }
 
-  /// The list beside this coordinator already holds its threads. Aide's
+  /// The list beside this coordinator already holds its threads. Percy's
   /// threads are in every level of the list, so it counts once the list shows.
   private func threadsOnScreen(_ project: ProjectRef) -> Bool {
     guard sidebarVisible, !router.showsColumnOnly(in: model) else { return false }
@@ -586,7 +586,7 @@ private struct ChatScreen: View {
       if router.showsColumnOnly(in: model) { router.choosePanes(.both, in: model) }
       router.sidebarShowsAllProjects = false
       if isAide {
-        // Kept beside the column, Aide's threads come up next to it;
+        // Kept beside the column, Percy's threads come up next to it;
         // otherwise they open in its place.
         if !router.showsThreadsBeside(in: model) { nav.push(.overview(project)) }
       } else if let row = model.project(project)?.ref {
@@ -828,7 +828,7 @@ private struct ChatScreen: View {
         .accessibilityIdentifier("chat.agents")
       }
       // Only a worker thread with a bound SpecWeave increment shows it; a
-      // coordinator or Aide chat never does.
+      // coordinator or Percy chat never does.
       if !(isShort && composerFocused), increment != nil || session.plan != nil || showsModelOptions {
         HStack {
           if let increment {
@@ -938,7 +938,7 @@ private struct ChatScreen: View {
 
   private var placeholder: String {
     switch target {
-    case .aide: "Ask Aide anything…"
+    case .aide: "Ask Percy anything…"
     case let .project(project):
       // With a thread from another machine beside it, say whose coordinator this is.
       if isBesideCoordinator, OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1, !session.machineLabel.isEmpty {

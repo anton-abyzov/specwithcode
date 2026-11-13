@@ -284,7 +284,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("keeps a machine's choice to turn Aide off through later saves", () =>
+  it.effect("keeps a machine's choice to turn Percy off through later saves", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;

@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseRoutedMessage, routedMessageText } from "./routedMessage.ts";
 
 describe("routed messages", () => {
-  const origin = { assistantTitle: "Aide", threadId: "project-coordinator:aide", messageId: "m:1" };
+  const origin = {
+    assistantTitle: "Percy",
+    threadId: "project-coordinator:aide",
+    messageId: "m:1",
+  };
 
   it("round-trips the user's words unchanged", () => {
     const words = 'Audit EasyChamp\'s signup flow.\n\nKeep the "beta" label.';
@@ -22,9 +26,9 @@ describe("routed messages", () => {
 
   it("cannot be broken by quotes in the assistant's name", () => {
     const parsed = parseRoutedMessage(
-      routedMessageText({ ...origin, assistantTitle: 'My "Aide"' }, "w"),
+      routedMessageText({ ...origin, assistantTitle: 'My "Percy"' }, "w"),
     );
-    expect(parsed?.assistantTitle).toBe("My 'Aide'");
+    expect(parsed?.assistantTitle).toBe("My 'Percy'");
   });
 
   it("ignores text without the header, including a user quoting it mid-message", () => {

@@ -119,7 +119,7 @@ class CommandEncodeTest {
             ProjectUpdateCommand(commandId = "c62", projectId = "proj_1", projectIcon = Nullable.Value(ProjectIconOverride.Emoji("🧪"))),
         ),
         "projectUpdate.clearIcon" to encodeToJSON(ProjectUpdateCommand(commandId = "c63", projectId = "proj_1", projectIcon = Nullable.Null)),
-        "createNew" to encodeToJSON(CreateNewProjectInput(name = "Aide", kind = WorkspaceKind.Personal)),
+        "createNew" to encodeToJSON(CreateNewProjectInput(name = "Percy", kind = WorkspaceKind.Personal)),
         "updateSettings.mode" to encodeToJSON(
             UpdateServerSettingsInput(ServerSettingsPatch(defaultRuntimeMode = RuntimeMode.Auto, defaultModelSelection = Nullable.Value(model))),
         ),

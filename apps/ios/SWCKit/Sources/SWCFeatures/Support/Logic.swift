@@ -76,7 +76,7 @@ nonisolated struct SearchResults: Equatable {
 
   init(query: String, projects: [ProjectSummary], threads: [ThreadSummary], threadLimit: Int = 30) {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    // Every project is listed before anything is typed, Aide and pinned first
+    // Every project is listed before anything is typed, Percy and pinned first
     // (pins keep their own order), then the most recently active; typing only
     // narrows that list.
     let listed = Self.recentFirst(projects.filter { !$0.archived && !$0.isAutomated }, threads: threads)
@@ -181,7 +181,7 @@ nonisolated enum LaunchRoute: String, Sendable, CaseIterable {
 /// Options read from launch arguments:
 /// `-SWCFixture [default|empty|running|fleet|m4-blip|minis-blip]`, `-SWCAppearance light|dark|system`,
 /// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search|coordinator|orchestrator|device`,
-/// `-SWCAide on|off` (sample data shows Aide unless it is `off`).
+/// `-SWCAide on|off` (sample data shows Percy unless it is `off`).
 nonisolated struct LaunchOptions: Equatable, Sendable {
   var fixture: FixtureScenario?
   var appearance: AppearancePreference?

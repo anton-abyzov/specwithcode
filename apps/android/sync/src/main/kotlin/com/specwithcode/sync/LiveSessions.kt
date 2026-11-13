@@ -149,7 +149,7 @@ internal class SessionHub(private val engine: LiveEngine) {
         }
     }
 
-    /** The coordinator thread of a project or Aide chat; null until it is known or a send creates it. */
+    /** The coordinator thread of a project or Percy chat; null until it is known or a send creates it. */
     private suspend fun resolveCoordinator(controller: Controller, entry: LiveEngine.MachineEntry, socket: RpcSocket): String? {
         val ref = when (val target = controller.target) {
             is ChatTarget.Aide -> target.project

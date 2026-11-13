@@ -777,7 +777,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     expect(kinds).toEqual([undefined]);
 
     // A personal one keeps its kind, so this machine's assistant is returned, not a code project.
-    yield* handle({ title: "Second Aide", kind: "personal" });
+    yield* handle({ title: "Second Percy", kind: "personal" });
     expect(kinds).toEqual([undefined, "personal"]);
     named.pop();
 

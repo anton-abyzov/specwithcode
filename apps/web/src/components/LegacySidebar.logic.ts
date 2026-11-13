@@ -44,7 +44,7 @@ export interface LegacySidebarProjectSections<G extends ProjectListGroup> {
  * The legacy sidebar's project sections: automated and archived projects sit in folded
  * sections, as in the studio sidebar. A machine's "No project" folder keeps its row,
  * because this sidebar has no Chats section. A fold the person has not toggled (null)
- * opens while its project is open. Aide is not a project: it is in no section, even
+ * opens while its project is open. Percy is not a project: it is in no section, even
  * automated or archived, and has its own link above the list.
  */
 export function legacySidebarProjectSections<G extends ProjectListGroup>(
@@ -114,7 +114,7 @@ export function withoutAssistants<G extends ProjectListGroup>(groups: ReadonlyAr
   return groups.filter((group) => !isAssistantGroup(group));
 }
 
-/** One link above the Projects list that opens an assistant, as the studio sidebar's Aide row does. */
+/** One link above the Projects list that opens an assistant, as the studio sidebar's Percy row does. */
 export interface LegacySidebarAssistantLink {
   readonly projectKey: string;
   readonly title: string;
@@ -124,7 +124,7 @@ export interface LegacySidebarAssistantLink {
 
 /**
  * The assistants the legacy sidebars link to, archived and automated ones included as in
- * the studio sidebar's Aide block: this machine's first. Empty while Aide is off, since
+ * the studio sidebar's Percy block: this machine's first. Empty while Percy is off, since
  * the sidebars leave a hidden assistant out of their groups.
  */
 export function legacySidebarAssistantLinks(

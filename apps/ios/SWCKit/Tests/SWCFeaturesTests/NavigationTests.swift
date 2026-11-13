@@ -156,7 +156,7 @@ struct LogicTests {
       ThreadSummary(ref: ThreadRef(environmentId: env, threadId: "t-\(projectId)-\(minutesAgo)"), projectRef: ProjectRef(environmentId: env, projectId: projectId), title: "Work", activity: .idle, updatedAt: now.addingTimeInterval(-minutesAgo * 60), machineLabel: "Office Mac", machineOnline: true)
     }
     let projects = [
-      project("aide", "Aide", kind: .personal),
+      project("aide", "Percy", kind: .personal),
       project("old", "Recipe app"),
       project("new", "Spec site"),
       project("pinA", "Pinned A", pinned: true),
@@ -175,7 +175,7 @@ struct LogicTests {
     ]
 
     let opened = SearchResults(query: " \n", projects: projects, threads: threads)
-    #expect(opened.projects.map(\.title) == ["Aide", "Pinned A", "Pinned B", "Linked repo", "Spec site", "Recipe app", "Quiet notes"])
+    #expect(opened.projects.map(\.title) == ["Percy", "Pinned A", "Pinned B", "Linked repo", "Spec site", "Recipe app", "Quiet notes"])
     #expect(opened.threads.isEmpty)
     #expect(!opened.isEmpty)
 

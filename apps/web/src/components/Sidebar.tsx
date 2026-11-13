@@ -2597,7 +2597,7 @@ export default function Sidebar() {
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
-  // Aide is a link of its own above the project tree, never one of its rows.
+  // Percy is a link of its own above the project tree, never one of its rows.
   const assistantLinks = useMemo(
     () => legacySidebarAssistantLinks(projectGroups, primaryEnvironmentId),
     [primaryEnvironmentId, projectGroups],

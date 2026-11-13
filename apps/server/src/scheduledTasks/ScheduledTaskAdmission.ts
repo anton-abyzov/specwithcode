@@ -14,8 +14,8 @@ import { taskError } from "./ScheduledTaskStorage.ts";
 
 /**
  * The cause of a refusal because the routine's project is archived or paused,
- * or is the personal assistant while Aide is turned off on this machine. Unlike
- * the other refusals it lasts until a person restores the project or turns Aide
+ * or is the personal assistant while Percy is turned off on this machine. Unlike
+ * the other refusals it lasts until a person restores the project or turns Percy
  * on, so a scheduled run moves on to its next time instead of being tried again
  * at once.
  */
@@ -69,7 +69,7 @@ export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmissi
       cause: new RoutineProjectSuspended({ state }),
     });
   }
-  // Turning Aide off stops its routines, which would otherwise keep reading mail
+  // Turning Percy off stops its routines, which would otherwise keep reading mail
   // from a chat nobody can see. Settings that cannot be read count as off.
   if (isPersonalAssistantProject({ workspaceSettings: policy })) {
     const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);

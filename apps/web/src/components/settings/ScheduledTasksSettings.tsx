@@ -441,7 +441,7 @@ function ScheduledTaskEditorDialog({
   );
   // Only the person's own projects are choices. A task whose project was since archived or
   // made by a check shows it apart (unavailableProject below), and saving needs another.
-  // Routines are Aide's too, so it is offered, first; a hidden Aide stays only while saved.
+  // Routines are Percy's too, so it is offered, first; a hidden Percy stays only while saved.
   const aideEnabled = useAideEnabled();
   const projects = useMemo(
     () =>

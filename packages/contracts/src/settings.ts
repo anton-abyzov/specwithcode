@@ -1929,7 +1929,7 @@ export const ServerSettings = Schema.Struct({
    */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
-   * Whether the personal assistant (Aide) is shown. On by default. Off hides
+   * Whether the personal assistant (Percy) is shown. On by default. Off hides
    * every way into it on the desktop, web and iPhone, and stops new assistants
    * from being created. Existing assistants and their threads are kept.
    */

@@ -16,7 +16,7 @@ function assistantOf(group: AssistantGroup) {
 }
 
 /**
- * The assistants the sidebar's Aide block lists: in use, automated and archived ones
+ * The assistants the sidebar's Percy block lists: in use, automated and archived ones
  * alike, since an assistant is never listed under Automated or Archived.
  */
 export function assistantGroupsOf<G extends AssistantGroup>(partition: {

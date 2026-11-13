@@ -2950,7 +2950,7 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
-  /** Aide's own links above the Projects list. */
+  /** Percy's own links above the Projects list. */
   assistantLinks: readonly LegacySidebarAssistantLink[];
 }
 

@@ -124,7 +124,7 @@ export function reduceCommandPaletteUiState(
 
 /**
  * Whether the palette offers to set up a personal assistant: only while it is on, a
- * machine can hold one and this machine has none yet. Once it has one, the Aide entry
+ * machine can hold one and this machine has none yet. Once it has one, the Percy entry
  * opens it instead.
  */
 export function personalAssistantActionOffered(input: {
@@ -157,7 +157,7 @@ interface PaletteAssistantCandidate {
 }
 
 /**
- * The palette's Aide entries: each machine's own assistant, this machine's first. An
+ * The palette's Percy entries: each machine's own assistant, this machine's first. An
  * archived assistant or a duplicate from before one assistant per machine is left out;
  * the sidebar still lists those.
  */
@@ -691,7 +691,7 @@ export function buildRootGroups(input: {
   projectItems: ReadonlyArray<CommandPaletteActionItem>;
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
-  /** Aide's own entry, apart from projects. */
+  /** Percy's own entry, apart from projects. */
   assistantItems?: ReadonlyArray<CommandPaletteActionItem> | undefined;
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
@@ -706,7 +706,7 @@ export function buildRootGroups(input: {
     groups.push({ value: "actions", label: "Actions", items: input.actionItems });
   }
   if (input.assistantItems && input.assistantItems.length > 0) {
-    groups.push({ value: "assistant", label: "Aide", items: input.assistantItems });
+    groups.push({ value: "assistant", label: "Percy", items: input.assistantItems });
   }
   if (input.recentThreadItems.length > 0) {
     groups.push({

@@ -6,7 +6,7 @@ const choices = [
   { label: "SpecWeave umbrella", detail: "/Users/me/specweave-umb" },
   { label: "Studio routing samples — M4", detail: "/tmp/verification/0886" },
   { label: "vskill", detail: "/Users/me/specweave-umb/repositories/vskill" },
-  { label: "Aide", detail: "Personal assistant" },
+  { label: "Percy", detail: "Personal assistant" },
 ];
 
 describe("filterScopeChoices", () => {
@@ -16,7 +16,7 @@ describe("filterScopeChoices", () => {
 
   it("matches every word against the label or detail, ignoring case and order", () => {
     expect(filterScopeChoices(choices, "UMB vskill").map((c) => c.label)).toEqual(["vskill"]);
-    expect(filterScopeChoices(choices, "assistant").map((c) => c.label)).toEqual(["Aide"]);
+    expect(filterScopeChoices(choices, "assistant").map((c) => c.label)).toEqual(["Percy"]);
     expect(filterScopeChoices(choices, "routing m4").map((c) => c.label)).toEqual([
       "Studio routing samples — M4",
     ]);

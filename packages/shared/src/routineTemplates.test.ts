@@ -46,7 +46,7 @@ describe("routine templates", () => {
     expect(prompt).toContain("Never invent or inflate urgency");
     expect(prompt).toContain("studio_google_gmail_create_draft");
     expect(prompt).toContain("Briefing preferences");
-    // Aide's own words: a topic, its memory, and one name for the settings page.
+    // Percy's own words: a topic, its memory, and one name for the settings page.
     expect(prompt).toContain("previous briefing in this topic");
     expect(prompt).toContain("Settings > Google account");
     expect(PROACTIVE_BRIEFING_PROMPT).not.toMatch(/this (project|thread)\b|Settings > Google,/);

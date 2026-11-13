@@ -124,7 +124,7 @@ describe("legacySidebarProjectSections", () => {
   });
 });
 
-describe("Aide in the legacy sidebars", () => {
+describe("Percy in the legacy sidebars", () => {
   const assistant = (
     projectKey: string,
     environmentId: string,
@@ -133,7 +133,7 @@ describe("Aide in the legacy sidebars", () => {
   ) =>
     ({
       projectKey,
-      displayName: "Aide",
+      displayName: "Percy",
       memberProjects: [
         {
           environmentId,
@@ -168,13 +168,13 @@ describe("Aide in the legacy sidebars", () => {
   it("links each assistant above the list, this machine's first, naming machines", () => {
     const projects = [atlas as unknown as SidebarProjectSnapshot, archivedOther, own];
     expect(legacySidebarAssistantLinks(projects, "host")).toEqual([
-      { projectKey: "aide", title: "Aide", hint: "Main Mac" },
-      { projectKey: "aide-m1", title: "Aide", hint: "M1" },
+      { projectKey: "aide", title: "Percy", hint: "Main Mac" },
+      { projectKey: "aide-m1", title: "Percy", hint: "M1" },
     ]);
     expect(legacySidebarAssistantLinks([own], "host")).toEqual([
-      { projectKey: "aide", title: "Aide", hint: undefined },
+      { projectKey: "aide", title: "Percy", hint: undefined },
     ]);
-    // Aide off: the sidebars leave it out of their groups, so nothing is linked.
+    // Percy off: the sidebars leave it out of their groups, so nothing is linked.
     expect(
       legacySidebarAssistantLinks([atlas as unknown as SidebarProjectSnapshot], "host"),
     ).toEqual([]);

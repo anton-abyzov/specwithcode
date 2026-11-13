@@ -25,11 +25,11 @@ struct FixtureDecodeTests {
   }
 
   @Test func aideEnabledDecodesAndDefaultsToOff() throws {
-    // Older servers and saved settings omit the key: Aide stays hidden.
+    // Older servers and saved settings omit the key: Percy stays hidden.
     #expect(try Fixture.decode(ServerSettings.self, "serverSettings.default.json").aideEnabled == false)
     #expect(try decodeJSON(ServerSettings.self, #"{"aideEnabled":true}"#).aideEnabled == true)
     #expect(try decodeJSON(ServerSettings.self, #"{"aideEnabled":false}"#).aideEnabled == false)
-    // A malformed value hides Aide rather than failing the whole snapshot.
+    // A malformed value hides Percy rather than failing the whole snapshot.
     #expect(try decodeJSON(ServerSettings.self, #"{"aideEnabled":"yes"}"#).aideEnabled == false)
   }
 

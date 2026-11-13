@@ -241,7 +241,7 @@ function EnvironmentNotifications({
   // when it is delivered, so a change in the project menu applies at once.
   const projects = useProjects();
   const levels = useRef(new Map<ProjectId, ProjectNotificationLevel>());
-  // Aide's threads are topics, so its alerts say topic.
+  // Percy's threads are topics, so its alerts say topic.
   const assistantIds = useRef(new Set<ProjectId>());
   useLayoutEffect(() => {
     const here = projects.filter((project) => project.environmentId === environmentId);

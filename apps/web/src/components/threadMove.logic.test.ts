@@ -72,7 +72,7 @@ describe("threadMoveBlockedReason", () => {
     ).toBe('Already moved to "Audit".');
   });
 
-  it("keeps an Aide topic in Aide", () => {
+  it("keeps a Percy topic in Percy", () => {
     expect(
       threadMoveBlockedReason(thread(), { id: specweave, workspaceSettings: { kind: "personal" } }),
     ).toBe(ASSISTANT_TOPIC_STAYS);
@@ -98,7 +98,7 @@ describe("threadMoveTargets", () => {
     ).toEqual([easychamp]);
   });
 
-  it("never offers Aide, and moves none of Aide's topics", () => {
+  it("never offers Percy, and moves none of Percy's topics", () => {
     const aide = ProjectId.make("project-aide");
     const projects = [
       { environmentId: here, id: specweave, workspaceRoot: "/repos/specweave" },

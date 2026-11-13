@@ -493,7 +493,7 @@ describe("requests the personal assistant routed here", () => {
   it("shows the user's words and who routed them, not the header", () => {
     const text = routedMessageText(
       {
-        assistantTitle: "Aide",
+        assistantTitle: "Percy",
         threadId: "project-coordinator:aide",
         messageId: "m1",
         note: "Yours: the signup audit.",
@@ -503,12 +503,12 @@ describe("requests the personal assistant routed here", () => {
     expect(projectCoordinatorMessageDisplay(routed(text), project, [worker])).toEqual({
       text: "Audit the **signup** flow.",
       sourceThread: null,
-      routedFrom: { assistantTitle: "Aide", note: "Yours: the signup audit." },
+      routedFrom: { assistantTitle: "Percy", note: "Yours: the signup audit." },
     });
   });
   it("leaves a header whose sender is another thread as written", () => {
     const text = routedMessageText(
-      { assistantTitle: "Aide", threadId: "project-coordinator:aide", messageId: "m1" },
+      { assistantTitle: "Percy", threadId: "project-coordinator:aide", messageId: "m1" },
       "Words",
     );
     expect(

@@ -26,7 +26,7 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("ServerSettings personal assistant", () => {
-  it("shows Aide by default and keeps a machine's saved choice", () => {
+  it("shows Percy by default and keeps a machine's saved choice", () => {
     expect(DEFAULT_SERVER_SETTINGS.aideEnabled).toBe(true);
     expect(decodeServerSettings({}).aideEnabled).toBe(true);
     expect(decodeServerSettings({ aideEnabled: false }).aideEnabled).toBe(false);

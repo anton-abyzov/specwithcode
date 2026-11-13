@@ -319,7 +319,7 @@ import SWCWire
   @Test func machineSettingsAndAide() async throws {
     let h = try await harness()
     #expect(await loaded(h))
-    // Aide is off until a machine's settings turn it on, and is never created while off.
+    // Percy is off until a machine's settings turn it on, and is never created while off.
     #expect(!h.model.aideEnabled)
     await #expect(throws: SyncError.aideDisabled) { try await h.engine.setupAide() }
     #expect(h.machine.payloads("projects.createNew").isEmpty)
@@ -335,7 +335,7 @@ import SWCWire
     let aide = try await h.engine.setupAide()
     #expect(aide == ProjectRef(environmentId: env, projectId: "aide_1"))
     let create = try #require(h.machine.payloads("projects.createNew").first)
-    #expect(create["name"] == .string("Aide"))
+    #expect(create["name"] == .string("Percy"))
     #expect(create["kind"] == .string("personal"))
   }
 
@@ -559,7 +559,7 @@ import SWCWire
     #expect(await loaded(h))
     #expect(await until { h.model.aideEnabled })
     #expect(h.model.allShellsLoaded)
-    // A second machine that never connects may already hold Aide.
+    // A second machine that never connects may already hold Percy.
     let other = MachineRecord(environmentId: "env_other", label: "Travel laptop", routes: [try #require(MachineRoute(httpBase: "http://192.168.1.99:8319"))])
     h.engine.addMachine(other, credential: nil)
     h.engine.publishNow()
@@ -574,7 +574,7 @@ import SWCWire
   }
 
   @Test func setUpAideWaitsForSettingsInsteadOfRefusing() async throws {
-    // A machine that has listed its projects but not yet sent its settings may have Aide on.
+    // A machine that has listed its projects but not yet sent its settings may have Percy on.
     let noSettings = FakeMachine.config.replacingOccurrences(of: #""settings":{"defaultRuntimeMode":"auto","sidebarProjectOrder":{"pinned":["env-1:/Users/x/specweave"],"unpinned":[]},"providerInstances":{}},"#, with: "")
     #expect(noSettings != FakeMachine.config)
     let h = try await harness(config: noSettings)
@@ -595,7 +595,7 @@ import SWCWire
     let h = try await harness(config: FakeMachine.aideConfig)
     #expect(await loaded(h))
     #expect(await until { h.model.aideEnabled })
-    // The desktop turned Aide off on this machine.
+    // The desktop turned Percy off on this machine.
     h.machine.answer("server.updateSettings", with: #"{"defaultRuntimeMode":"approval-required","providerInstances":{},"aideEnabled":false}"#)
     try await h.engine.saveMachineSettings(MachineSettings(defaultRuntimeMode: .approvalRequired, defaultModel: nil), for: env)
     #expect(await until { !h.model.aideEnabled })

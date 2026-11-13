@@ -31,7 +31,7 @@ useComposerDraftStore.getState().setPrompt(draftId, "Plan the grocery run for Sa
 createRoot(document.getElementById("root")!).render(
   view === "notice" ? (
     <main className="min-h-screen bg-background p-8 text-foreground">
-      <h1 className="mb-4 font-medium">Aide</h1>
+      <h1 className="mb-4 font-medium">Percy</h1>
       <OtherMachineAssistantNotice machineName="Anna's MacBook" />
     </main>
   ) : view === "menu" ? (

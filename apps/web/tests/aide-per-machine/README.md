@@ -6,7 +6,7 @@ Query flags: `view=sidebar|menu|notice`, `machines=1|2`, `duplicate=1` (a pre-ru
 
 `verify.mjs` checks at 1280x900 and 390x844, light:
 
-- two machines: the Overview lists two `Aide` rows, this machine's first, hinted "Studio Mac" and "Anna's MacBook"; no assistant is in Projects.
+- two machines: the Overview lists two `Percy` rows, this machine's first, hinted "Studio Mac" and "Anna's MacBook"; no assistant is in Projects.
 - duplicate: the later personal project on `m4` is hinted "Studio Mac · extra" (not clipped) and listed after both machines' own assistants; `m4`'s own is hinted "Studio Mac".
 - one machine: the single row has no hint.
 - this machine has none: "Set up here" leads, and Anna's row stays named by its machine.

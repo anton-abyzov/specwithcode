@@ -191,7 +191,7 @@ describe("buildCommandPaletteProjectMetadata", () => {
 });
 
 describe("personalAssistantActionOffered", () => {
-  it("offers Personal assistant only while Aide is on and a machine can hold it", () => {
+  it("offers Personal assistant only while Percy is on and a machine can hold it", () => {
     expect(personalAssistantActionOffered({ aideEnabled: true, newProjectMachineCount: 1 })).toBe(
       true,
     );
@@ -203,7 +203,7 @@ describe("personalAssistantActionOffered", () => {
     );
   });
 
-  it("leaves setup out once this machine has its assistant, which the Aide entry opens", () => {
+  it("leaves setup out once this machine has its assistant, which the Percy entry opens", () => {
     expect(
       personalAssistantActionOffered({
         aideEnabled: true,
@@ -261,7 +261,7 @@ describe("buildRootGroups", () => {
     run: async () => {},
   });
 
-  it("puts Aide in a group of its own, after the actions", () => {
+  it("puts Percy in a group of its own, after the actions", () => {
     expect(
       buildRootGroups({
         projectItems: [],
@@ -271,7 +271,7 @@ describe("buildRootGroups", () => {
       }).map((group) => [group.value, group.label]),
     ).toEqual([
       ["actions", "Actions"],
-      ["assistant", "Aide"],
+      ["assistant", "Percy"],
       ["recent-threads", "Recent Threads"],
     ]);
   });
@@ -355,7 +355,7 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: { kind: "new-assistant" },
     });
-    // While Aide is off, the sidebar's or another surface's setup request changes nothing.
+    // While Percy is off, the sidebar's or another surface's setup request changes nothing.
     expect(
       reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewAssistant", aideEnabled: false }),
     ).toBe(filesOpen);

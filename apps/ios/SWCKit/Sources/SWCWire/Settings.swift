@@ -14,8 +14,8 @@ public struct ServerSettings: Codable, Hashable, Sendable {
   /// The user's short names for every machine in the fleet, by environment id.
   /// Older servers omit it.
   public var machineNicknames: [String: MachineNicknameEntry]
-  /// Whether Aide, the personal assistant, is shown. Off by default; older
-  /// servers omit it, so Aide stays hidden there.
+  /// Whether Percy, the personal assistant, is shown. Off by default; older
+  /// servers omit it, so Percy stays hidden there.
   public var aideEnabled: Bool
   /// Suggested prompts: "all", "native" (the provider's own only) or "off".
   /// Older servers omit it and show every suggestion they record.

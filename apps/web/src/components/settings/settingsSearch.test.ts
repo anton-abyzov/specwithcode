@@ -61,7 +61,7 @@ describe("searchSettings", () => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });
 
-  it.each(["aide", "assistant", "briefing", "proactive briefing"])(
+  it.each(["percy", "aide", "assistant", "briefing", "proactive briefing"])(
     "finds the Google account page for %s",
     (query) => {
       expect(searchSettings(query).map((item) => item.id)).toContain("google-account");

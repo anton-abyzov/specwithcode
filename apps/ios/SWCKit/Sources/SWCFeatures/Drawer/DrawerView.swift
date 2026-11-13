@@ -2,7 +2,7 @@ import SwiftUI
 import SWCSync
 import Weave
 
-/// The side drawer: Aide, projects, recent threads, machines, settings and a
+/// The side drawer: Percy, projects, recent threads, machines, settings and a
 /// new chat button.
 struct DrawerView: View {
   @Environment(AppModel.self) private var model
@@ -63,15 +63,15 @@ struct DrawerView: View {
     .padding(.bottom, WeaveSpacing.s2)
   }
 
-  // MARK: Aide
+  // MARK: Percy
 
   @ViewBuilder private var aideRow: some View {
-    // Aide stays hidden, set-up offer included, until its switch is on.
+    // Percy stays hidden, set-up offer included, until its switch is on.
     if !model.aideEnabled {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       let target = ChatTarget.aide(aide.ref)
-      WeaveRow("Aide", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
+      WeaveRow("Percy", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
         ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
           .frame(width: 28)
           .accessibilityHidden(true)
@@ -81,9 +81,9 @@ struct DrawerView: View {
       .accessibilityValue(ProjectStatusGlyphs.spoken(aide))
       .drawerSelection(isSelected(target))
     } else if model.allMachinesLoaded {
-      // Only once every machine has answered: an offline one may hold Aide.
-      WeaveRow("Set up Aide", subtitle: "Your personal assistant", action: setUpAide) {
-        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+      // Only once every machine has answered: an offline one may hold Percy.
+      WeaveRow("Set up Percy", subtitle: "Your personal assistant", action: setUpAide) {
+        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Percy", size: 24, style: .plain)
           .frame(width: 28)
           .accessibilityHidden(true)
       } trailing: {
@@ -99,11 +99,11 @@ struct DrawerView: View {
       .disabled(settingUpAide)
     } else if !model.machines.isEmpty, !model.isLoading, model.aide == nil {
       HStack(spacing: WeaveSpacing.s3) {
-        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Aide", size: 24, style: .plain)
+        ProjectAvatar(icon: .lucide(name: "concierge-bell", tint: "violet"), title: "Percy", size: 24, style: .plain)
           .frame(width: 28)
           .opacity(0.5)
           .accessibilityHidden(true)
-        Text("Aide appears when your machines reconnect")
+        Text("Percy appears when your machines reconnect")
           .weaveFont(.callout)
           .foregroundStyle(Color.weave.muted)
           .frame(maxWidth: .infinity, alignment: .leading)

@@ -38,7 +38,7 @@ describe("project Google diagnostics privacy", () => {
     );
   });
 
-  it("names Aide instead of a project when the caller is the personal assistant", () => {
+  it("names Percy instead of a project when the caller is the personal assistant", () => {
     const input = {
       clientConfigured: true,
       connected: true,
@@ -51,9 +51,9 @@ describe("project Google diagnostics privacy", () => {
     );
     const aide = projectGoogleStatus({ ...input, assistant: true });
     expect(aide.guidance).toBe(
-      "Open Settings > Google account and enable the needed services for Aide.",
+      "Open Settings > Google account and enable the needed services for Percy.",
     );
-    expect(aide.serviceChecks[0]?.message).toBe("Aide has no access to this service.");
+    expect(aide.serviceChecks[0]?.message).toBe("Percy has no access to this service.");
   });
 
   it.each(["accessNotConfigured", "SERVICE_DISABLED", "serviceDisabled", "api_disabled"])(

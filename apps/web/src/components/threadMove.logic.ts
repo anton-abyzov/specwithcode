@@ -58,7 +58,7 @@ export function threadMoveBlockedReason(
 
 /** Why a topic of the personal assistant has no Move to project. */
 export const ASSISTANT_TOPIC_STAYS =
-  "Aide's topics stay private, so they cannot move to a project.";
+  "Percy's topics stay private, so they cannot move to a project.";
 
 /**
  * Projects the thread can move to: the same machine's main project list, minus its own.

@@ -21,14 +21,14 @@ import { ThreadToolkit } from "./tools.ts";
 
 const cases = [
   {
-    name: "code caller cannot merge a personal fork into Aide",
+    name: "code caller cannot merge a personal fork into Percy",
     caller: "code",
     parent: "aide",
     source: "aide",
     denied: true,
   },
   {
-    name: "Aide cannot merge a code fork into its project",
+    name: "Percy cannot merge a code fork into its project",
     caller: "aide",
     parent: "code",
     source: "code",
@@ -42,7 +42,7 @@ const cases = [
     denied: true,
   },
   {
-    name: "Aide cannot import a code source into Aide",
+    name: "Percy cannot import a code source into Percy",
     caller: "aide",
     parent: "aide",
     source: "code",

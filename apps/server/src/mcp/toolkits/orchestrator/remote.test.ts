@@ -296,7 +296,7 @@ const setup = (
         Effect.succeed(
           Option.some({
             id,
-            title: options.personal ? "Aide" : "App",
+            title: options.personal ? "Percy" : "App",
             workspaceSettings: { kind: options.personal ? "personal" : "code" },
           } as never),
         ),

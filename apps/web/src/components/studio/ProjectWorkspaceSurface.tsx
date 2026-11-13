@@ -244,7 +244,7 @@ function missingModelMessage(modelsLoading: boolean, personal = false): string {
   return modelsLoading
     ? "Models are still loading from this host. Try again in a moment."
     : personal
-      ? "Choose and save a model in Aide's settings first."
+      ? "Choose and save a model in Percy's settings first."
       : "Choose and save a coordinator or worker model in project settings first.";
 }
 
@@ -315,7 +315,7 @@ export function ProjectWorkspaceSurface({
   const refreshWorkspace = query.refresh;
   const machinePrivate =
     (project.workspaceSettings?.kind ?? snapshot?.settings.kind) === "personal";
-  // Aide calls its threads topics, and itself Aide where a project says the coordinator.
+  // Percy calls its threads topics, and itself Percy where a project says the coordinator.
   const say = paneWords(machinePrivate);
   const coordinatorId = snapshot?.settings.coordinatorThreadId ?? null;
   // The project shell names the coordinator before the workspace read answers; the
@@ -823,7 +823,7 @@ export function ProjectWorkspaceSurface({
     onError: setError,
     onSaved: () =>
       setNotice(
-        machinePrivate ? "Aide's model saved." : "Coordinator model saved for this project.",
+        machinePrivate ? "Percy's model saved." : "Coordinator model saved for this project.",
       ),
     onSettled: refreshSnapshot,
   });
@@ -953,7 +953,7 @@ export function ProjectWorkspaceSurface({
     setError(null);
     setNotice(
       project.workspaceSettings?.kind === "personal"
-        ? "Ask Aide for a new topic. It starts the topic and links it here."
+        ? "Ask Percy for a new topic. It starts the topic and links it here."
         : "Ask the coordinator for a new thread. It starts the thread and links it here.",
     );
     requestAnimationFrame(() => {
@@ -1223,11 +1223,11 @@ export function ProjectWorkspaceSurface({
       modelCompatibility ??
       (voiceModelProblem === "coordinator_tools_required"
         ? machinePrivate
-          ? "Choose a model with tool support for Aide."
+          ? "Choose a model with tool support for Percy."
           : "Choose a coordinator model with tool support."
         : voiceModelProblem
           ? machinePrivate
-            ? "Connect a provider in Settings > Providers and choose a model for Aide first."
+            ? "Connect a provider in Settings > Providers and choose a model for Percy first."
             : "Connect a provider in Settings > Providers and choose a coordinator model first."
           : null),
   );
@@ -1400,7 +1400,7 @@ export function ProjectWorkspaceSurface({
       ? modelsLoading
         ? "Models are still loading from this host."
         : machinePrivate
-          ? "Choose a model for Aide to start one of these."
+          ? "Choose a model for Percy to start one of these."
           : "Choose a coordinator model to start one of these."
       : null);
   const starterList = (
@@ -1669,7 +1669,7 @@ export function ProjectWorkspaceSurface({
           <section
             ref={coordinatorPaneRef}
             className="project-coordinator sws-coordinator"
-            aria-label={machinePrivate ? "Aide" : "Project coordinator"}
+            aria-label={machinePrivate ? "Percy" : "Project coordinator"}
             data-project-pane="coordinator"
           >
             {/* The top bar spans this column only: the panel beside it runs the full
@@ -1813,7 +1813,7 @@ export function ProjectWorkspaceSurface({
               />
             ) : null}
             <div className="contents">
-              <h2 className="sr-only">{machinePrivate ? "Aide" : "Coordinator"}</h2>
+              <h2 className="sr-only">{machinePrivate ? "Percy" : "Coordinator"}</h2>
               {query.error && (
                 <p className="project-notice sws-pane-notice" role="alert">
                   {query.error}{" "}
@@ -1904,10 +1904,10 @@ export function ProjectWorkspaceSurface({
                 promptLabel={
                   coordinatorQuestion
                     ? machinePrivate
-                      ? "Your answer to Aide's question"
+                      ? "Your answer to Percy's question"
                       : "Your answer to the coordinator's question"
                     : machinePrivate
-                      ? "Message Aide"
+                      ? "Message Percy"
                       : "Message the project coordinator"
                 }
                 question={
@@ -2016,12 +2016,12 @@ export function ProjectWorkspaceSurface({
                         label={
                           chipOpens === "answer"
                             ? machinePrivate
-                              ? "Aide asked you a question. Answer it in the message box"
+                              ? "Percy asked you a question. Answer it in the message box"
                               : "The coordinator asked you a question. Answer it in the message box"
                             : attention && chipOpens === "coordinator-review"
                               ? `${say(attention.message)} Review here`
                               : machinePrivate
-                                ? "Aide's status. Show its latest message"
+                                ? "Percy's status. Show its latest message"
                                 : "Coordinator status. Show its latest message"
                         }
                       >
@@ -2043,12 +2043,12 @@ export function ProjectWorkspaceSurface({
                           <span className="sr-only">
                             {chipOpens === "answer"
                               ? machinePrivate
-                                ? ", answer Aide's question in the message box"
+                                ? ", answer Percy's question in the message box"
                                 : ", answer the coordinator's question in the message box"
                               : attention && chipOpens === "coordinator-review"
                                 ? `, ${attention.action.toLowerCase()} here`
                                 : machinePrivate
-                                  ? ", show Aide's latest message"
+                                  ? ", show Percy's latest message"
                                   : ", show the coordinator's latest message"}
                           </span>
                         </button>

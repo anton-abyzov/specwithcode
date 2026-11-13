@@ -1,6 +1,6 @@
 import XCTest
 
-/// Long Aide history, links, deep links and background/foreground, on the
+/// Long Percy history, links, deep links and background/foreground, on the
 /// `long` fixture. These replace checks that used to need the phone.
 @MainActor
 final class AideHistoryUITests: SWCUITestCase {

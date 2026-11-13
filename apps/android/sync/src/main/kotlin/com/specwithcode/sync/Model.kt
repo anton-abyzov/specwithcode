@@ -13,7 +13,7 @@ data class ProjectRef(val environmentId: String, val projectId: String)
 
 data class ThreadRef(val environmentId: String, val threadId: String)
 
-/** Where a message goes. Aide and projects talk to their coordinator. */
+/** Where a message goes. Percy and projects talk to their coordinator. */
 sealed interface ChatTarget {
     val environmentId: String
 

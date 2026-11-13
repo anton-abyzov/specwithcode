@@ -16,7 +16,7 @@ interface GoogleProjectAccess {
 }
 
 /**
- * The spaces Google access is offered to. Aide, the personal assistant, has its own group and
+ * The spaces Google access is offered to. Percy, the personal assistant, has its own group and
  * is never a project; a hidden one shows only while it holds access, so it can be turned off.
  * Projects are the person's own active ones, those a check or agent made for itself
  * (acceptance runs, fixtures, tests) and archived ones apart. Scratch is not a project.
@@ -47,7 +47,7 @@ export function partitionGoogleProjects<
   };
 }
 
-/** The services that set up Aide's own briefing routine once the assistant may read one. */
+/** The services that set up Percy's own briefing routine once the assistant may read one. */
 const BRIEFING_SERVICES: ReadonlyArray<GoogleService> = ["gmail", "calendar"];
 
 /**

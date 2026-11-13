@@ -192,7 +192,7 @@ const makeHarness = (
                 : projectId === AIDE_PROJECT
                   ? Option.some({
                       projectId,
-                      title: "Aide",
+                      title: "Percy",
                       deletedAt: null,
                       workspaceSettings: { kind: "personal" },
                     })
@@ -536,7 +536,7 @@ it.effect(
     }),
 );
 
-it.effect("names Aide, not a project, when the assistant lacks a service", () =>
+it.effect("names Percy, not a project, when the assistant lacks a service", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
     yield* Effect.gen(function* () {
@@ -548,11 +548,11 @@ it.effect("names Aide, not a project, when the assistant lacks a service", () =>
       yield* google.completeSignIn({ callbackUrl: `?code=good-code&state=${state}` });
       assert.include(
         failureDetail(yield* Effect.exit(google.gmailSearch(AIDE_PROJECT, { query: "x" }))),
-        "Gmail is not turned on for Aide. The user can turn it on under Settings > Google account.",
+        "Gmail is not turned on for Percy. The user can turn it on under Settings > Google account.",
       );
       assert.include(
         (yield* google.projectAccess(AIDE_PROJECT)).guidance,
-        "enable the needed services for Aide.",
+        "enable the needed services for Percy.",
       );
       assert.include(
         failureDetail(yield* Effect.exit(google.gmailSearch(PROJECT, { query: "x" }))),

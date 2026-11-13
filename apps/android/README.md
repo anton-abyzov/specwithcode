@@ -99,6 +99,6 @@ Tests:
 
 ## Not done yet
 
-- Live engine gaps: sending pictures, project settings, Aide setup, older history paging for bounded thread snapshots, a cached shell for offline start, the fleet roster and linked-machine discovery (all machines are listed), push registration, and the Connect phones list.
+- Live engine gaps: sending pictures, project settings, Percy setup, older history paging for bounded thread snapshots, a cached shell for offline start, the fleet roster and linked-machine discovery (all machines are listed), push registration, and the Connect phones list.
 - Thread info and the iOS sidebar layout for wide screens.
 - Features not ported to `AppEngine` yet: handoff, increment progress, attachments, thread links and device hub access.

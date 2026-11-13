@@ -509,12 +509,12 @@ export function GoogleAccountSettingsPanel() {
         <div className="flex flex-col gap-1 px-3 py-3 text-muted-foreground text-sm sm:px-4">
           <p>
             {tx(
-              "Let Aide and the projects you choose read your Gmail, Calendar and Drive, so Aide can brief you on your day, find a document or check who is coming to a meeting.",
+              "Let Percy and the projects you choose read your Gmail, Calendar and Drive, so Percy can brief you on your day, find a document or check who is coming to a meeting.",
             )}
           </p>
           <p className="text-xs">
             {tx(
-              "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Aide starts with access.",
+              "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only Percy starts with access.",
             )}
           </p>
           {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
@@ -893,8 +893,8 @@ export function GoogleAccountSettingsPanel() {
               </div>
             ) : null}
             {assistants.length > 0 ? (
-              <section aria-label={tx("Aide")} className="flex flex-col">
-                <span className="px-3 pt-4 font-medium text-sm sm:px-4">{tx("Aide")}</span>
+              <section aria-label={tx("Percy")} className="flex flex-col">
+                <span className="px-3 pt-4 font-medium text-sm sm:px-4">{tx("Percy")}</span>
                 <ul className="flex flex-col py-2">
                   {assistants.map((assistant) => renderProjectRow(assistant, true))}
                 </ul>
@@ -952,7 +952,7 @@ export function GoogleAccountSettingsPanel() {
             archivedProjects.length === 0 ? (
               <p className="px-3 pb-4 text-muted-foreground text-sm sm:px-4">
                 {assistants.length > 0
-                  ? tx("No projects yet. Aide above can already use this account.")
+                  ? tx("No projects yet. Percy above can already use this account.")
                   : tx("No projects yet. Add one to let its agents read this account.")}
               </p>
             ) : (
