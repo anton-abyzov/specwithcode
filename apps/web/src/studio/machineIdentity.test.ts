@@ -6,7 +6,9 @@ vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => undefined 
 import { mergeMachineNicknames } from "@specweave-studio/shared/machineNicknames";
 
 import {
+  knownMachineIds,
   machineColorProps,
+  machineColorWearers,
   machineIdentityPatch,
   resolveMachineIdentities,
 } from "./machineIdentity";
@@ -76,6 +78,35 @@ describe("resolveMachineIdentities", () => {
     const before = resolve("env-m4").color;
     expect(resolve("env-unknown").color).toBeTruthy();
     expect(resolve("env-m4").color).toBe(before);
+  });
+});
+
+describe("machines known only from a fleet list", () => {
+  const fleet = ["fleet-a", "fleet-b", "fleet-c", "fleet-d", "fleet-e"];
+
+  it("never draws one default color twice while eight are free", () => {
+    const resolve = resolveMachineIdentities({ nicknames: {}, labels, kinds, fleet });
+    const colors = [...labels.keys(), ...fleet].map((id) => resolve(id).color);
+    expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  it("keeps each machine's color the same wherever it is resolved", () => {
+    const first = resolveMachineIdentities({ nicknames: {}, labels, kinds, fleet });
+    const again = resolveMachineIdentities({ nicknames: {}, labels, kinds, fleet });
+    for (const id of [...labels.keys(), ...fleet]) {
+      expect(again(id).color).toBe(first(id).color);
+    }
+  });
+
+  it("lists who wears each color, the chosen ones too", () => {
+    const nicknames = {
+      "env-m1": { name: "M1", updatedAt: "2026-11-10T21:00:00.000Z", color: "teal" },
+    } as const;
+    const input = { nicknames, labels, kinds, fleet: ["fleet-a"] };
+    expect(knownMachineIds(input)).toHaveLength(4);
+    const wearers = machineColorWearers(input);
+    expect(wearers.get("teal")?.map((identity) => identity.name)).toEqual(["M1"]);
+    expect([...wearers.values()].flat()).toHaveLength(4);
   });
 });
 

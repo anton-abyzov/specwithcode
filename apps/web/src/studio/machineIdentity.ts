@@ -37,6 +37,7 @@ import { Atom } from "effect/reactivity";
 import { createContext, useMemo } from "react";
 
 import { environmentServerConfigsAtom } from "../state/server";
+import { fleetMachineIdsAtom } from "./knownMachines";
 import { resolveMachineNickname, useMachineNameSources } from "./machineNickname";
 
 export const MACHINE_COLOR_LABELS: Record<MachineColorId, string> = {
@@ -81,13 +82,31 @@ const machineKindsAtom = Atom.make((get): ReadonlyMap<string, EnvironmentMachine
     : next;
 }).pipe(Atom.withLabel("machine-kinds"));
 
-/** Resolves any machine's identity from the nickname map and what is known of the fleet. */
-export function resolveMachineIdentities(input: {
+interface MachineIdentitySources {
   readonly nicknames: MachineNicknames;
   readonly labels: ReadonlyMap<string, string>;
   readonly kinds: ReadonlyMap<string, EnvironmentMachineKind>;
-}): (environmentId: string, fallbackLabel?: string | null) => MachineIdentity {
-  const known = [...input.labels.keys(), ...input.kinds.keys()];
+  /** Machines a fleet list names, connected here or not (`knownMachines.ts`). */
+  readonly fleet?: Iterable<string> | undefined;
+}
+
+/** Every machine this device knows of: connected, listed by a fleet or named. */
+export function knownMachineIds(input: MachineIdentitySources): readonly string[] {
+  return [
+    ...new Set([
+      ...input.labels.keys(),
+      ...input.kinds.keys(),
+      ...(input.fleet ?? []),
+      ...Object.keys(input.nicknames),
+    ]),
+  ];
+}
+
+/** Resolves any machine's identity from the nickname map and what is known of the fleet. */
+export function resolveMachineIdentities(
+  input: MachineIdentitySources,
+): (environmentId: string, fallbackLabel?: string | null) => MachineIdentity {
+  const known = [...input.labels.keys(), ...input.kinds.keys(), ...(input.fleet ?? [])];
   const colors = assignMachineColors(known, input.nicknames);
   const nameOf = (environmentId: string, fallbackLabel?: string | null) =>
     resolveMachineNickname(
@@ -146,18 +165,54 @@ export function resolveMachineIdentities(input: {
 const kindsOf = (value: unknown): ReadonlyMap<string, EnvironmentMachineKind> =>
   value instanceof Map ? (value as ReadonlyMap<string, EnvironmentMachineKind>) : NO_KINDS;
 const NO_KINDS: ReadonlyMap<string, EnvironmentMachineKind> = new Map();
+const fleetOf = (value: unknown): ReadonlySet<string> =>
+  value instanceof Set ? (value as ReadonlySet<string>) : NO_FLEET;
+const NO_FLEET: ReadonlySet<string> = new Set();
+
+function useMachineIdentitySources(): MachineIdentitySources {
+  const { nicknames, labels } = useMachineNameSources();
+  const kinds = kindsOf(useAtomValue(machineKindsAtom));
+  const fleet = fleetOf(useAtomValue(fleetMachineIdsAtom));
+  return useMemo(() => ({ nicknames, labels, kinds, fleet }), [nicknames, labels, kinds, fleet]);
+}
 
 /** Resolves any machine's identity; re-renders when a nickname, color or icon changes. */
 export function useMachineIdentities(): (
   environmentId: string,
   fallbackLabel?: string | null,
 ) => MachineIdentity {
-  const { nicknames, labels } = useMachineNameSources();
-  const kinds = kindsOf(useAtomValue(machineKindsAtom));
-  return useMemo(
-    () => resolveMachineIdentities({ nicknames, labels, kinds }),
-    [nicknames, labels, kinds],
-  );
+  const sources = useMachineIdentitySources();
+  return useMemo(() => resolveMachineIdentities(sources), [sources]);
+}
+
+/**
+ * Which known machines wear each color, so a color picker can say a color is
+ * taken ("Teal: M1") before two machines end up looking alike.
+ */
+export function machineColorWearers(
+  input: MachineIdentitySources,
+): ReadonlyMap<MachineColorId, readonly MachineIdentity[]> {
+  const resolve = resolveMachineIdentities(input);
+  const wearers = new Map<MachineColorId, MachineIdentity[]>();
+  for (const id of knownMachineIds(input)) {
+    const identity = resolve(id);
+    wearers.set(identity.color, [...(wearers.get(identity.color) ?? []), identity]);
+  }
+  return wearers;
+}
+
+/** Every known machine's identity, for places that hold only a machine's shown name. */
+export function useKnownMachineIdentities(): readonly MachineIdentity[] {
+  const sources = useMachineIdentitySources();
+  return useMemo(() => {
+    const resolve = resolveMachineIdentities(sources);
+    return knownMachineIds(sources).map((id) => resolve(id));
+  }, [sources]);
+}
+
+export function useMachineColorWearers(): ReadonlyMap<MachineColorId, readonly MachineIdentity[]> {
+  const sources = useMachineIdentitySources();
+  return useMemo(() => machineColorWearers(sources), [sources]);
 }
 
 export function useMachineIdentity(

@@ -22,7 +22,8 @@ import {
   useMachineNameHolder,
   useMachineNickname,
 } from "../../studio/machineNickname";
-import { useMachineIdentity } from "../../studio/machineIdentity";
+import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
+import { MachineColorButton } from "./MachineColor";
 import { useRenameMachine } from "../../studio/useRenameMachine";
 import { teamRulesReachLock, type TeamRulesLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
@@ -266,13 +267,18 @@ export function MachineSummary({
     <section
       aria-label={tx("This machine")}
       data-machine-summary
-      className="flex items-start gap-3 rounded-xl border border-border/60 bg-card/60 px-3 py-3 sm:px-4 sm:py-4"
+      {...machineColorProps(identity)}
+      className="machine-card flex items-start gap-3 rounded-xl border border-border/60 bg-card/60 px-3 py-3 sm:px-4 sm:py-4"
     >
-      <EnvironmentMachineIcon
-        aria-hidden
-        kind={kind}
-        className="mt-0.5 size-5 shrink-0 text-muted-foreground"
-      />
+      {identity ? (
+        <MachineColorButton environmentId={environmentId} fallbackLabel={environment?.label} size="lg" />
+      ) : (
+        <EnvironmentMachineIcon
+          aria-hidden
+          kind={kind}
+          className="mt-0.5 size-5 shrink-0 text-muted-foreground"
+        />
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <h2 className="truncate text-base font-semibold text-foreground" data-machine-name>
