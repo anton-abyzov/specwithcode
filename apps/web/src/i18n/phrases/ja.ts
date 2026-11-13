@@ -4564,7 +4564,6 @@ export const ja: PhraseCatalog = {
   "workers only": "ワーカーのみ",
   "move pending": "移動の確認待ち",
   "separate project": "別のプロジェクト",
-  "not synced here": "ここでは未同期",
   "{value}Messages go to Percy. {value2}": "{value}メッセージは Percy に届きます。{value2}",
   "Show only topics that need you in {project}": "{project} で対応が必要なトピックのみ表示",
   "New topic in {title}": "{title} で新しいトピック",
@@ -4808,4 +4807,6 @@ export const ja: PhraseCatalog = {
     "{machine} が次にここで作業を開始するときに設定します。そのマシンがここで開始するスレッドが確認なしでできることの上限です。",
   "{title} (archived)": "{title}（アーカイブ済み）",
   "{title} (automated)": "{title}（自動化）",
+  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
+    "このアプリは {machine} に接続されていないため、そのコピーを表示できません。「設定 > マシン」で接続してください。",
 };

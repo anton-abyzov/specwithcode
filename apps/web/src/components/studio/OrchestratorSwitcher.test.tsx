@@ -124,7 +124,7 @@ it("leaves thread migration off while the viewed machine is unreachable", async 
   expect(migrate?.textContent).toBe("Move running threads…M4 offline");
 });
 
-it("lists a linked machine never synced here as Unknown", async () => {
+it("lists a linked machine this app has no connection to as not connected", async () => {
   const calls = handlers();
   await renderSwitcher({
     ...calls,
@@ -132,7 +132,10 @@ it("lists a linked machine never synced here as Unknown", async () => {
     unknown: [{ key: "minis:p", machine: "Minis" }],
   });
   const unknown = item("menuitemradio", "Minis");
-  expect(unknown?.textContent).toBe("Minisnot synced here");
+  expect(unknown?.textContent).toBe("Minisnot connected");
+  expect(unknown?.title).toBe(
+    "This app isn't connected to Minis, so its copy can't be shown. Connect it in Settings > Machines.",
+  );
   await act(async () => unknown!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
 });

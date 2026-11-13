@@ -217,11 +217,17 @@ export function OrchestratorSwitcher({
                   key: copy.key,
                   name: nameOf(copy),
                   note: ROLE_NOTE[copy.role],
+                  hint: nameOf(copy),
                 })),
+                // Linked, but this app has no connection to it, so it has no copy to show.
                 ...unknown.map((ref) => ({
                   key: ref.key,
                   name: ref.machine,
-                  note: "not synced here",
+                  note: "not connected",
+                  hint: tx(
+                    "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.",
+                    { machine: ref.machine },
+                  ),
                 })),
               ].map((row) => (
                 <MenuRadioItem
@@ -229,9 +235,10 @@ export function OrchestratorSwitcher({
                   value={row.key}
                   data-orchestrator-view={row.key}
                   closeOnClick
+                  title={row.hint}
                 >
                   <span className="flex w-full items-center gap-2">
-                    <span className="min-w-0 truncate" title={row.name}>
+                    <span className="min-w-0 truncate">
                       {row.name}
                     </span>
                     {row.note ? (
