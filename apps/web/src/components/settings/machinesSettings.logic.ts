@@ -241,11 +241,13 @@ const copyKey = (copy: { readonly environmentId: string; readonly id: string }) 
  * the newest binding epoch, then the lowest machine and project id. The tie-break
  * reads only the copies themselves, never one copy's member list (each copy may
  * keep its members in another order), so every copy picks the same lead and two
- * copies that never handed off name one coordinator, not two.
+ * copies that never handed off name one coordinator, not two. Copies on an old
+ * record of a machine that joined again (`retired`) never lead: that record is dead.
  */
 function leadCoordinator(
   copy: MachineProjectInput,
   projects: readonly MachineProjectInput[],
+  retired?: ReadonlyMap<string, unknown>,
 ): MachineProjectInput | null {
   const logical = copy.workspaceSettings?.logicalProject;
   if (!logical) return null;
@@ -255,6 +257,7 @@ function leadCoordinator(
     .filter(
       (candidate) =>
         candidate.workspaceSettings?.logicalProject?.id === logical.id &&
+        !retired?.has(candidate.environmentId) &&
         sharedProjectRole(candidate.workspaceSettings?.coordinatorBinding) === "coordinator",
     )
     .toSorted(
@@ -267,10 +270,12 @@ function leadCoordinator(
 export function copyRole(
   copy: MachineProjectInput,
   projects: readonly MachineProjectInput[],
+  /** Old records of machines that joined again (`replacedMachineRecords`). */
+  retired?: ReadonlyMap<string, unknown>,
 ): SharedProjectRole {
   const own = sharedProjectRole(copy.workspaceSettings?.coordinatorBinding);
   if (own !== "coordinator") return own;
-  const lead = leadCoordinator(copy, projects);
+  const lead = leadCoordinator(copy, projects, retired);
   return lead === null || copyKey(lead) === copyKey(copy) ? "coordinator" : "also-coordinator";
 }
 
@@ -395,6 +400,7 @@ function otherCopies(
   project: MachineProjectInput,
   projects: readonly MachineProjectInput[],
   machineOf: (environmentId: EnvironmentId) => { name: string; seen: MachineSeen },
+  retired?: ReadonlyMap<string, unknown>,
 ): MachineProjectCopy[] {
   const members = project.workspaceSettings?.logicalProject?.members ?? [];
   const seen = new Set<string>([environmentId]);
@@ -410,7 +416,7 @@ function otherCopies(
       environmentId: member.environmentId,
       ...machineOf(member.environmentId),
       folder: copy?.workspaceRoot ?? null,
-      roleLabel: copy ? ROLE_LABELS[copyRole(copy, projects)] : null,
+      roleLabel: copy ? ROLE_LABELS[copyRole(copy, projects, retired)] : null,
     });
   }
   return copies;
@@ -436,6 +442,7 @@ function projectsOn(
   projects: readonly MachineProjectInput[],
   machineOf: (environmentId: EnvironmentId) => { name: string; seen: MachineSeen },
   scratchRootFor: (environmentId: EnvironmentId) => string | null | undefined,
+  retired?: ReadonlyMap<string, unknown>,
 ): MachineProjects {
   const lists: Record<keyof MachineProjects, MachineProject[]> = {
     own: [],
@@ -450,8 +457,10 @@ function projectsOn(
       )
         continue;
       const shared = isSharedProject(project);
-      const role = shared ? copyRole(project, projects) : "only-here";
-      const elsewhere = shared ? otherCopies(environmentId, project, projects, machineOf) : [];
+      const role = shared ? copyRole(project, projects, retired) : "only-here";
+      const elsewhere = shared
+        ? otherCopies(environmentId, project, projects, machineOf, retired)
+        : [];
       lists[projectListOf(project)].push({
         key: project.workspaceSettings?.logicalProject?.id ?? project.id,
         title: logicalProjectTitle(project),
@@ -472,7 +481,7 @@ function projectsOn(
       if (!logical || !isSharedProject(project) || seenIdentities.has(logical.id)) continue;
       if (!logical.members.some((member) => member.environmentId === environmentId)) continue;
       seenIdentities.add(logical.id);
-      const elsewhere = otherCopies(environmentId, project, projects, machineOf);
+      const elsewhere = otherCopies(environmentId, project, projects, machineOf, retired);
       // That machine's own copy is out of sight, so the copies in sight decide together.
       const copies = projects.filter(
         (copy) => copy.workspaceSettings?.logicalProject?.id === logical.id,
@@ -641,6 +650,7 @@ export function buildMachineRows(input: {
         input.projects,
         machineOf,
         scratchRootFor,
+        input.replaced,
       ),
       accounts: accountsOn(environment.environmentId, input.hostBlocks),
       connectBothWays: fleetMachine !== null && connected,
@@ -680,7 +690,14 @@ export function buildMachineRows(input: {
       connect: fleetConnectAction(machine, input.canPair),
       workers: workerGrant(machine),
       workHere: workHereFor(machine.environmentId, input.workGrants),
-      projects: projectsOn(machine.environmentId, false, input.projects, machineOf, scratchRootFor),
+      projects: projectsOn(
+        machine.environmentId,
+        false,
+        input.projects,
+        machineOf,
+        scratchRootFor,
+        input.replaced,
+      ),
       accounts: null,
       connectBothWays: false,
       ...peerRulesFields(machine.label, undefined, machine),

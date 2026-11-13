@@ -134,6 +134,15 @@ describe("copyRole", () => {
     expect(copyRole(there, [here, there])).toBe("runs-workers");
   });
 
+  it("never lets a copy on an old record of a re-joined machine lead", () => {
+    const live = easyChamp(m4, "p-m4", "/Users/a/ec");
+    const dead = withEpoch(easyChamp(m3, "p-m3", "/Users/b/ec"), 2);
+    const retired = new Map([[m3, m4]]);
+    expect(copyRole(dead, [live, dead])).toBe("coordinator");
+    expect(copyRole(live, [live, dead], retired)).toBe("coordinator");
+    expect(copyRole(dead, [live, dead], retired)).toBe("also-coordinator");
+  });
+
   it("names this copy coordinator when it is the only one in sight", () => {
     const there = easyChamp(m3, "p-m3", "/Users/b/ec");
     expect(copyRole(there, [there])).toBe("coordinator");
@@ -790,5 +799,30 @@ describe("old records of a machine that joined again", () => {
     expect(old.seen.text).toBe("Old record: this machine joined again as a new one");
     expect(live.replacedBy).toBeNull();
     expect(live.seen.state).toBe("connected");
+  });
+
+  it("keeps the live copy the coordinator over a newer copy cached on an old record", () => {
+    const dead = easyChamp(m3, "p-m3", "/Users/b/ec");
+    const rows = buildMachineRows({
+      environments: [env(m4, "M4MAX"), env(m3, "MacBook Pro", "error")],
+      primaryEnvironmentId: m4,
+      fleet: fleet([]),
+      canPair: true,
+      projects: [
+        easyChamp(m4, "p-m4", "/Users/a/ec"),
+        {
+          ...dead,
+          workspaceSettings: {
+            ...dead.workspaceSettings!,
+            coordinatorBinding: { epoch: 2, state: "active" },
+          },
+        },
+      ],
+      hostBlocks: [],
+      replaced: new Map([[m3, m1]]),
+    });
+    const here = rows[0]!.projects.own[0]!;
+    expect(here.roleLabel).toBe("Coordinator here");
+    expect(here.elsewhere[0]?.roleLabel).toBe("Coordinator here too");
   });
 });
