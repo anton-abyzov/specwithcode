@@ -1805,7 +1805,6 @@ export const zh: PhraseCatalog = {
     "在工作可被限制之前就已允许，因此在你更改之前，它可以使用这里的所有项目和登录。",
   "Whose machine": "电脑归属",
   "Whose machine is it": "这台电脑属于谁",
-  "Work from it may pass through {hopLimit} machine": "来自它的工作最多可经过 {hopLimit} 台电脑",
   "Projects it may run work in": "它可以运行工作的项目",
   "Sign-ins its work may use": "它的工作可以使用的登录",
   "Most access": "最高访问权限",
@@ -2754,7 +2753,6 @@ export const zh: PhraseCatalog = {
   "Reset to inherited value": "重置为继承值",
   "Restore device defaults": "恢复设备默认设置",
   "Reconnect {label} to change its settings.": "重新连接 {label} 以更改其设置。",
-  "Work from it may pass through {hopLimit} machines": "来自它的工作最多可经过 {hopLimit} 台电脑",
   "{length} empty placeholders": "{length} 个空占位符",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · {tabs} 个标签页 · 最近操作 {value2}",

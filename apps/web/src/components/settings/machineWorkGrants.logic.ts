@@ -153,3 +153,86 @@ export function workGrantStatus(grant: StudioWorkGrant): string {
   ];
   return parts.filter(Boolean).join(" · ");
 }
+
+/**
+ * This machine's sign-ins in the order the picker shows them: signed-in ones
+ * first, then the rest, each group in the server's order. A chosen sign-in the
+ * machine no longer lists is kept, so it can still be cleared.
+ */
+export function signInChoices(
+  available: StudioWorkGrantsSnapshot["accounts"],
+  chosen: ReadonlyArray<string> = [],
+): StudioWorkGrantsSnapshot["accounts"] {
+  const known = new Set<string>(available.map((account) => account.instanceId));
+  const gone = chosen
+    .filter((id) => !known.has(id))
+    .map((id): StudioWorkGrantsSnapshot["accounts"][number] => ({
+      instanceId: id as StudioWorkGrantsSnapshot["accounts"][number]["instanceId"],
+      label: id,
+      driver: "",
+      account: null,
+    }));
+  return [
+    ...available.filter((account) => account.signedIn !== false),
+    ...available.filter((account) => account.signedIn === false),
+    ...gone,
+  ];
+}
+
+export interface WorkGrantHopStop {
+  readonly label: string;
+  /** sender: where the work starts. here: this machine. onward: a further machine. blocked: not allowed. */
+  readonly kind: "sender" | "here" | "onward" | "blocked";
+}
+
+/**
+ * How far work from a machine may travel, as stops and one plain sentence.
+ * The hop limit counts machines after the sender: 1 ends here, 2 lets the work
+ * it starts here start work on one more machine.
+ */
+export function workGrantHopPath(grant: Pick<StudioWorkGrant, "machineLabel" | "hopLimit">): {
+  readonly stops: ReadonlyArray<WorkGrantHopStop>;
+  readonly text: string;
+} {
+  const further = Math.max(0, grant.hopLimit - 1);
+  const sender: WorkGrantHopStop = { label: grant.machineLabel, kind: "sender" };
+  const here: WorkGrantHopStop = { label: "This machine", kind: "here" };
+  if (further === 0)
+    return {
+      stops: [sender, here, { label: "Another machine", kind: "blocked" }],
+      text: `Work ${grant.machineLabel} starts here stays here: it cannot start work on another machine from this one.`,
+    };
+  return {
+    stops: [
+      sender,
+      here,
+      { label: further === 1 ? "1 more machine" : `${further} more machines`, kind: "onward" },
+    ],
+    text: `Work ${grant.machineLabel} starts here may itself start work on ${further === 1 ? "one more machine" : `${further} more machines`}, and no further. It can never loop back to ${grant.machineLabel}.`,
+  };
+}
+
+/**
+ * What the Routines switch does in its current position. Starting work and
+ * managing schedules are separate permissions: the switch covers only the
+ * schedules, and only in the projects the grant already covers.
+ */
+export function workGrantRoutinesNote(
+  grant: Pick<StudioWorkGrant, "machineLabel" | "routines">,
+): string {
+  return grant.routines
+    ? `On: agents on ${grant.machineLabel} may create, change, run and delete scheduled routines on this machine, in the projects chosen above. Turn it off to let them start work here but leave the schedules alone.`
+    : `Off: agents on ${grant.machineLabel} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if ${grant.machineLabel} should set up recurring work here.`;
+}
+
+/**
+ * Where the access limit comes from and what it caps. It is read-only here:
+ * the sending machine chose it when it allowed workers on this one.
+ */
+export function workGrantAccessNote(
+  grant: Pick<StudioWorkGrant, "machineLabel" | "runtimeCap">,
+): string {
+  return grant.runtimeCap === null
+    ? `${grant.machineLabel} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.`
+    : `The most a thread ${grant.machineLabel} starts here may do without asking. A thread can run with less, never more. Chosen on ${grant.machineLabel}, under Allow workers for this machine; change it there.`;
+}

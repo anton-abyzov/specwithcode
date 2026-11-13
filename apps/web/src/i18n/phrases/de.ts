@@ -1882,8 +1882,6 @@ export const de: PhraseCatalog = {
     "Erlaubt, bevor Arbeit eingeschränkt werden konnte; sie kann also jedes Projekt und jede Anmeldung hier nutzen, bis du das änderst.",
   "Whose machine": "Wessen Rechner",
   "Whose machine is it": "Wem gehört der Rechner",
-  "Work from it may pass through {hopLimit} machine":
-    "Arbeit von dort darf über {hopLimit} Rechner laufen",
   "Projects it may run work in": "Projekte, in denen er Arbeit ausführen darf",
   "Sign-ins its work may use": "Anmeldungen, die seine Arbeit nutzen darf",
   "Most access": "Höchster Zugriff",
@@ -2871,8 +2869,6 @@ export const de: PhraseCatalog = {
   "Restore device defaults": "Gerätestandards wiederherstellen",
   "Reconnect {label} to change its settings.":
     "Verbinde {label} neu, um seine Einstellungen zu ändern.",
-  "Work from it may pass through {hopLimit} machines":
-    "Arbeit von dort darf über {hopLimit} Rechner laufen",
   "{length} empty placeholders": "{length} leere Platzhalter",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · {tabs} Tabs · letzte Aktion {value2}",

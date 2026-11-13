@@ -1867,8 +1867,6 @@ export const ru: PhraseCatalog = {
     "Разрешено до того, как работу можно было ограничивать, поэтому она может использовать все проекты и входы здесь, пока вы это не измените.",
   "Whose machine": "Чья машина",
   "Whose machine is it": "Чья это машина",
-  "Work from it may pass through {hopLimit} machine":
-    "Работа с неё может пройти через машин: {hopLimit}",
   "Projects it may run work in": "Проекты, в которых она может запускать работу",
   "Sign-ins its work may use": "Входы, которые может использовать её работа",
   "Most access": "Максимальный доступ",
@@ -2850,8 +2848,6 @@ export const ru: PhraseCatalog = {
   "Restore device defaults": "Восстановить настройки устройства по умолчанию",
   "Reconnect {label} to change its settings.":
     "Переподключите {label}, чтобы изменить его настройки.",
-  "Work from it may pass through {hopLimit} machines":
-    "Работа с неё может пройти через машин: {hopLimit}",
   "{length} empty placeholders": "Пустых плейсхолдеров: {length}",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · вкладок: {tabs} · последнее действие {value2}",
