@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { useTx } from "../../i18n";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
-import { usePrimaryFleetSnapshot } from "../../studio/fleet";
+import { usePrimaryFleetSnapshot, useStudioFleet } from "../../studio/fleet";
 import { readSkippedFleetEnvironments } from "../../studio/fleetAutoConnect";
 import {
   requestAccountMachineConnect,
@@ -36,7 +36,11 @@ export function HandoffAccountMachines({
 }) {
   const tx = useTx();
   const { environments } = useEnvironments();
+  // Saving happens in this app, so its own server's fleet says what is being
+  // saved; which machines can take the work is the source machine's fleet,
+  // as in the dialog's list.
   const fleetSnapshot = usePrimaryFleetSnapshot(usePrimaryEnvironmentId());
+  const sourceFleet = useStudioFleet(sourceEnvironmentId).snapshot;
   // Read from the atom, not the environments hook, so callers mocking that module still render.
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const states = useAccountAutoConnectStates();
@@ -45,7 +49,8 @@ export function HandoffAccountMachines({
   const name = useMachineNicknames();
   const savedEnvironmentIds = new Set<string>(environments.map((item) => item.environmentId));
   const fleetMachines = fleetSnapshot?.machines ?? null;
-  const { fallback, notAllowed: accountOnly } = handoffAccountMachines({
+  const sourceMachines = sourceFleet?.machines ?? null;
+  const { fallback } = handoffAccountMachines({
     discovered: discovery.environments.values(),
     savedEnvironmentIds,
     sourceEnvironmentId,
@@ -54,13 +59,22 @@ export function HandoffAccountMachines({
     fleetPairingSettled: fleetAutoConnectSettled,
     name,
   });
+  const { notAllowed: accountOnly } = handoffAccountMachines({
+    discovered: discovery.environments.values(),
+    savedEnvironmentIds,
+    sourceEnvironmentId,
+    fleet: sourceMachines,
+    states,
+    fleetPairingSettled: fleetAutoConnectSettled,
+    name,
+  });
   // Named only once the list is current, and only machines answering now.
   const notAllowed = discovery.refreshing ? [] : accountOnly.filter((machine) => machine.answering);
   const fleetOnly =
-    discovery.refreshing || fleetMachines === null
+    discovery.refreshing || sourceMachines === null
       ? []
       : handoffFleetOnlyMachines({
-          fleet: fleetMachines,
+          fleet: sourceMachines,
           savedEnvironmentIds,
           sourceEnvironmentId,
           accountEnvironmentIds: new Set(discovery.environments.keys()),
@@ -82,6 +96,7 @@ export function HandoffAccountMachines({
             <span className="block truncate font-medium">{machine.label}</span>
             <span className="block wrap-anywhere text-xs text-muted-foreground">
               {tx(machine.reason)}
+              {machine.detail ? ` (${machine.detail})` : null}
             </span>
           </span>
           {!machine.canConnect ? null : (

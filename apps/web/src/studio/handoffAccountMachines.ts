@@ -19,8 +19,10 @@ export interface HandoffAccountMachine {
 }
 
 export interface HandoffConnectFallback extends HandoffAccountMachine {
-  /** Why it is not in the list yet. */
+  /** Why it is not in the list yet: a phrase. */
   readonly reason: string;
+  /** The relay's own words for a failure, shown untranslated after the reason. */
+  readonly detail?: string;
   /** Being saved over SpecWithCode Connect now: Connect waits. */
   readonly connecting: boolean;
   /** Connect by hand can do something now (not while Connect is unreachable). */
@@ -50,6 +52,7 @@ function withState(
     : {
         ...machine,
         reason: state.reason,
+        ...(state.phase === "failed" && state.detail !== undefined ? { detail: state.detail } : {}),
         connecting: false,
         canConnect: accountConnectCanRetry(state),
       };

@@ -171,7 +171,8 @@ describe("GrantedAccountMachines", () => {
     await act(async () => renderer.update(<GrantedAccountMachines />));
     expect(accountAutoConnectStates().get("m5")).toEqual({
       phase: "failed",
-      reason: "Relay refused",
+      reason: "Could not connect over SpecWithCode Connect.",
+      detail: "Relay refused",
     });
     await act(async () => renderer.unmount());
   });
@@ -246,6 +247,9 @@ describe("GrantedAccountMachines", () => {
     await act(async () => requestAccountMachineConnect(["m5"]));
     expect(heard).toEqual([["m5"]]);
     expect(state.register).not.toHaveBeenCalled();
+    // An earlier removal here is lifted, so the linked path saves it.
+    const { setFleetEnvironmentSkipped } = await import("../studio/fleetAutoConnect");
+    expect(setFleetEnvironmentSkipped).toHaveBeenCalledWith("m5", false);
     stop();
     await act(async () => renderer.unmount());
   });
@@ -274,5 +278,20 @@ describe("GrantedAccountMachines", () => {
     expect(state.refresh).toHaveBeenCalledTimes(1);
     expect(state.register).not.toHaveBeenCalled();
     await act(async () => renderer!.unmount());
+  });
+
+  it("adds no second route while the reconciler's linked path is adding one", async () => {
+    m5InFleet();
+    const { connectRouteAddsInFlight } = await import("../studio/grantedAccountMachines");
+    connectRouteAddsInFlight.add("m5");
+    const renderer = await mount();
+    expect(state.register).not.toHaveBeenCalled();
+    expect(accountAutoConnectStates().get("m5")).toEqual({ phase: "connecting" });
+    connectRouteAddsInFlight.delete("m5");
+    await act(async () => renderer.unmount());
+  });
+
+  it("tells the caller when nothing listens, so Settings pairs instead", () => {
+    expect(requestAccountMachineConnect(["m5"])).toBe(false);
   });
 });

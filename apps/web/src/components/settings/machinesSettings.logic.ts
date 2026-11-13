@@ -288,7 +288,15 @@ export function withAccountConnectState(
     };
   return {
     ...row,
-    seen: state ? { state: row.seen.state, text: state.reason } : row.seen,
+    seen: state
+      ? {
+          state: row.seen.state,
+          text:
+            state.phase === "failed" && state.detail !== undefined
+              ? `${state.reason} (${state.detail})`
+              : state.reason,
+        }
+      : row.seen,
     // Pressing it does nothing while Connect itself cannot be reached.
     connect: { enabled: accountConnectCanRetry(state), label: "Connect" },
   };

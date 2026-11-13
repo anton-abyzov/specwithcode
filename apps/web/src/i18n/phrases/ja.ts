@@ -4623,4 +4623,5 @@ export const ja: PhraseCatalog = {
   "Removed from this app.": "このアプリから削除済みです。",
   "SpecWithCode Connect cannot be reached right now.":
     "現在 SpecWithCode Connect に接続できません。",
+  "Could not connect over SpecWithCode Connect.": "SpecWithCode Connect で接続できませんでした。",
 };

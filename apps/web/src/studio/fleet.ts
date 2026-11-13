@@ -191,7 +191,10 @@ export function usePrimaryFleetSnapshot(primaryEnvironmentId: EnvironmentId | nu
     key: "null",
     snapshot: null,
   });
-  const key = JSON.stringify(next);
+  // observedAt changes on every read; the machines are what callers act on.
+  const key = JSON.stringify(
+    next === null ? null : [next.connectPermission ?? null, next.machines],
+  );
   if (kept.current.key !== key) kept.current = { key, snapshot: next };
   return kept.current.snapshot;
 }

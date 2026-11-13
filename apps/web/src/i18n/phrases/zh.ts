@@ -4441,4 +4441,5 @@ export const zh: PhraseCatalog = {
   "Not connected to this app yet.": "尚未连接到此应用。",
   "Removed from this app.": "已从此应用中移除。",
   "SpecWithCode Connect cannot be reached right now.": "目前无法访问 SpecWithCode Connect。",
+  "Could not connect over SpecWithCode Connect.": "无法通过 SpecWithCode Connect 连接。",
 };

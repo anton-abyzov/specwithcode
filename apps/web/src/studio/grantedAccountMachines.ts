@@ -79,7 +79,7 @@ export function grantedMachinesMissingFromAccount(input: {
 export type AccountAutoConnectState =
   | { readonly phase: "connecting" }
   /** The last automatic or requested save failed; Connect by hand retries. */
-  | { readonly phase: "failed"; readonly reason: string }
+  | { readonly phase: "failed"; readonly reason: string; readonly detail?: string }
   /** Not tried on purpose: removed here, Connect automatically off, or Connect unreachable. */
   | { readonly phase: "held"; readonly reason: string };
 
@@ -87,6 +87,13 @@ export const AUTO_CONNECT_OFF_REASON = "Connect automatically is off.";
 export const REMOVED_HERE_REASON = "Removed from this app.";
 export const CONNECT_UNREACHABLE_REASON = "SpecWithCode Connect cannot be reached right now.";
 export const CONNECT_NO_ANSWER_REASON = "SpecWithCode Connect did not answer for it.";
+export const CONNECT_FAILED_REASON = "Could not connect over SpecWithCode Connect.";
+
+/**
+ * Machines whose Connect route is being added right now, by the reconciler's
+ * linked path or GrantedAccountMachines: neither starts a second add for one.
+ */
+export const connectRouteAddsInFlight = new Set<string>();
 
 let states: ReadonlyMap<string, AccountAutoConnectState> = new Map();
 const listeners = new Set<() => void>();
@@ -101,6 +108,9 @@ function sameStates(
     const other = b.get(id);
     if (!other || other.phase !== state.phase) return false;
     if ("reason" in state && "reason" in other && state.reason !== other.reason) return false;
+    if ("detail" in state || "detail" in other)
+      if ((state as { detail?: string }).detail !== (other as { detail?: string }).detail)
+        return false;
   }
   return true;
 }
@@ -134,8 +144,10 @@ const connectRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) 
  * lifts an earlier removal here. Reads no list again, so other machine lists
  * stay put.
  */
-export function requestAccountMachineConnect(environmentIds: ReadonlyArray<string>): void {
+export function requestAccountMachineConnect(environmentIds: ReadonlyArray<string>): boolean {
   for (const listener of connectRequestListeners) listener(environmentIds);
+  // False while signed out of Connect: nothing listens, the caller pairs instead.
+  return connectRequestListeners.size > 0;
 }
 
 export function onAccountMachineConnectRequest(
