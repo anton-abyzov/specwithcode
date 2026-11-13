@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import type { AccountAutoConnectState } from "./grantedAccountMachines";
 import {
-  AUTO_CONNECT_OFF_REASON,
-  NOT_ANSWERING_REASON,
+  CONNECTING_REASON,
+  NOT_CONNECTED_REASON,
   handoffAccountMachines,
   handoffFleetOnlyMachines,
 } from "./handoffAccountMachines";
@@ -19,67 +20,79 @@ const connectOnly = (environmentId: string) => ({
 const base = {
   savedEnvironmentIds: new Set<string>(["m4"]),
   sourceEnvironmentId: "m4",
-  autoConnect: true,
-  failures: new Map<string, string>(),
+  states: new Map<string, AccountAutoConnectState>(),
+  fleetPairingSettled: () => false,
 };
 
 describe("handoffAccountMachines", () => {
-  it("offers no button for an allowed machine that is connecting on its own", () => {
+  it("says nothing until the fleet has loaded, so no one is told to grant twice", () => {
     expect(
-      handoffAccountMachines({
-        ...base,
-        discovered: [found("m5", "M5")],
-        fleet: [connectOnly("m5")],
-      }),
+      handoffAccountMachines({ ...base, discovered: [found("m5", "M5")], fleet: null }),
     ).toEqual({ fallback: [], notAllowed: [] });
   });
 
-  it("offers Connect by hand with the reason when the automatic connection failed", () => {
+  it("shows an allowed machine as connecting while it is saved, with no button", () => {
     expect(
       handoffAccountMachines({
         ...base,
         discovered: [found("m5", "M5")],
         fleet: [connectOnly("m5")],
-        failures: new Map([["m5", "Relay refused"]]),
+        states: new Map([["m5", { phase: "connecting" }]]),
       }).fallback,
-    ).toEqual([{ environmentId: "m5", label: "M5", answering: true, reason: "Relay refused" }]);
+    ).toEqual([
+      {
+        environmentId: "m5",
+        label: "M5",
+        answering: true,
+        reason: CONNECTING_REASON,
+        connecting: true,
+      },
+    ]);
   });
 
-  it("offers Connect when Connect automatically is off, or the machine is not answering", () => {
+  it("offers Connect with the reason when saving failed or is held", () => {
     const result = handoffAccountMachines({
       ...base,
-      discovered: [found("m5", "M5"), found("m6", "M6", "offline")],
+      discovered: [found("m5", "M5"), found("m6", "M6")],
       fleet: [connectOnly("m5"), connectOnly("m6")],
-      autoConnect: false,
+      states: new Map<string, AccountAutoConnectState>([
+        ["m5", { phase: "failed", reason: "Relay refused" }],
+        ["m6", { phase: "held", reason: "Removed from this app." }],
+      ]),
     });
-    expect(result.fallback.map((machine) => [machine.environmentId, machine.reason])).toEqual([
-      ["m5", AUTO_CONNECT_OFF_REASON],
-      ["m6", AUTO_CONNECT_OFF_REASON],
+    expect(
+      result.fallback.map((machine) => [machine.environmentId, machine.reason, machine.connecting]),
+    ).toEqual([
+      ["m5", "Relay refused", false],
+      ["m6", "Removed from this app.", false],
     ]);
+  });
+
+  it("offers Connect for a tailnet machine once its fleet pairing finished without saving it", () => {
+    const tailnet = { environmentId: "m1", label: "M1", url: "https://m1.tail1234.ts.net:3773" };
+    expect(
+      handoffAccountMachines({ ...base, discovered: [found("m1", "M1")], fleet: [tailnet] })
+        .fallback,
+    ).toEqual([]);
     expect(
       handoffAccountMachines({
         ...base,
-        discovered: [found("m6", "M6", "offline")],
-        fleet: [connectOnly("m6")],
+        discovered: [found("m1", "M1")],
+        fleet: [tailnet],
+        fleetPairingSettled: (id) => id === "m1",
       }).fallback.map((machine) => machine.reason),
-    ).toEqual([NOT_ANSWERING_REASON]);
+    ).toEqual([NOT_CONNECTED_REASON]);
   });
 
-  it("names an account machine that has not allowed this one yet", () => {
-    expect(
-      handoffAccountMachines({ ...base, discovered: [found("m7", "M7")], fleet: [] }).notAllowed,
-    ).toEqual([{ environmentId: "m7", label: "M7", answering: true }]);
-  });
-
-  it("names machines the way the rest of the app does", () => {
+  it("names an account machine that has not allowed this one yet, by its nickname", () => {
     expect(
       handoffAccountMachines({
         ...base,
         discovered: [found("m7", "Anton M7")],
         fleet: [],
         name: (id, label) => (id === "m7" ? "m7" : label),
-      }).notAllowed[0]?.label,
-    ).toBe("m7");
+      }).notAllowed,
+    ).toEqual([{ environmentId: "m7", label: "m7", answering: true }]);
   });
 });
 

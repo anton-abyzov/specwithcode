@@ -1,11 +1,9 @@
-import { useAtomValue } from "@effect/atom-react";
 import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { relayEnvironmentDiscovery } from "../state/relay";
 import { useEnvironmentScope } from "../state/session";
 import { useStudioFleet } from "./fleet";
 import {
@@ -14,12 +12,7 @@ import {
   rejectedSavedEnvironments,
   savedRouteOrigins,
 } from "./fleetAutoConnect";
-import {
-  accountAutoConnectFailures,
-  accountAutoConnectFailuresVersion,
-  grantedAccountMachinesToConnect,
-  subscribeAccountAutoConnectFailures,
-} from "./grantedAccountMachines";
+import { useAccountAutoConnectStates } from "./grantedAccountMachines";
 
 /*
  * Machines whose first automatic pairing has finished, won or lost, since the
@@ -36,6 +29,11 @@ export function markFleetAutoConnectSettled(environmentId: string): void {
   settledAutoConnects.add(environmentId);
   version += 1;
   for (const listener of listeners) listener();
+}
+
+/** Whether the automatic fleet pairing has finished with this machine since the page loaded. */
+export function fleetAutoConnectSettled(environmentId: string): boolean {
+  return settledAutoConnects.has(environmentId);
 }
 
 function subscribe(listener: () => void) {
@@ -86,13 +84,8 @@ export function useMachineStillChecking(): (environmentId: string) => boolean {
     primaryEnvironmentId,
     snapshot?.connectPermission ?? AuthAccessWriteScope,
   );
-  const discovered = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).environments;
-  // A failed automatic Connect save ends the check for that machine.
-  const failed = useSyncExternalStore(
-    subscribeAccountAutoConnectFailures,
-    accountAutoConnectFailuresVersion,
-    accountAutoConnectFailuresVersion,
-  );
+  // Connect-only machines that allowed this one, while they are being saved over Connect.
+  const accountStates = useAccountAutoConnectStates();
   const settled = useSyncExternalStore(
     subscribe,
     () => version,
@@ -104,7 +97,6 @@ export function useMachineStillChecking(): (environmentId: string) => boolean {
       return NO_MACHINES;
     // Re-read after each settled attempt; the attempts themselves live in the module.
     void settled;
-    void failed;
     const machines = fleetMachinesToAutoConnect({
       snapshot,
       currentEnvironmentId: primaryEnvironmentId,
@@ -116,28 +108,8 @@ export function useMachineStillChecking(): (environmentId: string) => boolean {
       skippedEnvironmentIds: readSkippedFleetEnvironments(),
       attemptedEnvironmentIds: settledAutoConnects,
     });
-    // Connect-only machines that allowed this one are being saved over Connect.
-    const granted = grantedAccountMachinesToConnect({
-      snapshot,
-      currentEnvironmentId: primaryEnvironmentId,
-      savedEnvironmentIds: new Set(environments.map((environment) => environment.environmentId)),
-      discovered,
-      skip: new Set([...readSkippedFleetEnvironments(), ...accountAutoConnectFailures().keys()]),
-    });
-    return new Set([
-      ...machines.map((machine) => machine.environmentId),
-      ...granted.map((machine) => machine.environmentId),
-    ]);
-  }, [
-    autoConnect,
-    canPair,
-    discovered,
-    environments,
-    failed,
-    primaryEnvironmentId,
-    settled,
-    snapshot,
-  ]);
+    return new Set(machines.map((machine) => machine.environmentId));
+  }, [autoConnect, canPair, environments, primaryEnvironmentId, settled, snapshot]);
   const phases = useMemo(
     () =>
       new Map(
@@ -151,14 +123,16 @@ export function useMachineStillChecking(): (environmentId: string) => boolean {
   const fleetPending =
     primaryEnvironmentId !== null && canPair && snapshot === null && fleet.loading;
   return useCallback(
-    (environmentId: string) =>
-      machineStillChecking({
+    (environmentId: string) => {
+      const savingOverConnect = accountStates.get(environmentId)?.phase === "connecting";
+      return machineStillChecking({
         catalogReady: isReady,
         phase: phases.get(environmentId) ?? null,
-        autoConnect,
+        autoConnect: autoConnect || savingOverConnect,
         fleetPending,
-        autoConnectWillTry: willTry.has(environmentId),
-      }),
-    [autoConnect, fleetPending, isReady, phases, willTry],
+        autoConnectWillTry: willTry.has(environmentId) || savingOverConnect,
+      });
+    },
+    [accountStates, autoConnect, fleetPending, isReady, phases, willTry],
   );
 }

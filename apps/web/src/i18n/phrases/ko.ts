@@ -4557,10 +4557,7 @@ export const ko: PhraseCatalog = {
     "설치가 오류로 끝났습니다. 로그는 아래에 있습니다. 거기서 다시 시도를 누르거나 터미널에서 명령을 실행하세요.",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "Muse Code 같은 다른 에이전트나 사용자 지정 제공업체가 필요한가요? 초기 설정을 마친 뒤 언제든지 설정 > 제공업체에서 추가하세요.",
-  "Could not connect to {name}. Check that SpecWithCode is open there, then try again.":
-    "{name}에 연결할 수 없습니다. 그곳에서 SpecWithCode가 열려 있는지 확인한 뒤 다시 시도하세요.",
   "Connect automatically is off.": "자동 연결이 꺼져 있습니다.",
-  "Not answering over SpecWithCode Connect.": "SpecWithCode Connect로 응답하지 않습니다.",
   "SpecWithCode Connect did not answer for it.":
     "SpecWithCode Connect가 이 컴퓨터에 대해 응답하지 않았습니다.",
   "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
@@ -4568,4 +4565,9 @@ export const ko: PhraseCatalog = {
   "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
     "목록에 없음: {names}. 이 앱은 아직 연결되지 않았습니다. 여기서 같은 계정으로 SpecWithCode Connect에 로그인하거나 다음에서 연결하세요:",
   "Settings > Machines": "설정 > 머신",
+  "Connecting over SpecWithCode Connect…": "SpecWithCode Connect로 연결하는 중…",
+  "Not connected to this app yet.": "아직 이 앱에 연결되지 않았습니다.",
+  "Removed from this app.": "이 앱에서 제거되었습니다.",
+  "SpecWithCode Connect cannot be reached right now.":
+    "지금은 SpecWithCode Connect에 연결할 수 없습니다.",
 };

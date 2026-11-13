@@ -8,6 +8,7 @@
  *
  * @module grantedAccountMachines
  */
+import { useSyncExternalStore } from "react";
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
 import type { RelayClientEnvironmentRecord } from "@specweave-studio/contracts/relay";
 
@@ -21,8 +22,10 @@ export function grantedAccountMachinesToConnect(input: {
   readonly savedEnvironmentIds: ReadonlySet<string>;
   /** This account's machines, from the SpecWithCode Connect list. */
   readonly discovered: ReadonlyMap<string, { readonly environment: RelayClientEnvironmentRecord }>;
-  /** Removed here, Connect route declined, in flight or out of attempts. */
-  readonly skip: ReadonlySet<string>;
+  /** Left out: removed here, Connect route declined, in flight or out of attempts. */
+  readonly skip?: ReadonlySet<string>;
+  /** Asked for by hand: included even with a tailnet address, whose pairing may have failed. */
+  readonly requested?: ReadonlySet<string>;
 }): RelayClientEnvironmentRecord[] {
   const seen = new Set<string>();
   const machines: RelayClientEnvironmentRecord[] = [];
@@ -33,9 +36,9 @@ export function grantedAccountMachinesToConnect(input: {
       id === input.currentEnvironmentId ||
       machine.status === "identity-mismatch" ||
       // A machine with a tailnet address is paired by the fleet instead.
-      fleetMachineHasTailnetAddress(machine) ||
+      (fleetMachineHasTailnetAddress(machine) && !input.requested?.has(id)) ||
       input.savedEnvironmentIds.has(id) ||
-      input.skip.has(id)
+      input.skip?.has(id)
     )
       continue;
     seen.add(id);
@@ -68,40 +71,66 @@ export function grantedMachinesMissingFromAccount(input: {
     .map((machine) => machine.environmentId);
 }
 
-/*
- * Why the last automatic connection to a machine failed, by environment id.
- * The move dialog offers Connect by hand for these, with the reason.
+/**
+ * Where saving each such machine stands, published by the reconciler so the
+ * move dialog, Settings > Machines and the checking state all read one answer.
+ * A machine absent from the map is saved, not a candidate, or not tried yet.
  */
-const failures = new Map<string, string>();
+export type AccountAutoConnectState =
+  | { readonly phase: "connecting" }
+  /** The last automatic or requested save failed; Connect by hand retries. */
+  | { readonly phase: "failed"; readonly reason: string }
+  /** Not tried on purpose: removed here, Connect automatically off, or Connect unreachable. */
+  | { readonly phase: "held"; readonly reason: string };
+
+export const AUTO_CONNECT_OFF_REASON = "Connect automatically is off.";
+export const REMOVED_HERE_REASON = "Removed from this app.";
+export const CONNECT_UNREACHABLE_REASON = "SpecWithCode Connect cannot be reached right now.";
+export const CONNECT_NO_ANSWER_REASON = "SpecWithCode Connect did not answer for it.";
+
+let states: ReadonlyMap<string, AccountAutoConnectState> = new Map();
 const listeners = new Set<() => void>();
 let version = 0;
 
-function changed() {
+function sameStates(
+  a: ReadonlyMap<string, AccountAutoConnectState>,
+  b: ReadonlyMap<string, AccountAutoConnectState>,
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, state] of a) {
+    const other = b.get(id);
+    if (!other || other.phase !== state.phase) return false;
+    if ("reason" in state && "reason" in other && state.reason !== other.reason) return false;
+  }
+  return true;
+}
+
+/** Replaces every machine's state; called by the reconciler after each pass. */
+export function publishAccountAutoConnectStates(
+  next: ReadonlyMap<string, AccountAutoConnectState>,
+): void {
+  if (sameStates(states, next)) return;
+  states = new Map(next);
   version += 1;
   for (const listener of listeners) listener();
 }
 
-export function recordAccountAutoConnectFailure(environmentId: string, reason: string): void {
-  if (failures.get(environmentId) === reason) return;
-  failures.set(environmentId, reason);
-  changed();
-}
-
-export function clearAccountAutoConnectFailure(environmentId: string): void {
-  if (failures.delete(environmentId)) changed();
-}
-
-export function subscribeAccountAutoConnectFailures(listener: () => void): () => void {
+export function subscribeAccountAutoConnectStates(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 }
 
-export function accountAutoConnectFailuresVersion(): number {
-  return version;
+export function accountAutoConnectStates(): ReadonlyMap<string, AccountAutoConnectState> {
+  return states;
 }
 
-export function accountAutoConnectFailures(): ReadonlyMap<string, string> {
-  return failures;
+/** {@link accountAutoConnectStates}, re-rendering when the reconciler publishes. */
+export function useAccountAutoConnectStates(): ReadonlyMap<string, AccountAutoConnectState> {
+  return useSyncExternalStore(
+    subscribeAccountAutoConnectStates,
+    accountAutoConnectStates,
+    accountAutoConnectStates,
+  );
 }

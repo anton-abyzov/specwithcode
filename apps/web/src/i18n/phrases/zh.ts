@@ -4430,14 +4430,15 @@ export const zh: PhraseCatalog = {
     "安装出错结束。日志在下方。请在那里点击“重试”，或在终端中运行该命令。",
   "Want another agent or a custom provider, such as Muse Code? Add it any time after setup in Settings > Providers.":
     "想用其他智能体或自定义提供方（例如 Muse Code）？设置完成后可随时在 设置 > 提供方 中添加。",
-  "Could not connect to {name}. Check that SpecWithCode is open there, then try again.":
-    "无法连接到 {name}。请确认那台机器上已打开 SpecWithCode，然后重试。",
   "Connect automatically is off.": "自动连接已关闭。",
-  "Not answering over SpecWithCode Connect.": "通过 SpecWithCode Connect 无响应。",
   "SpecWithCode Connect did not answer for it.": "SpecWithCode Connect 未就这台机器作出响应。",
   "Not listed: {names}. To use one here, open Settings > Machines on it and allow this machine to run work there.":
     "未列出：{names}。要在这里使用，请在那台机器上打开 设置 > 机器，并允许这台机器在那里运行工作。",
   "Not listed: {names}. This app has no connection to them yet. Sign in to SpecWithCode Connect here with the same account, or connect them in":
     "未列出：{names}。此应用尚未连接到它们。请在这里用同一账号登录 SpecWithCode Connect，或在以下位置连接：",
   "Settings > Machines": "设置 > 机器",
+  "Connecting over SpecWithCode Connect…": "正在通过 SpecWithCode Connect 连接…",
+  "Not connected to this app yet.": "尚未连接到此应用。",
+  "Removed from this app.": "已从此应用中移除。",
+  "SpecWithCode Connect cannot be reached right now.": "目前无法访问 SpecWithCode Connect。",
 };
