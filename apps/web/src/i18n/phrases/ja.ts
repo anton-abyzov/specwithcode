@@ -2339,6 +2339,30 @@ export const ja: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.":
     "2〜3文字にしてください。",
+  "Coordinator here":
+    "ここがコーディネーター",
+  "Coordinator here too":
+    "ここもコーディネーター",
+  "Workers only":
+    "ワーカーのみ",
+  "Moving coordinator":
+    "コーディネーター移動中",
+  "Not shared":
+    "共有なし",
+  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
+    "このコピーでプロジェクトのコーディネーターが動いています（今作業中かどうかに関わらず）。他のマシンのコピーはここから作業を受け取ります。コピーの作り方ではなく、コーディネーターについての表示です。",
+  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
+    "このコピーでも独自のコーディネーターが動いています（どのマシンでも可能です）が、プロジェクトのコーディネーターは別のコピーです。引き継ぎでコーディネーターが移り、ここにはワーカーだけが残ります。",
+  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
+    "コーディネーターは別のマシンに移りました。このコピーは送られてきたワーカーを実行するだけです。",
+  "The project's coordinator is moving between machines right now.":
+    "プロジェクトのコーディネーターが今マシン間を移動中です。",
+  "No other machine has a copy of this project.":
+    "このプロジェクトのコピーは他のどのマシンにもありません。",
+  "Connect to see its role":
+    "接続すると役割が表示されます",
+  "This app cannot see this machine, so it cannot tell what this copy does.":
+    "このアプリからはこのマシンが見えないため、このコピーの役割はわかりません。",
   "{name} wears {color}":
     "{name} の色は {color}",
   "Change the color of {name}, now {color}":

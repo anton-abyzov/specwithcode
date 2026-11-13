@@ -2351,6 +2351,30 @@ export const es: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "¿Quitar de este dispositivo el registro antiguo de {name} ({host})?\nLa máquina se unió de nuevo como una nueva y sigue funcionando; solo se van el registro muerto y sus hilos en caché aquí.",
   "Use 2 or 3 characters.":
     "Usa 2 o 3 caracteres.",
+  "Coordinator here":
+    "Coordinador aquí",
+  "Coordinator here too":
+    "También coordinador",
+  "Workers only":
+    "Solo workers",
+  "Moving coordinator":
+    "Coordinador en traslado",
+  "Not shared":
+    "No compartido",
+  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
+    "El coordinador del proyecto se ejecuta en esta copia, esté trabajando ahora o no. Las copias de otras máquinas reciben trabajo de él. Se refiere al coordinador, no a cómo se hizo la copia.",
+  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
+    "Esta copia también ejecuta un coordinador propio, como puede hacer cada máquina, pero el coordinador del proyecto es el de otra copia. Transferir mueve el coordinador y deja aquí solo workers.",
+  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
+    "El coordinador se trasladó a otra máquina. Esta copia solo ejecuta los workers que él envía aquí.",
+  "The project's coordinator is moving between machines right now.":
+    "El coordinador del proyecto se está trasladando entre máquinas ahora mismo.",
+  "No other machine has a copy of this project.":
+    "Ninguna otra máquina tiene una copia de este proyecto.",
+  "Connect to see its role":
+    "Conéctate para ver su rol",
+  "This app cannot see this machine, so it cannot tell what this copy does.":
+    "Esta app no ve esta máquina, así que no puede saber qué hace esta copia.",
   "{name} wears {color}":
     "{name} usa {color}",
   "Change the color of {name}, now {color}":
