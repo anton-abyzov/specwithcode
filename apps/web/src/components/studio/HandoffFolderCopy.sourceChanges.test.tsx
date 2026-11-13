@@ -219,7 +219,7 @@ it("names a repository whose only change is its refs or Git settings", async () 
   await mount();
   await handOff();
   const row = container.querySelector('[data-slot="source-change"]')!;
-  expect(row.textContent).toContain("tags or other refs differ; Git settings or hooks differ");
+  expect(row.textContent).toContain("tags or other refs differ; Git settings differ");
 });
 
 it("lists the changed paths by folder with the three choices", async () => {

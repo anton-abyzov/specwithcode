@@ -208,7 +208,7 @@ it("lists a new tag, note or remote-tracking ref as the repository's refs", asyn
   expect(await repository()).toEqual([]);
 });
 
-it("lists a changed Git setting, exclude rule or hook as the repository's settings", async () => {
+it("lists a changed Git setting or exclude rule as the repository's settings; hooks never travel", async () => {
   await committed();
   const config = Path.join(folder, ".git/config");
   const exclude = Path.join(folder, "repositories/svc/.git/info/exclude");
@@ -226,9 +226,9 @@ it("lists a changed Git setting, exclude rule or hook as the repository's settin
   await FSP.writeFile(config, original.config);
   await FSP.writeFile(exclude, original.exclude);
   expect(await changed()).toEqual([]);
+  // Hooks and settings the copy never carries are not changes to it.
   write(hook, "#!/bin/sh\nexit 0\n");
-  expect(await changed()).toEqual(["repositories/svc"]);
-  await FSP.rm(hook);
+  git(folder, "config", "core.pager", "less -R");
   expect(await changed()).toEqual([]);
 });
 

@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import { privateDirectory } from "./durable.ts";
 import { FolderGitError, runGit } from "./git.ts";
+import { isUncarriedGitPath, rewriteCopiedGitConfigs, safeRemoteUrl } from "./safeGitConfig.ts";
 import {
   emptyTotals,
   FolderScanError,
@@ -585,12 +586,15 @@ async function snapshotMain(
     required: new Set(["HEAD", "config"]),
     skip: (relative, isDirectory) =>
       relative === "objects" ||
+      isUncarriedGitPath(relative, isDirectory) ||
       (isDirectory &&
         relative.startsWith("worktrees/") &&
         !relative.slice("worktrees/".length).includes("/") &&
         !admins.has(relative.slice("worktrees/".length))),
   });
   const after = await readRefs(context, sourceFolder);
+  // Only plain settings travel: hooks, drivers, helpers and credentialed URLs stay here (1328).
+  await rewriteCopiedGitConfigs(targetGit, { signal: context.signal });
   // Objects AFTER all HEAD/index/refs/reflogs are frozen: every object they
   // name existed before they were written.
   await copyObjects(
@@ -687,7 +691,8 @@ async function snapshotExternal(
     for (const name of await NodeFSP.readdir(directory))
       if (/^sharedindex\.[a-f0-9]+$/.test(name))
         await copyGitFile(context, NodePath.join(directory, name), NodePath.join(targetGit, name));
-  if (info.origin) await git(target, ["config", "remote.origin.url", info.origin]);
+  const origin = info.origin ? safeRemoteUrl(info.origin) : null;
+  if (origin) await git(target, ["config", "remote.origin.url", origin]);
   await git(target, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
   await copyObjects(context, NodePath.join(common, "objects"), NodePath.join(targetGit, "objects"));
   await materializeAlternates(context, common, targetGit, target);

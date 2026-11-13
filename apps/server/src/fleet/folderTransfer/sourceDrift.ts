@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { readJson, writeJson } from "./durable.ts";
 import { runGit } from "./git.ts";
+import { safeGitConfigBytes } from "./safeGitConfig.ts";
 import {
   forEachLimited,
   hashFile,
@@ -28,7 +29,7 @@ export interface DriftRepository {
   readonly indexChanged: boolean;
   /** A tag, note, remote-tracking or other ref differs; branches and stashes are listed apart. */
   readonly refsChanged?: boolean;
-  /** The repository's config, exclude rules or hooks differ from what the copy carried. */
+  /** The repository's Git settings or exclude rules differ from what the copy carried. */
   readonly settingsChanged?: boolean;
 }
 
@@ -88,9 +89,8 @@ const STAT_CONCURRENCY = 16;
 
 const UNREADABLE = /^Could not read (.+)$/;
 const UNCOPYABLE = /^Skipped an entry whose name cannot be copied safely below (.+)$/;
-/** What the copy carries of a main repository's own Git folder besides refs, objects and logs. */
-const SETTINGS = (path: string) =>
-  path === "config" || path === "info/exclude" || path.startsWith("hooks/");
+/** What the copy carries byte for byte of a main repository's Git settings; config is compared apart. */
+const SETTINGS = (path: string) => path === "info/exclude";
 
 export const driftBasisFile = (directory: string) => NodePath.join(directory, "drift-basis.json");
 export const servedSecretsFile = (directory: string) =>
@@ -255,12 +255,25 @@ async function gitFilesDiffer(
   return false;
 }
 
-/** Config, exclude rules and hooks. */
-const settingsDiffer = (
+/**
+ * Config and exclude rules. The copy carries only a config's safe entries and
+ * no hooks (1328), so the live config is compared as the copy would carry it
+ * (or byte for byte, for a record from before that), and hooks not at all.
+ */
+async function settingsDiffer(
   folder: string,
   repo: RepositoryInfo,
   copiedEntries: ReadonlyMap<string, ManifestEntry>,
-) => gitFilesDiffer(folder, repo, copiedEntries, SETTINGS, ["config", "info/exclude"], ["hooks"]);
+): Promise<boolean> {
+  if (await gitFilesDiffer(folder, repo, copiedEntries, SETTINGS, ["info/exclude"], []))
+    return true;
+  if (repo.kind !== "main") return false;
+  const copied = copiedEntries.get(`${gitPrefix(repo.path)}/config`)?.sha256 ?? null;
+  const live = NodePath.join(folder, gitPrefix(repo.path), "config");
+  if ((await smallFileHash(live)) === copied) return false;
+  const safe = await safeGitConfigBytes(live);
+  return (safe === null ? null : sha256Hex(safe)) !== copied;
+}
 
 /** Older records keep no ref digest: the copied loose refs and packed-refs files instead. */
 const refFilesDiffer = (

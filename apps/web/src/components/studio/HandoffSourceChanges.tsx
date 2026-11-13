@@ -58,7 +58,7 @@ function repositoryDetail(row: ChangeRow): string {
     parts.push(`stashes ${repository.stashFrom} → ${repository.stashTo}`);
   if (repository.indexChanged) parts.push("staged changes differ");
   if (repository.refsChanged) parts.push("tags or other refs differ");
-  if (repository.settingsChanged) parts.push("Git settings or hooks differ");
+  if (repository.settingsChanged) parts.push("Git settings differ");
   return parts.length > 0 ? parts.join("; ") : "Git data changed.";
 }
 

@@ -10,6 +10,28 @@ import {
 import { PORTABLE_GIT_NOTICE } from "./portableGit.ts";
 import type { SecretHint, SecretLocations } from "./secretLocations.ts";
 import { sha256Hex } from "./wire.ts";
+import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
+
+/** Tracked files that look like secrets, listed per copy; the count beyond stays unlisted. */
+const MAX_TRACKED_SECRET_HINTS = 50;
+export const TRACKED_SECRET_SOURCE = "Git";
+export const TRACKED_SECRET_HINT =
+  "Tracked in Git, so it travels with the repository's history. If it holds a secret, remove it from Git and rotate it.";
+
+/** Tracked files whose names look like secrets: Git carries them, so the review names them (1328). */
+export function trackedSecretHints(scan: FolderScan): ReadonlyArray<SecretHint> {
+  return scan.entries
+    .filter(
+      (entry) =>
+        entry.class === "tracked" && entry.type === "file" && isSecretLikeProjectPath(entry.path),
+    )
+    .slice(0, MAX_TRACKED_SECRET_HINTS)
+    .map((entry) => ({
+      path: entry.path,
+      source: TRACKED_SECRET_SOURCE,
+      hint: TRACKED_SECRET_HINT,
+    }));
+}
 
 /** Skipped worktree paths kept per list; the counts stay true. */
 const MAX_SKIPPED_WORKTREES = 200;
@@ -79,6 +101,14 @@ export function inventoryFingerprint(scan: FolderScan): string {
   );
 }
 
+function secretHintsOf(
+  scan: FolderScan,
+  locations: SecretLocations | undefined,
+): { readonly secretHints?: ReadonlyArray<SecretHint> } {
+  const hints = [...trackedSecretHints(scan), ...(locations?.hints ?? [])];
+  return hints.length > 0 ? { secretHints: hints } : {};
+}
+
 export function summarize(
   scan: FolderScan,
   warnings: ReadonlyArray<string> = [],
@@ -106,7 +136,7 @@ export function summarize(
         )
         .map((entry) => ({ path: entry.path, size: entry.size })),
     ].slice(0, 500),
-    ...(locations && locations.hints.length > 0 ? { secretHints: locations.hints } : {}),
+    ...secretHintsOf(scan, locations),
     linksOutside: scan.entries.filter(
       (entry) =>
         entry.type === "symlink" &&
