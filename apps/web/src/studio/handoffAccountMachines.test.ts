@@ -62,6 +62,32 @@ describe("handoffAccountMachines", () => {
     ).toEqual([["m5", "M5", true]]);
   });
 
+  it("names a machine the source has not allowed once, not also as connecting", () => {
+    const result = handoffAccountMachines({
+      ...base,
+      discovered: [found("m5", "M5")],
+      fleet: [connectOnly("m5")],
+      sourceFleet: [],
+      states: new Map([["m5", { phase: "connecting" }]]),
+    });
+    expect(result.fallback).toEqual([]);
+    expect(result.notAllowed.map((machine) => machine.environmentId)).toEqual(["m5"]);
+  });
+
+  it("keeps Connect rows while the source machine's fleet cannot be read", () => {
+    const result = handoffAccountMachines({
+      ...base,
+      discovered: [found("m5", "M5")],
+      fleet: [connectOnly("m5")],
+      sourceFleet: null,
+      states: new Map<string, AccountAutoConnectState>([
+        ["m5", { phase: "failed", reason: "Could not connect over SpecWithCode Connect." }],
+      ]),
+    });
+    expect(result.fallback.map((machine) => machine.environmentId)).toEqual(["m5"]);
+    expect(result.notAllowed).toEqual([]);
+  });
+
   it("offers no Connect while SpecWithCode Connect cannot be reached", () => {
     const [row] = handoffAccountMachines({
       ...base,
