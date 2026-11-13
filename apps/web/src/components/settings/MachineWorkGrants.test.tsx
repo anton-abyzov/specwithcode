@@ -24,7 +24,8 @@ import {
   workGrantProjectsSummary,
   workGrantStatus,
 } from "./MachineWorkGrants";
-import { grantSignInRows } from "./GrantSignInPicker";
+import { renderToStaticMarkup } from "react-dom/server";
+import { GrantSignInChoices, grantSignInRows, signInModeAfterKey } from "./GrantSignInPicker";
 import {
   signInChoices,
   workGrantAllowsNoProject,
@@ -590,5 +591,41 @@ describe("who can run work on this Mac", () => {
     expect(workGrantAccessNote({ machineLabel: "m4", runtimeCap: null })).toContain(
       "m4 sets it the next time",
     );
+  });
+
+  it("moves the sign-in mode with arrow keys and keeps one tab stop", () => {
+    expect(signInModeAfterKey("all", "ArrowRight")).toBe("listed");
+    expect(signInModeAfterKey("all", "ArrowLeft")).toBe("none");
+    expect(signInModeAfterKey("none", "ArrowDown")).toBe("all");
+    expect(signInModeAfterKey("listed", "Enter")).toBeNull();
+    const html = renderToStaticMarkup(
+      <GrantSignInChoices
+        accounts={{ kind: "all" }}
+        available={snapshot.accounts}
+        disabled={false}
+        label="All sign-ins"
+        onChange={vi.fn()}
+      />,
+    );
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(html.match(/tabindex="-1"/g)).toHaveLength(2);
+  });
+
+  it("locks every sign-in choice while the grant is busy", () => {
+    const html = renderToStaticMarkup(
+      <GrantSignInChoices
+        accounts={{ kind: "listed", instanceIds: [claude] }}
+        available={snapshot.accounts}
+        disabled
+        label="Claude"
+        onChange={vi.fn()}
+      />,
+    );
+    expect(html.match(/role="radio"[^>]*disabled=""|disabled=""[^>]*role="radio"/g)).toHaveLength(
+      3,
+    );
+    expect(
+      html.match(/type="checkbox"[^>]*disabled=""|disabled=""[^>]*type="checkbox"/g),
+    ).toHaveLength(2);
   });
 });

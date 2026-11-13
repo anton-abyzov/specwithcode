@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import type { StudioWorkGrant } from "@specweave-studio/contracts/studioFleet";
-import { MachineLimits, MachineWorkSummary } from "./MachineWorkSummary";
+import { MachineLimits, MachineWorkSummary, machineLimitsOpen } from "./MachineWorkSummary";
 import type { MachineWorkerGrant, MachineWorkHere } from "./machinesSettings.logic";
 
 const m5 = EnvironmentId.make("env-m5");
@@ -90,5 +90,24 @@ describe("a machine card's work summary", () => {
       'open=""',
     );
     expect(renderToStaticMarkup(<MachineLimits open>x</MachineLimits>)).toContain('open=""');
+  });
+
+  it("opens Limits by itself while a choice is pending or access runs out", () => {
+    const base = {
+      workers: workers(),
+      workHere: here(grant),
+      addForAgents: false,
+      allowBack: false,
+    };
+    expect(machineLimitsOpen(base)).toBe(false);
+    expect(machineLimitsOpen({ ...base, workers: { ...workers(), status: "expiring" } })).toBe(
+      true,
+    );
+    expect(machineLimitsOpen({ ...base, workers: { ...workers(), status: "not-allowed" } })).toBe(
+      true,
+    );
+    expect(machineLimitsOpen({ ...base, workers: null, addForAgents: true })).toBe(true);
+    expect(machineLimitsOpen({ ...base, workHere: null, allowBack: true })).toBe(true);
+    expect(machineLimitsOpen({ ...base, addForAgents: true, allowBack: true })).toBe(false);
   });
 });

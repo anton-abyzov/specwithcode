@@ -73,11 +73,8 @@ export function GrantSignInPicker({
   onChange: (next: StudioWorkGrantAccounts) => void;
 }) {
   const tx = useTx();
-  const [query, setQuery] = useState("");
   const chosen: ReadonlyArray<ProviderInstanceId> =
     accounts.kind === "listed" ? accounts.instanceIds : [];
-  const choices = signInChoices(available, chosen);
-  const shown = grantSignInRows(available, chosen, query);
   const label =
     accounts.kind === "all"
       ? tx("All sign-ins")
@@ -96,107 +93,167 @@ export function GrantSignInPicker({
         {label}
       </PopoverTrigger>
       <PopoverPopup align="start" width="sm" padding="compact">
-        <div className="flex flex-col gap-2" data-slot="grant-sign-in-picker">
-          <div
-            role="radiogroup"
-            aria-label={tx("Sign-ins its work may use")}
-            className="grid grid-cols-3 gap-1 rounded-md bg-muted p-0.5 text-xs"
-          >
-            {MODES.map((mode) => (
-              <button
-                key={mode.kind}
-                type="button"
-                role="radio"
-                aria-checked={accounts.kind === mode.kind}
-                className={`rounded px-2 py-1 ${
-                  accounts.kind === mode.kind
-                    ? "bg-background font-medium text-foreground shadow-xs"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() =>
-                  onChange(
-                    mode.kind === "listed"
-                      ? { kind: "listed", instanceIds: [...chosen] }
-                      : { kind: mode.kind },
-                  )
-                }
-              >
-                {tx(mode.label)}
-              </button>
-            ))}
-          </div>
-          {accounts.kind === "listed" ? (
-            choices.length === 0 ? (
-              <p className="px-1 text-xs text-muted-foreground">
-                {tx("No sign-ins on this machine yet. Add one under Settings > Providers.")}
-              </p>
-            ) : (
-              <>
-                {choices.length > 4 ? (
-                  <label className="flex items-center gap-1.5 rounded-md border border-input px-2 py-1 text-xs">
-                    <SearchIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-                    <input
-                      type="search"
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      placeholder={tx("Search")}
-                      aria-label={tx("Search sign-ins")}
-                      className="min-w-0 flex-1 bg-transparent outline-none"
-                    />
-                  </label>
-                ) : null}
-                <ul className="flex max-h-60 flex-col overflow-y-auto" aria-label={label}>
-                  {shown.map((account) => {
-                    const checked = account.checked;
-                    return (
-                      <li key={account.instanceId}>
-                        <label className="flex min-w-0 cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-accent/50">
-                          <input
-                            type="checkbox"
-                            className="shrink-0"
-                            checked={checked}
-                            onChange={(event) =>
-                              onChange({
-                                kind: "listed",
-                                instanceIds: event.target.checked
-                                  ? [...chosen, account.instanceId]
-                                  : chosen.filter((id) => id !== account.instanceId),
-                              })
-                            }
-                          />
-                          <AccountLogo account={account} />
-                          <span className="min-w-0 flex-1 truncate">
-                            {account.label}
-                            {account.account ? (
-                              <span className="text-muted-foreground"> · {account.account}</span>
-                            ) : null}
-                          </span>
-                          {account.notSignedIn ? (
-                            <span className="shrink-0 text-muted-foreground">
-                              {tx("not signed in")}
-                            </span>
-                          ) : null}
-                        </label>
-                      </li>
-                    );
-                  })}
-                  {shown.length === 0 ? (
-                    <li className="px-1 py-1 text-xs text-muted-foreground">
-                      {tx("Nothing matches.")}
-                    </li>
-                  ) : null}
-                </ul>
-              </>
-            )
-          ) : (
-            <p className="px-1 text-xs text-muted-foreground">
-              {accounts.kind === "all"
-                ? tx("Its work may use any sign-in on this machine.")
-                : tx("Its work may use no sign-in here, so every launch is refused.")}
-            </p>
-          )}
-        </div>
+        <GrantSignInChoices
+          accounts={accounts}
+          available={available}
+          disabled={disabled}
+          label={label}
+          onChange={onChange}
+        />
       </PopoverPopup>
     </Popover>
+  );
+}
+
+/** The mode an arrow key moves to in the All / Chosen / None group, or null for other keys. */
+export function signInModeAfterKey(
+  current: StudioWorkGrantAccounts["kind"],
+  key: string,
+): StudioWorkGrantAccounts["kind"] | null {
+  const step =
+    key === "ArrowRight" || key === "ArrowDown"
+      ? 1
+      : key === "ArrowLeft" || key === "ArrowUp"
+        ? -1
+        : 0;
+  if (step === 0) return null;
+  const index = MODES.findIndex((mode) => mode.kind === current);
+  return MODES[(index + step + MODES.length) % MODES.length]!.kind;
+}
+
+/**
+ * The picker's popup: the All / Chosen / None group (one tab stop, arrow keys
+ * move) and, for Chosen, the searchable list. Everything in it is locked while
+ * `disabled`, so a click during a save is not silently dropped.
+ */
+export function GrantSignInChoices({
+  accounts,
+  available,
+  disabled,
+  label,
+  onChange,
+}: {
+  accounts: StudioWorkGrantAccounts;
+  available: StudioWorkGrantsSnapshot["accounts"];
+  disabled: boolean;
+  label: string;
+  onChange: (next: StudioWorkGrantAccounts) => void;
+}) {
+  const tx = useTx();
+  const [query, setQuery] = useState("");
+  const chosen: ReadonlyArray<ProviderInstanceId> =
+    accounts.kind === "listed" ? accounts.instanceIds : [];
+  const choices = signInChoices(available, chosen);
+  const shown = grantSignInRows(available, chosen, query);
+  const pick = (kind: StudioWorkGrantAccounts["kind"]) => {
+    if (disabled || kind === accounts.kind) return;
+    onChange(kind === "listed" ? { kind: "listed", instanceIds: [...chosen] } : { kind });
+  };
+  return (
+    <div className="flex flex-col gap-2" data-slot="grant-sign-in-picker">
+      <div
+        role="radiogroup"
+        aria-label={tx("Sign-ins its work may use")}
+        className="grid grid-cols-3 gap-1 rounded-md bg-muted p-0.5 text-xs"
+      >
+        {MODES.map((mode) => (
+          <button
+            key={mode.kind}
+            type="button"
+            role="radio"
+            disabled={disabled}
+            aria-checked={accounts.kind === mode.kind}
+            tabIndex={accounts.kind === mode.kind ? 0 : -1}
+            onKeyDown={(event) => {
+              const next = signInModeAfterKey(accounts.kind, event.key);
+              if (next === null) return;
+              event.preventDefault();
+              pick(next);
+              const buttons = event.currentTarget.parentElement?.querySelectorAll("button");
+              buttons?.[MODES.findIndex((item) => item.kind === next)]?.focus();
+            }}
+            className={`rounded px-2 py-1 ${
+              accounts.kind === mode.kind
+                ? "bg-background font-medium text-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => pick(mode.kind)}
+          >
+            {tx(mode.label)}
+          </button>
+        ))}
+      </div>
+      {accounts.kind === "listed" ? (
+        choices.length === 0 ? (
+          <p className="px-1 text-xs text-muted-foreground">
+            {tx("No sign-ins on this machine yet. Add one under Settings > Providers.")}
+          </p>
+        ) : (
+          <>
+            {choices.length > 4 ? (
+              <label className="flex items-center gap-1.5 rounded-md border border-input px-2 py-1 text-xs">
+                <SearchIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={tx("Search")}
+                  aria-label={tx("Search sign-ins")}
+                  className="min-w-0 flex-1 bg-transparent outline-none"
+                />
+              </label>
+            ) : null}
+            <ul className="flex max-h-60 flex-col overflow-y-auto" aria-label={label}>
+              {shown.map((account) => {
+                const checked = account.checked;
+                return (
+                  <li key={account.instanceId}>
+                    <label className="flex min-w-0 cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-accent/50">
+                      <input
+                        type="checkbox"
+                        className="shrink-0"
+                        disabled={disabled}
+                        checked={checked}
+                        onChange={(event) =>
+                          onChange({
+                            kind: "listed",
+                            instanceIds: event.target.checked
+                              ? [...chosen, account.instanceId]
+                              : chosen.filter((id) => id !== account.instanceId),
+                          })
+                        }
+                      />
+                      <AccountLogo account={account} />
+                      <span className="min-w-0 flex-1 truncate">
+                        {account.label}
+                        {account.account ? (
+                          <span className="text-muted-foreground"> · {account.account}</span>
+                        ) : null}
+                      </span>
+                      {account.notSignedIn ? (
+                        <span className="shrink-0 text-muted-foreground">
+                          {tx("not signed in")}
+                        </span>
+                      ) : null}
+                    </label>
+                  </li>
+                );
+              })}
+              {shown.length === 0 ? (
+                <li className="px-1 py-1 text-xs text-muted-foreground">
+                  {tx("Nothing matches.")}
+                </li>
+              ) : null}
+            </ul>
+          </>
+        )
+      ) : (
+        <p className="px-1 text-xs text-muted-foreground">
+          {accounts.kind === "all"
+            ? tx("Its work may use any sign-in on this machine.")
+            : tx("Its work may use no sign-in here, so every launch is refused.")}
+        </p>
+      )}
+    </div>
   );
 }

@@ -71,7 +71,7 @@ import {
 } from "./AddProjectToMachine";
 import { MachineSetupState, MachineSummary, type MachineSetup } from "./MachineSummary";
 import { MachineWorkGrants } from "./MachineWorkGrants";
-import { MachineLimits, MachineWorkSummary } from "./MachineWorkSummary";
+import { MachineLimits, MachineWorkSummary, machineLimitsOpen } from "./MachineWorkSummary";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
@@ -827,7 +827,7 @@ export function MachineRow({
         </div>
       ) : null}
 
-      {row.workers || row.workHere || addForAgents || allowBack || details ? (
+      {row.workers || row.workHere || addForAgents || allowBack || connectBothWays || details ? (
         <div className="flex min-w-0 flex-col gap-1.5 pl-7">
           {row.workers || row.workHere || allowBack ? (
             <MachineWorkSummary
@@ -838,11 +838,12 @@ export function MachineRow({
             />
           ) : null}
           <MachineLimits
-            open={
-              Boolean(addForAgents && !row.workers) ||
-              Boolean(allowBack && !row.workHere) ||
-              row.workers?.status === "not-allowed"
-            }
+            open={machineLimitsOpen({
+              workers: row.workers,
+              workHere: row.workHere,
+              addForAgents: Boolean(addForAgents),
+              allowBack: Boolean(allowBack),
+            })}
           >
             {row.workers ? (
               workersControl ? (
@@ -865,9 +866,9 @@ export function MachineRow({
             ) : (
               allowBack
             )}
-            {connectBothWays}
             {details}
           </MachineLimits>
+          {connectBothWays}
         </div>
       ) : null}
 

@@ -155,6 +155,30 @@ export function MachineWorkSummary({
   );
 }
 
+/**
+ * Whether a card's Limits opens by itself: while a direction still needs a
+ * choice, while agents here are not allowed there, or while that access is
+ * running out and will not renew.
+ */
+export function machineLimitsOpen({
+  workers,
+  workHere,
+  addForAgents,
+  allowBack,
+}: {
+  workers: MachineWorkerGrant | null;
+  workHere: MachineWorkHere | null;
+  addForAgents: boolean;
+  allowBack: boolean;
+}): boolean {
+  return (
+    (addForAgents && !workers) ||
+    (allowBack && !workHere) ||
+    workers?.status === "not-allowed" ||
+    workers?.status === "expiring"
+  );
+}
+
 /** The folded part of a card: what each side may do, and how this app reaches it. */
 export function MachineLimits({
   open,
