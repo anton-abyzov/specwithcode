@@ -189,7 +189,7 @@ it.effect("refuses another machine's work the owner's mail even in a project wit
       expect(JSON.stringify(result.at(-1)?.result)).toContain("Settings > Google > Other machines");
       expect(f.calls).toEqual([]);
       expect(other.asked).toEqual(["env-m4:gmail"]);
-    }).pipe(Effect.provide(other.layer), Effect.provide(f.layer));
+    }).pipe(Effect.provide(Layer.merge(other.layer, f.layer)));
   }),
 );
 
@@ -211,7 +211,7 @@ it.effect("reads only the sources the owner allowed that machine", () =>
         .pipe(Stream.unwrap, Stream.runCollect);
       expect(calendar.at(-1)?.result).toMatchObject({ code: "capability_denied" });
       expect(f.calls.map((call) => call.operation)).toEqual(["gmailSearch"]);
-    }).pipe(Effect.provide(other.layer), Effect.provide(f.layer));
+    }).pipe(Effect.provide(Layer.merge(other.layer, f.layer)));
   }),
 );
 
@@ -226,7 +226,7 @@ it.effect("lets the owner's own machine read as the owner", () =>
         .pipe(Stream.unwrap, Stream.runCollect);
       expect(f.calls.map((call) => call.operation)).toEqual(["driveRead"]);
       expect(other.asked).toEqual([]);
-    }).pipe(Effect.provide(other.layer), Effect.provide(f.layer));
+    }).pipe(Effect.provide(Layer.merge(other.layer, f.layer)));
   }),
 );
 
