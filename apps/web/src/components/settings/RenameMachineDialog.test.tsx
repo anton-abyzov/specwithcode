@@ -15,6 +15,16 @@ vi.mock("../../studio/machineNickname", async (importOriginal) => {
     ...actual,
     useMachineNameSources: () => ({ nicknames: state.nicknames, labels: state.labels }),
     useCustomMachineNickname: (id: string | null) => state.nicknames[id ?? ""]?.name ?? null,
+    // The real hook reads the store inside its own module, past this mock; resolve from state.
+    useMachineNameHolder: () => (id: string, name: string) => {
+      const names = new Map<string, string>(state.labels);
+      for (const [key, entry] of Object.entries(state.nicknames)) names.set(key, entry.name);
+      const wanted = name.trim().toLowerCase();
+      for (const [key, shown] of names) {
+        if (key !== id && shown.trim().toLowerCase() === wanted) return { environmentId: key, name: shown };
+      }
+      return null;
+    },
   };
 });
 vi.mock("../../studio/machineIdentity", async (importOriginal) => ({
