@@ -8,6 +8,7 @@ import { useTx } from "../../i18n";
 import { useEnvironments } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { readSkippedFleetEnvironments } from "../../studio/fleetAutoConnect";
 import { useAccountAutoConnectStates } from "../../studio/grantedAccountMachines";
 import {
   handoffAccountMachines,
@@ -69,6 +70,8 @@ export function HandoffAccountMachines({
           savedEnvironmentIds,
           sourceEnvironmentId,
           accountEnvironmentIds: new Set(discovery.environments.keys()),
+          removed: readSkippedFleetEnvironments(),
+          fleetPairingSettled: fleetAutoConnectSettled,
           name,
         });
   if (fallback.length === 0 && notAllowed.length === 0 && fleetOnly.length === 0) return null;

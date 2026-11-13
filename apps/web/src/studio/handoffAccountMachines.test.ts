@@ -113,4 +113,26 @@ describe("handoffFleetOnlyMachines", () => {
       }),
     ).toEqual([{ environmentId: "m5", label: "M5" }]);
   });
+
+  it("does not report machines still pairing, removed here or with a wrong address", () => {
+    expect(
+      handoffFleetOnlyMachines({
+        fleet: [
+          { environmentId: "m1", label: "M1", url: "https://m1.tail1234.ts.net:3773" },
+          { environmentId: "m2", label: "M2", url: "https://relay.specwithcode.com/e/m2" },
+          {
+            environmentId: "m3",
+            label: "M3",
+            url: "https://relay.specwithcode.com/e/m3",
+            status: "identity-mismatch",
+          },
+        ],
+        savedEnvironmentIds: new Set(),
+        sourceEnvironmentId: "m4",
+        accountEnvironmentIds: new Set(),
+        removed: new Set(["m2"]),
+        fleetPairingSettled: () => false,
+      }),
+    ).toEqual([]);
+  });
 });

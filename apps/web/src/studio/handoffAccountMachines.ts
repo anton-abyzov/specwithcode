@@ -98,7 +98,16 @@ export function handoffAccountMachines(input: {
  * complete while one of the user's machines is absent from it.
  */
 export function handoffFleetOnlyMachines(input: {
-  readonly fleet: ReadonlyArray<{ readonly environmentId: string; readonly label: string }>;
+  readonly fleet: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly label: string;
+    readonly url?: string;
+    readonly status?: string;
+  }>;
+  /** Removed here on purpose: not reported as missing. */
+  readonly removed?: ReadonlySet<string>;
+  /** Tailnet machines whose automatic pairing has finished; until then they may still join. */
+  readonly fleetPairingSettled?: (environmentId: string) => boolean;
   readonly savedEnvironmentIds: ReadonlySet<string>;
   readonly sourceEnvironmentId: string;
   /** Machines on this app's Connect account, handled above. */
@@ -113,6 +122,11 @@ export function handoffFleetOnlyMachines(input: {
         id === input.sourceEnvironmentId ||
         input.savedEnvironmentIds.has(id) ||
         input.accountEnvironmentIds.has(id) ||
+        input.removed?.has(id) ||
+        machine.status === "identity-mismatch" ||
+        (machine.url !== undefined &&
+          fleetMachineHasTailnetAddress({ url: machine.url }) &&
+          input.fleetPairingSettled?.(id) === false) ||
         seen.has(id)
       )
         return false;
