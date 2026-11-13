@@ -19,6 +19,7 @@ import {
   type LearnedModelPreference,
 } from "@specweave-studio/contracts";
 import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -773,7 +774,7 @@ describe("OrchestratorMcpService review delegation", () => {
         ["gpt-6-luna", "GPT-6 Luna"],
       ]),
       usageLimits: {
-        checkedAt: new Date().toISOString(),
+        checkedAt: DateTime.formatIso(DateTime.nowUnsafe()),
         windows: [
           {
             id: "seven_day",
