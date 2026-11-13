@@ -4,6 +4,7 @@ import {
   PERSONAL_ASSISTANT_LABEL,
 } from "@specweave-studio/contracts";
 import { CheckIcon, ConciergeBellIcon, FolderGit2Icon, ListChecksIcon } from "lucide-react";
+import { AssistantIconGlyph, type AssistantLucideIcon } from "./AssistantIconChoice";
 import { useId, type ReactNode } from "react";
 import type { CommandPaletteView } from "../CommandPalette.logic";
 import { cn } from "../../lib/utils";
@@ -167,18 +168,25 @@ export function ProjectCreationPreview({
   path,
   root,
   machine,
+  icon,
 }: {
   kind: NewProjectKind;
   name: string;
   path: string | null;
   root: string | null;
   machine: string | null;
+  /** The icon a new assistant will get, chosen below the preview. */
+  icon?: AssistantLucideIcon | null;
 }) {
   return (
     <div className="p-2 pb-0">
       <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
         {kind === "personal" ? (
-          <ConciergeBellIcon className="size-4 shrink-0" />
+          icon ? (
+            <AssistantIconGlyph icon={icon} />
+          ) : (
+            <ConciergeBellIcon className="size-4 shrink-0" />
+          )
         ) : (
           <FolderGit2Icon className="size-4 shrink-0" />
         )}

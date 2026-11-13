@@ -5,9 +5,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/ai";
+import * as WorkGrants from "../../../fleet/WorkGrants.ts";
+import { unscopedGrant } from "../../../fleet/workGrantPolicy.ts";
 import * as Google from "../../../integrations/google/GoogleAccountService.ts";
 import { projectGoogleStatus } from "../../../integrations/google/googleAccountHealth.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as PersonalDataAccess from "../../../personalData/PersonalDataAccess.ts";
 import * as Context from "../../McpInvocationContext.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
@@ -146,6 +149,85 @@ it.effect.each(["read-only", "full-access"] as const)(
         Effect.provide(f.layer),
       );
     }),
+);
+
+/** The calling thread was started by another machine's work, under the grant given. */
+const startedByAnotherMachine = (kind: "own" | "team", allowed: ReadonlyArray<string>) => {
+  const m4 = EnvironmentId.make("env-m4");
+  const asked: Array<string> = [];
+  return {
+    asked,
+    layer: Layer.mergeAll(
+      Layer.succeed(WorkGrants.WorkGrants, {
+        ...WorkGrants.WorkGrants.defaultValue(),
+        enabled: true,
+        originOf: () => Effect.succeed({ coordinatorEnvironmentId: m4, path: [m4], hops: 1 }),
+        forCoordinator: (id) => Effect.succeed({ ...unscopedGrant(id), kind }),
+      }),
+      Layer.succeed(PersonalDataAccess.PersonalDataAccess, {
+        ...PersonalDataAccess.PersonalDataAccess.defaultValue(),
+        check: (input) =>
+          Effect.sync(() => {
+            asked.push(`${input.environmentId}:${input.source}`);
+            return allowed.includes(input.source);
+          }),
+      }),
+    ),
+  };
+};
+
+it.effect("refuses another machine's work the owner's mail even in a project with Gmail on", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const other = startedByAnotherMachine("team", []);
+    yield* Effect.gen(function* () {
+      const toolkit = yield* GoogleToolkit;
+      const result = yield* toolkit
+        .handle("studio_google_gmail_search", { query: "is:unread" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(result.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+      expect(JSON.stringify(result.at(-1)?.result)).toContain("Settings > Google > Other machines");
+      expect(f.calls).toEqual([]);
+      expect(other.asked).toEqual(["env-m4:gmail"]);
+    }).pipe(Effect.provide(other.layer), Effect.provide(f.layer));
+  }),
+);
+
+it.effect("reads only the sources the owner allowed that machine", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const other = startedByAnotherMachine("team", ["gmail"]);
+    yield* Effect.gen(function* () {
+      const toolkit = yield* GoogleToolkit;
+      yield* toolkit
+        .handle("studio_google_gmail_search", { query: "is:unread" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      const drive = yield* toolkit
+        .handle("studio_google_drive_read", { fileId: "f1" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(drive.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+      const calendar = yield* toolkit
+        .handle("studio_google_calendar_events", {})
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(calendar.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+      expect(f.calls.map((call) => call.operation)).toEqual(["gmailSearch"]);
+    }).pipe(Effect.provide(other.layer), Effect.provide(f.layer));
+  }),
+);
+
+it.effect("lets the owner's own machine read as the owner", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const other = startedByAnotherMachine("own", []);
+    yield* Effect.gen(function* () {
+      const toolkit = yield* GoogleToolkit;
+      yield* toolkit
+        .handle("studio_google_drive_read", { fileId: "f1" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(f.calls.map((call) => call.operation)).toEqual(["driveRead"]);
+      expect(other.asked).toEqual([]);
+    }).pipe(Effect.provide(other.layer), Effect.provide(f.layer));
+  }),
 );
 
 it("offers agents reads, reply drafts and card-approved sending only, and no way to change access", () => {

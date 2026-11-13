@@ -47,6 +47,7 @@ import {
   partitionGoogleProjects,
 } from "./googleAccountSettings.logic";
 import { MORNING_BRIEFING_TEMPLATE } from "./scheduledTasksSettings.logic";
+import { PersonalDataAccessSection } from "./PersonalDataAccessSection";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 
@@ -1057,6 +1058,10 @@ export function GoogleAccountSettingsPanel() {
               {tx("Use your own OAuth client")}
             </Button>
           </div>
+        ) : null}
+
+        {environmentId !== null && status?.connected ? (
+          <PersonalDataAccessSection environmentId={environmentId} canWrite={canWrite} />
         ) : null}
 
         {status?.connected || usesOwnClient || (status?.projects.length ?? 0) > 0 ? (

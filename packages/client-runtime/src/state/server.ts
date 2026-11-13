@@ -1435,6 +1435,17 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    personalDataStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:personal-data:status",
+      tag: WS_METHODS.personalDataStatus,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    setPersonalDataAccess: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:personal-data:set-access",
+      tag: WS_METHODS.personalDataSetAccess,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
       tag: WS_METHODS.serverRefreshUsageRates,

@@ -73,7 +73,7 @@ const storageFailure = () =>
  * across the fleet), else its name in this machine's fleet list. Read without
  * adding a requirement, so every tool can name the coordinator.
  */
-const labelsOf = Effect.gen(function* () {
+export const labelsOf = Effect.gen(function* () {
   const fleet = yield* RemoteWorkers.RemoteWorkers.pipe(
     Effect.flatMap((remote) => remote.machineLabels),
   );

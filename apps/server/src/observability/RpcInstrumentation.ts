@@ -261,6 +261,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accessAnswerRequest]: "access",
   [WS_METHODS.accessListGrants]: "access",
   [WS_METHODS.accessRevokeGrant]: "access",
+  [WS_METHODS.personalDataStatus]: "access",
+  [WS_METHODS.personalDataSetAccess]: "access",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",
   [WS_METHODS.pullRequestsList]: "pull-requests",

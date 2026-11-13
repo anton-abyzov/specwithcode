@@ -4,7 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectIconOverride } from "@specweave-studio/contracts";
 import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -35,6 +35,7 @@ import { useProjects, waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { useNewThreadHandler } from "./useHandleNewThread";
 
 function errorMessage(error: unknown): string {
@@ -57,6 +58,9 @@ export function useNewProject() {
   const clientSettings = useClientSettings();
   const { environments } = useNamedEnvironments();
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  const updateProject = useOrchestrationCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
@@ -125,6 +129,8 @@ export function useNewProject() {
       readonly github: { readonly account: string | null } | null;
       /** "Use SpecWeave" was ticked: run `specweave init` before the first commit. */
       readonly specweave?: boolean;
+      /** The icon chosen for a new assistant; the server's own starting icon stays without it. */
+      readonly icon?: ProjectIconOverride;
     }): Promise<boolean> => {
       const result = await createNew({
         environmentId: input.environmentId,
@@ -165,6 +171,14 @@ export function useNewProject() {
       }
 
       const { projectId, workspaceRoot, commitError, existing, specweaveError } = result.value;
+      // The chosen icon goes on with the same update a later icon change uses, so
+      // any server takes it. If it fails the assistant keeps its starting icon.
+      if (input.kind === "personal" && input.icon !== undefined && existing !== true) {
+        await updateProject({
+          environmentId: input.environmentId,
+          input: { projectId, projectIcon: input.icon },
+        });
+      }
       // Confirm the actual folder, including any collision suffix. An existing
       // project is confirmed once it is read, under its own title.
       if (existing !== true)
@@ -276,7 +290,15 @@ export function useNewProject() {
       );
       return true;
     },
-    [createNew, environments, handleNewThread, publishToGitHub, navigate, clientSettings],
+    [
+      createNew,
+      updateProject,
+      environments,
+      handleNewThread,
+      publishToGitHub,
+      navigate,
+      clientSettings,
+    ],
   );
 }
 
