@@ -15,7 +15,7 @@
  * @module reviewPolicy
  */
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
-import type { ProviderInstanceId, ServerProvider } from "@specweave-studio/contracts";
+import type { ServerProvider } from "@specweave-studio/contracts";
 
 import { type ExcludedFallbackModel, normalizeModelKey } from "./providerFallback.ts";
 
@@ -67,12 +67,20 @@ export function sameReviewModel(a: string, b: string): boolean {
   return normalizeModelKey(a) === normalizeModelKey(b);
 }
 
+/** Markdown emphasis or code marks around a value, never inside it: `gpt_6_1_sol` keeps its underscores. */
+function unwrapMarks(value: string): string {
+  return value
+    .trim()
+    .replace(/^[`*_]+|[`*_]+$/gu, "")
+    .trim();
+}
+
 function parseReviewer(value: string): Pick<IncrementReviewPolicy, "family" | "model"> | null {
-  const v = value.trim().replace(/[`*_]/g, "");
+  const v = unwrapMarks(value);
   if (v === "") return null;
   const paren = /^([^()]+?)\s*\(([^()]+)\)\s*$/u.exec(v);
-  const head = (paren?.[1] ?? v).trim().toLowerCase();
-  const model = paren?.[2]?.trim();
+  const head = unwrapMarks(paren?.[1] ?? v).toLowerCase();
+  const model = paren?.[2] === undefined ? undefined : unwrapMarks(paren[2]);
   const withModel = model === undefined || model === "" ? {} : { model };
   if (/^(cross[- ]?family|cross[- ]?model|any other family|other family|auto)$/u.test(head))
     return { family: "cross-family", ...withModel };
@@ -287,20 +295,64 @@ export function reviewRepoKey(repo: string | null | undefined): string {
 }
 
 /**
- * The repositories an increment's task Files live in (`.` for the project
- * root), from its spec's `Files:` fields. Increment bookkeeping and `none`
- * do not count.
+ * Repository paths a project's `.specweave/config.json` registers
+ * (`workspace.repos`, `umbrella.childRepos`), relative to the project root.
  */
-export function incrementReviewRepos(spec: string | null): ReadonlyArray<string> {
-  if (spec === null) return [];
+export function registeredReviewRepos(config: unknown, projectRoot: string): ReadonlyArray<string> {
+  const lists =
+    config !== null && typeof config === "object"
+      ? [
+          (config as { workspace?: { repos?: unknown } }).workspace?.repos,
+          (config as { umbrella?: { childRepos?: unknown } }).umbrella?.childRepos,
+        ]
+      : [];
+  const root = projectRoot.replace(/\\/gu, "/").replace(/\/+$/u, "");
   const repos = new Set<string>();
-  for (const match of spec.matchAll(/Files:\s*([^|\n]+)/giu)) {
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      const raw = (entry as { path?: unknown } | null)?.path;
+      if (typeof raw !== "string" || raw.trim() === "") continue;
+      let rel = raw.trim().replace(/\\/gu, "/");
+      if (rel.startsWith(`${root}/`)) rel = rel.slice(root.length + 1);
+      rel = reviewRepoKey(rel);
+      if (rel !== "." && !rel.startsWith("../") && !/^([a-z]:)?\//iu.test(rel)) repos.add(rel);
+    }
+  }
+  return [...repos];
+}
+
+/**
+ * The repositories an increment's task Files live in (`.` for the project
+ * root), owned the way `specweave` owns them: the longest registered
+ * repository path first, then `repositories/<organization>/<repository>`.
+ * Increment bookkeeping and `none` do not count; a glob that hides its owner
+ * is left out (closure refuses it).
+ */
+export function incrementReviewRepos(
+  spec: string | null,
+  registered: ReadonlyArray<string> = [],
+): ReadonlyArray<string> {
+  if (spec === null) return [];
+  const byLength = [...registered].sort((a, b) => b.length - a.length);
+  const repos = new Set<string>();
+  for (const match of spec.matchAll(/\**Files\**\s*:\s*\**\s*([^|\n]+)/giu)) {
     for (const raw of (match[1] ?? "").split(",")) {
-      const file = raw.trim().replace(/[`*]/gu, "").replace(/\\/gu, "/");
+      const file = raw.trim().replace(/`/gu, "").replace(/\\/gu, "/");
       if (file === "" || /^(none|n\/a|-)$/iu.test(file) || /(^|\/)\.specweave(\/|$)/u.test(file))
         continue;
-      const repo = /^(repositories\/[^/\s]+\/[^/\s]+)\//u.exec(file);
-      repos.add(repo?.[1] ?? ".");
+      const owner = byLength.find((repo) => file === repo || file.startsWith(`${repo}/`));
+      if (owner !== undefined) {
+        repos.add(owner);
+        continue;
+      }
+      if (!file.startsWith("repositories/")) {
+        repos.add(".");
+        continue;
+      }
+      const parts = file.split("/");
+      if (parts.length >= 3 && parts[2] && !/[*?[\]{}]/u.test(`${parts[1]}/${parts[2]}`))
+        repos.add(parts.slice(0, 3).join("/"));
     }
   }
   return [...repos].sort();
@@ -329,38 +381,40 @@ export function reviewPolicySatisfied(
 }
 
 /**
- * Every model on these providers outside the review's family, as fallback
- * exclusions: added to a review thread's limit rule, a quota stop can move
- * the review only to another model of its reviewer's family, or it waits.
+ * A limit rule for this thread: unchanged, or narrowed to its review family
+ * (and the policy's pinned model). Every other model on these providers joins
+ * the fallback exclusions, so a quota stop moves the review only to an
+ * eligible reviewer, or it waits.
  */
-export function reviewFamilyExclusions(
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models">>,
-  family: ReviewFamily,
-): ReadonlyArray<ExcludedFallbackModel & { readonly instanceId: ProviderInstanceId }> {
-  return providers.flatMap((provider) =>
-    provider.models
-      .filter((model) => modelFamily(model) !== family)
-      .map((model) => ({ instanceId: provider.instanceId, model: model.slug })),
-  );
-}
-
-/** A limit rule for this thread: unchanged, or narrowed to its review family. */
 export function reviewConstrainedRule<
   R extends {
     readonly providerLimitExcludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   },
 >(
   rule: R,
-  routing: { readonly reviewFamily?: ReviewFamily | undefined } | null | undefined,
+  routing:
+    | {
+        readonly reviewFamily?: ReviewFamily | undefined;
+        readonly reviewModel?: string | undefined;
+      }
+    | null
+    | undefined,
   providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models">>,
 ): R {
   const family = routing?.reviewFamily;
   if (family === undefined) return rule;
+  const pinned = routing?.reviewModel;
+  const excluded = providers.flatMap((provider) =>
+    provider.models
+      .filter(
+        (model) =>
+          modelFamily(model) !== family ||
+          (pinned !== undefined && !sameReviewModel(model.slug, pinned)),
+      )
+      .map((model) => ({ instanceId: provider.instanceId, model: model.slug })),
+  );
   return {
     ...rule,
-    providerLimitExcludedModels: [
-      ...(rule.providerLimitExcludedModels ?? []),
-      ...reviewFamilyExclusions(providers, family),
-    ],
+    providerLimitExcludedModels: [...(rule.providerLimitExcludedModels ?? []), ...excluded],
   };
 }

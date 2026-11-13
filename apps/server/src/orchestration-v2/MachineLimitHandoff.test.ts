@@ -292,6 +292,37 @@ function run(scenario: Scenario, sweeps = 1) {
 }
 
 describe("limit handoff in the fallback sweep", () => {
+  itEffect.effect(
+    "keeps a review delegation on this machine: no handoff carries its reviewer lock",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          {
+            machines: [machine(minis, "Minis"), machine(m3, "M3")],
+
+            thread: {
+              routing: {
+                taskClass: "review",
+                confidence: "high",
+                moved: false,
+                tier: null,
+                selection: limited.modelSelection,
+                baseline: limited.modelSelection,
+                escalation: null,
+                billing: "unknown",
+                reason: "Review by Claude; it stays on Claude models.",
+                signals: [],
+                reviewFamily: "claude",
+                decidedAt: "2026-10-09T11:00:00.000Z",
+              },
+            },
+          },
+          3,
+        );
+        expect(result.requests).toHaveLength(0);
+      }),
+  );
+
   itEffect.effect("hands a turn stopped on the limit to the first eligible machine", () =>
     Effect.gen(function* () {
       const result = yield* run({ machines: [machine(minis, "Minis"), machine(m3, "M3")] }, 3);

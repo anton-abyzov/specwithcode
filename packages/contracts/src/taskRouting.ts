@@ -271,6 +271,8 @@ export const TaskRoutingDecision = Schema.Struct({
    * review never moves to the author's family; with none, it waits.
    */
   reviewFamily: Schema.optionalKey(Schema.Literals(["claude", "openai", "google", "xai", "meta"])),
+  /** The model the increment's review policy pins, when it pins one: recovery keeps to it too. */
+  reviewModel: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   decidedAt: IsoDateTime,
 });
 export type TaskRoutingDecision = typeof TaskRoutingDecision.Type;

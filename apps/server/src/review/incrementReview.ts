@@ -16,6 +16,7 @@ import {
   incrementReviewRepos,
   type IncrementReviewPolicy,
   parseReviewRecordHeader,
+  registeredReviewRepos,
   type ReviewConfigLayer,
   type ReviewRecordForPolicy,
   resolveIncrementReviewPolicy,
@@ -43,21 +44,31 @@ async function readSmall(path: string, maximum: number): Promise<string | null> 
 
 const CONFIG_BYTES = 262_144;
 
-/** The project's `review` config for an increment folder (`<root>/.specweave/increments/<id>`). */
-async function readReviewConfig(incrementPath: string): Promise<ReviewConfigLayer | null> {
+/** The project's `.specweave/config.json` for an increment folder (`<root>/.specweave/increments/<id>`). */
+async function readProjectConfig(incrementPath: string): Promise<Record<string, unknown> | null> {
   const text = await readSmall(
     NodePath.join(incrementPath, "..", "..", "config.json"),
     CONFIG_BYTES,
   );
   if (text === null) return null;
   try {
-    const config = JSON.parse(text) as { review?: unknown };
-    return config.review !== null && typeof config.review === "object"
-      ? (config.review as ReviewConfigLayer)
+    const config: unknown = JSON.parse(text);
+    return config !== null && typeof config === "object"
+      ? (config as Record<string, unknown>)
       : null;
   } catch {
     return null;
   }
+}
+
+/** The config's `review` section. */
+function reviewLayer(config: Record<string, unknown> | null): ReviewConfigLayer | null {
+  const review = config?.["review"];
+  return review !== null && typeof review === "object" ? (review as ReviewConfigLayer) : null;
+}
+
+async function readReviewConfig(incrementPath: string): Promise<ReviewConfigLayer | null> {
+  return reviewLayer(await readProjectConfig(incrementPath));
 }
 
 /** An increment's effective review policy, or null when neither its spec nor the project config sets one. */
@@ -138,10 +149,9 @@ export async function readIncrementReview(input: {
   readonly spec: string | null;
   readonly ledger: string | null;
 }): Promise<ThreadIncrementReview | null> {
-  const policy = resolveIncrementReviewPolicy({
-    spec: input.spec,
-    config: await readReviewConfig(input.incrementPath),
-  });
+  const config = await readProjectConfig(input.incrementPath);
+  const policy = resolveIncrementReviewPolicy({ spec: input.spec, config: reviewLayer(config) });
+  const projectRoot = NodePath.resolve(input.incrementPath, "..", "..", "..");
   const files = await listReviewFiles(input.incrementPath);
   const author = ledgerAuthorFamily(input.ledger);
   const records: Array<
@@ -192,7 +202,12 @@ export async function readIncrementReview(input: {
   const satisfied =
     policy === null
       ? null
-      : reviewPolicySatisfied(policy, records, incrementReviewRepos(input.spec), author);
+      : reviewPolicySatisfied(
+          policy,
+          records,
+          incrementReviewRepos(input.spec, registeredReviewRepos(config, projectRoot)),
+          author,
+        );
   return {
     policy:
       policy === null

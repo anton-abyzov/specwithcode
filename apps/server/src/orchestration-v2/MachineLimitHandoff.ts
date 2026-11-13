@@ -49,7 +49,6 @@ import {
   targetMachineLabel,
 } from "@specweave-studio/shared/machineFallback";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
-import { familyOfModelId } from "@specweave-studio/shared/reviewPolicy";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -415,12 +414,13 @@ export const make = Effect.gen(function* () {
       const teamRules = yield* teamRulesForFolder(
         input.thread.worktreePath ?? Option.getOrUndefined(folderProject)?.workspaceRoot,
       );
-      // A review continues only on its reviewer's family (TaskRoutingDecision.reviewFamily).
-      const reviewFamily = input.thread.routing?.reviewFamily;
+      // A review delegation (TaskRoutingDecision.reviewFamily) stays on this
+      // machine: a handoff does not carry its reviewer lock, so another
+      // machine's fallback could continue it on the author's family. It waits.
+      if (input.thread.routing?.reviewFamily !== undefined)
+        return [] as ReadonlyArray<MachineCandidateVerdict>;
       const targets = input.rule.providerLimitMachineTargets.filter(
         (target) =>
-          (reviewFamily === undefined ||
-            familyOfModelId(target.modelSelection.model) === reviewFamily) &&
           teamRulesSelectionRefusal(teamRules, {
             driver: teamRulesInstanceDriver(input.rule, target.modelSelection.instanceId),
             model: target.modelSelection.model,

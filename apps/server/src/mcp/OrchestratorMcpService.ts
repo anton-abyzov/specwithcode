@@ -10,7 +10,7 @@ import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.
 import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { readIncrementReviewPolicy } from "../review/incrementReview.ts";
 import { MODEL_FAMILY_LABELS } from "@specweave-studio/shared/fallbackOptions";
-import type { IncrementReviewPolicy } from "@specweave-studio/shared/reviewPolicy";
+import { type IncrementReviewPolicy, sameReviewModel } from "@specweave-studio/shared/reviewPolicy";
 import { orchestratorFeatures } from "./orchestratorFeatures.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
 import { isPaidModel } from "@specweave-studio/shared/modelBilling";
@@ -846,10 +846,16 @@ function reviewRouting(
   review: Extract<ReviewDelegationDecision, { kind: "pick" | "named" }>,
   routed: TaskRoutingDecision | null,
   author: ModelSelection,
+  policy: IncrementReviewPolicy | null,
   decidedAt: string,
 ): TaskRoutingDecision | null {
   if (review.reviewerFamily === "other") return routed;
-  if (routed !== null) return { ...routed, reviewFamily: review.reviewerFamily };
+  // A policy that pins a model keeps the review on it, not just on its family.
+  const pinned =
+    policy?.model !== undefined && sameReviewModel(review.selection.model, policy.model)
+      ? { reviewModel: review.selection.model }
+      : {};
+  if (routed !== null) return { ...routed, reviewFamily: review.reviewerFamily, ...pinned };
   return {
     taskClass: "review",
     confidence: "high",
@@ -862,6 +868,7 @@ function reviewRouting(
     reason: `Review by ${review.label}; it stays on ${MODEL_FAMILY_LABELS[review.reviewerFamily]} models.`,
     signals: [],
     reviewFamily: review.reviewerFamily,
+    ...pinned,
     decidedAt,
   };
 }
@@ -3073,6 +3080,7 @@ const make = Effect.gen(function* () {
                 review,
                 routing,
                 parent.thread.modelSelection,
+                reviewPolicy,
                 DateTime.formatIso(yield* DateTime.now),
               );
         // Whatever picked the model, a grant's work runs only on the sign-ins it allows.

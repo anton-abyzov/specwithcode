@@ -9,6 +9,7 @@ import {
   resolveIncrementReviewPolicy,
   reviewConstrainedRule,
   reviewPolicyAccepts,
+  registeredReviewRepos,
   reviewPolicySatisfied,
 } from "./reviewPolicy.ts";
 
@@ -194,6 +195,60 @@ describe("review policy evidence (Sol review, November 13, 2026)", () => {
         "- AC: AC-01 | Files: repositories/acme/app/src/a.ts, .specweave/x.md, scripts/b.sh | Test: t",
       ),
     ).toEqual([".", app]);
+  });
+
+  it("keeps underscores inside a model id and reads bold Files fields", () => {
+    expect(parseIncrementReviewPolicy("## Review\n- Reviewer: openai (gpt_6_1_sol)\n")).toEqual({
+      family: "openai",
+      model: "gpt_6_1_sol",
+    });
+    expect(
+      parseIncrementReviewPolicy("## Review\n- **Reviewer**: **openai** (`gpt-6.1-sol`)\n"),
+    ).toEqual({ family: "openai", model: "gpt-6.1-sol" });
+    expect(
+      incrementReviewRepos("- **AC**: AC-01 | **Files**: repositories/acme/app/a.ts | **Test**: t"),
+    ).toEqual(["repositories/acme/app"]);
+  });
+
+  it("a pinned review model narrows the limit rule to that model, across spellings", () => {
+    const copilot = ProviderInstanceId.make("copilot");
+    const providers = [
+      {
+        instanceId: copilot,
+        models: [
+          { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false, capabilities: null },
+          { slug: "gpt-6-luna", name: "GPT-6 Luna", isCustom: false, capabilities: null },
+          { slug: "claude-opus-5.5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+        ],
+      },
+    ];
+    expect(
+      reviewConstrainedRule(
+        { providerLimitExcludedModels: [] },
+        { reviewFamily: "openai", reviewModel: "gpt_6_1_sol" },
+        providers,
+      ).providerLimitExcludedModels,
+    ).toEqual([
+      { instanceId: copilot, model: "gpt-6-luna" },
+      { instanceId: copilot, model: "claude-opus-5.5" },
+    ]);
+  });
+
+  it("owns task Files by registered repositories first, like specweave", () => {
+    const registered = registeredReviewRepos(
+      {
+        workspace: { repos: [{ path: "apps/web" }, { path: "/work/umb/libs/core" }] },
+        umbrella: { childRepos: [{ path: "../outside" }] },
+      },
+      "/work/umb",
+    );
+    expect(registered).toEqual(["apps/web", "libs/core"]);
+    expect(
+      incrementReviewRepos(
+        "- AC: AC-01 | Files: apps/web/src/a.ts, libs/core/**/*.ts, repositories/x/*/a.ts, README.md | Test: t",
+        registered,
+      ),
+    ).toEqual([".", "apps/web", "libs/core"]);
   });
 
   it("narrows a review thread's limit rule to its reviewer's family", () => {
