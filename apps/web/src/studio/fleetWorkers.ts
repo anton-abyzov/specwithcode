@@ -51,7 +51,7 @@ export function fleetWorkersHelp(machineLabel: string): readonly string[] {
  */
 export const DEFAULT_FLEET_WORKER_ACCESS: StudioFleetWorkerAccess = "full-access";
 
-const accessLabel = (access: StudioFleetWorkerAccess | null) =>
+export const accessLabel = (access: StudioFleetWorkerAccess | null) =>
   access === null ? "Auto" : runtimeModeConfig[access].label;
 
 const PROBLEMS: Record<NonNullable<StudioFleetWorkers["problem"]>, string> = {

@@ -558,8 +558,6 @@ export const ja: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "自動選択は既定でサブスクリプションの使用量を使います。トークン課金のプロバイダー（API クレジット）は、ここで許可しない限り使わず、許可しても選んだティアまでです。自動選択がキーを追加したり、サインインしたり、クレジットを購入したりすることはありません。",
   "Switches the hosted app release channel.": "ホスト版アプリのリリースチャンネルを切り替えます。",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "同じプロジェクトを持つほかのマシンに各ターンを同期し、どのマシンでも続きができるようにします。このマシンのスレッドに適用され、既存のスレッドも対象です。トークンを少し多く使います。",
   "System default follows your browser or OS clock preference.":
     "「システムの既定」はブラウザーまたは OS の時計の設定に従います。",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1867,18 +1865,12 @@ export const ja: PhraseCatalog = {
   "Allow again": "もう一度許可",
   "Allowed before work could be limited, so it may use every project and sign-in here until you change it.":
     "作業を制限できるようになる前に許可されたため、変更するまでここのすべてのプロジェクトとサインインを使えます。",
-  "Whose machine": "マシンの所有者",
   "Whose machine is it": "このマシンの所有者",
-  "Work from it may pass through {hopLimit} machine":
-    "このマシンからの作業は最大 {hopLimit} 台のマシンを経由できます",
   "Projects it may run work in": "作業を実行できるプロジェクト",
   "Sign-ins its work may use": "作業で使えるサインイン",
-  "Most access": "最大アクセス",
   "Could not read who can run work here. Refresh to retry.":
     "ここで作業を実行できるユーザーを読み取れませんでした。更新して再試行してください。",
   "Checking who can run work here…": "ここで作業を実行できるユーザーを確認しています…",
-  "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
-    "取り消すと新しい作業はすぐに拒否されます。ここで開始したスレッドは 2 分間続いてから停止します。ワークツリーと変更は残ります。{value}",
   "Checking your machines…": "マシンを確認しています…",
   "No machines yet.": "マシンはまだありません。",
   "Advanced connection settings": "接続の詳細設定",
@@ -2855,8 +2847,6 @@ export const ja: PhraseCatalog = {
   "Reset to inherited value": "継承値にリセット",
   "Restore device defaults": "デバイスのデフォルトに戻す",
   "Reconnect {label} to change its settings.": "設定を変更するには {label} を再接続してください。",
-  "Work from it may pass through {hopLimit} machines":
-    "このマシンからの作業は最大 {hopLimit} 台のマシンを経由できます",
   "{length} empty placeholders": "空のプレースホルダー {length} 件",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · {tabs} タブ · 最後の操作 {value2}",
@@ -4340,8 +4330,6 @@ export const ja: PhraseCatalog = {
   "Current machine": "現在のマシン",
   "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
     "接続するには、このサーバーの所有者から {value} 付きのペアリングリンクを開くか、そのマシン自身のリンクで「接続を追加」を使ってください。",
-  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
-    "このアプリを開いたとき、応答するマシンに自動で接続し、そのプロジェクトをここに表示します。オフにすると、「マシンを接続」で 1 台ずつ自分で接続します。エージェントの権限は変わりません。このデバイスに保存されます。",
   "Cannot use Connect? Pair over your own network":
     "Connect を使えない場合は、自分のネットワークでペアリング",
   "Cannot use Connect? Pair over your own network.":
@@ -4630,4 +4618,193 @@ export const ja: PhraseCatalog = {
     "一覧にないマシン: {names}。ここで使うには、そのマシンで 設定 > マシン を開き、{machine} が作業を実行することを許可してください。",
   "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
     "このマシンには SpecWithCode Connect 経由でしか接続できず、このアプリの Connect アカウントにはまだ表示されていません。ここで同じアカウントで SpecWithCode Connect にサインインし、少し待ってからもう一度「接続」を押してください。",
+  "1 chosen project (could not read this machine's projects)":
+    "選択したプロジェクト 1 件（このマシンのプロジェクトを読み取れませんでした）",
+  "1 more machine": "ほかに 1 台のマシン",
+  "1 running thread": "実行中のスレッド 1 件",
+  "1 running thread stops at {time}": "実行中のスレッド 1 件は {time} に停止します",
+  "Active until {time}": "{time} まで有効",
+  "Add {machineLabel}": "{machineLabel} を追加",
+  "Added {machineLabel}. Choose Allow on this line after Refresh.":
+    "{machineLabel} を追加しました。更新したあと、この行で「許可」を選んでください。",
+  "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
+    "各ターンのあと、このマシンのスレッドを既存のものも含めて、同じプロジェクトを持つほかのマシンにコピーし、どのマシンでも続きを引き継げるようにします。トークンを少し多く使います。",
+  "After work left while it slept. Ask shows one button to bring it back.":
+    "スリープ中に作業がほかへ移ったあとの動作です。「確認」では、作業を戻すボタンを 1 つ表示します。",
+  "Agents on {hereLabel} can start work on {thereLabel}":
+    "{hereLabel} のエージェントは {thereLabel} で作業を開始できます",
+  "Agents on {thereLabel} can start work on {hereLabel}":
+    "{thereLabel} のエージェントは {hereLabel} で作業を開始できます",
+  "All sign-ins": "すべてのサインイン",
+  "All sign-ins on this machine": "このマシンのすべてのサインイン",
+  Allow: "許可",
+  "Allow all projects": "すべてのプロジェクトを許可",
+  "Allow another machine": "別のマシンを許可",
+  "Allowing them needs Manage access on this machine.":
+    "許可するには、このマシンでアクセス管理の権限が必要です。",
+  "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:":
+    "すでに接続済みですか？ {link} を開き、そのカードで「追加」を選んでください。コピーするものはありません。接続していない場合は、次の手順に従ってください:",
+  "Away target": "不在時の移動先",
+  "Can manage routines": "ルーティンを管理できる",
+  "Cannot manage routines": "ルーティンを管理できない",
+  "Changing this needs Manage access on this machine.":
+    "これを変更するには、このマシンでアクセス管理の権限が必要です。",
+  "Checking your SpecWithCode Connect sign-in…":
+    "SpecWithCode Connect のサインインを確認しています…",
+  "Choose Allow on its card above, on the line about agents here starting work on it.":
+    "上のそのマシンのカードで、ここのエージェントがそのマシンで作業を開始する行の「許可」を選んでください。",
+  Chosen: "選択済み",
+  "Chosen projects": "選択したプロジェクト",
+  "Connection details": "接続の詳細",
+  "Connects this app to your machines that answer, so their projects show here. Off: you connect each one yourself. Changes no permissions. This device only.":
+    "応答するあなたのマシンにこのアプリを接続し、そのプロジェクトをここに表示します。オフ: 各マシンに自分で接続します。権限は変わりません。このデバイスのみ。",
+  "Could not open {label} through SpecWithCode Connect. Check that it is online, then choose it again.":
+    "SpecWithCode Connect 経由で {label} を開けませんでした。オンラインであることを確認してから、もう一度選んでください。",
+  "Could not read this machine's projects. The grant keeps its choices.":
+    "このマシンのプロジェクトを読み取れませんでした。許可の選択内容はそのまま残ります。",
+  "Each card shows who may start work where, both ways. Hover a line for details.":
+    "各カードには、どのマシンがどこで作業を開始できるかを双方向で表示します。詳細は行にポインターを合わせてください。",
+  "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
+    "このアプリが把握しているほかのマシンは、すでに 設定 > マシン の「ここで作業を実行できるユーザー」に表示されています。変更、取り消し、復元はそこで行ってください。",
+  "Expired: that machine must allow workers here again":
+    "期限切れ: そのマシンでもう一度ワーカーを許可する必要があります",
+  Filter: "フィルター",
+  "Filter: {label}": "フィルター: {label}",
+  "Grace time": "猶予時間",
+  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
+    "この Mac がスリープすると、作業を不在時の移動先に渡します。移動先はまず猶予時間だけ待ち、それより早く戻れば何も移動しません。Mac のみ。",
+  "How long the target waits after the lid closes before it takes over.":
+    "蓋を閉じてから移動先が引き継ぐまでの待ち時間です。",
+  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
+    "さらに、このマシンのアクセス、アップデート、スキルを 1 年間管理できるキーも受け取ります。既存のプロジェクトとサインインの制限は引き続き有効です。",
+  "Its app sees this machine": "そのアプリからこのマシンが見える",
+  "Its work may use any sign-in on this machine.":
+    "その作業は、このマシンのどのサインインでも使えます。",
+  "Its work may use no sign-in here, so every launch is refused.":
+    "その作業はここのサインインを使えないため、すべての起動が拒否されます。",
+  Lasts: "有効期間",
+  "Leave automatically when the lid closes": "蓋を閉じたら自動で不在にする",
+  "Let another of your machines run work here": "自分の別のマシンにここで作業を実行させる",
+  "Let {machine} manage scheduled routines": "{machine} に予定されたルーティンの管理を許可",
+  Limits: "制限",
+  "Linked projects": "リンクされたプロジェクト",
+  "Linked to it": "リンク済み",
+  "Looking for your other machines…": "ほかのマシンを探しています…",
+  "Make pairing link": "ペアリングリンクを作成",
+  "Most access for agents from {hereLabel}": "{hereLabel} からのエージェントの最大アクセス",
+  "Most its work may do": "その作業の最大アクセス",
+  "My machine": "自分のマシン",
+  "No longer answers. If it was wiped or reinstalled, remove it here; a fresh install joins as a new machine.":
+    "応答しなくなりました。消去または再インストールした場合は、ここで削除してください。新しくインストールすると新しいマシンとして参加します。",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Another account, or no Connect below.":
+    "選べるマシンはまだありません。このビルドには SpecWithCode Connect がないため、マシンはコードか参加用の行で参加します。下の「別のアカウント、または Connect なし」を開いてください。",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Settings > Machines, then Another account, or no Connect.":
+    "選べるマシンはまだありません。このビルドには SpecWithCode Connect がないため、マシンはコードか参加用の行で参加します。設定 > マシン を開いてから、「別のアカウント、または Connect なし」を開いてください。",
+  "No other machine can start work here. To allow one, choose Allow on its card above, on the line that says its agents can start work on this machine.":
+    "ここで作業を開始できるほかのマシンはありません。許可するには、上のそのマシンのカードで、そのエージェントがこのマシンで作業を開始できるという行の「許可」を選んでください。",
+  "No other machine is on your SpecWithCode Connect account yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "SpecWithCode Connect アカウントにほかのマシンはまだありません。もう一方のマシンに SpecWithCode をインストールし、このアカウントで SpecWithCode Connect にサインインしてください。すると、ここに表示されます。",
+  "No other machine is signed in to {account} yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "{account} にサインインしているほかのマシンはまだありません。もう一方のマシンに SpecWithCode をインストールし、このアカウントで SpecWithCode Connect にサインインしてください。すると、ここに表示されます。",
+  "No project folder (chats)": "プロジェクトフォルダーなし（チャット）",
+  "No projects": "プロジェクトなし",
+  "No projects allowed": "許可されたプロジェクトなし",
+  "No sign-ins": "サインインなし",
+  "No sign-ins on this machine yet. Add one under Settings > Providers.":
+    "このマシンにはまだサインインがありません。設定 > プロバイダー で追加してください。",
+  "No sign-ins: every launch is refused": "サインインなし: すべての起動が拒否されます",
+  "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
+    "いいえ。{machineLabel} からこのマシンのプロジェクトを開くには、ここで 1 回限りのリンクを作成し、そちらで開いてください。",
+  "Not included. Each secret transfer still asks you.":
+    "含まれません。シークレットを転送するたびに確認します。",
+  "Not set up yet.": "まだ設定されていません。",
+  "Nothing allowed yet: tick a project or pick All projects":
+    "まだ何も許可されていません: プロジェクトにチェックを入れるか、「すべてのプロジェクト」を選んでください",
+  "Nothing matches.": "一致するものはありません。",
+  "Nothing to choose on this machine yet.": "このマシンにはまだ選べるものがありません。",
+  "Off: agents on {machine} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if {machine} should set up recurring work here.":
+    "オフ: {machine} のエージェントはここで作業を開始できますが、このマシンの予定されたルーティンを作成、変更、実行、削除することはできません。{machine} にここで繰り返しの作業を設定させる場合はオンにしてください。",
+  "On {coordinatorLabel}, agents can pick this machine now. Keep SpecWithCode open here; while this machine sleeps or the app is closed it shows there as not answering. To stop it, choose Revoke under Who can run work here in Settings > Machines.":
+    "{coordinatorLabel} のエージェントは、このマシンを選べるようになりました。ここでは SpecWithCode を開いたままにしてください。このマシンがスリープ中、またはアプリを閉じている間は、そちらで応答なしと表示されます。停止するには、設定 > マシン の「ここで作業を実行できるユーザー」で「取り消す」を選んでください。",
+  "On: agents on {machine} may create, change, run and delete scheduled routines on this machine, in the projects it may use. Turn it off to let them start work here but leave the schedules alone.":
+    "オン: {machine} のエージェントは、使えるプロジェクト内で、このマシンの予定されたルーティンを作成、変更、実行、削除できます。ここでの作業の開始は許可しつつスケジュールには触れさせない場合は、オフにしてください。",
+  "Opening {label} through SpecWithCode Connect…":
+    "SpecWithCode Connect 経由で {label} を開いています…",
+  "Pick the machine whose agents may start work here.":
+    "ここで作業を開始できるエージェントのマシンを選んでください。",
+  "Pick the machine whose agents may start work here. Machines on your SpecWithCode Connect account show up by themselves.":
+    "ここで作業を開始できるエージェントのマシンを選んでください。SpecWithCode Connect アカウントのマシンは自動で表示されます。",
+  "Projects linked to {machine} (could not read this machine's projects)":
+    "{machine} にリンクされたプロジェクト（このマシンのプロジェクトを読み取れませんでした）",
+  "Projects linked to {machine} (none yet)":
+    "{machine} にリンクされたプロジェクト（まだありません）",
+  "Projects linked to {machine}: {projects}": "{machine} にリンクされたプロジェクト: {projects}",
+  "Projects {machine} may use": "{machine} が使えるプロジェクト",
+  "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
+    "新しい作業をすぐに拒否します。ここで開始したスレッドは 2 分後に停止します。ワークツリーと変更は残ります。",
+  "Renews automatically.": "自動で更新されます。",
+  "Revoked {time}. New work is refused": "{time} に取り消し済み。新しい作業は拒否されます",
+  "Revoked. New work is refused": "取り消し済み。新しい作業は拒否されます",
+  "Search sign-ins": "サインインを検索",
+  Secrets: "シークレット",
+  "Set when it first starts work": "最初に作業を開始したときに設定されます",
+  Shared: "共有",
+  "Show the switch": "スイッチを表示",
+  "Sign in to SpecWithCode Connect on this machine. Your other machines on the same account are then listed here.":
+    "このマシンで SpecWithCode Connect にサインインしてください。すると、同じアカウントのほかのマシンがここに表示されます。",
+  "Sign-ins": "サインイン",
+  "Sign-ins {machine} may use": "{machine} が使えるサインイン",
+  Skip: "スキップ",
+  "Someone else's machine": "他の人のマシン",
+  "SpecWithCode Connect cannot be reached right now, so your machines cannot be listed. Check this machine's internet connection, then choose Check again.":
+    "現在 SpecWithCode Connect に接続できないため、マシンを一覧表示できません。このマシンのインターネット接続を確認してから、「もう一度確認」を選んでください。",
+  "SpecWithCode Connect is off on this machine, so your other machines cannot reach it. Turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow.":
+    "このマシンでは SpecWithCode Connect がオフのため、ほかのマシンから接続できません。設定 > マシン で SpecWithCode Connect のスイッチをオンにしてから、「許可」を選んでください。",
+  "The most a thread {machine} starts here may do without asking. A thread can run with less, never more. Chosen on {machine}, on this machine's card; change it there.":
+    "{machine} がここで開始するスレッドが確認なしでできることの上限です。スレッドはそれより少ない権限では実行できますが、それを超えることはありません。{machine} 上のこのマシンのカードで選びます。変更はそちらで行ってください。",
+  "The same choice as in a chat.": "チャットと同じ選択肢です。",
+  "These machines are signed in to {account}, like this one. Pick whose agents may start work here.":
+    "これらのマシンは、このマシンと同じく {account} にサインインしています。ここで作業を開始できるエージェントのマシンを選んでください。",
+  "This machine has no projects yet. Add a project folder here, or hand a project off to it, then tick it.":
+    "このマシンにはまだプロジェクトがありません。ここにプロジェクトフォルダーを追加するか、プロジェクトをこのマシンに引き継いでから、チェックを入れてください。",
+  "Until you stop it here or on {coordinatorLabel}. After Allow, this card says whether it renews by itself or ends on a date.":
+    "ここか {coordinatorLabel} で停止するまで。許可したあと、自動で更新されるか特定の日に終了するかがこのカードに表示されます。",
+  "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
+    "ここか {coordinatorLabel} で停止するまで。自動で更新されます。",
+  "Until you stop it, here or on that machine.": "ここかそのマシンで停止するまで。",
+  "What {thereLabel} may use here: under Who can run work here.":
+    "{thereLabel} がここで使えるもの: 「ここで作業を実行できるユーザー」で設定します。",
+  "When this machine wakes": "このマシンがスリープから復帰したとき",
+  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
+    "不在時にスレッド、ルーティン、コーディネーターを送る先です。このマシンがスリープしたときにも使われます。画面のロックは対象外です。",
+  "Who is it for": "対象者",
+  "Whose machine {machine} is": "{machine} の所有者",
+  "Work from {machine}": "{machine} からの作業",
+  "Work {machine} starts here may itself start work on one more machine, and no further. It can never loop back to {machine}.":
+    "{machine} がここで開始した作業は、さらにもう 1 台のマシンで作業を開始できますが、それ以上はできません。{machine} に戻ることはありません。",
+  "Work {machine} starts here may itself start work on {count} more machines, and no further. It can never loop back to {machine}.":
+    "{machine} がここで開始した作業は、さらに {count} 台のマシンで作業を開始できますが、それ以上はできません。{machine} に戻ることはありません。",
+  "Work {machine} starts here stays here: it cannot start work on another machine from this one.":
+    "{machine} がここで開始した作業はここにとどまります。このマシンから別のマシンで作業を開始することはできません。",
+  "archived, uncheck to remove": "アーカイブ済み、チェックを外すと削除",
+  "automated, uncheck to remove": "自動化、チェックを外すと削除",
+  "checking…": "確認中…",
+  "folder for chats, uncheck to remove": "チャット用フォルダー、チェックを外すと削除",
+  "not answering right now": "現在応答なし",
+  "not connected in this app": "このアプリでは未接続",
+  "not signed in": "未サインイン",
+  online: "オンライン",
+  "renews automatically": "自動で更新",
+  "until {date}": "{date} まで",
+  "up to {access}": "最大 {access}",
+  "{access}, until {date}": "{access}、{date} まで",
+  "{count} chosen projects (could not read this machine's projects)":
+    "選択したプロジェクト {count} 件（このマシンのプロジェクトを読み取れませんでした）",
+  "{count} more machines": "ほかに {count} 台のマシン",
+  "{count} running threads": "実行中のスレッド {count} 件",
+  "{count} running threads stop at {time}": "実行中のスレッド {count} 件は {time} に停止します",
+  "{machine} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.":
+    "{machine} が次にここで作業を開始するときに設定します。そのマシンがここで開始するスレッドが確認なしでできることの上限です。",
+  "{title} (archived)": "{title}（アーカイブ済み）",
+  "{title} (automated)": "{title}（自動化）",
 };

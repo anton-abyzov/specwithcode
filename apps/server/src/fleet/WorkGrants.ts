@@ -348,9 +348,13 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const freshPolicy = (coordinatorEnvironmentId: string, now: number): WorkGrantPolicyRecord => ({
+  const freshPolicy = (
+    coordinatorEnvironmentId: string,
+    now: number,
+    managing: ReadonlySet<string>,
+  ): WorkGrantPolicyRecord => ({
     coordinatorEnvironmentId,
-    ...newGrantDefaults("self"),
+    ...newGrantDefaults("self", managing.has(coordinatorEnvironmentId)),
     legacy: false,
     runtimeCap: null,
     createdAt: isoOf(now),
@@ -365,12 +369,14 @@ export const make = Effect.gen(function* () {
     coordinatorEnvironmentId: string,
     now: number,
     change: (record: WorkGrantPolicyRecord) => WorkGrantPolicyRecord,
+    /** The coordinators that manage this machine: a new grant to one of them is the owner's own. */
+    managing: ReadonlySet<string> = new Set(),
   ) => {
     const index = file.policies.findIndex(
       (policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId,
     );
     const current =
-      index === -1 ? freshPolicy(coordinatorEnvironmentId, now) : file.policies[index]!;
+      index === -1 ? freshPolicy(coordinatorEnvironmentId, now, managing) : file.policies[index]!;
     const next = change(current);
     const changed = index === -1 || JSON.stringify(next) !== JSON.stringify(current);
     return [
@@ -400,12 +406,18 @@ export const make = Effect.gen(function* () {
       const managing = yield* managers;
       let upgraded = false;
       const record = yield* modify((file, now) =>
-        upsertPolicy(file, coordinatorEnvironmentId, now, (current) => {
-          const changed = change(current);
-          const next = withOwnRoutines(changed, managing, isoOf(now));
-          upgraded = next !== changed;
-          return next;
-        }),
+        upsertPolicy(
+          file,
+          coordinatorEnvironmentId,
+          now,
+          (current) => {
+            const changed = change(current);
+            const next = withOwnRoutines(changed, managing, isoOf(now));
+            upgraded = next !== changed;
+            return next;
+          },
+          managing,
+        ),
       );
       if (upgraded)
         yield* Effect.logInfo(

@@ -565,8 +565,6 @@ export const de: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "Die automatische Wahl verbraucht standardmäßig Abo-Nutzung. Anbieter mit Abrechnung pro Token (API-Guthaben) bleiben außen vor, sofern sie hier nicht erlaubt sind, und dann nur bis zur gewählten Stufe. Sie fügt nie einen Schlüssel hinzu, meldet sich nie an und kauft nie Guthaben.",
   "Switches the hosted app release channel.": "Wechselt den Release-Kanal der gehosteten App.",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "Synchronisiert jeden Turn mit den anderen Rechnern, die dasselbe Projekt haben, damit jeder von ihnen weitermachen kann. Gilt für die Threads dieses Rechners, auch bestehende. Verbraucht etwas mehr Tokens.",
   "System default follows your browser or OS clock preference.":
     "Systemstandard folgt der Uhrzeiteinstellung von Browser oder Betriebssystem.",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1880,18 +1878,12 @@ export const de: PhraseCatalog = {
   "Allow again": "Erneut erlauben",
   "Allowed before work could be limited, so it may use every project and sign-in here until you change it.":
     "Erlaubt, bevor Arbeit eingeschränkt werden konnte; sie kann also jedes Projekt und jede Anmeldung hier nutzen, bis du das änderst.",
-  "Whose machine": "Wessen Rechner",
   "Whose machine is it": "Wem gehört der Rechner",
-  "Work from it may pass through {hopLimit} machine":
-    "Arbeit von dort darf über {hopLimit} Rechner laufen",
   "Projects it may run work in": "Projekte, in denen er Arbeit ausführen darf",
   "Sign-ins its work may use": "Anmeldungen, die seine Arbeit nutzen darf",
-  "Most access": "Höchster Zugriff",
   "Could not read who can run work here. Refresh to retry.":
     "Konnte nicht lesen, wer hier Arbeit ausführen darf. Aktualisiere, um es erneut zu versuchen.",
   "Checking who can run work here…": "Es wird geprüft, wer hier Arbeit ausführen darf…",
-  "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
-    "Widerrufen lehnt neue Arbeit sofort ab. Threads, die er hier gestartet hat, laufen noch 2 Minuten und stoppen dann; ihre Worktrees und Änderungen bleiben.{value}",
   "Checking your machines…": "Deine Rechner werden geprüft…",
   "No machines yet.": "Noch keine Rechner.",
   "Advanced connection settings": "Erweiterte Verbindungseinstellungen",
@@ -2871,8 +2863,6 @@ export const de: PhraseCatalog = {
   "Restore device defaults": "Gerätestandards wiederherstellen",
   "Reconnect {label} to change its settings.":
     "Verbinde {label} neu, um seine Einstellungen zu ändern.",
-  "Work from it may pass through {hopLimit} machines":
-    "Arbeit von dort darf über {hopLimit} Rechner laufen",
   "{length} empty placeholders": "{length} leere Platzhalter",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · {tabs} Tabs · letzte Aktion {value2}",
@@ -4362,8 +4352,6 @@ export const de: PhraseCatalog = {
   "Current machine": "Aktueller Rechner",
   "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
     "Um einen zu verbinden, öffne einen Kopplungslink vom Besitzer dieses Servers mit {value} oder nutze Verbindung hinzufügen mit dem eigenen Link dieses Rechners.",
-  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
-    "Beim Öffnen der App wird sie mit deinen Rechnern verbunden, die antworten, damit ihre Projekte hier erscheinen. Schalte aus, und du verbindest jeden selbst mit Rechner verbinden. Das ändert keine Agentenberechtigungen. Auf diesem Gerät gespeichert.",
   "Cannot use Connect? Pair over your own network":
     "Connect nicht nutzbar? Über dein eigenes Netzwerk koppeln",
   "Cannot use Connect? Pair over your own network.":
@@ -4657,4 +4645,194 @@ export const de: PhraseCatalog = {
     "Nicht aufgeführt: {names}. Um eines davon hier zu nutzen, öffne dort Einstellungen > Rechner und erlaube {machine}, dort Arbeit auszuführen.",
   "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
     "Dieser Rechner ist nur über SpecWithCode Connect erreichbar, und das Connect-Konto dieser App listet ihn noch nicht. Melde dich hier mit demselben Konto bei SpecWithCode Connect an, warte kurz und drücke dann erneut auf Verbinden.",
+  "1 chosen project (could not read this machine's projects)":
+    "1 ausgewähltes Projekt (Projekte dieses Rechners konnten nicht gelesen werden)",
+  "1 more machine": "1 weiterer Rechner",
+  "1 running thread": "1 laufender Thread",
+  "1 running thread stops at {time}": "1 laufender Thread stoppt um {time}",
+  "Active until {time}": "Aktiv bis {time}",
+  "Add {machineLabel}": "{machineLabel} hinzufügen",
+  "Added {machineLabel}. Choose Allow on this line after Refresh.":
+    "{machineLabel} hinzugefügt. Wähle nach dem Aktualisieren auf dieser Zeile „Erlauben“.",
+  "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
+    "Kopiert nach jedem Turn die Threads dieses Rechners, auch bestehende, auf deine anderen Rechner mit demselben Projekt, damit jeder von ihnen weitermachen kann. Verbraucht etwas mehr Tokens.",
+  "After work left while it slept. Ask shows one button to bring it back.":
+    "Nachdem Arbeit im Ruhezustand weitergegeben wurde. „Fragen“ zeigt einen Button, um sie zurückzuholen.",
+  "Agents on {hereLabel} can start work on {thereLabel}":
+    "Agents auf {hereLabel} dürfen Arbeit auf {thereLabel} starten",
+  "Agents on {thereLabel} can start work on {hereLabel}":
+    "Agents auf {thereLabel} dürfen Arbeit auf {hereLabel} starten",
+  "All sign-ins": "Alle Anmeldungen",
+  "All sign-ins on this machine": "Alle Anmeldungen auf diesem Rechner",
+  Allow: "Erlauben",
+  "Allow all projects": "Alle Projekte erlauben",
+  "Allow another machine": "Anderen Rechner erlauben",
+  "Allowing them needs Manage access on this machine.":
+    "Sie zu erlauben erfordert Zugriffsverwaltung auf diesem Rechner.",
+  "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:":
+    "Schon mit ihm verbunden? Öffne {link} und wähle auf seiner Karte „Hinzufügen“. Du musst nichts kopieren. Sonst folge diesen Schritten:",
+  "Away target": "Ziel bei Abwesenheit",
+  "Can manage routines": "Darf Routinen verwalten",
+  "Cannot manage routines": "Darf keine Routinen verwalten",
+  "Changing this needs Manage access on this machine.":
+    "Um das zu ändern, brauchst du Zugriffsverwaltung auf diesem Rechner.",
+  "Checking your SpecWithCode Connect sign-in…":
+    "Deine Anmeldung bei SpecWithCode Connect wird geprüft…",
+  "Choose Allow on its card above, on the line about agents here starting work on it.":
+    "Wähle oben auf seiner Karte „Erlauben“, in der Zeile darüber, dass Agents von hier Arbeit auf ihm starten.",
+  Chosen: "Ausgewählt",
+  "Chosen projects": "Ausgewählte Projekte",
+  "Connection details": "Verbindungsdetails",
+  "Connects this app to your machines that answer, so their projects show here. Off: you connect each one yourself. Changes no permissions. This device only.":
+    "Verbindet diese App mit deinen Rechnern, die antworten, damit ihre Projekte hier erscheinen. Aus: Du verbindest jeden selbst. Ändert keine Berechtigungen. Nur auf diesem Gerät.",
+  "Could not open {label} through SpecWithCode Connect. Check that it is online, then choose it again.":
+    "{label} konnte nicht über SpecWithCode Connect geöffnet werden. Prüfe, ob er online ist, und wähle ihn dann erneut.",
+  "Could not read this machine's projects. The grant keeps its choices.":
+    "Die Projekte dieses Rechners konnten nicht gelesen werden. Die Freigabe behält ihre Auswahl.",
+  "Each card shows who may start work where, both ways. Hover a line for details.":
+    "Jede Karte zeigt, wer wo Arbeit starten darf, in beide Richtungen. Fahre über eine Zeile für Details.",
+  "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
+    "Jeder andere Rechner, den diese App kennt, steht schon unter „Wer hier Arbeit ausführen darf“ in Einstellungen > Rechner. Dort kannst du ihn ändern, widerrufen oder wiederherstellen.",
+  "Expired: that machine must allow workers here again":
+    "Abgelaufen: Dieser Rechner muss Worker von hier erneut erlauben",
+  Filter: "Filter",
+  "Filter: {label}": "Filter: {label}",
+  "Grace time": "Wartezeit",
+  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
+    "Gibt Arbeit an das Ziel bei Abwesenheit ab, wenn dieser Mac in den Ruhezustand geht. Das Ziel wartet zuerst die Wartezeit ab, und nichts wird verschoben, wenn du früher zurück bist. Nur Mac.",
+  "How long the target waits after the lid closes before it takes over.":
+    "Wie lange das Ziel nach dem Zuklappen wartet, bevor es übernimmt.",
+  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
+    "Er bekommt außerdem für ein Jahr einen Schlüssel, um Zugriff, Updates und Skills auf diesem Rechner zu verwalten. Bestehende Grenzen für Projekte und Anmeldungen bleiben gültig.",
+  "Its app sees this machine": "Seine App sieht diesen Rechner",
+  "Its work may use any sign-in on this machine.":
+    "Seine Arbeit darf jede Anmeldung auf diesem Rechner nutzen.",
+  "Its work may use no sign-in here, so every launch is refused.":
+    "Seine Arbeit darf hier keine Anmeldung nutzen, daher wird jeder Start abgelehnt.",
+  Lasts: "Gültig",
+  "Leave automatically when the lid closes": "Beim Zuklappen automatisch abgeben",
+  "Let another of your machines run work here":
+    "Einen anderen deiner Rechner hier Arbeit ausführen lassen",
+  "Let {machine} manage scheduled routines": "{machine} geplante Routinen verwalten lassen",
+  Limits: "Limits",
+  "Linked projects": "Verknüpfte Projekte",
+  "Linked to it": "Mit ihm verknüpft",
+  "Looking for your other machines…": "Deine anderen Rechner werden gesucht…",
+  "Make pairing link": "Kopplungslink erstellen",
+  "Most access for agents from {hereLabel}": "Höchster Zugriff für Agents von {hereLabel}",
+  "Most its work may do": "Höchstens, was seine Arbeit darf",
+  "My machine": "Mein Rechner",
+  "No longer answers. If it was wiped or reinstalled, remove it here; a fresh install joins as a new machine.":
+    "Antwortet nicht mehr. Wenn er gelöscht oder neu installiert wurde, entferne ihn hier; eine frische Installation tritt als neuer Rechner bei.",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Another account, or no Connect below.":
+    "Noch kein Rechner zur Auswahl. Dieser Build hat kein SpecWithCode Connect, daher tritt ein Rechner mit einem Code oder einer Beitrittszeile bei: Öffne unten „Anderes Konto oder kein Connect“.",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Settings > Machines, then Another account, or no Connect.":
+    "Noch kein Rechner zur Auswahl. Dieser Build hat kein SpecWithCode Connect, daher tritt ein Rechner mit einem Code oder einer Beitrittszeile bei: Öffne Einstellungen > Rechner, dann „Anderes Konto oder kein Connect“.",
+  "No other machine can start work here. To allow one, choose Allow on its card above, on the line that says its agents can start work on this machine.":
+    "Kein anderer Rechner darf hier Arbeit starten. Um einen zu erlauben, wähle oben auf seiner Karte „Erlauben“, in der Zeile, die sagt, dass seine Agents Arbeit auf diesem Rechner starten dürfen.",
+  "No other machine is on your SpecWithCode Connect account yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "Noch ist kein anderer Rechner in deinem SpecWithCode-Connect-Konto. Installiere SpecWithCode auf dem anderen Rechner und melde dich dort mit diesem Konto bei SpecWithCode Connect an. Dann erscheint er hier.",
+  "No other machine is signed in to {account} yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "Noch ist kein anderer Rechner bei {account} angemeldet. Installiere SpecWithCode auf dem anderen Rechner und melde dich dort mit diesem Konto bei SpecWithCode Connect an. Dann erscheint er hier.",
+  "No project folder (chats)": "Kein Projektordner (Chats)",
+  "No projects": "Keine Projekte",
+  "No projects allowed": "Keine Projekte erlaubt",
+  "No sign-ins": "Keine Anmeldungen",
+  "No sign-ins on this machine yet. Add one under Settings > Providers.":
+    "Noch keine Anmeldungen auf diesem Rechner. Füge eine unter Einstellungen > Anbieter hinzu.",
+  "No sign-ins: every launch is refused": "Keine Anmeldungen: Jeder Start wird abgelehnt",
+  "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
+    "Nein. Um die Projekte dieses Rechners von {machineLabel} aus zu öffnen, erstelle hier einen einmaligen Link und öffne ihn dort.",
+  "Not included. Each secret transfer still asks you.":
+    "Nicht enthalten. Jede Übertragung von Secrets fragt dich weiterhin.",
+  "Not set up yet.": "Noch nicht eingerichtet.",
+  "Nothing allowed yet: tick a project or pick All projects":
+    "Noch nichts erlaubt: Hake ein Projekt an oder wähle „Alle Projekte“",
+  "Nothing matches.": "Nichts passt.",
+  "Nothing to choose on this machine yet.": "Auf diesem Rechner gibt es noch nichts zur Auswahl.",
+  "Off: agents on {machine} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if {machine} should set up recurring work here.":
+    "Aus: Agents auf {machine} dürfen hier Arbeit starten, aber keine geplanten Routinen auf diesem Rechner erstellen, ändern, ausführen oder löschen. Schalte es ein, wenn {machine} hier wiederkehrende Arbeit einrichten soll.",
+  "On {coordinatorLabel}, agents can pick this machine now. Keep SpecWithCode open here; while this machine sleeps or the app is closed it shows there as not answering. To stop it, choose Revoke under Who can run work here in Settings > Machines.":
+    "Auf {coordinatorLabel} können Agents diesen Rechner jetzt wählen. Lass SpecWithCode hier geöffnet; solange dieser Rechner schläft oder die App geschlossen ist, wird er dort als nicht antwortend angezeigt. Zum Beenden wähle „Widerrufen“ unter „Wer hier Arbeit ausführen darf“ in Einstellungen > Rechner.",
+  "On: agents on {machine} may create, change, run and delete scheduled routines on this machine, in the projects it may use. Turn it off to let them start work here but leave the schedules alone.":
+    "An: Agents auf {machine} dürfen geplante Routinen auf diesem Rechner erstellen, ändern, ausführen und löschen, in den Projekten, die er nutzen darf. Schalte es aus, damit sie hier Arbeit starten, die Zeitpläne aber in Ruhe lassen.",
+  "Opening {label} through SpecWithCode Connect…":
+    "{label} wird über SpecWithCode Connect geöffnet…",
+  "Pick the machine whose agents may start work here.":
+    "Wähle den Rechner, dessen Agents hier Arbeit starten dürfen.",
+  "Pick the machine whose agents may start work here. Machines on your SpecWithCode Connect account show up by themselves.":
+    "Wähle den Rechner, dessen Agents hier Arbeit starten dürfen. Rechner in deinem SpecWithCode-Connect-Konto erscheinen von selbst.",
+  "Projects linked to {machine} (could not read this machine's projects)":
+    "Mit {machine} verknüpfte Projekte (Projekte dieses Rechners konnten nicht gelesen werden)",
+  "Projects linked to {machine} (none yet)": "Mit {machine} verknüpfte Projekte (noch keine)",
+  "Projects linked to {machine}: {projects}": "Mit {machine} verknüpfte Projekte: {projects}",
+  "Projects {machine} may use": "Projekte, die {machine} nutzen darf",
+  "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
+    "Lehnt neue Arbeit sofort ab. Threads, die er hier gestartet hat, stoppen nach 2 Minuten; ihre Worktrees und Änderungen bleiben.",
+  "Renews automatically.": "Verlängert sich automatisch.",
+  "Revoked {time}. New work is refused": "Widerrufen {time}. Neue Arbeit wird abgelehnt",
+  "Revoked. New work is refused": "Widerrufen. Neue Arbeit wird abgelehnt",
+  "Search sign-ins": "Anmeldungen suchen",
+  Secrets: "Secrets",
+  "Set when it first starts work": "Wird festgelegt, wenn er zum ersten Mal Arbeit startet",
+  Shared: "Geteilt",
+  "Show the switch": "Schalter anzeigen",
+  "Sign in to SpecWithCode Connect on this machine. Your other machines on the same account are then listed here.":
+    "Melde dich auf diesem Rechner bei SpecWithCode Connect an. Deine anderen Rechner mit demselben Konto erscheinen dann hier.",
+  "Sign-ins": "Anmeldungen",
+  "Sign-ins {machine} may use": "Anmeldungen, die {machine} nutzen darf",
+  Skip: "Überspringen",
+  "Someone else's machine": "Rechner einer anderen Person",
+  "SpecWithCode Connect cannot be reached right now, so your machines cannot be listed. Check this machine's internet connection, then choose Check again.":
+    "SpecWithCode Connect ist gerade nicht erreichbar, daher können deine Rechner nicht aufgelistet werden. Prüfe die Internetverbindung dieses Rechners und wähle dann „Erneut prüfen“.",
+  "SpecWithCode Connect is off on this machine, so your other machines cannot reach it. Turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow.":
+    "SpecWithCode Connect ist auf diesem Rechner aus, daher können deine anderen Rechner ihn nicht erreichen. Schalte SpecWithCode Connect in Einstellungen > Rechner ein und wähle dann „Erlauben“.",
+  "The most a thread {machine} starts here may do without asking. A thread can run with less, never more. Chosen on {machine}, on this machine's card; change it there.":
+    "Das Höchste, was ein Thread, den {machine} hier startet, ohne Nachfrage tun darf. Ein Thread kann mit weniger laufen, nie mit mehr. Wird auf {machine} auf der Karte dieses Rechners gewählt; ändere es dort.",
+  "The same choice as in a chat.": "Dieselbe Auswahl wie in einem Chat.",
+  "These machines are signed in to {account}, like this one. Pick whose agents may start work here.":
+    "Diese Rechner sind wie dieser bei {account} angemeldet. Wähle, wessen Agents hier Arbeit starten dürfen.",
+  "This machine has no projects yet. Add a project folder here, or hand a project off to it, then tick it.":
+    "Dieser Rechner hat noch keine Projekte. Füge hier einen Projektordner hinzu oder übergib ihm ein Projekt und hake es dann an.",
+  "Until you stop it here or on {coordinatorLabel}. After Allow, this card says whether it renews by itself or ends on a date.":
+    "Bis du es hier oder auf {coordinatorLabel} beendest. Nach „Erlauben“ zeigt diese Karte, ob es sich selbst verlängert oder an einem Datum endet.",
+  "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
+    "Bis du es hier oder auf {coordinatorLabel} beendest. Es verlängert sich selbst.",
+  "Until you stop it, here or on that machine.":
+    "Bis du es beendest, hier oder auf diesem Rechner.",
+  "What {thereLabel} may use here: under Who can run work here.":
+    "Was {thereLabel} hier nutzen darf: unter „Wer hier Arbeit ausführen darf“.",
+  "When this machine wakes": "Wenn dieser Rechner aufwacht",
+  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
+    "Wohin „Abwesend“ deine Threads, Routinen und Koordinatoren schickt. Gilt auch, wenn dieser Rechner schläft; das Sperren des Bildschirms zählt nicht.",
+  "Who is it for": "Für wen ist er",
+  "Whose machine {machine} is": "Wem {machine} gehört",
+  "Work from {machine}": "Arbeit von {machine}",
+  "Work {machine} starts here may itself start work on one more machine, and no further. It can never loop back to {machine}.":
+    "Arbeit, die {machine} hier startet, darf selbst Arbeit auf einem weiteren Rechner starten, aber nicht weiter. Sie kann nie zu {machine} zurückführen.",
+  "Work {machine} starts here may itself start work on {count} more machines, and no further. It can never loop back to {machine}.":
+    "Arbeit, die {machine} hier startet, darf selbst Arbeit auf {count} weiteren Rechnern starten, aber nicht weiter. Sie kann nie zu {machine} zurückführen.",
+  "Work {machine} starts here stays here: it cannot start work on another machine from this one.":
+    "Arbeit, die {machine} hier startet, bleibt hier: Sie kann von diesem Rechner aus keine Arbeit auf einem anderen Rechner starten.",
+  "archived, uncheck to remove": "archiviert, zum Entfernen abhaken",
+  "automated, uncheck to remove": "automatisiert, zum Entfernen abhaken",
+  "checking…": "wird geprüft…",
+  "folder for chats, uncheck to remove": "Ordner für Chats, zum Entfernen abhaken",
+  "not answering right now": "antwortet gerade nicht",
+  "not connected in this app": "in dieser App nicht verbunden",
+  "not signed in": "nicht angemeldet",
+  online: "online",
+  "renews automatically": "verlängert sich automatisch",
+  "until {date}": "bis {date}",
+  "up to {access}": "bis zu {access}",
+  "{access}, until {date}": "{access}, bis {date}",
+  "{count} chosen projects (could not read this machine's projects)":
+    "{count} ausgewählte Projekte (Projekte dieses Rechners konnten nicht gelesen werden)",
+  "{count} more machines": "{count} weitere Rechner",
+  "{count} running threads": "{count} laufende Threads",
+  "{count} running threads stop at {time}": "{count} laufende Threads stoppen um {time}",
+  "{machine} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.":
+    "{machine} legt es fest, wenn er das nächste Mal hier Arbeit startet. Es ist das Höchste, was ein Thread, den er hier startet, ohne Nachfrage tun darf.",
+  "{title} (archived)": "{title} (archiviert)",
+  "{title} (automated)": "{title} (automatisiert)",
 };

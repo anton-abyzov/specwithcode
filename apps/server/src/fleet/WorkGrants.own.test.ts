@@ -81,6 +81,24 @@ describe("own and team work grants", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("lets a new own grant use every project and starts a team grant on linked ones", () =>
+    Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      expect((yield* grants.forCoordinator(MINISTORM)).projects).toEqual({ kind: "all" });
+      const team = yield* grants.forCoordinator(EnvironmentId.make("env-colleague"));
+      expect(team.projects).toEqual({ kind: "linked" });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps an existing own grant's projects as they are", () =>
+    Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      yield* grants.forCoordinator(MINISTORM);
+      yield* grants.update({ coordinatorEnvironmentId: MINISTORM, projects: { kind: "linked" } });
+      expect((yield* grants.forCoordinator(MINISTORM)).projects).toEqual({ kind: "linked" });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("upgrades once: the owner's later off sticks", () =>
     Effect.gen(function* () {
       const grants = yield* WorkGrants.WorkGrants;

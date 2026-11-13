@@ -34,3 +34,13 @@ export const ServerUpdateProgress = () => null;
 export const serverEnvironment = { configValueAtom: () => null, updateSettings: null };
 export const toastManager = { add: () => undefined };
 export const stackedThreadToast = (toast: unknown) => toast;
+export const changeMachineWorkGrant = async () => {
+  throw new Error("Not saved in the fixture.");
+};
+export const machineNickname = () => null;
+export const useRelayEnvironmentDiscovery = () => ({
+  environments: new Map(),
+  refreshing: false,
+  error: { _tag: "None" },
+  offline: false,
+});

@@ -68,7 +68,7 @@ describe("Moving work between machines", () => {
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html).toContain("existing ones too");
-    expect(html).toContain("Where Away leaves your threads, routines and coordinators.");
+    expect(html).toContain("Where Away sends your threads, routines and coordinators.");
     expect(html).toContain("including uncommitted and untracked files");
     expect(html).toContain("Move running threads…");
     expect(html).not.toContain("Keep new threads");

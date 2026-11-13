@@ -175,6 +175,7 @@ export const workGrantsSnapshot = (input: {
         routines:
           policy.legacy || WorkGrants.routinesAllowed(policy, grantKindOf(policy, managers)),
         kind: grantKindOf(policy.legacy ? { ...policy, owner: "self" } : policy, managers),
+        renews: policy.revokedAt === null && managers.has(policy.coordinatorEnvironmentId),
       };
     });
     const projects = yield* ProjectService.ProjectService;
@@ -211,6 +212,11 @@ export const workGrantsSnapshot = (input: {
         label: provider.displayName ?? provider.instanceId,
         driver: provider.driver,
         account: Option.getOrNull(Option.fromNullishOr(provider.auth?.email)),
+        ...(provider.auth?.status === "authenticated"
+          ? { signedIn: true }
+          : provider.auth?.status === "unauthenticated"
+            ? { signedIn: false }
+            : {}),
       })),
     } satisfies StudioWorkGrantsSnapshot;
   });

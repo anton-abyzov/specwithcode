@@ -543,8 +543,6 @@ export const zh: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "自动模式默认消耗订阅用量。按 token 计费的提供方（API 额度）不会使用，除非在此允许，并且只到你选择的档位为止。自动模式绝不会添加密钥、登录或购买额度。",
   "Switches the hosted app release channel.": "切换托管应用的发布通道。",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "将每一轮同步到拥有同一项目的其他电脑，使任意一台都能继续。适用于这台电脑的会话，包括已有会话。会多用一些 token。",
   "System default follows your browser or OS clock preference.":
     "“系统默认”跟随浏览器或操作系统的时钟偏好。",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1804,17 +1802,12 @@ export const zh: PhraseCatalog = {
   "Allow again": "再次允许",
   "Allowed before work could be limited, so it may use every project and sign-in here until you change it.":
     "在工作可被限制之前就已允许，因此在你更改之前，它可以使用这里的所有项目和登录。",
-  "Whose machine": "电脑归属",
   "Whose machine is it": "这台电脑属于谁",
-  "Work from it may pass through {hopLimit} machine": "来自它的工作最多可经过 {hopLimit} 台电脑",
   "Projects it may run work in": "它可以运行工作的项目",
   "Sign-ins its work may use": "它的工作可以使用的登录",
-  "Most access": "最高访问权限",
   "Could not read who can run work here. Refresh to retry.":
     "无法读取谁可以在这里运行工作。请刷新重试。",
   "Checking who can run work here…": "正在检查谁可以在这里运行工作…",
-  "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
-    "撤销会立即拒绝新工作。它在这里启动的会话会继续运行 2 分钟然后停止；它们的工作树和更改会保留。{value}",
   "Checking your machines…": "正在检查你的电脑…",
   "No machines yet.": "还没有电脑。",
   "Advanced connection settings": "高级连接设置",
@@ -2755,7 +2748,6 @@ export const zh: PhraseCatalog = {
   "Reset to inherited value": "重置为继承值",
   "Restore device defaults": "恢复设备默认设置",
   "Reconnect {label} to change its settings.": "重新连接 {label} 以更改其设置。",
-  "Work from it may pass through {hopLimit} machines": "来自它的工作最多可经过 {hopLimit} 台电脑",
   "{length} empty placeholders": "{length} 个空占位符",
   "{threadLabel} · {tabs} tabs · last action {value2}":
     "{threadLabel} · {tabs} 个标签页 · 最近操作 {value2}",
@@ -4174,8 +4166,6 @@ export const zh: PhraseCatalog = {
   "Current machine": "当前电脑",
   "To connect one, open a pairing link from this server’s owner with {value}, or use Add connection with that machine’s own link.":
     "要连接一台电脑，请打开此服务器所有者提供的、带有 {value} 的配对链接，或通过“添加连接”使用那台电脑自己的链接。",
-  "When this app opens, connect it to your machines that answer, so their projects show here. Turn off and you connect each one yourself with Connect machine. It changes no agent permissions. Saved on this device.":
-    "打开此应用时，自动连接到有响应的电脑，让它们的项目显示在这里。关闭后，需要你自己用“连接电脑”逐台连接。不会更改任何智能体权限。保存在此设备上。",
   "Cannot use Connect? Pair over your own network": "无法使用 Connect？通过你自己的网络配对",
   "Cannot use Connect? Pair over your own network.": "无法使用 Connect？通过你自己的网络配对。",
   "Scan a one-time code with the SpecWithCode app on your phone. It connects to {url}.":
@@ -4448,4 +4438,185 @@ export const zh: PhraseCatalog = {
     "未列出：{names}。要在这里使用，请在该机器上打开 设置 > 机器，并允许 {machine} 在那里运行工作。",
   "This machine is reached over SpecWithCode Connect only, and this app's Connect account does not list it yet. Sign in to SpecWithCode Connect here with the same account, wait a moment, then press Connect again.":
     "这台机器只能通过 SpecWithCode Connect 访问，而此应用的 Connect 账户还未列出它。请在这里用同一账户登录 SpecWithCode Connect，稍等片刻，然后再次点击“连接”。",
+  "1 chosen project (could not read this machine's projects)":
+    "已选 1 个项目（无法读取这台电脑的项目）",
+  "1 more machine": "另外 1 台电脑",
+  "1 running thread": "1 个运行中的会话",
+  "1 running thread stops at {time}": "1 个运行中的会话将于 {time} 停止",
+  "Active until {time}": "有效至 {time}",
+  "Add {machineLabel}": "添加 {machineLabel}",
+  "Added {machineLabel}. Choose Allow on this line after Refresh.":
+    "已添加 {machineLabel}。刷新后，请在这一行选择“允许”。",
+  "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
+    "每轮结束后，将这台电脑的会话（包括已有会话）复制到有同一项目的其他电脑，任何一台都可以接着做。会多用一些 token。",
+  "After work left while it slept. Ask shows one button to bring it back.":
+    "在它睡眠期间转走的工作之后。“询问”会显示一个按钮，用来把工作带回来。",
+  "Agents on {hereLabel} can start work on {thereLabel}":
+    "{hereLabel} 上的智能体可以在 {thereLabel} 上开始工作",
+  "Agents on {thereLabel} can start work on {hereLabel}":
+    "{thereLabel} 上的智能体可以在 {hereLabel} 上开始工作",
+  "All sign-ins": "所有登录",
+  "All sign-ins on this machine": "这台电脑上的所有登录",
+  Allow: "允许",
+  "Allow all projects": "允许所有项目",
+  "Allow another machine": "允许另一台电脑",
+  "Allowing them needs Manage access on this machine.": "允许它们需要这台电脑上的管理访问权限。",
+  "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:":
+    "已经连接到它了？打开 {link}，在它的卡片上选择“添加”。无需复制任何内容。否则，请按以下步骤操作：",
+  "Away target": "离开目标",
+  "Can manage routines": "可以管理例行任务",
+  "Cannot manage routines": "无法管理例行任务",
+  "Changing this needs Manage access on this machine.": "更改此项需要这台电脑上的管理访问权限。",
+  "Checking your SpecWithCode Connect sign-in…": "正在检查你的 SpecWithCode Connect 登录…",
+  "Choose Allow on its card above, on the line about agents here starting work on it.":
+    "在上方它的卡片上，于“这里的智能体在它上面开始工作”那一行选择“允许”。",
+  Chosen: "已选",
+  "Chosen projects": "已选项目",
+  "Connection details": "连接详情",
+  "Connects this app to your machines that answer, so their projects show here. Off: you connect each one yourself. Changes no permissions. This device only.":
+    "将此应用连接到有响应的电脑，让它们的项目显示在这里。关闭时，需要你逐台自行连接。不会更改任何权限。仅限此设备。",
+  "Could not open {label} through SpecWithCode Connect. Check that it is online, then choose it again.":
+    "无法通过 SpecWithCode Connect 打开 {label}。请确认它在线，然后再次选择它。",
+  "Could not read this machine's projects. The grant keeps its choices.":
+    "无法读取这台电脑的项目。授权会保留其已有的选择。",
+  "Each card shows who may start work where, both ways. Hover a line for details.":
+    "每张卡片双向显示谁可以在哪里开始工作。将鼠标悬停在某一行上可查看详情。",
+  "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
+    "此应用知道的其他所有电脑都已列在 设置 > 机器 的“谁可以在这里运行工作”下。请在那里更改、撤销或恢复。",
+  "Expired: that machine must allow workers here again":
+    "已过期：那台电脑需要再次允许这里的工作节点",
+  Filter: "筛选",
+  "Filter: {label}": "筛选：{label}",
+  "Grace time": "宽限时间",
+  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
+    "这台 Mac 睡眠时，将工作交给离开目标。目标会先等待宽限时间，如果你提前回来，则不会转移任何工作。仅限 Mac。",
+  "How long the target waits after the lid closes before it takes over.":
+    "合上盖子后，目标等待多久再接手。",
+  "It also gets a key to manage access, updates and skills on this machine, for a year. Existing project and sign-in limits stay in force.":
+    "它还会获得一把密钥，可在一年内管理这台电脑上的访问权限、更新和技能。现有的项目和登录限制仍然有效。",
+  "Its app sees this machine": "它的应用能看到这台电脑",
+  "Its work may use any sign-in on this machine.": "它的工作可以使用这台电脑上的任何登录。",
+  "Its work may use no sign-in here, so every launch is refused.":
+    "它的工作不能使用这里的任何登录，因此每次启动都会被拒绝。",
+  Lasts: "有效期",
+  "Leave automatically when the lid closes": "合上盖子时自动离开",
+  "Let another of your machines run work here": "让你的另一台电脑在这里运行工作",
+  "Let {machine} manage scheduled routines": "允许 {machine} 管理定时例行任务",
+  Limits: "限制",
+  "Linked projects": "关联的项目",
+  "Linked to it": "已与它关联",
+  "Looking for your other machines…": "正在查找你的其他电脑…",
+  "Make pairing link": "生成配对链接",
+  "Most access for agents from {hereLabel}": "来自 {hereLabel} 的智能体的最高访问权限",
+  "Most its work may do": "它的工作最多可以做的事",
+  "My machine": "我的电脑",
+  "No longer answers. If it was wiped or reinstalled, remove it here; a fresh install joins as a new machine.":
+    "已不再响应。如果它被清空或重装，请在这里移除它；全新安装会作为一台新电脑加入。",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Another account, or no Connect below.":
+    "还没有可选的电脑。此版本没有 SpecWithCode Connect，因此电脑需通过代码或加入代码加入：请打开下方的“其他账户或无 Connect”。",
+  "No machine to choose yet. This build has no SpecWithCode Connect, so a machine joins with a code or a join line: open Settings > Machines, then Another account, or no Connect.":
+    "还没有可选的电脑。此版本没有 SpecWithCode Connect，因此电脑需通过代码或加入代码加入：请打开 设置 > 机器，然后打开“其他账户或无 Connect”。",
+  "No other machine can start work here. To allow one, choose Allow on its card above, on the line that says its agents can start work on this machine.":
+    "没有其他电脑可以在这里开始工作。要允许某台电脑，请在上方它的卡片上，于“它的智能体可以在这台电脑上开始工作”那一行选择“允许”。",
+  "No other machine is on your SpecWithCode Connect account yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "你的 SpecWithCode Connect 账户上还没有其他电脑。请在另一台电脑上安装 SpecWithCode，并用此账户登录 SpecWithCode Connect。之后它会列在这里。",
+  "No other machine is signed in to {account} yet. On the other machine, install SpecWithCode and sign in to SpecWithCode Connect with this account. It is then listed here.":
+    "还没有其他电脑登录 {account}。请在另一台电脑上安装 SpecWithCode，并用此账户登录 SpecWithCode Connect。之后它会列在这里。",
+  "No project folder (chats)": "无项目文件夹（对话）",
+  "No projects": "没有项目",
+  "No projects allowed": "未允许任何项目",
+  "No sign-ins": "没有登录",
+  "No sign-ins on this machine yet. Add one under Settings > Providers.":
+    "这台电脑上还没有登录。请在 设置 > 提供方 中添加。",
+  "No sign-ins: every launch is refused": "没有登录：每次启动都会被拒绝",
+  "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.":
+    "否。要从 {machineLabel} 打开这台电脑的项目，请在这里生成一次性链接，然后在那里打开。",
+  "Not included. Each secret transfer still asks you.": "不包含。每次传输机密仍会询问你。",
+  "Not set up yet.": "尚未设置。",
+  "Nothing allowed yet: tick a project or pick All projects":
+    "尚未允许任何内容：请勾选一个项目或选择“所有项目”",
+  "Nothing matches.": "没有匹配的内容。",
+  "Nothing to choose on this machine yet.": "这台电脑上还没有可选的内容。",
+  "Off: agents on {machine} can start work here, but cannot create, change, run or delete scheduled routines on this machine. Turn it on if {machine} should set up recurring work here.":
+    "关闭时：{machine} 上的智能体可以在这里开始工作，但不能创建、更改、运行或删除这台电脑上的定时例行任务。如果 {machine} 需要在这里设置周期性工作，请开启。",
+  "On {coordinatorLabel}, agents can pick this machine now. Keep SpecWithCode open here; while this machine sleeps or the app is closed it shows there as not answering. To stop it, choose Revoke under Who can run work here in Settings > Machines.":
+    "现在 {coordinatorLabel} 上的智能体可以选择这台电脑。请在这里保持 SpecWithCode 打开；这台电脑睡眠或应用关闭时，它在那里会显示为无响应。要停止，请在 设置 > 机器 的“谁可以在这里运行工作”下选择“撤销”。",
+  "On: agents on {machine} may create, change, run and delete scheduled routines on this machine, in the projects it may use. Turn it off to let them start work here but leave the schedules alone.":
+    "开启时：{machine} 上的智能体可以在它可用的项目中，创建、更改、运行和删除这台电脑上的定时例行任务。关闭后，它们仍可在这里开始工作，但不会动定时任务。",
+  "Opening {label} through SpecWithCode Connect…": "正在通过 SpecWithCode Connect 打开 {label}…",
+  "Pick the machine whose agents may start work here.": "选择其智能体可以在这里开始工作的电脑。",
+  "Pick the machine whose agents may start work here. Machines on your SpecWithCode Connect account show up by themselves.":
+    "选择其智能体可以在这里开始工作的电脑。你 SpecWithCode Connect 账户上的电脑会自动显示。",
+  "Projects linked to {machine} (could not read this machine's projects)":
+    "与 {machine} 关联的项目（无法读取这台电脑的项目）",
+  "Projects linked to {machine} (none yet)": "与 {machine} 关联的项目（暂无）",
+  "Projects linked to {machine}: {projects}": "与 {machine} 关联的项目：{projects}",
+  "Projects {machine} may use": "{machine} 可以使用的项目",
+  "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
+    "立即拒绝新工作。它在这里启动的会话会在 2 分钟后停止；它们的工作树和更改会保留。",
+  "Renews automatically.": "自动续期。",
+  "Revoked {time}. New work is refused": "已于 {time} 撤销。新工作会被拒绝",
+  "Revoked. New work is refused": "已撤销。新工作会被拒绝",
+  "Search sign-ins": "搜索登录",
+  Secrets: "机密",
+  "Set when it first starts work": "在它首次开始工作时设置",
+  Shared: "共享",
+  "Show the switch": "显示开关",
+  "Sign in to SpecWithCode Connect on this machine. Your other machines on the same account are then listed here.":
+    "请在这台电脑上登录 SpecWithCode Connect。之后，同一账户上的其他电脑会列在这里。",
+  "Sign-ins": "登录",
+  "Sign-ins {machine} may use": "{machine} 可以使用的登录",
+  Skip: "跳过",
+  "Someone else's machine": "别人的电脑",
+  "SpecWithCode Connect cannot be reached right now, so your machines cannot be listed. Check this machine's internet connection, then choose Check again.":
+    "目前无法连接 SpecWithCode Connect，因此无法列出你的电脑。请检查这台电脑的网络连接，然后选择“重新检查”。",
+  "SpecWithCode Connect is off on this machine, so your other machines cannot reach it. Turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow.":
+    "这台电脑上的 SpecWithCode Connect 已关闭，因此你的其他电脑无法连接到它。请在 设置 > 机器 中打开 SpecWithCode Connect 开关，然后选择“允许”。",
+  "The most a thread {machine} starts here may do without asking. A thread can run with less, never more. Chosen on {machine}, on this machine's card; change it there.":
+    "{machine} 在这里启动的会话无需询问即可做的最多事情。会话可以用更少的权限运行，但绝不会更多。此项在 {machine} 上这台电脑的卡片中选择；请在那里更改。",
+  "The same choice as in a chat.": "与对话中的选择相同。",
+  "These machines are signed in to {account}, like this one. Pick whose agents may start work here.":
+    "这些电脑和这台一样登录了 {account}。请选择谁的智能体可以在这里开始工作。",
+  "This machine has no projects yet. Add a project folder here, or hand a project off to it, then tick it.":
+    "这台电脑还没有项目。请在这里添加一个项目文件夹，或将项目交接给它，然后勾选。",
+  "Until you stop it here or on {coordinatorLabel}. After Allow, this card says whether it renews by itself or ends on a date.":
+    "直到你在这里或在 {coordinatorLabel} 上停止它。选择“允许”后，这张卡片会显示它是自动续期，还是在某个日期结束。",
+  "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
+    "直到你在这里或在 {coordinatorLabel} 上停止它。它会自动续期。",
+  "Until you stop it, here or on that machine.": "直到你在这里或那台电脑上停止它。",
+  "What {thereLabel} may use here: under Who can run work here.":
+    "{thereLabel} 在这里可以使用的内容：见“谁可以在这里运行工作”。",
+  "When this machine wakes": "这台电脑唤醒时",
+  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
+    "离开模式将你的会话、例行任务和协调者发送到哪里。这台电脑睡眠时也会使用；锁屏不算。",
+  "Who is it for": "给谁用",
+  "Whose machine {machine} is": "{machine} 属于谁",
+  "Work from {machine}": "来自 {machine} 的工作",
+  "Work {machine} starts here may itself start work on one more machine, and no further. It can never loop back to {machine}.":
+    "{machine} 在这里启动的工作，自身最多还能在另外 1 台电脑上开始工作，不能更远。它绝不能绕回 {machine}。",
+  "Work {machine} starts here may itself start work on {count} more machines, and no further. It can never loop back to {machine}.":
+    "{machine} 在这里启动的工作，自身最多还能在另外 {count} 台电脑上开始工作，不能更远。它绝不能绕回 {machine}。",
+  "Work {machine} starts here stays here: it cannot start work on another machine from this one.":
+    "{machine} 在这里启动的工作只留在这里：它不能从这台电脑在另一台电脑上开始工作。",
+  "archived, uncheck to remove": "已归档，取消勾选即可移除",
+  "automated, uncheck to remove": "自动项目，取消勾选即可移除",
+  "checking…": "正在检查…",
+  "folder for chats, uncheck to remove": "对话文件夹，取消勾选即可移除",
+  "not answering right now": "目前无响应",
+  "not connected in this app": "未在此应用中连接",
+  "not signed in": "未登录",
+  online: "在线",
+  "renews automatically": "自动续期",
+  "until {date}": "有效至 {date}",
+  "up to {access}": "最高 {access}",
+  "{access}, until {date}": "{access}，有效至 {date}",
+  "{count} chosen projects (could not read this machine's projects)":
+    "已选 {count} 个项目（无法读取这台电脑的项目）",
+  "{count} more machines": "另外 {count} 台电脑",
+  "{count} running threads": "{count} 个运行中的会话",
+  "{count} running threads stop at {time}": "{count} 个运行中的会话将于 {time} 停止",
+  "{machine} sets it the next time it starts work here. It is the most a thread it starts here may do without asking.":
+    "{machine} 下次在这里开始工作时会设置它。这是它在这里启动的会话无需询问即可做的最多事情。",
+  "{title} (archived)": "{title}（已归档）",
+  "{title} (automated)": "{title}（自动项目）",
 };

@@ -424,7 +424,9 @@ describe("Settings > Machines", () => {
     expect(html).toContain("Agents on M4MAX can start work on MacBook Pro");
     expect(html).not.toContain('href="/settings/machines"');
     expect(html).toContain("Connection details");
-    expect(html).toContain(">Allowed<");
+    // One summary line per direction; the access workers there get, in a few words.
+    expect(html).toContain('data-slot="machine-work-summary"');
+    expect(html).toContain(">Auto<");
     expect(html).toContain("EasyChamp");
     expect(html).toContain("Runs workers only");
     // The row keeps the folder short; the button says it in full.
@@ -549,8 +551,11 @@ describe("Settings > Machines", () => {
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain('aria-label="Who can run work here"');
     expect(html).toContain("Agents on MacBook Pro can start work on M4MAX");
-    expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
-    expect(html.match(/>Agents on MacBook Pro can start work on M4MAX</g)).toHaveLength(1);
+    expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active");
+    expect(html).toContain(">Linked projects<");
+    expect(html.match(/aria-label="Agents on MacBook Pro can start work on M4MAX/g)).toHaveLength(
+      1,
+    );
     expect(html).not.toContain("use this machine too");
   });
 

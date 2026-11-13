@@ -19,16 +19,16 @@ others off.
 
 ## Seeing a machine is not the same as adding it
 
-| Layer               | What it means                                                              | Where                                                                        |
-| ------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **App connection**  | This app window can see the machine and open its chats                     | **Settings → Machines**                                                      |
-| **Private machine** | This machine's server holds its own key to it, even with the window closed | **Add <machine>** on its card, or the steps below                            |
-| **Workers allowed** | Agents on this machine may start work there                                | **Allow** on the line "Agents on <this machine> can start work on <machine>" |
+| Layer               | What it means                                                              | Where                                             |
+| ------------------- | -------------------------------------------------------------------------- | ------------------------------------------------- |
+| **App connection**  | This app window can see the machine and open its chats                     | **Settings → Machines**                           |
+| **Private machine** | This machine's server holds its own key to it, even with the window closed | **Add <machine>** on its card, or the steps below |
+| **Workers allowed** | Agents on this machine may start work there                                | **Allow** under **Limits** on its card            |
 
 If you only want to use a machine by hand, the app connection is enough.
 
 If the machine already shows as connected under **Settings → Machines**, choose
-**Add <machine>** on its card, then **Allow** on the line "Agents on <this machine> can start work on <machine>". There is nothing to copy
+**Add <machine>** on its card, then **Allow** under **Limits**. There is nothing to copy
 or paste. Your main machine gets a key to that machine for a year, which can
 manage its access, updates and skills. It needs the desktop app, SpecWithCode
 Connect linked on that machine and a connection with full access to it;
@@ -389,26 +389,39 @@ again, make a new line on the worker and add it on the main machine.
 ## Who can run work here
 
 Allowing workers is a grant the worker gives the main machine, and the worker
-enforces it. On the worker, open **Settings → Machines → Who can run work on
-this Mac**. Each machine that may start work there has a row with:
+enforces it. On the worker, open **Settings → Machines → Who can run work
+here**. Each machine that may start work there has a row with one summary line,
+for example "All projects, All sign-ins, up to Full access, renews
+automatically", a **Revoke** button, and **Limits**, folded:
 
-- **Whose machine**: **My machine** or **Someone else's machine**. Work from
-  your own machine may pass through two machines in a row (main machine to this
-  one to a third); work from someone else's machine only one. Switching a
-  machine to someone else's also turns off its sign-ins until you choose them.
-- **Projects**: **Linked to it** (the default for new grants: projects that are
-  part of a shared project with that machine), **Chosen projects**, or **All
-  projects**. Work outside these is refused, and the other machine does not see
-  those projects in its list.
-- **Sign-ins**: **All sign-ins**, **Chosen sign-ins** or **None**. A launch that
-  asks for a sign-in outside the list is refused with a message naming the
-  allowed ones. With **None**, every launch is refused.
-- **Most access**: the most a thread started from there may run with, as chosen
-  in **Allow workers** on the main machine.
-- When the grant expires, and how many threads it started here are running.
+- **Who is it for** (someone else's machine only): **My machine** or
+  **Someone else's machine**. Work from your own machine may pass through two
+  machines in a row (main machine to this one to a third); work from someone
+  else's machine only one. Switching a machine to someone else's also turns off
+  its sign-ins until you choose them. Hover the route icon beside the machine's
+  name to see that path.
+- **Projects**: **All projects** (the default when your own machine first starts
+  work here), **Chosen projects**, or **Linked to it** (projects that are part of
+  a shared project with that machine; the default for other machines). Work
+  outside these is refused, and the other machine does not see those projects
+  in its list. A grant that allows no project at all says **No projects
+  allowed** and offers **Allow all projects**.
+- **Sign-ins**: a picker with **All**, **Chosen** or **None**, and a searchable
+  list with each provider's logo, signed-in ones first. A launch that asks for a
+  sign-in outside the list is refused with a message naming the allowed ones.
+  With **None**, every launch is refused.
+- **Routines**: on, that machine's agents may create, change, run and delete
+  scheduled routines here, in the projects it may use. Off, they can still start
+  work here but not manage schedules.
+- **Access**: the most a thread started from there may run with, as chosen on
+  the main machine. It is shown here, and changed there.
 
-That machine's own row in the list above it says **May run work here**,
-**Revoked** or **Expired**, with the same projects and status.
+The summary says "renews automatically" when your own machine keeps the grant
+renewed, and the date it lapses otherwise.
+
+That machine's own card above shows one line each way, for example
+"M4 → M5 Full access" and "M5 → M4 All projects". Hover a line for the full
+sentence.
 
 Machines allowed before 1.0.56 show **Allowed before work could be limited**:
 they keep every project and sign-in until you change them. A main machine
