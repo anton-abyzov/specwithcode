@@ -17,6 +17,7 @@ import type {
 import { codexAuthHandoffUrl } from "@specweave-studio/shared/codexAuthHandoff";
 import { providerAuthReturnUrl } from "@specweave-studio/shared/providerAuthReturnUrl";
 import { isLoopbackHost } from "@specweave-studio/shared/preview";
+import { clearChatGptSignIn, noteChatGptSignInStarted } from "./chatGptWelcomeState";
 import { CheckIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
@@ -415,6 +416,7 @@ function ManagedCodexSetup({
   }, [handoff, handoffQuery.data, handoffQuery.error]);
   const cancelSignIn = useCallback(() => {
     setAwaitingProvider(null);
+    clearChatGptSignIn(environmentId, instanceId);
     if (handoff) {
       setHandoff(null);
       return Promise.resolve();
@@ -426,6 +428,7 @@ function ManagedCodexSetup({
     async (methodId = "chatgpt") => {
       if (pendingRef.current) return;
       openRequested.current = true;
+      noteChatGptSignInStarted(environmentId, instanceId);
       setTransferFailed(false);
       setRequestedMethodId(methodId);
       const returnUrl = new URL(window.location.href);

@@ -26,6 +26,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { noteChatGptSignInStarted } from "./chatGptWelcomeState";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -301,7 +302,8 @@ export function ProviderAuthenticationSection({
                 size="sm"
                 variant="outline"
                 disabled={disabled || !provider.enabled || !provider.installed || !auth}
-                onClick={() =>
+                onClick={() => {
+                  noteChatGptSignInStarted(environmentId, instanceId);
                   void run(() =>
                     start({
                       environmentId,
@@ -312,8 +314,8 @@ export function ProviderAuthenticationSection({
                           : {}),
                       },
                     }),
-                  )
-                }
+                  );
+                }}
               >
                 {signedIn
                   ? tx("Change account")

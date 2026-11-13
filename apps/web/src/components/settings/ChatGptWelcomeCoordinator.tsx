@@ -2,7 +2,7 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { environmentPresentations } from "../../state/presentation";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { OpenAI } from "../Icons";
@@ -16,17 +16,48 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
+import {
+  acknowledgeChatGptProfile,
+  readAcknowledgedChatGptProfiles,
+  readPendingChatGptSignIns,
+  subscribeChatGptWelcome,
+  type PendingChatGptSignIn,
+} from "./chatGptWelcomeState";
 
-const STORAGE_KEY = "specweave-studio:chatgpt-sharing-welcome:v1";
-function readAcknowledgedProfiles(): string[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    return Array.isArray(value)
-      ? value.filter((key): key is string => typeof key === "string")
-      : [];
-  } catch {
-    return [];
-  }
+let version = 0;
+const getVersion = () => version;
+const subscribe = (listener: () => void) =>
+  subscribeChatGptWelcome(() => {
+    version += 1;
+    listener();
+  });
+
+export interface ChatGptWelcomeProfile {
+  readonly key: string;
+  readonly environmentId: string;
+  readonly instanceId: string;
+  readonly environmentLabel: string;
+  readonly providerName: string;
+}
+
+/**
+ * The welcome is for a sign-in this window started: a ChatGPT profile that is
+ * connected on some machine is not enough, because another machine's sign-in
+ * (or a synced or refreshed snapshot) also connects it here.
+ */
+export function selectChatGptWelcome(
+  profiles: readonly ChatGptWelcomeProfile[],
+  pending: readonly PendingChatGptSignIn[],
+  acknowledged: readonly string[],
+): ChatGptWelcomeProfile | undefined {
+  return profiles.find(
+    (profile) =>
+      !acknowledged.includes(profile.key) &&
+      pending.some(
+        (entry) =>
+          entry.environmentId === profile.environmentId && entry.instanceId === profile.instanceId,
+      ),
+  );
 }
 
 /** Read the verified environment snapshot, never the browser callback acknowledgment. */
@@ -34,7 +65,7 @@ export function ChatGptWelcomeCoordinator() {
   const tx = useTx();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const nickname = useMachineNicknames();
-  const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);
+  useSyncExternalStore(subscribe, getVersion, getVersion);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
     presentation.connection.phase !== "connected"
       ? []
@@ -44,20 +75,20 @@ export function ChatGptWelcomeCoordinator() {
             provider.instanceId,
             provider.auth.profileId ?? provider.auth.email ?? "default",
           ]),
+          environmentId: String(environmentId),
+          instanceId: String(provider.instanceId),
           environmentLabel: nickname(environmentId, presentation.entry.target.label),
           providerName: provider.displayName ?? "Codex",
         })),
   );
-  const next = profiles.find((profile) => !acknowledged.includes(profile.key));
+  const next = selectChatGptWelcome(
+    profiles,
+    readPendingChatGptSignIns(),
+    readAcknowledgedChatGptProfiles(),
+  );
   const dismiss = () => {
     if (!next) return;
-    const updated = [...acknowledged, next.key];
-    setAcknowledged(updated);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch {
-      /* Session dismissal still works. */
-    }
+    acknowledgeChatGptProfile(next.key, next.environmentId, next.instanceId);
   };
   return (
     <Dialog
