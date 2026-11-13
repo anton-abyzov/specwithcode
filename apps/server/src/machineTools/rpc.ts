@@ -5,7 +5,7 @@
  */
 import {
   MachineToolsError,
-  type MachineToolId,
+  type MachineReadinessToolId,
   type MachineToolInstallEvent,
   MACHINE_TOOLS_RPC_METHODS,
   WsMachineToolsRpcGroup,
@@ -25,9 +25,10 @@ import { probeGit } from "../provider/providerDiscovery.ts";
 import { makeNodeProvisionHost } from "../provision/host.ts";
 import {
   checkMachineTools,
+  existingManagedToolDirs,
   installMachineTool,
+  machineToolName,
   MachineToolInstallError,
-  managedToolDirs,
   runsOnGlibc,
   type MachineToolsContext,
   withPathDirs,
@@ -46,11 +47,8 @@ function addToServerPath(dirs: ReadonlyArray<string>): void {
   if (next !== undefined) env[key] = next;
 }
 
-const toolName = (tool: MachineToolId) =>
-  tool === "gh" ? "GitHub CLI" : tool === "node" ? "Node.js" : "Git";
-
 /** The install running on this machine. It is held until the install itself ends, not its stream. */
-let installing: MachineToolId | null = null;
+let installing: MachineReadinessToolId | null = null;
 /** The handlers are built per connection; the PATH is seeded once per server. */
 let pathSeeded = false;
 
@@ -62,17 +60,15 @@ export const seedManagedToolPath = (baseDir: string) =>
   Effect.gen(function* () {
     if (pathSeeded) return;
     pathSeeded = true;
-    const fs = yield* FileSystem.FileSystem;
     const host = makeNodeProvisionHost();
-    const installed: string[] = [];
-    for (const dir of managedToolDirs({
-      home: baseDir,
-      platform: host.platform,
-      arch: host.arch,
-      glibc: runsOnGlibc(),
-    })) {
-      if (yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))) installed.push(dir);
-    }
+    const installed = yield* Effect.promise(() =>
+      existingManagedToolDirs(host, {
+        home: baseDir,
+        platform: host.platform,
+        arch: host.arch,
+        glibc: runsOnGlibc(),
+      }).catch(() => [] as ReadonlyArray<string>),
+    );
     addToServerPath(installed);
   });
 
@@ -128,13 +124,15 @@ export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumenta
             }),
           ),
         ),
-      [MACHINE_TOOLS_RPC_METHODS.machineToolsInstall]: (input: { readonly tool: MachineToolId }) =>
+      [MACHINE_TOOLS_RPC_METHODS.machineToolsInstall]: (input: {
+        readonly tool: MachineReadinessToolId;
+      }) =>
         Stream.callback<MachineToolInstallEvent, MachineToolsError>((queue) =>
           Effect.gen(function* () {
             if (installing !== null)
               return yield* new MachineToolsError({
                 code: "busy",
-                reason: `${toolName(installing)} is being installed on this machine. Wait for it to end.`,
+                reason: `${machineToolName(installing)} is being installed on this machine. Wait for it to end.`,
               });
             // Taken before the first yield, so a second request sees it.
             installing = input.tool;

@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { managedNodeDir, runsOnGlibc, toolPlatformKey } from "../machineTools/machineTools.ts";
+import { managedSpecweaveDir } from "../machineTools/specweaveTool.ts";
 
 export interface NodeToolDirsInput {
   readonly home: string;
@@ -84,7 +85,9 @@ function managedNode(input: NodeToolDirsInput): ReadonlyArray<string> {
   // oxlint-disable-next-line studio/no-global-process-runtime -- the running machine's own CPU.
   const arch = input.arch ?? process.arch;
   const key = toolPlatformKey(input.platform, arch, input.glibc ?? runsOnGlibc());
-  return key === null ? [] : [managedNodeDir(input.studioHome, key)];
+  // SpecWeave the app installed sits next to them, so SpecWeave setup finds it too.
+  const specweave = managedSpecweaveDir(input.studioHome, input.platform);
+  return key === null ? [specweave] : [managedNodeDir(input.studioHome, key), specweave];
 }
 
 /** Folders to search after PATH: version managers, then the service's own Node. Missing ones are harmless. */

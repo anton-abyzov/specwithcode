@@ -54,6 +54,17 @@ export const nodeDownload = (
   };
 };
 
+/**
+ * The SpecWeave CLI machine readiness installs into the app's folder with npm,
+ * which checks the package against the registry's sha512 integrity.
+ * SPECWEAVE_MIN_VERSION is the oldest one SpecWithCode works with; an older
+ * copy shows as too old.
+ */
+export const SPECWEAVE_VERSION = "3.1.22";
+export const SPECWEAVE_MIN_VERSION = "3.1.21";
+/** SpecWeave and Copilot CLI need Node.js 20 or newer. */
+export const NODE_MIN_MAJOR = 20;
+
 export const GH_VERSION = "2.102.0";
 const GH_ASSETS: Record<ToolPlatformKey, { file: string; sha256: string }> = {
   "linux-x64": {
