@@ -288,11 +288,17 @@ export async function safeGitConfigBytes(
   }
 }
 
-/** A Git directory has a HEAD file and an objects folder; a name prefix has neither. */
+/**
+ * A Git directory has a HEAD file and an objects folder; a name prefix has
+ * neither. Any spelling counts (`head`, `Objects`): on a case-insensitive disk
+ * those are the same names, so such a folder is sanitized too.
+ */
 async function isGitDirectory(dir: string): Promise<boolean> {
-  const head = await NodeFSP.lstat(NodePath.join(dir, "HEAD")).catch(() => null);
-  const objects = await NodeFSP.lstat(NodePath.join(dir, "objects")).catch(() => null);
-  return head?.isFile() === true && objects?.isDirectory() === true;
+  const entries = await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => []);
+  return (
+    entries.some((entry) => entry.isFile() && entry.name.toLowerCase() === "head") &&
+    entries.some((entry) => entry.isDirectory() && entry.name.toLowerCase() === "objects")
+  );
 }
 
 /**
@@ -387,6 +393,16 @@ const GIT_NAMES = [
   "exclude",
   "sparse-checkout",
   "alternates",
+  "http-alternates",
+  "git-rebase-todo",
+  "todo",
+  "done",
+  "ORIG_HEAD",
+  "FETCH_HEAD",
+  "MERGE_HEAD",
+  "CHERRY_PICK_HEAD",
+  "REVERT_HEAD",
+  "REBASE_HEAD",
 ];
 const GIT_NAME_OF = new Map(GIT_NAMES.map((name) => [name.toLowerCase(), name]));
 
@@ -409,20 +425,27 @@ export async function sanitizeCopiedGitDir(
 ): Promise<void> {
   // Aliases first, so the walk below sees only the names Git will read.
   const aliasDirs = async (dir: string) => {
-    const dirs = [dir, NodePath.join(dir, "info"), NodePath.join(dir, "objects", "info")];
+    // Pending-operation folders hold todo files Git runs on `--continue`.
+    const inside = (base: string) =>
+      ["info", "rebase-merge", "rebase-apply", "sequencer"].map((name) =>
+        NodePath.join(base, name),
+      );
+    const dirs = [dir, ...inside(dir), NodePath.join(dir, "objects", "info")];
     for (const admin of await NodeFSP.readdir(NodePath.join(dir, "worktrees"), {
       withFileTypes: true,
     }).catch(() => []))
       if (admin.isDirectory()) {
         const path = NodePath.join(dir, "worktrees", admin.name);
-        dirs.push(path, NodePath.join(path, "info"));
+        dirs.push(path, ...inside(path));
       }
     return dirs;
   };
   await removeCaseAliases(gitDir);
-  for (const dir of await gitDirectoriesIn(gitDir))
-    for (const path of await aliasDirs(dir)) await removeCaseAliases(path);
-  for (const dir of await gitDirectoriesIn(gitDir)) {
+  const found = await gitDirectoriesIn(gitDir);
+  for (const dir of found) for (const path of await aliasDirs(dir)) await removeCaseAliases(path);
+  // A folder that only looked like a Git directory through another spelling
+  // is still cleaned: it would be one on a case-insensitive disk.
+  for (const dir of new Set([...found, ...(await gitDirectoriesIn(gitDir))])) {
     await refuseCommandTodo(dir);
     for (const name of ["hooks", "commondir", "remotes", "branches"])
       await NodeFSP.rm(NodePath.join(dir, name), { recursive: true, force: true });

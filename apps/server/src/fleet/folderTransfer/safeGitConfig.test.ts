@@ -334,6 +334,42 @@ describe("copied repositories", () => {
     expect(scan.warnings.join(" ")).toContain("some disks read it as .git");
   });
 
+  it("cleans a submodule whose HEAD, todo or object store is spelled differently", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const gitDir = NodePath.join(main, ".git");
+    // A dormant submodule whose HEAD is spelled `head`: one on a case-insensitive disk.
+    const dormant = NodePath.join(gitDir, "modules/dormant");
+    write(NodePath.join(dormant, "head"), "ref: refs/heads/main\n");
+    NodeFS.mkdirSync(NodePath.join(dormant, "objects"), { recursive: true });
+    write(NodePath.join(dormant, "config"), "[core]\n\tfsmonitor = evil-fsmonitor\n");
+    write(NodePath.join(dormant, "hooks/post-checkout"), "#!/bin/sh\nexit 1\n", 0o755);
+    await sanitizeCopiedGitDir(gitDir, main);
+    expect(NodeFS.readFileSync(NodePath.join(dormant, "config"), "utf8")).not.toContain("evil");
+    expect(NodeFS.existsSync(NodePath.join(dormant, "hooks"))).toBe(false);
+    // A rebase todo under another spelling is removed before Git could read it.
+    write(NodePath.join(gitDir, "rebase-merge/GIT-REBASE-TODO"), "exec touch /tmp/x\n");
+    await sanitizeCopiedGitDir(gitDir, main);
+    expect(NodeFS.readdirSync(NodePath.join(gitDir, "rebase-merge"))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "darwin" || process.platform === "win32")(
+    "does not carry an object store pointer spelled ALTERNATES",
+    async () => {
+      const root = tempRoot();
+      const main = repository(root);
+      const outside = NodePath.join(root, "outside.git");
+      git(root, "init", "-q", "--bare", outside);
+      write(NodePath.join(main, ".git/objects/info/ALTERNATES"), `${outside}/objects\n`);
+      const scan = await scanFolder(main);
+      const overlay = NodePath.join(root, "overlay");
+      await preparePortableGit(scan, overlay);
+      const info = NodePath.join(overlay, ".git/objects/info");
+      const names = NodeFS.existsSync(info) ? NodeFS.readdirSync(info) : [];
+      expect(names.map((name) => name.toLowerCase())).not.toContain("alternates");
+    },
+  );
+
   it("refuses a pending rebase that runs commands", async () => {
     const root = tempRoot();
     const main = repository(root);

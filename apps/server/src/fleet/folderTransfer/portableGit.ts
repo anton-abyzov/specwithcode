@@ -294,7 +294,12 @@ async function copyObjects(context: CopyContext, source: string, target: string)
   });
   await copyGitTree(context, NodePath.join(source, "info"), NodePath.join(target, "info"), {
     skip: (relative) =>
-      relative === "commit-graph" || relative === "commit-graphs" || relative === "packs",
+      relative === "commit-graph" ||
+      relative === "commit-graphs" ||
+      relative === "packs" ||
+      // Another object store, under any spelling a case-insensitive disk would read.
+      relative.toLowerCase() === "http-alternates" ||
+      (relative.toLowerCase() === "alternates" && relative !== "alternates"),
   });
   const done = new Set<string>();
   for (let pass = 0; pass < 2; pass += 1) {
