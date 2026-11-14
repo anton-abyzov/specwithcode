@@ -1572,7 +1572,7 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.map((records) =>
-          records.turnItems.flatMap((item) =>
+          (records.turnItems ?? []).flatMap((item) =>
             item.type === "user_input_request" && item.responseMode === "message"
               ? [
                   {
