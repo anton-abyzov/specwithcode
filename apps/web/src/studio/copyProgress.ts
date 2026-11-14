@@ -36,8 +36,20 @@ export interface CopyProgressView {
   readonly outcome: CopyOutcome;
 }
 
+/** A phase as two parts: what happens, and on which machine ("Send", "to m5"). */
+export const phaseParts = (
+  phase: CopyPhase,
+  source: string,
+  target: string,
+): readonly [verb: string, place: string] =>
+  phase === "measure"
+    ? ["Measure", `on ${source}`]
+    : phase === "send"
+      ? ["Send", `to ${target}`]
+      : ["Apply", `on ${target}`];
+
 export const phaseLabel = (phase: CopyPhase, source: string, target: string): string =>
-  phase === "measure" ? `Measure on ${source}` : phase === "send" ? `Send to ${target}` : `Apply on ${target}`;
+  phaseParts(phase, source, target).join(" ");
 
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 const ratio = (done: number, total: number | null | undefined) =>
@@ -52,7 +64,14 @@ export function sourceProgressView(
 ): CopyProgressView {
   const base = { phase: "measure" as const, bytesLocal: 0, outcome: "running" as const };
   if (!progress)
-    return { ...base, step: `Measuring the folder on ${sourceLabel}`, fraction: null, bytes: null, files: null, rateKey: null };
+    return {
+      ...base,
+      step: `Measuring the folder on ${sourceLabel}`,
+      fraction: null,
+      bytes: null,
+      files: null,
+      rateKey: null,
+    };
   switch (progress.step) {
     case "checking-worktrees":
       return {
@@ -76,7 +95,8 @@ export function sourceProgressView(
       return {
         ...base,
         step: `Reading files on ${sourceLabel}`,
-        fraction: ratio(progress.bytes, progress.totalBytes) ?? ratio(progress.files, progress.totalFiles),
+        fraction:
+          ratio(progress.bytes, progress.totalBytes) ?? ratio(progress.files, progress.totalFiles),
         bytes: { done: progress.bytes, total: progress.totalBytes ?? null },
         files: { done: progress.files, total: progress.totalFiles ?? null },
         rateKey: "measure:hashing",
@@ -130,7 +150,9 @@ export function statusProgressView(
         ...running,
         phase: "send",
         step: `Sending files to ${targetLabel}`,
-        fraction: ratio(progress.bytesDone, progress.bytesTotal) ?? ratio(progress.filesDone, progress.filesTotal),
+        fraction:
+          ratio(progress.bytesDone, progress.bytesTotal) ??
+          ratio(progress.filesDone, progress.filesTotal),
         ...counts,
         rateKey: "send:files",
       };
@@ -140,7 +162,10 @@ export function statusProgressView(
         ...running,
         phase: "send",
         step: `Checking files on ${targetLabel}`,
-        fraction: progress ? (ratio(progress.filesDone, progress.filesTotal) ?? ratio(progress.bytesDone, progress.bytesTotal)) : null,
+        fraction: progress
+          ? (ratio(progress.filesDone, progress.filesTotal) ??
+            ratio(progress.bytesDone, progress.bytesTotal))
+          : null,
         ...counts,
         rateKey: "send:verify",
       };
@@ -149,7 +174,8 @@ export function statusProgressView(
         ...running,
         phase: "apply",
         step: `Putting files in place on ${targetLabel}`,
-        fraction: progress?.phase === "apply" ? ratio(progress.filesDone, progress.filesTotal) : null,
+        fraction:
+          progress?.phase === "apply" ? ratio(progress.filesDone, progress.filesTotal) : null,
         ...(progress?.phase === "apply" ? counts : { bytes: null, files: null, bytesLocal: 0 }),
         rateKey: null,
       };
@@ -308,6 +334,11 @@ export function timeLeftText(view: CopyProgressView, rate: number | null): strin
   const left = view.bytes.total - view.bytes.done;
   if (left <= 0) return null;
   const seconds = left / rate;
-  const rounded = seconds < 60 ? Math.max(5, Math.ceil(seconds / 5) * 5) : seconds < 600 ? Math.ceil(seconds / 10) * 10 : Math.ceil(seconds / 60) * 60;
+  const rounded =
+    seconds < 60
+      ? Math.max(5, Math.ceil(seconds / 5) * 5)
+      : seconds < 600
+        ? Math.ceil(seconds / 10) * 10
+        : Math.ceil(seconds / 60) * 60;
   return `About ${formatDuration(rounded * 1000)} left`;
 }

@@ -6,6 +6,7 @@ import {
   countsText,
   formatRate,
   phaseLabel,
+  phaseParts,
   rateOf,
   timeLeftText,
   type CopyPhase,
@@ -131,17 +132,24 @@ export function CopyPhaseTrack({
               <li
                 key={phase}
                 data-state={state}
-                className={`flex min-w-0 items-center gap-1 ${
+                className={`min-w-0 leading-tight ${
                   state === "active"
-                    ? "font-medium text-foreground"
+                    ? "text-foreground"
                     : state === "failed"
-                      ? "font-medium text-destructive-foreground"
+                      ? "text-destructive-foreground"
                       : "text-muted-foreground"
                 }`}
               >
-                {state === "done" && <CheckIcon className="size-3 shrink-0" />}
-                {state === "failed" && <XIcon className="size-3 shrink-0" />}
-                <span className="truncate">{phaseLabel(phase, sourceLabel, targetLabel)}</span>
+                <span
+                  className={`flex items-center gap-1 ${state === "active" || state === "failed" ? "font-medium" : ""}`}
+                >
+                  {state === "done" && <CheckIcon className="size-3 shrink-0" />}
+                  {state === "failed" && <XIcon className="size-3 shrink-0" />}
+                  {phaseParts(phase, sourceLabel, targetLabel)[0]}
+                </span>
+                <span className="block truncate text-muted-foreground">
+                  {phaseParts(phase, sourceLabel, targetLabel)[1]}
+                </span>
               </li>
             );
           })}
@@ -215,7 +223,10 @@ export function CopyProgressPanel({
             </p>
           )}
           {(rate || left || elapsed) && (
-            <p className="flex flex-wrap gap-x-4 text-muted-foreground" data-slot="copy-progress-pace">
+            <p
+              className="flex flex-wrap gap-x-4 text-muted-foreground"
+              data-slot="copy-progress-pace"
+            >
               {rate && <span>{formatRate(rate)}</span>}
               {left && <span>{left}</span>}
               {elapsed && <span>{elapsed}</span>}
