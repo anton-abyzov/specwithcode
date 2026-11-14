@@ -4674,8 +4674,6 @@ export const pt: PhraseCatalog = {
     "Depois que o trabalho saiu enquanto ela dormia. Perguntar mostra um botão para trazê-lo de volta.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Agentes em {hereLabel} podem iniciar trabalho em {thereLabel}",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "Agentes em {thereLabel} podem iniciar trabalho em {hereLabel}",
   "All sign-ins": "Todos os logins",
   "All sign-ins on this machine": "Todos os logins desta máquina",
   Allow: "Permitir",
@@ -4779,7 +4777,6 @@ export const pt: PhraseCatalog = {
   "Projects {machine} may use": "Projetos que {machine} pode usar",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "Recusa novo trabalho na hora. As threads que ela iniciou aqui param em 2 minutos; os worktrees e as alterações delas ficam.",
-  "Renews automatically.": "Renova automaticamente.",
   "Search sign-ins": "Pesquisar logins",
   Secrets: "Segredos",
   "Set when it first starts work": "Definido quando ela iniciar trabalho pela primeira vez",
@@ -4830,7 +4827,6 @@ export const pt: PhraseCatalog = {
   "renews automatically": "renova automaticamente",
   "until {date}": "até {date}",
   "up to {access}": "até {access}",
-  "{access}, until {date}": "{access}, até {date}",
   "{count} chosen projects (could not read this machine's projects)":
     "{count} projetos escolhidos (não foi possível ler os projetos desta máquina)",
   "{count} more machines": "mais {count} máquinas",
@@ -5041,4 +5037,14 @@ export const pt: PhraseCatalog = {
     "Deixar {thereLabel} iniciar trabalho aqui",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} pode iniciar trabalho aqui: seus agentes podem iniciar threads nos projetos desta máquina. Parar recusa trabalho novo na hora; as threads em execução param 2 minutos depois. Esta máquina pode iniciar trabalho em {there}: os agentes daqui podem iniciar threads lá, até o acesso que {there} permitir.",
+  "Allow {there} to start work here":
+    "Permitir que {there} inicie trabalho aqui",
+  "Stop {there} starting work here":
+    "Impedir que {there} inicie trabalho aqui",
+  "Allow {there} again to start work here":
+    "Permitir de novo que {there} inicie trabalho aqui",
+  "Set up this machine to start work on {there}":
+    "Configurar esta máquina para iniciar trabalho em {there}",
+  "Change what this machine may do on {there}":
+    "Alterar o que esta máquina pode fazer em {there}",
 };

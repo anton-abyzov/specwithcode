@@ -4485,8 +4485,6 @@ export const zh: PhraseCatalog = {
     "在它睡眠期间转走的工作之后。“询问”会显示一个按钮，用来把工作带回来。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} 上的智能体可以在 {thereLabel} 上开始工作",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "{thereLabel} 上的智能体可以在 {hereLabel} 上开始工作",
   "All sign-ins": "所有登录",
   "All sign-ins on this machine": "这台电脑上的所有登录",
   Allow: "允许",
@@ -4584,7 +4582,6 @@ export const zh: PhraseCatalog = {
   "Projects {machine} may use": "{machine} 可以使用的项目",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "立即拒绝新工作。它在这里启动的会话会在 2 分钟后停止；它们的工作树和更改会保留。",
-  "Renews automatically.": "自动续期。",
   "Search sign-ins": "搜索登录",
   Secrets: "机密",
   "Set when it first starts work": "在它首次开始工作时设置",
@@ -4635,7 +4632,6 @@ export const zh: PhraseCatalog = {
   "renews automatically": "自动续期",
   "until {date}": "有效至 {date}",
   "up to {access}": "最高 {access}",
-  "{access}, until {date}": "{access}，有效至 {date}",
   "{count} chosen projects (could not read this machine's projects)":
     "已选 {count} 个项目（无法读取这台电脑的项目）",
   "{count} more machines": "另外 {count} 台电脑",
@@ -4840,4 +4836,14 @@ export const zh: PhraseCatalog = {
     "让 {thereLabel} 在这里开始工作",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} 可以在这里开始工作：它的代理可以在此机器的项目中启动线程。停止会立即拒绝新工作；正在运行的线程在 2 分钟后停止。此机器可以在 {there} 上开始工作：这里的代理可以在 {there} 允许的访问范围内在那里启动线程。",
+  "Allow {there} to start work here":
+    "允许 {there} 在此开始工作",
+  "Stop {there} starting work here":
+    "停止 {there} 在此开始工作",
+  "Allow {there} again to start work here":
+    "再次允许 {there} 在此开始工作",
+  "Set up this machine to start work on {there}":
+    "设置本机在 {there} 上开始工作",
+  "Change what this machine may do on {there}":
+    "更改本机在 {there} 上可以做的事",
 };

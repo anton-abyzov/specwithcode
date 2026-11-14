@@ -4613,8 +4613,6 @@ export const ko: PhraseCatalog = {
     "잠자기 중에 작업이 다른 곳으로 옮겨진 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있음",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "{thereLabel}의 에이전트가 {hereLabel}에서 작업을 시작할 수 있음",
   "All sign-ins": "모든 로그인",
   "All sign-ins on this machine": "이 컴퓨터의 모든 로그인",
   Allow: "허용",
@@ -4718,7 +4716,6 @@ export const ko: PhraseCatalog = {
   "Projects {machine} may use": "{machine}이(가) 사용할 수 있는 프로젝트",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "새 작업을 즉시 거부합니다. 여기서 시작한 스레드는 2분 후 중지되며, 워크트리와 변경 사항은 유지됩니다.",
-  "Renews automatically.": "자동으로 갱신됩니다.",
   "Search sign-ins": "로그인 검색",
   Secrets: "시크릿",
   "Set when it first starts work": "처음 작업을 시작할 때 설정됨",
@@ -4769,7 +4766,6 @@ export const ko: PhraseCatalog = {
   "renews automatically": "자동 갱신",
   "until {date}": "{date}까지",
   "up to {access}": "최대 {access}",
-  "{access}, until {date}": "{access}, {date}까지",
   "{count} chosen projects (could not read this machine's projects)":
     "선택한 프로젝트 {count}개 (이 컴퓨터의 프로젝트를 읽지 못함)",
   "{count} more machines": "컴퓨터 {count}대 더",
@@ -4979,4 +4975,14 @@ export const ko: PhraseCatalog = {
     "{thereLabel}이(가) 여기서 작업을 시작하도록 허용",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there}은(는) 여기서 작업을 시작할 수 있습니다: 그 에이전트가 이 머신의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고 실행 중인 스레드는 2분 뒤 중지됩니다. 이 머신은 {there}에서 작업을 시작할 수 있습니다: 여기 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 스레드를 시작할 수 있습니다.",
+  "Allow {there} to start work here":
+    "{there}이(가) 여기서 작업을 시작하도록 허용",
+  "Stop {there} starting work here":
+    "{there}의 여기서 작업 시작 중지",
+  "Allow {there} again to start work here":
+    "{there}이(가) 여기서 작업을 시작하도록 다시 허용",
+  "Set up this machine to start work on {there}":
+    "이 머신이 {there}에서 작업을 시작하도록 설정",
+  "Change what this machine may do on {there}":
+    "이 머신이 {there}에서 할 수 있는 일 변경",
 };

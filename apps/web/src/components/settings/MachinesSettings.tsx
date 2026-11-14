@@ -7,7 +7,7 @@ import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/cont
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
 import { Link } from "@tanstack/react-router";
 import { EllipsisIcon, RefreshCwIcon } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useId, useMemo, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
@@ -807,6 +807,9 @@ export function MachineRow({
   const here = { environmentId: row.environmentId, name: nickname, seen: row.seen };
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [allProjects, setAllProjects] = useState(false);
+  const panelIds = useId();
+  const detailsPanel = { id: `${panelIds}-details`, open: detailsOpen };
+  const projectsId = `${panelIds}-projects`;
   const thisMachine = row.seen.state === "this-machine";
   const incoming = incomingLine(
     { there: nickname, workHere: row.workHere, durations, canSetUp: Boolean(allowBack) },
@@ -909,7 +912,12 @@ export function MachineRow({
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuItem onClick={() => setRenaming(true)}>{tx("Rename…")}</MenuItem>
-            <MenuItem data-connection-details="" onClick={() => setDetailsOpen((open) => !open)}>
+            <MenuItem
+              data-connection-details=""
+              aria-expanded={detailsOpen}
+              aria-controls={detailsPanel.id}
+              onClick={() => setDetailsOpen((open) => !open)}
+            >
               {detailsOpen ? tx("Hide connection details") : tx("Connection details")}
             </MenuItem>
           </MenuPopup>
@@ -950,19 +958,28 @@ export function MachineRow({
                 durations={durations}
                 changes={grantChanges}
                 onSetUp={() => setDetailsOpen(true)}
+                details={detailsPanel}
               />
             }
           />
           <DirectionRow
             direction="outgoing"
             line={outgoing}
-            button={<OutgoingButton line={outgoing} onOpen={() => setDetailsOpen(true)} />}
+            button={
+              <OutgoingButton
+                line={outgoing}
+                there={nickname}
+                details={detailsPanel}
+                onOpen={() => setDetailsOpen(true)}
+              />
+            }
           />
         </div>
       )}
 
       {detailsOpen ? (
         <div
+          id={detailsPanel.id}
           className="ml-7 flex min-w-0 flex-col gap-3 rounded-lg border border-border/60 px-3 py-2.5 text-xs [&>.pl-7]:pl-0"
           data-slot="connection-details"
         >
@@ -1017,12 +1034,16 @@ export function MachineRow({
       >
         {row.projects.own.length > 0 ? (
           <>
-            <ProjectList projects={shownProjects} here={here} />
+            <div id={projectsId}>
+              <ProjectList projects={shownProjects} here={here} />
+            </div>
             {row.projects.own.length > MAX_PROJECTS_SHOWN ? (
               <Button
                 size="xs"
                 variant="ghost-muted"
                 className="-ml-2"
+                aria-expanded={allProjects}
+                aria-controls={projectsId}
                 data-projects-more=""
                 onClick={() => setAllProjects((all) => !all)}
               >

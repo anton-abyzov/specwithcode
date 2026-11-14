@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -817,6 +818,116 @@ describe("Settings > Machines", () => {
     );
     expect(html).toContain("enter this machine&#x27;s private address and this pairing code");
     expect(html).toContain("Works once, until 12:05 PM");
+  });
+});
+
+describe("Machine card: keyboard and screen readers", () => {
+  const m2 = EnvironmentId.make("env-m2");
+  const grant = (coordinatorEnvironmentId: EnvironmentId, machineLabel: string) => ({
+    coordinatorEnvironmentId,
+    machineLabel,
+    projects: { kind: "linked" },
+    accounts: { kind: "all" },
+    owner: "self",
+    hopLimit: 2,
+    runtimeCap: "auto",
+    expiresAt: null,
+    status: "active",
+    revokedAt: null,
+    interruptAt: null,
+    runningThreads: 0,
+    legacy: false,
+  });
+  let container: HTMLDivElement;
+  let root: import("react-dom/client").Root;
+  async function mount() {
+    const { createRoot } = await import("react-dom/client");
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root.render(<MachinesSettingsPanel />));
+  }
+  afterEach(async () => {
+    await act(async () => root?.unmount());
+    container?.remove();
+  });
+  const press = (element: Element, key: string) =>
+    act(async () => {
+      element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+
+  it("gives each card's repeated buttons its machine's name", async () => {
+    setUp();
+    runtime.environments = [...runtime.environments, environment(m2, "ministorm")];
+    runtime.grants = {
+      grants: [grant(m3, "MacBook Pro"), grant(m2, "ministorm")],
+      projects: [],
+      accounts: [],
+    };
+    await mount();
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>("[data-direction-action]")];
+    const labels = buttons.map((button) => button.getAttribute("aria-label"));
+    expect(labels).toContain("Stop MacBook Pro starting work here");
+    expect(labels).toContain("Stop ministorm starting work here");
+    expect(labels.every((label) => label && /MacBook Pro|ministorm/.test(label))).toBe(true);
+    expect(new Set(labels).size).toBe(labels.length);
+    // Each one is a real button in the tab order.
+    for (const button of buttons) {
+      expect(button.tagName).toBe("BUTTON");
+      expect(button.tabIndex).toBe(0);
+    }
+  });
+
+  it("says Set up… and Change… open Connection details, and points at them", async () => {
+    setUp();
+    await mount();
+    const opener = container.querySelector<HTMLButtonElement>(
+      '[data-direction-action="change"], [data-direction-action="set-up"]',
+    )!;
+    expect(opener.getAttribute("aria-label")).toMatch(/on MacBook Pro$/);
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+    const panelId = opener.getAttribute("aria-controls")!;
+    expect(document.getElementById(panelId)).toBeNull();
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+    await act(async () => opener.click());
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(panelId)?.dataset.slot).toBe("connection-details");
+  });
+
+  it("opens Connection details from the ⋯ menu with the keyboard", async () => {
+    setUp();
+    await mount();
+    const more = container.querySelector<HTMLButtonElement>('[aria-label="More for MacBook Pro"]')!;
+    more.focus();
+    await press(more, "ArrowDown");
+    const item = document.querySelector<HTMLElement>("[data-connection-details]")!;
+    expect(item.getAttribute("aria-expanded")).toBe("false");
+    const panelId = item.getAttribute("aria-controls")!;
+    await press(item, "Enter");
+    expect(document.getElementById(panelId)?.dataset.slot).toBe("connection-details");
+    await press(more, "ArrowDown");
+    expect(document.querySelector("[data-connection-details]")!.getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+  });
+
+  it("says whether the long project list is open and which list it controls", async () => {
+    setUp();
+    runtime.projects = Array.from({ length: 8 }, (_, index) => ({
+      environmentId: m3,
+      id: `p-${index}`,
+      title: `project-${index}`,
+      workspaceRoot: `/Users/a/project-${index}`,
+    }));
+    await mount();
+    const more = container.querySelector<HTMLButtonElement>("[data-projects-more]")!;
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    const list = document.getElementById(more.getAttribute("aria-controls")!)!;
+    expect(list.textContent).not.toContain("project-7");
+    await act(async () => more.click());
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    expect(list.textContent).toContain("project-7");
   });
 });
 

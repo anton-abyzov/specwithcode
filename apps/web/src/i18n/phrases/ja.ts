@@ -4666,8 +4666,6 @@ export const ja: PhraseCatalog = {
     "スリープ中に作業がほかへ移ったあとの動作です。「確認」では、作業を戻すボタンを 1 つ表示します。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} のエージェントは {thereLabel} で作業を開始できます",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "{thereLabel} のエージェントは {hereLabel} で作業を開始できます",
   "All sign-ins": "すべてのサインイン",
   "All sign-ins on this machine": "このマシンのすべてのサインイン",
   Allow: "許可",
@@ -4773,7 +4771,6 @@ export const ja: PhraseCatalog = {
   "Projects {machine} may use": "{machine} が使えるプロジェクト",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "新しい作業をすぐに拒否します。ここで開始したスレッドは 2 分後に停止します。ワークツリーと変更は残ります。",
-  "Renews automatically.": "自動で更新されます。",
   "Search sign-ins": "サインインを検索",
   Secrets: "シークレット",
   "Set when it first starts work": "最初に作業を開始したときに設定されます",
@@ -4824,7 +4821,6 @@ export const ja: PhraseCatalog = {
   "renews automatically": "自動で更新",
   "until {date}": "{date} まで",
   "up to {access}": "最大 {access}",
-  "{access}, until {date}": "{access}、{date} まで",
   "{count} chosen projects (could not read this machine's projects)":
     "選択したプロジェクト {count} 件（このマシンのプロジェクトを読み取れませんでした）",
   "{count} more machines": "ほかに {count} 台のマシン",
@@ -5037,4 +5033,14 @@ export const ja: PhraseCatalog = {
     "{thereLabel} にここで作業を開始させる",
   "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
     "{there} はここで作業を開始できます: そのエージェントはこのマシンのプロジェクトでスレッドを開始できます。停止すると新しい作業はすぐに拒否され、実行中のスレッドは 2 分後に停止します。このマシンは {there} で作業を開始できます: ここのエージェントは {there} が許可するアクセスの範囲でスレッドを開始できます。",
+  "Allow {there} to start work here":
+    "{there} にここで作業の開始を許可",
+  "Stop {there} starting work here":
+    "{there} によるここでの作業開始を停止",
+  "Allow {there} again to start work here":
+    "{there} にここで作業の開始を再び許可",
+  "Set up this machine to start work on {there}":
+    "このマシンが {there} で作業を開始できるよう設定",
+  "Change what this machine may do on {there}":
+    "このマシンが {there} でできることを変更",
 };

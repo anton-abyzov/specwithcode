@@ -206,6 +206,7 @@ export function IncomingButton({
   durations,
   changes,
   onSetUp,
+  details,
 }: {
   line: DirectionLine;
   there: string;
@@ -214,6 +215,8 @@ export function IncomingButton({
   changes: WorkGrantChanges | null;
   /** Opens the first-time setup in Connection details. */
   onSetUp: () => void;
+  /** The Connection details panel Allow… opens, for assistive technology. */
+  details: DetailsPanel;
 }) {
   const tx = useTx();
   if (line.action === "allow-setup")
@@ -222,6 +225,9 @@ export function IncomingButton({
         size="xs"
         variant="outline"
         className="shrink-0"
+        aria-label={tx("Allow {there} to start work here", { there })}
+        aria-expanded={details.open}
+        aria-controls={details.id}
         data-direction-action="allow-setup"
         onClick={onSetUp}
       >
@@ -237,6 +243,7 @@ export function IncomingButton({
         variant="outline"
         className="shrink-0"
         disabled={busy}
+        aria-label={tx("Stop {there} starting work here", { there })}
         data-direction-action="stop"
         onClick={() =>
           void changes.change({ action: "revoke", input: { coordinatorEnvironmentId } })
@@ -253,6 +260,7 @@ export function IncomingButton({
         variant="outline"
         className="shrink-0"
         disabled={busy}
+        aria-label={tx("Allow {there} again to start work here", { there })}
         data-direction-action="allow"
         onClick={() =>
           void changes.change({ action: "restore", input: { coordinatorEnvironmentId } })
@@ -275,8 +283,24 @@ export function IncomingButton({
   );
 }
 
+/** The Connection details panel a row's button opens: its element id and whether it shows. */
+export interface DetailsPanel {
+  readonly id: string;
+  readonly open: boolean;
+}
+
 /** The outgoing row's button: Set up… or Change…, both opening Connection details. */
-export function OutgoingButton({ line, onOpen }: { line: DirectionLine; onOpen: () => void }) {
+export function OutgoingButton({
+  line,
+  there,
+  details,
+  onOpen,
+}: {
+  line: DirectionLine;
+  there: string;
+  details: DetailsPanel;
+  onOpen: () => void;
+}) {
   const tx = useTx();
   if (line.action !== "set-up" && line.action !== "change") return null;
   return (
@@ -284,6 +308,13 @@ export function OutgoingButton({ line, onOpen }: { line: DirectionLine; onOpen: 
       size="xs"
       variant={line.action === "set-up" ? "outline" : "ghost-muted"}
       className="shrink-0"
+      aria-label={
+        line.action === "set-up"
+          ? tx("Set up this machine to start work on {there}", { there })
+          : tx("Change what this machine may do on {there}", { there })
+      }
+      aria-expanded={details.open}
+      aria-controls={details.id}
       data-direction-action={line.action}
       onClick={onOpen}
     >
