@@ -398,7 +398,8 @@ export function cUnquote(line: string): string {
   const end = line.lastIndexOf('"');
   if (!line.startsWith('"') || end <= 0) throw new Error(`Unreadable alternates line: ${line}`);
   const bytes: Array<number> = [];
-  const body = line.slice(1, end);
+  // Whole code points, so a character outside the BMP (an emoji) stays intact.
+  const body = Array.from(line.slice(1, end));
   for (let index = 0; index < body.length; index += 1) {
     const char = body[index]!;
     if (char !== "\\") {
@@ -407,7 +408,7 @@ export function cUnquote(line: string): string {
     }
     const next = body[index + 1] ?? "";
     if (/[0-7]/.test(next)) {
-      bytes.push(Number.parseInt(body.slice(index + 1, index + 4), 8));
+      bytes.push(Number.parseInt(body.slice(index + 1, index + 4).join(""), 8));
       index += 3;
     } else {
       bytes.push(C_ESCAPES[next] ?? next.charCodeAt(0));

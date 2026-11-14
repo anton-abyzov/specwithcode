@@ -354,32 +354,26 @@ const REF_TEXT = new RegExp(
 );
 
 /**
- * A ref-namespace look-alike stays untouched, so it must stay inert even when
- * a Git call is pointed at it: each file Git would read as settings holds ref
- * text, and nothing under its `hooks` can run.
+ * A ref-namespace look-alike stays untouched, so it must stay inert under any
+ * spelling a disk may read: everything in a `refs/` or `logs/` folder is a
+ * ref or a reflog, so every file under it must hold ref or reflog text, with
+ * no link and nothing executable. A ref named `config`, `Config` or
+ * `remotes/x` passes; settings, URLs and scripts do not.
  */
 async function refuseActiveLookalike(dir: string, root: string): Promise<void> {
-  const report = (path: string) =>
-    new Error(
-      `Git data at ${NodePath.relative(root, path).split(NodePath.sep).join("/")} looks like settings inside a ref folder. Remove it before copying.`,
-    );
-  for (const file of [
-    ...(await gitConfigFilesOf(dir)),
-    NodePath.join(dir, "commondir"),
-    NodePath.join(dir, "gitdir"),
-  ]) {
-    const stat = await NodeFSP.lstat(file).catch(() => null);
-    if (!stat) continue;
-    if (!stat.isFile() || !REF_TEXT.test(await NodeFSP.readFile(file, "utf8"))) throw report(file);
-  }
-  const hooks = await NodeFSP.readdir(NodePath.join(dir, "hooks"), {
-    withFileTypes: true,
-    recursive: true,
-  }).catch(() => []);
-  for (const entry of hooks) {
+  const entries = await NodeFSP.readdir(dir, { withFileTypes: true, recursive: true });
+  for (const entry of entries) {
     const path = NodePath.join(entry.parentPath, entry.name);
     const stat = await NodeFSP.lstat(path);
-    if (stat.isSymbolicLink() || (stat.isFile() && (stat.mode & 0o111) !== 0)) throw report(path);
+    if (stat.isDirectory()) continue;
+    const inert =
+      stat.isFile() &&
+      (stat.mode & 0o111) === 0 &&
+      REF_TEXT.test(await NodeFSP.readFile(path, "utf8"));
+    if (!inert)
+      throw new Error(
+        `Git data at ${NodePath.relative(root, path).split(NodePath.sep).join("/")} is not a ref inside a ref folder. Remove it before copying.`,
+      );
   }
 }
 

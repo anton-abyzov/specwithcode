@@ -429,14 +429,26 @@ describe("copied repositories", () => {
     const copied = NodePath.join(overlay, ".git/modules/lib");
     const refs = git(root, "--git-dir", copied, "for-each-ref", "--format=%(refname)").split("\n");
     for (const name of names) expect(refs).toContain(`refs/remotes/origin/${name}`);
-    // A ref folder that would act as a repository is refused, not carried.
-    write(
-      NodePath.join(lib, "refs/remotes/origin/config"),
-      "[core]\n\tfsmonitor = evil-fsmonitor\n",
-    );
-    await expect(sanitizeCopiedGitDir(NodePath.join(main, ".git"), main)).rejects.toThrow(
-      /refs\/remotes\/origin\/config looks like settings inside a ref folder/,
-    );
+    // A ref folder holding anything but refs is refused, under any spelling.
+    const origin = NodePath.join(lib, "refs/remotes/origin");
+    const gitDir = NodePath.join(main, ".git");
+    for (const [name, text] of [
+      ["config.worktree", "[core]\n\tfsmonitor = evil-fsmonitor\n"],
+      ["Commondir", "../../../elsewhere\n"],
+      ["CONFIG.WORKTREE", '[remote "x"]\n\turl = https://u:t@example.invalid/r\n'],
+      ["remotes/x", "URL: https://u:t@example.invalid/r\n"],
+    ] as const) {
+      write(NodePath.join(origin, name), text);
+      const error = await sanitizeCopiedGitDir(gitDir, main).then(
+        () => undefined,
+        (cause: Error) => cause.message,
+      );
+      expect(error).toBe(
+        `Git data at .git/modules/lib/refs/remotes/origin/${name} is not a ref inside a ref folder. Remove it before copying.`,
+      );
+      NodeFS.rmSync(NodePath.join(origin, name));
+    }
+    await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
   });
 
   it("reads quoted and commented alternates lines", async () => {
@@ -460,6 +472,7 @@ describe("copied repositories", () => {
       git(root, "--git-dir", NodePath.join(overlay, ".git/modules/lib"), "show", "HEAD:lib.txt"),
     ).toBe("lib");
     expect(cUnquote('"a\\303\\251\\tb\\"c"')).toBe('aé\tb"c');
+    expect(cUnquote('"/x/\u{1F600}\\"y"')).toBe('/x/\u{1F600}"y');
   });
 
   it("refuses a pending rebase that runs commands", async () => {
