@@ -94,12 +94,15 @@ export function CopyPhaseTrack({
       >
         {COPY_PHASES.map((phase) => {
           const state = segmentState(phase, view);
+          // A stopped phase fills red up to where it stopped, or whole when that is unknown.
           const fill =
-            state === "done" || state === "failed"
-              ? 100
-              : state === "active" && view.fraction !== null
-                ? view.fraction * 100
-                : 0;
+            state === "failed" && view.fraction !== null
+              ? Math.max(4, view.fraction * 100)
+              : state === "done" || state === "failed"
+                ? 100
+                : state === "active" && view.fraction !== null
+                  ? view.fraction * 100
+                  : 0;
           return (
             <span
               key={phase}

@@ -8,7 +8,7 @@ import {
 } from "../../studio/copyProgress";
 import {
   copyActivityText,
-  copyOpener,
+  copyDetailsOpener,
   overallFraction,
   requestCopyReview,
   type CopyActivity,
@@ -122,11 +122,8 @@ export function syncCopyToasts(
     const activity = activities.get(key);
     // A copy waiting for review has its own Review in the sidebar and banner.
     if (!activity || activity.waiting || dismissed.has(key)) continue;
-    const details = () => {
-      const show = copyOpener(key);
-      if (show) show();
-      else requestCopyReview(key);
-    };
+    // From another project the row's navigator opens the copy's page, then its dialog.
+    const details = () => (copyDetailsOpener(key) ?? (() => requestCopyReview(key)))();
     const close = () => {
       dismissed.add(key);
       open.delete(key);

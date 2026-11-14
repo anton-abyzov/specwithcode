@@ -103,9 +103,9 @@ describe("copy progress phases", () => {
       bytesPresent: 0,
       decisionsNeeded: 0,
     };
-    expect(
-      statusProgressView(status({ state: "applied", totals }), "m4", "m5")?.outcome,
-    ).toBe("running");
+    expect(statusProgressView(status({ state: "applied", totals }), "m4", "m5")?.outcome).toBe(
+      "running",
+    );
     const done = statusProgressView(
       status({ state: "applied", totals, committed: true, projectId: "p" as never }),
       "m4",
@@ -147,6 +147,50 @@ describe("copy progress phases", () => {
       "m4",
     );
     expect(overallFraction({ ...base, progress: reading, source: "m4" })).toBeCloseTo(0.25 / 3);
+    // Apply reports no fraction: the line holds the two phases done, never a sweep.
+    const applying = statusProgressView(status({ state: "applying" }), "m4", "m5")!;
+    expect(overallFraction({ ...base, progress: applying, source: "m4" })).toBeCloseTo(2 / 3);
+    // Measure with no total yet is the only indeterminate stretch.
+    const listing = sourceProgressView({ files: 10, bytes: 10 }, "m4");
+    expect(overallFraction({ ...base, progress: listing, source: "m4" })).toBeNull();
+  });
+
+  it("checks files without claiming 100% from the finished send counts", () => {
+    const sent = { filesDone: 2, filesTotal: 2, bytesDone: 100, bytesTotal: 100, bytesLocal: 0 };
+    expect(
+      statusProgressView(
+        status({ state: "verifying", progress: { phase: "files", ...sent } }),
+        "m4",
+        "m5",
+      )?.fraction,
+    ).toBeNull();
+    expect(
+      statusProgressView(
+        status({ state: "verifying", progress: { phase: "verify", ...sent, filesDone: 1 } }),
+        "m4",
+        "m5",
+      )?.fraction,
+    ).toBe(0.5);
+  });
+
+  it("fills a stopped send only as far as it got", () => {
+    const stopped = statusProgressView(
+      status({
+        state: "failed",
+        failedStep: "transferring",
+        progress: {
+          phase: "files",
+          filesDone: 1,
+          filesTotal: 4,
+          bytesDone: 41,
+          bytesTotal: 100,
+          bytesLocal: 0,
+        },
+      }),
+      "m4",
+      "m5",
+    );
+    expect(stopped).toMatchObject({ outcome: "failed", phase: "send", fraction: 0.41 });
   });
 });
 
@@ -176,6 +220,13 @@ describe("copy speed and time left", () => {
 
   it("shows no speed while nothing moves", () => {
     expect(rateOf(samples([0, 100], [2_000, 100], [4_000, 100]))).toBeNull();
+  });
+
+  it("drops the speed after a stall instead of letting it decay over the window", () => {
+    // 100 MB/s for 4 s, then nothing for 5 s (one slow batch): still a speed.
+    expect(rateOf(samples([0, 0], [4_000, 400_000_000], [9_000, 400_000_000]))).not.toBeNull();
+    // Nothing for 8 s: stalled.
+    expect(rateOf(samples([0, 0], [4_000, 400_000_000], [12_000, 400_000_000]))).toBeNull();
   });
 
   it("rounds the time left so it does not flicker", () => {

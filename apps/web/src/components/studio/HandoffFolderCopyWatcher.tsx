@@ -14,7 +14,7 @@ import {
   copyActivityFromSource,
   copyActivityFromStatus,
   copyActivityKey,
-  copyOpener,
+  copyDetailsOpener,
   setCopyActivity,
 } from "../../studio/folderCopyActivity";
 import { toastManager } from "../ui/toast";
@@ -487,7 +487,7 @@ export function HandoffFolderCopyWatcher({
         }
         const summary = destination.value.state === "applied" ? await readSummary() : null;
         if (stopped) return false;
-        const open = latest.current.onOpenDialog ?? copyOpener(activityKey);
+        const open = latest.current.onOpenDialog ?? copyDetailsOpener(activityKey);
         announceCopy(
           REOPEN,
           destination.value,
