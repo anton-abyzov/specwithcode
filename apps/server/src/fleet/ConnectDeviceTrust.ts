@@ -26,8 +26,14 @@
  * Local sessions are never affected.
  *
  * Credentials a device turns into something else (an MCP client session, a
- * folder-copy bearer) are bound here to that device's key and approval, so
- * Remove ends them too and a waiting device cannot launder its credential.
+ * folder-copy bearer, a pairing code, an asset or upload URL) carry a
+ * `DeviceBinding`: that device's key and the approval it held. The binding
+ * lives on the credential itself (signed claims, the transfer record, the
+ * pairing row), never only in this list, so a damaged or repaired list cannot
+ * erase it: a binding is honoured only while this list is readable and names
+ * the same approval. Remove ends them too and a waiting device cannot launder
+ * its credential. A removed or denied key is also refused under subjects the
+ * gate otherwise exempts.
  *
  * @module ConnectDeviceTrust
  */
@@ -79,6 +85,8 @@ export interface DeviceSessionFacts {
   readonly proofKeyThumbprint?: string | undefined;
   readonly clientLabel?: string | undefined;
   readonly clientDeviceType?: string | undefined;
+  /** The device this session was minted for, from its signed claims. */
+  readonly boundDevice?: { readonly key: string; readonly approval: string } | undefined;
 }
 
 export interface GatedDevice {
@@ -182,15 +190,27 @@ export const noticesFor = (
     .map(({ id, at, message }) => ({ id, at, message }));
 };
 
-/** A credential minted from a device's session; valid while that approval stands. */
+/**
+ * The device a credential was minted for, and the approval it held then: a
+ * later re-approval does not revive it. Stored on the credential itself.
+ */
+export const DeviceBinding = Schema.Struct({ key: Schema.String, approval: Schema.String });
+export type DeviceBinding = typeof DeviceBinding.Type;
+
+/**
+ * Credentials minted for a device, so Remove can end them at once. Only an
+ * index: whether they work is decided by the binding they carry.
+ */
 const BoundRecord = Schema.Struct({
   id: Schema.String,
   key: Schema.String,
-  /** The device's approval when bound: a later re-approval does not revive it. */
   approval: Schema.String,
   expiresAt: Schema.String,
 });
-type BoundRecord = typeof BoundRecord.Type;
+
+/** A key this machine removed; refused under every subject until approved again. */
+const RemovedRecord = Schema.Struct({ key: Schema.String, at: Schema.String });
+const MAX_REMOVED = 500;
 
 const StoreFile = Schema.Struct({
   version: Schema.Literal(1),
@@ -202,6 +222,7 @@ const StoreFile = Schema.Struct({
   denied: Schema.Array(DeniedRecord),
   notices: Schema.Array(NoticeRecord),
   bound: Schema.optionalKey(Schema.Array(BoundRecord)),
+  removed: Schema.optionalKey(Schema.Array(RemovedRecord)),
 });
 type StoreFile = typeof StoreFile.Type;
 
@@ -214,7 +235,6 @@ const encodeStoreFile = Schema.encodeEffect(StoreFileJson);
 
 /** Binding ids for what a device can mint. */
 export const sessionBindingId = (sessionId: string) => `session:${sessionId}`;
-export const transferBindingId = (operationId: string) => `transfer:${operationId}`;
 
 export type TrustVerdict =
   | {
@@ -276,26 +296,30 @@ export class DeviceTrustError extends Schema.TaggedError<DeviceTrustError>()("De
 
 export interface ConnectDeviceTrustShape {
   /**
-   * Whether a gated device may go on. Other sessions are allowed unless a
-   * device minted them (see `bindCredential`) and that device is no longer
-   * approved. Never fails.
+   * Whether a gated device may go on. Other sessions are allowed unless they
+   * carry a binding whose approval no longer stands (or cannot be read), or
+   * their proof key was removed or denied here. Never fails.
    */
   readonly check: (
     session: DeviceSessionFacts & { readonly sessionId?: string | undefined },
   ) => Effect.Effect<TrustVerdict>;
   /**
-   * Ties a credential minted from an approved device's session to that
-   * device. False, with nothing recorded, when the key is not approved.
+   * The binding a credential minted for an approved device must carry; null
+   * when that key is not approved here, or the list cannot be read.
    */
-  readonly bindCredential: (input: {
+  readonly bindingFor: (key: string) => Effect.Effect<DeviceBinding | null>;
+  /** Allowed while the list is readable and names the binding's approval. */
+  readonly checkBinding: (binding: DeviceBinding) => Effect.Effect<TrustVerdict>;
+  /** Notes a bound credential, so Remove can end it at once. Best effort. */
+  readonly trackCredential: (input: {
     readonly id: string;
-    readonly key: string;
+    readonly binding: DeviceBinding;
     readonly expiresAtMillis: number;
-  }) => Effect.Effect<boolean, DeviceTrustError>;
-  /** Allowed when `id` is unbound or its device's approval still stands. */
-  readonly checkBound: (id: string) => Effect.Effect<TrustVerdict>;
-  /** The live credentials bound to one device, for Remove. */
+  }) => Effect.Effect<void>;
+  /** The live credentials noted for one device, for Remove. */
   readonly boundIds: (key: string) => Effect.Effect<ReadonlyArray<string>>;
+  /** A key this machine removed, or denied less than a day ago. */
+  readonly isTurnedAway: (key: string) => Effect.Effect<boolean>;
   /**
    * Called when Connect mints a pairing credential for a device key: answers
    * the refusal that stops the mint (denied key, too many waiting), else null
@@ -310,7 +334,8 @@ export interface ConnectDeviceTrustShape {
     /** The approving device's own key; null for this machine's local owner. */
     readonly approverKey: string | null;
   }) => Effect.Effect<ApproveOutcome, DeviceTrustError>;
-  readonly deny: (pendingId: string) => Effect.Effect<boolean, DeviceTrustError>;
+  /** Turns a waiting device away; answers its key, or null when nothing waited. */
+  readonly deny: (pendingId: string) => Effect.Effect<string | null, DeviceTrustError>;
   /** Forgets one device; the caller ends its sessions. Answers the removed record. */
   readonly remove: (key: string) => Effect.Effect<DeviceRecord | null, DeviceTrustError>;
   readonly confirmReview: Effect.Effect<void, DeviceTrustError>;
@@ -327,9 +352,11 @@ const refusedUnwired: TrustVerdict = {
 const unwired: ConnectDeviceTrustShape = {
   check: (session) =>
     Effect.succeed(gatedDevice(session) === null ? { _tag: "allowed" } : refusedUnwired),
-  bindCredential: () => Effect.fail(new DeviceTrustError({ reason: "unwired" })),
-  checkBound: () => Effect.succeed({ _tag: "allowed" }),
+  bindingFor: () => Effect.succeed(null),
+  checkBinding: () => Effect.succeed(refusedUnwired),
+  trackCredential: () => Effect.void,
   boundIds: () => Effect.succeed([]),
+  isTurnedAway: () => Effect.succeed(false),
   refuseAtMint: () => Effect.succeed(refusedUnwired.message),
   isApproved: () => Effect.succeed(false),
   snapshot: Effect.fail(new DeviceTrustError({ reason: "unwired" })),
@@ -648,45 +675,50 @@ export const makeWith = (options: MakeOptions = {}) =>
     const removedMessage = (machineName: string) =>
       `${machineName} no longer lets this device in. Approve it again in SpecWithCode on ${machineName}.`;
 
-    const checkBound: ConnectDeviceTrustShape["checkBound"] = (id) =>
+    const bindingFor: ConnectDeviceTrustShape["bindingFor"] = (key) =>
+      withLock(load).pipe(
+        Effect.map((loaded) => {
+          if (loaded._tag !== "ok") return null;
+          const device = loaded.file.devices.find((entry) => entry.key === key);
+          return device === undefined ? null : { key, approval: approvalOf(device) };
+        }),
+      );
+
+    const checkBinding: ConnectDeviceTrustShape["checkBinding"] = (binding) =>
       Effect.gen(function* () {
+        const machineName = yield* machine;
         const loaded = yield* withLock(load);
-        // A lost or damaged list cannot say; local sessions keep working, and Remove revoked the rest.
-        if (loaded._tag !== "ok") return { _tag: "allowed" } as const;
-        const now = yield* Clock.currentTimeMillis;
-        const binding = (loaded.file.bound ?? []).find(
-          (entry) => entry.id === id && millisOf(entry.expiresAt) > now,
-        );
-        if (binding === undefined) return { _tag: "allowed" } as const;
+        // A lost or damaged list cannot vouch for the device, so what it was given stops.
+        if (loaded._tag !== "ok")
+          return { _tag: "refused", message: damagedMessage(machineName) } as const;
         const standing = loaded.file.devices.some(
           (entry) => entry.key === binding.key && approvalOf(entry) === binding.approval,
         );
         return standing
           ? ({ _tag: "allowed", deviceKey: binding.key } as const)
-          : ({ _tag: "refused", message: removedMessage(yield* machine) } as const);
+          : ({ _tag: "refused", message: removedMessage(machineName) } as const);
       });
 
-    const bindCredential: ConnectDeviceTrustShape["bindCredential"] = (input) =>
-      modify((file, now) => {
-        const device = file.devices.find((entry) => entry.key === input.key);
-        if (device === undefined || input.expiresAtMillis <= now)
-          return [false, undefined] as const;
-        return [
-          true,
-          {
-            ...file,
-            bound: [
-              ...(file.bound ?? []).filter((entry) => entry.id !== input.id),
+    const trackCredential: ConnectDeviceTrustShape["trackCredential"] = (input) =>
+      modify((file, now) =>
+        input.expiresAtMillis <= now
+          ? ([undefined, undefined] as const)
+          : ([
+              undefined,
               {
-                id: input.id,
-                key: input.key,
-                approval: approvalOf(device),
-                expiresAt: isoOf(input.expiresAtMillis),
+                ...file,
+                bound: [
+                  ...(file.bound ?? []).filter((entry) => entry.id !== input.id),
+                  {
+                    id: input.id,
+                    key: input.binding.key,
+                    approval: input.binding.approval,
+                    expiresAt: isoOf(input.expiresAtMillis),
+                  },
+                ],
               },
-            ],
-          },
-        ] as const;
-      });
+            ] as const),
+      ).pipe(Effect.ignore);
 
     const boundIds: ConnectDeviceTrustShape["boundIds"] = (key) =>
       Effect.gen(function* () {
@@ -698,13 +730,28 @@ export const makeWith = (options: MakeOptions = {}) =>
         );
       });
 
+    const isTurnedAway: ConnectDeviceTrustShape["isTurnedAway"] = (key) =>
+      Effect.gen(function* () {
+        const loaded = yield* withLock(load);
+        if (loaded._tag !== "ok") return false;
+        const now = yield* Clock.currentTimeMillis;
+        return (
+          (loaded.file.removed ?? []).some((entry) => entry.key === key) ||
+          loaded.file.denied.some((entry) => entry.key === key && millisOf(entry.until) > now)
+        );
+      });
+
     const check: ConnectDeviceTrustShape["check"] = (session) =>
       Effect.gen(function* () {
         const device = gatedDevice(session);
-        if (device === null)
-          return session.sessionId === undefined
-            ? ({ _tag: "allowed" } as const)
-            : yield* checkBound(sessionBindingId(session.sessionId));
+        if (device === null) {
+          if (session.boundDevice !== undefined) return yield* checkBinding(session.boundDevice);
+          // Exempt subjects too: a key this machine removed or denied gets nothing here.
+          const thumbprint = session.proofKeyThumbprint?.trim();
+          if (thumbprint && (yield* isTurnedAway(deviceKeyOfThumbprint(thumbprint))))
+            return { _tag: "refused", message: removedMessage(yield* machine) } as const;
+          return { _tag: "allowed" } as const;
+        }
         const machineName = yield* machine;
         if (device.key === null)
           return {
@@ -832,6 +879,7 @@ export const makeWith = (options: MakeOptions = {}) =>
               ...file,
               devices: [...file.devices.filter((entry) => entry.key !== match.key), device],
               pending: file.pending.filter((entry) => entry.id !== match.id),
+              removed: (file.removed ?? []).filter((entry) => entry.key !== match.key),
               notices: [...file.notices, notice].slice(-MAX_NOTICES),
             },
           ];
@@ -841,10 +889,10 @@ export const makeWith = (options: MakeOptions = {}) =>
     const deny: ConnectDeviceTrustShape["deny"] = (pendingId) =>
       modify((file, now) => {
         const match = file.pending.find((entry) => entry.id === pendingId);
-        if (match === undefined) return [false, undefined] as const;
+        if (match === undefined) return [null, undefined] as const;
         codes.delete(match.key);
         return [
-          true,
+          match.key,
           {
             ...file,
             pending: file.pending.filter((entry) => entry.id !== pendingId),
@@ -857,12 +905,19 @@ export const makeWith = (options: MakeOptions = {}) =>
       });
 
     const remove: ConnectDeviceTrustShape["remove"] = (key) =>
-      modify((file) => {
+      modify((file, now) => {
         const match = file.devices.find((entry) => entry.key === key);
         if (match === undefined) return [null, undefined] as const;
         return [
           match,
-          { ...file, devices: file.devices.filter((entry) => entry.key !== key) },
+          {
+            ...file,
+            devices: file.devices.filter((entry) => entry.key !== key),
+            removed: [
+              ...(file.removed ?? []).filter((entry) => entry.key !== key),
+              { key, at: isoOf(now) },
+            ].slice(-MAX_REMOVED),
+          },
         ] as const;
       });
 
@@ -904,9 +959,11 @@ export const makeWith = (options: MakeOptions = {}) =>
 
     return {
       check,
-      bindCredential,
-      checkBound,
+      bindingFor,
+      checkBinding,
+      trackCredential,
       boundIds,
+      isTurnedAway,
       refuseAtMint,
       isApproved,
       snapshot,

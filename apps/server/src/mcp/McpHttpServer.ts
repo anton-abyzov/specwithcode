@@ -40,6 +40,7 @@ import { DesignSystemsToolkit } from "./toolkits/designSystems/tools.ts";
 import * as DesignSystemsHandlers from "./toolkits/designSystems/handlers.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -301,6 +302,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     }
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      // The device a client acts for; tools also read it off the invocation (1327).
+      Effect.provideService(ConnectDeviceTrust.RequestDevice, invocation.client?.deviceKey ?? null),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;

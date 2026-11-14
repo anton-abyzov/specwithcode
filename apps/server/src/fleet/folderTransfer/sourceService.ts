@@ -121,6 +121,8 @@ export interface SourceOperationRecord {
     readonly summary?: SourceSummary;
   };
   readonly grant: TransferGrantRecord;
+  /** The approved device that asked for this copy (1327); it stops when that approval ends. */
+  readonly device?: { readonly key: string; readonly approval: string };
   readonly state: SourceState;
   readonly selection: ReadonlyArray<FileClass> | null;
   readonly summary: SourceSummary | null;
@@ -398,6 +400,7 @@ export class SourceTransfers {
     readonly destinationEnvironmentId: string;
     readonly warnings?: ReadonlyArray<string>;
     readonly secretPatterns?: ReadonlyArray<string> | undefined;
+    readonly device?: { readonly key: string; readonly approval: string } | undefined;
   }): Promise<{ readonly token: string; readonly record: SourceOperationRecord }> {
     this.assertOpen();
     const folder = await NodeFSP.realpath(input.folder);
@@ -428,8 +431,11 @@ export class SourceTransfers {
     });
     if (existing) {
       // A retried offer replaces the token; the old one stops working at once.
+      // A device's binding is never dropped by a retry, only added.
+      const device = existing.record.device ?? input.device;
       await this.save(existing, {
         grant: { ...minted.record, issuedAt: existing.record.grant.issuedAt },
+        ...(device === undefined ? {} : { device }),
       });
       return { token: minted.token, record: existing.record };
     }
@@ -443,6 +449,7 @@ export class SourceTransfers {
       destinationEnvironmentId: input.destinationEnvironmentId,
       createdAt: this.now(),
       grant: minted.record,
+      ...(input.device === undefined ? {} : { device: input.device }),
       state: "scanning",
       selection: null,
       summary: null,

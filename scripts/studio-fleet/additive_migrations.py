@@ -120,6 +120,13 @@ DECLARED = {
          "orchestration_v2_projection_messages(thread_id, created_at DESC, message_id DESC) "
          "WHERE message_id LIKE 'limit-fallback:%' OR message_id LIKE 'provider-fallback:%'"),
     )),
+    # 075_DevicePairingCreators.ts
+    75: ('DevicePairingCreators', (
+        ('table', 'device_pairing_creators', 'device_pairing_creators',
+         "CREATE TABLE device_pairing_creators ( pairing_link_id TEXT PRIMARY KEY, "
+         "device_key TEXT NOT NULL, approval TEXT NOT NULL )"),
+        ('index', 'sqlite_autoindex_device_pairing_creators_1', 'device_pairing_creators', None),
+    )),
 }
 
 # Server migrations the page proof refuses (a rebuild, alter, drop or rename): an update that runs

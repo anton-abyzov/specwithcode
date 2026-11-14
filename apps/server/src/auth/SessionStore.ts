@@ -76,6 +76,14 @@ export interface VerifiedSession {
   readonly proofKeyThumbprint?: string;
   /** The most an MCP client approved through OAuth may hand to the threads it drives. */
   readonly runtimeModeCeiling?: RuntimeMode;
+  /** The approved device this session was minted for (1327), from its signed claims. */
+  readonly boundDevice?: SessionDeviceBinding;
+}
+
+/** A device key and the approval it held when the session was minted. */
+export interface SessionDeviceBinding {
+  readonly key: string;
+  readonly approval: string;
 }
 
 export type SessionCredentialChange =
@@ -465,6 +473,8 @@ export class SessionStore extends Context.Service<
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
+      /** Signed into the token, so the device gate does not depend on any list to find it. */
+      readonly boundDevice?: SessionDeviceBinding;
       /**
        * Atomically revoke active sessions with the same subject and method
        * before storing this session.
@@ -492,6 +502,8 @@ export class SessionStore extends Context.Service<
       sessionId: AuthSessionId,
       input?: {
         readonly ttl?: Duration.Duration;
+        /** The parent session's device binding; a ticket keeps it. */
+        readonly boundDevice?: SessionDeviceBinding | undefined;
       },
     ) => Effect.Effect<
       {
@@ -555,6 +567,11 @@ const DEFAULT_SESSION_TTL = Duration.days(30);
 const SESSION_WATCH_RECHECK_INTERVAL = Duration.seconds(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
+/** `k` the device key, `a` its approval (1327). */
+const DeviceBindingClaim = Schema.Struct({ k: Schema.String, a: Schema.String });
+const deviceBindingOfClaim = (claim: typeof DeviceBindingClaim.Type | undefined) =>
+  claim === undefined ? {} : { boundDevice: { key: claim.k, approval: claim.a } };
+
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
   kind: Schema.Literal("session"),
@@ -564,6 +581,7 @@ const SessionClaims = Schema.Struct({
   method: Schema.Literals(["browser-session-cookie", "bearer-access-token", "dpop-access-token"]),
   jkt: Schema.optionalKey(Schema.String),
   rtc: Schema.optionalKey(RuntimeMode),
+  dev: Schema.optionalKey(DeviceBindingClaim),
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -573,6 +591,7 @@ const WebSocketClaims = Schema.Struct({
   v: Schema.Literal(1),
   kind: Schema.Literal("websocket"),
   sid: AuthSessionId,
+  dev: Schema.optionalKey(DeviceBindingClaim),
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -898,6 +917,9 @@ export const make = Effect.gen(function* () {
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
+        ...(input?.boundDevice
+          ? { dev: { k: input.boundDevice.key, a: input.boundDevice.approval } }
+          : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
@@ -1105,6 +1127,7 @@ export const make = Effect.gen(function* () {
         scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
+        ...deviceBindingOfClaim(claims.dev),
       } satisfies VerifiedSession;
     },
   );
@@ -1239,6 +1262,9 @@ export const make = Effect.gen(function* () {
       v: 1,
       kind: "websocket",
       sid: sessionId,
+      ...(input?.boundDevice
+        ? { dev: { k: input.boundDevice.key, a: input.boundDevice.approval } }
+        : {}),
       iat: issuedAt.epochMilliseconds,
       exp: expiresAt.epochMilliseconds,
     };
@@ -1335,6 +1361,7 @@ export const make = Effect.gen(function* () {
       scopes: row.value.scopes,
       // The ticket was issued to this key's session; the device gate keys on it.
       ...(row.value.proofKeyThumbprint ? { proofKeyThumbprint: row.value.proofKeyThumbprint } : {}),
+      ...deviceBindingOfClaim(claims.dev),
     } satisfies VerifiedSession;
   });
 

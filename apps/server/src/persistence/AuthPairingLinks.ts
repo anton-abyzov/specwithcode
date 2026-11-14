@@ -26,6 +26,8 @@ export const AuthPairingLinkRecord = Schema.Struct({
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   proofKeyThumbprint: Schema.NullOr(Schema.String),
+  /** From device_pairing_creators, on the consume path only (1327). */
+  creatorDevice: Schema.optionalKey(Schema.Struct({ key: Schema.String, approval: Schema.String })),
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -43,6 +45,8 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   proofKeyThumbprint: Schema.NullOr(Schema.String),
+  /** The approved device that created the link, and its approval (1327). */
+  creatorDevice: Schema.optionalKey(Schema.Struct({ key: Schema.String, approval: Schema.String })),
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
@@ -68,6 +72,12 @@ export const RevokeAuthPairingLinkInput = Schema.Struct({
   revokedAt: Schema.DateTimeUtcFromString,
 });
 export type RevokeAuthPairingLinkInput = typeof RevokeAuthPairingLinkInput.Type;
+
+export const RevokeAuthPairingLinksByCreatorInput = Schema.Struct({
+  creatorDeviceKey: Schema.String,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeAuthPairingLinksByCreatorInput = typeof RevokeAuthPairingLinksByCreatorInput.Type;
 
 export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
   credential: Schema.String,
@@ -110,6 +120,10 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly revoke: (
       input: RevokeAuthPairingLinkInput,
     ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
+    /** Revokes the unredeemed links one device created; answers their ids. */
+    readonly revokeByCreatorDeviceKey: (
+      input: RevokeAuthPairingLinksByCreatorInput,
+    ) => Effect.Effect<ReadonlyArray<string>, AuthPairingLinkRepositoryError>;
     readonly getByCredential: (
       input: GetAuthPairingLinkByCredentialInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
@@ -169,6 +183,43 @@ export const make = Effect.gen(function* () {
           NULL,
           NULL
         )
+      `,
+  });
+
+  const insertCreatorRow = SqlSchema.void({
+    Request: Schema.Struct({ id: Schema.String, key: Schema.String, approval: Schema.String }),
+    execute: ({ id, key, approval }) =>
+      sql`
+        INSERT INTO device_pairing_creators (pairing_link_id, device_key, approval)
+        VALUES (${id}, ${key}, ${approval})
+      `,
+  });
+
+  const creatorRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ id: Schema.String }),
+    Result: Schema.Struct({ key: Schema.String, approval: Schema.String }),
+    execute: ({ id }) =>
+      sql`
+        SELECT device_key AS "key", approval AS "approval"
+        FROM device_pairing_creators
+        WHERE pairing_link_id = ${id}
+      `,
+  });
+
+  const revokePairingLinkRowsByCreator = SqlSchema.findAll({
+    Request: RevokeAuthPairingLinksByCreatorInput,
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ creatorDeviceKey, revokedAt }) =>
+      sql`
+        UPDATE auth_pairing_links
+        SET revoked_at = ${revokedAt}
+        WHERE id IN (
+            SELECT pairing_link_id FROM device_pairing_creators
+            WHERE device_key = ${creatorDeviceKey}
+          )
+          AND revoked_at IS NULL
+          AND consumed_at IS NULL
+        RETURNING id AS "id"
       `,
   });
 
@@ -292,6 +343,13 @@ export const make = Effect.gen(function* () {
 
   const create: AuthPairingLinkRepository["Service"]["create"] = (input) =>
     createPairingLinkRow(input).pipe(
+      // Both rows or neither: a link a device made is never left without its creator.
+      Effect.andThen(
+        input.creatorDevice === undefined
+          ? Effect.void
+          : insertCreatorRow({ id: input.id, ...input.creatorDevice }),
+      ),
+      sql.withTransaction,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthPairingLinkRepository.create:query",
@@ -319,6 +377,19 @@ export const make = Effect.gen(function* () {
                   "AuthPairingLinkRepository.consumeAvailable:decodeRow",
                   cause,
                   { pairingLinkId: row.id },
+                ),
+              ),
+              Effect.flatMap((record) =>
+                creatorRow({ id: record.id }).pipe(
+                  Effect.mapError(
+                    toPersistenceSqlOrDecodeError(
+                      "AuthPairingLinkRepository.consumeAvailable:creatorQuery",
+                      "AuthPairingLinkRepository.consumeAvailable:creatorDecode",
+                    ),
+                  ),
+                  Effect.map((creator) =>
+                    Option.isSome(creator) ? { ...record, creatorDevice: creator.value } : record,
+                  ),
                 ),
               ),
               Effect.asSome,
@@ -362,6 +433,18 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.length > 0),
     );
 
+  const revokeByCreatorDeviceKey: AuthPairingLinkRepository["Service"]["revokeByCreatorDeviceKey"] =
+    (input) =>
+      revokePairingLinkRowsByCreator(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthPairingLinkRepository.revokeByCreatorDeviceKey:query",
+            "AuthPairingLinkRepository.revokeByCreatorDeviceKey:decodeRows",
+          ),
+        ),
+        Effect.map((rows) => rows.map((row) => row.id)),
+      );
+
   const getByCredential: AuthPairingLinkRepository["Service"]["getByCredential"] = (input) =>
     getPairingLinkRowByCredential(input).pipe(
       Effect.mapError(
@@ -394,6 +477,7 @@ export const make = Effect.gen(function* () {
     consumeAvailable,
     listActive,
     revoke,
+    revokeByCreatorDeviceKey,
     getByCredential,
   } satisfies AuthPairingLinkRepository["Service"];
 });

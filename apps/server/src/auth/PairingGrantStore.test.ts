@@ -60,6 +60,7 @@ const layerPairingGrantStoreTest = (
           consumeAvailable: () => Effect.succeedNone,
           listActive: () => Effect.succeed([]),
           revoke: () => Effect.succeed(false),
+          revokeByCreatorDeviceKey: () => Effect.succeed([]),
           getByCredential: () => Effect.succeedNone,
           ...overrides,
         }),

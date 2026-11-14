@@ -44,6 +44,7 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -455,6 +456,8 @@ export const layerAuthenticatedAuth = Layer.effect(
             ...session,
             scopes: new Set(session.scopes),
           }),
+          // What this request mints (asset URLs, copies) is bound to its device (1327).
+          Effect.provideService(ConnectDeviceTrust.RequestDevice, session.deviceKey ?? null),
         );
         return yield* session.subject === "cloud-connect"
           ? traceAuthenticatedRelayRequest(handler, { startTime, endTime })
@@ -723,6 +726,10 @@ export const layer = HttpApiBuilder.group(
                 "auth.pairingCredential",
                 serverAuth.issuePairingCredential({
                   ...args.payload,
+                  // A device's code dies with its approval (1327).
+                  ...(session.deviceKey === undefined
+                    ? {}
+                    : { creatorDeviceKey: session.deviceKey }),
                   ...(coordinator ? { coordinatorEnvironmentId: coordinator } : {}),
                   ...(session.principal?.kind === "coordinator"
                     ? { principalGeneration: session.principalGeneration }

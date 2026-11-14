@@ -33,6 +33,8 @@ export interface BootstrapGrant {
   readonly principalGeneration?: number | undefined;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
+  /** The approved device that created it and the approval it held (1327). */
+  readonly creatorDevice?: { readonly key: string; readonly approval: string };
   readonly expiresAt: DateTime.DateTime;
 }
 
@@ -219,6 +221,8 @@ export class PairingGrantStore extends Context.Service<
       readonly subject?: string;
       readonly label?: string;
       readonly proofKeyThumbprint?: string;
+      /** Stored on the row: redemption rechecks this device's approval (1327). */
+      readonly creatorDevice?: { readonly key: string; readonly approval: string };
       /**
        * "startup" marks the credential the server mints for itself at boot,
        * which gets the long dev TTL when a dev URL is configured.
@@ -231,6 +235,10 @@ export class PairingGrantStore extends Context.Service<
     >;
     readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
     readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
+    /** Revokes the unredeemed credentials one device created; answers how many. */
+    readonly revokeByCreatorDevice: (
+      key: string,
+    ) => Effect.Effect<number, BootstrapCredentialInternalError>;
     /** What a usable credential would grant, without spending it. */
     readonly peek: (credential: string) => Effect.Effect<
       | {
@@ -416,6 +424,17 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const revokeByCreatorDevice: PairingGrantStore["Service"]["revokeByCreatorDevice"] = Effect.fn(
+    "PairingGrantStore.revokeByCreatorDevice",
+  )(function* (key) {
+    const revokedAt = yield* DateTime.now;
+    const ids = yield* pairingLinks
+      .revokeByCreatorDeviceKey({ creatorDeviceKey: key, revokedAt })
+      .pipe(Effect.mapError((cause) => new PairingLinkRevokeError({ pairingLinkId: key, cause })));
+    yield* Effect.forEach(ids, emitRemoved, { discard: true });
+    return ids.length;
+  });
+
   const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
   )(function* (input) {
@@ -464,6 +483,7 @@ export const make = Effect.gen(function* () {
         principalGeneration,
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
+        ...(input?.creatorDevice ? { creatorDevice: input.creatorDevice } : {}),
         createdAt: now,
         expiresAt: expiresAt,
       })
@@ -662,6 +682,7 @@ export const make = Effect.gen(function* () {
           ...(consumed.value.proofKeyThumbprint
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
             : {}),
+          ...(consumed.value.creatorDevice ? { creatorDevice: consumed.value.creatorDevice } : {}),
           expiresAt: consumed.value.expiresAt,
         } satisfies BootstrapGrant;
       }
@@ -712,6 +733,7 @@ export const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    revokeByCreatorDevice,
     peek,
     consume,
   });
