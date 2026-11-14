@@ -24,6 +24,7 @@ import {
   threadTone,
   waitingCount,
   threadToneShowsDot,
+  runFailureReason,
 } from "./shellModel";
 import { unreachableEnvironmentIds } from "../state/environments";
 import { threadBackgroundWait } from "@specweave-studio/client-runtime/state/projectAttention";
@@ -1017,5 +1018,24 @@ describe("chat list by machine", () => {
     ]);
     expect(new Set(groups.map((group) => group.key)).size).toBe(3);
     expect(groups.every((group) => group.key.startsWith("machine:"))).toBe(true);
+  });
+});
+
+describe("runFailureReason", () => {
+  it("says an expired sign-in in words and what to do", () => {
+    expect(
+      runFailureReason(
+        "Provider error after 5/5 retries: unexpected status 401 Unauthorized: Provided authentication token is expired. auth error code: token_expired",
+      ),
+    ).toBe("The provider's sign-in expired. Sign in again on that machine.");
+  });
+
+  it("keeps another error's text, short", () => {
+    expect(runFailureReason("Provider error after 5/5 retries: model not found")).toBe(
+      "model not found",
+    );
+    expect(runFailureReason("x".repeat(300))?.length).toBe(140);
+    expect(runFailureReason("  ")).toBeNull();
+    expect(runFailureReason(undefined)).toBeNull();
   });
 });

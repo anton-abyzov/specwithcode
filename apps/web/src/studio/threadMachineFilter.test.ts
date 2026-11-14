@@ -117,7 +117,8 @@ describe("chatMachineColumnCh", () => {
   const row = (name: string, moved = false, offline = false) => ({ name, moved, offline });
 
   it("leaves a short name room beside its arrow and offline mark", () => {
-    expect(chatMachineColumnCh([row("m1")])).toBe(4);
+    // No room kept beyond the name: "m1" leaves no gap made for a longer one.
+    expect(chatMachineColumnCh([row("m1")])).toBe(3);
     expect(chatMachineColumnCh([row("m1"), row("m2", true)])).toBe(5);
     expect(chatMachineColumnCh([row("m3", false, true)])).toBe(5);
     expect(chatMachineColumnCh([row("m3", true, true)])).toBe(8);

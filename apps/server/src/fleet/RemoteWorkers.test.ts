@@ -1150,6 +1150,27 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("lists a project thread's scratch worker on that project's page", () => {
+    const { remote, layer } = setup();
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      // A reviewer on a machine without the project: scratch there, the project's here.
+      yield* workers.launch({
+        ...launchInput(),
+        localProject: undefined,
+        listedUnder: ProjectId.make("local-project"),
+      });
+      const launch = remote.toolCalls.find((call) => call.name === "studio_thread_launch");
+      expect(launch?.args).toMatchObject({ scratch: true });
+      const listed = yield* eventually(
+        workers.workersForProject(ProjectId.make("local-project")),
+        (current) => current[0]?.remoteThreadId === "b-thread-1",
+      );
+      expect(listed).toMatchObject([{ machineId: "m1", remoteThreadId: "b-thread-1" }]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reads a row stored before clients could launch as its thread's", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
