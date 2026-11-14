@@ -26,6 +26,7 @@ import {
 import { Tip } from "./shell/Tip";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
+import { DRAFT_SENT_ELSEWHERE_MESSAGE } from "../../lib/durableComposerDraftBindings";
 
 type Attached = ReturnType<typeof useCoordinatorAttachments>;
 
@@ -49,6 +50,8 @@ export async function submitCoordinatorDraft(input: {
   readonly onError: (message: string | null) => void;
   /** The text as the coordinator's provider should get it (a typed `/skill` as its `$` mention). */
   readonly resolveText?: (text: string) => string;
+  /** True when another window already sent (or changed) the copy this composer shows. */
+  readonly sentElsewhere?: () => Promise<boolean>;
 }): Promise<void> {
   const { composer, attached, onAppCommand, onSend, onError } = input;
   const { prompt: text, promptRevision, attachments: images, submitting } = composer.getSnapshot();
@@ -73,6 +76,16 @@ export async function submitCoordinatorDraft(input: {
   attached.dismissProblem();
   let release = () => {};
   try {
+    // A stale copy of a draft sent from another window or machine must not go out twice;
+    // the composer now shows the host's state (empty after that send).
+    if (await input.sentElsewhere?.()) {
+      onError(DRAFT_SENT_ELSEWHERE_MESSAGE);
+      return;
+    }
+    // The composer changed while the host answered (typed here, or cleared by a restore):
+    // what was captured above is no longer what the box holds, so it is not sent.
+    const after = composer.getSnapshot();
+    if (after.promptRevision !== promptRevision || after.attachments !== images) return;
     const attachments = await attached.prepare(images);
     release = attached.hold(images);
     const sent = await onSend(
@@ -146,6 +159,8 @@ function CoordinatorComposerForm(props: {
   readonly modelFallback: boolean;
   /** False while the coordinator's machine is not connected: Send then names no machine. */
   readonly hostReachable?: boolean;
+  /** Checked before a send; see `submitCoordinatorDraft`. */
+  readonly draftSentElsewhere?: () => Promise<boolean>;
 }) {
   const {
     composer,
@@ -209,6 +224,7 @@ function CoordinatorComposerForm(props: {
       onSend,
       onError,
       resolveText: (text) => resolveLeadingSkillCommand(text, props.provider?.snapshot, props.cwd),
+      ...(props.draftSentElsewhere ? { sentElsewhere: props.draftSentElsewhere } : {}),
     });
   return (
     <form

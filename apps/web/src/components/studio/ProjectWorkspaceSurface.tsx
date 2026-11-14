@@ -23,7 +23,11 @@ import { settleAfter, settleCaught } from "../../lib/settle";
 import { CoordinatorComposer } from "./CoordinatorComposer";
 import { CoordinatorQuestionCard, focusCoordinatorPrompt } from "./CoordinatorQuestionCard";
 import { useCoordinatorQuestion } from "./useCoordinatorQuestion";
-import { useDurableCoordinatorDraft, whenHostReady } from "../../lib/durableComposerDraftBindings";
+import {
+  durableCoordinatorDraftSentElsewhere,
+  useDurableCoordinatorDraft,
+  whenHostReady,
+} from "../../lib/durableComposerDraftBindings";
 import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { type MachineHandoffOpenRequest, ProjectMachineHandoff } from "./ProjectMachineHandoff";
@@ -1937,6 +1941,9 @@ export function ProjectWorkspaceSurface({
                       : promptPlaceholder
                 }
                 hostReachable={connected}
+                draftSentElsewhere={() =>
+                  durableCoordinatorDraftSentElsewhere(project.environmentId, project.id)
+                }
                 promptLabel={
                   coordinatorQuestion
                     ? machinePrivate

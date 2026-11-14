@@ -469,6 +469,8 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import {
+  DRAFT_SENT_ELSEWHERE_MESSAGE,
+  durableThreadDraftSentElsewhere,
   holdDurableThreadDraft,
   useDurableThreadDraftRestore,
   whenHostReady,
@@ -13308,6 +13310,17 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
+    // A stale copy of a draft another window or machine already sent must not go out
+    // twice; the composer now shows the host's state (empty after that send).
+    const draftCheck = await durableThreadDraftSentElsewhere(composerDraftTarget);
+    if (draftCheck !== "send") {
+      sendInFlightRef.current = false;
+      // Typing during the check leaves the draft as it is, for the next send.
+      if (draftCheck === "sent-elsewhere") {
+        setThreadError(threadIdForSend, DRAFT_SENT_ELSEWHERE_MESSAGE);
+      }
+      return;
+    }
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
     if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {

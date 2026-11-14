@@ -5,6 +5,7 @@ import {
   ThreadId,
   WS_METHODS,
   WsComposerDraftsRpcGroup,
+  type ComposerDraftGetInput,
   type ComposerDraftGetResult,
   type ComposerDraftKey,
   type ComposerDraftKeyInput,
@@ -24,7 +25,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { forkParked } from "../serverActivation.ts";
-import { listDrafts, putDraft, readDraftWithData, removeDraft } from "./draftFiles.ts";
+import { listDrafts, putDraft, readDraft, readDraftWithData, removeDraft } from "./draftFiles.ts";
 
 /** A new-chat draft nobody returned to in this long is dropped. */
 const NEW_CHAT_DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -36,7 +37,37 @@ const decodeBase64 = (value: string) => Uint8Array.from(Buffer.from(value, "base
 /** The drafts kept in `dir`, as the RPC handlers and the cleanup use them. */
 export const makeComposerDrafts = (dir: string) => {
   const get = (
-    input: ComposerDraftKeyInput,
+    input: ComposerDraftGetInput,
+  ): Effect.Effect<ComposerDraftGetResult, ComposerDraftError> =>
+    input.metadataOnly === true ? getMetadata(input) : getWithData(input);
+
+  // A cheap check: attachments come back without their bytes.
+  const getMetadata = (
+    input: ComposerDraftGetInput,
+  ): Effect.Effect<ComposerDraftGetResult, ComposerDraftError> =>
+    Effect.tryPromise({
+      try: () => readDraft(dir, input.key),
+      catch: failWith("Could not read the saved draft."),
+    }).pipe(
+      Effect.map((draft) => ({
+        draft:
+          draft === null
+            ? null
+            : {
+                key: input.key,
+                prompt: draft.prompt,
+                editedAt: draft.editedAt,
+                revision: draft.revision,
+                attachments: draft.attachments.map((attachment) => ({
+                  ...attachment,
+                  dataBase64: "",
+                })),
+              },
+      })),
+    );
+
+  const getWithData = (
+    input: ComposerDraftGetInput,
   ): Effect.Effect<ComposerDraftGetResult, ComposerDraftError> =>
     Effect.tryPromise({
       try: () => readDraftWithData(dir, input.key),

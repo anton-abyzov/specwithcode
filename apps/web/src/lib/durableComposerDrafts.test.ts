@@ -15,6 +15,7 @@ import {
   type DurableDraftEdit,
   type DurableDraftJournalEntry,
   type DurableDraftSnapshot,
+  type DurableDraftTransport,
 } from "./durableComposerDrafts";
 
 const snapshotSource = {
@@ -98,7 +99,20 @@ function makeHost() {
         const draft = drafts.get(key);
         return draft ? Schema.decodeSync(DraftRecordSchema)(draft) : null;
       },
-    },
+      /** Like the host with `metadataOnly`: no attachment bytes. */
+      peek: async (_environmentId: string, key: ComposerDraftKey) => {
+        const draft = drafts.get(key);
+        return draft
+          ? Schema.decodeSync(DraftRecordSchema)({
+              ...draft,
+              attachments: draft.attachments.map((attachment) => ({
+                ...attachment,
+                dataBase64: "",
+              })),
+            })
+          : null;
+      },
+    } as { -readonly [K in keyof DurableDraftTransport]: DurableDraftTransport[K] },
   };
 }
 
@@ -346,5 +360,310 @@ describe("durable composer drafts", () => {
     await sync.flush();
     expect(host.puts.at(-1)!.attachments[0]!.dataBase64).toBeDefined();
     expect(host.drafts.get(KEY)?.attachments.map((attachment) => attachment.id)).toEqual(["a"]);
+  });
+
+  describe("a draft open in two windows on the same host", () => {
+    /** One window: its own sync, edit log and composer contents. */
+    function makeWindow(host: ReturnType<typeof makeHost>) {
+      const { sync } = makeSync(host);
+      let composer: DurableDraftSnapshot = text("");
+      const input = {
+        target: TARGET,
+        local: () => composer,
+        apply: (snapshot: DurableDraftSnapshot) => {
+          composer = snapshot;
+        },
+      };
+      return {
+        sync,
+        input,
+        composer: () => composer,
+        type: async (snapshot: DurableDraftSnapshot) => {
+          composer = snapshot;
+          sync.schedule(TARGET, snapshot);
+          await sync.flush();
+        },
+        /** A confirmed send: hold, clear, release (what ChatView and the coordinator do). */
+        send: async () => {
+          const release = sync.hold(KEY);
+          composer = text("");
+          sync.schedule(TARGET, composer);
+          release();
+          await sync.flush();
+        },
+      };
+    }
+    const shots = () => [image("one", [1]), image("two", [2]), image("three", [3])];
+
+    it("a send in one window clears the copy another window shows, images included", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      expect(await m5.sync.restore(m5.input)).toBe("restored");
+      expect(m5.composer().attachments).toHaveLength(3);
+
+      await m4.send();
+      expect(host.drafts.has(KEY)).toBe(false);
+
+      expect(await m5.sync.refresh(m5.input)).toBe("cleared");
+      expect(m5.composer()).toEqual(text(""));
+      await m5.sync.flush();
+      expect(host.drafts.has(KEY)).toBe(false);
+    });
+
+    it("a stale copy is not sent a second time", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      const putsBefore = host.puts.length;
+
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+      await m5.sync.flush();
+      // The stale copy never went back to the host either.
+      expect(host.puts).toHaveLength(putsBefore);
+      expect(host.drafts.has(KEY)).toBe(false);
+    });
+
+    it("a draft typed here and sent from the other window clears here too", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m5.type(text("typed on the M5", shots()));
+      await m4.sync.restore(m4.input);
+      await m4.send();
+
+      expect(await m5.sync.refresh(m5.input)).toBe("cleared");
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("reopening the composer without a reload follows the host", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5"));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      expect(await m5.sync.restore(m5.input)).toBe("none");
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("takes a newer copy another window saved", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("first"));
+      await m5.sync.restore(m5.input);
+      await m4.type(text("first, then more"));
+      expect(await m5.sync.refresh(m5.input)).toBe("replaced");
+      expect(m5.composer().prompt).toBe("first, then more");
+    });
+
+    it("keeps an edit made here, and a still-current draft sends", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("shared"));
+      await m5.sync.restore(m5.input);
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(false);
+      expect(m5.composer().prompt).toBe("shared");
+
+      await m4.send();
+      // An unsaved edit here is the user's: it is not wiped.
+      m5.input.apply(text("shared, edited on the M5"));
+      m5.sync.schedule(TARGET, m5.composer());
+      expect(await m5.sync.refresh(m5.input)).toBe("kept");
+      expect(m5.composer().prompt).toBe("shared, edited on the M5");
+    });
+
+    it("a check an edit overtook never clears that edit, even once it is saved", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5"));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      // The host answers slowly; meanwhile the user types here and it saves.
+      let answer!: (value: null) => void;
+      host.transport.peek = () => new Promise((resolve) => (answer = resolve));
+      const checking = m5.sync.refresh(m5.input);
+      await m5.type(text("my own new text", [image("mine", [4])]));
+      expect(host.drafts.get(KEY)?.prompt).toBe("my own new text");
+      answer(null);
+      expect(await checking).toBe("kept");
+      expect(m5.composer().prompt).toBe("my own new text");
+      expect(host.drafts.get(KEY)?.attachments.map((attachment) => attachment.id)).toEqual([
+        "mine",
+      ]);
+    });
+
+    it("a draft typed here, then sent from another window, is not sent here again", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      // Typed and saved here; no focus check ran since.
+      await m5.type(text("typed on the M5", shots()));
+      await m4.sync.restore(m4.input);
+      await m4.send();
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("checks without downloading attachment bytes unless the draft changed", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("with shots", shots()));
+      await m5.sync.restore(m5.input);
+      const get = vi.spyOn(host.transport, "get");
+      expect(await m5.sync.refresh(m5.input)).toBe("kept");
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(false);
+      expect(get).not.toHaveBeenCalled();
+
+      await m4.type(text("with shots, edited", shots()));
+      expect(await m5.sync.refresh(m5.input)).toBe("replaced");
+      expect(get).toHaveBeenCalledTimes(1);
+      const bytes = new Uint8Array(await m5.composer().attachments[2]!.file.arrayBuffer());
+      expect([...bytes]).toEqual([3]);
+    });
+
+    it("works against a host that sends the bytes anyway (older hosts)", async () => {
+      const host = makeHost();
+      delete (host.transport as { peek?: unknown }).peek;
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("old host", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("a restore an edit overtook never clears that edit, even once it is saved", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5"));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      let answer!: (value: null) => void;
+      host.transport.get = () => new Promise((resolve) => (answer = resolve));
+      const restoring = m5.sync.restore(m5.input);
+      await m5.type(text("typed during the restore", [image("mine", [4])]));
+      answer(null);
+      await restoring;
+      expect(m5.composer().prompt).toBe("typed during the restore");
+      expect(host.drafts.get(KEY)?.prompt).toBe("typed during the restore");
+    });
+
+    it("a failed read of the bytes never clears the composer", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("first", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.type(text("first, changed", shots()));
+      host.transport.get = async () => {
+        throw new Error("No read access to this machine's drafts.");
+      };
+      await expect(m5.sync.refresh(m5.input)).rejects.toThrow("No read access");
+      expect(m5.composer().prompt).toBe("first");
+      expect(m5.composer().attachments).toHaveLength(3);
+    });
+
+    it("a file too large for the host keeps the composer out of the host's hands", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("text only"));
+      await m5.sync.restore(m5.input);
+      const big = {
+        ...image("big"),
+        sizeBytes: 26 * 1024 * 1024,
+        file: new Blob([new Uint8Array(26 * 1024 * 1024)]),
+      };
+      await m5.type(text("text only", [big]));
+      await m4.send();
+      expect(await m5.sync.refresh(m5.input)).toBe("kept");
+      expect(m5.composer().attachments.map((attachment) => attachment.id)).toEqual(["big"]);
+    });
+
+    it("a check that ends after the composer closed changes nothing, so the guard still holds", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      // Focus starts a check; the user leaves the composer before the host answers.
+      let open = true;
+      let answer!: (value: null) => void;
+      const realPeek = host.transport.peek!;
+      host.transport.peek = () => new Promise((resolve) => (answer = resolve));
+      const closing = { ...m5.input, apply: () => {}, active: () => open };
+      const checking = m5.sync.refresh(closing);
+      open = false;
+      answer(null);
+      expect(await checking).toBe("kept");
+      // Back on the composer: the stale copy is still caught before it is sent.
+      host.transport.peek = realPeek;
+      expect(m5.composer().attachments).toHaveLength(3);
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("a send right after returning does not trust the closed composer's pending check", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      let open = true;
+      const answers: Array<(value: null) => void> = [];
+      host.transport.peek = () => new Promise((resolve) => answers.push(resolve));
+      const closing = { ...m5.input, apply: () => {}, active: () => open };
+      void m5.sync.refresh(closing);
+      open = false;
+      // Back, and Send at once: the old check has not answered yet.
+      const sending = m5.sync.sentElsewhere(m5.input);
+      answers[0]!(null);
+      await vi.waitFor(() => expect(answers).toHaveLength(2));
+      answers[1]!(null);
+      expect(await sending).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("a stalled check never holds a send for long", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("shared"));
+      await m5.sync.restore(m5.input);
+      host.transport.peek = () => new Promise(() => {});
+      const closing = { ...m5.input, apply: () => {}, active: () => false };
+      void m5.sync.refresh(closing);
+      const sending = m5.sync.sentElsewhere(m5.input);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await sending).toBe(false);
+      expect(m5.composer().prompt).toBe("shared");
+    });
+
+    it("an unreachable host does not stop a send", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("shared"));
+      await m5.sync.restore(m5.input);
+      host.transport.peek = async () => {
+        throw new Error("offline");
+      };
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(false);
+      expect(m5.composer().prompt).toBe("shared");
+    });
   });
 });

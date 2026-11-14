@@ -53,6 +53,17 @@ export type ComposerDraftPutResult = typeof ComposerDraftPutResult.Type;
 export const ComposerDraftKeyInput = Schema.Struct({ key: ComposerDraftKey });
 export type ComposerDraftKeyInput = typeof ComposerDraftKeyInput.Type;
 
+export const ComposerDraftGetInput = Schema.Struct({
+  key: ComposerDraftKey,
+  /**
+   * Leave out the attachment bytes (each `dataBase64` comes back empty): a
+   * cheap check of what the host holds. Hosts before this field ignore it
+   * and send the bytes.
+   */
+  metadataOnly: Schema.optionalKey(Schema.Boolean),
+});
+export type ComposerDraftGetInput = typeof ComposerDraftGetInput.Type;
+
 export const ComposerDraftRecord = Schema.Struct({
   key: ComposerDraftKey,
   prompt: Schema.String,

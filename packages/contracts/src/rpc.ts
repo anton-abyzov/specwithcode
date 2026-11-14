@@ -194,6 +194,7 @@ import {
 import {
   ComposerDraftError,
   ComposerDraftGetResult,
+  ComposerDraftGetInput,
   ComposerDraftKeyInput,
   ComposerDraftPutInput,
   ComposerDraftPutResult,
@@ -998,7 +999,7 @@ const WsModsDisableRpc = Rpc.make(WS_METHODS.modsDisable, {
 });
 
 const WsComposerDraftsGetRpc = Rpc.make(WS_METHODS.composerDraftsGet, {
-  payload: ComposerDraftKeyInput,
+  payload: ComposerDraftGetInput,
   success: ComposerDraftGetResult,
   error: Schema.Union([ComposerDraftError, EnvironmentAuthorizationError]),
 });
