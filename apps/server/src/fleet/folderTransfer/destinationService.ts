@@ -138,6 +138,8 @@ export interface DestinationRecord {
   readonly secrets?: ReadonlyArray<ReceivedSecret>;
   /** Every approved secret file was received (or the source offered none). */
   readonly secretsDone?: boolean;
+  /** Approved without secrets: none are pulled, whatever the source has staged. */
+  readonly withoutSecrets?: boolean;
   /** When the person approved the copy; the copy's clock starts here. */
   readonly startedAt?: string;
   /** When Apply finished: the files are in place, checked or not. */
@@ -542,7 +544,10 @@ export class DestinationCopies {
    * Starts the transfer after a ready preview. Disk space is checked first and
    * the copy is refused early with the size it needs.
    */
-  async approve(operationId: string): Promise<DestinationRecord> {
+  async approve(
+    operationId: string,
+    options: { readonly withoutSecrets?: boolean } = {},
+  ): Promise<DestinationRecord> {
     const record = await this.require(operationId);
     if (record.state !== "previewed")
       throw new CopyError("refused", "Review the copy before approving it.");
@@ -606,6 +611,7 @@ export class DestinationCopies {
         disk: { needed, free },
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
+        ...(options.withoutSecrets ? { withoutSecrets: true } : {}),
         startedAt: this.now(),
         updatedAt: this.now(),
       };
@@ -1265,6 +1271,9 @@ export class DestinationCopies {
    * records each as it lands so a retry neither repeats nor forgets one.
    */
   private async receiveSecrets(record: DestinationRecord): Promise<DestinationRecord> {
+    // Approved without secrets: the source's staged list is never read.
+    if (record.withoutSecrets === true)
+      return this.update(record.operationId, { secretsDone: true });
     const client = this.client(record);
     const offered = await client.secrets();
     let current = record;

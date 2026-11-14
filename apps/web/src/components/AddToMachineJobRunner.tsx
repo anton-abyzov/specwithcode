@@ -328,7 +328,7 @@ async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> 
 
   if (job.copyIgnored || job.secrets.length > 0) {
     try {
-      await copyExtras(job, context.commands, destName);
+      await copyExtras(job, context.commands, destName, sourceName);
     } catch (cause) {
       const transient = isTransient(cause);
       toastManager.add(
@@ -388,6 +388,7 @@ async function copyExtras(
   job: AddToMachineJob,
   commands: CopyCommands,
   destName: string,
+  sourceName: string,
 ): Promise<void> {
   const { source, destination } = job;
   const env = destination.environmentId;
@@ -445,6 +446,7 @@ async function copyExtras(
     sourceEnvironmentId: source.environmentId,
     destinationEnvironmentId: env,
     destinationLabel: destName,
+    sourceLabel: sourceName,
     operationId,
     secrets,
   });

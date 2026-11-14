@@ -141,6 +141,7 @@ export function AddToMachineConsolidate(props: {
         sourceEnvironmentId: source.environmentId,
         destinationEnvironmentId: destination,
         destinationLabel: destName,
+        sourceLabel: sourceName,
         operationId,
         secrets,
         onStatus: setCopy,

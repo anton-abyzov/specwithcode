@@ -84,6 +84,7 @@ export function HandoffCopyStepPanels({
   leftOnSource,
   keptHere,
   secretsNote,
+  secretsLocked = null,
   link,
   linkDialog,
   onLinkDialogClose,
@@ -158,6 +159,8 @@ export function HandoffCopyStepPanels({
   /** The person kept the coordinator on the source. */
   readonly keptHere: boolean;
   readonly secretsNote: string | null;
+  /** Why this window cannot send secrets and where to send them from; null when it can. */
+  readonly secretsLocked?: string | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
   readonly linkDialog: boolean;
   readonly onLinkDialogClose: () => void;
@@ -204,6 +207,7 @@ export function HandoffCopyStepPanels({
               uncommittedFiles,
               includeSecrets,
               onIncludeSecretsChange,
+              secretsLocked,
               details,
             }}
             folder={folder}
@@ -326,6 +330,7 @@ export function HandoffCopyStepPanels({
                 machines.find((entry) => entry.id === machine)?.homeSecretFiles === true
               }
               disabled={busy}
+              locked={secretsLocked}
               onChange={onSecretsChange}
             />
           )}

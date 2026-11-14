@@ -8,6 +8,13 @@ import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 const state = vi.hoisted(() => ({
   handlers: {} as Record<string, (input: unknown) => unknown>,
   toasts: [] as unknown[],
+  /** This window's access:write on the source, as the session reports it. */
+  sourceAccess: "unknown" as "granted" | "denied" | "unknown",
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScopeAccess: () => state.sourceAccess,
+  readEnvironmentScopeAccess: () => state.sourceAccess,
 }));
 vi.mock("../../studio/machineHandoff", () => ({
   machineHandoff: new Proxy({}, { get: (_target, name) => name }),
@@ -64,6 +71,7 @@ beforeEach(() => {
   localStorage.clear();
   state.toasts = [];
   state.handlers = {};
+  state.sourceAccess = "unknown";
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -607,6 +615,114 @@ it("waits for the person when the secrets choice cannot be sent", async () => {
     });
     state.handlers.copySecrets = () => {
       throw new Error("The source is offline.");
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { staged: true, does: "takes staged ones off" },
+  { staged: false, does: "sends nothing" },
+])("from a window that may not send secrets, $does before approving", async ({ staged }) => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = "denied";
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+      secrets: staged
+        ? { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" }
+        : null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(sent).toEqual(staged ? [[]] : []);
+    expect(approvals).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { access: "granted" as const, how: "with the secrets choice" },
+  { access: "denied" as const, how: "without secrets from a window that may not send them" },
+])("approves a Replace all left running $how", async ({ access }) => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = access;
+    pointer({ replaceAll: true, secrets: { included: true, out: [] } });
+    state.handlers.copyStatus = () =>
+      previewed([row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })]);
+    // The click staged .env on the source while a permitted window had the dialog.
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+      secrets: { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" },
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    const inputs: unknown[] = [];
+    state.handlers.copyApprove = (request) => {
+      inputs.push((request as { input: unknown }).input);
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // A blocked window takes them off first: an older destination ignores withoutSecrets.
+    expect(sent).toEqual(access === "denied" ? [[]] : []);
+    expect(inputs[0]).toEqual(
+      access === "denied"
+        ? { operationId: expect.any(String), withoutSecrets: true }
+        : { operationId: expect.any(String) },
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("waits for the person when staged secrets cannot be taken off from that window", async () => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = "denied";
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+      secrets: { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" },
+    });
+    state.handlers.copySecrets = () => {
+      throw new Error("This connection requires access:write.");
     };
     let approvals = 0;
     state.handlers.copyApprove = () => {

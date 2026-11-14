@@ -4,6 +4,22 @@ import { handoffErrorMarksStep, plainHandoffError } from "./handoffErrors";
 const places = { source: "M4", destination: "ministorm" };
 
 describe("plainHandoffError", () => {
+  it("says where to send secrets from when this window's grant cannot send them", () => {
+    expect(
+      plainHandoffError("This connection requires access:write.", "copy", {
+        source: "m4",
+        destination: "m5",
+      }),
+    ).toBe(
+      "Only SpecWithCode on m4 can send secrets. Untick Secrets to copy without them, or start this copy in the SpecWithCode window on m4.",
+    );
+    expect(
+      plainHandoffError("This connection requires settings:write.", "copy", { source: "m4" }),
+    ).toBe(
+      "This window's sign-in on m4 doesn't allow this step (settings:write). Start this copy in the SpecWithCode window on m4.",
+    );
+  });
+
   it("names the machine and where a linked working folder leads, without jargon", () => {
     expect(
       plainHandoffError(

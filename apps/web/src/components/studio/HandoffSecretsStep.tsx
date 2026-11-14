@@ -33,6 +33,7 @@ export function HandoffSecretsStep({
   targetLabel,
   homeSupported,
   disabled,
+  locked = null,
   onChange,
 }: {
   readonly files: ReadonlyArray<SecretFileRow>;
@@ -46,6 +47,8 @@ export function HandoffSecretsStep({
   /** The destination writes `~/` files into its home folder; older ones would not. */
   readonly homeSupported: boolean;
   readonly disabled: boolean;
+  /** Why this window cannot send secrets, and where to start the copy instead. */
+  readonly locked?: string | null;
   /** One choice: whether secrets travel, and which of the shown files. */
   readonly onChange: (included: boolean, selected: ReadonlyArray<string>) => void;
 }) {
@@ -77,7 +80,7 @@ export function HandoffSecretsStep({
               <span className="flex h-5 items-center">
                 <Checkbox
                   checked={included}
-                  disabled={disabled}
+                  disabled={disabled || !!locked}
                   aria-label="Include secrets (.env, keys)"
                   onCheckedChange={(checked) => {
                     const on = checked === true;
@@ -88,9 +91,11 @@ export function HandoffSecretsStep({
               <span className="leading-5">
                 Secrets (.env, keys): {counted}, {included ? "included" : `left on ${sourceLabel}`}
                 <span className="block text-xs text-muted-foreground">
-                  {included
-                    ? `Copied to ${targetLabel}, where only your user can read them.`
-                    : `They stay on ${sourceLabel}.`}{" "}
+                  {locked
+                    ? locked
+                    : included
+                      ? `Copied to ${targetLabel}, where only your user can read them.`
+                      : `They stay on ${sourceLabel}.`}{" "}
                   Sign-ins to Claude, Codex and GitHub are never copied; sign in on {targetLabel}{" "}
                   instead.
                 </span>
@@ -113,7 +118,7 @@ export function HandoffSecretsStep({
                   <label className="flex min-w-0 cursor-pointer items-center gap-2">
                     <Checkbox
                       checked={included && selected.includes(file.path)}
-                      disabled={disabled}
+                      disabled={disabled || !!locked}
                       onCheckedChange={(checked) =>
                         // Ticking one file while secrets stay here sends that file only.
                         checked === true && !included
