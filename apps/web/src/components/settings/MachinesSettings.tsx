@@ -471,7 +471,7 @@ interface MachineHere {
   readonly seen: MachineSeen;
 }
 
-/** The machine a copy is on, as "ministorm (This app can see it)", so its dot is never the only clue. */
+/** The machine a copy is on, as "ministorm (Online)", so its dot is never the only clue. */
 function spokenMachine(machine: { name: string; seen: MachineSeen }): string {
   return `${machine.name} (${machine.seen.text})`;
 }
