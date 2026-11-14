@@ -414,57 +414,103 @@ function ownFrontMatter(text: string): { readonly lines: string[]; readonly body
   return { lines, body: text.slice(match[0].length).trim() };
 }
 
-/** Windows has no O_NOFOLLOW; there the name is checked before it is opened. */
-const NO_FOLLOW = NodeFS.constants.O_NOFOLLOW ?? 0;
+/** macOS 11 and later: the open fails when any component of the path is a link. */
+const O_NOFOLLOW_ANY = 0x2000_0000;
+/** Windows has no O_NOFOLLOW; the checks around the open cover it there. */
+const NO_FOLLOW =
+  (NodeFS.constants.O_NOFOLLOW ?? 0) | (process.platform === "darwin" ? O_NOFOLLOW_ANY : 0);
+
+function leadsOutside(relativePath: string): ProjectLibraryProblem {
+  return new ProjectLibraryProblem("invalid", `${relativePath} leads outside the project.`);
+}
 
 /**
- * Opens a saved report without following a link at its name, and only when
- * the handle is one regular file. The read and any update go through this
- * handle, so a link swapped in after the check is never written through, and
- * a second name for a file elsewhere (a hard link) is never touched.
+ * Opens a file of the project by a path from its real root that holds no link
+ * anywhere, and only when it is one regular file there: a link at its name or
+ * in a folder above it, or a second name for a file elsewhere, is never read
+ * or written through. macOS refuses a link in any component as it opens; on
+ * Linux the kernel's record of the opened file must be that path; everywhere
+ * the opened file must be the one found at that path with no link on the
+ * way, before (when it exists) and after the open.
  */
-async function openSavedReport(
-  file: string,
-  writable: boolean,
-): Promise<NodeFSP.FileHandle | null> {
-  if (NO_FOLLOW === 0) {
-    const named = await NodeFSP.lstat(file).catch(() => null);
-    if (named === null || !named.isFile()) return null;
+async function openInside(
+  realRoot: string,
+  relativePath: string,
+  flags: number,
+): Promise<NodeFSP.FileHandle> {
+  const expected = NodePath.join(realRoot, ...relativePath.split("/"));
+  const creating = (flags & NodeFS.constants.O_CREAT) !== 0;
+  const before = creating ? null : await NodeFSP.lstat(expected, { bigint: true });
+  if (before !== null && !before.isFile()) throw leadsOutside(relativePath);
+  const handle = await NodeFSP.open(expected, flags | NO_FOLLOW, 0o644);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile() || opened.nlink !== 1n) throw leadsOutside(relativePath);
+    if (before !== null && (before.dev !== opened.dev || before.ino !== opened.ino)) {
+      throw leadsOutside(relativePath);
+    }
+    if (process.platform === "linux") {
+      const actual = await NodeFSP.readlink(`/proc/self/fd/${handle.fd}`).catch(() => null);
+      if (actual !== null && actual !== expected) throw leadsOutside(relativePath);
+    }
+    const real = await NodeFSP.realpath(expected).catch(() => null);
+    const named = await NodeFSP.lstat(expected, { bigint: true }).catch(() => null);
+    if (
+      real !== expected ||
+      named === null ||
+      named.dev !== opened.dev ||
+      named.ino !== opened.ino
+    ) {
+      throw leadsOutside(relativePath);
+    }
+    return handle;
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
   }
-  const flags = (writable ? NodeFS.constants.O_RDWR : NodeFS.constants.O_RDONLY) | NO_FOLLOW;
-  const handle = await NodeFSP.open(file, flags).catch(() => null);
-  if (handle === null) return null;
-  const stat = await handle.stat().catch(() => null);
-  if (stat === null || !stat.isFile() || stat.nlink !== 1) {
-    await handle.close();
-    return null;
+}
+
+/** Writes all of it from the start of the file: one write may take only part. */
+async function writeAll(handle: NodeFSP.FileHandle, bytes: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset, offset);
+    if (bytesWritten <= 0) throw new Error("The report could not be written.");
+    offset += bytesWritten;
   }
-  return handle;
 }
 
 interface StoredReport {
-  readonly title: string | null;
-  readonly thread: string | null;
-  /** The line is there; its value is null when it is not a JSON string. */
-  readonly hasSource: boolean;
-  readonly source: string | null;
-  readonly hasOriginal: boolean;
-  readonly original: string | null;
+  readonly title: string | null | undefined;
+  readonly thread: string | null | undefined;
+  readonly source: string | null | undefined;
+  readonly original: string | null | undefined;
   readonly body: string;
   readonly content: string;
   readonly blockEnd: number;
 }
 
-/** A front-matter property the app writes, `key: "json string"`. */
-function storedValue(block: string, key: string): string | null {
-  const raw = new RegExp(`^${key}: (.+)$`, "m").exec(block)?.[1];
-  if (raw === undefined) return null;
-  try {
-    const value: unknown = JSON.parse(raw);
-    return typeof value === "string" ? value : null;
-  } catch {
-    return null;
+/**
+ * A flat front-matter string: JSON or single quoted, or bare. Undefined when
+ * the key is absent, null when its value is not a plain string.
+ */
+function storedValue(block: string, key: string): string | null | undefined {
+  const found = new RegExp(`^${key}[ \\t]*:(.*)$`, "im").exec(block);
+  if (found === null) return undefined;
+  const raw = found[1]!.trim();
+  if (raw.startsWith('"')) {
+    try {
+      const value: unknown = JSON.parse(raw);
+      return typeof value === "string" ? value : null;
+    } catch {
+      return null;
+    }
   }
+  if (raw.startsWith("'")) {
+    return raw.length >= 2 && raw.endsWith("'") ? raw.slice(1, -1).replace(/''/g, "'") : null;
+  }
+  const bare = raw.replace(/\s+#.*$/, "").trim();
+  return bare.length === 0 || /^[[{|>&*!%@`]/.test(bare) ? null : bare;
 }
 
 function parseStoredReport(content: string): StoredReport {
@@ -473,15 +519,21 @@ function parseStoredReport(content: string): StoredReport {
   return {
     title: storedValue(block, "title"),
     thread: storedValue(block, "thread"),
-    hasSource: /^source:/m.test(block),
     source: storedValue(block, "source"),
-    hasOriginal: /^original:/m.test(block),
     original: storedValue(block, "original"),
     body: match ? content.slice(match[0].length) : content,
     content,
     // Where the closing rule starts, for properties added later.
     blockEnd: match && content.startsWith("---\n") ? 4 + block.length : -1,
   };
+}
+
+function sameLink(left: string, right: string): boolean {
+  try {
+    return new URL(left).href === new URL(right).href;
+  } catch {
+    return left === right;
+  }
 }
 
 /** The same text: line endings and the blank lines around it aside. Indentation counts. */
@@ -491,31 +543,77 @@ function sameBody(left: string, right: string): boolean {
 
 /**
  * The provenance lines a saved copy of the same text lacks, each added on
- * its own. A copy that names another source or original is refused, so
- * neither origin is lost.
+ * its own. A copy that records another source or original, or one that
+ * cannot be read, is refused, so neither origin is lost.
  */
 function missingProvenance(
   stored: StoredReport,
   provenance: ReportProvenance,
   relativePath: string,
 ): string[] {
-  const conflict = (recorded: string) =>
+  const conflict = (recorded: string | null) =>
     new ProjectLibraryProblem(
       "conflict",
-      `This text is already saved at ${relativePath} from ${recorded}. Link that report.`,
+      `This text is already saved at ${relativePath} from ${recorded ?? "an origin that cannot be read"}. Link that report.`,
     );
   const lines: string[] = [];
-  if (!stored.hasSource) lines.push(`source: ${frontMatterValue(provenance.source)}`);
-  else if (stored.source !== null && stored.source !== provenance.source) {
-    throw conflict(stored.source);
-  }
+  if (stored.source === undefined) lines.push(`source: ${frontMatterValue(provenance.source)}`);
+  else if (stored.source !== provenance.source) throw conflict(stored.source);
   if (provenance.original !== undefined) {
-    if (!stored.hasOriginal) lines.push(`original: ${frontMatterValue(provenance.original)}`);
-    else if (stored.original !== null && stored.original !== provenance.original) {
+    if (stored.original === undefined) {
+      lines.push(`original: ${frontMatterValue(provenance.original)}`);
+    } else if (stored.original === null || !sameLink(stored.original, provenance.original)) {
       throw conflict(stored.original);
     }
   }
+  if (lines.length > 0 && stored.blockEnd <= 0) throw conflict(null);
   return lines;
+}
+
+/**
+ * Adds provenance lines to a saved report through a second, writable handle
+ * on the same file, and only while it still holds what was read. A report
+ * that is only read needs no write access, so a read-only copy is still found.
+ */
+async function addProvenance(
+  realRoot: string,
+  relativePath: string,
+  reader: NodeFSP.FileHandle,
+  stored: StoredReport,
+  lines: ReadonlyArray<string>,
+): Promise<void> {
+  const writer = await openInside(realRoot, relativePath, NodeFS.constants.O_RDWR).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "EACCES" || error.code === "EPERM") {
+        throw new ProjectLibraryProblem(
+          "conflict",
+          `This text is already saved at ${relativePath}, which is read-only, so its source was not added. Link that report.`,
+        );
+      }
+      throw error;
+    },
+  );
+  try {
+    const [read, write] = await Promise.all([
+      reader.stat({ bigint: true }),
+      writer.stat({ bigint: true }),
+    ]);
+    if (read.dev !== write.dev || read.ino !== write.ino) throw leadsOutside(relativePath);
+    if ((await writer.readFile("utf8")) !== stored.content) {
+      throw new ProjectLibraryProblem(
+        "conflict",
+        `${relativePath} changed while this save read it. Save again.`,
+      );
+    }
+    const updated = Buffer.from(
+      `${stored.content.slice(0, stored.blockEnd)}\n${lines.join("\n")}${stored.content.slice(stored.blockEnd)}`,
+      "utf8",
+    );
+    await writeAll(writer, updated);
+    await writer.truncate(updated.length);
+  } finally {
+    await writer.close();
+  }
 }
 
 /**
@@ -631,6 +729,8 @@ export async function saveReport(
   const key = reportKey(source.threadId, normalizedText);
   return oneSaveAtATime(`${root}\0${key}`, async () => {
     const before = await readThreadReports(root, source);
+    // Files are opened from the real root, by paths that hold no link.
+    const realRoot = await NodeFSP.realpath(root);
     const own = ownFrontMatter(normalizedText);
     const provenanceLines = provenance
       ? [
@@ -643,20 +743,17 @@ export async function saveReport(
     // import of a text saved before adds the provenance that copy lacks.
     const already = async (relativePath: string): Promise<SavedReport | null> => {
       const absolutePath = NodePath.join(root, ...relativePath.split("/"));
-      const handle = await openSavedReport(absolutePath, provenance !== undefined);
-      if (handle === null) return null;
+      const reader = await openInside(realRoot, relativePath, NodeFS.constants.O_RDONLY).catch(
+        () => null,
+      );
+      if (reader === null) return null;
       try {
-        const stored = parseStoredReport(await handle.readFile("utf8"));
+        const stored = parseStoredReport(await reader.readFile("utf8"));
         if (stored.thread !== source.threadId || !sameBody(stored.body, own.body)) return null;
         const missing =
           provenance === undefined ? [] : missingProvenance(stored, provenance, relativePath);
-        if (missing.length > 0 && stored.blockEnd > 0) {
-          const updated = Buffer.from(
-            `${stored.content.slice(0, stored.blockEnd)}\n${missing.join("\n")}${stored.content.slice(stored.blockEnd)}`,
-            "utf8",
-          );
-          await handle.write(updated, 0, updated.length, 0);
-          await handle.truncate(updated.length);
+        if (missing.length > 0) {
+          await addProvenance(realRoot, relativePath, reader, stored, missing);
         }
         const snapshot = await readThreadReports(root, source);
         return {
@@ -671,7 +768,7 @@ export async function saveReport(
           absolutePath,
         };
       } finally {
-        await handle.close();
+        await reader.close();
       }
     };
     for (const report of before.reports) {
@@ -689,7 +786,7 @@ export async function saveReport(
             : null));
     const relativeDir =
       increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
-    const target = await ensureDirectoryWithin(root, relativeDir);
+    await ensureDirectoryWithin(root, relativeDir);
     const savedAt = now.toISOString();
     const content = [
       "---",
@@ -716,11 +813,16 @@ export async function saveReport(
       const name = attempt === 1 ? first : first.replace(`-${key}.md`, `-${attempt}-${key}.md`);
       const relativePath = posix(NodePath.join(relativeDir, name));
       try {
-        await NodeFSP.writeFile(NodePath.join(target, name), content, {
-          encoding: "utf8",
-          flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
-          mode: 0o644,
-        });
+        const writer = await openInside(
+          realRoot,
+          relativePath,
+          NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
+        );
+        try {
+          await writeAll(writer, Buffer.from(content, "utf8"));
+        } finally {
+          await writer.close();
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         // A save of the same text that ran alongside this one wrote it first; it
@@ -742,7 +844,7 @@ export async function saveReport(
         },
         title,
         alreadySaved: false,
-        absolutePath: NodePath.join(root, relativeDir, name),
+        absolutePath: NodePath.join(root, ...relativePath.split("/")),
       };
     }
     throw new ProjectLibraryProblem(

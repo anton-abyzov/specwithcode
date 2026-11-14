@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { reportKey, reportThreadKey } from "@specweave-studio/shared/threadReport";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
 import {
@@ -723,5 +723,103 @@ describe("saveReport", () => {
     expect(saved.alreadySaved).toBe(false);
     expect(saved.report.path.endsWith(`-2-${reportKey("t-hardlink", IMPORTED)}.md`)).toBe(true);
     expect(await NodeFSP.readFile(target, "utf8")).toBe(planted);
+  });
+
+  it("never reads or writes a report through a linked folder, even one inside the project", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-folder", title: null, branch: null, home };
+    const elsewhere = NodePath.join(root, "elsewhere");
+    await NodeFSP.mkdir(elsewhere, { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/reports"), { recursive: true });
+    const name = `2026-11-13-release-checklist-what-is-unfinished-${reportKey("t-folder", IMPORTED)}.md`;
+    const planted = `---\nthread: "t-folder"\n---\n\n${IMPORTED}\n`;
+    await NodeFSP.writeFile(NodePath.join(elsewhere, name), planted);
+    await NodeFSP.symlink(elsewhere, NodePath.join(root, ".specweave/reports/threads"), "dir");
+    await expect(
+      saveReport(root, source, IMPORTED, new Date("2026-11-13T19:00:00Z"), {
+        provenance: { source: "Claude desktop", original: ORIGINAL },
+      }),
+    ).rejects.toThrow("leads outside the project");
+    expect(await NodeFSP.readFile(NodePath.join(elsewhere, name), "utf8")).toBe(planted);
+  });
+
+  it("writes the whole report when the system takes each write in pieces", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-pieces", title: null, branch: null, home };
+    const at = new Date("2026-11-13T19:00:00Z");
+    const probe = await NodeFSP.open(NodePath.join(root, "probe"), "w");
+    const prototype = Object.getPrototypeOf(probe) as NodeFSP.FileHandle;
+    await probe.close();
+    const write = prototype.write;
+    // Each write takes at most 16 bytes, as a system may.
+    const pieces = vi.spyOn(prototype, "write").mockImplementation(function (
+      this: NodeFSP.FileHandle,
+      ...args: unknown[]
+    ) {
+      const [buffer, offset, length, position] = args as [Buffer, number, number, number];
+      return Reflect.apply(write, this, [buffer, offset, Math.min(length, 16), position]);
+    } as unknown as typeof prototype.write);
+    try {
+      const saved = await saveReport(root, source, IMPORTED, at);
+      await saveReport(root, source, IMPORTED, at, {
+        provenance: { source: "Claude desktop", original: ORIGINAL },
+      });
+      const content = await NodeFSP.readFile(saved.absolutePath, "utf8");
+      expect(content).toMatch(/\noriginal: ".+"\n---\n\n# Release checklist/);
+      expect(content.endsWith("Nothing was lost.\n")).toBe(true);
+      expect(content).not.toContain("\0");
+      expect(pieces.mock.calls.length).toBeGreaterThan(2);
+    } finally {
+      pieces.mockRestore();
+    }
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "finds a read-only report again, and says so when it cannot add the source",
+    async () => {
+      const root = await project();
+      const home = await temp("studio-home-");
+      const source = { threadId: "t-readonly", title: null, branch: null, home };
+      const at = new Date("2026-11-13T19:00:00Z");
+      const first = await saveReport(root, source, IMPORTED, at);
+      await NodeFSP.chmod(first.absolutePath, 0o444);
+      const again = await saveReport(root, source, IMPORTED, at);
+      expect(again).toMatchObject({ alreadySaved: true, absolutePath: first.absolutePath });
+      await expect(
+        saveReport(root, source, IMPORTED, at, { provenance: { source: "Claude desktop" } }),
+      ).rejects.toThrow("which is read-only, so its source was not added");
+      expect((await readThreadReports(root, source)).reports).toHaveLength(1);
+      await NodeFSP.chmod(first.absolutePath, 0o644);
+    },
+  );
+
+  it("reads provenance written as bare YAML, and refuses another origin over it", async () => {
+    const root = await project();
+    const home = await temp("studio-home-");
+    const source = { threadId: "t-yaml", title: null, branch: null, home };
+    const at = new Date("2026-11-13T19:00:00Z");
+    const name = `2026-11-13-release-checklist-what-is-unfinished-${reportKey("t-yaml", IMPORTED)}.md`;
+    const file = NodePath.join(root, ".specweave/reports/threads", name);
+    const written = `---\nthread: "t-yaml"\nsource: Claude desktop\noriginal: ${ORIGINAL}\n---\n\n${IMPORTED}\n`;
+    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+    await NodeFSP.writeFile(file, written);
+    const same = await saveReport(root, source, IMPORTED, at, {
+      provenance: { source: "Claude desktop", original: ORIGINAL },
+    });
+    expect(same).toMatchObject({
+      alreadySaved: true,
+      absolutePath: NodePath.join(root, ".specweave/reports/threads", name),
+    });
+    await expect(
+      saveReport(root, source, IMPORTED, at, { provenance: { source: "Codex" } }),
+    ).rejects.toThrow("from Claude desktop. Link that report.");
+    await expect(
+      saveReport(root, source, IMPORTED, at, {
+        provenance: { source: "Claude desktop", original: "https://claude.ai/artifact/Other" },
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(await NodeFSP.readFile(file, "utf8")).toBe(written);
   });
 });
