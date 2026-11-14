@@ -3,6 +3,7 @@ import {
   existingCopyLine,
   holdingLabel,
   machineHoldings,
+  pickedHolding,
   sendChoiceLabel,
   sendPlan,
 } from "./sendToMachine";
@@ -35,11 +36,12 @@ describe("machineHoldings", () => {
       project("mini", "a", { root: "/home/anton/a" }),
       project("mini", "b", { root: "/home/anton/b" }),
     ];
-    const holdings = machineHoldings({
+    const { byMachine: holdings, mainEnvironmentId } = machineHoldings({
       source,
       machineIds: ["m4", "m1", "mini", "m3"],
       projects,
     });
+    expect(mainEnvironmentId).toBe("m4");
     expect(holdings.get("m4")?.kind).toBe("main");
     expect(holdings.get("m1")?.kind).toBe("copy");
     expect(holdings.get("mini")?.kind).toBe("several");
@@ -54,12 +56,48 @@ describe("machineHoldings", () => {
 
   it("calls a linked copy that is not Main a copy", () => {
     const source = project("m4", "p4", { logical: "L", state: "active", epoch: 2 });
-    const holdings = machineHoldings({
+    const { byMachine: holdings } = machineHoldings({
       source,
       machineIds: ["m5"],
       projects: [source, project("m5", "p5", { logical: "L", state: "transferred", epoch: 1 })],
     });
     expect(holdings.get("m5")?.kind).toBe("copy");
+  });
+});
+
+describe("roles among several copies and retired records", () => {
+  it("keeps which of several copies is Main, and names Main's machine regardless", () => {
+    const source = project("m5", "p5", { logical: "L", state: "transferred", epoch: 1 });
+    const main = project("m1", "a", { logical: "L", state: "active", epoch: 2 });
+    const other = project("m1", "b", { logical: "L", state: "transferred", epoch: 0 });
+    const { byMachine, mainEnvironmentId } = machineHoldings({
+      source,
+      machineIds: ["m1"],
+      projects: [source, main, other],
+    });
+    const holding = byMachine.get("m1")!;
+    expect(holding).toMatchObject({ kind: "several", mainId: "a" });
+    expect(mainEnvironmentId).toBe("m1");
+    expect(pickedHolding(holding, "a")).toEqual({ kind: "main", copy: main });
+    expect(pickedHolding(holding, "b")).toEqual({ kind: "copy", copy: other });
+    expect(pickedHolding(holding, null)).toBe(holding);
+  });
+
+  it("never lets a re-joined machine's old record be Main", () => {
+    const source = project("m5", "p5", { logical: "L", state: "active", epoch: 3 });
+    const old = project("old-m1", "x", { logical: "L", state: "active", epoch: 9 });
+    const projects = [source, old];
+    expect(machineHoldings({ source, machineIds: ["old-m1"], projects }).mainEnvironmentId).toBe(
+      "old-m1",
+    );
+    const fixed = machineHoldings({
+      source,
+      machineIds: ["old-m1"],
+      projects,
+      retired: new Set(["old-m1"]),
+    });
+    expect(fixed.mainEnvironmentId).toBe("m5");
+    expect(fixed.byMachine.get("old-m1")?.kind).toBe("copy");
   });
 });
 

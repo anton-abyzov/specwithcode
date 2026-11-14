@@ -1,6 +1,6 @@
 // `?scene=send&state=copy|move|none|main|several` (and `&folder=taken`): the Send to another
-// machine… dialog as it opens on m5, with the chosen machine holding a copy, Main, several
-// copies or nothing. Buttons act locally; nothing is sent.
+// machine… dialog as it opens on m5, a copy of a project whose Main is on m4, with the chosen
+// machine holding a copy, Main, several copies or nothing. Buttons act locally; nothing is sent.
 import { HandoffShare, type HandoffShareProps } from "../../src/components/studio/HandoffShare";
 import { MachineHandoffDialog } from "../../src/components/studio/MachineHandoffDialog";
 
@@ -50,6 +50,7 @@ const scenes: Record<
     label: "m1",
     holding: {
       kind: "several",
+      mainId: null,
       copies: [
         copyAt("env-m1", "a", "/Users/anton/Projects/specweave"),
         copyAt("env-m1", "b", "/Users/anton/work/specweave"),
@@ -106,7 +107,7 @@ export function SendScene() {
             machine={scene.machine as never}
             machineLabel={scene.label}
             holding={scene.holding}
-            mainLabel="m5"
+            mainLabel="m4"
             projectsRoot={state === "none" ? "/home/anton/Projects" : "/Users/anton/Projects"}
             joined={false}
             uncommittedFiles={3}

@@ -40,6 +40,7 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { displayFolder } from "~/lib/displayFolder";
 import {
   existingCopyLine,
+  pickedHolding,
   sendChoiceLabel,
   sendPlan,
   type MachineHolding,
@@ -80,7 +81,8 @@ export interface HandoffShareProps {
   readonly onCopyInstead: (move: boolean) => void;
   readonly onPrepareRepositories: (move: boolean) => void;
   /** The folder there needs a person's choice: the full Add to another machine dialog. */
-  readonly onNeedsFolderChoice: () => void;
+  /** The folder there needs a person's choice; `move` hands Main over once it is linked. */
+  readonly onNeedsFolderChoice: (move: boolean) => void;
   readonly onBusyChange: (busy: boolean) => void;
   readonly onClose: () => void;
 }
@@ -195,7 +197,7 @@ export function HandoffShare({
     if (!machine || !machineLabel || remoteUrl === null) return;
     // Secret files are picked one by one, in the full Add to another machine review.
     if (includeSecrets) {
-      onNeedsFolderChoice();
+      onNeedsFolderChoice(sendChoice === "move");
       return;
     }
     setBusy(true);
@@ -218,7 +220,7 @@ export function HandoffShare({
         }),
       );
       if (destinationPlan(inspected).kind !== "clone") {
-        onNeedsFolderChoice();
+        onNeedsFolderChoice(sendChoice === "move");
         return;
       }
       const projectId = newProjectId();
@@ -283,8 +285,7 @@ export function HandoffShare({
           if (live) setFolder({ state: "ready", path: first.path, taken: null });
           return;
         }
-        const second =
-          plan.kind === "refuse" ? await look(plan.suggestion) : null;
+        const second = plan.kind === "refuse" ? await look(plan.suggestion) : null;
         if (!live) return;
         setFolder(
           second && destinationPlan(second).kind === "clone"
@@ -301,14 +302,12 @@ export function HandoffShare({
     };
   }, [inspecting, machine, remoteUrl, defaultFolder]);
   // The copy this send goes to: the one there, or the one picked among several.
-  const sendCopy =
-    holding.kind === "main" || holding.kind === "copy"
-      ? holding.copy
-      : holding.kind === "several"
-        ? (holding.copies.find((copy) => copy.id === picked) ?? null)
-        : null;
+  // The copy this send goes to: the one there, or the one picked among several, with its
+  // own role: picking the copy that is Main there makes it a Main holding.
+  const picks = pickedHolding(holding, picked);
+  const sendCopy = picks.kind === "main" || picks.kind === "copy" ? picks.copy : null;
   const sendKey = sendCopy ? `${sendCopy.environmentId}:${sendCopy.id}` : null;
-  const moving = sendChoice === "move" && holding.kind !== "main";
+  const moving = sendChoice === "move" && picks.kind !== "main";
   const plan =
     machineLabel === null || justAdded
       ? null
@@ -320,7 +319,7 @@ export function HandoffShare({
               choice: sendChoice,
               there: machineLabel,
               main: mainLabel,
-              holding: holding.kind === "main" ? "main" : linked ? "copy" : "none",
+              holding: picks.kind === "main" ? "main" : linked ? "copy" : "none",
               folder: sendCopy
                 ? sendCopy.workspaceRoot
                 : folder.state === "ready"
@@ -390,7 +389,7 @@ export function HandoffShare({
               : alsoMove
                 ? `${machineLabel} is cloning this project. Keep this open: Main moves when the clone finishes.`
                 : `${machineLabel} is cloning this project. You can close this; it links when the clone finishes.`
-            : existingCopyLine({ there: machineLabel, holding, updatesCommits })}
+            : existingCopyLine({ there: machineLabel, holding: picks, updatesCommits })}
         </p>
       )}
       {machineLabel && !justAdded && holding.kind === "several" && (
@@ -408,7 +407,7 @@ export function HandoffShare({
           ))}
         </RadioGroup>
       )}
-      {machineLabel && !justAdded && holding.kind !== "main" && (
+      {machineLabel && !justAdded && picks.kind !== "main" && (
         <fieldset className="min-w-0" data-slot="send-choice" disabled={busy}>
           <legend className="mb-2 text-xs font-medium text-muted-foreground">Then</legend>
           <RadioGroup

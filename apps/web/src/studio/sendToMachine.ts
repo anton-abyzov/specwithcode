@@ -13,12 +13,22 @@ export type SendChoice = "copy" | "move";
 
 type SendCopy = CopyCandidate & CoordinatedCopy;
 
-/** What one machine holds: Main, one copy, several (the person picks), or nothing. */
+/**
+ * What one machine holds: Main, one copy, several (the person picks; `mainId` names the
+ * one among them that is Main, if any), or nothing.
+ */
 export type MachineHolding<T> =
   | { readonly kind: "main"; readonly copy: T }
   | { readonly kind: "copy"; readonly copy: T }
-  | { readonly kind: "several"; readonly copies: readonly T[] }
+  | { readonly kind: "several"; readonly copies: readonly T[]; readonly mainId: string | null }
   | { readonly kind: "none" };
+
+/** Each machine's holding, and the machine Main is on whatever the destinations hold. */
+export interface MachineHoldings<T> {
+  readonly byMachine: ReadonlyMap<string, MachineHolding<T>>;
+  /** Main's machine, from the one role derivation; null when no copy is Main. */
+  readonly mainEnvironmentId: string | null;
+}
 
 /**
  * Each machine's holding, keyed by environment id. `projects` is every project this app
@@ -29,25 +39,49 @@ export function machineHoldings<T extends SendCopy>(input: {
   readonly source: T;
   readonly machineIds: readonly string[];
   readonly projects: readonly T[];
-}): ReadonlyMap<string, MachineHolding<T>> {
+  /** Old records of machines that joined again; the same set Settings passes. */
+  readonly retired?: { has(environmentId: string): boolean } | undefined;
+}): MachineHoldings<T> {
   const logical = input.source.workspaceSettings?.logicalProject?.id ?? null;
   const members =
     logical === null
       ? []
       : input.projects.filter((item) => item.workspaceSettings?.logicalProject?.id === logical);
-  const roles = copyRoles(members);
-  const holdings = new Map<string, MachineHolding<T>>();
+  const roles = copyRoles(members, input.retired);
+  const isMain = (copy: T) => roles.get(`${copy.environmentId}:${copy.id}`)?.role === "main";
+  const main = members.find(isMain) ?? null;
+  const byMachine = new Map<string, MachineHolding<T>>();
   for (const environmentId of input.machineIds) {
     const there = input.projects.filter((item) => item.environmentId === environmentId);
     const found = existingCopyOn({ source: input.source, candidates: there });
-    if (found.kind === "none") holdings.set(environmentId, { kind: "none" });
-    else if (found.kind === "several") holdings.set(environmentId, found);
-    else {
-      const role = roles.get(`${found.copy.environmentId}:${found.copy.id}`)?.role;
-      holdings.set(environmentId, { kind: role === "main" ? "main" : "copy", copy: found.copy });
-    }
+    if (found.kind === "none") byMachine.set(environmentId, { kind: "none" });
+    else if (found.kind === "several")
+      byMachine.set(environmentId, {
+        kind: "several",
+        copies: found.copies,
+        mainId: found.copies.find(isMain)?.id ?? null,
+      });
+    else
+      byMachine.set(environmentId, {
+        kind: isMain(found.copy) ? "main" : "copy",
+        copy: found.copy,
+      });
   }
-  return holdings;
+  return { byMachine, mainEnvironmentId: main?.environmentId ?? null };
+}
+
+/**
+ * The holding once the person picked among several copies: the picked one, as Main or a
+ * copy; still "several" until they pick. Every other holding is itself.
+ */
+export function pickedHolding<T extends { readonly id: string }>(
+  holding: MachineHolding<T>,
+  pickedId: string | null,
+): MachineHolding<T> {
+  if (holding.kind !== "several") return holding;
+  const copy = holding.copies.find((item) => item.id === pickedId);
+  if (!copy) return holding;
+  return { kind: copy.id === holding.mainId ? "main" : "copy", copy };
 }
 
 /** The machine row's note: "Has Main", "Has a copy", "Has 2 copies", "No copy". */

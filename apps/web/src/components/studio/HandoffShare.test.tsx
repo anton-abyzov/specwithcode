@@ -203,7 +203,9 @@ it("leads with the copy when the project has no Git remote, and shows why Clone 
   expect(choice("clone")?.hasAttribute("data-disabled")).toBe(true);
   expect(container.textContent).toContain("No Git remote to clone from");
   expect(button("Copy to Ministorm")).toBeUndefined();
-  expect(plan()).toBe("Copy the folder to Ministorm. You review the files first. Main stays on M4.");
+  expect(plan()).toBe(
+    "Copy the folder to Ministorm. You review the files first. Main stays on M4.",
+  );
   await act(async () => button("Copy to Ministorm…")!.click());
   expect(base.onPrepareRepositories).toHaveBeenCalledWith(false);
 });
@@ -402,6 +404,7 @@ it("asks which copy when the machine has several, and guesses none", async () =>
     holding: {
       kind: "several",
       copies: [thereCopy("a", "/work/a"), thereCopy("b", "/work/b")],
+      mainId: null,
     },
   });
   expect(plan()).toBe("Pick the copy to send to.");
@@ -444,4 +447,36 @@ it("selects the copy when this machine cannot clone, and holds Add while nested 
   state.scope = { ...state.scope, loading: true };
   await show({ canClone: true });
   expect(button("Copy to Ministorm")?.disabled).toBe(true);
+});
+
+it("treats the picked copy that is Main as Main: no Move, and Main stays there", async () => {
+  await show({
+    holding: {
+      kind: "several",
+      copies: [thereCopy("a", "/work/a"), thereCopy("b", "/work/b")],
+      mainId: "a",
+    },
+  });
+  expect(sendChoice("move")).not.toBeNull();
+  const pick = container.querySelectorAll<HTMLElement>(
+    "[data-slot='send-copy-picker'] [role='radio']",
+  );
+  await act(async () => sendChoice("move")!.click());
+  await act(async () => pick[0]!.click());
+  expect(sendChoice("move")).toBeNull();
+  expect(plan()).toContain("Main stays on Ministorm.");
+  expect(container.textContent).toContain("Ministorm already has Main, at /work/a");
+  await act(async () => button("Copy to Ministorm")!.click());
+  expect(base.onSync).toHaveBeenCalledWith("m1:a");
+  expect(base.onMove).not.toHaveBeenCalled();
+});
+
+it("carries a chosen Move into the full add dialog when the folder needs a choice", async () => {
+  state.inspect.mockResolvedValue({
+    value: { path: "/work/project", state: "repository", sameRepository: true },
+  });
+  await show();
+  await act(async () => sendChoice("move")!.click());
+  await act(async () => button("Move to Ministorm…")!.click());
+  expect(base.onNeedsFolderChoice).toHaveBeenCalledWith(true);
 });

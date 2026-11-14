@@ -6,12 +6,13 @@ import {
 } from "../../studio/folderCopyActivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ComponentProps } from "react";
 import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
 import { buildProjectGroups } from "../../logicalProject";
 import type { HandoffShareProps } from "./HandoffShare";
+import { toastManager } from "../ui/toast";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { handoffMachinePreferenceKey } from "../../studio/handoffMachinePreference";
 import { MoveDialogHold } from "../../studio/moveDialogHold";
@@ -26,7 +27,15 @@ vi.mock("../../state/query", () => ({
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
 vi.mock("./HandoffShare", () => ({ HandoffShare: () => null }));
 vi.mock("./HandoffAccountMachines", () => ({ HandoffAccountMachines: () => null }));
-vi.mock("../chat/AddToMachineDialog", () => ({ AddToMachineDialog: () => null }));
+vi.mock("../chat/AddToMachineDialog", () => ({
+  AddToMachineDialog: (props: { onAdded: (target: unknown) => void }) => {
+    state.addDialog = props;
+    return null;
+  },
+}));
+vi.mock("../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => new Map(),
+}));
 vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: state.fleet }),
@@ -38,6 +47,10 @@ const state = vi.hoisted(() => ({
   receive: vi.fn(),
   copyCapabilities: vi.fn(),
   navigate: vi.fn(),
+  addDialog: null as {
+    onAdded: (target: unknown) => void;
+    destinationEnvironmentId?: string;
+  } | null,
   props: null as ComponentProps<typeof MachineHandoffDialog> | null,
   denied: new Set<string>(),
   /** A denied scope is denied on this machine (the source) too, not only on destinations. */
@@ -1408,4 +1421,97 @@ it("routes umbrella review to cloning with local files without moving the coordi
   expect(props().shareFlow).toBeUndefined();
   expect(props().intent).toBe("copy");
   expect(props().method).toBe("clone");
+});
+
+describe("Send resolves the copy it was given", () => {
+  const at = (
+    project: typeof source,
+    over: { id?: string; root: string; rootPath?: string; key?: string; logical?: string },
+  ) => ({
+    ...project,
+    ...(over.id ? { id: over.id } : {}),
+    workspaceRoot: over.root,
+    repositoryIdentity: {
+      ...repositoryIdentity,
+      canonicalKey: over.key ?? repositoryIdentity.canonicalKey,
+      rootPath: over.rootPath ?? over.root,
+    },
+    ...(over.logical
+      ? { workspaceSettings: { logicalProject: { id: over.logical, title: "Project" } } }
+      : {}),
+  });
+  const open = async (from: Record<string, unknown>, others: Array<Record<string, unknown>>) => {
+    state.environments = machineEnvironments;
+    state.projects = [from, ...others];
+    await act(async () =>
+      root.render(
+        <ProjectMachineHandoff project={from as never} coordinatorId={"coordinator" as never} />,
+      ),
+    );
+    await act(async () => container.querySelector("button")!.click());
+  };
+  const share = () =>
+    (props().shareFlow as React.ReactElement<HandoffShareProps> | undefined)?.props;
+
+  it("moves to the copy chosen even when its repository key reads in other casing", async () => {
+    const a = at(target, { id: "a", root: "/a", key: "GitHub.com/Example/Project" });
+    const b = at(target, { id: "b", root: "/b" });
+    await open(at(source, { root: "/source" }), [b, a]);
+    await act(async () => share()!.onMove("m1:a"));
+    expect(props().selected).toBe("m1:a");
+  });
+
+  it("refuses a copy that is no longer there instead of moving to another one", async () => {
+    const warn = vi.spyOn(toastManager, "add");
+    await open(at(source, { root: "/source" }), [at(target, { id: "b", root: "/b" })]);
+    const before = { selected: props().selected, method: props().method, intent: props().intent };
+    await act(async () => share()!.onMove("m1:gone"));
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ type: "warning" }));
+    expect(share()).toBeDefined();
+    expect({ selected: props().selected, method: props().method, intent: props().intent }).toEqual(
+      before,
+    );
+    warn.mockRestore();
+  });
+
+  it("moves a project inside a larger repository by folder copy, not Git", async () => {
+    await open(at(source, { root: "/source/app", rootPath: "/source" }), [
+      at(target, { root: "/target/app", rootPath: "/target" }),
+    ]);
+    await act(async () => share()!.onMove("m1:target"));
+    expect(props().intent).toBe("move");
+    expect(props().method).toBe("copy");
+    expect(state.prepare).not.toHaveBeenCalled();
+  });
+
+  it("moves a root checkout through Git", async () => {
+    await open(at(source, { root: "/source" }), [at(target, { root: "/target" })]);
+    await act(async () => share()!.onMove("m1:target"));
+    expect(props().method).toBe("folder");
+  });
+
+  it("resumes a chosen Move once the add dialog's copy is linked", async () => {
+    const from = at(source, { root: "/source", logical: "L" });
+    await open(from, []);
+    await act(async () => share()!.onNeedsFolderChoice(true));
+    expect(state.addDialog).not.toBeNull();
+    await act(async () => state.addDialog!.onAdded({ environmentId: "m1", projectId: "added" }));
+    // Cloned but not linked yet: nothing moves.
+    state.projects = [from, at(target, { id: "added", root: "/added" })];
+    await act(async () =>
+      root.render(
+        <ProjectMachineHandoff project={from as never} coordinatorId={"coordinator" as never} />,
+      ),
+    );
+    expect(props().open).toBe(false);
+    state.projects = [from, at(target, { id: "added", root: "/added", logical: "L" })];
+    await act(async () =>
+      root.render(
+        <ProjectMachineHandoff project={from as never} coordinatorId={"coordinator" as never} />,
+      ),
+    );
+    expect(props().open).toBe(true);
+    expect(props().intent).toBe("move");
+    expect(props().selected).toBe("m1:added");
+  });
 });
