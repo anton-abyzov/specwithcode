@@ -158,6 +158,7 @@ export default mergeConfig(
       sequence: { sequencer: WeightedShardSequencer },
       // Appended to the root setup, which mergeConfig concatenates.
       setupFiles: [
+        "./src/testUtils/agentGitGuard.setup.ts",
         "./src/testUtils/gitConfig.setup.ts",
         "./src/testUtils/githubEnv.setup.ts",
         "./src/testUtils/crashReports.setup.ts",
