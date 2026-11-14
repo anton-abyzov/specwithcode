@@ -1032,10 +1032,36 @@ const make = Effect.gen(function* () {
         return yield* write;
       }),
     );
+  /**
+   * Holds the admission lock of the project and of every other project whose real folder
+   * overlaps its own (nested, or around it), in one order. Every path that starts work
+   * admits through these locks, so nothing starts in that folder while a move checks,
+   * updates and takes over its copy (1326).
+   */
+  const withFolderLocks = <A, E, R>(projectId: ProjectId, effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const found = yield* guarded(projects.getById(projectId), "storage_failed");
+      const ids = new Set([projectId]);
+      if (Option.isSome(found)) {
+        const real = (folder: string) =>
+          fs.realPath(folder).pipe(Effect.orElseSucceed(() => path.resolve(folder)));
+        const own = yield* real(found.value.workspaceRoot);
+        const overlaps = (other: string) =>
+          own === other ||
+          own.startsWith(`${other}${path.sep}`) ||
+          other.startsWith(`${own}${path.sep}`);
+        for (const other of (yield* guarded(projects.snapshot, "storage_failed")).projects)
+          if (other.id !== projectId && overlaps(yield* real(other.workspaceRoot)))
+            ids.add(other.id);
+      }
+      return yield* [...ids]
+        .sort()
+        .reduceRight<Effect.Effect<A, E, R>>((inner, id) => admission.withLock(id, inner), effect);
+    });
   const receive: MachineHandoff["Service"]["receive"] = (input) =>
     locks.withLock(
       `destination:${input.operationId}`,
-      admission.withLock(
+      withFolderLocks(
         input.projectId,
         Effect.gen(function* () {
           yield* refuseMoveByTeamRules;

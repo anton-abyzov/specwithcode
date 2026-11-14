@@ -48,6 +48,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as HandoffGit from "./handoffGit.ts";
 import * as MachineHandoffStore from "./MachineHandoffStore.ts";
 import * as MachineHandoff from "./MachineHandoff.ts";
+import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 
@@ -115,6 +116,8 @@ const makeHarness = (
     existingCopyChecks: 0,
     /** Why the destination's existing copy cannot reach the source heads; null updates it. */
     existingCopyRefusal: null as HandoffGitError | null,
+    /** Runs inside an existing copy's update, as work starting elsewhere would. */
+    duringExistingCopyUpdate: null as Effect.Effect<void> | null,
     starts: [] as Array<{ commandId: string; projectId: string; prompt: string }>,
     creations: [] as string[],
     sendAttempts: [] as string[],
@@ -245,6 +248,10 @@ const makeHarness = (
           )) as unknown as SqlClient.SqlClient),
     Layer.succeed(ProjectService.ProjectService, {
       getById: (pid: ProjectId) => Effect.succeed(Option.fromNullishOr(projects.get(pid))),
+      snapshot: Effect.sync(() => ({
+        projects: [...projects.values()],
+        updatedAt: "2026-11-14T00:00:00.000Z",
+      })),
       update: (input: ProjectService.ProjectUpdateInput) =>
         Effect.sync(() => {
           state.policyUpdates.push(input);
@@ -467,6 +474,7 @@ const makeHarness = (
           if (input.existingCopy) {
             state.existingCopyMaterializations++;
             if (state.existingCopyRefusal) return Effect.fail(state.existingCopyRefusal);
+            if (state.duringExistingCopyUpdate) return state.duringExistingCopyUpdate;
           }
           return Effect.void;
         }).pipe(
@@ -527,7 +535,11 @@ const makeHarness = (
     state,
     projects,
     memory,
-    layer: MachineHandoff.layer.pipe(Layer.provideMerge(access)),
+    // The same admission instance the service locks with, for tests that contend for it.
+    layer: MachineHandoff.layer.pipe(
+      Layer.provideMerge(access),
+      Layer.provideMerge(ProjectAdmission.layer),
+    ),
   };
 };
 const imported = (bundle: MachineHandoffBundle): MachineHandoffBundle => {
