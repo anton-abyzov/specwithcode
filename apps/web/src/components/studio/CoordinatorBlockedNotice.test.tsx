@@ -53,7 +53,7 @@ it("opens the coordinator's checkout and starts a coordinator here through the e
   await show({ onOpen });
   expect(buttons()).toEqual([
     "Open Anton's MacBook's coordinator",
-    "Start a coordinator on ministorm",
+    "Run ministorm's coordinator again",
   ]);
   await act(async () => container.querySelectorAll("button")[0]!.click());
   expect(onOpen).toHaveBeenCalledWith("m4:main");

@@ -8,6 +8,7 @@ import {
   coordinatorElsewhere,
   coordinatorMachineKey,
   heldCheckoutKey,
+  keptCoordinatorCopies,
   orchestratorCopies,
   SUPERSEDED_COORDINATOR_PROBLEM,
   unloadedMachineRef,
@@ -389,5 +390,59 @@ describe("heldCheckoutKey", () => {
     expect(heldCheckoutKey(held, "logical:two", [source, destination])).toBeNull();
     expect(heldCheckoutKey(null, "logical:one", [source, destination])).toBeNull();
     expect(heldCheckoutKey(held, "logical:one", [destination])).toBeNull();
+  });
+});
+
+describe("keptCoordinatorCopies", () => {
+  const machine = (member: EnvironmentProject) => member.environmentId;
+  // A copy as the server leaves it: transferred, naming where its coordinator went.
+  const handedOver = (environmentId: string, id: string, successorEnvironmentId: string) =>
+    ({
+      environmentId,
+      id,
+      workspaceRoot: "/w/atlas",
+      workspaceSettings: {
+        logicalProject: { id: "logical:one", title: "One", coordinatorId: "c", members: [] },
+        coordinatorBinding: {
+          epoch: 1,
+          state: "transferred",
+          successor: {
+            environmentId: successorEnvironmentId,
+            projectId: "next",
+            coordinatorThreadId: "project-coordinator:next",
+          },
+        },
+      },
+    }) as unknown as EnvironmentProject;
+  const main = linked("env-m4", "proj-a", "active", 2);
+  const startable = (members: EnvironmentProject[], threads: string[]) =>
+    keptCoordinatorCopies(
+      orchestratorCopies(members, machine, () => true),
+      members,
+      (environmentId, threadId) => threads.includes(`${environmentId}/${threadId}`),
+    ).map((copy) => [copy.key, copy.canStart]);
+
+  it("keeps Open for a copy whose own coordinator conversation moved to another machine", () => {
+    const m1Copy = handedOver("env-m1", "proj-b", "env-m4");
+    expect(startable([main, m1Copy], ["env-m1/project-coordinator:proj-b"])).toEqual([
+      ["env-m4:proj-a", false],
+      ["env-m1:proj-b", true],
+    ]);
+  });
+
+  it("offers no Open on a copy that joined as workers only and never had a conversation", () => {
+    const joined = handedOver("env-m1", "proj-b", "env-m4");
+    expect(startable([main, joined], [])).toEqual([
+      ["env-m4:proj-a", false],
+      ["env-m1:proj-b", false],
+    ]);
+  });
+
+  it("offers no Open on the copy a worktree move left behind on its own machine", () => {
+    const registered = handedOver("env-m1", "proj-b", "env-m1");
+    expect(startable([main, registered], ["env-m1/project-coordinator:proj-b"])).toEqual([
+      ["env-m4:proj-a", false],
+      ["env-m1:proj-b", false],
+    ]);
   });
 });
