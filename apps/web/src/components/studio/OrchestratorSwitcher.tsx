@@ -144,11 +144,12 @@ export function OrchestratorSwitcher({
   }, []);
   const tx = useTx();
   const runsOn = tx("Runs on {machine}", { machine: label });
-  // The chip names the machine and shows its state by the dot alone: while it is not
+  // The chip names the machine and shows its state by the dot alone, in the machine's own
+  // color while connected (never a status green that reads as another machine). While it is not
   // connected, the line above the message box says so once, with what happens next.
   const status = (
     <>
-      <span className="sws-dot" data-tone={connected ? "resolved" : "failed"} aria-hidden />
+      <span className="sws-dot" data-tone={connected ? "machine" : "failed"} aria-hidden />
       <span
         className="sws-host-name"
         title={hostLabel && hostLabel !== label ? `${runsOn} (${hostLabel})` : runsOn}

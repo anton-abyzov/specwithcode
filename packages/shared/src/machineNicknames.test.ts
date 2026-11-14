@@ -197,6 +197,26 @@ describe("machine nicknames", () => {
       expect(colors.get("b")).not.toBe(chosen);
     });
 
+    it("gives a named machine the same color whatever else a device knows", () => {
+      const mini = "dd2fc230-5af3-44e7-9599-b4b8471cf23c";
+      const nicknames = {
+        "4d73e481-1b03-4ee8-b4c1-87a448431538": at("m4", "2026-11-10T21:00:00.000Z"),
+        "2cd57c57-eecc-4be4-8e94-b783c2ca0d5c": at("m1", "2026-11-10T21:00:00.000Z"),
+        [mini]: at("linux-mini", "2026-11-10T21:00:00.000Z"),
+      };
+      const onMini = assignMachineColors([mini], nicknames);
+      // A machine only one device knows, whose own default is linux-mini's color and
+      // whose id sorts first: it must not push linux-mini to another color there.
+      let rival = "";
+      for (let index = 0; rival === ""; index += 1) {
+        const id = `0-unnamed-${index}`;
+        if (assignMachineColors([id], {}).get(id) === onMini.get(mini)) rival = id;
+      }
+      const onM4 = assignMachineColors([rival, ...Object.keys(nicknames)], nicknames);
+      for (const id of Object.keys(nicknames)) expect(onM4.get(id)).toBe(onMini.get(id));
+      expect(onM4.get(rival)).not.toBe(onM4.get(mini));
+    });
+
     it("includes machines known only by their nickname", () => {
       expect(
         assignMachineColors([], { away: at("Away", "2026-11-10T21:00:00.000Z") }).has("away"),

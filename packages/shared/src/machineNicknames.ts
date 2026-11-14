@@ -164,25 +164,27 @@ function hashMachineId(environmentId: string): number {
 
 /**
  * The color of every known machine: the one chosen for it, else a default from
- * its id, stepping past colors already taken so no two known machines share one
- * while fewer than eight are known. Ids are settled in sorted order, so every
- * device that knows the same machines gives them the same colors.
+ * its id, stepping past colors already taken so no two machines share one while
+ * there are colors left. Machines in the nickname map settle first, from that
+ * map alone, which is synced across the fleet: a device's other known machines
+ * never move them, so every device shows a named machine in the same color.
  */
 export function assignMachineColors(
   environmentIds: Iterable<string>,
   nicknames: MachineNicknames,
 ): ReadonlyMap<string, MachineColorId> {
-  const ids = [...new Set([...environmentIds, ...Object.keys(nicknames)])].sort();
+  const named = Object.keys(nicknames).sort();
+  const others = [...new Set(environmentIds)].filter((id) => !(id in nicknames)).sort();
   const colors = new Map<string, MachineColorId>();
   const taken = new Set<MachineColorId>();
-  for (const id of ids) {
+  for (const id of named) {
     const chosen = nicknames[id]?.color;
     if (chosen === undefined) continue;
     colors.set(id, chosen);
     taken.add(chosen);
   }
   const count = MACHINE_COLOR_IDS.length;
-  for (const id of ids) {
+  for (const id of [...named, ...others]) {
     if (colors.has(id)) continue;
     const start = hashMachineId(id) % count;
     let color = MACHINE_COLOR_IDS[start]!;
