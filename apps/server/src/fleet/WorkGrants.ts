@@ -82,6 +82,13 @@ export const WorkGrantPolicyRecord = Schema.Struct({
    * Absent or null: until stopped.
    */
   endsAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * Set while this machine's sign-ins for the grant may not match it yet:
+   * cleared once they are revoked (or allowed again) to match. The sweeper
+   * retries until then, so a failure or restart between the two never leaves
+   * renewable sign-ins behind a stopped grant.
+   */
+  principalPending: Schema.optionalKey(Schema.Boolean),
 });
 export type WorkGrantPolicyRecord = typeof WorkGrantPolicyRecord.Type;
 
@@ -372,6 +379,48 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** The sign-ins for a coordinator follow its policy. Runs under the lock. */
+  const settlePrincipal = (coordinatorEnvironmentId: string) =>
+    Effect.gen(function* () {
+      const file = yield* read;
+      const policy = file.policies.find(
+        (entry) => entry.coordinatorEnvironmentId === coordinatorEnvironmentId,
+      );
+      if (policy === undefined) return;
+      yield* auth
+        .setPrincipalRevoked(
+          { kind: "coordinator", environmentId: EnvironmentId.make(coordinatorEnvironmentId) },
+          policy.revokedAt !== null,
+        )
+        .pipe(Effect.mapError(storageError));
+      if (policy.principalPending === true) {
+        const { principalPending: _settled, ...rest } = policy;
+        yield* write({
+          ...file,
+          policies: file.policies.map((entry) => (entry === policy ? rest : entry)),
+        });
+      }
+    });
+
+  /**
+   * Like `modify`, then brings the coordinator's sign-ins in line under the
+   * same lock, so a policy change and its sign-in change are never reordered.
+   */
+  const modifySettling = <A>(
+    coordinatorEnvironmentId: string,
+    change: (file: StoreFile, now: number) => readonly [A, StoreFile | undefined],
+    settle: (result: A) => boolean,
+  ) =>
+    lock.withPermit(
+      Effect.gen(function* () {
+        const file = yield* read;
+        const [result, next] = change(file, yield* Clock.currentTimeMillis);
+        if (next !== undefined) yield* write(next);
+        if (settle(result)) yield* settlePrincipal(coordinatorEnvironmentId);
+        return result;
+      }),
+    );
+
   const freshPolicy = (
     coordinatorEnvironmentId: string,
     now: number,
@@ -528,63 +577,61 @@ export const make = Effect.gen(function* () {
     file.policies.some((policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId);
 
   const update: WorkGrantsShape["update"] = (input) =>
-    modify((file, now) => {
-      if (!known(file, input.coordinatorEnvironmentId)) return [undefined, undefined] as const;
-      return upsertPolicy(file, input.coordinatorEnvironmentId, now, (record) => {
-        // A legacy record holds the unscoped values, so editing it starts from them.
-        const owner = input.owner ?? record.owner;
-        // Marking it another person's withdraws the sign-ins unless chosen in the same edit.
-        const accounts =
-          input.accounts ??
-          (owner === "other" && record.owner !== "other"
-            ? ({ kind: "none" } as const)
-            : record.accounts);
-        // A legacy grant allowed routines, so leaving legacy keeps them unless turned off.
-        const routines = input.routines ?? (record.legacy || record.routines === true);
-        // The owner's own choice replaces the one-time upgrade.
-        const { routinesAutoGranted, ...kept } = record;
-        // A duration starts a fresh period from now, and allows a stopped or ended grant again.
-        const period =
-          input.duration === undefined
-            ? {}
-            : {
-                endsAt:
-                  input.duration === "until-stopped"
-                    ? null
-                    : isoOf(now + WORK_GRANT_DURATION_MS[input.duration]),
-                revokedAt: null,
-                interruptAt: null,
-                interruptedAt: null,
-              };
-        return {
-          ...kept,
-          ...(input.routines === undefined && routinesAutoGranted !== undefined
-            ? { routinesAutoGranted }
-            : {}),
-          ...(input.routines === undefined || record.routinesSettledAt !== undefined
-            ? {}
-            : { routinesSettledAt: isoOf(now) }),
-          projects: input.projects ?? record.projects,
-          accounts,
-          owner,
-          routines,
-          legacy: false,
-          ...period,
-          updatedAt: isoOf(now),
-        };
-      });
-    }).pipe(
+    modifySettling(
+      input.coordinatorEnvironmentId,
+      (file, now) => {
+        if (!known(file, input.coordinatorEnvironmentId)) return [undefined, undefined] as const;
+        return upsertPolicy(file, input.coordinatorEnvironmentId, now, (record) => {
+          // A legacy record holds the unscoped values, so editing it starts from them.
+          const owner = input.owner ?? record.owner;
+          // Marking it another person's withdraws the sign-ins unless chosen in the same edit.
+          const accounts =
+            input.accounts ??
+            (owner === "other" && record.owner !== "other"
+              ? ({ kind: "none" } as const)
+              : record.accounts);
+          // A legacy grant allowed routines, so leaving legacy keeps them unless turned off.
+          const routines = input.routines ?? (record.legacy || record.routines === true);
+          // The owner's own choice replaces the one-time upgrade.
+          const { routinesAutoGranted, ...kept } = record;
+          // A duration starts a fresh period from now, and allows a stopped or ended grant again.
+          const period =
+            input.duration === undefined
+              ? {}
+              : {
+                  endsAt:
+                    input.duration === "until-stopped"
+                      ? null
+                      : isoOf(now + WORK_GRANT_DURATION_MS[input.duration]),
+                  revokedAt: null,
+                  interruptAt: null,
+                  interruptedAt: null,
+                  principalPending: true,
+                };
+          return {
+            ...kept,
+            ...(input.routines === undefined && routinesAutoGranted !== undefined
+              ? { routinesAutoGranted }
+              : {}),
+            ...(input.routines === undefined || record.routinesSettledAt !== undefined
+              ? {}
+              : { routinesSettledAt: isoOf(now) }),
+            projects: input.projects ?? record.projects,
+            accounts,
+            owner,
+            routines,
+            legacy: false,
+            ...period,
+            updatedAt: isoOf(now),
+          };
+        });
+      },
+      (record) => record !== undefined && input.duration !== undefined,
+    ).pipe(
       Effect.flatMap((record) =>
         record === undefined
           ? Effect.fail(new WorkGrantsError({ reason: "unknown_grant" }))
-          : input.duration === undefined
-            ? Effect.succeed(record)
-            : auth
-                .setPrincipalRevoked(
-                  { kind: "coordinator", environmentId: input.coordinatorEnvironmentId },
-                  false,
-                )
-                .pipe(Effect.mapError(storageError), Effect.as(record)),
+          : Effect.succeed(record),
       ),
     );
 
@@ -596,56 +643,55 @@ export const make = Effect.gen(function* () {
           revokedAt: isoOf(now),
           interruptAt: isoOf(now + WORK_GRANT_REVOKE_GRACE_MS),
           interruptedAt: null,
+          principalPending: true,
           updatedAt: isoOf(now),
         };
 
   const revoke: WorkGrantsShape["revoke"] = (coordinatorEnvironmentId) =>
     Effect.gen(function* () {
-      const record = yield* modify((file, now) => {
-        if (!known(file, coordinatorEnvironmentId)) return [undefined, undefined] as const;
-        return upsertPolicy(file, coordinatorEnvironmentId, now, (current) =>
-          revoked(current, now),
-        );
-      });
-      if (record === undefined) return yield* new WorkGrantsError({ reason: "unknown_grant" });
       // The policy refuses it first, so a session minted meanwhile is refused too.
-      yield* auth
-        .setPrincipalRevoked(
-          { kind: "coordinator", environmentId: EnvironmentId.make(coordinatorEnvironmentId) },
-          true,
-        )
-        .pipe(Effect.mapError(storageError));
+      const record = yield* modifySettling(
+        coordinatorEnvironmentId,
+        (file, now) => {
+          if (!known(file, coordinatorEnvironmentId)) return [undefined, undefined] as const;
+          return upsertPolicy(file, coordinatorEnvironmentId, now, (current) =>
+            revoked(current, now),
+          );
+        },
+        (record) => record !== undefined,
+      );
+      if (record === undefined) return yield* new WorkGrantsError({ reason: "unknown_grant" });
       return record;
     });
 
   const restore: WorkGrantsShape["restore"] = (coordinatorEnvironmentId) =>
-    modify<WorkGrantPolicyRecord | "ended" | undefined>((file, now) => {
-      if (!known(file, coordinatorEnvironmentId)) return [undefined, undefined] as const;
-      const current = file.policies.find(
-        (policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId,
-      );
-      // Restore lifts a Stop; a grant whose time ran out needs Allow with a new limit.
-      if (current !== undefined && grantEnded(current, now))
-        return ["ended" as const, undefined] as const;
-      return upsertPolicy(file, coordinatorEnvironmentId, now, (current) => ({
-        ...current,
-        revokedAt: null,
-        interruptAt: null,
-        interruptedAt: null,
-        updatedAt: isoOf(now),
-      }));
-    }).pipe(
+    modifySettling<WorkGrantPolicyRecord | "ended" | undefined>(
+      coordinatorEnvironmentId,
+      (file, now) => {
+        if (!known(file, coordinatorEnvironmentId)) return [undefined, undefined] as const;
+        const current = file.policies.find(
+          (policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId,
+        );
+        // Restore lifts a Stop; a grant whose time ran out needs Allow with a new limit.
+        if (current !== undefined && grantEnded(current, now))
+          return ["ended" as const, undefined] as const;
+        return upsertPolicy(file, coordinatorEnvironmentId, now, (current) => ({
+          ...current,
+          revokedAt: null,
+          interruptAt: null,
+          interruptedAt: null,
+          principalPending: true,
+          updatedAt: isoOf(now),
+        }));
+      },
+      (record) => record !== undefined && record !== "ended",
+    ).pipe(
       Effect.flatMap((record) =>
         record === undefined
           ? Effect.fail(new WorkGrantsError({ reason: "unknown_grant" }))
           : record === "ended"
             ? Effect.fail(new WorkGrantsError({ reason: "ended" }))
-            : auth
-                .setPrincipalRevoked(
-                  { kind: "coordinator", environmentId: coordinatorEnvironmentId },
-                  false,
-                )
-                .pipe(Effect.mapError(storageError), Effect.as(record)),
+            : Effect.succeed(record),
       ),
     );
 
@@ -656,36 +702,47 @@ export const make = Effect.gen(function* () {
       ),
     ).pipe(Effect.asVoid);
 
-  const expireDue: WorkGrantsShape["expireDue"] = Effect.gen(function* () {
-    const ended = yield* modify((file, now) => {
-      const due = file.policies.filter(
-        (policy) => policy.revokedAt === null && grantEnded(policy, now),
-      );
-      if (due.length === 0) return [[] as ReadonlyArray<string>, undefined] as const;
-      const ids = new Set(due.map((policy) => policy.coordinatorEnvironmentId));
-      return [
-        [...ids],
-        {
+  /**
+   * Turns each grant whose time limit passed into a revoke, then brings every
+   * grant still marked pending in line with its sign-ins, all under the lock:
+   * a failed or interrupted revoke is retried on the next sweep, and an Allow
+   * cannot land between a policy change and its sign-in change.
+   */
+  const expireDue: WorkGrantsShape["expireDue"] = lock.withPermit(
+    Effect.gen(function* () {
+      const file = yield* read;
+      const now = yield* Clock.currentTimeMillis;
+      const ended = file.policies
+        .filter((policy) => policy.revokedAt === null && grantEnded(policy, now))
+        .map((policy) => policy.coordinatorEnvironmentId);
+      if (ended.length > 0) {
+        const ids = new Set(ended);
+        yield* write({
           ...file,
           policies: file.policies.map((policy) =>
             ids.has(policy.coordinatorEnvironmentId) ? revoked(policy, now) : policy,
           ),
-        },
-      ] as const;
-    });
-    for (const coordinatorEnvironmentId of ended) {
-      yield* auth
-        .setPrincipalRevoked(
-          { kind: "coordinator", environmentId: EnvironmentId.make(coordinatorEnvironmentId) },
-          true,
-        )
-        .pipe(Effect.mapError(storageError));
-      yield* Effect.logInfo("Work grant: its time limit ended; refused like a Stop.", {
-        coordinatorEnvironmentId,
-      });
-    }
-    return ended;
-  });
+        });
+      }
+      const pending = (yield* read).policies
+        .filter((policy) => policy.principalPending === true)
+        .map((policy) => policy.coordinatorEnvironmentId);
+      for (const coordinatorEnvironmentId of pending)
+        yield* settlePrincipal(coordinatorEnvironmentId).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not update a revoked machine's sign-ins; retrying.", {
+              coordinatorEnvironmentId,
+              error,
+            }),
+          ),
+        );
+      for (const coordinatorEnvironmentId of ended)
+        yield* Effect.logInfo("Work grant: its time limit ended; refused like a Stop.", {
+          coordinatorEnvironmentId,
+        });
+      return ended;
+    }),
+  );
 
   // Settles which grants predate scopes before any new one can be minted.
   yield* lock

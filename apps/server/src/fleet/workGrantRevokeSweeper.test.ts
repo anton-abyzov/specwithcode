@@ -32,7 +32,14 @@ const shell = (id: string, running: boolean) =>
 /** The thread a handoff from M4 continues here, at the id the receiver gives it. */
 const CONTINUATION = continuationThreadId(M4, "thread-on-m4", 2);
 
-const setup = () => {
+const setup = (
+  principal: {
+    /** Each setPrincipalRevoked call's revoked value, in order. */
+    readonly calls: Array<boolean>;
+    /** Fails the call when true. */
+    readonly fail?: () => boolean;
+  } = { calls: [] },
+) => {
   const interrupted: Array<{ threadId: string; commandId: string }> = [];
   const shells = new Map([
     [CONTINUATION as string, shell(CONTINUATION, true)],
@@ -44,7 +51,15 @@ const setup = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         Layer.mock(EnvironmentAuth.EnvironmentAuth)({
-          setPrincipalRevoked: () => Effect.void,
+          setPrincipalRevoked: (_principal, revoked) =>
+            Effect.yieldNow.pipe(
+              Effect.andThen(() => {
+                principal.calls.push(revoked);
+                return principal.fail?.() === true
+                  ? Effect.fail(new Error("store unavailable") as never)
+                  : Effect.void;
+              }),
+            ),
           listSessions: () =>
             Effect.succeed(
               [M4, M1].map((coordinator) => ({
@@ -166,6 +181,57 @@ describe("revoking a machine's work", () => {
       yield* grants.update({ coordinatorEnvironmentId: M4, duration: "until-stopped" });
       yield* TestClock.adjust("30 days");
       expect(yield* sweepRevoked).toBe(0);
+      expect((yield* grants.forCoordinator(M4)).revoked).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("retries the sign-in revoke a failed sweep left behind", () => {
+    let failing = true;
+    const principal = { calls: [] as Array<boolean>, fail: () => failing };
+    const { layer } = setup(principal);
+    return Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      failing = false;
+      yield* grants.update({ coordinatorEnvironmentId: M4, duration: "1h" });
+      failing = true;
+      yield* TestClock.adjust("61 minutes");
+      yield* sweepRevoked;
+      const pendingAfterFailure = (yield* grants.policies).find(
+        (entry) => entry.coordinatorEnvironmentId === M4,
+      );
+      expect(pendingAfterFailure?.revokedAt).not.toBeNull();
+      expect(pendingAfterFailure?.principalPending).toBe(true);
+      failing = false;
+      yield* sweepRevoked;
+      expect(principal.calls.at(-1)).toBe(true);
+      const settled = (yield* grants.policies).find(
+        (entry) => entry.coordinatorEnvironmentId === M4,
+      );
+      expect(settled?.principalPending).toBeUndefined();
+      const before = principal.calls.length;
+      yield* sweepRevoked;
+      // Settled: later sweeps leave the sign-ins alone.
+      expect(principal.calls.length).toBe(before);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("never leaves a fresh Allow's sign-ins revoked when it races the expiry sweep", () => {
+    const principal = { calls: [] as Array<boolean> };
+    const { layer } = setup(principal);
+    return Effect.gen(function* () {
+      const grants = yield* WorkGrants.WorkGrants;
+      yield* grants.update({ coordinatorEnvironmentId: M4, duration: "1h" });
+      yield* TestClock.adjust("61 minutes");
+      yield* Effect.all(
+        [sweepRevoked, grants.update({ coordinatorEnvironmentId: M4, duration: "1d" })],
+        { concurrency: "unbounded" },
+      );
+      const policy = (yield* grants.policies).find(
+        (entry) => entry.coordinatorEnvironmentId === M4,
+      );
+      expect(policy?.revokedAt).toBeNull();
+      expect(policy?.principalPending).toBeUndefined();
+      expect(principal.calls.at(-1)).toBe(false);
       expect((yield* grants.forCoordinator(M4)).revoked).toBe(false);
     }).pipe(Effect.provide(layer));
   });

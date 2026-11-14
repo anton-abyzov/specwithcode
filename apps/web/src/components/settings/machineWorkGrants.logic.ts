@@ -276,9 +276,12 @@ export function workGrantStatus(
   const parts = [
     grant.status === "expired"
       ? tx("Expired: that machine must allow workers here again")
-      : grant.expiresAt
-        ? tx("Active until {time}", { time: formatTime(grant.expiresAt) })
-        : tx("Active"),
+      : grant.endsAt
+        ? tx("Active until {time}", { time: formatTime(grant.endsAt) })
+        : // An owner's limit of "until stopped" is null; an older machine sends none.
+          grant.endsAt === undefined && grant.expiresAt
+          ? tx("Active until {time}", { time: formatTime(grant.expiresAt) })
+          : tx("Active"),
     count === 0
       ? null
       : count === 1
