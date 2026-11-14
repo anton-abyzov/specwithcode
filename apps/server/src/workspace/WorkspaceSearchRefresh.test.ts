@@ -230,9 +230,16 @@ describe("watchSearchRoot", () => {
       const stopSecond = watchSearchRoot(root, () => undefined);
       expect(watchedSearchRootCount()).toBe(before + 1);
 
-      NodeFS.writeFileSync(NodePath.join(root, "new-file.ts"), "export {};\n");
+      // macOS can drop an event that lands just after a watch starts, so the
+      // file is written again until the watcher reports it.
       const deadline = Date.now() + 10_000;
+      const file = NodePath.join(root, "new-file.ts");
+      let nextWrite = 0;
       while (!seen.some((path) => path?.endsWith("new-file.ts")) && Date.now() < deadline) {
+        if (Date.now() >= nextWrite) {
+          NodeFS.writeFileSync(file, `export {}; // ${nextWrite}\n`);
+          nextWrite = Date.now() + 500;
+        }
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       expect(seen.some((path) => path?.endsWith("new-file.ts"))).toBe(true);
