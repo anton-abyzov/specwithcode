@@ -2,7 +2,7 @@
 import { parseFleetOrigin } from "../fleetOrigin.ts";
 import type { ManifestEntry, ManifestHeader } from "./manifest.ts";
 import { readManifestBytes } from "./manifest.ts";
-import { decodeFrames, FOLDER_TRANSFER_PREFIX, type ChunkFrame } from "./wire.ts";
+import { decodeFrames, FOLDER_TRANSFER_PREFIX, zstdAvailable, type ChunkFrame } from "./wire.ts";
 
 export type SourceClientErrorCode =
   | "unsupported_url"
@@ -207,6 +207,8 @@ export class SourceClient {
   async hello(expectedEnvironmentId: string) {
     const hello = await this.json<{
       version: number;
+      /** Chunks one batch may name; older sources omit it. */
+      maxBatchChunks?: number;
       environmentId: string;
       operationId: string;
       mode: string;
@@ -279,7 +281,9 @@ export class SourceClient {
   }
 
   async chunks(hashes: ReadonlyArray<string>): Promise<Array<ChunkFrame>> {
-    const response = await this.request("POST", "chunks", { chunks: hashes }, 300_000);
+    // Ask for zstd when this machine reads it; an older source ignores the field.
+    const body = zstdAvailable() ? { chunks: hashes, encodings: ["zstd"] } : { chunks: hashes };
+    const response = await this.request("POST", "chunks", body, 300_000);
     if (!response.ok) await this.json(response);
     return decodeFrames(new Uint8Array(await response.arrayBuffer()));
   }

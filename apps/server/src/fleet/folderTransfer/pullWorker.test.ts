@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { DEFAULT_SELECTION } from "./classify.ts";
 import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import type { ManifestEntry } from "./manifest.ts";
-import { finalPass, pullFiles, stagedPath, type PullFile } from "./pullWorker.ts";
+import { finalPass, inFlightBudget, pullFiles, stagedPath, type PullFile } from "./pullWorker.ts";
 import { checkSourceUrl, SourceClient, SourceClientError } from "./sourceClient.ts";
 import { SourceTransfers } from "./sourceService.ts";
 import { liveMovingCopies, serveSource } from "./sourceTestServer.testkit.ts";
@@ -293,5 +293,23 @@ describe("pull into staging", () => {
   it("rejects manifest paths that leave staging", () => {
     for (const bad of ["../escape", "/etc/passwd", "a/../../b"])
       expect(() => stagedPath(base, bad)).toThrow();
+  });
+});
+
+describe("in-flight batch budget", () => {
+  it("holds batches past the byte budget until earlier ones finish; one always runs", async () => {
+    const budget = inFlightBudget(100);
+    const first = await budget.take(60);
+    let second: (() => void) | null = null;
+    const waiting = budget.take(60).then((release) => (second = release));
+    await Promise.resolve();
+    expect(second).toBeNull();
+    first();
+    await waiting;
+    expect(second).not.toBeNull();
+    // A batch bigger than the whole budget still runs when nothing else does.
+    second!();
+    const huge = await budget.take(500);
+    huge();
   });
 });

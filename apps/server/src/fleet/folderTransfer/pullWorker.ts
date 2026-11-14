@@ -7,7 +7,14 @@ import * as NodePath from "node:path";
 import { CHUNK_SIZE, forEachLimited, hashFile, type ManifestEntry } from "./manifest.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import type { SourceClient } from "./sourceClient.ts";
-import { CHUNK_CHANGED, CHUNK_OK, MAX_BATCH_BYTES, MAX_BATCH_CHUNKS, sha256Hex } from "./wire.ts";
+import {
+  CHUNK_CHANGED,
+  CHUNK_OK,
+  MAX_BATCH_BYTES,
+  MAX_BATCH_CHUNKS,
+  MAX_BATCH_CHUNKS_LARGE,
+  sha256Hex,
+} from "./wire.ts";
 
 /** One file the destination needs, with a local copy to reuse when it has one. */
 export interface PullFile {
@@ -39,7 +46,41 @@ export interface PullResult {
   readonly refreshed: ReadonlyMap<string, ManifestEntry>;
 }
 
-const BATCH_CONCURRENCY = 4;
+const BATCH_CONCURRENCY = 8;
+/**
+ * Bytes of batches in flight at once: four full 64 MiB batches, as before batches grew,
+ * while batches of small files still run eight at a time.
+ */
+const IN_FLIGHT_BYTES = 4 * MAX_BATCH_BYTES;
+
+/** Waits until `bytes` fit under the budget; one batch always runs, however big. */
+export function inFlightBudget(limit: number) {
+  let used = 0;
+  const waiting: Array<() => void> = [];
+  const wake = () => {
+    while (waiting.length > 0) waiting.shift()!();
+  };
+  return {
+    async take(bytes: number): Promise<() => void> {
+      while (used > 0 && used + bytes > limit)
+        await new Promise<void>((resolve) => waiting.push(resolve));
+      used += bytes;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        used -= bytes;
+        wake();
+      };
+    },
+  };
+}
+
+/** The batch size a source offered in its hello, within what this side accepts. */
+export const batchChunksFor = (offered: unknown): number =>
+  typeof offered === "number" && Number.isSafeInteger(offered)
+    ? Math.min(Math.max(offered, MAX_BATCH_CHUNKS), MAX_BATCH_CHUNKS_LARGE)
+    : MAX_BATCH_CHUNKS;
 const MAX_REFRESH_ROUNDS = 3;
 
 /** Path in staging for a manifest path; staging never holds links, so no escape is possible. */
@@ -105,7 +146,10 @@ export async function pullFiles(input: {
   readonly directories: ReadonlyArray<string>;
   readonly signal?: AbortSignal;
   readonly onProgress?: (progress: PullProgress) => void;
+  /** Chunks per request the source accepts (its hello); MAX_BATCH_CHUNKS when unknown. */
+  readonly maxBatchChunks?: number;
 }): Promise<PullResult> {
+  const maxBatchChunks = input.maxBatchChunks ?? MAX_BATCH_CHUNKS;
   const stagingRoot = await NodeFSP.realpath(input.stagingRoot);
   for (const directory of input.directories) {
     const absolute = stagedPath(stagingRoot, directory);
@@ -191,7 +235,7 @@ export async function pullFiles(input: {
     for (const [sha, targets] of needed) {
       const first = targets[0]!;
       const length = Math.min(CHUNK_SIZE, first.file.size - first.index * CHUNK_SIZE);
-      if (batch.length >= MAX_BATCH_CHUNKS || batchBytes + length > MAX_BATCH_BYTES) {
+      if (batch.length >= maxBatchChunks || batchBytes + length > MAX_BATCH_BYTES) {
         batches.push(batch);
         batch = [];
         batchBytes = 0;
@@ -200,43 +244,55 @@ export async function pullFiles(input: {
       batchBytes += length;
     }
     if (batch.length) batches.push(batch);
+    // Many small batches run 8 at once; full 64 MiB ones stay within the in-flight budget.
+    const budget = inFlightBudget(IN_FLIGHT_BYTES);
 
     await forEachLimited(batches, BATCH_CONCURRENCY, async (hashes) => {
       input.signal?.throwIfAborted();
-      const frames = await input.client.chunks(hashes);
-      const seen = new Set<string>();
-      for (const frame of frames) {
-        input.signal?.throwIfAborted();
-        const targets = needed.get(frame.sha256);
-        if (!targets || seen.has(frame.sha256)) continue;
-        seen.add(frame.sha256);
-        if (frame.status !== CHUNK_OK || sha256Hex(frame.data) !== frame.sha256) {
-          for (const { file } of targets) changed.add(file.path);
-          continue;
-        }
-        for (const { file, index } of targets) {
-          if (changed.has(file.path)) continue;
-          const handle = await NodeFSP.open(
-            stagedPath(stagingRoot, file.path),
-            NodeFS.constants.O_WRONLY | NodeFS.constants.O_NOFOLLOW,
-          );
-          try {
-            await handle.write(frame.data, 0, frame.data.length, index * CHUNK_SIZE);
-          } finally {
-            await handle.close();
-          }
-          bytesDone += frame.data.length;
-          const left = (remaining.get(file) ?? 1) - 1;
-          remaining.set(file, left);
-          if (left === 0) {
-            await finishFile(stagedPath(stagingRoot, file.path), file);
-            filesDone += 1;
-          }
-        }
-        report();
+      let size = 0;
+      for (const sha of hashes) {
+        const first = needed.get(sha)![0]!;
+        size += Math.min(CHUNK_SIZE, first.file.size - first.index * CHUNK_SIZE);
       }
-      for (const sha of hashes)
-        if (!seen.has(sha)) for (const { file } of needed.get(sha) ?? []) changed.add(file.path);
+      const release = await budget.take(size);
+      try {
+        const frames = await input.client.chunks(hashes);
+        const seen = new Set<string>();
+        for (const frame of frames) {
+          input.signal?.throwIfAborted();
+          const targets = needed.get(frame.sha256);
+          if (!targets || seen.has(frame.sha256)) continue;
+          seen.add(frame.sha256);
+          if (frame.status !== CHUNK_OK || sha256Hex(frame.data) !== frame.sha256) {
+            for (const { file } of targets) changed.add(file.path);
+            continue;
+          }
+          for (const { file, index } of targets) {
+            if (changed.has(file.path)) continue;
+            const handle = await NodeFSP.open(
+              stagedPath(stagingRoot, file.path),
+              NodeFS.constants.O_WRONLY | NodeFS.constants.O_NOFOLLOW,
+            );
+            try {
+              await handle.write(frame.data, 0, frame.data.length, index * CHUNK_SIZE);
+            } finally {
+              await handle.close();
+            }
+            bytesDone += frame.data.length;
+            const left = (remaining.get(file) ?? 1) - 1;
+            remaining.set(file, left);
+            if (left === 0) {
+              await finishFile(stagedPath(stagingRoot, file.path), file);
+              filesDone += 1;
+            }
+          }
+          report();
+        }
+        for (const sha of hashes)
+          if (!seen.has(sha)) for (const { file } of needed.get(sha) ?? []) changed.add(file.path);
+      } finally {
+        release();
+      }
     });
 
     if (changed.size === 0) break;
@@ -275,6 +331,8 @@ export async function pullFiles(input: {
  * now is refreshed and pulled again, up to three rounds; what still moves is flagged.
  */
 export async function finalPass(input: {
+  /** The batch size the source offered, as for the main pull. */
+  readonly maxBatchChunks?: number;
   readonly client: SourceClient;
   readonly stagingRoot: string;
   readonly files: Array<PullFile>;
@@ -340,6 +398,7 @@ export async function finalPass(input: {
       files: again.filter((file) => !vanished.has(file.path)),
       directories: [],
       ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.maxBatchChunks === undefined ? {} : { maxBatchChunks: input.maxBatchChunks }),
     });
     for (const path of pulled.unstable) unstable.add(path);
     for (const path of pulled.vanished) vanished.add(path);
