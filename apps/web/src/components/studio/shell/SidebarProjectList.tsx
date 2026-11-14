@@ -106,6 +106,7 @@ import { Tip } from "./Tip";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
 import type { ProjectNameCheck } from "../../../studio/projectRename";
 import {
+  copyActivityKey,
   copyActivityText,
   overallFraction,
   registerCopyNavigator,
@@ -629,17 +630,23 @@ export function ProjectRow(props: {
   const keyedCopy = useKeyedCopyActivity(group.memberProjects);
   const copying = keyedCopy?.activity ?? null;
   // A copy's toast opens its details from any project: this row knows the page to open.
-  const copyKey = keyedCopy?.key ?? null;
+  // Every member stays registered, so a done or failed toast's button still works after
+  // the copy's activity clears, and a second copy in the same group has its own.
+  const memberKeys = group.memberProjects
+    .map((member) => copyActivityKey(member.environmentId, member.id))
+    .join("\n");
   useEffect(() => {
-    if (copyKey === null) return;
-    return registerCopyNavigator(copyKey, () => {
-      void navigate({
-        to: "/projects/$projectKey",
-        params: { projectKey: group.projectKey },
-        search: { checkout: copyKey },
-      });
-    });
-  }, [copyKey, group.projectKey, navigate]);
+    const unregister = memberKeys.split("\n").map((key) =>
+      registerCopyNavigator(key, () => {
+        void navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: group.projectKey },
+          search: { checkout: key },
+        });
+      }),
+    );
+    return () => unregister.forEach((stop) => stop());
+  }, [memberKeys, group.projectKey, navigate]);
   const copyingText = copying ? copyActivityText(copying) : null;
   // A project with no copy on this device still opens and runs on its machine; the
   // row says where, mutes its name, and offers to bring a copy here.

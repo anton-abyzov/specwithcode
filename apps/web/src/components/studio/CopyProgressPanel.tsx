@@ -220,7 +220,7 @@ export function CopyProgressPanel({
         </div>
         {percent !== null && (
           <span
-            className={`shrink-0 text-2xl font-semibold leading-none tracking-tight tabular-nums transition-colors duration-500 ${
+            className={`shrink-0 text-2xl font-semibold leading-none tracking-tight tabular-nums transition-colors duration-500 motion-reduce:transition-none ${
               view.outcome === "finished" ? "text-success-foreground" : ""
             }`}
             data-slot="copy-progress-percent"

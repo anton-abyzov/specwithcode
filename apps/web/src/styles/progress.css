@@ -26,7 +26,7 @@
   background: linear-gradient(
     90deg,
     transparent,
-    color-mix(in srgb, var(--primary-foreground) 45%, transparent),
+    color-mix(in srgb, #fff 45%, transparent),
     transparent
   );
   animation: seg-sheen 1.9s ease-in-out infinite;
@@ -120,6 +120,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .seg-fill,
+  [data-outcome="finished"] .seg-fill,
+  .seg-finished .seg-fill,
   .seg-check,
   .seg-notch,
   .seg-sheen::after,

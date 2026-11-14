@@ -45,7 +45,13 @@ export function overallFraction(activity: CopyActivity): number | null {
   // A later phase that cannot say how far it is keeps the phases already done: the line
   // never runs back to a sweep at Comparing or Apply.
   const index = COPY_PHASES.indexOf(progress.phase);
-  if (progress.fraction === null) return index > 0 ? index / COPY_PHASES.length : null;
+  if (progress.fraction === null) {
+    // Checking files after Send knows no fraction, but every byte it checks has arrived.
+    const total = progress.bytes?.total ?? 0;
+    const reached =
+      progress.phase === "send" && total > 0 ? Math.min(1, (progress.bytes?.done ?? 0) / total) : 0;
+    return index > 0 || reached > 0 ? (index + reached) / COPY_PHASES.length : null;
+  }
   return (index + progress.fraction) / COPY_PHASES.length;
 }
 

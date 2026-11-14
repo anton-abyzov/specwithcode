@@ -150,6 +150,24 @@ describe("copy progress phases", () => {
     // Apply reports no fraction: the line holds the two phases done, never a sweep.
     const applying = statusProgressView(status({ state: "applying" }), "m4", "m5")!;
     expect(overallFraction({ ...base, progress: applying, source: "m4" })).toBeCloseTo(2 / 3);
+    // Checking files after Send has no fraction of its own, but every byte has arrived.
+    const checking = statusProgressView(
+      status({
+        state: "verifying",
+        progress: {
+          phase: "files",
+          filesDone: 2,
+          filesTotal: 2,
+          bytesDone: 100,
+          bytesTotal: 100,
+          bytesLocal: 0,
+        },
+      }),
+      "m4",
+      "m5",
+    )!;
+    expect(checking.fraction).toBeNull();
+    expect(overallFraction({ ...base, progress: checking, source: "m4" })).toBeCloseTo(2 / 3);
     // Measure with no total yet is the only indeterminate stretch.
     const listing = sourceProgressView({ files: 10, bytes: 10 }, "m4");
     expect(overallFraction({ ...base, progress: listing, source: "m4" })).toBeNull();

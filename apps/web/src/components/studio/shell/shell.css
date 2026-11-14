@@ -3722,6 +3722,14 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 /* The row's line shows the copy's three phases, as the dialog, banner and toast do. */
 .sws-copy-progress:not([data-inline]):not([data-waiting]) {
   --seg-gap: 1.5px;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    #000 0 calc(33.333% - var(--seg-gap)),
+    transparent 0 calc(33.333% + var(--seg-gap)),
+    #000 0 calc(66.667% - var(--seg-gap)),
+    transparent 0 calc(66.667% + var(--seg-gap)),
+    #000 0
+  );
   mask-image: linear-gradient(
     90deg,
     #000 0 calc(33.333% - var(--seg-gap)),
@@ -3748,6 +3756,9 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .sws-copy-progress-fill {
+    transition: none;
+  }
   .sws-copy-progress[data-indeterminate] .sws-copy-progress-fill {
     width: 100%;
     opacity: 0.5;
