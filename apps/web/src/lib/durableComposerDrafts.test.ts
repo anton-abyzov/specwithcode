@@ -347,4 +347,136 @@ describe("durable composer drafts", () => {
     expect(host.puts.at(-1)!.attachments[0]!.dataBase64).toBeDefined();
     expect(host.drafts.get(KEY)?.attachments.map((attachment) => attachment.id)).toEqual(["a"]);
   });
+
+  describe("a draft open in two windows on the same host", () => {
+    /** One window: its own sync, edit log and composer contents. */
+    function makeWindow(host: ReturnType<typeof makeHost>) {
+      const { sync } = makeSync(host);
+      let composer: DurableDraftSnapshot = text("");
+      const input = {
+        target: TARGET,
+        local: () => composer,
+        apply: (snapshot: DurableDraftSnapshot) => {
+          composer = snapshot;
+        },
+      };
+      return {
+        sync,
+        input,
+        composer: () => composer,
+        type: async (snapshot: DurableDraftSnapshot) => {
+          composer = snapshot;
+          sync.schedule(TARGET, snapshot);
+          await sync.flush();
+        },
+        /** A confirmed send: hold, clear, release (what ChatView and the coordinator do). */
+        send: async () => {
+          const release = sync.hold(KEY);
+          composer = text("");
+          sync.schedule(TARGET, composer);
+          release();
+          await sync.flush();
+        },
+      };
+    }
+    const shots = () => [image("one", [1]), image("two", [2]), image("three", [3])];
+
+    it("a send in one window clears the copy another window shows, images included", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      expect(await m5.sync.restore(m5.input)).toBe("restored");
+      expect(m5.composer().attachments).toHaveLength(3);
+
+      await m4.send();
+      expect(host.drafts.has(KEY)).toBe(false);
+
+      expect(await m5.sync.refresh(m5.input)).toBe("cleared");
+      expect(m5.composer()).toEqual(text(""));
+      await m5.sync.flush();
+      expect(host.drafts.has(KEY)).toBe(false);
+    });
+
+    it("a stale copy is not sent a second time", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      const putsBefore = host.puts.length;
+
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+      await m5.sync.flush();
+      // The stale copy never went back to the host either.
+      expect(host.puts).toHaveLength(putsBefore);
+      expect(host.drafts.has(KEY)).toBe(false);
+    });
+
+    it("a draft typed here and sent from the other window clears here too", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m5.type(text("typed on the M5", shots()));
+      await m4.sync.restore(m4.input);
+      await m4.send();
+
+      expect(await m5.sync.refresh(m5.input)).toBe("cleared");
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("reopening the composer without a reload follows the host", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5"));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      expect(await m5.sync.restore(m5.input)).toBe("none");
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("takes a newer copy another window saved", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("first"));
+      await m5.sync.restore(m5.input);
+      await m4.type(text("first, then more"));
+      expect(await m5.sync.refresh(m5.input)).toBe("replaced");
+      expect(m5.composer().prompt).toBe("first, then more");
+    });
+
+    it("keeps an edit made here, and a still-current draft sends", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("shared"));
+      await m5.sync.restore(m5.input);
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(false);
+      expect(m5.composer().prompt).toBe("shared");
+
+      await m4.send();
+      // An unsaved edit here is the user's: it is not wiped.
+      m5.input.apply(text("shared, edited on the M5"));
+      m5.sync.schedule(TARGET, m5.composer());
+      expect(await m5.sync.refresh(m5.input)).toBe("kept");
+      expect(m5.composer().prompt).toBe("shared, edited on the M5");
+    });
+
+    it("an unreachable host does not stop a send", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("shared"));
+      await m5.sync.restore(m5.input);
+      host.transport.get = async () => {
+        throw new Error("offline");
+      };
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(false);
+      expect(m5.composer().prompt).toBe("shared");
+    });
+  });
 });

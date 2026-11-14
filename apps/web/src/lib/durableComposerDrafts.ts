@@ -163,7 +163,18 @@ interface KeyState {
   fromJournal: boolean;
   /** The composer shows a journaled copy the host had confirmed; the host may have cleared it since. */
   showsSyncedJournal: boolean;
+  /** The composer shows a copy another window saved, not one typed here. */
+  adopted: boolean;
+  /** A check against the host that is still running. */
+  refreshing: Promise<DurableDraftRefresh> | null;
 }
+
+/**
+ * What a check against the host found: the draft is gone there (sent or
+ * cleared in another window), another window changed it, or this window's
+ * copy still stands.
+ */
+export type DurableDraftRefresh = "cleared" | "replaced" | "kept";
 
 export interface DurableDraftSync {
   /** Records an edit and saves it after the debounce. */
@@ -199,6 +210,27 @@ export interface DurableDraftSync {
   /** Applies a host copy without saving it straight back. */
   readonly applying: <T>(key: ComposerDraftKey, run: () => T) => T;
   readonly isApplying: (key: string) => boolean;
+  /**
+   * Checks a composer that shows the host's copy against the host again:
+   * when another window sent or cleared it the composer empties, and when
+   * another window changed it the composer takes the new copy. A composer
+   * with an unsaved edit of its own is left alone.
+   */
+  readonly refresh: (input: {
+    readonly target: DurableDraftTarget;
+    readonly local: () => DurableDraftSnapshot;
+    readonly apply: (snapshot: DurableDraftSnapshot) => void;
+  }) => Promise<DurableDraftRefresh>;
+  /**
+   * Run before a send: true when the composer held a copy that another
+   * window already sent or changed, so this send must not go out. A host
+   * that cannot be reached does not stop the send.
+   */
+  readonly sentElsewhere: (input: {
+    readonly target: DurableDraftTarget;
+    readonly local: () => DurableDraftSnapshot;
+    readonly apply: (snapshot: DurableDraftSnapshot) => void;
+  }) => Promise<boolean>;
 }
 
 export function createDurableDraftSync(options: {
@@ -238,6 +270,8 @@ export function createDurableDraftSync(options: {
         failures: 0,
         fromJournal: false,
         showsSyncedJournal: false,
+        adopted: false,
+        refreshing: null,
       };
       keys.set(key, state);
     }
@@ -361,6 +395,9 @@ export function createDurableDraftSync(options: {
       options.edits.write(target.key, { at, empty: durableDraftIsEmpty(next) });
       // Every change reaches this window's disk at once, host or not.
       journalWrite(target.key, state, next, at, false);
+      // Typed here: from now on this window's own draft.
+      state.adopted = false;
+      state.showsSyncedJournal = false;
     }
     state.pending = next;
     // A fresh edit outranks whatever another window saved meanwhile.
@@ -433,9 +470,11 @@ export function createDurableDraftSync(options: {
     if (edit !== undefined && edit.at > entry.editedAt) return "kept";
     const current = local();
     const same = signatureOf(keepable(current)) === signatureOf(entry.snapshot);
-    if (!same && !durableDraftIsEmpty(entry.snapshot)) {
-      applySnapshot(target.key, state, entry.snapshot, apply);
+    if (!durableDraftIsEmpty(entry.snapshot)) {
+      if (!same) applySnapshot(target.key, state, entry.snapshot, apply);
+      // A copy the host had confirmed may have been sent elsewhere since.
       state.showsSyncedJournal = entry.synced;
+      state.adopted ||= entry.synced;
     }
     options.edits.write(target.key, {
       at: entry.editedAt,
@@ -464,14 +503,11 @@ export function createDurableDraftSync(options: {
         return record === null ? "none" : "kept";
       }
     }
-    const showedSynced = state.showsSyncedJournal;
+    const showedHostCopy = showsHostCopy(state, local());
     state.showsSyncedJournal = false;
     if (record === null) {
-      if (showedSynced && state.pending === null && state.holds === 0) {
-        // Sent or cleared in another window after this one last saw it.
-        journalWrite(target.key, state, EMPTY_DURABLE_DRAFT, now(), true);
-        applySnapshot(target.key, state, EMPTY_DURABLE_DRAFT, apply);
-      }
+      // Sent or cleared in another window after this one last saw it.
+      if (showedHostCopy) clearToHost(target.key, state, apply);
       return "none";
     }
     // An edit made while the host answered wins over what the host had.
@@ -501,7 +537,87 @@ export function createDurableDraftSync(options: {
     options.edits.write(target.key, { at: record.editedAt, empty: durableDraftIsEmpty(snapshot) });
     journalWrite(target.key, state, snapshot, record.editedAt, true);
     applySnapshot(target.key, state, snapshot, apply);
+    state.adopted = !durableDraftIsEmpty(snapshot);
     return "restored";
+  };
+
+  /**
+   * The composer shows exactly what the host last held for it, with no edit
+   * of its own waiting: the host's state decides what it should show.
+   */
+  function showsHostCopy(state: KeyState, current: DurableDraftSnapshot): boolean {
+    if (state.pending !== null || state.holds > 0 || durableDraftIsEmpty(current)) return false;
+    if (state.showsSyncedJournal) return true;
+    return state.sent !== null && signatureOf(keepable(current)) === state.sent;
+  }
+
+  function clearToHost(
+    key: ComposerDraftKey,
+    state: KeyState,
+    apply: (snapshot: DurableDraftSnapshot) => void,
+  ) {
+    state.sent = signatureOf(EMPTY_DURABLE_DRAFT);
+    state.stored = new Set();
+    state.adopted = false;
+    state.showsSyncedJournal = false;
+    journalWrite(key, state, EMPTY_DURABLE_DRAFT, now(), true);
+    applySnapshot(key, state, EMPTY_DURABLE_DRAFT, apply);
+  }
+
+  const check = async (
+    key: ComposerDraftKey,
+    state: KeyState,
+    input: Parameters<DurableDraftSync["refresh"]>[0],
+  ): Promise<DurableDraftRefresh> => {
+    const record = await options.transport.get(input.target.environmentId, key);
+    // An edit made while the host answered wins.
+    if (!showsHostCopy(state, input.local())) return "kept";
+    if (record === null) {
+      clearToHost(key, state, input.apply);
+      return "cleared";
+    }
+    const snapshot = snapshotFromRecord(record);
+    const signature = signatureOf(snapshot);
+    if (signature === signatureOf(keepable(input.local()))) return "kept";
+    const edit = options.edits.read(key);
+    if (edit !== undefined && edit.at > record.editedAt) return "kept";
+    state.stored = new Set(record.attachments.map((attachment) => attachment.id));
+    state.sent = signature;
+    state.showsSyncedJournal = false;
+    options.edits.write(key, { at: record.editedAt, empty: durableDraftIsEmpty(snapshot) });
+    journalWrite(key, state, snapshot, record.editedAt, true);
+    applySnapshot(key, state, snapshot, input.apply);
+    state.adopted = !durableDraftIsEmpty(snapshot);
+    return "replaced";
+  };
+
+  const refresh: DurableDraftSync["refresh"] = (input) => {
+    const key = input.target.key;
+    const state = keys.get(key);
+    if (!state || !showsHostCopy(state, input.local())) return Promise.resolve("kept");
+    if (state.refreshing) return state.refreshing;
+    const running = check(key, state, input).finally(() => {
+      if (state.refreshing === running) state.refreshing = null;
+    });
+    state.refreshing = running;
+    return running;
+  };
+
+  const sentElsewhere: DurableDraftSync["sentElsewhere"] = async (input) => {
+    const state = keys.get(input.target.key);
+    if (!state) return false;
+    try {
+      // A copy from another window is checked now; this window's own draft
+      // only waits for a check already running (the window just got focus).
+      const result =
+        state.adopted || state.showsSyncedJournal
+          ? await refresh(input)
+          : await (state.refreshing ?? Promise.resolve<DurableDraftRefresh>("kept"));
+      return result !== "kept";
+    } catch (error) {
+      options.onError?.(error);
+      return false;
+    }
   };
 
   return {
@@ -515,5 +631,7 @@ export function createDurableDraftSync(options: {
     },
     applying,
     isApplying: (key) => keys.get(key)?.applying === true,
+    refresh,
+    sentElsewhere,
   };
 }

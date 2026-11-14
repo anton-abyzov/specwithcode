@@ -181,6 +181,39 @@ async function restoreLocalThenHost(
   }
 }
 
+// ── Composers on screen, checked again when the window comes back ────────
+
+/**
+ * Each open composer's restore input, by host key. Another window can send or
+ * change the same draft (the host is shared), so a window that comes back to
+ * the front checks its copies against the host again.
+ */
+const openComposers = new Map<string, RestoreInput>();
+
+function trackOpenComposer(input: RestoreInput): () => void {
+  const id = `${input.target.environmentId}\u0000${input.target.key}`;
+  openComposers.set(id, input);
+  return () => {
+    if (openComposers.get(id) === input) openComposers.delete(id);
+  };
+}
+
+function refreshOpenComposers(): void {
+  for (const input of openComposers.values()) {
+    void durableComposerDrafts.refresh(input).catch((error: unknown) => {
+      console.warn("Could not check the saved draft.", error);
+    });
+  }
+}
+
+function openComposerInput(environmentId: string, key: ComposerDraftKey): RestoreInput | undefined {
+  return openComposers.get(`${environmentId}\u0000${key}`);
+}
+
+/** Said when a send stops because the draft already went out from another window. */
+export const DRAFT_SENT_ELSEWHERE_MESSAGE =
+  "This draft was already sent or changed in another window, so it was not sent again.";
+
 // ── Thread and new-chat composers ────────────────────────────────────────
 
 interface ThreadDraftTarget {
@@ -340,8 +373,10 @@ export function useDurableThreadDraftRestore(target: ComposerThreadTarget): void
       },
     };
     void restoreLocalThenHost(durable.environmentId, signal, input);
+    const untrack = trackOpenComposer(input);
     return () => {
       signal.cancelled = true;
+      untrack();
     };
     // The target object changes identity on every render; its key does not.
   }, [storeKey]);
@@ -358,6 +393,23 @@ export function holdDurableThreadDraft(target: ComposerThreadTarget): () => void
     (key) => state.draftThreadsByThreadKey[key]?.environmentId,
   );
   return durable ? durableComposerDrafts.hold(durable.key) : () => {};
+}
+
+/**
+ * Run before a thread send: true when another window already sent (or
+ * changed) the copy this composer shows. The composer then shows the host's
+ * state, empty after a send, and the send must stop.
+ */
+export async function durableThreadDraftSentElsewhere(
+  target: ComposerThreadTarget,
+): Promise<boolean> {
+  const state = useComposerDraftStore.getState();
+  const durable = durableTargetForStoreKey(
+    composerTargetKey(target),
+    (key) => state.draftThreadsByThreadKey[key]?.environmentId,
+  );
+  const input = durable ? openComposerInput(durable.environmentId, durable.key) : undefined;
+  return input ? durableComposerDrafts.sentElsewhere(input) : false;
 }
 
 // ── Project coordinator composer ─────────────────────────────────────────
@@ -393,7 +445,7 @@ export function useDurableCoordinatorDraft(
       durableComposerDrafts.schedule(target, snapshotOfCoordinator(composer));
     });
     const signal = { cancelled: false };
-    void restoreLocalThenHost(environmentId, signal, {
+    const input: RestoreInput = {
       target,
       local: () => snapshotOfCoordinator(composer),
       apply: (snapshot) => {
@@ -432,12 +484,25 @@ export function useDurableCoordinatorDraft(
         last = composer.getSnapshot();
         for (const image of restored) startAttachmentUpload({ environmentId, image });
       },
-    });
+    };
+    void restoreLocalThenHost(environmentId, signal, input);
+    const untrack = trackOpenComposer(input);
     return () => {
       signal.cancelled = true;
+      untrack();
       unsubscribe();
     };
   }, [environmentId, projectId, composer]);
+}
+
+/** Run before a coordinator send; see `durableThreadDraftSentElsewhere`. */
+export async function durableCoordinatorDraftSentElsewhere(
+  environmentId: string,
+  projectId: string,
+): Promise<boolean> {
+  const key = coordinatorKey(projectId);
+  const input = key ? openComposerInput(environmentId, key) : undefined;
+  return input ? durableComposerDrafts.sentElsewhere(input) : false;
 }
 
 // ── Save at once when the window may be about to go away ─────────────────
@@ -451,5 +516,8 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
   window.addEventListener("focusout", flush);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flush();
+    else refreshOpenComposers();
   });
+  // Back in front: a draft shown here may have been sent from another window or machine.
+  window.addEventListener("focus", refreshOpenComposers);
 }
