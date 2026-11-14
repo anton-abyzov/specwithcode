@@ -1,5 +1,6 @@
 import {
   AuthAccessWriteScope,
+  AuthSessionId,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
   EnvironmentHttpForbiddenError,
@@ -84,14 +85,26 @@ export const layer = HttpApiBuilder.group(
       ),
     );
 
-    /** Ends every session of one device here: its key's, or its phone link's. */
+    /**
+     * Ends every session of one device here: its key's or its phone link's,
+     * and the MCP sessions it approved. Its other bound credentials (folder
+     * copies) stop on their next use, since the approval they name is gone.
+     */
     const endSessions = (key: string) =>
       Effect.gen(function* () {
-        if (key.startsWith("jkt:"))
-          return yield* auth.revokeSessionsByProofKeyThumbprints([key.slice("jkt:".length)]);
-        if (!key.startsWith("link:")) return 0;
-        const subject = key.slice("link:".length);
         let ended = 0;
+        for (const id of yield* trust.boundIds(key))
+          if (
+            id.startsWith("session:") &&
+            (yield* auth.revokeSession(AuthSessionId.make(id.slice("session:".length))))
+          )
+            ended += 1;
+        if (key.startsWith("jkt:"))
+          return (
+            ended + (yield* auth.revokeSessionsByProofKeyThumbprints([key.slice("jkt:".length)]))
+          );
+        if (!key.startsWith("link:")) return ended;
+        const subject = key.slice("link:".length);
         for (const session of yield* auth.listSessions())
           if (session.subject === subject && (yield* auth.revokeSession(session.sessionId)))
             ended += 1;

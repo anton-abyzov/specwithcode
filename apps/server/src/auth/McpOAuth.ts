@@ -215,6 +215,8 @@ interface PendingCode {
   readonly access: AuthMcpClientAccess;
   readonly principal?: AuthPrincipal;
   readonly principalGeneration?: number | undefined;
+  /** The approved device that approved this client; its MCP session stays gated by it. */
+  readonly deviceKey?: string;
   readonly expiresAtMs: number;
 }
 
@@ -245,6 +247,7 @@ export class McpOAuth extends Context.Service<
           readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
           readonly principal?: AuthPrincipal;
           readonly principalGeneration?: number | undefined;
+          readonly deviceKey?: string;
         }
       | undefined
     >;
@@ -443,6 +446,7 @@ const make = Effect.gen(function* () {
               ...(session.principal
                 ? { principal: session.principal, principalGeneration: session.principalGeneration }
                 : {}),
+              ...(session.deviceKey === undefined ? {} : { deviceKey: session.deviceKey }),
             }
           : undefined,
       ),
@@ -454,6 +458,7 @@ const make = Effect.gen(function* () {
     access: AuthMcpClientAccess,
     principal?: AuthPrincipal,
     principalGeneration?: number,
+    deviceKey?: string,
   ) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
@@ -472,6 +477,7 @@ const make = Effect.gen(function* () {
           resource: authorization.resource,
           access,
           ...(principal ? { principal, principalGeneration } : {}),
+          ...(deviceKey === undefined ? {} : { deviceKey }),
           expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
         });
         return next;
@@ -484,6 +490,7 @@ const make = Effect.gen(function* () {
       const { decision } = input;
       let principal: AuthPrincipal | undefined;
       let principalGeneration: number | undefined;
+      let deviceKey: string | undefined;
       if (decision._tag === "pairing-code") {
         const approval = yield* environmentAuth
           .consumeMcpApprovalCode(decision.code, decision.access)
@@ -502,6 +509,7 @@ const make = Effect.gen(function* () {
           );
         principal = approval.principal;
         principalGeneration = approval.principalGeneration;
+        deviceKey = approval.deviceKey;
       } else {
         const session = yield* approvingBrowserSession(input.request, input.authorization);
         if (
@@ -517,6 +525,7 @@ const make = Effect.gen(function* () {
         }
         principal = session.principal;
         principalGeneration = session.principalGeneration;
+        deviceKey = session.deviceKey;
       }
       const claimed = coordinatorOfWorkerLabel(input.authorization.client.name);
       if (
@@ -537,6 +546,7 @@ const make = Effect.gen(function* () {
         decision.access,
         principal,
         principalGeneration,
+        deviceKey,
       );
       yield* Effect.logInfo("Approved an MCP client sign-in.", {
         client: input.authorization.client.name,
@@ -607,6 +617,7 @@ const make = Effect.gen(function* () {
             : {}),
           label: pending.clientName,
           access: pending.access,
+          ...(pending.deviceKey === undefined ? {} : { deviceKey: pending.deviceKey }),
           client: deriveAuthClientMetadata({ request }),
           ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
         })

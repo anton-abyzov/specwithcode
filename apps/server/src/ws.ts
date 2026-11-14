@@ -3573,7 +3573,7 @@ const inferredWebSocketLayer = Layer.unwrap(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.mergeAll(
-                RpcAuthorization.layer(session.scopes, session.principal),
+                RpcAuthorization.layer(session.scopes, session.principal, session.deviceKey),
                 rpcDeadlineLayer,
                 rpcInstrumentationLayer,
               ),
