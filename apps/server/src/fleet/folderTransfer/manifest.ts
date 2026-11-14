@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import { canonicalOrigin } from "../handoffGitTypes.ts";
+import { type ContentBudget, refineClassByContent } from "./secretContent.ts";
 import {
   classifyFile,
   FILE_CLASSES,
@@ -531,6 +532,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
   const skippedWorktrees: Array<string> = [];
   const skippedGitDirs: Array<string> = [];
   let rebuildableFolders = 0;
+  const contentBudget: ContentBudget = { probes: 0 };
   let files = 0;
   let bytes = 0;
   let lastReport = Date.now();
@@ -659,12 +661,21 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
         : innermost && inner !== null
           ? gitStateIn(innermost, inner)
           : "outside";
-      const fileClass = classifyFile({
+      let fileClass = classifyFile({
         relative,
         insideGitData: gitData,
         gitState,
         secretPattern: options.secretPattern,
       });
+      if (!gitData && stat.isFile() && !options.secretPattern?.(relative))
+        fileClass = await refineClassByContent({
+          absolute: location,
+          relative,
+          size: stat.size,
+          fileClass,
+          gitState,
+          budget: contentBudget,
+        });
       const base = {
         path: relative,
         mode: stat.mode & 0o7777,

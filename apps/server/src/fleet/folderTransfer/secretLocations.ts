@@ -17,6 +17,7 @@ import { isHomeSecretPathRefused } from "../../workspace/WorkspaceSensitivePaths
 import type { ManifestEntry } from "./manifest.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import { MAX_SECRET_FILE_BYTES, MAX_SECRET_FILES } from "./secrets.ts";
+import { ENVRC_FILE_SOURCES, isVendoredPath, readEnvrc } from "./secretContent.ts";
 
 export const MAX_SECRET_PATTERNS = 100;
 export const MAX_SECRET_PATTERN_LENGTH = 512;
@@ -151,6 +152,8 @@ export interface SecretHint {
 export interface SecretLocations {
   readonly homeFiles: ReadonlyArray<HomeSecretFile>;
   readonly hints: ReadonlyArray<SecretHint>;
+  /** Plain notes for the copy's notices: the folders whose `.envrc` needs `direnv allow` there. */
+  readonly notes?: ReadonlyArray<string>;
 }
 
 /** Marker files of tools that keep secrets out of the folder. */
@@ -173,11 +176,6 @@ const VAULT_MARKERS: ReadonlyArray<{
     name: /^\.sops\.ya?ml$/iu,
     source: "SOPS",
     hint: "Encrypted files are copied as they are. The key that opens them (age, GPG or a cloud KMS) stays here.",
-  },
-  {
-    name: /^\.envrc$/iu,
-    source: "direnv",
-    hint: "direnv can load secrets from a command or a vault. Run direnv allow on the other machine.",
   },
 ];
 
@@ -267,6 +265,8 @@ export async function findSecretLocations(input: {
   readonly patterns?: ReadonlyArray<string> | undefined;
   readonly home: string;
   readonly platform?: NodeJS.Platform;
+  /** Submodule folders: like vendored folders, their marker files are upstream's. */
+  readonly submodules?: ReadonlyArray<string>;
 }): Promise<SecretLocations> {
   const platform = input.platform ?? process.platform;
   // Every home path is checked against its real location, so a linked home (/var/home) is read as itself.
@@ -292,9 +292,27 @@ export async function findSecretLocations(input: {
         });
   }
   let probed = 0;
+  const direnvFolders: Array<string> = [];
   for (const entry of input.entries) {
-    if (entry.type !== "file") continue;
+    if (entry.type !== "file" || isVendoredPath(entry.path, input.submodules)) continue;
     const name = entry.path.split("/").at(-1) ?? "";
+    if (name === ".envrc") {
+      direnvFolders.push(entry.path.split("/").slice(0, -1).join("/") || ".");
+      if (entry.size > MAX_PROBE_BYTES || probed >= MAX_PROBED_FILES) continue;
+      probed += 1;
+      const text = await readSmall(NodePath.join(input.root, entry.path), MAX_PROBE_BYTES);
+      // A .env file it loads is in the folder and listed under Secrets; only vaults and commands stay behind.
+      const loads = (text === null ? [] : readEnvrc(text).loads).filter(
+        (source) => !ENVRC_FILE_SOURCES.has(source),
+      );
+      if (loads.length > 0)
+        hints.push({
+          path: entry.path,
+          source: "direnv",
+          hint: `Loads secrets from ${loads.join(", ")}. The values stay there; set them up on the other machine, then run direnv allow.`,
+        });
+      continue;
+    }
     const marker = VAULT_MARKERS.find((item) => item.name.test(name));
     if (marker) hints.push({ path: entry.path, source: marker.source, hint: marker.hint });
     const csproj = /\.(?:cs|fs|vb)proj$/iu.test(name);
@@ -322,5 +340,11 @@ export async function findSecretLocations(input: {
         hint: `Uses user secrets ${id}, but this machine has none saved. Set them on the other machine with dotnet user-secrets.`,
       });
   }
-  return { homeFiles: [...homeFiles.values()], hints: hints.slice(0, 50) };
+  const notes =
+    direnvFolders.length === 0
+      ? []
+      : [
+          `direnv: run direnv allow on the other machine in ${direnvFolders.slice(0, 5).join(", ")}${direnvFolders.length > 5 ? ` and ${direnvFolders.length - 5} more folders` : ""}.`,
+        ];
+  return { homeFiles: [...homeFiles.values()], hints: hints.slice(0, 50), notes };
 }

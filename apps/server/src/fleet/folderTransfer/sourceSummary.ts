@@ -120,6 +120,7 @@ export function summarize(
         ...warnings,
         ...scan.warnings,
         ...(scan.notices ?? []),
+        ...(locations?.notes ?? []),
       ]),
     ].slice(0, 50),
     ...(scan.skipped
