@@ -70,7 +70,7 @@ it("lists the same logical project on other machines, never by path", () => {
 
 it("lists the copies the sidebar groups as this project even when they are not linked", () => {
   const unlinked = (environmentId: string, workspaceRoot: string) =>
-    ({ ...copy(environmentId, workspaceRoot), workspaceSettings: null }) as EnvironmentProject;
+    ({ ...copy(environmentId, workspaceRoot), workspaceSettings: null }) as unknown as EnvironmentProject;
   const m1Copy = unlinked("m1", "/Users/me/Projects/app-fleet");
   const m4Copy = unlinked("m4", "/Users/me/Projects/app");
   const stranger = unlinked("m5", "/Users/me/Projects/app");
@@ -84,14 +84,20 @@ it("lists the copies the sidebar groups as this project even when they are not l
 });
 
 it("shows an unlinked member's folder in the list", async () => {
-  const m1Copy = { ...copy("m1", "/Users/me/Projects/app-fleet"), workspaceSettings: null };
-  const m4Copy = { ...copy("m4", "/Users/me/Projects/sw-app"), workspaceSettings: null };
+  const m1Copy = {
+    ...copy("m1", "/Users/me/Projects/app-fleet"),
+    workspaceSettings: null,
+  } as unknown as EnvironmentProject;
+  const m4Copy = {
+    ...copy("m4", "/Users/me/Projects/sw-app"),
+    workspaceSettings: null,
+  } as unknown as EnvironmentProject;
   state.projects = [m1Copy, m4Copy];
   await act(async () =>
     root.render(
       <ProjectFolderCopies
-        project={m1Copy as EnvironmentProject}
-        members={[m1Copy, m4Copy] as EnvironmentProject[]}
+        project={m1Copy}
+        members={[m1Copy, m4Copy]}
         disabled={false}
         renderChange={change}
       />,
