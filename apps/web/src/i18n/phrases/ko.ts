@@ -3128,7 +3128,7 @@ export const ko: PhraseCatalog = {
   "Run this draft on": "이 초안을 실행할 위치",
   "Auto balance matching projects": "일치하는 프로젝트 자동 분산",
   "Add to another machine…": "다른 컴퓨터에 추가…",
-  "Copy to another machine…": "다른 컴퓨터로 복사…",
+  "Send to another machine…": "다른 컴퓨터로 보내기…",
   "Leave this machine…": "이 컴퓨터 떠나기…",
   "Another project or no project": "다른 프로젝트 또는 프로젝트 없음",
   "Rename a machine": "컴퓨터 이름 변경",

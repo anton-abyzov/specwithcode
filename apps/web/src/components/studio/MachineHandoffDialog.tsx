@@ -20,6 +20,7 @@ import {
   useProjectMoveDialog,
   WhatComesAlong,
   type MoveIntent,
+  type SendFacts,
 } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
 import { retentionReviewText, unmergedWorkerLine, unmergedWorkersText } from "./handoffRetention";
@@ -70,10 +71,10 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
       size="sm"
       className={cn("h-6 gap-1.5 px-2 text-xs sm:h-6 sm:text-xs", className)}
       data-slot="handoff-trigger"
-      aria-label="Copy this project to another machine"
+      aria-label="Send this project to another machine"
     >
       <LaptopIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Copy to another machine</span>
+      <span>Send to another machine</span>
     </Button>
   );
 }
@@ -119,7 +120,10 @@ export function MachineHandoffDialog({
   machinesLoading = false,
   machinesExtra,
   sync = null,
+  send = null,
 }: {
+  /** What the chosen machine already holds, for Copy or Move and the plan sentence. */
+  readonly send?: SendFacts | null;
   /**
    * "Sync to X…": X already has this project at `folder`. The dialog copies only files into
    * that folder and says so; the coordinator stays here.
@@ -212,6 +216,7 @@ export function MachineHandoffDialog({
             machinesLoading,
             machinesExtra,
             sync: sync !== null,
+            send,
           }}
         >
           <DialogHeader>
@@ -226,7 +231,7 @@ export function MachineHandoffDialog({
                   : complete
                     ? `${projectTitle} is on ${targetLabel}`
                     : copying
-                      ? `Copy ${projectTitle} to ${copyTargetLabel ?? "another machine"}`
+                      ? `Send ${projectTitle} to ${copyTargetLabel ?? "another machine"}`
                       : `Move ${projectTitle} to ${machineLabel ?? "another machine"}`}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}

@@ -3153,7 +3153,7 @@ export const ru: PhraseCatalog = {
   "Run this draft on": "Запустить этот черновик на",
   "Auto balance matching projects": "Автобаланс подходящих проектов",
   "Add to another machine…": "Добавить на другую машину…",
-  "Copy to another machine…": "Скопировать на другую машину…",
+  "Send to another machine…": "Отправить на другую машину…",
   "Leave this machine…": "Уйти с этой машины…",
   "Another project or no project": "Другой проект или без проекта",
   "Rename a machine": "Переименовать машину",

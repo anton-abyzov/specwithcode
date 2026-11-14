@@ -71,8 +71,35 @@ function GitFixture() {
     </main>
   );
 }
+/**
+ * `?holding=copy|main|several|several-main|none`: what the chosen machine already holds, as
+ * Send to another machine… reads it. Main is on m4 (this machine) unless m5 holds it.
+ */
+const HOLDING = params.get("holding");
+const at = (id: string, workspaceRoot: string) => ({ id, workspaceRoot });
+// A copy sits at the same place in its umbrella checkout as the project sent from.
+const copyIn = (root: string) => `${root}/repositories/anton-abyzov/specweave`;
+const holding =
+  HOLDING === "main"
+    ? { kind: "main" as const, copy: at("m5", copyIn("/Users/you/Projects/github/specweave-umb")) }
+    : HOLDING === "several" || HOLDING === "several-main"
+      ? {
+          kind: "several" as const,
+          copies: [
+            at("a", copyIn("/Users/you/Projects/github/specweave-umb")),
+            at("b", copyIn("/Users/you/work/specweave-umb")),
+          ],
+          mainId: "b",
+        }
+      : HOLDING === "copy"
+        ? {
+            kind: "copy" as const,
+            copy: at("m5", copyIn("/Users/you/Projects/github/specweave-umb")),
+          }
+        : { kind: "none" as const };
 function Fixture() {
   const [open, setOpen] = useState(true);
+  const [picked, setPicked] = useState<string | null>(HOLDING === "several-main" ? "b" : null);
   const [target, setTarget] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
@@ -101,6 +128,18 @@ function Fixture() {
         copyLocked={locked}
         copyDoneOn={doneOn}
         copyTargetLabel={target}
+        send={
+          HOLDING && target
+            ? {
+                holding,
+                picked,
+                onPick: setPicked,
+                mainLabel:
+                  holding.kind === "main" ? "m5" : params.has("short") ? "m4" : "MacBook M4",
+                localFiles: params.has("uncommitted") ? Number(params.get("uncommitted")) : null,
+              }
+            : null
+        }
         copyFlow={
           <HandoffFolderCopy
             project={
@@ -117,7 +156,14 @@ function Fixture() {
             method="copy"
             machines={MACHINES}
             preferredMachine={(params.has("short") ? "m5" : "linux") as never}
-            savedFolder={() => null}
+            savedFolder={() =>
+              holding.kind === "main" || holding.kind === "copy"
+                ? holding.copy.workspaceRoot
+                : holding.kind === "several"
+                  ? (holding.copies.find((copy) => copy.id === picked)?.workspaceRoot ?? null)
+                  : null
+            }
+            chooseCopyFirst={holding.kind === "several" && picked === null}
             canMove
             uncommittedFiles={params.has("uncommitted") ? Number(params.get("uncommitted")) : null}
             defaultMode="copy-only"

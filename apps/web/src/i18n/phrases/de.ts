@@ -3172,7 +3172,7 @@ export const de: PhraseCatalog = {
   "Run this draft on": "Diesen Entwurf ausführen auf",
   "Auto balance matching projects": "Passende Projekte automatisch verteilen",
   "Add to another machine…": "Auf anderem Rechner hinzufügen…",
-  "Copy to another machine…": "Auf anderen Rechner kopieren…",
+  "Send to another machine…": "An anderen Rechner senden…",
   "Leave this machine…": "Diesen Rechner verlassen…",
   "Another project or no project": "Anderes Projekt oder kein Projekt",
   "Rename a machine": "Rechner umbenennen",

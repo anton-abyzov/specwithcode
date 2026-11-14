@@ -6,7 +6,7 @@ import {
 } from "../../studio/folderCopyActivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ComponentProps } from "react";
 import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
@@ -25,11 +25,15 @@ vi.mock("../../state/query", () => ({
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
 vi.mock("./HandoffAccountMachines", () => ({ HandoffAccountMachines: () => null }));
 vi.mock("../chat/AddToMachineDialog", () => ({ AddToMachineDialog: () => null }));
+vi.mock("../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => state.retired,
+}));
 vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: state.fleet }),
 }));
 const state = vi.hoisted(() => ({
+  retired: new Set<string>() as ReadonlySet<string>,
   fleet: null as { machines: Array<Record<string, unknown>> } | null,
   environments: [] as Array<Record<string, unknown>>,
   prepare: vi.fn(),
@@ -222,6 +226,7 @@ beforeEach(() => {
   state.sourceDenied = false;
   state.catalogReady = true;
   state.projects = [source, target];
+  state.retired = new Set();
   state.fleet = null;
   state.environments = [
     { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
@@ -1382,4 +1387,95 @@ it("holds the workspace page on this checkout while the move dialog is open", as
   // Leaving the page lets go of the hold.
   await act(async () => root.render(<div>Another checkout</div>));
   expect(hold).toHaveBeenLastCalledWith(false);
+});
+
+describe("Send to another machine", () => {
+  // Places in the repository are known, so a same-repository copy counts as a copy.
+  const at = (
+    project: typeof source,
+    over: { id?: string; environmentId?: string; root: string; key?: string; logical?: string },
+  ) => ({
+    ...project,
+    ...(over.id ? { id: over.id } : {}),
+    ...(over.environmentId ? { environmentId: over.environmentId } : {}),
+    workspaceRoot: over.root,
+    repositoryIdentity: {
+      ...repositoryIdentity,
+      canonicalKey: over.key ?? repositoryIdentity.canonicalKey,
+      rootPath: over.root,
+    },
+    workspaceSettings: over.logical
+      ? {
+          logicalProject: { id: over.logical, title: "Project" },
+          coordinatorBinding: { state: "active", epoch: over.id === "old" ? 9 : 1 },
+        }
+      : null,
+  });
+  const copyProps = () =>
+    (props().copyFlow as { props: Record<string, unknown> }).props as {
+      savedFolder: (id: string) => string | null;
+      chooseCopyFirst: boolean;
+      onChoicesChange: (choices: Record<string, unknown>) => void;
+      defaultMode: string;
+    };
+  const open = async (from: ReturnType<typeof at>, others: Array<ReturnType<typeof at>>) => {
+    state.environments = machineEnvironments;
+    state.projects = [from, ...others];
+    await act(async () =>
+      root.render(
+        <ProjectMachineHandoff project={from as never} coordinatorId={"coordinator" as never} />,
+      ),
+    );
+    await act(async () => container.querySelector("button")!.click());
+  };
+  const choose = (machine: string, mode = "copy-only") =>
+    act(async () => copyProps().onChoicesChange({ mode, machine, done: false }));
+
+  it("fills the one copy there even when its repository key reads in other casing", async () => {
+    await open(at(source, { root: "/source" }), [
+      at(target, { root: "/target", key: "GitHub.com/Example/Project" }),
+    ]);
+    expect(copyProps().savedFolder("m1")).toBe("/target");
+    await choose("m1");
+    expect(props().send).toMatchObject({ holding: { kind: "copy" }, mainLabel: "M4" });
+  });
+
+  it("starts nothing on a machine with several copies until one is picked", async () => {
+    await open(at(source, { root: "/source" }), [
+      at(target, { id: "a", environmentId: "m3", root: "/a" }),
+      at(target, { id: "b", environmentId: "m3", root: "/b" }),
+    ]);
+    await choose("m3");
+    expect(props().send?.holding.kind).toBe("several");
+    expect(copyProps().chooseCopyFirst).toBe(true);
+    expect(copyProps().savedFolder("m3")).toBeNull();
+    await act(async () => props().send!.onPick("b"));
+    expect(copyProps().chooseCopyFirst).toBe(false);
+    expect(copyProps().savedFolder("m3")).toBe("/b");
+    expect(props().send?.picked).toBe("b");
+  });
+
+  it("keeps a chosen Move when the machine changes", async () => {
+    await open(at(source, { root: "/source" }), [at(target, { root: "/target" })]);
+    await choose("m1", "copy-and-move");
+    expect(props().intent).toBe("move");
+    await choose("m3", "copy-and-move");
+    expect(props().intent).toBe("move");
+    expect(copyProps().defaultMode).toBe("copy-and-move");
+  });
+
+  it("never lets a re-joined machine's old record be Main in the dialog", async () => {
+    const from = at(source, { root: "/source", logical: "L" });
+    const old = at(target, { id: "old", environmentId: "m3", root: "/old", logical: "L" });
+    await open(from, [old]);
+    await choose("m1");
+    expect(props().send?.mainLabel).toBe("M3");
+    state.retired = new Set(["m3"]);
+    await act(async () =>
+      root.render(
+        <ProjectMachineHandoff project={from as never} coordinatorId={"coordinator" as never} />,
+      ),
+    );
+    expect(props().send?.mainLabel).toBe("M4");
+  });
 });

@@ -3176,7 +3176,7 @@ export const es: PhraseCatalog = {
   "Run this draft on": "Ejecutar este borrador en",
   "Auto balance matching projects": "Equilibrar automáticamente los proyectos coincidentes",
   "Add to another machine…": "Añadir a otro equipo…",
-  "Copy to another machine…": "Copiar a otro equipo…",
+  "Send to another machine…": "Enviar a otro equipo…",
   "Leave this machine…": "Dejar este equipo…",
   "Another project or no project": "Otro proyecto o ninguno",
   "Rename a machine": "Renombrar un equipo",

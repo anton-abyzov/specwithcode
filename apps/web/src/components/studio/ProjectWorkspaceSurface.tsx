@@ -395,7 +395,7 @@ export function ProjectWorkspaceSurface({
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
   const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
-  // The machine menu's "Copy to another machine…": the dialog opens on the copy.
+  // The machine menu's "Send to another machine…": the dialog opens on the copy.
   const [handoffRequest, setHandoffRequest] = useState<MachineHandoffOpenRequest | null>(null);
   const requestHandoff = useCallback(
     (mode: MachineHandoffOpenRequest["mode"], target?: string) =>
@@ -2048,7 +2048,7 @@ export function ProjectWorkspaceSurface({
                       onMove={
                         mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
                       }
-                      // One Copy to another machine: its dialog asks where the coordinator runs.
+                      // One Send to another machine: its dialog offers Copy or Move.
                       onCopy={canOperate && !machinePrivate ? () => requestHandoff("copy") : null}
                     />
                     {/* After the model, at the row's end: voice and the run state are icons,

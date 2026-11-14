@@ -98,8 +98,8 @@ export function OrchestratorSwitcher({
   /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
   onMigrate?: (() => void) | null;
   /**
-   * "Copy to another machine…": the one way to bring this project to another machine. The
-   * dialog asks where the coordinator runs, so adding, moving and syncing all start here.
+   * "Send to another machine…": the one way to bring this project to another machine. The
+   * dialog offers Copy or Move, so adding, moving and syncing all start here.
    */
   onCopy?: (() => void) | null;
   /** "Leave this machine…": Away mode for everything live here. */
@@ -243,13 +243,13 @@ export function OrchestratorSwitcher({
               <MenuGroupLabel>{tx("This project")}</MenuGroupLabel>
               {onCopy ? (
                 <MenuItem
-                  data-machine-action="copy"
+                  data-machine-action="send"
                   onClick={() => {
                     pendingView.current = onCopy;
                   }}
                 >
                   <CopyPlusIcon aria-hidden />
-                  {tx("Copy to another machine…")}
+                  {tx("Send to another machine…")}
                 </MenuItem>
               ) : null}
               {movable.map((copy) => (

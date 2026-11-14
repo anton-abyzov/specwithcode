@@ -3182,7 +3182,7 @@ export const fr: PhraseCatalog = {
   "Run this draft on": "Exécuter ce brouillon sur",
   "Auto balance matching projects": "Répartir automatiquement les projets correspondants",
   "Add to another machine…": "Ajouter à une autre machine…",
-  "Copy to another machine…": "Copier vers une autre machine…",
+  "Send to another machine…": "Envoyer vers une autre machine…",
   "Leave this machine…": "Quitter cette machine…",
   "Another project or no project": "Un autre projet ou aucun projet",
   "Rename a machine": "Renommer une machine",

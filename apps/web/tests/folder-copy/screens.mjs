@@ -1,4 +1,4 @@
-// Headless screenshots of the one Copy to another machine flow (increment 1325): setup in
+// Headless screenshots of the one Send to another machine flow (increments 1325, 1326): setup in
 // light and dark, Move selected, the review with secrets listed, and the Git only screen.
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
 // Run from the repository root: node apps/web/tests/folder-copy/screens.mjs /absolute/report-dir
@@ -68,11 +68,11 @@ try {
     await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=${theme}`);
     await page.locator('[data-slot="handoff-coordinator"]').waitFor();
     const text = await page.locator('[data-slot="dialog-popup"]').textContent();
-    NodeAssert.match(text, /Copy specweave to m5/);
+    NodeAssert.match(text, /Send specweave to m5/);
     NodeAssert.match(text, /What comes along/);
     NodeAssert.match(text, /including 18 uncommitted files/);
     NodeAssert.match(text, /Secrets \(\.env, keys\): included/);
-    NodeAssert.match(text, /Where should the coordinator run\?/);
+    NodeAssert.match(text, /Copy or move/);
     NodeAssert.doesNotMatch(text, /Hand off and continue there|Copy local files/);
     // Details is kept mounted but closed: the Workspace locations rows are not on screen.
     NodeAssert.equal(
@@ -84,7 +84,7 @@ try {
   await page.getByRole("radio", { name: /Move to m5/ }).click();
   await page.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
   await shot(page, "after-setup-move");
-  await page.getByRole("radio", { name: /Keep on m4/ }).click();
+  await page.getByRole("radio", { name: /Copy to m5/ }).click();
   await page.getByRole("button", { name: "Details" }).click();
   await page.locator('[data-slot="handoff-workspace-summary"]').waitFor();
   await shot(page, "after-setup-details");
