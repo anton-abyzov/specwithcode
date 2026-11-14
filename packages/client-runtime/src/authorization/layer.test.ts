@@ -80,6 +80,20 @@ const accessToken = (token: string, scope = AuthStandardClientScopes.join(" ")) 
     scope,
   });
 
+const waitingForApproval = () =>
+  Response.json(
+    {
+      _tag: "EnvironmentAuthInvalidError",
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      refusal: "device_not_approved",
+      approvalCode: "K7QX2M",
+      teamRulesMessage: "Open SpecWithCode on m4 and type this code: K7QX2M",
+      traceId: "trace-waiting",
+    },
+    { status: 401 },
+  );
+
 const authInvalid = () =>
   Response.json(
     {
@@ -648,6 +662,50 @@ describe("RemoteEnvironmentAuthorization", () => {
         }),
       );
       expect(harness.fetch.calls).toHaveLength(4);
+    }),
+  );
+
+  it.effect("keeps a waiting device's token and retries with it instead of minting a new one", () =>
+    Effect.gen(function* () {
+      const cached = new TokenStore.RemoteDpopAccessToken({
+        environmentId: ENVIRONMENT_ID,
+        accountId: "account-1",
+        label: DESCRIPTOR.label,
+        endpoint: ENDPOINT,
+        accessToken: "waiting-access-token",
+        expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        dpopThumbprint: "thumbprint-1",
+      });
+      const harness = yield* makeHarness({
+        initialToken: cached,
+        responses: [waitingForApproval(), waitingForApproval(), websocketTicket("approved-ticket")],
+      });
+      const authorize = Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+      });
+
+      const run = Effect.gen(function* () {
+        // Two retries while the owner has not typed the code yet.
+        for (let attempt = 0; attempt < 2; attempt++)
+          expect(yield* Effect.flip(authorize)).toMatchObject({
+            _tag: "ConnectionTransientError",
+            deviceApprovalCode: "K7QX2M",
+          });
+        // Approved: the same token gets a ticket.
+        return yield* authorize;
+      }).pipe(Effect.provide(harness.layer));
+      const authorized = yield* run;
+
+      expect(authorized.socketUrl).toContain("wsTicket=approved-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/oauth/token")),
+      ).toHaveLength(0);
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toEqual(
+        expect.objectContaining({ accessToken: "waiting-access-token" }),
+      );
+      expect(harness.fetch.calls).toHaveLength(3);
     }),
   );
 
