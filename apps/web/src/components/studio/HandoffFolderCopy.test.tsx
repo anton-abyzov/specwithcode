@@ -1662,7 +1662,9 @@ it("copies into an empty destination in one click without a preview", async () =
   expect(container.querySelector('[data-slot="copy-working"]')?.textContent).toBe(
     "Starting to send to M3…",
   );
-  expect(container.textContent).toContain("You can close this window. We’ll notify you when it’s done.");
+  expect(container.textContent).toContain(
+    "You can close this window. We’ll notify you when it’s done.",
+  );
   expect(stepState()).toEqual(["Where:done", "Copy:current", "Done:next"]);
   await act(async () => finishApprove());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -1973,9 +1975,9 @@ it("keeps the preview while repository clicks re-compare once", async () => {
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   const checkbox = (label: string) =>
     container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
-  const cloneApp = container.querySelector<HTMLElement>(
-    '[data-slot="copy-clone"] [data-slot="checkbox"]',
-  )!;
+  const cloneApp = container.querySelectorAll<HTMLElement>(
+    '[data-slot="copy-clone"] [role="radio"]',
+  )[1]!;
   await act(async () => cloneApp.click());
   await act(async () => checkbox("Copy repos/ec").click());
   // Shown at once, before the destination answers; the preview is not replaced.

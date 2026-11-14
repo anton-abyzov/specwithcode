@@ -35,7 +35,7 @@ export async function refreshCopyScan(
       () =>
         reject(
           new Error(
-            "Checking this scan took too long. Your saved copy and choices are unchanged. Try Measure again.",
+            "Checking this scan took too long. Your saved copy and choices are unchanged. Try Check for changes again.",
           ),
         ),
       120_000,

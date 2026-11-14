@@ -8,8 +8,8 @@ export function measuredAgo(at: number, now = Date.now()): string {
 }
 
 /**
- * One muted line under What and Review: when the folder was measured, and Measure again.
- * Measuring again is read-only: the current copy, file types and conflict choices stay.
+ * One muted line under What and Review: when the folder was measured, and Check for changes.
+ * Checking is read-only: the current copy, file types and conflict choices stay.
  */
 export function HandoffCopyScanFreshness({
   status,
@@ -29,16 +29,20 @@ export function HandoffCopyScanFreshness({
   const captured = status?.capturedAt ?? capturedAt;
   const changed = sourceChanged || status?.freshness?.current === false;
   const at = status?.scanCompletedAt;
+  // One control at a time: Check for changes (read-only) until a change is found, then
+  // Measure and compare again, which the footer holds while the source changed.
+  const compareHere = changed && !sourceChanged;
   return (
     <div className="space-y-1 text-xs text-muted-foreground" data-slot="copy-scan-freshness">
       <p className="flex flex-wrap items-center gap-x-1.5">
         <span data-slot="copy-scan-age">
           {at === undefined ? "Measured earlier" : `Measured ${measuredAgo(at)}`}
         </span>
-        <span aria-hidden>·</span>
-        <Button variant="link" size="xs" disabled={busy} onClick={onRefresh}>
-          Measure again
-        </Button>
+        {changed ? null : (
+          <Button variant="outline" size="xs" disabled={busy} onClick={onRefresh}>
+            Check for changes
+          </Button>
+        )}
       </p>
       {captured !== undefined && (
         <p data-slot="copy-captured-files">
@@ -58,7 +62,7 @@ export function HandoffCopyScanFreshness({
             : "Nothing changed since then, so your choices stay."}
         </p>
       )}
-      {(changed || captured !== undefined) && (
+      {compareHere && (
         <div className="space-y-1">
           <Button variant="outline" size="sm" disabled={busy} onClick={onCompareAgain}>
             Measure and compare again

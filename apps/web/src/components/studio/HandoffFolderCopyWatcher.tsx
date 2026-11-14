@@ -15,9 +15,13 @@ import {
   copyActivityFromStatus,
   copyActivityKey,
   copyDetailsOpener,
+  copyActivityText,
+  openCopyReview,
   setCopyActivity,
+  type CopyActivity,
 } from "../../studio/folderCopyActivity";
 import { toastManager } from "../ui/toast";
+import { notifyCopyReview } from "../../notificationConnection";
 import {
   folderCopyStorageKey,
   isFolderCopyNotFound,
@@ -73,7 +77,11 @@ function leftBehind(
 ): string | null {
   if (!summary) return null;
   const worktrees = skippedWorktreeParts(
-    groupCopyNotices({ skipped: summary.skipped, warnings: [], rootLabel: "Root" }),
+    groupCopyNotices({
+      skipped: summary.skipped,
+      warnings: [],
+      rootLabel: "Root",
+    }),
     sourceLabel,
   );
   const secrets = secretsLeftText(secretsLeft(summary.secretFiles, status.secrets), sourceLabel);
@@ -248,16 +256,52 @@ export function HandoffFolderCopyWatcher({
   readonly onDone?: () => void;
 }) {
   const REOPEN = reopenText(projectName);
-  const status = useAtomCommand(machineHandoff.copyStatus, { reportFailure: false });
-  const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
-  const offerCopy = useAtomCommand(machineHandoff.copyOffer, { reportFailure: false });
-  const start = useAtomCommand(machineHandoff.copyStart, { reportFailure: false });
-  const decide = useAtomCommand(machineHandoff.copyDecide, { reportFailure: false });
-  const approve = useAtomCommand(machineHandoff.copyApprove, { reportFailure: false });
-  const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
-  const commands = { status, sourceStatus, offerCopy, start, decide, approve, sendSecrets };
-  const latest = useRef({ commands, machineLabel, sourceLabel, onOpenDialog, onDone });
-  latest.current = { commands, machineLabel, sourceLabel, onOpenDialog, onDone };
+  const status = useAtomCommand(machineHandoff.copyStatus, {
+    reportFailure: false,
+  });
+  const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, {
+    reportFailure: false,
+  });
+  const offerCopy = useAtomCommand(machineHandoff.copyOffer, {
+    reportFailure: false,
+  });
+  const start = useAtomCommand(machineHandoff.copyStart, {
+    reportFailure: false,
+  });
+  const decide = useAtomCommand(machineHandoff.copyDecide, {
+    reportFailure: false,
+  });
+  const approve = useAtomCommand(machineHandoff.copyApprove, {
+    reportFailure: false,
+  });
+  const sendSecrets = useAtomCommand(machineHandoff.copySecrets, {
+    reportFailure: false,
+  });
+  const commands = {
+    status,
+    sourceStatus,
+    offerCopy,
+    start,
+    decide,
+    approve,
+    sendSecrets,
+  };
+  const latest = useRef({
+    commands,
+    machineLabel,
+    sourceLabel,
+    projectName,
+    onOpenDialog,
+    onDone,
+  });
+  latest.current = {
+    commands,
+    machineLabel,
+    sourceLabel,
+    projectName,
+    onOpenDialog,
+    onDone,
+  };
 
   useEffect(() => {
     const key = folderCopyStorageKey(environmentId, projectId);
@@ -444,13 +488,27 @@ export function HandoffFolderCopyWatcher({
       const approved = await approve({ environmentId: destination, input });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.
-      const current = await status({ environmentId: destination, input: { operationId } });
+      const current = await status({
+        environmentId: destination,
+        input: { operationId },
+      });
       return current._tag === "Success" && APPROVED.has(current.value.state)
         ? ("again" as const)
         : ("ask" as const);
     };
 
     /** Returns whether to keep watching. */
+    /** The activity with what is copied and from where, for the banner and Needs you. */
+    const named = (activity: CopyActivity | null): CopyActivity | null => {
+      if (!activity) return null;
+      const { projectName: project, sourceLabel: source } = latest.current;
+      return {
+        ...activity,
+        ...(project ? { project } : {}),
+        ...(source && source !== "this machine" ? { source } : {}),
+      };
+    };
+
     const check = async (saved: PendingCopy): Promise<boolean> => {
       // A cancelled copy only waits for the dialog to retell the source; never announce it.
       if (saved.cancelled) return false;
@@ -464,8 +522,7 @@ export function HandoffFolderCopyWatcher({
       const firstCheck = quiet;
       quiet = false;
       if (destination._tag === "Success") {
-        setCopyActivity(
-          activityKey,
+        const activity = named(
           copyActivityFromStatus(
             destination.value,
             machine,
@@ -474,6 +531,7 @@ export function HandoffFolderCopyWatcher({
             sourceLabel,
           ),
         );
+        setCopyActivity(activityKey, activity);
         if (!copySettled(destination.value)) return true;
         // Closed on the machine, by a person or a later finished copy: nothing to come back to.
         if (destination.value.state === "cancelled") {
@@ -485,7 +543,32 @@ export function HandoffFolderCopyWatcher({
           }
           return false;
         }
-        if (firstCheck) return false;
+        if (firstCheck) {
+          // Found waiting after a restart: nothing else says so, so the toast and a system
+          // notification do, each with a way to the review.
+          if (activity?.waiting) {
+            const review = () => openCopyReview(activityKey);
+            const title = copyActivityText(activity);
+            addWithOpen(
+              {
+                type: "success",
+                title: `${title}. Nothing is copied until you approve it.`,
+                timeout: 0,
+              },
+              review,
+              "Review",
+            );
+            notifyCopyReview({
+              tag: `folder-copy-review:${operationId}`,
+              title,
+              environmentId,
+              projectId,
+              coordinatorThreadId: `project-coordinator:${projectId}`,
+              onOpen: review,
+            });
+          }
+          return false;
+        }
         if ((saved.auto || saved.replaceAll) && destination.value.state === "previewed") {
           // A refused choice or approval waits for the person instead of retrying.
           const outcome = await settle(saved, destination.value).catch(() => "ask" as const);
@@ -503,18 +586,33 @@ export function HandoffFolderCopyWatcher({
           sourceLabel,
           open ? () => open() : null,
         );
+        if (destination.value.state === "previewed" && activity)
+          notifyCopyReview({
+            tag: `folder-copy-review:${operationId}`,
+            title: copyActivityText(activity),
+            environmentId,
+            projectId,
+            coordinatorThreadId: `project-coordinator:${projectId}`,
+            onOpen: () => openCopyReview(activityKey),
+          });
         return false;
       }
       // An unreachable destination may come back; keep watching, unless only restored.
       if (!isFolderCopyNotFound(squashAtomCommandFailure(destination))) return !firstCheck;
-      const source = await commands.sourceStatus({ environmentId, input: { operationId } });
+      const source = await commands.sourceStatus({
+        environmentId,
+        input: { operationId },
+      });
       if (stopped) return false;
       if (source._tag === "Failure") {
         const gone = isFolderCopyNotFound(squashAtomCommandFailure(source));
         if (gone) setCopyActivity(activityKey, null);
         return !gone;
       }
-      setCopyActivity(activityKey, copyActivityFromSource(source.value, machine, sourceLabel));
+      setCopyActivity(
+        activityKey,
+        named(copyActivityFromSource(source.value, machine, sourceLabel)),
+      );
       if (source.value.state === "scanning") return true;
       if (firstCheck && !saved.auto) return false;
       if (source.value.summary && source.value.state !== "failed") {

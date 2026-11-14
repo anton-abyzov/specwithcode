@@ -88,9 +88,16 @@ import {
   useOverviewKeys,
   type MachineRowView,
   type ProjectRowView,
+  CopyReviewRow,
 } from "./OverviewRows";
 import { useProviderEntriesByEnvironment } from "./shell/ModelBadge";
 import "./overview.css";
+import {
+  copyActivityText,
+  openCopyReview,
+  useCopyActivities,
+  waitingCopies,
+} from "../../studio/folderCopyActivity";
 
 type DraftRequest = {
   readonly environmentId?: string;
@@ -118,6 +125,8 @@ export function StudioOverview() {
   // its card, its chats nor offers it as a new chat's project.
   const aideEnabled = useAideEnabled();
   const allProjectGroups = useSettingsProjectGroups();
+  // Folder copies this window started that wait for a decision belong in Needs you.
+  const copyReviews = waitingCopies(useCopyActivities());
   const projectGroups = useMemo(
     () =>
       aideEnabled
@@ -373,7 +382,10 @@ export function StudioOverview() {
     scoped.filter(
       (s) => s.attention === null && !s.working && (tab === "done" ? s.settled : !s.settled),
     );
-  const recentCounts = { open: recentOf("open").length, done: recentOf("done").length };
+  const recentCounts = {
+    open: recentOf("open").length,
+    done: recentOf("done").length,
+  };
   const recent = recentOf(recentTab).filter(
     (s) =>
       !query ||
@@ -391,7 +403,9 @@ export function StudioOverview() {
       ),
   );
   const registry = useContext(RegistryContext);
-  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, {
+    reportFailure: false,
+  });
   // Checks each machine the notice names again: a disconnected one retries its
   // connection now, a connected one reads its chats again from the start.
   const recheckStaleMachines = () => {
@@ -741,7 +755,7 @@ export function StudioOverview() {
                 <SectionHeading
                   title={tx("Needs you")}
                   id="studio-attention-title"
-                  count={bootstrapped ? scopedAttention.length : undefined}
+                  count={bootstrapped ? scopedAttention.length + copyReviews.length : undefined}
                   tone="amber"
                   action={
                     scopedAttention.length > 0 ? (
@@ -765,12 +779,27 @@ export function StudioOverview() {
                       })}
                     </button>
                   ))}
+                {copyReviews.length > 0 ? (
+                  <div className="studio-list" role="group" aria-label={tx("Copies to review")}>
+                    <h3 className="studio-group-label">
+                      {tx("Copies to review")} · {copyReviews.length}
+                    </h3>
+                    {copyReviews.map(({ key, activity }) => (
+                      <CopyReviewRow
+                        key={key}
+                        title={copyActivityText(activity)}
+                        onReview={() => openCopyReview(key)}
+                      />
+                    ))}
+                  </div>
+                ) : null}
                 {!bootstrapped ? (
                   <EmptyState
                     title={tx("Reading your chats…")}
                     detail={tx("Each connected machine reports its chats.")}
                   />
-                ) : scopedAttention.length === 0 ? (
+                ) : scopedAttention.length === 0 &&
+                  copyReviews.length > 0 ? null : scopedAttention.length === 0 ? (
                   <div className="studio-list studio-clear">
                     <CheckIcon aria-hidden="true" />
                     <div>
@@ -1050,7 +1079,9 @@ export function StudioOverview() {
                             }}
                             onNewChat={() => {
                               if (!target) return;
-                              openDraftChooser({ environmentId: target.environmentId });
+                              openDraftChooser({
+                                environmentId: target.environmentId,
+                              });
                               setSelectedProject(`${target.environmentId}:${target.projectId}`);
                             }}
                           />
@@ -1066,7 +1097,9 @@ export function StudioOverview() {
                       >
                         {allProjects
                           ? tx("Show fewer")
-                          : tx("Show all {count}", { count: railProjects.length })}
+                          : tx("Show all {count}", {
+                              count: railProjects.length,
+                            })}
                       </button>
                     )}
                   </div>
@@ -1113,7 +1146,11 @@ export function StudioOverview() {
             environments={environments}
             configs={configs}
             onNewDraft={(environmentId, model, validate) =>
-              openDraftChooser({ environmentId, model, ...(validate ? { validate } : {}) })
+              openDraftChooser({
+                environmentId,
+                model,
+                ...(validate ? { validate } : {}),
+              })
             }
           />
         </div>
@@ -1135,12 +1172,22 @@ function summarizeProjects(
   }
   const stats = new Map<
     string,
-    { sessions: number; attention: number; working: number; last: string | null }
+    {
+      sessions: number;
+      attention: number;
+      working: number;
+      last: string | null;
+    }
   >();
   for (const session of sessions) {
     const key = groupByProject.get(`${session.thread.environmentId}:${session.thread.projectId}`);
     if (!key) continue;
-    const entry = stats.get(key) ?? { sessions: 0, attention: 0, working: 0, last: null };
+    const entry = stats.get(key) ?? {
+      sessions: 0,
+      attention: 0,
+      working: 0,
+      last: null,
+    };
     entry.sessions += 1;
     if (session.attention) entry.attention += 1;
     if (session.working) entry.working += 1;

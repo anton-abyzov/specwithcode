@@ -66,7 +66,10 @@ export async function sendNotificationTest(): Promise<boolean> {
       tag: NOTIFICATION_TEST_TAG,
       title: "SpecWithCode notifications",
       body: "Notifications are connected on this device.",
-      target: { environmentId: "notification-test", threadId: "notification-test" },
+      target: {
+        environmentId: "notification-test",
+        threadId: "notification-test",
+      },
     });
   }
   if (notificationAvailability() !== "granted") return false;
@@ -90,4 +93,52 @@ export function disconnectNotifications(): void {
   void window.desktopBridge
     ?.closeThreadNotification?.(NOTIFICATION_TEST_TAG)
     .catch(() => undefined);
+}
+
+/**
+ * A system notification that a folder copy waits for review, when this window is not in
+ * front and notifications are connected. A click opens the project's coordinator, where
+ * the banner holds Review; a browser notification also calls `onOpen`.
+ */
+export function notifyCopyReview(input: {
+  readonly tag: string;
+  readonly title: string;
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly coordinatorThreadId: string;
+  readonly onOpen: () => void;
+}): void {
+  if (!notificationsConnected() || document.hasFocus()) return;
+  const body = "Nothing is copied until you approve it. Open to review or cancel.";
+  const bridge = window.desktopBridge;
+  if (bridge?.showThreadNotification) {
+    void bridge
+      .showThreadNotification({
+        tag: input.tag,
+        title: input.title,
+        body,
+        target: {
+          environmentId: input.environmentId,
+          threadId: input.coordinatorThreadId,
+          projectId: input.projectId,
+        },
+      })
+      .catch(() => false);
+    return;
+  }
+  if (notificationAvailability() !== "granted") return;
+  try {
+    const notification = new Notification(input.title, {
+      body,
+      tag: input.tag,
+      silent: true,
+    });
+    notification.addEventListener("click", () => {
+      notification.close();
+      window.focus();
+      input.onOpen();
+    });
+  } catch {
+    /* The toast in the window still says it. */
+  }
 }

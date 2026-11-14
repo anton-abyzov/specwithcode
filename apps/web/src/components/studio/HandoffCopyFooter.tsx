@@ -283,7 +283,7 @@ export function HandoffCopyFooter({
             <TooltipTrigger
               render={
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   data-leading
                   aria-description="Stops this copy and goes back"
                   disabled={busy}

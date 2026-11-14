@@ -233,7 +233,9 @@ export function ProjectRow({
             aria-label={
               personal
                 ? tx("New topic in {title}", { title: card.group.displayName })
-                : tx("New chat in {project}", { project: card.group.displayName })
+                : tx("New chat in {project}", {
+                    project: card.group.displayName,
+                  })
             }
             onClick={onNewChat}
           >
@@ -305,7 +307,9 @@ export function MachineRow({
         <Link
           to="/settings/connections"
           className="studio-icon-button"
-          aria-label={tx("Connection settings for {machine}", { machine: machine.label })}
+          aria-label={tx("Connection settings for {machine}", {
+            machine: machine.label,
+          })}
         >
           <SettingsIcon aria-hidden="true" />
         </Link>
@@ -370,4 +374,31 @@ export function useOverviewKeys(
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [root, onNewChat, onFilter]);
+}
+
+/** A folder copy waiting for review: Review opens it, as the project's banner does. */
+export function CopyReviewRow({
+  title,
+  onReview,
+}: {
+  readonly title: string;
+  readonly onReview: () => void;
+}) {
+  const tx = useTx();
+  return (
+    <button
+      type="button"
+      className="studio-row studio-session-item studio-attention-item"
+      data-overview-row
+      onClick={onReview}
+    >
+      <span className="studio-state-dot amber" aria-hidden="true" />
+      <span className="studio-row-main">
+        <span className="studio-row-title">{title}</span>
+        <span className="studio-row-meta">{tx("Nothing is copied until you approve it.")}</span>
+      </span>
+      <span className="studio-pill amber">{tx("Review")}</span>
+      <span />
+    </button>
+  );
 }
