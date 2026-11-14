@@ -152,7 +152,35 @@ const NoticeRecord = Schema.Struct({
   id: Schema.String,
   at: Schema.String,
   message: Schema.String,
+  /** Who approved: their device key, or OWNER_NOTICE_KEY for this machine's own app. */
+  by: Schema.optionalKey(Schema.String),
+  /** The device that was approved. */
+  device: Schema.optionalKey(Schema.String),
 });
+
+/** Stands for this machine's own app as the approver of a notice. */
+export const OWNER_NOTICE_KEY = "owner";
+
+/**
+ * The notices one caller should see: not the approvals it made itself, not the
+ * one that let it in, and none from before it was let in (1327). `callerKey` is
+ * null for this machine's own app, which sees every other approval.
+ */
+export const noticesFor = (
+  snapshot: Pick<TrustSnapshot, "notices" | "devices">,
+  callerKey: string | null,
+): ReadonlyArray<{ readonly id: string; readonly at: string; readonly message: string }> => {
+  const caller = callerKey ?? OWNER_NOTICE_KEY;
+  const joined = snapshot.devices.find((device) => device.key === callerKey)?.approvedAt;
+  return snapshot.notices
+    .filter(
+      (notice) =>
+        notice.by !== caller &&
+        notice.device !== caller &&
+        (joined === undefined || Date.parse(notice.at) > Date.parse(joined)),
+    )
+    .map(({ id, at, message }) => ({ id, at, message }));
+};
 
 /** A credential minted from a device's session; valid while that approval stands. */
 const BoundRecord = Schema.Struct({
@@ -222,6 +250,8 @@ export interface TrustSnapshot {
     readonly id: string;
     readonly at: string;
     readonly message: string;
+    readonly by?: string;
+    readonly device?: string;
   }>;
 }
 
@@ -793,6 +823,8 @@ export const makeWith = (options: MakeOptions = {}) =>
             id: random(9).toString("base64url"),
             at: isoOf(now),
             message: `New device approved on ${machineName} by ${input.approvedBy}.`,
+            by: input.approverKey ?? OWNER_NOTICE_KEY,
+            device: match.key,
           };
           return [
             { status: "approved", device },
