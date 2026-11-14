@@ -58,7 +58,7 @@ it("keeps one progress toast for a copy running with its dialog closed, then clo
   const watches = new Map([["m4:source", watch]]);
   syncCopyToasts(new Map([["m4:source", sending(0.25)]]), watches);
   expect(toasts.added).toHaveLength(1);
-  expect(toasts.added[0]!.options.title).toBe("Copy to m5: sending files to m5, 25%");
+  expect(toasts.added[0]!.options.title).toBe("Copy to m5: 41% done");
   // Send is the second of three phases: the toast's bar shows the whole copy.
   expect(toasts.added[0]!.options.data?.progress).toBeCloseTo((1 + 0.25) / 3);
   syncCopyToasts(new Map([["m4:source", sending(0.5)]]), watches);
@@ -77,4 +77,35 @@ it("shows no toast while the dialog follows the copy, or while it waits for revi
     new Map([["m4:source", watch]]),
   );
   expect(toasts.added).toHaveLength(0);
+});
+
+it("says what is left and, once the speed steadies, about how long", () => {
+  const watches = new Map([["m4:source", watch]]);
+  syncCopyToasts(new Map([["m4:source", sending(0.25)]]), watches, 0);
+  expect(toasts.added[0]!.options).toMatchObject({
+    description: "Sending files to m5. 6.0 GB and 3,000 files left.",
+    timeout: 0,
+  });
+  // 400 MB in 4 s is 100 MB/s; 5.6 GB left is about 56 s, rounded to 60 s.
+  syncCopyToasts(new Map([["m4:source", sending(0.3)]]), watches, 4_000);
+  expect(toasts.updated.at(-1)!.options).toMatchObject({
+    description: "Sending files to m5. 5.6 GB and 2,800 files left, about 1 min 00 s left.",
+  });
+});
+
+it("says only the step while the totals are not known yet", () => {
+  const measuring: CopyActivity = {
+    ...sending(0),
+    progress: {
+      ...sending(0).progress!,
+      phase: "measure",
+      step: "Measuring on m4",
+      fraction: null,
+      bytes: null,
+      files: null,
+      rateKey: null,
+    },
+  };
+  syncCopyToasts(new Map([["m4:source", measuring]]), new Map([["m4:source", watch]]));
+  expect(toasts.added[0]!.options).toMatchObject({ description: "Measuring on m4." });
 });

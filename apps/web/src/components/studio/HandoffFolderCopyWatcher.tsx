@@ -83,7 +83,38 @@ function leftBehind(
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
-function announceCopy(
+/** The failure's own words, short enough for a toast; the dialog shows the rest. */
+export function failureReason(message: string | null | undefined): string | null {
+  const text = message?.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const sentence = text.length > 180 ? `${text.slice(0, 177).trimEnd()}...` : text;
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+/** Adds a toast with an Open button that closes it and opens the copy's dialog. */
+function addWithOpen(
+  options: Parameters<typeof toastManager.add>[0],
+  openDialog: (() => void) | null,
+  label = "Open",
+) {
+  const id: string = toastManager.add({
+    ...options,
+    ...(openDialog
+      ? {
+          actionProps: {
+            children: label,
+            onClick: () => {
+              toastManager.close(id);
+              openDialog();
+            },
+          },
+        }
+      : {}),
+  });
+  return id;
+}
+
+export function announceCopy(
   REOPEN: string,
   status: FolderCopyStatus,
   machine: string,
@@ -91,50 +122,81 @@ function announceCopy(
   sourceLabel: string,
   openDialog: (() => void) | null,
 ) {
+  const reopen = (what: string) => (openDialog ? `Open it to ${what}.` : `${REOPEN} to ${what}.`);
   if (status.state === "previewed") {
     const count = replacingCount(status);
     const replaced =
       count !== null && count > 0
         ? `${count.toLocaleString()} ${count === 1 ? "file" : "files"}`
         : replacementText(status.rows);
-    toastManager.add({
-      type: "success",
-      title: replaced
-        ? `Copy to ${machine} would replace ${replaced}. ${REOPEN} to review.`
-        : `Copy to ${machine} is ready to review.`,
-    });
+    addWithOpen(
+      {
+        type: "success",
+        title: replaced
+          ? `Copy to ${machine} would replace ${replaced}.${openDialog ? "" : ` ${REOPEN} to review.`}`
+          : `Copy to ${machine} is ready to review.`,
+        timeout: 0,
+      },
+      openDialog,
+      "Review",
+    );
   } else if (status.state === "applied" && copyProblem(status, sourceLabel)) {
     // Files changed while copying or a check failed: not a success; copying again fixes it.
-    const id = toastManager.add({
-      type: "warning",
-      title: `Copy to ${machine} finished, but ${copyProblem(status, sourceLabel)}.`,
-      description: openDialog
-        ? "Open it to see what differs and copy again."
-        : `${REOPEN} to see what differs and copy again.`,
-      ...(openDialog
-        ? {
-            actionProps: {
-              children: "Open",
-              onClick: () => {
-                toastManager.close(id);
-                openDialog();
-              },
-            },
-          }
-        : {}),
-    });
+    addWithOpen(
+      {
+        type: "warning",
+        title: `Copy to ${machine} finished, but ${copyProblem(status, sourceLabel)}.`,
+        description: reopen("see what differs and copy again"),
+        timeout: 0,
+      },
+      openDialog,
+    );
   } else if (status.state === "applied") {
     const left = leftBehind(status, summary, sourceLabel);
-    toastManager.add({
-      type: "success",
-      title:
-        status.mode === "copy-and-move"
-          ? `Files are copied to ${machine}. ${REOPEN} to move the coordinator.`
-          : `Copy to ${machine} is done. ${REOPEN} to finish setting it up.`,
-      ...(left ? { description: left } : {}),
-    });
-  } else if (status.state === "failed")
-    toastManager.add({ type: "error", title: `Copy to ${machine} stopped. ${REOPEN} to retry.` });
+    addWithOpen(
+      {
+        type: "success",
+        // With an Open button the title names only what happened; the button says how to go on.
+        title: openDialog
+          ? status.mode === "copy-and-move"
+            ? `Files are copied to ${machine}`
+            : `Copy to ${machine} is done`
+          : status.mode === "copy-and-move"
+            ? `Files are copied to ${machine}. ${REOPEN} to move the coordinator.`
+            : `Copy to ${machine} is done. ${REOPEN} to finish setting it up.`,
+        ...(openDialog || left
+          ? {
+              description: [
+                left,
+                openDialog
+                  ? status.mode === "copy-and-move"
+                    ? "Open it to move the coordinator."
+                    : "Open it to finish setting it up."
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" "),
+            }
+          : {}),
+      },
+      openDialog,
+    );
+  } else if (status.state === "failed") {
+    // A failure stays until dismissed: it names why and how to go on.
+    const reason = failureReason(status.error?.message);
+    addWithOpen(
+      {
+        type: "error",
+        title: `Copy to ${machine} stopped`,
+        description: [reason, reopen("retry; files already copied are kept")]
+          .filter(Boolean)
+          .join(" "),
+        timeout: 0,
+      },
+      openDialog,
+      "Retry",
+    );
+  }
 }
 
 const writePointer = (key: string, value: PendingCopy) => {
@@ -459,6 +521,7 @@ export function HandoffFolderCopyWatcher({
             toastManager.add({
               type: "error",
               title: `Copy to ${machine} could not start. ${REOPEN} to see why.`,
+              timeout: 0,
             });
             return false;
           }
@@ -470,7 +533,11 @@ export function HandoffFolderCopyWatcher({
       } else if (source.value.state === "failed")
         toastManager.add({
           type: "error",
-          title: `Measuring the folder stopped. ${REOPEN} to see why.`,
+          title: "Measuring the folder stopped",
+          description: [failureReason(source.value.error), `${REOPEN} to try again.`]
+            .filter(Boolean)
+            .join(" "),
+          timeout: 0,
         });
       return false;
     };

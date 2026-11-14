@@ -539,9 +539,17 @@ function ThreadToastVisibleAutoDismiss({
   return null;
 }
 
-function ToastProvider({ children, position = "top-right", ...props }: ToastProviderProps) {
+/** Long enough to read a two-line toast; progress and failures pass 0 and stay until closed. */
+export const DEFAULT_TOAST_TIMEOUT_MS = 10_000;
+
+function ToastProvider({
+  children,
+  position = "top-right",
+  timeout = DEFAULT_TOAST_TIMEOUT_MS,
+  ...props
+}: ToastProviderProps) {
   return (
-    <Toast.Provider toastManager={toastManager} {...props}>
+    <Toast.Provider toastManager={toastManager} timeout={timeout} {...props}>
       {children}
       <Toasts position={position} />
     </Toast.Provider>
