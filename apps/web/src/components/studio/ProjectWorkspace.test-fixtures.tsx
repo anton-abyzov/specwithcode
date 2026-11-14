@@ -235,6 +235,10 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map(),
 }));
 const noUnreachableEnvironments = vi.hoisted(() => new Set<string>());
+// Retired machine records come from Connect and the fleet; none in these fixtures.
+vi.mock("../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => new Map(),
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     isReady: true,

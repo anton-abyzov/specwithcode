@@ -103,6 +103,7 @@ import { sharedProjectBadge } from "../../../studio/linkedMachines";
 import type { ArrangedProjects, ProjectDropTarget } from "../../../studio/projectOrder";
 import { isScratchMember, type ScratchRootLookup } from "../../../studio/projectListVisibility";
 import { Tip } from "./Tip";
+import { useRetiredMachineRecords } from "../../settings/useReplacedMachineRecords";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
 import type { ProjectNameCheck } from "../../../studio/projectRename";
 import {
@@ -215,6 +216,8 @@ export function SidebarProjectList(props: {
     | ((group: SidebarProjectSnapshot, level: ProjectNotificationLevel) => void)
     | undefined;
 }) {
+  // Read once for the list: the same retired records Settings and the project menu use.
+  const retired = useRetiredMachineRecords();
   const tx = useTx();
   // A move's destination joins the project only when the move finishes; until then it is
   // the same project mid-move, shown once on its source row.
@@ -372,6 +375,7 @@ export function SidebarProjectList(props: {
     <ProjectRow
       key={group.projectKey}
       group={group}
+      retired={retired}
       {...props.rowState(group)}
       sortable
       pinned={pinned}
@@ -536,6 +540,8 @@ function CopyProgressLine({ activity }: { readonly activity: CopyActivity }) {
 
 export function ProjectRow(props: {
   group: SidebarProjectSnapshot;
+  /** Old records of machines that joined again; they never lead in the copies line. */
+  retired?: ReadonlyMap<string, string>;
   displayedProject: SidebarProjectGroupMember | undefined;
   archived: boolean;
   /** Absent in the archived list, which keeps no order. */
@@ -611,8 +617,10 @@ export function ProjectRow(props: {
   const displayName = displayNameOf(group, props.displayedProject);
   const personal = isPersonalGroup(group);
   const nickname = useMachineNicknames();
-  const copies = copyRolesSummary(group.memberProjects, (member) =>
-    nickname(member.environmentId, member.environmentLabel),
+  const copies = copyRolesSummary(
+    group.memberProjects,
+    (member) => nickname(member.environmentId, member.environmentLabel),
+    props.retired,
   );
   // A project shared with or handed off from another machine wears a badge.
   const shared = personal

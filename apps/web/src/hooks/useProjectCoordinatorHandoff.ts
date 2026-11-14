@@ -49,7 +49,7 @@ export function projectCoordinatorHandoffText(
 ): string {
   return [
     copy
-      ? `This request is for the copy on ${copy.machine}, in ${copy.folder}. That copy runs workers only. Delegate the work to a worker there.`
+      ? `This request is for the copy on ${copy.machine}, in ${copy.folder}. That copy is not Main: its work starts here. Delegate the work to a worker there.`
       : null,
     task.prompt?.trim(),
     task.url ? `Pull request: ${task.url}` : null,

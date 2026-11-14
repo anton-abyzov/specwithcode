@@ -140,7 +140,8 @@ vi.mock("../../studio/machineIdentity", () => {
   return {
     machineColorProps: (value: { color: string } | null | undefined) =>
       value ? { "data-machine-color": value.color } : {},
-    useMachineIdentity: (id: string | null, name?: string | null) => (id ? identity(id, name) : null),
+    useMachineIdentity: (id: string | null, name?: string | null) =>
+      id ? identity(id, name) : null,
     useMachineIdentities: () => identity,
     useKnownMachineIdentities: () => [],
   };
@@ -450,7 +451,8 @@ describe("Settings > Machines", () => {
     expect(html).toContain('data-slot="machine-work-summary"');
     expect(html).toContain(">Auto<");
     expect(html).toContain("EasyChamp");
-    expect(html).toContain("Workers only");
+    expect(html).toContain("<span>Copy");
+    expect(html).not.toContain("orkers only");
     // The row keeps the folder short; the button says it in full.
     expect(html).toContain("~/easychamp");
     expect(html).toContain(

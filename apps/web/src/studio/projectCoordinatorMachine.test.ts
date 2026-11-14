@@ -227,14 +227,12 @@ describe("a workers-only copy whose coordinator is on another machine", () => {
 
   it("keeps the history wording only for a copy that had a conversation", () => {
     const fresh = workersOnlyProblem("Anton's MacBook", false);
-    expect(fresh).toBe(
-      "This copy runs workers only. Its coordinator is on Anton's MacBook. Start work for this copy from there.",
-    );
+    expect(fresh).toBe("Work starts on Anton's MacBook. This copy takes work from there.");
     expect(fresh).not.toContain("history");
     expect(workersOnlyProblem("Anton's MacBook", true)).toBe(
-      "This project now runs on Anton's MacBook. The conversation here is kept as history. Start work for this copy from Anton's MacBook.",
+      "Work starts on Anton's MacBook. This copy takes work from there. The conversation here is kept as history.",
     );
-    expect(workersOnlyProblem(null, false)).toContain("Its coordinator is on another machine.");
+    expect(workersOnlyProblem(null, false)).toContain("Work starts on another machine.");
   });
 });
 
@@ -389,5 +387,19 @@ describe("heldCheckoutKey", () => {
     expect(heldCheckoutKey(held, "logical:two", [source, destination])).toBeNull();
     expect(heldCheckoutKey(null, "logical:one", [source, destination])).toBeNull();
     expect(heldCheckoutKey(held, "logical:one", [destination])).toBeNull();
+  });
+});
+
+describe("roles with a machine that joined again", () => {
+  it("never lets the old record of a re-joined machine be Main in the menu", () => {
+    // m1's old record kept a higher epoch; m1 joined again as a new machine.
+    const old = linked("env-m1-old", "proj-old", "active", 9);
+    const current = linked("env-m4", "proj-a", "active", 3);
+    const name = (member: EnvironmentProject) => member.environmentId;
+    const without = orchestratorCopies([old, current], name, () => true);
+    expect(without.find((copy) => copy.main)?.key).toBe("env-m1-old:proj-old");
+    const retired = new Map([["env-m1-old", "env-m1"]]);
+    const copies = orchestratorCopies([old, current], name, () => true, retired);
+    expect(copies.find((copy) => copy.main)?.key).toBe("env-m4:proj-a");
   });
 });
