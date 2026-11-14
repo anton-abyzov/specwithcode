@@ -127,6 +127,18 @@ export function OrchestratorSwitcher({
   // left is hidden under an Activity, and a menu hidden mid-close stays mounted
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
+  // Open shows the started copy only while this switcher still shows the copy it was
+  // clicked on: a start that settles after the person viewed another copy or left the
+  // project never pulls them back.
+  const shown = useRef({ mounted: true, current });
+  shown.current.current = current;
+  useEffect(() => {
+    const state = shown.current;
+    state.mounted = true;
+    return () => {
+      state.mounted = false;
+    };
+  }, []);
   const tx = useTx();
   const runsOn = tx("Runs on {machine}", { machine: label });
   // The chip names the machine and shows its state by the dot alone: while it is not
@@ -285,9 +297,12 @@ export function OrchestratorSwitcher({
                       { machine: nameOf(copy) },
                     )}
                     onClick={() => {
+                      const from = current;
                       const opened = onStart?.(copy.key);
                       void Promise.resolve(opened).then((ok) => {
-                        if (ok && onView) onView(copy.key);
+                        const state = shown.current;
+                        if (ok && onView && state.mounted && state.current === from)
+                          onView(copy.key);
                       });
                     }}
                   >

@@ -134,6 +134,29 @@ it("stays on this machine when that coordinator did not start", async () => {
   expect(calls.onView).not.toHaveBeenCalled();
 });
 
+it("never pulls the page back when the start settles after the view changed", async () => {
+  const calls = handlers();
+  let finish!: (ok: boolean) => void;
+  calls.onStart.mockReturnValue(new Promise<boolean>((resolve) => (finish = resolve)));
+  await renderSwitcher(calls);
+  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
+  // The person views another copy before the start settles.
+  await renderSwitcher({ ...calls, current: "minis:p" });
+  await act(async () => finish(true));
+  expect(calls.onView).not.toHaveBeenCalled();
+});
+
+it("never switches the view once the switcher has left the page", async () => {
+  const calls = handlers();
+  let finish!: (ok: boolean) => void;
+  calls.onStart.mockReturnValue(new Promise<boolean>((resolve) => (finish = resolve)));
+  await renderSwitcher(calls);
+  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
+  await act(async () => root.render(<></>));
+  await act(async () => finish(true));
+  expect(calls.onView).not.toHaveBeenCalled();
+});
+
 it("offers nothing for a machine that already runs its own coordinator, but lists it to view", async () => {
   const calls = handlers();
   await renderSwitcher({
