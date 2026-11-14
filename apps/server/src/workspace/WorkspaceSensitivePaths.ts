@@ -339,6 +339,21 @@ const STACK_SECRET_FILE = new RegExp(
     String.raw`terraform\.tfstate(?:\.backup)?`,
     String.raw`kubeconfig(?:\..+)?`,
     String.raw`(?:service[-_]?account|client[-_]?secret|credentials?)(?:[-_.].+)?\.json`,
+    // Firebase and Google service-account keys as downloaded: serviceAccountKey.json, <project>-firebase-adminsdk-<id>.json.
+    String.raw`service[-_]?account.*\.json`,
+    String.raw`.+-firebase-adminsdk-.+\.json`,
+    // Package registries: Yarn auth tokens, pip index credentials, Maven master password.
+    String.raw`\.yarnrc(?:\.ya?ml)?`,
+    String.raw`pip\.(?:conf|ini)`,
+    String.raw`settings-security\.xml`,
+    // Terraform CLI credentials, Sentry auth token, WordPress database password, Ansible vault passwords.
+    String.raw`\.terraformrc|terraform\.rc`,
+    String.raw`\.sentryclirc`,
+    String.raw`wp-config\.php`,
+    String.raw`\.?vault[-_.]?pass(?:word)?(?:\.txt)?`,
+    // Apple signing and Xcode secret settings, PuTTY keys, KeePass databases, VPN profiles with embedded keys.
+    String.raw`.+\.(?:mobileprovision|provisionprofile|ppk|kdbx|ovpn)`,
+    String.raw`secrets?\.xcconfig|.+\.secrets?\.xcconfig`,
     // Generic secret stores and password files.
     String.raw`\.secrets?`,
     String.raw`.+\.secrets?`,
@@ -378,6 +393,22 @@ export function isSecretLikeProjectPath(relativePath: string): boolean {
 }
 
 /**
+ * Config files whose name alone is too common (`config`, `config.py`), so the
+ * folder above them decides: Bundler gem-server credentials, Flask instance
+ * config, Django local settings, Rails database and Figaro settings, RubyGems
+ * and Maven credentials kept in a project folder. Untracked files only.
+ */
+const STACK_SECRET_PATHS = [
+  ".bundle/config",
+  "instance/config.py",
+  "settings/local.py",
+  "config/database.yml",
+  "config/application.yml",
+  ".gem/credentials",
+  ".m2/settings.xml",
+] as const;
+
+/**
  * True for a per-stack config file that usually holds secrets when Git does not
  * track it: .NET `appsettings*.json` and `secrets.json`, Azure Functions
  * `local.settings.json`, Spring profile overrides, `gradle.properties` and signing
@@ -386,7 +417,9 @@ export function isSecretLikeProjectPath(relativePath: string): boolean {
  * to untracked or ignored files: a tracked `appsettings.json` is ordinary work.
  */
 export function isUntrackedSecretConfigPath(relativePath: string): boolean {
-  return STACK_SECRET_FILE.test(relativePath.split("/").at(-1) ?? "");
+  if (STACK_SECRET_FILE.test(relativePath.split("/").at(-1) ?? "")) return true;
+  const key = relativePath.toLowerCase();
+  return STACK_SECRET_PATHS.some((listed) => key === listed || key.endsWith(`/${listed}`));
 }
 
 /**

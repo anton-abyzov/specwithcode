@@ -1007,7 +1007,9 @@ export class SourceTransfers {
       if (
         entry.class !== "tracked" &&
         entry.class !== "repository" &&
-        isSecretLikeProjectPath(entry.path)
+        isSecretLikeProjectPath(entry.path) &&
+        // The scan reads a `.envrc` and keeps one that holds no values as an ordinary file.
+        entry.path.split("/").at(-1) !== ".envrc"
       )
         throw new SourceTransferError(
           409,
@@ -1326,6 +1328,9 @@ export class SourceTransfers {
       entries: scan.entries,
       patterns: record.secretPatterns,
       home: this.secretRoots(record).home,
+      submodules: scan.repositories
+        .filter((repository) => repository.kind === "gitfile")
+        .map((repository) => repository.path),
     });
   }
 
