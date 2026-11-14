@@ -414,11 +414,15 @@ function ownFrontMatter(text: string): { readonly lines: string[]; readonly body
   return { lines, body: text.slice(match[0].length).trim() };
 }
 
-/** macOS 11 and later: the open fails when any component of the path is a link. */
+/**
+ * macOS 11 and later: the open fails when any component of the path, the
+ * last one too, is a link. It replaces O_NOFOLLOW there: macOS refuses the
+ * two together with EINVAL.
+ */
 const O_NOFOLLOW_ANY = 0x2000_0000;
 /** Windows has no O_NOFOLLOW; the checks around the open cover it there. */
 const NO_FOLLOW =
-  (NodeFS.constants.O_NOFOLLOW ?? 0) | (process.platform === "darwin" ? O_NOFOLLOW_ANY : 0);
+  process.platform === "darwin" ? O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0);
 
 function leadsOutside(relativePath: string): ProjectLibraryProblem {
   return new ProjectLibraryProblem("invalid", `${relativePath} leads outside the project.`);
