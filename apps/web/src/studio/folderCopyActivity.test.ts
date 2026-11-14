@@ -4,11 +4,13 @@ import {
   copyActivityFromSource,
   copyActivityFromStatus,
   copyActivityText,
+  copyDetailsOpener,
   copyOpener,
   currentCopyActivities,
   isMovingDestination,
   moveDestination,
   withoutMovingDestinations,
+  registerCopyNavigator,
   registerCopyOpener,
   requestCopyReview,
   resetCopyActivityForTests,
@@ -257,4 +259,19 @@ it("does not open a review for another project's dialog", async () => {
   });
   await Promise.resolve();
   expect(opened).toBe(0);
+});
+
+it("opens a copy's details from another project: its page first, then its dialog", async () => {
+  expect(copyDetailsOpener("env:project")).toBeNull();
+  const steps: string[] = [];
+  registerCopyNavigator("env:project", () => steps.push("navigate"));
+  copyDetailsOpener("env:project")!();
+  expect(steps).toEqual(["navigate"]);
+  // The page mounts its dialog, which then opens.
+  registerCopyOpener("env:project", () => steps.push("open"));
+  await Promise.resolve();
+  expect(steps).toEqual(["navigate", "open"]);
+  // On the page already: the dialog opens without navigating.
+  copyDetailsOpener("env:project")!();
+  expect(steps).toEqual(["navigate", "open", "open"]);
 });

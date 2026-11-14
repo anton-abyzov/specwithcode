@@ -5,6 +5,14 @@ import type {
   MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
 import { formatBytes } from "../../studio/folderCopy";
+import {
+  comparingProgressView,
+  movingProgressView,
+  sourceProgressView,
+  startingSendView,
+  statusProgressView,
+  type CopyProgressView,
+} from "../../studio/copyProgress";
 import type { ReplaceAllOutcome } from "./handoffFolderCopyPending";
 import { DestinationContextPreviewError, messageOf } from "./useCoordinatorTransfer";
 
@@ -108,6 +116,56 @@ export function workingLine(input: {
     default:
       return null;
   }
+}
+
+/**
+ * The progress panel's view while the dialog works: the source measuring and reading,
+ * the destination comparing, sending and applying, then the coordinator starting there.
+ */
+export function workingView(input: {
+  readonly stage: CopyStage;
+  readonly sourceLabel: string;
+  readonly targetLabel: string;
+  readonly measured: FolderCopySourceStatus["progress"];
+  readonly copy: FolderCopyStatus | null;
+  readonly recompare?: CopyRecompare;
+}): CopyProgressView | null {
+  const { stage, sourceLabel, targetLabel, measured, copy } = input;
+  switch (stage) {
+    case "scanning":
+      return sourceProgressView(measured, sourceLabel);
+    case "planning":
+      // The source reads the chosen files while the destination waits to compare them.
+      if (measured?.step && measured.step !== "listing")
+        return sourceProgressView(measured, sourceLabel);
+    {
+      const fromCopy = copy ? statusProgressView(copy, sourceLabel, targetLabel) : null;
+      // Comparing says why it compares again; later steps speak for themselves.
+      return fromCopy && fromCopy.phase !== "measure"
+        ? fromCopy
+        : comparingProgressView(targetLabel, recompareStep(input.recompare ?? null));
+    }
+    case "copying":
+      // Approving: the destination still reads as previewed until it starts.
+      return (
+        (copy && statusProgressView(copy, sourceLabel, targetLabel)) ??
+        startingSendView(targetLabel)
+      );
+    case "moving":
+      return movingProgressView(targetLabel);
+    default:
+      return null;
+  }
+}
+
+/** What a re-compare does, as the panel's step; null for the first compare. */
+function recompareStep(recompare: CopyRecompare): string | null {
+  if (recompare === "choices") return "Comparing again with your choices";
+  if (recompare === "replace-all")
+    return "Comparing again, then copying with every conflict replaced";
+  if (recompare === "replace-kept")
+    return "Comparing again, then copying with your choices kept and the rest replaced";
+  return null;
 }
 
 /** "Measuring… 1,204 files, 3 MB" while listing; the source's own step once it moves on. */

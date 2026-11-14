@@ -63,6 +63,7 @@ import {
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 import { createApplicationActiveGate } from "./applicationActiveGate";
+import { onConnectionRetryRequest } from "./retryRequests";
 
 let nextObservedRpcRequestId = 0;
 
@@ -186,12 +187,19 @@ export const layerWakeups = Wakeups.layer({
             };
             document.addEventListener("visibilitychange", listener);
             window.addEventListener("focus", focus);
-            return { listener, focus };
+            // A page showing a machine offline asks for a retry while the window stays put.
+            const stopRequests = onConnectionRetryRequest(() => {
+              if (document.visibilityState === "visible" && gate.hinted()) {
+                Queue.offerUnsafe(queue, "retry-hint");
+              }
+            });
+            return { listener, focus, stopRequests };
           }),
-          ({ listener, focus }) =>
+          ({ listener, focus, stopRequests }) =>
             Effect.sync(() => {
               document.removeEventListener("visibilitychange", listener);
               window.removeEventListener("focus", focus);
+              stopRequests();
             }),
         ).pipe(Effect.asVoid),
       ),

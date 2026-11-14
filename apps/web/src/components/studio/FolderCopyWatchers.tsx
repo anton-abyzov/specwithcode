@@ -2,7 +2,13 @@ import { useEffect } from "react";
 import { logicalProjectTitle, type EnvironmentId } from "@specweave-studio/contracts";
 import { useProjects } from "../../state/entities";
 import { useNamedEnvironments } from "../settings/useNamedEnvironments";
-import { unwatchCopy, useCopyWatches, watchCopy } from "../../studio/folderCopyActivity";
+import {
+  unwatchCopy,
+  useCopyActivities,
+  useCopyWatches,
+  watchCopy,
+} from "../../studio/folderCopyActivity";
+import { syncCopyToasts } from "./folderCopyToasts";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 import { readPendingCopy } from "./handoffFolderCopyPending";
 
@@ -35,6 +41,9 @@ function pendingPointers(): ReadonlyArray<{ environmentId: string; projectId: st
  */
 export function FolderCopyWatchers() {
   const watches = useCopyWatches();
+  const activities = useCopyActivities();
+  // A copy running with its dialog closed keeps a progress toast, like an update does.
+  useEffect(() => syncCopyToasts(activities, watches), [activities, watches]);
   const { environments } = useNamedEnvironments();
   const projects = useProjects();
   // A restored watch has no dialog's name for its project; the project list has it.

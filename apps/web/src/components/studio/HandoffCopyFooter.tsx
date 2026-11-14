@@ -55,6 +55,19 @@ function SetupActions({
   );
 }
 
+/**
+ * Closes the dialog while the machines keep working: the copy runs on the source and the
+ * destination, and a progress toast, the sidebar row and the project banner follow it.
+ */
+function RunInBackgroundButton() {
+  const close = useProjectMoveDialog()?.close ?? null;
+  return close ? (
+    <Button variant="outline" data-slot="copy-run-in-background" onClick={close}>
+      Run in background
+    </Button>
+  ) : null;
+}
+
 /** The leading ghost while a copy works or waits: stops it before anything is applied. */
 function StopCopyButton({
   disabled,
@@ -203,6 +216,9 @@ export function HandoffCopyFooter({
       )}
       {stage === "scanning" && (
         <StopCopyButton disabled={false} move={mode === "copy-and-move"} onStop={onCancelMeasure} />
+      )}
+      {(stage === "scanning" || stage === "planning" || stage === "copying") && (
+        <RunInBackgroundButton />
       )}
       {stage === "setup" &&
         (pending ? (

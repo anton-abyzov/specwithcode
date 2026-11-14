@@ -3709,7 +3709,19 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   width: 0;
   border-radius: inherit;
   background: var(--primary);
-  transition: width 400ms ease;
+  transition: width 600ms var(--ease-out-quint);
+}
+/* The row's line shows the copy's three phases, as the dialog, banner and toast do. */
+.sws-copy-progress:not([data-inline]):not([data-waiting]) {
+  --seg-gap: 1.5px;
+  mask-image: linear-gradient(
+    90deg,
+    #000 0 calc(33.333% - var(--seg-gap)),
+    transparent 0 calc(33.333% + var(--seg-gap)),
+    #000 0 calc(66.667% - var(--seg-gap)),
+    transparent 0 calc(66.667% + var(--seg-gap)),
+    #000 0
+  );
 }
 .sws-copy-progress[data-waiting] .sws-copy-progress-fill {
   width: 100%;
@@ -3751,6 +3763,26 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 }
 .sws-copy-review:hover {
   background: color-mix(in srgb, var(--shell-waiting) 32%, transparent);
+}
+/* A copy phase that cannot say how far it is: a slow sweep inside its own segment. */
+.copy-phase-sweep {
+  left: 0;
+  animation: copy-phase-sweep 1.6s ease-in-out infinite;
+}
+@keyframes copy-phase-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-phase-sweep {
+    width: 100%;
+    opacity: 0.35;
+    animation: none;
+  }
 }
 /* The same bar, full width in the project's copy banner. */
 .sws-copy-progress[data-inline] {
