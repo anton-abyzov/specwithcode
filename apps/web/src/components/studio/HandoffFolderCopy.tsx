@@ -48,7 +48,7 @@ import {
 } from "./handoffFolderCopyPending";
 import type { CopyMachine } from "./HandoffCopySetup";
 import { copyHeld } from "./HandoffCopyDone";
-import { useSecretsGate } from "./useSecretsGate";
+import { sendSecretsOrWithdraw, useSecretsGate } from "./useSecretsGate";
 import { messageOf } from "./useCoordinatorTransfer";
 import { useCoordinatorMove } from "./useCoordinatorMove";
 import {
@@ -380,11 +380,9 @@ export function HandoffFolderCopy({
     }
   };
 
-  /**
-   * Follows the source measuring the folder, with live counts. Cancel abandons the
-   * operation; closing the dialog only stops watching, and reopening resumes here.
-   * Returns the measured offer, or null when the person cancelled.
-   */
+  // Follows the source measuring the folder, with live counts. Cancel abandons the
+  // operation; closing the dialog only stops watching, and reopening resumes here.
+  // Returns the measured offer, or null when the person cancelled.
   const followMeasure = async (
     saved: PendingCopy,
     offerStep: () => Promise<FolderCopyOffer>,
@@ -442,10 +440,8 @@ export function HandoffFolderCopy({
     }
   };
 
-  /**
-   * Tells the source to drop an operation and, for a move, to release any fence. A strict
-   * call keeps the pointer and says so when the source did not; gone counts as dropped.
-   */
+  // Tells the source to drop an operation and, for a move, to release any fence. A strict
+  // call keeps the pointer and says so when the source did not; gone counts as dropped.
   const abandonSource = async (
     saved: PendingCopy,
     reason: string,
@@ -475,10 +471,8 @@ export function HandoffFolderCopy({
 
   const show = (next: FolderCopyStatus) => setStage(stageForStatus(next));
 
-  /**
-   * The source's measured summary, so a reopened copy shows its secrets step, skipped
-   * worktrees and the secret files that stayed behind.
-   */
+  // The source's measured summary, so a reopened copy shows its secrets step, skipped
+  // worktrees and the secret files that stayed behind.
   const readSummary = async (saved: PendingCopy) => {
     try {
       const measured = unwrap(
@@ -692,7 +686,7 @@ export function HandoffFolderCopy({
     machines,
     canMove,
     explicit: { mode: defaultMode !== undefined, machine: machineRequested },
-    form: { machine, folderDraft, mode, chooseFirst, secrets: secretsChoice },
+    form: { machine, folderDraft, mode, chooseFirst, secrets: chosenSecrets },
     latestPending,
     setForm: {
       machine: setMachine,
@@ -750,7 +744,7 @@ export function HandoffFolderCopy({
       projectRelativePath,
       projectId,
       selection,
-      secrets: secretsChoice,
+      secrets: chosenSecrets,
       method: choices.method,
       ...(choices.auto ? { auto: true } : {}),
       ...(existing ? { existingDestination: true } : {}),
@@ -910,9 +904,16 @@ export function HandoffFolderCopy({
       machine: there,
       choice: secretsGate.clamp(saved ? pendingSecrets(saved) : secretsChoice),
     });
-    if (!paths || (secretsGate.blocked && paths.length === 0)) return;
+    if (!paths) return;
+    const environmentId = project.environmentId;
     const input = { operationId, paths, destinationLabel: there?.label ?? targetLabel };
-    unwrap(await sendSecrets({ environmentId: project.environmentId, input }));
+    await sendSecretsOrWithdraw(
+      { blocked: secretsGate.blocked, sourceLabel, empty: paths.length === 0 },
+      {
+        send: () => sendSecrets({ environmentId, input }),
+        status: () => sourceStatus({ environmentId, input: { operationId } }),
+      },
+    );
   };
 
   /** Approves, then checks a failed answer once in case the approval landed anyway. */
@@ -1028,11 +1029,9 @@ export function HandoffFolderCopy({
     });
   };
 
-  /**
-   * Cancels a copy that has not applied anything: the destination drops its compare, the
-   * source its snapshot, and a move releases its fence. Machine, folder, mode and the
-   * chosen classes stay in the form.
-   */
+  // Cancels a copy that has not applied anything: the destination drops its compare, the
+  // source its snapshot, and a move releases its fence. Machine, folder, mode and the
+  // chosen classes stay in the form.
   const cancelBeforeApply = async () => {
     if (!pending) {
       setStage("setup");

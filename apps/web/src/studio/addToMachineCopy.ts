@@ -12,6 +12,8 @@ import type {
   ProjectId,
 } from "@specweave-studio/contracts";
 import { folderCopyAllConflictsKey } from "@specweave-studio/contracts";
+import { AuthAccessWriteScope } from "@specweave-studio/contracts";
+import { readEnvironmentScopeAccess } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { copySettled } from "./folderCopy";
 import { machineHandoff } from "./machineHandoff";
@@ -236,11 +238,17 @@ export async function applyCopy(
   },
 ): Promise<FolderCopyStatus> {
   const { operationId } = input;
-  if (input.secrets.length > 0)
+  // Only a window holding access:write on the source may send secrets (see useSecretsGate);
+  // from any other window this copy leaves them there, as its dialog says.
+  const secrets =
+    readEnvironmentScopeAccess(input.sourceEnvironmentId, AuthAccessWriteScope) === "denied"
+      ? []
+      : input.secrets;
+  if (secrets.length > 0)
     unwrap(
       await commands.secrets({
         environmentId: input.sourceEnvironmentId,
-        input: { operationId, paths: input.secrets, destinationLabel: input.destinationLabel },
+        input: { operationId, paths: secrets, destinationLabel: input.destinationLabel },
       }),
     );
   try {

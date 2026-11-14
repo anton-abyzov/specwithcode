@@ -25,7 +25,7 @@ import {
   pendingSecrets,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
-import { secretsBlockedNow, withoutSecrets } from "./useSecretsGate";
+import { secretsBlockedNow, withdrawStagedSecrets, withoutSecrets } from "./useSecretsGate";
 import { sendableSecrets } from "./handoffCopySecrets";
 import {
   copyStartInput,
@@ -257,8 +257,33 @@ export function HandoffFolderCopyWatcher({
         machine: undefined,
         choice: blocked ? withoutSecrets(pendingSecrets(saved)) : pendingSecrets(saved),
       });
-      // Only the source's own window may send secrets: from here the copy goes without them.
-      if (!paths || (blocked && paths.length === 0)) return true;
+      if (!paths) return true;
+      // Only the source's own window may send secrets: from here staged ones come off.
+      if (blocked && paths.length === 0)
+        return withdrawStagedSecrets({
+          staged: async () => {
+            const read = await latest.current.commands.sourceStatus({
+              environmentId,
+              input: { operationId },
+            });
+            return read._tag === "Success" ? (read.value.secrets?.files.length ?? 0) : null;
+          },
+          withdraw: async () =>
+            (
+              await latest.current.commands.sendSecrets({
+                environmentId,
+                input: {
+                  operationId,
+                  paths: [],
+                  destinationLabel: latest.current.machineLabel(saved.environmentId),
+                },
+              })
+            )._tag === "Success",
+          sourceLabel: latest.current.machineLabel(environmentId),
+        }).then(
+          () => !stopped,
+          () => false,
+        );
       const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
         latest.current.commands.sendSecrets({
           environmentId,

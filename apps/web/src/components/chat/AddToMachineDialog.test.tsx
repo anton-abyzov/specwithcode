@@ -13,6 +13,13 @@ const state = vi.hoisted(() => ({
   handlers: {} as Record<string, (input: unknown) => unknown>,
   environments: {} as Record<string, unknown>,
   waitForProject: vi.fn(async () => ({})),
+  /** This window's access:write on the source, as the session reports it. */
+  sourceAccess: "unknown" as "granted" | "denied" | "unknown",
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScopeAccess: () => state.sourceAccess,
+  readEnvironmentScopeAccess: () => state.sourceAccess,
 }));
 
 vi.mock("../../state/sourceControl", () => ({
@@ -149,6 +156,7 @@ beforeEach(() => {
   onAdded.mockClear();
   onOpenChange.mockClear();
   localStorage.clear();
+  state.sourceAccess = "unknown";
   container = document.createElement("div");
   document.body.append(container);
 });
@@ -390,4 +398,43 @@ it("links and consolidates an existing checkout after the copy is applied", asyn
   await act(async () => button("Done")!.click());
   expect(onAdded).toHaveBeenCalledWith({ environmentId: "mini", projectId: "existing" });
   expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+it("leaves secrets on the source in a window that may not send them", async () => {
+  state.sourceAccess = "denied";
+  await render();
+  expect(text()).toContain(
+    "Only SpecWithCode on M4 can send secrets. To include them, start this copy in the SpecWithCode window on M4.",
+  );
+  await act(async () => button("Clone to Mini")!.click());
+  expect(readAddToMachineJob("mini" as EnvironmentId, "project-new" as ProjectId)).toMatchObject({
+    secrets: [],
+  });
+});
+
+it("links and consolidates without sending secrets from a window that may not send them", async () => {
+  state.sourceAccess = "denied";
+  const copyStatus = (copyState: string) => ({
+    operationId: "00000000-0000-4000-8000-000000000001",
+    state: copyState,
+    rows: [],
+    totals: { decisionsNeeded: 0 },
+    disk: null,
+    error: null,
+    checks: [],
+    projectId: copyState === "applied" ? "existing" : null,
+    committed: copyState === "applied",
+  });
+  let applied = false;
+  state.handlers.inspectDestination = () => inspected("repository", true);
+  state.handlers.copyStatus = () => copyStatus(applied ? "applied" : "previewed");
+  state.handlers.copyApprove = () => {
+    applied = true;
+    return copyStatus("applying");
+  };
+  await render();
+  await act(async () => button("Link and consolidate")!.click());
+  await act(async () => button("Apply and link")!.click());
+  expect(calls("copySecrets")).toEqual([]);
+  expect(calls("copyApprove")).toHaveLength(1);
 });

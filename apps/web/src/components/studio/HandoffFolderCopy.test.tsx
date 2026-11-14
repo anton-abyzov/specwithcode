@@ -250,30 +250,6 @@ it("sends secret files by default, shown as one included line that lists them on
   expect(container.textContent).toContain("Readiness m3 copied");
 });
 
-it("copies without secrets, and says where to send them from, in a window that may not send them", async () => {
-  // A window on another machine (signed in through Connect) holds no access:write there.
-  state.sourceAccess = "denied";
-  try {
-    statuses = [copyStatus("previewed"), copyStatus("applied")];
-    await mount();
-    const along = container.querySelector('[data-slot="copy-along-secrets"]')!;
-    expect(along.textContent).toContain("Secrets (.env, keys): left on M4");
-    expect(along.textContent).toContain(
-      "Only SpecWithCode on M4 can send secrets. To include them, start this copy in the SpecWithCode window on M4.",
-    );
-    expect(along.querySelector('[data-slot="checkbox"]')!.hasAttribute("data-disabled")).toBe(true);
-    await click("Copy to M3");
-    expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
-    await click("Copy to M3");
-    // Approval goes ahead; nothing asks the source for a grant this window lacks.
-    expect(names()).toContain("copyApprove");
-    expect(names()).not.toContain("copySecrets");
-    expect(container.textContent).not.toContain("requires access:write");
-  } finally {
-    state.sourceAccess = "unknown";
-  }
-});
-
 it("leaves secrets on the source when What comes along unticks them", async () => {
   await mount();
   await act(async () =>
