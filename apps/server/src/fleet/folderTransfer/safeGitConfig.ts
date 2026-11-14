@@ -357,8 +357,9 @@ const REF_TEXT = new RegExp(
  * A ref-namespace look-alike stays untouched, so it must stay inert under any
  * spelling a disk may read: everything in a `refs/` or `logs/` folder is a
  * ref or a reflog, so every file under it must hold ref or reflog text, with
- * no link and nothing executable. A ref named `config`, `Config` or
- * `remotes/x` passes; settings, URLs and scripts do not.
+ * no link and nothing executable (an expired reflog may be empty). A ref
+ * named `config`, `Config` or `remotes/x` passes; settings, URLs and scripts
+ * do not.
  */
 async function refuseActiveLookalike(dir: string, root: string): Promise<void> {
   const entries = await NodeFSP.readdir(dir, { withFileTypes: true, recursive: true });
@@ -369,7 +370,8 @@ async function refuseActiveLookalike(dir: string, root: string): Promise<void> {
     const inert =
       stat.isFile() &&
       (stat.mode & 0o111) === 0 &&
-      REF_TEXT.test(await NodeFSP.readFile(path, "utf8"));
+      // An expired reflog is left empty.
+      (stat.size === 0 || REF_TEXT.test(await NodeFSP.readFile(path, "utf8")));
     if (!inert)
       throw new Error(
         `Git data at ${NodePath.relative(root, path).split(NodePath.sep).join("/")} is not a ref inside a ref folder. Remove it before copying.`,

@@ -296,9 +296,16 @@ async function settingsDiffer(
       configs.set(relativeOf(file), isMain);
     }
   }
-  // A copied Git directory under `modules/`: its HEAD and objects travelled.
-  const copiedGitDir = (dir: string) => {
+  // A copied Git directory under `modules/`: its HEAD and objects travelled,
+  // and it is no ref folder inside another Git directory's `refs/` or `logs/`.
+  const copiedGitDir = (dir: string): boolean => {
     if (!dir.startsWith(`${prefix}/modules/`) || !copiedEntries.has(`${dir}/HEAD`)) return false;
+    const parts = dir.split("/");
+    for (let index = 1; index < parts.length; index++) {
+      if (parts[index] !== "refs" && parts[index] !== "logs") continue;
+      const owner = parts.slice(0, index).join("/");
+      if (owner === prefix || copiedGitDir(owner)) return false;
+    }
     if (copiedEntries.has(`${dir}/objects`)) return true;
     for (const path of copiedEntries.keys()) if (path.startsWith(`${dir}/objects/`)) return true;
     return false;

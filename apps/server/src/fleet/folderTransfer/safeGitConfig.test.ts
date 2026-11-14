@@ -449,6 +449,10 @@ describe("copied repositories", () => {
       NodeFS.rmSync(NodePath.join(origin, name));
     }
     await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
+    // Expired reflogs of the same refs are empty files: still inert.
+    const logs = NodePath.join(lib, "logs/refs/remotes/origin");
+    for (const name of ["HEAD", "objects/topic", "main"]) write(NodePath.join(logs, name), "");
+    await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
   });
 
   it("reads quoted and commented alternates lines", async () => {

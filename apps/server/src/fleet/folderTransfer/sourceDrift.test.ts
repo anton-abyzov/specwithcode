@@ -271,6 +271,26 @@ it("reads a remote branch named config as a ref, not a Git setting", async () =>
   ).toBe(false);
 });
 
+it("reads a dormant submodule's remote ref named config as a ref when refs are packed", async () => {
+  const module = Path.join(folder, ".git/modules/lib");
+  const sha = git(folder, "rev-parse", "HEAD").trim();
+  write(Path.join(module, "HEAD"), "ref: refs/heads/main\n");
+  await FSP.mkdir(Path.join(module, "objects"), { recursive: true });
+  write(Path.join(module, "config"), "[core]\n\tbare = true\n");
+  const origin = Path.join(module, "refs/remotes/origin");
+  write(Path.join(origin, "HEAD"), "ref: refs/remotes/origin/main\n");
+  for (const name of ["main", "objects/topic", "config"])
+    write(Path.join(origin, name), `${sha}\n`);
+  await committed();
+  // Packing the refs removes the loose `config` ref; no Git setting changed.
+  await FSP.rm(Path.join(origin, "config"));
+  write(Path.join(module, "packed-refs"), `${sha} refs/remotes/origin/config\n`);
+  const drift = await sources.driftSince(id);
+  expect(
+    drift.rows.some((row) => row.kind === "repository" && row.repository?.settingsChanged),
+  ).toBe(false);
+});
+
 it.skipIf(process.platform === "win32")(
   "lists a folder holding a new file it cannot copy, not nothing",
   async () => {
