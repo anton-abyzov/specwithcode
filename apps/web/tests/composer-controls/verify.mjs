@@ -59,7 +59,7 @@ try {
     });
     await page.keyboard.press("Escape");
     await page.locator("[data-coordinator-machine]").click();
-    await page.getByRole("menuitem", { name: "Copy to another machine…", exact: true }).waitFor();
+    await page.getByRole("menuitem", { name: "Send to another machine…", exact: true }).waitFor();
     assert.deepEqual(
       await page.locator('[role="menu"] [data-slot="menu-label"]').allTextContents(),
       ["View this project on", "This project", "On Build machine"],
