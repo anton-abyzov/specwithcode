@@ -64,6 +64,7 @@ import {
   CHUNK_OK,
   CHUNK_UNKNOWN,
   type ChunkFrame,
+  MAX_BATCH_BYTES,
   MAX_BATCH_CHUNKS_LARGE,
   OPERATION_ID,
   sha256Hex,
@@ -1036,6 +1037,14 @@ export class SourceTransfers {
   async chunks(loaded: Loaded, hashes: ReadonlyArray<string>): Promise<Array<ChunkFrame>> {
     return this.snapshotRead(loaded, async () => {
       await this.ready(loaded);
+      // The destination's byte cap is its own: hold every request to it before reading, so
+      // repeated or oversized hashes cannot make this machine buffer gigabytes.
+      if (new Set(hashes).size !== hashes.length)
+        throw new SourceTransferError(400, "invalid_request", "A chunk was asked for twice.");
+      let asked = 0;
+      for (const sha256 of hashes) asked += loaded.chunks!.get(sha256)?.length ?? 0;
+      if (asked > MAX_BATCH_BYTES + CHUNK_SIZE)
+        throw new SourceTransferError(413, "too_large", "Too many bytes asked for at once.");
       // Large batches of small chunks: read several at once, answer in the asked order.
       const frames: Array<ChunkFrame> = Array.from({ length: hashes.length });
       await forEachLimited(hashes, CHUNK_READ_CONCURRENCY, async (sha256, at) => {
