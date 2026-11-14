@@ -10,6 +10,7 @@ import {
   machineColorProps,
   machineColorWearers,
   machineIdentityPatch,
+  previewMachineShortLabel,
   resolveMachineIdentities,
   withFleetLabels,
 } from "./machineIdentity";
@@ -79,6 +80,56 @@ describe("resolveMachineIdentities", () => {
     const before = resolve("env-m4").color;
     expect(resolve("env-unknown").color).toBeTruthy();
     expect(resolve("env-m4").color).toBe(before);
+  });
+});
+
+describe("nicknames left by a machine that joined again", () => {
+  // The M5 report: two dead registrations of the M5 still carry its synced "m5"
+  // nickname, and their ids sort before the live one's.
+  const nicknames = {
+    "0c69470d": { name: "m5", updatedAt: "2026-11-11T00:00:00.000Z" },
+    dd453fc8: { name: "m5", updatedAt: "2026-11-12T00:00:00.000Z" },
+    "e5-live": { name: "M5", updatedAt: "2026-11-13T00:00:00.000Z" },
+  };
+  const m5Labels = new Map([...labels, ["e5-live", "Anton M5MAX PROLED"]]);
+  const input = { nicknames, labels: m5Labels, kinds };
+
+  it("are not known machines", () => {
+    expect(knownMachineIds(input)).not.toContain("0c69470d");
+    expect(knownMachineIds(input)).not.toContain("dd453fc8");
+    expect(knownMachineIds(input)).toContain("e5-live");
+  });
+
+  it("take no chip letters from the machine that carries the name now", () => {
+    expect(resolveMachineIdentities(input)("e5-live").short).toBe("M5");
+    expect(previewMachineShortLabel(input, "e5-live", "M5")).toBe("M5");
+  });
+
+  it("lose their letters once removed here, though a fleet list still names them", () => {
+    const fleetInput = { ...input, fleet: ["0c69470d"] };
+    expect(previewMachineShortLabel(fleetInput, "e5-live", "M5")).not.toBe("M5");
+    const removed = { ...fleetInput, removed: new Set(["0c69470d"]) };
+    expect(previewMachineShortLabel(removed, "e5-live", "M5")).toBe("M5");
+    expect(resolveMachineIdentities(removed)("e5-live").short).toBe("M5");
+  });
+
+  it("keep machines saved here with no config apart", () => {
+    const named = {
+      "saved-a": { name: "Build Server", updatedAt: "2026-11-13T00:00:00.000Z" },
+      "saved-b": { name: "Backup Server", updatedAt: "2026-11-13T00:00:00.000Z" },
+    };
+    const saved = new Map([
+      ["saved-a", "build.local"],
+      ["saved-b", "backup.local"],
+    ]);
+    const resolve = resolveMachineIdentities({ nicknames: named, labels, kinds, saved });
+    expect(resolve("saved-a").short).not.toBe(resolve("saved-b").short);
+  });
+
+  it("still give a machine seen only by its nickname letters no known machine wears", () => {
+    const short = resolveMachineIdentities(input)("0c69470d").short;
+    expect(short).not.toBe("M5");
+    expect(short.length).toBeGreaterThanOrEqual(2);
   });
 });
 

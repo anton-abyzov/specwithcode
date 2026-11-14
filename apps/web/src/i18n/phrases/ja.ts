@@ -2320,8 +2320,14 @@ export const ja: PhraseCatalog = {
     "コンピュータ名: {hostLabel}（変更されません）",
   "Call it {name}":
     "{name} と呼ぶ",
-  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
-    "別のマシンがすでに {name} という名前です。このマシンの古いコピーなら、「ほかのマシン」で削除してください。",
+  "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
+    "接続できないこのコンピュータの古い記録が、まだ {name} という名前です。このマシンだけがこの名前になるよう削除してください。",
+  "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
+    "このコンピュータの別の記録がすでに {name} という名前です。古いコピーなら「ほかのマシン」で削除してください。",
+  "{host} is already called {name}. Two machines with one name are hard to tell apart.":
+    "{host} がすでに {name} という名前です。同じ名前のマシンが2台あると見分けにくくなります。",
+  "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
+    "今は接続できない {host} がすでに {name} という名前です。もう使っていないなら「ほかのマシン」で削除してください。",
   "Use the computer name":
     "コンピュータ名を使う",
   "Chip letters":

@@ -21,6 +21,25 @@ export const fleetMachinesAtom = Atom.make<ReadonlyMap<string, string>>(NONE).pi
   Atom.withLabel("fleet-machines"),
 );
 
+/**
+ * Machines removed from this device this session ("Remove old record"). A fleet
+ * list's entry keeps its place for colors until reload, but a removed machine
+ * must stop holding a name or chip letters at once.
+ */
+export const removedMachinesAtom = Atom.make<ReadonlySet<string>>(new Set<string>()).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("removed-machines"),
+);
+
+export function noteMachineRemoved(environmentId: string, removed: boolean): void {
+  const current = appAtomRegistry.get(removedMachinesAtom);
+  if (current.has(environmentId) === removed) return;
+  const next = new Set(current);
+  if (removed) next.add(environmentId);
+  else next.delete(environmentId);
+  appAtomRegistry.set(removedMachinesAtom, next);
+}
+
 /** Adds the machines a fleet list names; writes only when one is new or renamed. */
 export function noteFleetMachines(
   machines: Iterable<{ readonly environmentId: string; readonly label: string }>,

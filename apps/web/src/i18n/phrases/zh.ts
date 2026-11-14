@@ -2237,8 +2237,14 @@ export const zh: PhraseCatalog = {
     "电脑名称：{hostLabel}，保持不变。",
   "Call it {name}":
     "命名为 {name}",
-  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
-    "已有另一台机器叫 {name}。如果它是这台机器的旧副本，请在“其他机器”中移除。",
+  "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
+    "这台电脑有一条无法连接的旧记录仍叫 {name}。移除它，让只有这台机器使用这个名字。",
+  "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
+    "这台电脑的另一条记录已经叫 {name}。如果它是旧副本，请在“其他机器”中移除。",
+  "{host} is already called {name}. Two machines with one name are hard to tell apart.":
+    "{host} 已经叫 {name}。两台同名的机器很难区分。",
+  "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
+    "{host} 现在无法连接，已经叫 {name}。如果它已不在，请在“其他机器”中移除。",
   "Use the computer name":
     "使用电脑名称",
   "Chip letters":

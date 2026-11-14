@@ -2314,8 +2314,14 @@ export const ru: PhraseCatalog = {
     "Имя компьютера: {hostLabel}, не меняется.",
   "Call it {name}":
     "Назвать {name}",
-  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
-    "Другая машина уже называется {name}. Если это старая копия этой машины, удалите её в разделе «Другие машины».",
+  "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
+    "Старая запись этого компьютера, которая не может подключиться, всё ещё называется {name}. Удалите её, чтобы это имя было только у этой машины.",
+  "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
+    "Другая запись этого компьютера уже называется {name}. Если это старая копия, удалите её в разделе «Другие машины».",
+  "{host} is already called {name}. Two machines with one name are hard to tell apart.":
+    "{host} уже называется {name}. Две машины с одним именем трудно различить.",
+  "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
+    "{host} сейчас не может подключиться и уже называется {name}. Если этой машины больше нет, удалите её в разделе «Другие машины».",
   "Use the computer name":
     "Использовать имя компьютера",
   "Chip letters":

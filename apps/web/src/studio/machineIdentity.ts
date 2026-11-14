@@ -34,11 +34,15 @@ import {
 } from "@specweave-studio/shared/machineShortLabel";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
-import { createContext, useMemo } from "react";
+import { createContext, useCallback, useMemo } from "react";
 
 import { environmentServerConfigsAtom } from "../state/server";
 import { fleetMachinesAtom } from "./knownMachines";
-import { resolveMachineNickname, useMachineNameSources } from "./machineNickname";
+import {
+  resolveMachineNickname,
+  useKnownMachineSources,
+  useMachineNameSources,
+} from "./machineNickname";
 
 export const MACHINE_COLOR_LABELS: Record<MachineColorId, string> = {
   violet: "Violet",
@@ -88,18 +92,61 @@ interface MachineIdentitySources {
   readonly kinds: ReadonlyMap<string, EnvironmentMachineKind>;
   /** Machines a fleet list names, connected here or not (`knownMachines.ts`). */
   readonly fleet?: Iterable<string> | undefined;
+  /** Machines saved on this device, connected or not, with the label each was saved under. */
+  readonly saved?: ReadonlyMap<string, string> | undefined;
+  /** Machines removed here, which a fleet list may still name. */
+  readonly removed?: ReadonlySet<string> | undefined;
 }
 
-/** Every machine this device knows of: connected, listed by a fleet or named. */
+/**
+ * Every machine this device knows of: connected, saved here, or listed by a
+ * fleet and not removed here. A nickname alone does not make one: a machine
+ * that joined again under a new id leaves its old id's nickname behind, and that
+ * must not take a name's chip letters ("M5" going to a dead record, this machine
+ * left with "M2").
+ */
 export function knownMachineIds(input: MachineIdentitySources): readonly string[] {
+  const removed = input.removed;
+  const fleet = [...(input.fleet ?? [])].filter((id) => removed === undefined || !removed.has(id));
   return [
     ...new Set([
       ...input.labels.keys(),
       ...input.kinds.keys(),
-      ...(input.fleet ?? []),
-      ...Object.keys(input.nicknames),
+      ...fleet,
+      ...(input.saved?.keys() ?? []),
     ]),
   ];
+}
+
+const machineNameOf =
+  (input: MachineIdentitySources) => (environmentId: string, fallbackLabel?: string | null) =>
+    resolveMachineNickname(
+      input.nicknames,
+      environmentId,
+      fallbackLabel ?? input.labels.get(environmentId) ?? input.saved?.get(environmentId),
+    );
+
+/**
+ * The chip letters a machine gets once saved under `name`: the same fleet-wide
+ * assignment the app runs, over the same machines, with this one's new name and
+ * no chosen letters. The rename dialog previews it before Save.
+ */
+export function previewMachineShortLabel(
+  input: MachineIdentitySources,
+  environmentId: string,
+  name: string,
+): string {
+  const nameOf = machineNameOf(input);
+  const ids = new Set(knownMachineIds(input));
+  ids.add(environmentId);
+  const assigned = assignMachineShortLabels(
+    [...ids].map((id) =>
+      id === environmentId
+        ? { environmentId: id, name, short: undefined }
+        : { environmentId: id, name: nameOf(id), short: input.nicknames[id]?.short },
+    ),
+  );
+  return assigned.get(environmentId) ?? "";
 }
 
 /** Resolves any machine's identity from the nickname map and what is known of the fleet. */
@@ -108,15 +155,9 @@ export function resolveMachineIdentities(
 ): (environmentId: string, fallbackLabel?: string | null) => MachineIdentity {
   const known = [...input.labels.keys(), ...input.kinds.keys(), ...(input.fleet ?? [])];
   const colors = assignMachineColors(known, input.nicknames);
-  const nameOf = (environmentId: string, fallbackLabel?: string | null) =>
-    resolveMachineNickname(
-      input.nicknames,
-      environmentId,
-      fallbackLabel ?? input.labels.get(environmentId),
-    );
-  const ids = [...new Set([...known, ...Object.keys(input.nicknames)])];
+  const nameOf = machineNameOf(input);
   const shorts = assignMachineShortLabels(
-    ids.map((id) => ({
+    knownMachineIds(input).map((id) => ({
       environmentId: id,
       name: nameOf(id),
       short: input.nicknames[id]?.short,
@@ -185,14 +226,30 @@ function useMachineIdentitySources(): MachineIdentitySources {
   const { nicknames, labels: connected } = useMachineNameSources();
   const kinds = kindsOf(useAtomValue(machineKindsAtom));
   const listed = fleetOf(useAtomValue(fleetMachinesAtom));
+  const { saved, removed } = useKnownMachineSources();
   return useMemo(
     () => ({
       nicknames,
-      labels: withFleetLabels(connected, listed),
+      // A removed machine keeps its fleet place for colors, but no name of its own.
+      labels: withFleetLabels(
+        connected,
+        removed.size === 0 ? listed : new Map([...listed].filter(([id]) => !removed.has(id))),
+      ),
       kinds,
       fleet: [...listed.keys()],
+      saved,
+      removed,
     }),
-    [nicknames, connected, kinds, listed],
+    [nicknames, connected, kinds, listed, saved, removed],
+  );
+}
+
+/** Previews the chip letters a machine gets once saved under a name. */
+export function useMachineShortLabelPreview(): (environmentId: string, name: string) => string {
+  const sources = useMachineIdentitySources();
+  return useCallback(
+    (environmentId, name) => previewMachineShortLabel(sources, environmentId, name),
+    [sources],
   );
 }
 
