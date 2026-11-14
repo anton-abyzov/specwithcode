@@ -414,31 +414,69 @@ function ownFrontMatter(text: string): { readonly lines: string[]; readonly body
   return { lines, body: text.slice(match[0].length).trim() };
 }
 
-/** The title and body of a saved report, or null when it cannot be read. */
-async function readSavedReport(file: string): Promise<{
+/** Windows has no O_NOFOLLOW; there the name is checked before it is opened. */
+const NO_FOLLOW = NodeFS.constants.O_NOFOLLOW ?? 0;
+
+/**
+ * Opens a saved report without following a link at its name, and only when
+ * the handle is one regular file. The read and any update go through this
+ * handle, so a link swapped in after the check is never written through, and
+ * a second name for a file elsewhere (a hard link) is never touched.
+ */
+async function openSavedReport(
+  file: string,
+  writable: boolean,
+): Promise<NodeFSP.FileHandle | null> {
+  if (NO_FOLLOW === 0) {
+    const named = await NodeFSP.lstat(file).catch(() => null);
+    if (named === null || !named.isFile()) return null;
+  }
+  const flags = (writable ? NodeFS.constants.O_RDWR : NodeFS.constants.O_RDONLY) | NO_FOLLOW;
+  const handle = await NodeFSP.open(file, flags).catch(() => null);
+  if (handle === null) return null;
+  const stat = await handle.stat().catch(() => null);
+  if (stat === null || !stat.isFile() || stat.nlink !== 1) {
+    await handle.close();
+    return null;
+  }
+  return handle;
+}
+
+interface StoredReport {
   readonly title: string | null;
+  readonly thread: string | null;
+  /** The line is there; its value is null when it is not a JSON string. */
   readonly hasSource: boolean;
+  readonly source: string | null;
+  readonly hasOriginal: boolean;
+  readonly original: string | null;
   readonly body: string;
   readonly content: string;
   readonly blockEnd: number;
-} | null> {
-  // Only a regular file is a saved report: never read or write through a link.
-  const stat = await NodeFSP.lstat(file).catch(() => null);
-  if (stat === null || !stat.isFile()) return null;
-  const content = await NodeFSP.readFile(file, "utf8").catch(() => null);
-  if (content === null) return null;
+}
+
+/** A front-matter property the app writes, `key: "json string"`. */
+function storedValue(block: string, key: string): string | null {
+  const raw = new RegExp(`^${key}: (.+)$`, "m").exec(block)?.[1];
+  if (raw === undefined) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredReport(content: string): StoredReport {
   const match = FRONTMATTER.exec(content);
   const block = match?.[1] ?? "";
-  let title: string | null = null;
-  try {
-    const value: unknown = JSON.parse(/^title: (.+)$/m.exec(block)?.[1] ?? "null");
-    title = typeof value === "string" ? value : null;
-  } catch {
-    title = null;
-  }
   return {
-    title,
+    title: storedValue(block, "title"),
+    thread: storedValue(block, "thread"),
     hasSource: /^source:/m.test(block),
+    source: storedValue(block, "source"),
+    hasOriginal: /^original:/m.test(block),
+    original: storedValue(block, "original"),
     body: match ? content.slice(match[0].length) : content,
     content,
     // Where the closing rule starts, for properties added later.
@@ -446,9 +484,59 @@ async function readSavedReport(file: string): Promise<{
   };
 }
 
-/** Same words in the same order: whitespace and line endings aside. */
+/** The same text: line endings and the blank lines around it aside. Indentation counts. */
 function sameBody(left: string, right: string): boolean {
-  return left.replace(/\s+/g, " ").trim() === right.replace(/\s+/g, " ").trim();
+  return left.replace(/\r\n?/g, "\n").trim() === right.replace(/\r\n?/g, "\n").trim();
+}
+
+/**
+ * The provenance lines a saved copy of the same text lacks, each added on
+ * its own. A copy that names another source or original is refused, so
+ * neither origin is lost.
+ */
+function missingProvenance(
+  stored: StoredReport,
+  provenance: ReportProvenance,
+  relativePath: string,
+): string[] {
+  const conflict = (recorded: string) =>
+    new ProjectLibraryProblem(
+      "conflict",
+      `This text is already saved at ${relativePath} from ${recorded}. Link that report.`,
+    );
+  const lines: string[] = [];
+  if (!stored.hasSource) lines.push(`source: ${frontMatterValue(provenance.source)}`);
+  else if (stored.source !== null && stored.source !== provenance.source) {
+    throw conflict(stored.source);
+  }
+  if (provenance.original !== undefined) {
+    if (!stored.hasOriginal) lines.push(`original: ${frontMatterValue(provenance.original)}`);
+    else if (stored.original !== null && stored.original !== provenance.original) {
+      throw conflict(stored.original);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Saves of the same text by one thread run one at a time in this server, so
+ * the second finds the first whatever title either gave it.
+ */
+const savesInFlight = new Map<string, Promise<void>>();
+
+async function oneSaveAtATime<T>(lock: string, run: () => Promise<T>): Promise<T> {
+  const previous = savesInFlight.get(lock) ?? Promise.resolve();
+  const current = previous.then(run);
+  const settled = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  savesInFlight.set(lock, settled);
+  try {
+    return await current;
+  } finally {
+    if (savesInFlight.get(lock) === settled) savesInFlight.delete(lock);
+  }
 }
 
 /** The provenance as it is written: one-line source, normalized https link. */
@@ -540,111 +628,128 @@ export async function saveReport(
       : requested.toLowerCase() === "none"
         ? null
         : await namedIncrement(root, requested);
-  const before = await readThreadReports(root, source);
   const key = reportKey(source.threadId, normalizedText);
-  const own = ownFrontMatter(normalizedText);
-  const provenanceLines = provenance
-    ? [
-        `source: ${frontMatterValue(provenance.source)}`,
-        ...(provenance.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
-      ]
-    : [];
-  // The key is short, so a hit is the same report only when the words match.
-  // An import of a text saved before without provenance adds it there.
-  const already = async (relativePath: string): Promise<SavedReport | null> => {
-    const absolutePath = NodePath.join(root, ...relativePath.split("/"));
-    const stored = await readSavedReport(absolutePath);
-    if (stored === null || !sameBody(stored.body, own.body)) return null;
-    if (provenanceLines.length > 0 && !stored.hasSource && stored.blockEnd > 0) {
-      await NodeFSP.writeFile(
-        absolutePath,
-        `${stored.content.slice(0, stored.blockEnd)}\n${provenanceLines.join("\n")}${stored.content.slice(stored.blockEnd)}`,
-        "utf8",
-      );
-    }
-    const snapshot = await readThreadReports(root, source);
-    return {
-      snapshot,
-      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
-        key,
-        path: relativePath,
-        savedAt: now.toISOString(),
-      },
-      title: stored.title ?? title,
-      alreadySaved: true,
-      absolutePath,
-    };
-  };
-  for (const report of before.reports) {
-    if (report.key !== key) continue;
-    const found = await already(report.path);
-    if (found !== null) return found;
-  }
-
-  const increment =
-    explicit !== undefined
-      ? explicit
-      : (before.increment?.id ??
-        (options.resolveFromText
-          ? await resolveReportIncrement(root, source, normalizedText)
-          : null));
-  const relativeDir =
-    increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
-  const target = await ensureDirectoryWithin(root, relativeDir);
-  const savedAt = now.toISOString();
-  const content = [
-    "---",
-    `title: ${frontMatterValue(title)}`,
-    `thread: ${frontMatterValue(source.threadId)}`,
-    ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
-    ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
-    `savedAt: ${frontMatterValue(savedAt)}`,
-    ...provenanceLines,
-    ...own.lines,
-    "---",
-    "",
-    own.body,
-    "",
-  ].join("\n");
-  const first = reportFileName({ savedAt, title, threadId: source.threadId, text: normalizedText });
-  for (let attempt = 1; attempt <= 9; attempt += 1) {
-    // A second report under the same day, title and key gets a number before the key.
-    const name = attempt === 1 ? first : first.replace(`-${key}.md`, `-${attempt}-${key}.md`);
-    const relativePath = posix(NodePath.join(relativeDir, name));
-    try {
-      await NodeFSP.writeFile(NodePath.join(target, name), content, {
-        encoding: "utf8",
-        flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
-        mode: 0o644,
-      });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      // A save of the same text that ran alongside this one wrote it first; it
-      // may still be writing, so read again briefly before calling it different.
-      for (let read = 0; read < 5; read += 1) {
-        const found = await already(relativePath);
-        if (found !== null) return found;
-        await NodeTimers.setTimeout(20);
+  return oneSaveAtATime(`${root}\0${key}`, async () => {
+    const before = await readThreadReports(root, source);
+    const own = ownFrontMatter(normalizedText);
+    const provenanceLines = provenance
+      ? [
+          `source: ${frontMatterValue(provenance.source)}`,
+          ...(provenance.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
+        ]
+      : [];
+    // The key is short and shared by texts that differ only in spacing, so a
+    // hit is this report only when its thread and its text match exactly. An
+    // import of a text saved before adds the provenance that copy lacks.
+    const already = async (relativePath: string): Promise<SavedReport | null> => {
+      const absolutePath = NodePath.join(root, ...relativePath.split("/"));
+      const handle = await openSavedReport(absolutePath, provenance !== undefined);
+      if (handle === null) return null;
+      try {
+        const stored = parseStoredReport(await handle.readFile("utf8"));
+        if (stored.thread !== source.threadId || !sameBody(stored.body, own.body)) return null;
+        const missing =
+          provenance === undefined ? [] : missingProvenance(stored, provenance, relativePath);
+        if (missing.length > 0 && stored.blockEnd > 0) {
+          const updated = Buffer.from(
+            `${stored.content.slice(0, stored.blockEnd)}\n${missing.join("\n")}${stored.content.slice(stored.blockEnd)}`,
+            "utf8",
+          );
+          await handle.write(updated, 0, updated.length, 0);
+          await handle.truncate(updated.length);
+        }
+        const snapshot = await readThreadReports(root, source);
+        return {
+          snapshot,
+          report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+            key,
+            path: relativePath,
+            savedAt: now.toISOString(),
+          },
+          title: stored.title ?? title,
+          alreadySaved: true,
+          absolutePath,
+        };
+      } finally {
+        await handle.close();
       }
-      continue;
-    }
-    const snapshot = await readThreadReports(root, source);
-    return {
-      snapshot,
-      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
-        key,
-        path: relativePath,
-        savedAt,
-      },
-      title,
-      alreadySaved: false,
-      absolutePath: NodePath.join(root, relativeDir, name),
     };
-  }
-  throw new ProjectLibraryProblem(
-    "conflict",
-    "Nine reports already share this title today; save this one under its own title.",
-  );
+    for (const report of before.reports) {
+      if (report.key !== key) continue;
+      const found = await already(report.path);
+      if (found !== null) return found;
+    }
+
+    const increment =
+      explicit !== undefined
+        ? explicit
+        : (before.increment?.id ??
+          (options.resolveFromText
+            ? await resolveReportIncrement(root, source, normalizedText)
+            : null));
+    const relativeDir =
+      increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
+    const target = await ensureDirectoryWithin(root, relativeDir);
+    const savedAt = now.toISOString();
+    const content = [
+      "---",
+      `title: ${frontMatterValue(title)}`,
+      `thread: ${frontMatterValue(source.threadId)}`,
+      ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
+      ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
+      `savedAt: ${frontMatterValue(savedAt)}`,
+      ...provenanceLines,
+      ...own.lines,
+      "---",
+      "",
+      own.body,
+      "",
+    ].join("\n");
+    const first = reportFileName({
+      savedAt,
+      title,
+      threadId: source.threadId,
+      text: normalizedText,
+    });
+    for (let attempt = 1; attempt <= 9; attempt += 1) {
+      // A second report under the same day, title and key gets a number before the key.
+      const name = attempt === 1 ? first : first.replace(`-${key}.md`, `-${attempt}-${key}.md`);
+      const relativePath = posix(NodePath.join(relativeDir, name));
+      try {
+        await NodeFSP.writeFile(NodePath.join(target, name), content, {
+          encoding: "utf8",
+          flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
+          mode: 0o644,
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        // A save of the same text that ran alongside this one wrote it first; it
+        // may still be writing, so read again briefly before calling it different.
+        for (let read = 0; read < 5; read += 1) {
+          const found = await already(relativePath);
+          if (found !== null) return found;
+          await NodeTimers.setTimeout(20);
+        }
+        continue;
+      }
+      const snapshot = await readThreadReports(root, source);
+      return {
+        snapshot,
+        report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+          key,
+          path: relativePath,
+          savedAt,
+        },
+        title,
+        alreadySaved: false,
+        absolutePath: NodePath.join(root, relativeDir, name),
+      };
+    }
+    throw new ProjectLibraryProblem(
+      "conflict",
+      "Nine reports already share this title today; save this one under its own title.",
+    );
+  });
 }
 
 /**

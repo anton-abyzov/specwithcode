@@ -385,6 +385,8 @@ function withoutDefaultWorkflowSettings(expected: unknown, actual: unknown): unk
  * Recordings made before SpecWithCode kept Claude sessions from publishing
  * provider-hosted documents (1320) lack those disallowed tools. Only that whole
  * set is tolerated against such a recording; any other list compares in full.
+ * A replay therefore passes with or without the set; the adapter test "keeps
+ * Claude from publishing provider-hosted documents" asserts it is sent.
  */
 function withoutProviderHostedDocumentTools(expected: unknown, actual: unknown): unknown {
   const hosted: ReadonlyArray<string> = CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS;
