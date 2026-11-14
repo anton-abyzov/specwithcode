@@ -11,7 +11,7 @@ import { repositoryRelations, scanDestination } from "./destinationScan.ts";
 import { reachableOrigin } from "./git.ts";
 import { deviceOf, exists, freeBytes, privateDirectory, readJson, writeJson } from "./durable.ts";
 import { readManifestFile, writeManifest, type Manifest } from "./manifest.ts";
-import { finalPass, pullFiles, type PullProgress } from "./pullWorker.ts";
+import { batchChunksFor, finalPass, pullFiles, type PullProgress } from "./pullWorker.ts";
 import {
   machineSlug,
   repoRowId,
@@ -138,6 +138,8 @@ export interface DestinationRecord {
   readonly secrets?: ReadonlyArray<ReceivedSecret>;
   /** Every approved secret file was received (or the source offered none). */
   readonly secretsDone?: boolean;
+  /** Chunks per batch the source offered in its hello; older sources and records omit it. */
+  readonly sourceBatchChunks?: number;
   /** When the person approved the copy; the copy's clock starts here. */
   readonly startedAt?: string;
   /** When Apply finished: the files are in place, checked or not. */
@@ -176,6 +178,8 @@ export interface DestinationHooks {
   readonly freeBytes?: (location: string) => Promise<number>;
   /** How long Apply backups stay for Undo; 14 days by default. */
   readonly backupRetentionMs?: number;
+  /** Caps chunks per batch below what the source offers; tests use it to get several batches. */
+  readonly maxBatchChunks?: number;
   /** How often held copies call the source to keep their grant; hourly by default. */
   readonly keepaliveMs?: number;
   /** The origin address this machine can read, or null; `git ls-remote` by default. */
@@ -490,6 +494,10 @@ export class DestinationCopies {
       record = {
         ...record,
         ...(hello.copyRoot ? { copyRoot: hello.copyRoot } : {}),
+        // A newer source takes larger chunk batches; an older one omits this and gets 32.
+        ...(typeof hello.maxBatchChunks === "number"
+          ? { sourceBatchChunks: hello.maxBatchChunks }
+          : {}),
         projectRelativePath: relative,
       };
       await writeJson(paths.record, record);
@@ -1161,6 +1169,7 @@ export class DestinationCopies {
       last = now;
       void this.update(op, { progress: { phase: "files", ...progress } }).catch(() => undefined);
     };
+    const batchSize = batchChunksFor(this.hooks.maxBatchChunks ?? record.sourceBatchChunks);
     const pulled = await pullFiles({
       client,
       stagingRoot: paths.staging,
@@ -1168,10 +1177,12 @@ export class DestinationCopies {
       directories: needs.directories,
       signal,
       onProgress,
+      maxBatchChunks: batchSize,
     });
     await this.update(op, { state: "verifying" });
     const final = await finalPass({
       client,
+      maxBatchChunks: batchSize,
       stagingRoot: paths.staging,
       files: needs.files,
       links: plan.actions

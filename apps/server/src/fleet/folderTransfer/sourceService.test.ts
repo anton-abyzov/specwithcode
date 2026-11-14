@@ -10,11 +10,11 @@ import { ACTIVE_COPY_WARNING, makeFolderCopyManifest } from "../folderCopyPrepar
 import { DEFAULT_SELECTION } from "./classify.ts";
 import * as Durable from "./durable.ts";
 import { runGit } from "./git.ts";
-import { readManifestFile } from "./manifest.ts";
+import { CHUNK_SIZE, readManifestFile } from "./manifest.ts";
 import { handleSourceRequest } from "./sourceRoutes.ts";
 import { SourceTransfers } from "./sourceService.ts";
 import { liveMovingCopies } from "./sourceTestServer.testkit.ts";
-import { CHUNK_CHANGED, CHUNK_OK } from "./wire.ts";
+import { CHUNK_CHANGED, CHUNK_OK, MAX_BATCH_BYTES } from "./wire.ts";
 import { TRANSFER_GRANT_IDLE_MS } from "./transferGrant.ts";
 
 // Passes through; the close test holds one record write open to make its race deterministic.
@@ -342,6 +342,27 @@ describe("terminal source snapshot cleanup", () => {
     // With every copy changed, the chunk is reported changed.
     NodeFS.writeFileSync(NodePath.join(folder, "b-copy.txt"), "also changed\n");
     expect((await sources.chunks(loaded, [hash]))[0]?.status).toBe(CHUNK_CHANGED);
+  });
+
+  it("refuses a chunks request that repeats a hash or asks for more than one batch's bytes", async () => {
+    const { sources, state, loaded } = await snapshot(false, false);
+    const manifest = await readManifestFile(
+      NodePath.join(state, "folder-sources", operationId, "manifest.ndjson.gz"),
+    );
+    const hash = manifest.entries.find((entry) => entry.chunks?.length)!.chunks![0]!;
+    // One known 8 MiB chunk asked 1024 times would have buffered 8 GiB.
+    await expect(sources.chunks(loaded, [hash, hash])).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_request",
+    });
+    // Known chunks summing past the batch cap are refused before any read.
+    const place = loaded.chunks!.get(hash)!;
+    const big = "f".repeat(64);
+    loaded.chunks!.set(big, { ...place, length: MAX_BATCH_BYTES + CHUNK_SIZE });
+    await expect(sources.chunks(loaded, [hash, big])).rejects.toMatchObject({
+      status: 413,
+      code: "too_large",
+    });
   });
 
   it("refuses a commit with a grant revoked by a release", async () => {

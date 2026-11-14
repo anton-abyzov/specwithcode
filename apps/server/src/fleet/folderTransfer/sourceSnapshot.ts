@@ -5,7 +5,7 @@ import * as FSP from "node:fs/promises";
 import * as Path from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 import { privateDirectory, writeJson } from "./durable.ts";
-import { CHUNK_SIZE, type ManifestEntry } from "./manifest.ts";
+import { CHUNK_SIZE, forEachLimited, type ManifestEntry } from "./manifest.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import { sha256Hex } from "./wire.ts";
 import {
@@ -49,6 +49,10 @@ export type CapturedIndex = Readonly<
   Record<string, { readonly offset: number; readonly size: number }>
 >;
 const BUFFER = 1024 * 1024;
+/** Files read and hashed at once while the capture runs. */
+export const CAPTURE_CONCURRENCY = 12;
+/** Files up to one chunk are read whole into memory, so up to 12 x 8 MiB at once. */
+const BUFFERED_FILE_MAX = CHUNK_SIZE;
 /**
  * A busy machine changes folders above the project (the home folder, agent
  * ledgers) for moments at a time. Each try still needs one unchanged window;
@@ -71,33 +75,43 @@ export class CaptureSpaceRefused extends CaptureFilesystemRefused {}
  * ancestors above the selected root catches that root being moved too. Nanosecond
  * change times detect a replaced-and-restored directory on local filesystems;
  * cached/coarse network metadata is not an openat-equivalent security boundary.
+ *
+ * Folders above the copy root (the home folder, `/Users`) are checked by identity
+ * only: the same directory on the same device. Their times change whenever anything
+ * beside the project changes, which on a busy machine is all the time, and a
+ * replaced folder there still shows as a new identity or a failed realpath check.
  */
 async function sourceAncestors(
+  root: string,
   parent: string,
   admit: ReturnType<typeof sourceFilesystemAdmission>,
 ) {
   const paths = [parent];
   while (Path.dirname(paths[0]!) !== paths[0]) paths.unshift(Path.dirname(paths[0]!));
-  const before: Array<{ path: string; stat: FS.BigIntStats }> = [];
+  const before: Array<{ path: string; stat: FS.BigIntStats; identityOnly: boolean }> = [];
   for (const path of paths) {
     const stat = await FSP.lstat(path, { bigint: true });
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw invalid();
-    before.push({ path, stat });
+    before.push({ path, stat, identityOnly: aboveRoot(root, path) });
   }
   await admitAncestorDevices(before, admit);
   return before;
 }
+/** True for a strict ancestor of the copy root. */
+const aboveRoot = (root: string, path: string) => {
+  const base = Path.resolve(root);
+  return path !== base && (path === Path.parse(base).root || base.startsWith(`${path}${Path.sep}`));
+};
 async function unchangedAncestors(before: Awaited<ReturnType<typeof sourceAncestors>>) {
   for (let index = before.length - 1; index >= 0; index--) {
-    const { path, stat } = before[index]!;
+    const { path, stat, identityOnly } = before[index]!;
     const after = await FSP.lstat(path, { bigint: true });
     if (
       !after.isDirectory() ||
       after.isSymbolicLink() ||
       after.dev !== stat.dev ||
       after.ino !== stat.ino ||
-      after.ctimeNs !== stat.ctimeNs ||
-      after.mtimeNs !== stat.mtimeNs
+      (!identityOnly && (after.ctimeNs !== stat.ctimeNs || after.mtimeNs !== stat.mtimeNs))
     )
       throw new SourceDirectoryChanged(
         "The source folder changed while a file was being captured. Try a new comparison.",
@@ -131,7 +145,7 @@ async function openContained(
   if (!isSafeRelativePath(relative)) throw invalid();
   const absolute = Path.join(root, relative);
   const parent = Path.dirname(absolute);
-  const ancestors = stableSource ? await sourceAncestors(parent, stableSource) : null;
+  const ancestors = stableSource ? await sourceAncestors(root, parent, stableSource) : null;
   if ((await FSP.realpath(parent)) !== parent) throw invalid();
   const file = await FSP.open(absolute, FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW);
   try {
@@ -270,116 +284,161 @@ export async function captureSourceFiles(input: {
   const changing: Array<string> = [];
   let offset = 0;
   let completed = 0;
-  try {
-    for (const entry of files) {
-      input.stop();
-      let waited = 0;
-      const wait = async (attempt: number) => {
-        waited += stableDelay(attempt);
-        if (waited > FILE_WAIT_MS)
-          throw new Error(
-            `The source kept changing while ${entry.path} was being captured. Try a new comparison.`,
-          );
-        await pause(attempt);
-      };
-      for (let attempt = 0; ; attempt++) {
-        let changed = false;
-        const source = await openStableSource(
-          input.sourceRoot(entry),
-          entry.path,
-          input.stop,
-          admit,
-          wait,
+  // Appends to the pack one at a time; several files are read and hashed meanwhile.
+  let packTail: Promise<unknown> = Promise.resolve();
+  const withPack = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = packTail.then(work);
+    packTail = run.catch(() => undefined);
+    return run;
+  };
+  const writeAt = async (bytes: Buffer, at: number) => {
+    let written = 0;
+    while (written < bytes.length) {
+      const result = await output.write(bytes, written, bytes.length - written, at + written);
+      if (!result.bytesWritten) throw new Error("Could not write the captured copy.");
+      written += result.bytesWritten;
+    }
+  };
+  /**
+   * Reads one file until a try sees it unchanged. A buffered read (files up to one chunk)
+   * keeps the bytes in memory and appends them afterwards; a streamed read holds the pack
+   * and writes straight into it at `offset`. Undefined asks for a streamed read: the file
+   * grew past the buffered size.
+   */
+  const readStable = async (entry: ManifestEntry, streamed: boolean) => {
+    let waited = 0;
+    const wait = async (attempt: number) => {
+      waited += stableDelay(attempt);
+      if (waited > FILE_WAIT_MS)
+        throw new Error(
+          `The source kept changing while ${entry.path} was being captured. Try a new comparison.`,
         );
-        try {
-          const before = await source.stat({ bigint: true });
-          await admit(input.sourceRoot(entry), before.dev);
-          const size = Number(before.size);
-          const whole = Crypto.createHash("sha256");
-          let chunk = Crypto.createHash("sha256");
-          const chunks: string[] = [];
-          let inChunk = 0;
-          let position = 0;
-          const buffer = Buffer.allocUnsafe(BUFFER);
-          while (position < size) {
-            input.stop();
-            const want = Math.min(buffer.length, CHUNK_SIZE - inChunk, size - position);
-            const { bytesRead } = await source.read(buffer, 0, want, position);
-            if (!bytesRead) break;
-            const bytes = buffer.subarray(0, bytesRead);
-            whole.update(bytes);
-            chunk.update(bytes);
-            let written = 0;
-            while (written < bytesRead) {
-              const result = await output.write(
-                bytes,
-                written,
-                bytesRead - written,
-                offset + position + written,
-              );
-              if (!result.bytesWritten) throw new Error("Could not write the captured copy.");
-              written += result.bytesWritten;
-            }
-            position += bytesRead;
-            inChunk += bytesRead;
-            if (inChunk === CHUNK_SIZE) {
-              chunks.push(chunk.digest("hex"));
-              chunk = Crypto.createHash("sha256");
-              inChunk = 0;
-            }
+      await pause(attempt);
+    };
+    for (let attempt = 0; ; attempt++) {
+      let changed = false;
+      const source = await openStableSource(
+        input.sourceRoot(entry),
+        entry.path,
+        input.stop,
+        admit,
+        wait,
+      );
+      try {
+        const before = await source.stat({ bigint: true });
+        await admit(input.sourceRoot(entry), before.dev);
+        const size = Number(before.size);
+        if (!streamed && size > BUFFERED_FILE_MAX) return undefined;
+        const kept = streamed ? null : Buffer.allocUnsafe(size);
+        const whole = Crypto.createHash("sha256");
+        let chunk = Crypto.createHash("sha256");
+        const chunks: string[] = [];
+        let inChunk = 0;
+        let position = 0;
+        const buffer = streamed ? Buffer.allocUnsafe(BUFFER) : null;
+        while (position < size) {
+          input.stop();
+          const want = Math.min(BUFFER, CHUNK_SIZE - inChunk, size - position);
+          const target = kept ?? buffer!;
+          const at = kept ? position : 0;
+          const { bytesRead } = await source.read(target, at, want, kept ? position : position);
+          if (!bytesRead) break;
+          const bytes = target.subarray(at, at + bytesRead);
+          whole.update(bytes);
+          chunk.update(bytes);
+          if (!kept) await writeAt(bytes, offset + position);
+          position += bytesRead;
+          inChunk += bytesRead;
+          if (inChunk === CHUNK_SIZE) {
+            chunks.push(chunk.digest("hex"));
+            chunk = Crypto.createHash("sha256");
+            inChunk = 0;
           }
-          const after = await source.stat({ bigint: true });
-          const moved =
-            position !== size ||
-            after.size !== before.size ||
-            after.mtimeNs !== before.mtimeNs ||
-            after.ctimeNs !== before.ctimeNs;
-          // With keep-last, the try before the wait budget runs out is the last one.
-          const lastTry =
-            attempt >= STABLE_ATTEMPTS - 1 ||
-            (keepLast && waited + stableDelay(attempt) > FILE_WAIT_MS);
-          if (moved && !(keepLast && lastTry)) {
-            await output.truncate(offset);
-            if (attempt < STABLE_ATTEMPTS - 1) {
-              changed = true;
-              continue;
-            }
-            throw new Error(
-              `The file kept changing while being captured: ${entry.path}. Try a new comparison.`,
-            );
-          }
-          const stat = {
-            size: String(before.size),
-            mtimeNs: String(before.mtimeNs),
-            ctimeNs: String(before.ctimeNs),
-            ino: String(before.ino),
-            dev: String(before.dev),
-          };
-          if (moved) changing.push(entry.path);
-          // A file stamped within a tick of its read could change again unseen: no stat.
-          else if (settledStat(stat, BigInt(Math.trunc(now())) * 1_000_000n))
-            stats[entry.path] = stat;
-          if (inChunk > 0 || chunks.length === 0) chunks.push(chunk.digest("hex"));
-          entry.sha256 = whole.digest("hex");
-          entry.chunks = chunks;
-          entry.size = position;
-          entry.mtimeMs = Number(before.mtimeMs);
-          index[entry.path] = { offset, size: position };
-          offset += position;
-          completed++;
-          input.progress?.({ files: completed, bytes: offset });
-          break;
-        } finally {
-          await source.close();
-          // Pause with the file closed, then try it again.
-          if (changed) await wait(attempt);
         }
+        const after = await source.stat({ bigint: true });
+        const moved =
+          position !== size ||
+          after.size !== before.size ||
+          after.mtimeNs !== before.mtimeNs ||
+          after.ctimeNs !== before.ctimeNs;
+        // With keep-last, the try before the wait budget runs out is the last one.
+        const lastTry =
+          attempt >= STABLE_ATTEMPTS - 1 ||
+          (keepLast && waited + stableDelay(attempt) > FILE_WAIT_MS);
+        if (moved && !(keepLast && lastTry)) {
+          if (streamed) await output.truncate(offset);
+          if (attempt < STABLE_ATTEMPTS - 1) {
+            changed = true;
+            continue;
+          }
+          throw new Error(
+            `The file kept changing while being captured: ${entry.path}. Try a new comparison.`,
+          );
+        }
+        if (inChunk > 0 || chunks.length === 0) chunks.push(chunk.digest("hex"));
+        return {
+          before,
+          moved,
+          position,
+          chunks,
+          sha256: whole.digest("hex"),
+          bytes: kept ? kept.subarray(0, position) : null,
+        };
+      } finally {
+        await source.close();
+        // Pause with the file closed, then try it again.
+        if (changed) await wait(attempt);
       }
     }
+  };
+  /** Records a file read at `at` in the pack. Runs inside the pack lane. */
+  const record = (
+    entry: ManifestEntry,
+    read: NonNullable<Awaited<ReturnType<typeof readStable>>>,
+  ) => {
+    const { before, moved, position } = read;
+    const stat = {
+      size: String(before.size),
+      mtimeNs: String(before.mtimeNs),
+      ctimeNs: String(before.ctimeNs),
+      ino: String(before.ino),
+      dev: String(before.dev),
+    };
+    if (moved) changing.push(entry.path);
+    // A file stamped within a tick of its read could change again unseen: no stat.
+    else if (settledStat(stat, BigInt(Math.trunc(now())) * 1_000_000n)) stats[entry.path] = stat;
+    entry.sha256 = read.sha256;
+    entry.chunks = read.chunks;
+    entry.size = position;
+    entry.mtimeMs = Number(before.mtimeMs);
+    index[entry.path] = { offset, size: position };
+    offset += position;
+    completed++;
+    input.progress?.({ files: completed, bytes: offset });
+  };
+  const captureStreamed = (entry: ManifestEntry) =>
+    withPack(async () => {
+      const read = await readStable(entry, true);
+      record(entry, read!);
+    });
+  try {
+    await forEachLimited(files, CAPTURE_CONCURRENCY, async (entry) => {
+      input.stop();
+      if (entry.size > BUFFERED_FILE_MAX) return captureStreamed(entry);
+      const read = await readStable(entry, false);
+      if (!read) return captureStreamed(entry);
+      await withPack(async () => {
+        input.stop();
+        await writeAt(read.bytes!, offset);
+        record(entry, read);
+      });
+    });
+    await packTail;
     input.stop();
     await output.truncate(offset);
     await output.sync();
   } finally {
+    await packTail;
     await output.close();
   }
   const packHash = await digestFile(input.root, "files.pack", input.stop);
