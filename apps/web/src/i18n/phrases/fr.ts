@@ -3198,12 +3198,10 @@ export const fr: PhraseCatalog = {
   Fix: "Corriger",
   "Run this draft on": "Exécuter ce brouillon sur",
   "Auto balance matching projects": "Répartir automatiquement les projets correspondants",
-  "Add to another machine…": "Ajouter à une autre machine…",
   "Move to another machine…": "Déplacer vers une autre machine…",
   "Leave this machine…": "Quitter cette machine…",
   "Another project or no project": "Un autre projet ou aucun projet",
   "Rename a machine": "Renommer une machine",
-  "Add {title} to": "Ajouter {title} à",
   "Choose a project on": "Choisir un projet sur",
   "Project on {name}": "Projet sur {name}",
   "No active checkout of {title} is saved on {name}. Choose another project or No project. Your draft stays here until you choose.":
@@ -4165,12 +4163,6 @@ export const fr: PhraseCatalog = {
     "Le changement n’a pas pu être confirmé sur {machine}. L’interrupteur indique ce que {machine} signale.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} utilise une version de SpecWithCode sans ce réglage. Mettez d’abord {machine} à jour.",
-  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
-    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ouvrez d’abord un projet sur cette machine, puis ajoutez-le à {name} ici.",
-  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "{name} ne peut exécuter qu’un projet dont elle a une copie. Ajoutez-en un, puis choisissez {name} sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
-  "Add {project} to {name}": "Ajouter {project} à {name}",
-  "Add a project to {name}": "Ajouter un projet à {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "Étape suivante, sur {coordinatorLabel} : cette machine ne peut exécuter qu’un projet dont elle a une copie. Ouvrez-y Réglages > Machines et ajoutez un projet à cette machine. Choisissez-la ensuite sous « Exécuter sur » dans une discussion, ou inscrivez-la sous « Machines for workers » dans les réglages du projet.",
   "Signed in as {account}": "Connecté en tant que {account}",
@@ -4631,8 +4623,6 @@ export const fr: PhraseCatalog = {
   "Installs from npm could not be read.": "Les installations depuis npm n’ont pas pu être lues.",
   "Installs from npm": "Installations depuis npm",
   "View this project on": "Voir ce projet sur",
-  "Move to {machine}…": "Déplacer vers {machine}…",
-  "Sync to {machine}…": "Synchroniser vers {machine}…",
   "Start a coordinator on {machine}": "Démarrer un coordinateur sur {machine}",
   "Machine access settings": "Réglages d’accès entre machines",
   "{machine} offline": "{machine} hors ligne",
@@ -4969,7 +4959,6 @@ export const fr: PhraseCatalog = {
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "Non installé. Récupère-le sur son propre site, ou demande à une personne qui peut gérer cette machine de l'installer d'ici.",
   "Browse…": "Parcourir…",
-  "Add to this machine…": "Ajouter à cette machine…",
   "Runs on {machine}. No copy on this device.": "S’exécute sur {machine}. Aucune copie sur cet appareil.",
   "Agent status": "État de l'agent",
   "Last time it was not signed in.": "La dernière fois, il n'était pas connecté.",
@@ -5015,4 +5004,18 @@ export const fr: PhraseCatalog = {
     "Le travail démarre sur {machine}. Cette copie reçoit son travail de là-bas.",
   "Main is moving between machines right now.":
     "La principale est en train de changer de machine.",
+  "Send to another machine…":
+    "Envoyer vers une autre machine…",
+  "Copy to this machine…":
+    "Copier sur cette machine…",
+  "Send {title} to":
+    "Envoyer {title} vers",
+  "Send {project} to {name}":
+    "Envoyer {project} vers {name}",
+  "Send a project to {name}":
+    "Envoyer un projet vers {name}",
+  "{name} can only run a project it has a copy of. Send one there, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} ne peut exécuter qu'un projet dont il a une copie. Envoyez-en un là-bas, puis choisissez {name} sous Exécuter sur dans une discussion, ou ajoutez-le sous Machines pour les workers dans les réglages du projet.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then send it to {name} here.":
+    "{name} ne peut exécuter qu'un projet dont il a une copie. Ouvrez d'abord un projet sur cette machine, puis envoyez-le vers {name} ici.",
 };

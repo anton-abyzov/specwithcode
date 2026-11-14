@@ -163,6 +163,23 @@ const mount = async () => {
   );
   await act(async () => container.querySelector("button")!.click());
 };
+/** Source and target as checkouts at their repository roots, so Send finds the copy. */
+const mountAtRoots = async () => {
+  const at = (project: typeof source, rootPath: string) => ({
+    ...project,
+    repositoryIdentity: { ...repositoryIdentity, rootPath },
+  });
+  state.projects = [at(source, "/source"), at(target, "/target")];
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={at(source, "/source") as never}
+        coordinatorId={"coordinator" as never}
+      />,
+    ),
+  );
+  await act(async () => container.querySelector("button")!.click());
+};
 const review = () => act(async () => props().onReview());
 const consent = () => act(async () => props().onConsent(true));
 const transfer = () => act(async () => props().onContinue());
@@ -812,13 +829,13 @@ it("opens on a copy where the project has no saved folder", async () => {
   expect(props().method).toBe("copy");
 });
 
-it("opens on sharing, and Hand off goes to the Git review of that machine's folder", async () => {
+it("opens on sharing, and Move goes to the Git review of that machine's copy", async () => {
   state.environments = machineEnvironments;
-  await mount();
+  await mountAtRoots();
   const share = () =>
     (props().shareFlow as React.ReactElement<HandoffShareProps> | undefined)?.props;
-  expect(share()).toMatchObject({ machine: "m1", linked: true });
-  await act(async () => share()!.onMove());
+  expect(share()).toMatchObject({ machine: "m1", holding: { kind: "copy" } });
+  await act(async () => share()!.onMove("m1:target"));
   expect(share()).toBeUndefined();
   expect(props().method).toBe("folder");
   expect(state.prepare.mock.calls.at(-1)?.[0]?.input.destination).toMatchObject({
@@ -827,13 +844,23 @@ it("opens on sharing, and Hand off goes to the Git review of that machine's fold
   });
 });
 
+it("Copy to a machine with a copy opens the sync review into that copy", async () => {
+  state.environments = machineEnvironments;
+  await mountAtRoots();
+  const share = (props().shareFlow as React.ReactElement<HandoffShareProps>).props;
+  await act(async () => share.onSync("m1:target"));
+  expect(props().shareFlow).toBeUndefined();
+  expect(props().intent).toBe("copy");
+  expect(props().sync).toMatchObject({ folder: "/target" });
+});
+
 it("Copy files instead leaves sharing for the files-only copy", async () => {
   state.environments = machineEnvironments;
   state.projects = [source];
   await mount();
   const share = (props().shareFlow as React.ReactElement<HandoffShareProps>).props;
-  expect(share.linked).toBe(false);
-  await act(async () => share.onCopyInstead());
+  expect(share.holding).toEqual({ kind: "none" });
+  await act(async () => share.onCopyInstead(false));
   expect(props().shareFlow).toBeUndefined();
   expect(props().intent).toBe("copy");
   expect(props().method).toBe("copy");
@@ -1377,7 +1404,7 @@ it("routes umbrella review to cloning with local files without moving the coordi
   state.projects = [source];
   await mount();
   const share = (props().shareFlow as React.ReactElement<HandoffShareProps>).props;
-  await act(async () => share.onPrepareRepositories());
+  await act(async () => share.onPrepareRepositories(false));
   expect(props().shareFlow).toBeUndefined();
   expect(props().intent).toBe("copy");
   expect(props().method).toBe("clone");

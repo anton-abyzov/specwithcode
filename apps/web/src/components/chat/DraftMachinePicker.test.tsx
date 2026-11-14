@@ -623,7 +623,7 @@ it("says Connection failed, never Can't reach, when this machine's connection st
   expect(control.textContent).not.toContain("Can't reach");
 });
 
-it("lists only machines with the project and offers the rest under Add to another machine…", async () => {
+it("lists only machines with the project and offers the rest under Send to another machine…", async () => {
   // A Git remote to clone from; without one, Add copies the folder (next test).
   runtime.projects[0].repositoryIdentity = {
     canonicalKey: "github.com/acme/data",
@@ -640,8 +640,8 @@ it("lists only machines with the project and offers the rest under Add to anothe
   expect(document.body.textContent).toContain("Machines with m4");
   expect(button("M1Connected")).toBeTruthy();
   expect(document.body.textContent).not.toContain("M3Connected");
-  await click("Add to another machine…");
-  expect(document.body.textContent).toContain("Add m4 to");
+  await click("Send to another machine…");
+  expect(document.body.textContent).toContain("Send m4 to");
   expect(document.body.textContent).not.toContain("M1");
   await click("M3Clone it there");
   expect(document.querySelector("[data-add-dialog]")?.getAttribute("data-add-dialog")).toBe(m3);
@@ -669,7 +669,7 @@ it("lists only machines with the project and offers the rest under Add to anothe
 it("opens the folder copy review for a project with no Git remote, never a clone", async () => {
   await render();
   await open();
-  await click("Add to another machine…");
+  await click("Send to another machine…");
   expect(button("M3").textContent).toContain("Copy its folder there");
   expect(button("M3").textContent).not.toContain("Clone it there");
   await click("M3Copy its folder there");
@@ -703,7 +703,7 @@ it("offers Link, never Clone, when the machine has an unlinked checkout of the s
   );
   await render();
   await open();
-  await click("Add to another machine…");
+  await click("Send to another machine…");
   // The M3 project shares only a title; a name is never proof of the same repository.
   expect(button("M3").textContent).toContain("Clone it there");
   await click("M1Has a copy at /m1/code/dataLink");
@@ -743,7 +743,7 @@ it("shows every machine in a flat list for a draft without a project", async () 
   await render();
   await open();
   expect(document.body.textContent).toContain("Run this draft on");
-  expect(document.body.textContent).not.toContain("Add to another machine…");
+  expect(document.body.textContent).not.toContain("Send to another machine…");
   expect(button("M1Connected")).toBeTruthy();
   expect(button("M3Connected")).toBeTruthy();
 });

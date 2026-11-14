@@ -49,7 +49,7 @@ const copy = (
 
 const handlers = () => ({
   onView: vi.fn<(key: string) => void>(),
-  onMove: vi.fn<(key: string) => void>(),
+  onSend: vi.fn<() => void>(),
   onStart: vi.fn<(key: string) => void>(),
   onAllowWorkers: vi.fn<() => void>(),
 });
@@ -80,12 +80,12 @@ const item = (role: string, text: string) =>
     element.textContent?.includes(text),
   );
 
-it("keeps viewing, moving and starting as separate actions", async () => {
+it("keeps viewing, sending and starting as separate actions", async () => {
   const calls = handlers();
   await renderSwitcher(calls);
   await act(async () => item("menuitemradio", "Minis")!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
-  expect(calls.onMove).not.toHaveBeenCalled();
+  expect(calls.onSend).not.toHaveBeenCalled();
   expect(calls.onStart).not.toHaveBeenCalled();
 });
 
@@ -101,30 +101,19 @@ it("switches the view only after its menu has closed", async () => {
   expect(menuOpenAtSwitch).toEqual([false]);
 });
 
-it("moves the coordinator only from its own item", async () => {
+it("offers one Send item for add, move and sync, whatever the other copies run", async () => {
   const calls = handlers();
-  await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Move to Minis…")!.click());
-  expect(calls.onMove).toHaveBeenCalledWith("minis:p");
-  expect(calls.onView).not.toHaveBeenCalled();
-});
-
-it("offers Sync, not Move, for a machine that runs its own coordinator", async () => {
-  const calls = handlers();
-  const onSync = vi.fn<(key: string) => void>();
   await renderSwitcher({
     ...calls,
-    onSync,
     copies: [copy("m4:p", "M4"), copy("mini:p", "Mini"), copy("minis:p", "Minis", "workers")],
   });
   const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
-  expect(labels).not.toContain("Move to Mini…");
-  expect(labels).toContain("Sync to Mini…");
-  expect(labels).toContain("Move to Minis…");
-  expect(labels).toContain("Sync to Minis…");
-  await act(async () => item("menuitem", "Sync to Mini…")!.click());
-  await vi.waitFor(() => expect(onSync).toHaveBeenCalledWith("mini:p"));
-  expect(calls.onMove).not.toHaveBeenCalled();
+  expect(labels.filter((label) => /^(Add|Move to|Sync to|Send)/.test(label ?? ""))).toEqual([
+    "Send to another machine…",
+  ]);
+  await act(async () => item("menuitem", "Send to another machine…")!.click());
+  await vi.waitFor(() => expect(calls.onSend).toHaveBeenCalledTimes(1));
+  expect(calls.onView).not.toHaveBeenCalled();
 });
 
 it("starts a coordinator on a ready workers-only copy", async () => {
@@ -146,7 +135,7 @@ it("opens thread migration as its own action, after the menu closes", async () =
   await vi.waitFor(() => expect(onMigrate).toHaveBeenCalledTimes(1));
   expect(menuOpenAtMigrate).toEqual([false]);
   expect(calls.onView).not.toHaveBeenCalled();
-  expect(calls.onMove).not.toHaveBeenCalled();
+  expect(calls.onSend).not.toHaveBeenCalled();
   expect(calls.onStart).not.toHaveBeenCalled();
 });
 
@@ -248,9 +237,8 @@ it("runs one coordinator start at a time across the switcher and the composer no
   expect(startCoordinator).toHaveBeenCalledTimes(2);
 });
 
-it("offers Add, Move and Leave in one machine menu, even with one copy", async () => {
-  const onAdd = vi.fn<() => void>();
-  const onMoveElsewhere = vi.fn<() => void>();
+it("offers Send and Leave in one machine menu, even with one copy", async () => {
+  const onSend = vi.fn<() => void>();
   const onLeave = vi.fn<() => void>();
   await act(async () =>
     root.render(
@@ -263,11 +251,9 @@ it("offers Add, Move and Leave in one machine menu, even with one copy", async (
         unknown={[]}
         savedMachineMissing={false}
         onView={vi.fn()}
-        onMove={null}
         onStart={null}
         onAllowWorkers={null}
-        onAdd={onAdd}
-        onMoveElsewhere={onMoveElsewhere}
+        onSend={onSend}
         onLeave={onLeave}
       />,
     ),
@@ -278,17 +264,15 @@ it("offers Add, Move and Leave in one machine menu, even with one copy", async (
       .click(),
   );
   expect(document.querySelector('[role="menuitemradio"]')).toBeNull();
-  expect(item("menuitem", "Add to another machine…")).toBeDefined();
   expect(item("menuitem", "Leave this machine…")).toBeDefined();
-  await act(async () => item("menuitem", "Move to another machine…")!.click());
-  await vi.waitFor(() => expect(onMoveElsewhere).toHaveBeenCalledTimes(1));
-  expect(onAdd).not.toHaveBeenCalled();
+  await act(async () => item("menuitem", "Send to another machine…")!.click());
+  await vi.waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
   expect(onLeave).not.toHaveBeenCalled();
 });
 
 it("names machines once and labels every group of actions", async () => {
   const calls = handlers();
-  await renderSwitcher({ ...calls, onAdd: vi.fn(), onMoveElsewhere: vi.fn(), onLeave: vi.fn() });
+  await renderSwitcher({ ...calls, onLeave: vi.fn() });
   expect(
     [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
   ).toEqual(["M4Main", "MinisCopy · main on M4"]);
@@ -297,9 +281,7 @@ it("names machines once and labels every group of actions", async () => {
   ).toEqual(["View this project on", "This project", "On M4"]);
   expect([...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)).toEqual(
     [
-      "Add to another machine…",
-      "Move to Minis…",
-      "Move to another machine…",
+      "Send to another machine…",
       "Start a coordinator on Minis",
       "Move running threads…M4 offline",
       "Leave this machine…",
@@ -323,7 +305,6 @@ it("stays a plain label with one copy and no machine actions", async () => {
         unknown={[]}
         savedMachineMissing={false}
         onView={vi.fn()}
-        onMove={null}
         onStart={null}
         onAllowWorkers={null}
       />,

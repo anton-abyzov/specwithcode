@@ -92,24 +92,24 @@ export function AddProjectToMachineView(props: {
       <p className="text-xs text-muted-foreground">
         {choices.length === 0
           ? tx(
-              "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.",
+              "{name} can only run a project it has a copy of. Open a project on this machine first, then send it to {name} here.",
               { name },
             )
           : tx(
-              "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.",
+              "{name} can only run a project it has a copy of. Send one there, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.",
               { name },
             )}
       </p>
       {only ? (
         <Button size="xs" variant="outline" onClick={() => props.onChoose(only)}>
           <FolderPlusIcon aria-hidden className="size-3" />
-          {tx("Add {project} to {name}", { project: only.title, name })}
+          {tx("Send {project} to {name}", { project: only.title, name })}
         </Button>
       ) : choices.length > 1 ? (
         <Menu>
           <MenuTrigger render={<Button size="xs" variant="outline" />}>
             <FolderPlusIcon aria-hidden className="size-3" />
-            {tx("Add a project to {name}", { name })}
+            {tx("Send a project to {name}", { name })}
             <ChevronDownIcon aria-hidden className="size-3" />
           </MenuTrigger>
           <MenuPopup align="start" className="max-h-72 min-w-56">

@@ -328,7 +328,7 @@ describe("switching the coordinator machine", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(state.send).not.toHaveBeenCalled();
   });
-  it("keeps the coordinator, worker and draft until a confirmed move completes", async () => {
+  it("keeps the coordinator, worker and draft while the Send dialog is open", async () => {
     state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
     state.shells.push(shell("old-checkout-thread"));
     const onSelectThread = vi.fn();
@@ -345,7 +345,7 @@ describe("switching the coordinator machine", () => {
     await renderOpen();
     expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
     await openSwitcher();
-    await act(async () => menuItem("menuitem", "Move to laptop…")!.click());
+    await act(async () => menuItem("menuitem", "Send to another machine…")!.click());
     expect(state.savedMachines).toEqual({});
     await renderOpen();
     expect(onSelectThread).not.toHaveBeenCalled();
@@ -409,14 +409,14 @@ describe("the coordinator stays in the main column", () => {
     await openFirstThread();
     await prompt("Keep my coordinator draft");
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
-    // The machine menu opens the handoff dialog: Add to another machine…
+    // The machine menu opens the handoff dialog: Send to another machine…
     await act(async () =>
       document
         .querySelector<HTMLButtonElement>('[aria-label$="this project\'s machines"]')!
         .click(),
     );
     await act(async () =>
-      document.querySelector<HTMLElement>('[data-machine-action="add"]')!.click(),
+      document.querySelector<HTMLElement>('[data-machine-action="send"]')!.click(),
     );
     await act(async () => {});
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();

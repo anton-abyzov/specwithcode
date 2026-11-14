@@ -3168,12 +3168,10 @@ export const ru: PhraseCatalog = {
   Fix: "Исправить",
   "Run this draft on": "Запустить этот черновик на",
   "Auto balance matching projects": "Автобаланс подходящих проектов",
-  "Add to another machine…": "Добавить на другую машину…",
   "Move to another machine…": "Перенести на другую машину…",
   "Leave this machine…": "Уйти с этой машины…",
   "Another project or no project": "Другой проект или без проекта",
   "Rename a machine": "Переименовать машину",
-  "Add {title} to": "Добавить {title} на",
   "Choose a project on": "Выберите проект на",
   "Project on {name}": "Проект на {name}",
   "No active checkout of {title} is saved on {name}. Choose another project or No project. Your draft stays here until you choose.":
@@ -4128,12 +4126,6 @@ export const ru: PhraseCatalog = {
     "Не удалось подтвердить изменение на {machine}. Переключатель показывает то, что сообщает {machine}.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "На {machine} версия SpecWithCode без этой настройки. Сначала обновите {machine}.",
-  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
-    "{name} может запускать только проект, копия которого на ней есть. Сначала откройте проект на этой машине, затем добавьте его на {name} здесь.",
-  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "{name} может запускать только проект, копия которого на ней есть. Добавьте проект, затем выберите {name} в меню «Запустить на» в чате или внесите её в список «Machines for workers» в настройках проекта.",
-  "Add {project} to {name}": "Добавить {project} на {name}",
-  "Add a project to {name}": "Добавить проект на {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "Дальше на {coordinatorLabel}: эта машина может запускать только проект, копия которого на ней есть. Откройте там «Настройки > Машины» и добавьте проект на эту машину. Затем выберите её в меню «Запустить на» в чате или внесите в список «Machines for workers» в настройках проекта.",
   "Signed in as {account}": "Вход выполнен: {account}",
@@ -4588,8 +4580,6 @@ export const ru: PhraseCatalog = {
   "Installs from npm could not be read.": "Не удалось прочитать установки из npm.",
   "Installs from npm": "Установки из npm",
   "View this project on": "Смотреть проект на",
-  "Move to {machine}…": "Перенести на {machine}…",
-  "Sync to {machine}…": "Синхронизировать с {machine}…",
   "Start a coordinator on {machine}": "Запустить координатора на {machine}",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
@@ -4927,7 +4917,6 @@ export const ru: PhraseCatalog = {
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "Не установлен. Скачайте его с официального сайта или попросите того, кто может обслуживать эту машину, установить его отсюда.",
   "Browse…": "Обзор…",
-  "Add to this machine…": "Добавить на этот компьютер…",
   "Runs on {machine}. No copy on this device.": "Работает на {machine}. На этом устройстве копии нет.",
   "Agent status": "Статус агента",
   "Last time it was not signed in.": "В прошлый раз вход не был выполнен.",
@@ -4972,4 +4961,18 @@ export const ru: PhraseCatalog = {
     "Работа начинается на {machine}. Эта копия получает работу оттуда.",
   "Main is moving between machines right now.":
     "Основная прямо сейчас переезжает между машинами.",
+  "Send to another machine…":
+    "Отправить на другую машину…",
+  "Copy to this machine…":
+    "Скопировать на эту машину…",
+  "Send {title} to":
+    "Отправить {title} на",
+  "Send {project} to {name}":
+    "Отправить {project} на {name}",
+  "Send a project to {name}":
+    "Отправить проект на {name}",
+  "{name} can only run a project it has a copy of. Send one there, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} может запускать только проект, копия которого у него есть. Отправьте туда проект, затем выберите {name} в пункте «Запускать на» в чате или добавьте его в «Машины для воркеров» в настройках проекта.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then send it to {name} here.":
+    "{name} может запускать только проект, копия которого у него есть. Сначала откройте проект на этой машине, затем отправьте его на {name} здесь.",
 };

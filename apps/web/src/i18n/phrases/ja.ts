@@ -3173,12 +3173,10 @@ export const ja: PhraseCatalog = {
   Fix: "修正",
   "Run this draft on": "この下書きを実行するマシン",
   "Auto balance matching projects": "一致するプロジェクトを自動で分散",
-  "Add to another machine…": "別のマシンに追加…",
   "Move to another machine…": "別のマシンに移動…",
   "Leave this machine…": "このマシンを離れる…",
   "Another project or no project": "別のプロジェクトまたはプロジェクトなし",
   "Rename a machine": "マシンの名前を変更",
-  "Add {title} to": "{title} の追加先",
   "Choose a project on": "プロジェクトを選択:",
   "Project on {name}": "{name} 上のプロジェクト",
   "No active checkout of {title} is saved on {name}. Choose another project or No project. Your draft stays here until you choose.":
@@ -4130,12 +4128,6 @@ export const ja: PhraseCatalog = {
     "{machine} で変更を確認できませんでした。スイッチは {machine} が報告する状態を表示しています。",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} の SpecWithCode にはこの設定がありません。先に {machine} を更新してください。",
-  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
-    "{name} が実行できるのは、コピーを持っているプロジェクトだけです。まずこのマシンでプロジェクトを開いてから、ここで {name} に追加してください。",
-  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "{name} が実行できるのは、コピーを持っているプロジェクトだけです。プロジェクトを追加してから、チャットの「実行先」で {name} を選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
-  "Add {project} to {name}": "{project} を {name} に追加",
-  "Add a project to {name}": "プロジェクトを {name} に追加",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "次は {coordinatorLabel} で: このマシンが実行できるのは、コピーを持っているプロジェクトだけです。そちらで 設定 > マシン を開き、このマシンにプロジェクトを追加してください。その後、チャットの「実行先」でこのマシンを選ぶか、プロジェクト設定の「Machines for workers」に登録してください。",
   "Signed in as {account}": "{account} としてサインイン済み",
@@ -4593,8 +4585,6 @@ export const ja: PhraseCatalog = {
   "Installs from npm could not be read.": "npm からのインストール数を読み取れませんでした。",
   "Installs from npm": "npm からのインストール",
   "View this project on": "このプロジェクトを表示するマシン",
-  "Move to {machine}…": "{machine} に移動…",
-  "Sync to {machine}…": "{machine} に同期…",
   "Start a coordinator on {machine}": "{machine} でコーディネーターを開始",
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
@@ -4929,7 +4919,6 @@ export const ja: PhraseCatalog = {
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "未インストールです。公式サイトから入手するか、このマシンを管理できる人にここからインストールしてもらってください。",
   "Browse…": "参照…",
-  "Add to this machine…": "このマシンに追加…",
   "Runs on {machine}. No copy on this device.": "{machine} で実行されます。このデバイスにはコピーがありません。",
   "Agent status": "エージェントの状態",
   "Last time it was not signed in.": "前回はサインインしていませんでした。",
@@ -4974,4 +4963,18 @@ export const ja: PhraseCatalog = {
     "作業は {machine} で始まります。このコピーはそこから作業を受け取ります。",
   "Main is moving between machines right now.":
     "メインは現在マシン間で移動中です。",
+  "Send to another machine…":
+    "別のマシンに送る…",
+  "Copy to this machine…":
+    "このマシンにコピー…",
+  "Send {title} to":
+    "{title} の送り先",
+  "Send {project} to {name}":
+    "{project} を {name} に送る",
+  "Send a project to {name}":
+    "プロジェクトを {name} に送る",
+  "{name} can only run a project it has a copy of. Send one there, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} はコピーを持つプロジェクトしか実行できません。そこに 1 つ送ってから、チャットの「実行先」で {name} を選ぶか、プロジェクト設定の「ワーカー用マシン」に追加してください。",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then send it to {name} here.":
+    "{name} はコピーを持つプロジェクトしか実行できません。まずこのマシンでプロジェクトを開き、ここから {name} に送ってください。",
 };

@@ -55,6 +55,12 @@ vi.mock("./ProjectMoveOptions", () => ({
 }));
 
 const { HandoffShare } = await import("./HandoffShare");
+import type { HandoffShareProps } from "./HandoffShare";
+
+type Holding = HandoffShareProps["holding"];
+const thereCopy = (id = "there", workspaceRoot = "/work/project") =>
+  ({ environmentId: "m1", id, workspaceRoot }) as never;
+const hasCopy: Holding = { kind: "copy", copy: thereCopy() };
 
 const project = {
   environmentId: "m4",
@@ -79,13 +85,17 @@ const base = {
   machines: [],
   machine: "m1" as never,
   machineLabel: "Ministorm",
-  linked: false,
+  holding: { kind: "none" } as Holding,
+  mainLabel: "M4",
+  projectsRoot: null as string | null,
+  updatesCommits: false,
   joined: false,
   uncommittedFiles: 0,
   loading: false,
   canClone: true,
   onMachineChange: () => undefined,
   onMove: vi.fn(),
+  onSync: vi.fn(),
   onCopyInstead: vi.fn(),
   onPrepareRepositories: vi.fn(),
   onNeedsFolderChoice: vi.fn(),
@@ -123,7 +133,7 @@ afterEach(async () => {
 
 it("offers one Add button, and cloning copies no files and no secrets", async () => {
   await show();
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   expect(state.clone).toHaveBeenCalledOnce();
   expect(state.job).toHaveBeenCalledWith(
     expect.objectContaining({ copyIgnored: false, secrets: [] }),
@@ -133,19 +143,19 @@ it("offers one Add button, and cloning copies no files and no secrets", async ()
 
 it("keeps waiting for the link after a finished clone clears its job", async () => {
   await show();
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   state.listed.mockReturnValue([]);
   await act(async () => {
     window.dispatchEvent(new Event("jobs"));
   });
   expect(container.textContent).toContain("Ministorm is cloning this project");
-  expect(button("Add Ministorm")).toBeUndefined();
+  expect(button("Copy to Ministorm")).toBeUndefined();
 });
 
 it("tells the reader when the other machine cannot read the repository", async () => {
   state.checkRemote.mockResolvedValue({ value: { status: "denied" } });
   await show();
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   expect(state.clone).not.toHaveBeenCalled();
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("can't read");
 });
@@ -155,16 +165,28 @@ it("hands the choice to a person when a folder is already there", async () => {
     value: { path: "/work/project", state: "repository", sameRepository: true },
   });
   await show();
-  await act(async () => button("Add Ministorm")!.click());
+  expect(container.querySelector("[data-slot='send-plan']")?.textContent).toBe(
+    "/work/project on Ministorm is taken. Choose a folder there first.",
+  );
+  await act(async () => button("Copy to Ministorm…")!.click());
   expect(base.onNeedsFolderChoice).toHaveBeenCalledOnce();
   expect(state.clone).not.toHaveBeenCalled();
 });
 
-it("hands off directly when the machine already has the project", async () => {
-  await show({ linked: true });
-  await act(async () => button("Hand off to Ministorm")!.click());
-  expect(base.onMove).toHaveBeenCalledOnce();
-  expect(button("Add Ministorm")).toBeUndefined();
+const sendChoice = (value: "copy" | "move") =>
+  container.querySelector<HTMLElement>(`[data-send-choice="${value}"] [role="radio"]`);
+const plan = () => container.querySelector("[data-slot='send-plan']")?.textContent;
+
+it("moves Main straight to the copy the machine already has", async () => {
+  await show({ holding: hasCopy });
+  expect(sendChoice("copy")?.getAttribute("aria-checked")).toBe("true");
+  await act(async () => sendChoice("move")!.click());
+  expect(plan()).toBe(
+    "Push this machine's commits, then move Main to Ministorm's copy at /work/project. Work continues on Ministorm, and this copy stops starting work.",
+  );
+  await act(async () => button("Move to Ministorm")!.click());
+  expect(base.onMove).toHaveBeenCalledWith("m1:there");
+  expect(base.onSync).not.toHaveBeenCalled();
 });
 
 const choice = (value: string) =>
@@ -180,9 +202,10 @@ it("leads with the copy when the project has no Git remote, and shows why Clone 
   expect(choice("copy")?.getAttribute("aria-checked")).toBe("true");
   expect(choice("clone")?.hasAttribute("data-disabled")).toBe(true);
   expect(container.textContent).toContain("No Git remote to clone from");
-  expect(button("Add Ministorm")).toBeUndefined();
-  await act(async () => button("Review files to transfer")!.click());
-  expect(base.onPrepareRepositories).toHaveBeenCalledOnce();
+  expect(button("Copy to Ministorm")).toBeUndefined();
+  expect(plan()).toBe("Copy the folder to Ministorm. You review the files first. Main stays on M4.");
+  await act(async () => button("Copy to Ministorm…")!.click());
+  expect(base.onPrepareRepositories).toHaveBeenCalledWith(false);
 });
 
 it("shows Copy files beside Clone for a plain repository, with Clone first", async () => {
@@ -191,9 +214,9 @@ it("shows Copy files beside Clone for a plain repository, with Clone first", asy
   expect(choice("clone")?.getAttribute("aria-checked")).toBe("true");
   expect(container.querySelector("[data-slot='handoff-more-options']")).toBeNull();
   await act(async () => choice("copy")!.click());
-  expect(button("Add Ministorm")).toBeUndefined();
-  await act(async () => button("Copy files…")!.click());
-  expect(base.onCopyInstead).toHaveBeenCalledOnce();
+  expect(button("Copy to Ministorm")).toBeUndefined();
+  await act(async () => button("Copy to Ministorm…")!.click());
+  expect(base.onCopyInstead).toHaveBeenCalledWith(false);
 });
 
 it("leads with copying the whole folder when it holds nested repositories", async () => {
@@ -211,7 +234,7 @@ it("leads with copying the whole folder when it holds nested repositories", asyn
   expect(container.textContent).not.toContain("uncommitted files stay");
   await act(async () => choice("clone")!.click());
   expect(container.textContent).toContain("3 uncommitted files stay on M4");
-  expect(button("Add Ministorm")).toBeDefined();
+  expect(button("Copy to Ministorm")).toBeDefined();
 });
 
 it("keeps the long explanations in hints a keyboard can reach", async () => {
@@ -232,48 +255,47 @@ it("says uncommitted files stay here", async () => {
 
 it("moves the coordinator only once the clone is linked, not when its checkout appears", async () => {
   await show();
-  const box = container.querySelector('[data-slot="handoff-share-move"] [role="checkbox"]');
-  await act(async () => (box as HTMLElement).click());
-  await act(async () => button("Add Ministorm")!.click());
-  await show({ linked: true });
+  await act(async () => sendChoice("move")!.click());
+  await act(async () => button("Move to Ministorm")!.click());
+  await show({ holding: hasCopy });
   expect(base.onMove).not.toHaveBeenCalled();
-  await show({ linked: true, joined: true });
+  await show({ holding: hasCopy, joined: true });
   expect(base.onMove).toHaveBeenCalledOnce();
 });
 
 it("shows a clone still running from a closed dialog instead of offering Add again", async () => {
   await show();
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   const job = state.job.mock.calls[0]![0];
   state.listed.mockReturnValue([job]);
   await act(async () => root.unmount());
   root = createRoot(container);
   await show();
-  expect(button("Add Ministorm")).toBeUndefined();
+  expect(button("Copy to Ministorm")).toBeUndefined();
   expect(container.textContent).toContain("Ministorm is cloning this project");
 });
 
 it("offers Add again and says so when the clone failed", async () => {
   await show();
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   state.clone_ = { phase: "failed" };
   await act(async () => root.unmount());
   root = createRoot(container);
   await show();
-  expect(button("Add Ministorm")).toBeDefined();
+  expect(button("Copy to Ministorm")).toBeDefined();
   expect(container.textContent).toContain("did not finish");
 });
 
 it("offers Add again once the job ended with no link", async () => {
   await show();
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   vi.useFakeTimers();
   state.listed.mockReturnValue([]);
   await act(async () => window.dispatchEvent(new Event("jobs")));
-  expect(button("Add Ministorm")).toBeUndefined();
+  expect(button("Copy to Ministorm")).toBeUndefined();
   await act(async () => vi.advanceTimersByTime(120_000));
   vi.useRealTimers();
-  expect(button("Add Ministorm")).toBeDefined();
+  expect(button("Copy to Ministorm")).toBeDefined();
 });
 
 it("names nested origins and routes an umbrella to the mixed transfer review", async () => {
@@ -292,7 +314,7 @@ it("names nested origins and routes an umbrella to the mixed transfer review", a
   expect(container.textContent).not.toContain("nothing to clone");
   expect(container.textContent).not.toContain("Commit and push");
   expect(container.textContent).not.toContain("files stay");
-  await act(async () => button("Review repositories and local files")!.click());
+  await act(async () => button("Copy to Ministorm…")!.click());
   expect(base.onPrepareRepositories).toHaveBeenCalledOnce();
   expect(state.clone).not.toHaveBeenCalled();
 });
@@ -318,7 +340,7 @@ it("starts with both extras ticks off", async () => {
 it("sends ignored files with the clone when ticked", async () => {
   await show();
   await act(async () => tick("Copy ignored files")!.click());
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   expect(state.job).toHaveBeenCalledWith(
     expect.objectContaining({ copyIgnored: true, secrets: [] }),
   );
@@ -327,7 +349,7 @@ it("sends ignored files with the clone when ticked", async () => {
 it("opens the full review to pick secrets when Include secrets is ticked", async () => {
   await show();
   await act(async () => tick("Include secrets")!.click());
-  await act(async () => button("Add Ministorm")!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
   expect(base.onNeedsFolderChoice).toHaveBeenCalledOnce();
   expect(state.clone).not.toHaveBeenCalled();
   expect(state.job).not.toHaveBeenCalled();
@@ -342,14 +364,77 @@ it("keeps Copy ignored files a live tick while Include secrets is ticked", async
 });
 
 it("shows no extras ticks once the machine has the project", async () => {
-  await show({ linked: true });
+  await show({ holding: hasCopy });
   expect(tick("Copy ignored files")).toBeUndefined();
 });
 
-it("still offers a copy without moving when the machine already has the project", async () => {
-  await show({ linked: true });
-  await act(async () => button("Copy files…")!.click());
-  expect(base.onCopyInstead).toHaveBeenCalledOnce();
+it("copies into the machine's own copy by default, and says so before the click", async () => {
+  await show({ holding: hasCopy, uncommittedFiles: 3 });
+  expect(container.textContent).toContain("Ministorm already has a copy, at /work/project.");
+  expect(plan()).toBe(
+    "Copy 3 changed local files into Ministorm's copy at /work/project. Its commits update from Git when work starts there. Main stays on M4.",
+  );
+  await act(async () => button("Copy to Ministorm")!.click());
+  expect(base.onSync).toHaveBeenCalledWith("m1:there");
+  expect(base.onMove).not.toHaveBeenCalled();
+});
+
+it("says the copy will be updated once the machine updates copies to these commits", async () => {
+  await show({ holding: hasCopy, updatesCommits: true });
+  expect(container.textContent).toContain(
+    "Ministorm already has a copy. It will be updated to this machine's commits.",
+  );
+});
+
+it("hides the choice when the machine already has Main", async () => {
+  await show({ holding: { kind: "main", copy: thereCopy() } });
+  expect(sendChoice("move")).toBeNull();
+  expect(container.textContent).toContain(
+    "Ministorm already has Main, at /work/project, so there is nothing to move.",
+  );
+  expect(plan()).toContain("Main stays on Ministorm.");
+  await act(async () => button("Copy to Ministorm")!.click());
+  expect(base.onSync).toHaveBeenCalledWith("m1:there");
+});
+
+it("asks which copy when the machine has several, and guesses none", async () => {
+  await show({
+    holding: {
+      kind: "several",
+      copies: [thereCopy("a", "/work/a"), thereCopy("b", "/work/b")],
+    },
+  });
+  expect(plan()).toBe("Pick the copy to send to.");
+  expect(button("Copy to Ministorm")?.disabled).toBe(true);
+  const pick = container.querySelectorAll<HTMLElement>(
+    "[data-slot='send-copy-picker'] [role='radio']",
+  );
+  await act(async () => pick[1]!.click());
+  await act(async () => button("Copy to Ministorm")!.click());
+  expect(base.onSync).toHaveBeenCalledWith("m1:b");
+});
+
+it("clones into the machine's projects folder, or its -2 when that is taken", async () => {
+  state.inspect.mockImplementation(async ({ input }: { input: { path: string } }) => ({
+    value: { path: input.path, state: input.path.endsWith("-2") ? "missing" : "not-repository" },
+  }));
+  await show({ projectsRoot: "/Users/dana/Projects" });
+  expect(plan()).toBe(
+    "Clone into ~/Projects/project-2 on Ministorm. Main stays on M4. ~/Projects/project is taken.",
+  );
+  await act(async () => button("Copy to Ministorm")!.click());
+  expect(state.clone).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ destinationPath: "/Users/dana/Projects/project-2" }),
+    }),
+  );
+});
+
+it("starts every machine on Copy, the safe choice", async () => {
+  await show({ holding: hasCopy });
+  await act(async () => sendChoice("move")!.click());
+  await show({ holding: hasCopy, machine: "m3" as never, machineLabel: "m3" });
+  expect(sendChoice("copy")?.getAttribute("aria-checked")).toBe("true");
 });
 
 it("selects the copy when this machine cannot clone, and holds Add while nested repositories are checked", async () => {
@@ -358,5 +443,5 @@ it("selects the copy when this machine cannot clone, and holds Add while nested 
   expect(choiceOrder()).toEqual(["copy", "clone"]);
   state.scope = { ...state.scope, loading: true };
   await show({ canClone: true });
-  expect(button("Add Ministorm")?.disabled).toBe(true);
+  expect(button("Copy to Ministorm")?.disabled).toBe(true);
 });

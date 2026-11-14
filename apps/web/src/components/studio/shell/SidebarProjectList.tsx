@@ -929,7 +929,7 @@ export function ProjectRow(props: {
                   onClick={() => setAddingHere((previous) => ({ seq: (previous?.seq ?? 0) + 1 }))}
                 >
                   <MonitorDownIcon aria-hidden />
-                  {tx("Add to this machine…")}
+                  {tx("Copy to this machine…")}
                 </MenuItem>
                 <MenuSeparator />
               </>

@@ -134,21 +134,21 @@ it("shows no tag on a project this device has a copy of", async () => {
   await render("mixed", [project("m4", false), project("m5", false)]);
   expect(row()?.hasAttribute("data-elsewhere")).toBe(false);
   expect(container.querySelector("[data-project-elsewhere]")).toBeNull();
-  expect(await pick("Add to this machine…")).toBeUndefined();
+  expect(await pick("Copy to this machine…")).toBeUndefined();
 });
 
-it("copies a project with no Git remote to this device from Add to this machine", async () => {
+it("copies a project with no Git remote to this device from Copy to this machine", async () => {
   await render("remote-only", [project("m5", false)]);
-  const item = await pick("Add to this machine…");
+  const item = await pick("Copy to this machine…");
   await act(async () => item!.click());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
   expect(document.querySelector("[data-copy-dialog='m4']")).not.toBeNull();
   expect(state.dialogs.at(-1)?.[0]).toBe("copy");
 });
 
-it("clones a project with a Git remote to this device from Add to this machine", async () => {
+it("clones a project with a Git remote to this device from Copy to this machine", async () => {
   await render("remote-only", [project("m5", true)]);
-  const item = await pick("Add to this machine…");
+  const item = await pick("Copy to this machine…");
   await act(async () => item!.click());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
   expect(document.querySelector("[data-add-dialog='m4']")).not.toBeNull();

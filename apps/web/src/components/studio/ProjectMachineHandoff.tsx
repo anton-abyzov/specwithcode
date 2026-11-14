@@ -87,6 +87,7 @@ import { MoveDialogHold } from "../../studio/moveDialogHold";
 import { HandoffAccountMachines } from "./HandoffAccountMachines";
 import { HandoffBusyThreads } from "./HandoffBusyThreads";
 import { refusedBusyOf } from "./handoffCopySteps";
+import { holdingLabel, machineHoldings } from "../../studio/sendToMachine";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   return {
@@ -146,7 +147,7 @@ export function ProjectMachineHandoff({
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
   readonly requestedTarget?: string | null;
-  /** Set by the project's machine menu: "Add to another machine…" or "Move to another machine…". */
+  /** Set by the project's machine menu: "Send to another machine…". */
   readonly openRequest?: MachineHandoffOpenRequest | null;
   /** Off where the machine menu opens the dialog instead of its own button. */
   readonly showTrigger?: boolean;
@@ -329,6 +330,30 @@ export function ProjectMachineHandoff({
       };
     });
   const source = environments.find((item) => item.environmentId === project.environmentId);
+  // Send to another machine…: what each machine holds of this project, by the one rule.
+  const machineIdList = machines.map((item) => item.id).join("\n");
+  const holdings = useMemo(
+    () =>
+      machineHoldings({
+        source: project,
+        machineIds: machineIdList ? machineIdList.split("\n") : [],
+        projects: [
+          project,
+          ...projects.filter(
+            (item) =>
+              item.environmentId !== project.environmentId &&
+              !isArchivedMember(item) &&
+              isProjectFolder(item.workspaceRoot, item.id),
+          ),
+        ],
+      }),
+    [project, projects, machineIdList],
+  );
+  const mainHolder = [...holdings].find(([, holding]) => holding.kind === "main")?.[0];
+  const mainLabel =
+    (mainHolder ? environments.find((item) => item.environmentId === mainHolder)?.label : null) ??
+    source?.label ??
+    "this machine";
   // Said on the disabled button's tooltip: a disabled button alone never says why.
   const blockedReason = moveBlockedReason({
     connected: source?.connection.phase === "connected",
@@ -765,6 +790,11 @@ export function ProjectMachineHandoff({
             : null,
     disabled: item.unavailable !== null,
   }));
+  // The send screen's rows say what each machine holds; unusable ones keep their reason.
+  const sendOptions = machineOptions.map(
+    (option): MachineOption =>
+      option.disabled ? option : { ...option, reason: holdingLabel(holdings.get(option.value)) },
+  );
   /** Chooses a machine for the Git move: its usable saved folder, else the folder picker. */
   const chooseGitMachine = (environmentId: EnvironmentId | null) => {
     const saved =
@@ -978,12 +1008,15 @@ export function ProjectMachineHandoff({
             <HandoffShare
               project={project}
               sourceLabel={source?.label ?? "this machine"}
-              machines={machineOptions}
+              machines={sendOptions}
               machine={gitMachine}
               machineLabel={machines.find((item) => item.id === gitMachine)?.label ?? null}
-              linked={destinations.some(
-                (item) => item.environmentId === gitMachine && !item.unavailable,
-              )}
+              holding={(gitMachine ? holdings.get(gitMachine) : undefined) ?? { kind: "none" }}
+              mainLabel={mainLabel}
+              projectsRoot={gitMachine ? (configs.get(gitMachine)?.suggestedProjectsRoot ?? null) : null}
+              // Until the destination brings a copy to this machine's commits (1326 T-03), the
+              // plan says its commits update from Git when work starts there, as they do today.
+              updatesCommits={false}
               joined={candidates.some(
                 (item) =>
                   item.environmentId === gitMachine &&
@@ -998,22 +1031,30 @@ export function ProjectMachineHandoff({
                 shareConfig.projectCloneTracking === true
               }
               onMachineChange={chooseGitMachine}
-              onMove={() => {
-                if (!gitMachine) return;
-                queuedMove.current = gitMachine;
+              onMove={(copyKey) => {
+                const chosen = copyKey
+                  ? candidates.find((item) => `${item.environmentId}:${item.id}` === copyKey)
+                  : undefined;
+                const machine = chosen?.environmentId ?? gitMachine;
+                if (!machine) return;
+                queuedMove.current = machine;
                 setShareView(false);
                 setIntent("move");
                 setMethod("folder");
-                chooseGitMachine(gitMachine);
+                if (chosen) {
+                  setSelected(copyKey!);
+                  setPickerMachine(null);
+                } else chooseGitMachine(machine);
               }}
-              onPrepareRepositories={() => {
+              onSync={(copyKey) => openDialog("sync", undefined, copyKey)}
+              onPrepareRepositories={(move) => {
                 setShareView(false);
-                setIntent("copy");
+                setIntent(move ? "move" : "copy");
                 setMethod("clone");
               }}
-              onCopyInstead={() => {
+              onCopyInstead={(move) => {
                 setShareView(false);
-                setIntent("copy");
+                setIntent(move ? "move" : "copy");
                 setMethod("copy");
               }}
               onNeedsFolderChoice={() => {

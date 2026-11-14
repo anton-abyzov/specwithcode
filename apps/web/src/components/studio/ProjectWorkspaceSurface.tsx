@@ -2036,23 +2036,9 @@ export function ProjectWorkspaceSurface({
                             }
                           : null
                       }
-                      // Moving is its own confirmed dialog, and needs a coordinator to move.
-                      // A personal assistant is private to its machine: it never moves.
-                      onMove={
-                        mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
-                      }
-                      // Sync fills in what the other machine's own copy lacks; nothing moves.
-                      onSync={
-                        mainCoordinatorId && canOperate && !machinePrivate
-                          ? (key) => requestHandoff("sync", key)
-                          : null
-                      }
-                      onAdd={canOperate && !machinePrivate ? () => requestHandoff("add") : null}
-                      onMoveElsewhere={
-                        mainCoordinatorId && canOperate && !machinePrivate
-                          ? () => requestHandoff("move")
-                          : null
-                      }
+                      // One item for add, move and sync; its dialog asks Copy or Move.
+                      // A personal assistant is private to its machine: it never leaves.
+                      onSend={canOperate && !machinePrivate ? () => requestHandoff("add") : null}
                     />
                     {/* After the model, at the row's end: voice and the run state are icons,
                         so the machine and the model keep the room. */}

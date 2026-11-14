@@ -541,7 +541,7 @@ export function DraftMachinePicker(props: Props) {
         {groups && groups.addable.length > 0 && (
           <MenuItem closeOnClick={false} disabled={locked} onClick={() => setView("add")}>
             <PlusIcon aria-hidden />
-            {tx("Add to another machine…")}
+            {tx("Send to another machine…")}
             <ChevronRightIcon aria-hidden className="ms-auto" />
           </MenuItem>
         )}
@@ -566,7 +566,7 @@ export function DraftMachinePicker(props: Props) {
       <MenuGroup>
         {backRow}
         <MenuGroupLabel>
-          {renderRich(tx("Add {title} to"), { title: project.title })}
+          {renderRich(tx("Send {title} to"), { title: project.title })}
         </MenuGroupLabel>
         {addable.flatMap(({ environmentId, copy }) => {
           const environment = environmentById.get(environmentId);

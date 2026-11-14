@@ -8,12 +8,10 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import { useNavigate } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
-  CopyPlusIcon,
   DoorOpenIcon,
   MessageSquareShareIcon,
-  MoveRightIcon,
   PlayIcon,
-  RefreshCwIcon,
+  SendIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
@@ -56,7 +54,7 @@ function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }
 
 /**
  * Which machine's copy of the project this page shows, then what can be done
- * with the project (add, move, start a coordinator) and with the viewed machine
+ * with the project (send it to another machine, start a coordinator) and with the viewed machine
  * (move its running threads, leave). Viewing reads that machine's server and
  * moves nothing; every move is its own confirmed action.
  */
@@ -70,13 +68,10 @@ export function OrchestratorSwitcher({
   unknown,
   savedMachineMissing,
   onView,
-  onMove,
-  onSync = null,
   onStart,
   onAllowWorkers,
   onMigrate = null,
-  onAdd = null,
-  onMoveElsewhere = null,
+  onSend = null,
   onLeave = null,
   identity = null,
 }: {
@@ -94,18 +89,15 @@ export function OrchestratorSwitcher({
   unknown: ReadonlyArray<{ key: string; machine: string }>;
   savedMachineMissing: boolean;
   onView: ((key: string) => void) | null;
-  /** Opens the confirmed coordinator move; null when it cannot be offered. */
-  onMove: ((key: string) => void) | null;
-  /** "Sync to X…": fill in what X's own copy is missing; the coordinator stays here. */
-  onSync?: ((key: string) => void) | null;
   onStart: ((key: string) => void) | null;
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
   onMigrate?: (() => void) | null;
-  /** "Add to another machine…": link and clone it there; this copy keeps running. */
-  onAdd?: (() => void) | null;
-  /** "Move to another machine…": hand the project over to a machine you pick. */
-  onMoveElsewhere?: (() => void) | null;
+  /**
+   * "Send to another machine…": one dialog for add, move and sync. Copy (the default)
+   * keeps Main here; Move hands it over; a machine with a copy gets that copy updated.
+   */
+  onSend?: (() => void) | null;
   /** "Leave this machine…": Away mode for everything live here. */
   onLeave?: (() => void) | null;
 }) {
@@ -136,7 +128,7 @@ export function OrchestratorSwitcher({
   );
   const listed = copies.filter((copy) => isProjectFolder(copy.folder));
   const viewable = (listed.length >= 2 || unknown.length > 0) && onView !== null;
-  const machineActions = onAdd !== null || onMoveElsewhere !== null || onLeave !== null;
+  const machineActions = onSend !== null || onLeave !== null;
   if (!viewable && !machineActions)
     return (
       <span
@@ -154,21 +146,8 @@ export function OrchestratorSwitcher({
     ambiguous(copy.machine) ? `${copy.machine} · ${copy.folder}` : copy.machine;
   const others = listed.filter((copy) => copy.key !== current);
   const starts = onStart ? others.filter((copy) => copy.canStart) : [];
-  // A copy running its own coordinator already has the project: moving this coordinator there
-  // is refused, so it offers Sync instead. Move stays for copies that run only workers.
-  const movable = onMove
-    ? others.filter((copy) => copy.role === "workers" || copy.role === "independent")
-    : [];
-  const syncable = onSync
-    ? others.filter((copy) => copy.role === "coordinator" || copy.role === "workers")
-    : [];
-  // Add, the moves and Start act on this project; threads and Leave on the viewed machine.
-  const projectActions =
-    onAdd !== null ||
-    onMoveElsewhere !== null ||
-    movable.length > 0 ||
-    syncable.length > 0 ||
-    starts.length > 0;
+  // Send and Start act on this project; threads and Leave on the viewed machine.
+  const projectActions = onSend !== null || starts.length > 0;
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
@@ -253,48 +232,15 @@ export function OrchestratorSwitcher({
             {viewable ? <MenuSeparator /> : null}
             <MenuGroup>
               <MenuGroupLabel>{tx("This project")}</MenuGroupLabel>
-              {onAdd ? (
+              {onSend ? (
                 <MenuItem
-                  data-machine-action="add"
+                  data-machine-action="send"
                   onClick={() => {
-                    pendingView.current = onAdd;
+                    pendingView.current = onSend;
                   }}
                 >
-                  <CopyPlusIcon aria-hidden />
-                  {tx("Add to another machine…")}
-                </MenuItem>
-              ) : null}
-              {movable.map((copy) => (
-                <MenuItem
-                  key={copy.key}
-                  data-orchestrator-move={copy.key}
-                  onClick={() => onMove?.(copy.key)}
-                >
-                  <MoveRightIcon aria-hidden />
-                  {tx("Move to {machine}…", { machine: nameOf(copy) })}
-                </MenuItem>
-              ))}
-              {syncable.map((copy) => (
-                <MenuItem
-                  key={copy.key}
-                  data-orchestrator-sync={copy.key}
-                  onClick={() => {
-                    pendingView.current = () => onSync?.(copy.key);
-                  }}
-                >
-                  <RefreshCwIcon aria-hidden />
-                  {tx("Sync to {machine}…", { machine: nameOf(copy) })}
-                </MenuItem>
-              ))}
-              {onMoveElsewhere ? (
-                <MenuItem
-                  data-machine-action="move"
-                  onClick={() => {
-                    pendingView.current = onMoveElsewhere;
-                  }}
-                >
-                  <MoveRightIcon aria-hidden />
-                  {tx("Move to another machine…")}
+                  <SendIcon aria-hidden />
+                  {tx("Send to another machine…")}
                 </MenuItem>
               ) : null}
               {starts.map((copy) => (
@@ -372,10 +318,7 @@ export function ProjectOrchestratorSwitcher({
   unknown,
   savedMachineMissing,
   onView,
-  onMove,
-  onSync = null,
-  onAdd = null,
-  onMoveElsewhere = null,
+  onSend = null,
 }: {
   project: EnvironmentProject;
   members: readonly EnvironmentProject[];
@@ -388,10 +331,7 @@ export function ProjectOrchestratorSwitcher({
   unknown: ReadonlyArray<{ key: string; machine: string }>;
   savedMachineMissing: boolean;
   onView: ((key: string) => void) | null;
-  onMove: ((key: string) => void) | null;
-  onSync?: ((key: string) => void) | null;
-  onAdd?: (() => void) | null;
-  onMoveElsewhere?: (() => void) | null;
+  onSend?: (() => void) | null;
 }) {
   const navigate = useNavigate();
   // A nickname shows as typed; only a host label drops its owner.
@@ -411,10 +351,7 @@ export function ProjectOrchestratorSwitcher({
       unknown={unknown}
       savedMachineMissing={savedMachineMissing}
       onView={onView}
-      onMove={onMove}
-      onSync={onSync}
-      onAdd={onAdd}
-      onMoveElsewhere={onMoveElsewhere}
+      onSend={onSend}
       // Away mode runs on this device's machine, so it is offered only there.
       onLeave={isThisDevice ? () => requestAway("away") : null}
       onStart={(key) => void start(key)}

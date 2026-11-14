@@ -155,11 +155,11 @@ describe("Add a project to a joined machine", () => {
     const only = project("specweave");
     await mount(<AddProjectToMachineView name="M5" choices={[only]} onChoose={onChoose} />);
     const button = view!.root.findByType("button");
-    expect(renderToStaticMarkup(<>{button.props.children}</>)).toContain("Add specweave to M5");
+    expect(renderToStaticMarkup(<>{button.props.children}</>)).toContain("Send specweave to M5");
     await act(async () => button.props.onClick());
     expect(onChoose).toHaveBeenCalledExactlyOnceWith(only);
     expect(JSON.stringify(view!.toJSON())).toContain(
-      "M5 can only run a project it has a copy of. Add one, then choose M5 under Run on in a chat",
+      "M5 can only run a project it has a copy of. Send one there, then choose M5 under Run on in a chat",
     );
   });
 
@@ -171,7 +171,7 @@ describe("Add a project to a joined machine", () => {
       renderToStaticMarkup(
         <AddProjectToMachineView name="M5" choices={choices} onChoose={onChoose} />,
       ),
-    ).toContain("Add a project to M5");
+    ).toContain("Send a project to M5");
     const items = view!.root.findAllByProps({ "data-item": true });
     expect(items).toHaveLength(2);
     await act(async () => items[1]!.props.onClick());
@@ -182,7 +182,7 @@ describe("Add a project to a joined machine", () => {
     const html = renderToStaticMarkup(
       <AddProjectToMachineView name="M5" choices={[]} onChoose={vi.fn()} />,
     );
-    expect(html).toContain("Open a project on this machine first, then add it to M5 here.");
+    expect(html).toContain("Open a project on this machine first, then send it to M5 here.");
     expect(html).not.toContain("<button");
   });
 });

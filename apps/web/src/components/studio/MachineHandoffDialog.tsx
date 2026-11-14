@@ -224,7 +224,9 @@ export function MachineHandoffDialog({
                   ? `Sync ${projectTitle} to ${sync.machine}`
                   : complete
                     ? `${projectTitle} is on ${targetLabel}`
-                    : `${intent === "copy" ? "Copy local files:" : "Hand off"} ${projectTitle}`}
+                    : sharing
+                      ? `Send ${projectTitle} to another machine`
+                      : `${intent === "copy" ? "Copy local files:" : "Hand off"} ${projectTitle}`}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}
             {!(copying && copyDoneOn) && (
@@ -234,7 +236,7 @@ export function MachineHandoffDialog({
                   : sync && copying
                     ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two copies and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
                     : sharing
-                      ? "Share this project with another machine. Its code moves only through Git."
+                      ? "Nothing there is replaced without asking."
                       : intent === "copy"
                         ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
                         : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}

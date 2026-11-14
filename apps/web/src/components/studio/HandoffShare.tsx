@@ -6,6 +6,7 @@ import {
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useEffect, useState } from "react";
+import type { EnvironmentProject as SendProject } from "@specweave-studio/client-runtime/state/shell";
 
 import { newProjectId } from "~/lib/utils";
 import { waitForProject } from "~/state/entities";
@@ -36,6 +37,14 @@ import { HandoffShareRepositories } from "./HandoffShareRepositories";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
 import { SettingHelp } from "../settings/SettingHelp";
 import { Radio, RadioGroup } from "../ui/radio-group";
+import { displayFolder } from "~/lib/displayFolder";
+import {
+  existingCopyLine,
+  sendChoiceLabel,
+  sendPlan,
+  type MachineHolding,
+  type SendChoice,
+} from "~/studio/sendToMachine";
 
 /** How long a finished clone waits for its link before Add is offered again. */
 const LINK_WAIT_MS = 120_000;
@@ -47,8 +56,14 @@ export interface HandoffShareProps {
   readonly machines: ReadonlyArray<MachineOption>;
   readonly machine: EnvironmentId | null;
   readonly machineLabel: string | null;
-  /** The chosen machine has a checkout of this repository, ready to take the coordinator. */
-  readonly linked: boolean;
+  /** What the chosen machine already holds of this project: Main, a copy, several, none. */
+  readonly holding: MachineHolding<SendProject>;
+  /** The machine Main is on now, for the plan sentence. */
+  readonly mainLabel: string;
+  /** The chosen machine's projects folder (`suggestedProjectsRoot`), where a new copy goes. */
+  readonly projectsRoot: string | null;
+  /** That machine brings an existing copy to this machine's commits (1326 T-03). */
+  readonly updatesCommits?: boolean;
   /** That checkout is linked to this project, so the clone and link have both finished. */
   readonly joined: boolean;
   /** Uncommitted files on this machine, which Git does not carry. */
@@ -57,10 +72,13 @@ export interface HandoffShareProps {
   /** Reaches the other machine and supports cloning a project. */
   readonly canClone: boolean;
   readonly onMachineChange: (machine: EnvironmentId | null) => void;
-  /** Hands the coordinator to the chosen machine's copy, through the Git review. */
-  readonly onMove: () => void;
-  readonly onCopyInstead: () => void;
-  readonly onPrepareRepositories: () => void;
+  /** Moves Main to that machine's copy (`copyKey`, else its saved one), through the Git review. */
+  readonly onMove: (copyKey?: string) => void;
+  /** Copy into that machine's existing copy: the sync review, Main stays put. */
+  readonly onSync: (copyKey: string) => void;
+  /** The folder copy review for a machine without a copy; `move` hands Main over after. */
+  readonly onCopyInstead: (move: boolean) => void;
+  readonly onPrepareRepositories: (move: boolean) => void;
   /** The folder there needs a person's choice: the full Add to another machine dialog. */
   readonly onNeedsFolderChoice: () => void;
   readonly onBusyChange: (busy: boolean) => void;
@@ -68,10 +86,10 @@ export interface HandoffShareProps {
 }
 
 /**
- * The default handoff: one project on many machines. The other machine clones the
- * project's repository from Git and links it, which shares the goal, instructions, notes
- * and repository list; other repositories clone when a task needs them. Files move only
- * through Git, so there is nothing to review.
+ * Send to another machine…: one screen for add, move and sync. Pick a machine (each row
+ * says Has Main, Has a copy or No copy), then Copy (the default: Main stays) or Move (Main
+ * goes there). A machine with a copy gets that copy updated; one without gets a clone from
+ * Git, or the folder copy review. One plan sentence says exactly what the click does.
  */
 export function HandoffShare({
   project,
@@ -79,13 +97,17 @@ export function HandoffShare({
   machines,
   machine,
   machineLabel,
-  linked,
+  holding,
+  mainLabel,
+  projectsRoot,
+  updatesCommits = false,
   joined,
   uncommittedFiles,
   loading,
   canClone,
   onMachineChange,
   onMove,
+  onSync,
   onCopyInstead,
   onPrepareRepositories,
   onNeedsFolderChoice,
@@ -103,6 +125,15 @@ export function HandoffShare({
   });
   const moveDialog = useProjectMoveDialog();
   const [alsoMove, setAlsoMove] = useState(false);
+  // Copy is the safe default, and every machine change starts from it again.
+  const [sendChoice, setSendChoice] = useState<SendChoice>("copy");
+  // With several copies there, the person picks one; nothing is guessed.
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => {
+    setSendChoice("copy");
+    setPicked(null);
+  }, [machine]);
+  const linked = holding.kind !== "none";
   // Git carries tracked files only; these two send the rest, and both start off.
   const [copyIgnored, setCopyIgnored] = useState(false);
   const [includeSecrets, setIncludeSecrets] = useState(false);
@@ -110,6 +141,15 @@ export function HandoffShare({
   const [added, setAdded] = useState<EnvironmentId | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
+
+  // Where a new copy goes there, inspected before the plan names it: a taken folder gets
+  // the -2 suggestion, and one that is taken too needs the person's choice.
+  const [folder, setFolder] = useState<
+    | { readonly state: "checking" }
+    | { readonly state: "ready"; readonly path: string; readonly taken: string | null }
+    | { readonly state: "choose"; readonly taken: string }
+  >({ state: "checking" });
+  const defaultFolder = defaultDestinationFolder(project.workspaceRoot, projectsRoot);
 
   // Nested repositories decide which way leads, so every unlinked project checks for them.
   const scope = useCopyScope(project, !linked);
@@ -170,10 +210,11 @@ export function HandoffShare({
         );
         return;
       }
+      // Checked again at the click: the folder may have filled since the plan was read.
       const inspected = unwrap(
         await inspectDestination({
           environmentId: machine,
-          input: { path: defaultDestinationFolder(project.workspaceRoot), remoteUrl },
+          input: { path: folder.state === "ready" ? folder.path : defaultFolder, remoteUrl },
         }),
       );
       if (destinationPlan(inspected).kind !== "clone") {
@@ -210,6 +251,7 @@ export function HandoffShare({
       });
       notifyAddToMachineJobs();
       setJobs(listAddToMachineJobs());
+      setAlsoMove(sendChoice === "move");
       setAdded(machine);
       await waitForProject(scopeProjectRef(machine, projectId), 10_000).catch(() => undefined);
     } catch (cause) {
@@ -226,6 +268,71 @@ export function HandoffShare({
   const [choice, setChoice] = useState<"clone" | "copy" | null>(null);
   const way = cloneOff ? "copy" : (choice ?? (copyFirst ? "copy" : "clone"));
   const choosing = machineLabel !== null && !linked && !justAdded;
+  const inspecting = choosing && remoteUrl !== null && canClone && way === "clone";
+  useEffect(() => {
+    if (!inspecting || !machine || remoteUrl === null) return;
+    let live = true;
+    setFolder({ state: "checking" });
+    const look = async (path: string) =>
+      unwrap(await inspectDestination({ environmentId: machine, input: { path, remoteUrl } }));
+    void (async () => {
+      try {
+        const first = await look(defaultFolder);
+        const plan = destinationPlan(first);
+        if (plan.kind === "clone") {
+          if (live) setFolder({ state: "ready", path: first.path, taken: null });
+          return;
+        }
+        const second =
+          plan.kind === "refuse" ? await look(plan.suggestion) : null;
+        if (!live) return;
+        setFolder(
+          second && destinationPlan(second).kind === "clone"
+            ? { state: "ready", path: second.path, taken: first.path }
+            : { state: "choose", taken: first.path },
+        );
+      } catch {
+        // Unreadable from here: name the default; the click inspects it again.
+        if (live) setFolder({ state: "ready", path: defaultFolder, taken: null });
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [inspecting, machine, remoteUrl, defaultFolder]);
+  // The copy this send goes to: the one there, or the one picked among several.
+  const sendCopy =
+    holding.kind === "main" || holding.kind === "copy"
+      ? holding.copy
+      : holding.kind === "several"
+        ? (holding.copies.find((copy) => copy.id === picked) ?? null)
+        : null;
+  const sendKey = sendCopy ? `${sendCopy.environmentId}:${sendCopy.id}` : null;
+  const moving = sendChoice === "move" && holding.kind !== "main";
+  const plan =
+    machineLabel === null || justAdded
+      ? null
+      : holding.kind === "several" && !sendCopy
+        ? "Pick the copy to send to."
+        : !linked && way === "clone" && remoteUrl !== null && folder.state === "choose"
+          ? `${displayFolder(folder.taken)} on ${machineLabel} is taken. Choose a folder there first.`
+          : sendPlan({
+              choice: sendChoice,
+              there: machineLabel,
+              main: mainLabel,
+              holding: holding.kind === "main" ? "main" : linked ? "copy" : "none",
+              folder: sendCopy
+                ? sendCopy.workspaceRoot
+                : folder.state === "ready"
+                  ? folder.path
+                  : defaultFolder,
+              way: remoteUrl === null ? "copy" : way,
+              localFiles: uncommittedFiles,
+              updatesCommits,
+            }) +
+            (!linked && way === "clone" && folder.state === "ready" && folder.taken
+              ? ` ${displayFolder(folder.taken)} is taken.`
+              : "");
   const repositoryCount = scope.selected.repositories.length;
   const copyLine = nested
     ? `${repositoryCount}${scope.selected.truncated ? "+" : ""} ${repositoryCount === 1 ? "repository" : "repositories"}, with local work`
@@ -281,10 +388,51 @@ export function HandoffShare({
             ? joined
               ? `${machineLabel} has this project.`
               : alsoMove
-                ? `${machineLabel} is cloning this project. Keep this open: the coordinator moves when the clone finishes.`
+                ? `${machineLabel} is cloning this project. Keep this open: Main moves when the clone finishes.`
                 : `${machineLabel} is cloning this project. You can close this; it links when the clone finishes.`
-            : `${machineLabel} already has this project.`}
+            : existingCopyLine({ there: machineLabel, holding, updatesCommits })}
         </p>
+      )}
+      {machineLabel && !justAdded && holding.kind === "several" && (
+        <RadioGroup
+          value={picked ?? ""}
+          onValueChange={(value) => setPicked(typeof value === "string" ? value : null)}
+          aria-label={`The copy on ${machineLabel}`}
+          data-slot="send-copy-picker"
+        >
+          {holding.copies.map((copy) => (
+            <label key={copy.id} className="flex min-w-0 items-center gap-3 text-sm">
+              <Radio value={copy.id} />
+              <span className="min-w-0 truncate">{displayFolder(copy.workspaceRoot)}</span>
+            </label>
+          ))}
+        </RadioGroup>
+      )}
+      {machineLabel && !justAdded && holding.kind !== "main" && (
+        <fieldset className="min-w-0" data-slot="send-choice" disabled={busy}>
+          <legend className="mb-2 text-xs font-medium text-muted-foreground">Then</legend>
+          <RadioGroup
+            value={sendChoice}
+            onValueChange={(value) => setSendChoice(value as SendChoice)}
+            disabled={busy}
+            aria-label="Copy or move"
+          >
+            {(["copy", "move"] as const).map((value) => (
+              <label
+                key={value}
+                className="flex min-w-0 cursor-pointer items-start gap-3 text-sm"
+                data-send-choice={value}
+              >
+                <span className="flex h-5 items-center">
+                  <Radio value={value} />
+                </span>
+                <span className="min-w-0 wrap-anywhere leading-5">
+                  {sendChoiceLabel(value, machineLabel)}
+                </span>
+              </label>
+            ))}
+          </RadioGroup>
+        </fieldset>
       )}
       {choosing && (
         <fieldset className="min-w-0" data-slot="handoff-share-choices" disabled={busy}>
@@ -330,16 +478,6 @@ export function HandoffShare({
             label="Include secrets"
             note="Add opens the full review, where you pick the secret files and ignored files to send."
           />
-          <label className="flex items-start gap-2 text-sm" data-slot="handoff-share-move">
-            <span className="flex h-5 shrink-0 items-center">
-              <Checkbox
-                checked={alsoMove}
-                disabled={busy}
-                onCheckedChange={(checked) => setAlsoMove(checked === true)}
-              />
-            </span>
-            <span className="min-w-0 wrap-anywhere leading-5">Also move the coordinator there</span>
-          </label>
         </div>
       )}
       {machineLabel && cloneStopped && !joined && (
@@ -356,34 +494,51 @@ export function HandoffShare({
           {error}
         </p>
       )}
+      {plan && (
+        <p
+          className="wrap-anywhere rounded-lg bg-muted/60 px-3 py-2 text-sm"
+          data-slot="send-plan"
+          aria-live="polite"
+        >
+          {plan}
+        </p>
+      )}
       <HandoffCopyActions>
         {justAdded ? null : linked ? (
-          <Button disabled={busy || !machineLabel} onClick={onMove}>
-            {`Hand off to ${machineLabel ?? "machine"}`}
+          <Button
+            disabled={busy || !machineLabel || sendKey === null}
+            onClick={() => {
+              if (sendKey === null) return;
+              if (moving) onMove(sendKey);
+              else onSync(sendKey);
+            }}
+          >
+            {`${moving ? "Move" : "Copy"} to ${machineLabel ?? "machine"}`}
           </Button>
         ) : remoteUrl === null ? (
-          <Button disabled={busy || !machineLabel || scope.loading} onClick={onPrepareRepositories}>
-            {nested ? "Review repositories and local files" : "Review files to transfer"}
+          <Button
+            disabled={busy || !machineLabel || scope.loading}
+            onClick={() => onPrepareRepositories(moving)}
+          >
+            {`${moving ? "Move" : "Copy"} to ${machineLabel ?? "machine"}…`}
           </Button>
         ) : way === "copy" ? (
-          <Button disabled={busy || !machineLabel} onClick={onCopyInstead}>
-            Copy files…
+          <Button disabled={busy || !machineLabel} onClick={() => onCopyInstead(moving)}>
+            {`${moving ? "Move" : "Copy"} to ${machineLabel ?? "machine"}…`}
           </Button>
         ) : (
-          // Wait for the nested-repository check: it can make the copy the better way.
+          // Wait for the nested-repository check and the folder check: either changes the plan.
           <Button
-            disabled={busy || !machineLabel || !canClone || scope.loading}
+            disabled={
+              busy || !machineLabel || !canClone || scope.loading || folder.state === "checking"
+            }
             onClick={() => void add()}
           >
-            {busy ? "Adding…" : machineLabel ? `Add ${machineLabel}` : "Add"}
+            {busy
+              ? "Starting…"
+              : `${moving ? "Move" : "Copy"} to ${machineLabel ?? "machine"}${folder.state === "choose" ? "…" : ""}`}
           </Button>
         )}
-        {!justAdded && (linked || !machineLabel) ? (
-          // A machine with the project can still take a copy without the coordinator moving.
-          <Button variant="outline" disabled={busy} onClick={onCopyInstead}>
-            Copy files…
-          </Button>
-        ) : null}
         <Button variant="outline" disabled={busy} onClick={onClose}>
           {justAdded ? "Close" : "Cancel"}
         </Button>

@@ -21,9 +21,14 @@ const GRANTS_MOCKED = /\/(studio\/(fleet|machineNickname)|state\/session|confirm
 
 // Machine colors: every Settings piece that wears one reads it from the same fixture,
 // so a machine has one color across the cards, chips, grant pills and header.
-const COLORED = /(MachineColor|MachineDot|MachineWorkSummary|MachinesSettings|MachineSummary)\.tsx$/;
+const COLORED =
+  /(MachineColor|MachineDot|MachineWorkSummary|MachinesSettings|MachineSummary)\.tsx$/;
 const COLORED_MOCKED = /\/studio\/(machineIdentity|useRenameMachine)$/;
 const COLOR_PICKER_MOCKED = /\/studio\/machineNickname$/;
+
+// `?scene=send`: the Send to another machine… screen, with its server calls answered here.
+const SEND_MOCKED =
+  /(state\/(use-atom-command|sourceControl|entities|projectClones)|studio\/addToMachineCopy|\/HandoffCopyScope|client-runtime\/state\/runtime|client-runtime\/environment)$/;
 
 /** The mock file, relative to this folder, that stands in for `id` when `importer` asks for it. */
 export function mockFor(id, importer = "") {
@@ -34,5 +39,6 @@ export function mockFor(id, importer = "") {
   if (UPDATE_CARD.test(importer) && UPDATE_CARD_MOCKED.test(id)) return "mocks.tsx";
   if (GRANTS.test(importer) && GRANTS_MOCKED.test(id)) return "mocks.tsx";
   if (PAGE.test(importer) && PAGE_MOCKED.test(id)) return "page-mocks.tsx";
+  if (importer.endsWith("HandoffShare.tsx") && SEND_MOCKED.test(id)) return "send-mocks.tsx";
   return null;
 }

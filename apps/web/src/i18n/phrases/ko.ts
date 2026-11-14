@@ -3143,12 +3143,10 @@ export const ko: PhraseCatalog = {
   Fix: "수정",
   "Run this draft on": "이 초안을 실행할 위치",
   "Auto balance matching projects": "일치하는 프로젝트 자동 분산",
-  "Add to another machine…": "다른 컴퓨터에 추가…",
   "Move to another machine…": "다른 컴퓨터로 이동…",
   "Leave this machine…": "이 컴퓨터 떠나기…",
   "Another project or no project": "다른 프로젝트 또는 프로젝트 없음",
   "Rename a machine": "컴퓨터 이름 변경",
-  "Add {title} to": "{title} 추가 위치",
   "Choose a project on": "프로젝트 선택 위치",
   "Project on {name}": "{name}의 프로젝트",
   "No active checkout of {title} is saved on {name}. Choose another project or No project. Your draft stays here until you choose.":
@@ -4090,12 +4088,6 @@ export const ko: PhraseCatalog = {
     "{machine}에서 변경을 확인하지 못했습니다. 스위치는 {machine}이 보고하는 상태를 보여 줍니다.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine}의 SpecWithCode 버전에는 이 설정이 없습니다. 먼저 {machine}을(를) 업데이트하세요.",
-  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
-    "{name}은(는) 사본이 있는 프로젝트만 실행할 수 있습니다. 먼저 이 컴퓨터에서 프로젝트를 연 다음 여기에서 {name}에 추가하세요.",
-  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "{name}은(는) 사본이 있는 프로젝트만 실행할 수 있습니다. 프로젝트를 추가한 다음 채팅의 ‘실행 위치’에서 {name}을(를) 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
-  "Add {project} to {name}": "{project}을(를) {name}에 추가",
-  "Add a project to {name}": "{name}에 프로젝트 추가",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "다음 단계, {coordinatorLabel}에서: 이 컴퓨터는 사본이 있는 프로젝트만 실행할 수 있습니다. 그쪽에서 설정 > 컴퓨터를 열어 이 컴퓨터에 프로젝트를 추가하세요. 그런 다음 채팅의 ‘실행 위치’에서 이 컴퓨터를 선택하거나, 프로젝트 설정의 ‘Machines for workers’에 등록하세요.",
   "Signed in as {account}": "{account}(으)로 로그인됨",
@@ -4540,8 +4532,6 @@ export const ko: PhraseCatalog = {
   "Installs from npm could not be read.": "npm 설치 수를 읽지 못했습니다.",
   "Installs from npm": "npm 설치",
   "View this project on": "이 프로젝트를 볼 컴퓨터",
-  "Move to {machine}…": "{machine}(으)로 이동…",
-  "Sync to {machine}…": "{machine}(으)로 동기화…",
   "Start a coordinator on {machine}": "{machine}에서 코디네이터 시작",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
@@ -4872,7 +4862,6 @@ export const ko: PhraseCatalog = {
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
   "Browse…": "찾아보기…",
-  "Add to this machine…": "이 컴퓨터에 추가…",
   "Runs on {machine}. No copy on this device.": "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
   "Agent status": "에이전트 상태",
   "Last time it was not signed in.": "지난번에는 로그인되어 있지 않았습니다.",
@@ -4918,4 +4907,18 @@ export const ko: PhraseCatalog = {
     "작업은 {machine}에서 시작됩니다. 이 복사본은 거기서 작업을 받습니다.",
   "Main is moving between machines right now.":
     "메인이 지금 머신 간에 이동 중입니다.",
+  "Send to another machine…":
+    "다른 컴퓨터로 보내기…",
+  "Copy to this machine…":
+    "이 컴퓨터로 복사…",
+  "Send {title} to":
+    "{title} 보낼 곳",
+  "Send {project} to {name}":
+    "{project}을(를) {name}(으)로 보내기",
+  "Send a project to {name}":
+    "프로젝트를 {name}(으)로 보내기",
+  "{name} can only run a project it has a copy of. Send one there, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name}은(는) 사본이 있는 프로젝트만 실행할 수 있습니다. 그곳으로 하나를 보낸 다음, 채팅의 실행 위치에서 {name}을(를) 선택하거나 프로젝트 설정의 워커용 컴퓨터에 추가하세요.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then send it to {name} here.":
+    "{name}은(는) 사본이 있는 프로젝트만 실행할 수 있습니다. 먼저 이 컴퓨터에서 프로젝트를 연 다음 여기서 {name}(으)로 보내세요.",
 };

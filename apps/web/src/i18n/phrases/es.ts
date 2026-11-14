@@ -3191,12 +3191,10 @@ export const es: PhraseCatalog = {
   Fix: "Corregir",
   "Run this draft on": "Ejecutar este borrador en",
   "Auto balance matching projects": "Equilibrar automáticamente los proyectos coincidentes",
-  "Add to another machine…": "Añadir a otro equipo…",
   "Move to another machine…": "Mover a otro equipo…",
   "Leave this machine…": "Dejar este equipo…",
   "Another project or no project": "Otro proyecto o ninguno",
   "Rename a machine": "Renombrar un equipo",
-  "Add {title} to": "Añadir {title} a",
   "Choose a project on": "Elige un proyecto en",
   "Project on {name}": "Proyecto en {name}",
   "No active checkout of {title} is saved on {name}. Choose another project or No project. Your draft stays here until you choose.":
@@ -4155,12 +4153,6 @@ export const es: PhraseCatalog = {
     "No se pudo confirmar el cambio en {machine}. El interruptor muestra lo que indica {machine}.",
   "{machine} runs a SpecWithCode version without this setting. Update {machine} first.":
     "{machine} usa una versión de SpecWithCode sin este ajuste. Actualiza primero {machine}.",
-  "{name} can only run a project it has a copy of. Open a project on this machine first, then add it to {name} here.":
-    "{name} solo puede ejecutar un proyecto del que tiene una copia. Abre primero un proyecto en este equipo y luego añádelo a {name} aquí.",
-  "{name} can only run a project it has a copy of. Add one, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "{name} solo puede ejecutar un proyecto del que tiene una copia. Añade uno y luego elige {name} en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
-  "Add {project} to {name}": "Añadir {project} a {name}",
-  "Add a project to {name}": "Añadir un proyecto a {name}",
   "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
     "Siguiente paso, en {coordinatorLabel}: este equipo solo puede ejecutar un proyecto del que tiene una copia. Abre allí Ajustes > Equipos y añade un proyecto a este equipo. Luego elígelo en «Ejecutar en» dentro de un chat, o inclúyelo en «Machines for workers» en los ajustes del proyecto.",
   "Signed in as {account}": "Sesión iniciada como {account}",
@@ -4614,8 +4606,6 @@ export const es: PhraseCatalog = {
   "Installs from npm could not be read.": "No se pudieron leer las instalaciones desde npm.",
   "Installs from npm": "Instalaciones desde npm",
   "View this project on": "Ver este proyecto en",
-  "Move to {machine}…": "Mover a {machine}…",
-  "Sync to {machine}…": "Sincronizar con {machine}…",
   "Start a coordinator on {machine}": "Iniciar un coordinador en {machine}",
   "Machine access settings": "Ajustes de acceso entre equipos",
   "{machine} offline": "{machine} sin conexión",
@@ -4953,7 +4943,6 @@ export const es: PhraseCatalog = {
   "Not installed. Get it from its own site, or ask someone who can maintain this machine to install it from here.":
     "No está instalado. Descárgalo de su propio sitio o pide a alguien que pueda mantener esta máquina que lo instale desde aquí.",
   "Browse…": "Explorar…",
-  "Add to this machine…": "Añadir a este equipo…",
   "Runs on {machine}. No copy on this device.": "Se ejecuta en {machine}. No hay copia en este dispositivo.",
   "Agent status": "Estado del agente",
   "Last time it was not signed in.": "La última vez no tenía la sesión iniciada.",
@@ -4999,4 +4988,18 @@ export const es: PhraseCatalog = {
     "El trabajo empieza en {machine}. Esta copia recibe trabajo de allí.",
   "Main is moving between machines right now.":
     "La principal se está moviendo entre máquinas ahora mismo.",
+  "Send to another machine…":
+    "Enviar a otra máquina…",
+  "Copy to this machine…":
+    "Copiar a esta máquina…",
+  "Send {title} to":
+    "Enviar {title} a",
+  "Send {project} to {name}":
+    "Enviar {project} a {name}",
+  "Send a project to {name}":
+    "Enviar un proyecto a {name}",
+  "{name} can only run a project it has a copy of. Send one there, then choose {name} under Run on in a chat, or list it under Machines for workers in the project's settings.":
+    "{name} solo puede ejecutar un proyecto del que tiene una copia. Envía uno allí y luego elige {name} en Ejecutar en dentro de un chat, o añádelo en Máquinas para workers en los ajustes del proyecto.",
+  "{name} can only run a project it has a copy of. Open a project on this machine first, then send it to {name} here.":
+    "{name} solo puede ejecutar un proyecto del que tiene una copia. Abre primero un proyecto en esta máquina y luego envíalo a {name} aquí.",
 };
