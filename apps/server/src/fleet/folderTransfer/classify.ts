@@ -58,6 +58,8 @@ const REBUILDABLE_DIRECTORIES = new Set([
   ".tox",
   ".venv",
   "venv",
+  // direnv's per-machine cache: layout virtualenvs and flake shells, rebuilt by direnv allow.
+  ".direnv",
   "bin",
   "obj",
   // Pure build and test output; `.wrangler` (local state) and `release/` stay data.

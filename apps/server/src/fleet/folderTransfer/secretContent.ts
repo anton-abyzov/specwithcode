@@ -30,10 +30,7 @@ const VENDORED_SEGMENTS = new Set([
 ]);
 
 /** True for a path inside a vendored folder or inside one of `submodules` (folder-relative paths). */
-export function isVendoredPath(
-  relative: string,
-  submodules: ReadonlyArray<string> = [],
-): boolean {
+export function isVendoredPath(relative: string, submodules: ReadonlyArray<string> = []): boolean {
   const parts = relative.split("/");
   if (parts.slice(0, -1).some((part) => VENDORED_SEGMENTS.has(part))) return true;
   return submodules.some((folder) => folder !== "." && relative.startsWith(`${folder}/`));
@@ -45,8 +42,11 @@ export function isVendoredPath(
  */
 const TOKEN_PATTERNS: ReadonlyArray<{ readonly kind: string; readonly pattern: RegExp }> = [
   { kind: "private key", pattern: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/u },
-  { kind: "AWS access key", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/u },
-  { kind: "GitHub token", pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,})\b/u },
+  { kind: "AWS access key", pattern: /\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b/u },
+  {
+    kind: "GitHub token",
+    pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,})\b/u,
+  },
   { kind: "GitLab token", pattern: /\bglpat-[A-Za-z0-9_-]{20}\b/u },
   { kind: "Slack token", pattern: /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/u },
   { kind: "Stripe key", pattern: /\b[sr]k_live_[A-Za-z0-9]{20,}\b/u },
@@ -54,6 +54,7 @@ const TOKEN_PATTERNS: ReadonlyArray<{ readonly kind: string; readonly pattern: R
   { kind: "Anthropic key", pattern: /\bsk-ant-[A-Za-z0-9_-]{32,}\b/u },
   { kind: "OpenAI key", pattern: /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,}\b/u },
   { kind: "npm token", pattern: /\bnpm_[A-Za-z0-9]{36}\b/u },
+  { kind: "PyPI token", pattern: /\bpypi-AgEIcHlwaS5vcmc[\w-]{50,}/u },
 ];
 
 /** The kind of the first well-known token in `text`, or null. */
@@ -87,10 +88,19 @@ const ENVRC_SOURCES: ReadonlyArray<{ readonly label: string; readonly pattern: R
   { label: "SOPS", pattern: /\bsops\b/u },
   { label: "pass", pattern: /\b(?:gopass|pass)\s+(?:show|cat)\b/u },
   { label: "Bitwarden", pattern: /\bbws?\s+(?:get|secret)\b/u },
-  { label: "the keychain", pattern: /\bsecurity\s+find-(?:generic|internet)-password\b|\bsecret-tool\s+lookup\b/u },
-  { label: "a cloud secret manager", pattern: /\baws\s+(?:secretsmanager|ssm)\b|\bgcloud\s+secrets\b|\baz\s+keyvault\b/u },
+  {
+    label: "the keychain",
+    pattern: /\bsecurity\s+find-(?:generic|internet)-password\b|\bsecret-tool\s+lookup\b/u,
+  },
+  {
+    label: "a cloud secret manager",
+    pattern: /\baws\s+(?:secretsmanager|ssm)\b|\bgcloud\s+secrets\b|\baz\s+keyvault\b/u,
+  },
   { label: "a .env file", pattern: /^\s*dotenv(?:_if_exists)?\b/mu },
-  { label: "another env file", pattern: /^\s*(?:source_env(?:_if_exists)?|source|\.)\s+(?!\S*\.envrc\s*$)\S/mu },
+  {
+    label: "another env file",
+    pattern: /^\s*(?:source_env(?:_if_exists)?|source|\.)\s+(?!\S*\.envrc\s*$)\S/mu,
+  },
 ];
 
 /**

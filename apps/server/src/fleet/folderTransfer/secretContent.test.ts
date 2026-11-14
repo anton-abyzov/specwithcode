@@ -80,7 +80,9 @@ describe("readEnvrc", () => {
   it("finds nothing in a Nix or layout-only .envrc", () => {
     expect(readEnvrc("use flake\n")).toEqual({ holdsValues: false, loads: [] });
     expect(
-      readEnvrc("# dev shell\nuse nix\nlayout python3\nPATH_add bin\nexport ROOT=$(pwd)\nsource_up\n"),
+      readEnvrc(
+        "# dev shell\nuse nix\nlayout python3\nPATH_add bin\nexport ROOT=$(pwd)\nsource_up\n",
+      ),
     ).toEqual({ holdsValues: false, loads: [] });
   });
 
@@ -93,7 +95,7 @@ describe("readEnvrc", () => {
       "1Password",
     ]);
     expect(readEnvrc("export GITHUB_TOKEN=$(gh auth token)\n").loads).toEqual(["a command"]);
-    expect(readEnvrc("eval \"$(doppler secrets download --format env)\"\n").loads).toEqual([
+    expect(readEnvrc('eval "$(doppler secrets download --format env)"\n').loads).toEqual([
       "Doppler",
     ]);
   });
