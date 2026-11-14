@@ -3121,7 +3121,7 @@ export const ko: PhraseCatalog = {
   "Run this draft on": "이 초안을 실행할 위치",
   "Auto balance matching projects": "일치하는 프로젝트 자동 분산",
   "Add to another machine…": "다른 컴퓨터에 추가…",
-  "Copy to another machine…": "다른 컴퓨터로 복사…",
+  "Send to another machine…": "다른 컴퓨터로 보내기…",
   Link: "연결",
   "Link with the project on {machine}…": "{machine}의 프로젝트와 연결…",
   "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":

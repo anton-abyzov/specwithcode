@@ -3041,7 +3041,7 @@ export const zh: PhraseCatalog = {
   "Run this draft on": "在此运行草稿：",
   "Auto balance matching projects": "自动均衡匹配的项目",
   "Add to another machine…": "添加到另一台电脑…",
-  "Copy to another machine…": "复制到另一台电脑…",
+  "Send to another machine…": "发送到另一台电脑…",
   Link: "关联",
   "Link with the project on {machine}…": "与 {machine} 上的项目关联…",
   "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
