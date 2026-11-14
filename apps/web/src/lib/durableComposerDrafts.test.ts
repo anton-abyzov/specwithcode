@@ -592,6 +592,30 @@ describe("durable composer drafts", () => {
       expect(m5.composer().attachments.map((attachment) => attachment.id)).toEqual(["big"]);
     });
 
+    it("a check that ends after the composer closed changes nothing, so the guard still holds", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      // Focus starts a check; the user leaves the composer before the host answers.
+      let open = true;
+      let answer!: (value: null) => void;
+      const realPeek = host.transport.peek!;
+      host.transport.peek = () => new Promise((resolve) => (answer = resolve));
+      const closing = { ...m5.input, apply: () => {}, active: () => open };
+      const checking = m5.sync.refresh(closing);
+      open = false;
+      answer(null);
+      expect(await checking).toBe("kept");
+      // Back on the composer: the stale copy is still caught before it is sent.
+      host.transport.peek = realPeek;
+      expect(m5.composer().attachments).toHaveLength(3);
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
     it("an unreachable host does not stop a send", async () => {
       const host = makeHost();
       const m4 = makeWindow(host);

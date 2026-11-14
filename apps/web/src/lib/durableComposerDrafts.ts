@@ -219,6 +219,8 @@ export interface DurableDraftSync {
     readonly target: DurableDraftTarget;
     readonly local: () => DurableDraftSnapshot;
     readonly apply: (snapshot: DurableDraftSnapshot) => void;
+    /** False once the composer is gone: a late answer then changes nothing. */
+    readonly active?: () => boolean;
   }) => Promise<"restored" | "kept" | "none">;
   /**
    * Puts back what this window journaled and the host never confirmed, right
@@ -228,6 +230,8 @@ export interface DurableDraftSync {
     readonly target: DurableDraftTarget;
     readonly local: () => DurableDraftSnapshot;
     readonly apply: (snapshot: DurableDraftSnapshot) => void;
+    /** False once the composer is gone: a late answer then changes nothing. */
+    readonly active?: () => boolean;
   }) => Promise<"restored" | "kept" | "none">;
   /** Resolves when every journal write so far is on disk. */
   readonly journalSettled: () => Promise<void>;
@@ -244,6 +248,8 @@ export interface DurableDraftSync {
     readonly target: DurableDraftTarget;
     readonly local: () => DurableDraftSnapshot;
     readonly apply: (snapshot: DurableDraftSnapshot) => void;
+    /** False once the composer is gone: a late answer then changes nothing. */
+    readonly active?: () => boolean;
   }) => Promise<DurableDraftRefresh>;
   /**
    * Run before a send: true when the composer held a copy that another
@@ -254,6 +260,8 @@ export interface DurableDraftSync {
     readonly target: DurableDraftTarget;
     readonly local: () => DurableDraftSnapshot;
     readonly apply: (snapshot: DurableDraftSnapshot) => void;
+    /** False once the composer is gone: a late answer then changes nothing. */
+    readonly active?: () => boolean;
   }) => Promise<boolean>;
 }
 
@@ -512,10 +520,12 @@ export function createDurableDraftSync(options: {
     return same || durableDraftIsEmpty(entry.snapshot) ? "kept" : "restored";
   };
 
-  const restore: DurableDraftSync["restore"] = async ({ target, local, apply }) => {
+  const restore: DurableDraftSync["restore"] = async ({ target, local, apply, active }) => {
     const state = stateFor(target.key, target.environmentId);
     const generation = state.generation;
     const record = await options.transport.get(target.environmentId, target.key);
+    // The composer closed while the host answered: it reconciles when it opens again.
+    if (active?.() === false) return record === null ? "none" : "kept";
     if (state.fromJournal) {
       state.fromJournal = false;
       const journaledAt = state.journaled?.editedAt ?? 0;
@@ -599,7 +609,9 @@ export function createDurableDraftSync(options: {
     const generation = state.generation;
     // An edit or send that started while the host answered wins, saved or not.
     const overtaken = () =>
-      state.generation !== generation || !showsHostCopy(state, input.local());
+      state.generation !== generation ||
+      input.active?.() === false ||
+      !showsHostCopy(state, input.local());
     const peek = options.transport.peek ?? options.transport.get;
     let record = await peek(environmentId, key);
     if (overtaken()) return "kept";

@@ -363,6 +363,7 @@ export function useDurableThreadDraftRestore(target: ComposerThreadTarget): void
     const signal = { cancelled: false };
     const input = {
       target: durable,
+      active: () => !signal.cancelled,
       local: () =>
         snapshotOfThreadDraft(useComposerDraftStore.getState().draftsByThreadKey[storeKey]),
       apply: (snapshot: DurableDraftSnapshot) => {
@@ -468,6 +469,7 @@ export function useDurableCoordinatorDraft(
     const signal = { cancelled: false };
     const input: RestoreInput = {
       target,
+      active: () => !signal.cancelled,
       local: () => snapshotOfCoordinator(composer),
       apply: (snapshot) => {
         if (signal.cancelled) return;
