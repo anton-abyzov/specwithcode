@@ -89,7 +89,10 @@ const env = (environmentId: EnvironmentId, label: string, phase = "connected") =
 describe("copyRole", () => {
   const withEpoch = (copy: MachineProjectInput, epoch: number): MachineProjectInput => ({
     ...copy,
-    workspaceSettings: { ...copy.workspaceSettings, coordinatorBinding: { epoch, state: "active" } },
+    workspaceSettings: {
+      ...copy.workspaceSettings,
+      coordinatorBinding: { epoch, state: "active" },
+    },
   });
 
   it("names one coordinator when two copies never handed off, the same one from every copy", () => {
@@ -168,7 +171,7 @@ describe("machine rows", () => {
     });
     expect(rows.map((row) => [row.label, row.seen.state, row.seen.text])).toEqual([
       ["M4MAX", "this-machine", "This machine"],
-      ["MacBook Pro", "connected", "This app can see it"],
+      ["MacBook Pro", "connected", "Online"],
       ["M1Max", "reachable", "Reachable · not open in this window"],
     ]);
     // Connect only for the machine this app cannot see; both ways only for a connected private machine.
@@ -286,7 +289,7 @@ describe("machine rows", () => {
         {
           environmentId: m3,
           name: "MacBook Pro",
-          seen: { state: "connected", text: "This app can see it" },
+          seen: { state: "connected", text: "Online" },
           folder: "/Users/a/easychamp",
           roleLabel: "Workers only",
         },
@@ -296,9 +299,7 @@ describe("machine rows", () => {
     expect(rows[1]?.projects.own[0]?.elsewhere).toMatchObject([
       { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Coordinator here" },
     ]);
-    expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([
-      "Workers only",
-    ]);
+    expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual(["Workers only"]);
 
     const hidden = buildMachineRows({
       environments: [env(m4, "M4MAX")],
@@ -727,7 +728,13 @@ describe("old records of a machine that joined again", () => {
       }).size,
     ).toBe(0);
     expect(
-      replacedMachineRecords({ ...base, connect: connect([[newM5, M5], [oldM5, M5, false]]) }).size,
+      replacedMachineRecords({
+        ...base,
+        connect: connect([
+          [newM5, M5],
+          [oldM5, M5, false],
+        ]),
+      }).size,
     ).toBe(0);
   });
 
@@ -748,7 +755,13 @@ describe("old records of a machine that joined again", () => {
   it("never guesses between two machines with one computer name, wherever they are listed", () => {
     const other = EnvironmentId.make("env-other");
     expect(
-      replacedMachineRecords({ ...base, connect: connect([[newM5, M5], [other, M5]]) }).size,
+      replacedMachineRecords({
+        ...base,
+        connect: connect([
+          [newM5, M5],
+          [other, M5],
+        ]),
+      }).size,
     ).toBe(0);
     expect(
       replacedMachineRecords({

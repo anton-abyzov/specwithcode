@@ -4689,8 +4689,6 @@ export const es: PhraseCatalog = {
     "Cuando el trabajo se fue mientras dormía. Preguntar muestra un botón para traerlo de vuelta.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Los agentes de {hereLabel} pueden iniciar trabajo en {thereLabel}",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "Los agentes de {thereLabel} pueden iniciar trabajo en {hereLabel}",
   "All sign-ins": "Todos los inicios de sesión",
   "All sign-ins on this machine": "Todos los inicios de sesión de esta máquina",
   Allow: "Permitir",
@@ -4718,8 +4716,6 @@ export const es: PhraseCatalog = {
     "No se pudo abrir {label} a través de SpecWithCode Connect. Comprueba que esté en línea y vuelve a elegirla.",
   "Could not read this machine's projects. The grant keeps its choices.":
     "No se pudieron leer los proyectos de esta máquina. El permiso conserva sus elecciones.",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "Cada tarjeta muestra quién puede iniciar trabajo y dónde, en ambos sentidos. Pasa el cursor sobre una línea para ver detalles.",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "Todas las demás máquinas que conoce esta app ya aparecen en Quién puede ejecutar trabajo aquí, en Ajustes > Máquinas. Cámbialas, revócalas o restáuralas allí.",
   "Expired: that machine must allow workers here again":
@@ -4799,7 +4795,6 @@ export const es: PhraseCatalog = {
   "Projects {machine} may use": "Proyectos que puede usar {machine}",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "Rechaza trabajo nuevo al instante. Los hilos que inició aquí se detienen en 2 minutos; sus worktrees y cambios se conservan.",
-  "Renews automatically.": "Se renueva automáticamente.",
   "Search sign-ins": "Buscar inicios de sesión",
   Secrets: "Secretos",
   "Set when it first starts work": "Se define cuando inicia trabajo por primera vez",
@@ -4827,8 +4822,6 @@ export const es: PhraseCatalog = {
   "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
     "Hasta que lo detengas aquí o en {coordinatorLabel}. Se renueva solo.",
   "Until you stop it, here or on that machine.": "Hasta que lo detengas, aquí o en esa máquina.",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "Lo que {thereLabel} puede usar aquí: en Quién puede ejecutar trabajo aquí.",
   "When this machine wakes": "Cuando esta máquina se despierta",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "A dónde envía Ausente tus hilos, rutinas y coordinadores. También se usa cuando esta máquina duerme; bloquear la pantalla no cuenta.",
@@ -4852,7 +4845,6 @@ export const es: PhraseCatalog = {
   "renews automatically": "se renueva automáticamente",
   "until {date}": "hasta el {date}",
   "up to {access}": "hasta {access}",
-  "{access}, until {date}": "{access}, hasta el {date}",
   "{count} chosen projects (could not read this machine's projects)":
     "{count} proyectos elegidos (no se pudieron leer los proyectos de esta máquina)",
   "{count} more machines": "{count} máquinas más",
@@ -5022,4 +5014,58 @@ export const es: PhraseCatalog = {
     "La copia de SpecWithCode es la versión {version}, anterior a la que usa esta versión.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "Las herramientas se quedan en cada equipo y no se copian. {machineName} aún necesita algunas antes de que los agentes puedan trabajar allí en este proyecto.",
+  "{there} can start work here":
+    "{there} puede empezar trabajo aquí",
+  "{there} can't start work here":
+    "{there} no puede empezar trabajo aquí",
+  "This machine can start work on {there}":
+    "Esta máquina puede empezar trabajo en {there}",
+  "This machine can't start work on {there}":
+    "Esta máquina no puede empezar trabajo en {there}",
+  "until you stop it":
+    "hasta que lo detengas",
+  "1 running thread stops at {time}.":
+    "1 hilo en curso se detiene a las {time}.",
+  "{count} running threads stop at {time}.":
+    "{count} hilos en curso se detienen a las {time}.",
+  "Its access ran out {date}.":
+    "Su acceso caducó el {date}.",
+  "Its access ran out.":
+    "Su acceso caducó.",
+  "Time limit ended {date}.":
+    "El límite de tiempo terminó el {date}.",
+  "Stopped {date}.":
+    "Detenido el {date}.",
+  "Stopped.":
+    "Detenido.",
+  "{there} stopped it.":
+    "{there} lo detuvo.",
+  "{there} has not allowed it yet.":
+    "{there} aún no lo ha permitido.",
+  "Allow…":
+    "Permitir…",
+  "Set up…":
+    "Configurar…",
+  "Change…":
+    "Cambiar…",
+  "Allow {there} to start work here for":
+    "Permitir que {there} empiece trabajo aquí durante",
+  "More for {machine}":
+    "Más para {machine}",
+  "Hide connection details":
+    "Ocultar detalles de conexión",
+  "Let {thereLabel} start work here":
+    "Dejar que {thereLabel} empiece trabajo aquí",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} puede empezar trabajo aquí: sus agentes pueden iniciar hilos en los proyectos de esta máquina. Detener rechaza trabajo nuevo al instante; los hilos en curso se detienen 2 minutos después. Esta máquina puede empezar trabajo en {there}: los agentes de aquí pueden iniciar hilos allí, hasta el acceso que {there} permita.",
+  "Allow {there} to start work here":
+    "Permitir que {there} inicie trabajo aquí",
+  "Stop {there} starting work here":
+    "Impedir que {there} inicie trabajo aquí",
+  "Allow {there} again to start work here":
+    "Volver a permitir que {there} inicie trabajo aquí",
+  "Set up this machine to start work on {there}":
+    "Configurar esta máquina para iniciar trabajo en {there}",
+  "Change what this machine may do on {there}":
+    "Cambiar lo que esta máquina puede hacer en {there}",
 };

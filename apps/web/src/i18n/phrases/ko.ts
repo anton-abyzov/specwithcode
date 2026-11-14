@@ -4613,8 +4613,6 @@ export const ko: PhraseCatalog = {
     "잠자기 중에 작업이 다른 곳으로 옮겨진 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있음",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "{thereLabel}의 에이전트가 {hereLabel}에서 작업을 시작할 수 있음",
   "All sign-ins": "모든 로그인",
   "All sign-ins on this machine": "이 컴퓨터의 모든 로그인",
   Allow: "허용",
@@ -4641,8 +4639,6 @@ export const ko: PhraseCatalog = {
     "SpecWithCode Connect를 통해 {label}을(를) 열지 못했습니다. 온라인인지 확인한 후 다시 선택하세요.",
   "Could not read this machine's projects. The grant keeps its choices.":
     "이 컴퓨터의 프로젝트를 읽지 못했습니다. 권한 부여의 선택 사항은 그대로 유지됩니다.",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "각 카드는 누가 어디에서 작업을 시작할 수 있는지 양방향으로 보여 줍니다. 자세한 내용은 줄 위에 마우스를 올리세요.",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "이 앱이 아는 다른 모든 컴퓨터는 이미 설정 > 머신의 '여기서 작업을 실행할 수 있는 사람'에 있습니다. 그곳에서 변경, 취소 또는 복원하세요.",
   "Expired: that machine must allow workers here again":
@@ -4720,7 +4716,6 @@ export const ko: PhraseCatalog = {
   "Projects {machine} may use": "{machine}이(가) 사용할 수 있는 프로젝트",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "새 작업을 즉시 거부합니다. 여기서 시작한 스레드는 2분 후 중지되며, 워크트리와 변경 사항은 유지됩니다.",
-  "Renews automatically.": "자동으로 갱신됩니다.",
   "Search sign-ins": "로그인 검색",
   Secrets: "시크릿",
   "Set when it first starts work": "처음 작업을 시작할 때 설정됨",
@@ -4748,8 +4743,6 @@ export const ko: PhraseCatalog = {
   "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
     "여기나 {coordinatorLabel}에서 중지할 때까지입니다. 자동으로 갱신됩니다.",
   "Until you stop it, here or on that machine.": "여기나 해당 컴퓨터에서 중지할 때까지입니다.",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "{thereLabel}이(가) 여기서 사용할 수 있는 항목: '여기서 작업을 실행할 수 있는 사람'에서 확인하세요.",
   "When this machine wakes": "이 컴퓨터가 깨어날 때",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "자리 비움 시 스레드, 루틴, 코디네이터를 보내는 곳입니다. 이 컴퓨터가 잠자기 상태일 때도 사용되며, 화면 잠금은 해당하지 않습니다.",
@@ -4773,7 +4766,6 @@ export const ko: PhraseCatalog = {
   "renews automatically": "자동 갱신",
   "until {date}": "{date}까지",
   "up to {access}": "최대 {access}",
-  "{access}, until {date}": "{access}, {date}까지",
   "{count} chosen projects (could not read this machine's projects)":
     "선택한 프로젝트 {count}개 (이 컴퓨터의 프로젝트를 읽지 못함)",
   "{count} more machines": "컴퓨터 {count}대 더",
@@ -4939,4 +4931,58 @@ export const ko: PhraseCatalog = {
     "SpecWithCode의 사본은 버전 {version}으로, 이 릴리스가 사용하는 버전보다 오래되었습니다.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "도구는 각 컴퓨터에 남고 복사되지 않습니다. {machineName}에서 에이전트가 이 프로젝트를 작업하려면 아직 몇 가지가 필요합니다.",
+  "{there} can start work here":
+    "{there}은(는) 여기서 작업을 시작할 수 있습니다",
+  "{there} can't start work here":
+    "{there}은(는) 여기서 작업을 시작할 수 없습니다",
+  "This machine can start work on {there}":
+    "이 머신은 {there}에서 작업을 시작할 수 있습니다",
+  "This machine can't start work on {there}":
+    "이 머신은 {there}에서 작업을 시작할 수 없습니다",
+  "until you stop it":
+    "중지할 때까지",
+  "1 running thread stops at {time}.":
+    "실행 중인 스레드 1개가 {time}에 중지됩니다.",
+  "{count} running threads stop at {time}.":
+    "실행 중인 스레드 {count}개가 {time}에 중지됩니다.",
+  "Its access ran out {date}.":
+    "접근 권한이 {date}에 만료되었습니다.",
+  "Its access ran out.":
+    "접근 권한이 만료되었습니다.",
+  "Time limit ended {date}.":
+    "시간 제한이 {date}에 끝났습니다.",
+  "Stopped {date}.":
+    "{date}에 중지됨.",
+  "Stopped.":
+    "중지됨.",
+  "{there} stopped it.":
+    "{there}이(가) 중지했습니다.",
+  "{there} has not allowed it yet.":
+    "{there}이(가) 아직 허용하지 않았습니다.",
+  "Allow…":
+    "허용…",
+  "Set up…":
+    "설정…",
+  "Change…":
+    "변경…",
+  "Allow {there} to start work here for":
+    "{there}이(가) 여기서 작업을 시작하도록 허용할 기간",
+  "More for {machine}":
+    "{machine} 더 보기",
+  "Hide connection details":
+    "연결 세부 정보 숨기기",
+  "Let {thereLabel} start work here":
+    "{thereLabel}이(가) 여기서 작업을 시작하도록 허용",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there}은(는) 여기서 작업을 시작할 수 있습니다: 그 에이전트가 이 머신의 프로젝트에서 스레드를 시작할 수 있습니다. 중지하면 새 작업은 즉시 거부되고 실행 중인 스레드는 2분 뒤 중지됩니다. 이 머신은 {there}에서 작업을 시작할 수 있습니다: 여기 에이전트가 {there}이(가) 허용하는 접근 범위 안에서 스레드를 시작할 수 있습니다.",
+  "Allow {there} to start work here":
+    "{there}이(가) 여기서 작업을 시작하도록 허용",
+  "Stop {there} starting work here":
+    "{there}의 여기서 작업 시작 중지",
+  "Allow {there} again to start work here":
+    "{there}이(가) 여기서 작업을 시작하도록 다시 허용",
+  "Set up this machine to start work on {there}":
+    "이 머신이 {there}에서 작업을 시작하도록 설정",
+  "Change what this machine may do on {there}":
+    "이 머신이 {there}에서 할 수 있는 일 변경",
 };

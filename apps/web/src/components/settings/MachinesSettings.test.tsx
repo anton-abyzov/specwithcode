@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -140,7 +141,8 @@ vi.mock("../../studio/machineIdentity", () => {
   return {
     machineColorProps: (value: { color: string } | null | undefined) =>
       value ? { "data-machine-color": value.color } : {},
-    useMachineIdentity: (id: string | null, name?: string | null) => (id ? identity(id, name) : null),
+    useMachineIdentity: (id: string | null, name?: string | null) =>
+      id ? identity(id, name) : null,
     useMachineIdentities: () => identity,
     useKnownMachineIdentities: () => [],
   };
@@ -440,15 +442,17 @@ describe("Settings > Machines", () => {
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain("M4MAX");
     expect(html).toContain("This machine");
-    expect(html).toContain("This app can see it");
+    expect(html).toContain("Online");
     expect(html).toContain("not open in this window");
-    expect(html).not.toContain("This app cannot see it");
-    expect(html).toContain("Agents on M4MAX can start work on MacBook Pro");
+    expect(html).not.toContain("Not connected");
+    expect(html).toContain("This machine can start work on MacBook Pro");
     expect(html).not.toContain('href="/settings/machines"');
-    expect(html).toContain("Connection details");
-    // One summary line per direction; the access workers there get, in a few words.
-    expect(html).toContain('data-slot="machine-work-summary"');
-    expect(html).toContain(">Auto<");
+    // One sentence per direction with its one button; the rest sits under ⋯.
+    expect(html).toContain('data-slot="machine-directions"');
+    expect(html).toContain("Auto");
+    expect(html).toContain("data-machine-more");
+    expect(html).not.toContain("Limits");
+    expect(html).not.toContain("Its app sees this machine");
     expect(html).toContain("EasyChamp");
     expect(html).toContain("Workers only");
     // The row keeps the folder short; the button says it in full.
@@ -456,13 +460,12 @@ describe("Settings > Machines", () => {
     expect(html).toContain(
       'aria-label="EasyChamp: Also on M4MAX (This machine). Folder on MacBook Pro: /Users/a/easychamp. Show every copy"',
     );
-    expect(html).toContain("someone@example.com");
-    expect(html).toContain('<span class="sr-only">also on M4MAX</span>');
-    expect(html).toContain("Connect to see its accounts.");
-    expect(html).toContain("Make pairing link");
+    // Another machine's accounts and its app link wait under Connection details.
+    expect(html).not.toContain("someone@example.com");
+    expect(html).not.toContain("Make pairing link");
   });
 
-  it("puts a machine's actions and its no-longer-answers line on the card, not under Connection details", () => {
+  it("keeps a machine's no-longer-answers line on the card and its actions under Connection details", async () => {
     setUp();
     runtime.controls = <li>route and readiness</li>;
     runtime.card = {
@@ -470,24 +473,16 @@ describe("Settings > Machines", () => {
       gone: <p>No longer answers.</p>,
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    // One machine's card, up to the end of its closed disclosure.
-    const start = html.lastIndexOf(
-      "<li",
-      html.indexOf(
-        'class="machine-card flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4"',
-        html.indexOf('data-part="other-machines"'),
-      ),
-    );
-    const card = html.slice(start, html.indexOf("</details>", start));
-    const details = card.indexOf("<details");
-    expect(details).toBeGreaterThan(-1);
-    // Both sit before the disclosure, so Remove needs no extra click to find.
-    expect(card.indexOf("More actions for MacBook Pro")).toBeGreaterThan(-1);
-    expect(card.indexOf("More actions for MacBook Pro")).toBeLessThan(details);
-    expect(card.indexOf("No longer answers.")).toBeGreaterThan(-1);
-    expect(card.indexOf("No longer answers.")).toBeLessThan(details);
-    expect(card.slice(details)).toContain("route and readiness");
-    expect(card.slice(details)).not.toContain("More actions for MacBook Pro");
+    expect(html).toContain("No longer answers.");
+    expect(html).not.toContain("More actions for MacBook Pro");
+    expect(html).not.toContain("route and readiness");
+    await act(async () => {
+      rendered = create(<MachinesSettingsPanel />);
+    });
+    await openConnectionDetails();
+    const text = JSON.stringify(rendered!.toJSON());
+    expect(text).toContain("More actions for MacBook Pro");
+    expect(text).toContain("route and readiness");
   });
 
   it("names two other machines as chips, folds the rest into +N and reads them all aloud", () => {
@@ -535,7 +530,7 @@ describe("Settings > Machines", () => {
     expect(html).toContain('~/Projects/github/</span><span class="shrink-0">specweave-umb');
     expect(html).toContain(">+1<");
     expect(html).toContain(
-      "Umbrella: Also on MacBook Pro (This app can see it); ministorm (This app can see it); M1Max (This app cannot see it). Folder on M4MAX: /Users/you/Projects/github/specweave-umb. Show every copy",
+      "Umbrella: Also on MacBook Pro (Online); ministorm (Online); M1Max (Not connected). Folder on M4MAX: /Users/you/Projects/github/specweave-umb. Show every copy",
     );
     expect(html).not.toContain("Also on MacBook Pro, ministorm");
   });
@@ -546,8 +541,8 @@ describe("Settings > Machines", () => {
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain("M3");
     expect(html).toContain(" · MacBook Pro");
-    expect(html).toContain('aria-label="Rename M3"');
-    expect(html).toContain('aria-label="Rename M4MAX"');
+    // Rename sits in the card's ⋯ menu.
+    expect(html).toContain('aria-label="More for M3"');
   });
 
   it("lists who can run work on this Mac and says it on that machine's row", () => {
@@ -575,12 +570,10 @@ describe("Settings > Machines", () => {
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain('aria-label="Who can run work here"');
-    expect(html).toContain("Agents on MacBook Pro can start work on M4MAX");
-    expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active");
-    expect(html).toContain(">Linked projects<");
-    expect(html.match(/aria-label="Agents on MacBook Pro can start work on M4MAX/g)).toHaveLength(
-      1,
-    );
+    expect(html).toContain("MacBook Pro can start work here");
+    expect(html).toContain("Linked projects");
+    expect(html.match(/MacBook Pro can start work here/g)).toHaveLength(1);
+    expect(html).toContain('data-direction-action="stop"');
     expect(html).not.toContain("use this machine too");
   });
 
@@ -715,12 +708,12 @@ describe("Settings > Machines", () => {
     setUp();
     runtime.grants = { grants: [], projects: [], accounts: [] };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    expect(html).toContain("Agents on MacBook Pro can start work on M4MAX");
-    expect(html.match(/>Allow MacBook Pro</g)).toHaveLength(1);
-    expect(html).toContain("Not set up yet.");
+    expect(html).toContain("MacBook Pro can&#x27;t start work here");
+    expect(html).toContain("Not set up");
+    expect(html).toContain('data-direction-action="allow-setup"');
     expect(html).not.toContain("use this machine too");
     // Never for this machine itself.
-    expect(html).not.toContain(">Allow M4MAX<");
+    expect(html).not.toContain("M4MAX can&#x27;t start work here");
   });
 
   it("shows no allow-back step before the grants load or once that machine holds a grant", () => {
@@ -797,6 +790,7 @@ describe("Settings > Machines", () => {
     await act(async () => {
       rendered = create(<MachinesSettingsPanel />);
     });
+    await openConnectionDetails();
     const bothWays = rendered!.root
       .findAllByType("button")
       .find((button) => button.props.children === "Make pairing link");
@@ -826,6 +820,126 @@ describe("Settings > Machines", () => {
     expect(html).toContain("Works once, until 12:05 PM");
   });
 });
+
+describe("Machine card: keyboard and screen readers", () => {
+  const m2 = EnvironmentId.make("env-m2");
+  const grant = (coordinatorEnvironmentId: EnvironmentId, machineLabel: string) => ({
+    coordinatorEnvironmentId,
+    machineLabel,
+    projects: { kind: "linked" },
+    accounts: { kind: "all" },
+    owner: "self",
+    hopLimit: 2,
+    runtimeCap: "auto",
+    expiresAt: null,
+    status: "active",
+    revokedAt: null,
+    interruptAt: null,
+    runningThreads: 0,
+    legacy: false,
+  });
+  let container: HTMLDivElement;
+  let root: import("react-dom/client").Root;
+  async function mount() {
+    const { createRoot } = await import("react-dom/client");
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root.render(<MachinesSettingsPanel />));
+  }
+  afterEach(async () => {
+    await act(async () => root?.unmount());
+    container?.remove();
+  });
+  const press = (element: Element, key: string) =>
+    act(async () => {
+      element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+
+  it("gives each card's repeated buttons its machine's name", async () => {
+    setUp();
+    runtime.environments = [...runtime.environments, environment(m2, "ministorm")];
+    runtime.grants = {
+      grants: [grant(m3, "MacBook Pro"), grant(m2, "ministorm")],
+      projects: [],
+      accounts: [],
+    };
+    await mount();
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>("[data-direction-action]")];
+    const labels = buttons.map((button) => button.getAttribute("aria-label"));
+    expect(labels).toContain("Stop MacBook Pro starting work here");
+    expect(labels).toContain("Stop ministorm starting work here");
+    expect(labels.every((label) => label && /MacBook Pro|ministorm/.test(label))).toBe(true);
+    expect(new Set(labels).size).toBe(labels.length);
+    // Each one is a real button in the tab order.
+    for (const button of buttons) {
+      expect(button.tagName).toBe("BUTTON");
+      expect(button.tabIndex).toBe(0);
+    }
+  });
+
+  it("says Set up… and Change… open Connection details, and points at them", async () => {
+    setUp();
+    await mount();
+    const opener = container.querySelector<HTMLButtonElement>(
+      '[data-direction-action="change"], [data-direction-action="set-up"]',
+    )!;
+    expect(opener.getAttribute("aria-label")).toMatch(/on MacBook Pro$/);
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+    const panelId = opener.getAttribute("aria-controls")!;
+    expect(document.getElementById(panelId)).toBeNull();
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+    await act(async () => opener.click());
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(panelId)?.dataset.slot).toBe("connection-details");
+  });
+
+  it("opens Connection details from the ⋯ menu with the keyboard", async () => {
+    setUp();
+    await mount();
+    const more = container.querySelector<HTMLButtonElement>('[aria-label="More for MacBook Pro"]')!;
+    more.focus();
+    await press(more, "ArrowDown");
+    const item = document.querySelector<HTMLElement>("[data-connection-details]")!;
+    expect(item.getAttribute("aria-expanded")).toBe("false");
+    const panelId = item.getAttribute("aria-controls")!;
+    await press(item, "Enter");
+    expect(document.getElementById(panelId)?.dataset.slot).toBe("connection-details");
+    await press(more, "ArrowDown");
+    expect(document.querySelector("[data-connection-details]")!.getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+  });
+
+  it("says whether the long project list is open and which list it controls", async () => {
+    setUp();
+    runtime.projects = Array.from({ length: 8 }, (_, index) => ({
+      environmentId: m3,
+      id: `p-${index}`,
+      title: `project-${index}`,
+      workspaceRoot: `/Users/a/project-${index}`,
+    }));
+    await mount();
+    const more = container.querySelector<HTMLButtonElement>("[data-projects-more]")!;
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    const list = document.getElementById(more.getAttribute("aria-controls")!)!;
+    expect(list.textContent).not.toContain("project-7");
+    await act(async () => more.click());
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    expect(list.textContent).toContain("project-7");
+  });
+});
+
+/** Opens every card's Connection details through its direction rows' Set up… or Change…. */
+async function openConnectionDetails() {
+  const openers = rendered!.root
+    .findAllByType("button")
+    .filter((button) =>
+      ["allow-setup", "set-up", "change"].includes(button.props["data-direction-action"]),
+    );
+  for (const opener of openers) await act(async () => opener.props.onClick());
+}
 
 describe("Add for agents", () => {
   const view = (allowed: boolean, error: string | null = null) =>
