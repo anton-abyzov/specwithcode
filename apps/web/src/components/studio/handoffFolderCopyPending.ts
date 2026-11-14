@@ -267,6 +267,12 @@ export interface CopyDraft {
 
 /** The default: every secret file travels. */
 export const ALL_SECRETS: SecretsChoice = { included: true, out: [] };
+/**
+ * A copy's saved secrets choice. Every copy started since secrets became included by default
+ * saves one; an older copy has none, and it started with secrets left on the source.
+ */
+export const pendingSecrets = (saved: PendingCopy): SecretsChoice =>
+  saved.secrets ?? { included: false, out: [] };
 
 /** A saved secrets choice, or undefined when it is missing or malformed. */
 export function readSecretsChoice(value: unknown): SecretsChoice | undefined {

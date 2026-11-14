@@ -431,7 +431,7 @@ it("drops a pending Replace all whose re-compare still needs a choice and asks f
 it("approves a one-click copy with secret-like files and keeps watching an approval whose answer was lost", async () => {
   vi.useFakeTimers();
   try {
-    pointer({ auto: true });
+    pointer({ auto: true, secrets: { included: true, out: [] } });
     let destination: "previewed" | "approved" | "applied" = "previewed";
     state.handlers.copyStatus = () =>
       destination === "previewed" ? previewed([row()]) : copyStatus(destination);
@@ -471,6 +471,37 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
   }
 });
 
+it("keeps secrets on the source for a one-click copy saved before the choice existed", async () => {
+  vi.useFakeTimers();
+  try {
+    // Saved by an older version, which left secrets out unless the person ticked them.
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(sent).toEqual([[]]);
+    expect(approvals).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("sends an empty secrets list before a one-click approval that left secrets on the source", async () => {
   vi.useFakeTimers();
   try {
@@ -504,7 +535,7 @@ it("sends an empty secrets list before a one-click approval that left secrets on
 it("puts the current choice back and does not approve when another tab unticks secrets mid-send", async () => {
   vi.useFakeTimers();
   try {
-    pointer({ auto: true });
+    pointer({ auto: true, secrets: { included: true, out: [] } });
     state.handlers.copyStatus = () => previewed([row()]);
     state.handlers.copySourceStatus = () => ({
       state: "ready",

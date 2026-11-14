@@ -22,7 +22,7 @@ import {
   folderCopyStorageKey,
   isFolderCopyNotFound,
   readPendingCopy,
-  ALL_SECRETS,
+  pendingSecrets,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
 import { sendableSecrets } from "./handoffCopySecrets";
@@ -253,7 +253,7 @@ export function HandoffFolderCopyWatcher({
         plan: previewed,
         repositories: null,
         machine: undefined,
-        choice: saved.secrets ?? ALL_SECRETS,
+        choice: pendingSecrets(saved),
       });
       if (!paths) return true;
       const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
@@ -277,7 +277,7 @@ export function HandoffFolderCopyWatcher({
             plan: previewed,
             repositories: null,
             machine: undefined,
-            choice: now.secrets ?? ALL_SECRETS,
+            choice: pendingSecrets(now),
           });
         if (now && current) await send(now, current);
         return false;
@@ -287,7 +287,7 @@ export function HandoffFolderCopyWatcher({
     /** The pointer still says what this run acted on: same copy, Replace all and secrets. */
     const unchanged = (acted: PendingCopy) => {
       const now = readPendingCopy(key);
-      const choice = (copy: PendingCopy) => JSON.stringify(copy.secrets ?? ALL_SECRETS);
+      const choice = (copy: PendingCopy) => JSON.stringify(pendingSecrets(copy));
       return (
         now?.operationId === operationId &&
         Boolean(now.replaceAll) === Boolean(acted.replaceAll) &&

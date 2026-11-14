@@ -43,6 +43,7 @@ import {
   withReleaseFailure,
   type PendingCopy,
   ALL_SECRETS,
+  pendingSecrets,
   type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import type { CopyMachine } from "./HandoffCopySetup";
@@ -588,7 +589,7 @@ export function HandoffFolderCopy({
     // Secret files and worktrees shown must be this copy's, never an earlier copy's.
     if (latestPending.current?.operationId !== saved.operationId) setSummary(null);
     // The secrets choice made for this copy, as it was before the dialog closed.
-    setSecretsChoice(saved.secrets ?? ALL_SECRETS);
+    setSecretsChoice(pendingSecrets(saved));
     latestPending.current = saved;
     setPending(saved);
     // A copy linked before the dialog closed is not linked again.
@@ -906,7 +907,7 @@ export function HandoffFolderCopy({
       plan: copyNow.current,
       repositories: repositoryDraft.current,
       machine: there,
-      choice: saved?.secrets ?? secretsChoice,
+      choice: saved ? pendingSecrets(saved) : secretsChoice,
     });
     if (!paths) return;
     const input = { operationId, paths, destinationLabel: there?.label ?? targetLabel };
@@ -1200,10 +1201,7 @@ export function HandoffFolderCopy({
 
   const fresh = () => run(() => startOver());
 
-  /**
-   * Starts a fresh copy of the same folder to the same machine with the same choices. The
-   * destination compares with what the last copy left there, so only changed files move.
-   */
+  /** A fresh copy of the same folder, machine and choices; only changed files move. */
   const copyAgainNow = (retried = false) =>
     run(async () => {
       const last = latestPending.current;
