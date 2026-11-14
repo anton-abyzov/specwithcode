@@ -31,10 +31,8 @@ describe("existingCopyOn", () => {
 
   it("never matches a record whose repository root is unknown", () => {
     // A stale record of a subfolder (no root recorded) is not the source's root checkout.
-    const stale = copy("stale", "/home/b/app/packages/web", {
-      ...repo("/home/b/app"),
-      rootPath: undefined,
-    } as RepositoryIdentity);
+    const { rootPath: _unknown, ...noRoot } = repo("/home/b/app");
+    const stale = copy("stale", "/home/b/app/packages/web", noRoot as RepositoryIdentity);
     expect(existingCopyOn({ source, candidates: [stale] })).toEqual({ kind: "none" });
   });
 
