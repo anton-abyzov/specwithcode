@@ -1,6 +1,12 @@
 import { useSyncExternalStore } from "react";
 import type { FolderCopySourceStatus, FolderCopyStatus } from "@specweave-studio/contracts";
 import { copiedProjectFolder, copyDestinationKey } from "./folderCopy";
+import {
+  COPY_PHASES,
+  sourceProgressView,
+  statusProgressView,
+  type CopyProgressView,
+} from "./copyProgress";
 
 /**
  * Folder copies running in the background, app wide: what each one is doing, for the
@@ -22,6 +28,22 @@ export interface CopyActivity {
   readonly move?: boolean;
   /** Where a move lands, once known: that project is the same one, mid-move. */
   readonly destination?: MoveDestination;
+  /** The phase, counts and step, for the banner's track, speed and time left. */
+  readonly progress?: CopyProgressView;
+  /** The machine the folder is copied from, for the phase names. */
+  readonly source?: string;
+}
+
+/**
+ * How far the whole copy is, 0 to 1, for the sidebar's one thin line: each of the three
+ * phases is a third. Null while a phase cannot say how far it is.
+ */
+export function overallFraction(activity: CopyActivity): number | null {
+  const progress = activity.progress;
+  if (!progress) return activity.fraction;
+  if (progress.outcome === "finished") return 1;
+  if (progress.fraction === null) return null;
+  return (COPY_PHASES.indexOf(progress.phase) + progress.fraction) / COPY_PHASES.length;
 }
 
 /** The project a move registers on the destination, by id once known and by folder. */
@@ -127,7 +149,9 @@ const sameActivity = (a: CopyActivity | undefined, b: CopyActivity | null) =>
       a.destination?.environmentId === b.destination?.environmentId &&
       a.destination?.projectId === b.destination?.projectId &&
       a.destination?.folder === b.destination?.folder &&
-      a.destination?.existing === b.destination?.existing;
+      a.destination?.existing === b.destination?.existing &&
+      a.source === b.source &&
+      JSON.stringify(a.progress) === JSON.stringify(b.progress);
 
 export function setCopyActivity(key: string, activity: CopyActivity | null): void {
   if (sameActivity(activities.get(key), activity)) return;
@@ -242,8 +266,12 @@ export function copyActivityFromStatus(
   environmentId?: string,
   /** The move's folder already held a project before it started. */
   existing = false,
+  /** The machine the folder is copied from; given, the activity carries the phase view. */
+  source?: string,
 ): CopyActivity | null {
-  const activity = statusActivity(status, machine);
+  const base = statusActivity(status, machine);
+  const progress = base && source ? statusProgressView(status, source, machine) : null;
+  const activity = base && progress && source ? { ...base, progress, source } : base;
   const destination = environmentId ? moveDestination(status, environmentId, existing) : null;
   return activity && status.mode === "copy-and-move"
     ? { ...activity, move: true, ...(destination ? { destination } : {}) }
@@ -281,7 +309,16 @@ function statusActivity(status: FolderCopyStatus, machine: string): CopyActivity
 export function copyActivityFromSource(
   status: FolderCopySourceStatus,
   machine: string,
+  /** The machine measuring; given, the activity carries the phase view. */
+  source?: string,
 ): CopyActivity | null {
+  const activity = sourceActivity(status, machine);
+  return activity && !activity.waiting && source
+    ? { ...activity, progress: sourceProgressView(status.progress, source), source }
+    : activity;
+}
+
+function sourceActivity(status: FolderCopySourceStatus, machine: string): CopyActivity | null {
   const progress = status.progress ?? null;
   if (status.state === "scanning")
     return { machine, label: "Measuring the folder", fraction: null, waiting: false };
@@ -307,8 +344,10 @@ export function copyActivityFromSource(
 export function copyActivityText(activity: CopyActivity): string {
   if (activity.waiting)
     return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine} is waiting for your review`;
-  const percent = activity.fraction === null ? "" : `, ${Math.floor(activity.fraction * 100)}%`;
-  const label = activity.label.charAt(0).toLowerCase() + activity.label.slice(1);
+  const fraction = activity.progress ? activity.progress.fraction : activity.fraction;
+  const percent = fraction === null ? "" : `, ${Math.floor(fraction * 100)}%`;
+  const step = activity.progress?.step ?? activity.label;
+  const label = step.charAt(0).toLowerCase() + step.slice(1);
   return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine}: ${label}${percent}`;
 }
 

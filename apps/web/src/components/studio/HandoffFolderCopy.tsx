@@ -269,6 +269,7 @@ export function HandoffFolderCopy({
     existingDestination: pending?.existingDestination,
     scanStatus,
     machineName: targetLabel,
+    sourceName: sourceLabel,
     onBusyChange,
     onChoicesChange,
     onCloseLockChange,
@@ -1410,6 +1411,7 @@ export function HandoffFolderCopy({
             notices={notices}
             next={next}
             working={workingLine({ stage, targetLabel, measured, copy, recompare })}
+            recompare={recompare}
             choices={
               // Not on Review (its footer has Change setup) or after Apply: nothing to change.
               pending &&

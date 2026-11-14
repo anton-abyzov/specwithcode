@@ -3752,6 +3752,26 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-copy-review:hover {
   background: color-mix(in srgb, var(--shell-waiting) 32%, transparent);
 }
+/* A copy phase that cannot say how far it is: a slow sweep inside its own segment. */
+.copy-phase-sweep {
+  left: 0;
+  animation: copy-phase-sweep 1.6s ease-in-out infinite;
+}
+@keyframes copy-phase-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-phase-sweep {
+    width: 100%;
+    opacity: 0.35;
+    animation: none;
+  }
+}
 /* The same bar, full width in the project's copy banner. */
 .sws-copy-progress[data-inline] {
   position: relative;

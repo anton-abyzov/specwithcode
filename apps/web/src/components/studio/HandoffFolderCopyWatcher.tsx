@@ -402,6 +402,7 @@ export function HandoffFolderCopyWatcher({
             machine,
             saved.environmentId,
             saved.existingDestination,
+            sourceLabel,
           ),
         );
         if (!copySettled(destination.value)) return true;
@@ -444,7 +445,7 @@ export function HandoffFolderCopyWatcher({
         if (gone) setCopyActivity(activityKey, null);
         return !gone;
       }
-      setCopyActivity(activityKey, copyActivityFromSource(source.value, machine));
+      setCopyActivity(activityKey, copyActivityFromSource(source.value, machine, sourceLabel));
       if (source.value.state === "scanning") return true;
       if (firstCheck && !saved.auto) return false;
       if (source.value.summary && source.value.state !== "failed") {
