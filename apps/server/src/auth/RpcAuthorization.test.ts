@@ -73,6 +73,26 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
   });
 
+  it("sends secrets only with access:write, while withdrawing them needs no more than the copy", () => {
+    const send = clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecrets, {
+      operationId: "op",
+      paths: [".env"],
+      destinationLabel: "m5",
+    });
+    expect(send).toContain("access:write");
+    const withdraw = clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecrets, {
+      operationId: "op",
+      paths: [],
+      destinationLabel: "m5",
+    });
+    expect(withdraw).not.toContain("access:write");
+    expect(withdraw).toContain(AuthOrchestrationOperateScope);
+    // Anything that is not a plain empty list is treated as a send.
+    expect(clientRpcRequiredScopes(WS_METHODS.machineHandoffCopySecrets, undefined)).toContain(
+      "access:write",
+    );
+  });
+
   it("requires permission to operate on a thread before uploading feedback", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
       AuthOrchestrationOperateScope,

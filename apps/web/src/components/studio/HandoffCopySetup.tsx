@@ -22,6 +22,8 @@ export interface CopyAlong {
   /** Secret files (.env, keys) travel unless this is off; on by default. */
   readonly includeSecrets: boolean;
   readonly onIncludeSecretsChange: (include: boolean) => void;
+  /** Why this window cannot send secrets, and where to start the copy instead. */
+  readonly secretsLocked?: string | null;
   /** The Workspace locations rows, shown under Details. */
   readonly details?: ReactNode;
 }
@@ -179,7 +181,7 @@ export function HandoffCopySetup({
               <span className="flex h-5 w-4 shrink-0 items-center justify-center">
                 <Checkbox
                   checked={along.includeSecrets}
-                  disabled={disabled}
+                  disabled={disabled || !!along.secretsLocked}
                   onCheckedChange={(checked) => along.onIncludeSecretsChange(checked === true)}
                   aria-label="Include secrets (.env, keys)"
                 />
@@ -187,9 +189,11 @@ export function HandoffCopySetup({
               <span className="min-w-0 leading-5">
                 Secrets (.env, keys): {along.includeSecrets ? "included" : `left on ${sourceLabel}`}
                 <span className="block text-xs text-muted-foreground">
-                  {along.includeSecrets
-                    ? `Sent only to ${targetLabel}, readable only by your user there.`
-                    : `They stay on ${sourceLabel}.`}
+                  {along.secretsLocked
+                    ? along.secretsLocked
+                    : along.includeSecrets
+                      ? `Sent only to ${targetLabel}, readable only by your user there.`
+                      : `They stay on ${sourceLabel}.`}
                 </span>
               </span>
             </label>

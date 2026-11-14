@@ -269,9 +269,14 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
     case WS_METHODS.machineHandoffReadiness:
     case PROVISION_RPC_METHODS.provisionPreview:
       return read;
-    // Sends secret files to another machine: as strong as granting it access.
-    case WS_METHODS.machineHandoffCopySecrets:
-      return [...read, AuthOrchestrationOperateScope, AuthAccessWriteScope];
+    // Sends secret files to another machine: as strong as granting it access. An empty
+    // list only withdraws them, which any window that runs the copy may do.
+    case WS_METHODS.machineHandoffCopySecrets: {
+      const paths = (input as { readonly paths?: ReadonlyArray<unknown> } | undefined)?.paths;
+      return Array.isArray(paths) && paths.length === 0
+        ? [...read, AuthOrchestrationOperateScope]
+        : [...read, AuthOrchestrationOperateScope, AuthAccessWriteScope];
+    }
     case WS_METHODS.machineHandoffCopyOffer:
     case WS_METHODS.machineHandoffCopySourceCancel:
     case WS_METHODS.machineHandoffCopyStart:

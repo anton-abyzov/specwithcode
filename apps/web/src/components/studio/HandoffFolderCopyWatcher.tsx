@@ -25,6 +25,7 @@ import {
   pendingSecrets,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
+import { secretsBlockedNow, withoutSecrets } from "./useSecretsGate";
 import { sendableSecrets } from "./handoffCopySecrets";
 import {
   copyStartInput,
@@ -248,14 +249,16 @@ export function HandoffFolderCopyWatcher({
       // Read the pointer again: a reopened dialog owns the choice and the approval from here.
       const saved = readPendingCopy(key);
       if (stopped || !summary || saved?.operationId !== operationId) return false;
+      const blocked = secretsBlockedNow(environmentId);
       const paths = sendableSecrets({
         summary,
         plan: previewed,
         repositories: null,
         machine: undefined,
-        choice: pendingSecrets(saved),
+        choice: blocked ? withoutSecrets(pendingSecrets(saved)) : pendingSecrets(saved),
       });
-      if (!paths) return true;
+      // Only the source's own window may send secrets: from here the copy goes without them.
+      if (!paths || (blocked && paths.length === 0)) return true;
       const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
         latest.current.commands.sendSecrets({
           environmentId,
