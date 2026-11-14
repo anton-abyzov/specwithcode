@@ -48,6 +48,7 @@ export const primaryServerKeybindingsAtom = { name: "keybindings" };
 export const primaryServerConfigAtom = { name: "config" };
 export const environmentServerConfigsAtom = { name: "server-configs" };
 export const RegistryContext = createContext(null);
+export const useAtomRefresh = () => () => {};
 const keybindings = [
   {
     command: "thread.next",
@@ -106,6 +107,7 @@ export const useRouter = () => ({ navigate, routesById: {} });
 
 // state/entities, state/environments, state/projects, state/use-atom-command
 export const useThreadShells = () => useFixture(() => fixture.shells);
+export const useThreadShell = () => null;
 export const useAllEnvironmentProjectSnapshotsReady = () => true;
 export const readThreadShell = (ref: { environmentId: string; threadId: string }) =>
   fixture.shells.find((t) => t.environmentId === ref.environmentId && t.id === ref.threadId) ??
@@ -185,6 +187,13 @@ export const useClientSettings = <T,>(select: (s: typeof NO_MACHINES) => T) => s
 export const useAideEnabled = () => true;
 export const useProjects = () => [];
 export const useEnvironmentsWithScope = () => ({ environments: [] });
+export const useEnvironmentScope = () => true;
+export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<never> = [];
+// Newer settings code reads machine atoms from it; the fixture has none to give.
+export const serverEnvironment = new Proxy(
+  {},
+  { get: () => () => ({ name: "server-environment" }) },
+) as Record<string, (...args: unknown[]) => unknown>;
 export const usePrimarySettingsAvailable = () => false;
 export const useUpdatePrimarySettings = () => () => {};
 export const useScratchProject = () => ({
