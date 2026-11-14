@@ -584,6 +584,17 @@ it.effect("a removed device cannot come back through a pairing code it created",
       expect(yield* redeem(owners.credential, key.thumbprint).pipe(Effect.flip)).toMatchObject({
         deviceRefusal: "device_not_approved",
       });
+      // Its own Connect sign-in still works, so it can ask again with a new code.
+      const connectLink = yield* auth.createPairingLink({
+        subject: "cloud-connect",
+        scopes: AuthStandardClientScopes,
+        proofKeyThumbprint: key.thumbprint,
+      });
+      const asksAgain = yield* redeem(connectLink.credential, key.thumbprint);
+      const waiting = yield* auth
+        .authenticateHttpRequest(dpopRequest(key, asksAgain.access_token))
+        .pipe(Effect.flip);
+      expect(asInvalidCredential(waiting).deviceApprovalCode).toMatch(/^[0-9A-Z]{6}$/);
       // Another device redeeming the owner's code is its own entry.
       const fresh = yield* auth.issuePairingCredential({
         scopes: AuthStandardClientScopes,

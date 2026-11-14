@@ -1088,8 +1088,12 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* refuseFleetRedeemGrant(grant);
             yield* refuseUnboundCoordinatorGrant(grant, input);
-            // A removed or denied device's key gets no session, exempt subjects included.
-            if (yield* refuseTurnedAwayKey(input?.proofKeyThumbprint))
+            // A removed or denied key gets no session under a subject the gate
+            // exempts. A gated one (its own Connect sign-in) may ask again.
+            if (
+              ConnectDeviceTrust.gatedDevice({ subject: grant.subject }) === null &&
+              (yield* refuseTurnedAwayKey(input?.proofKeyThumbprint))
+            )
               return yield* new ServerAuthInvalidCredentialError({
                 diagnostic: "device_not_approved",
                 deviceRefusal: "device_not_approved",
