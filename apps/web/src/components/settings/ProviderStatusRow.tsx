@@ -29,11 +29,11 @@ import {
   AGENT_CHECK_TIMEOUT_MS,
   AgentSetupPanel,
   agentSetupPanelKey,
+  codexSignInCanSwitch,
   signInAccountKey,
   useAgentSetupPanel,
   useDetachedInstall,
 } from "../onboarding/AgentSetupPanel";
-import { isPerTokenProvider } from "@specweave-studio/shared/providerFallback";
 import { useHeldFor } from "../onboarding/WizardFrame";
 import { Button } from "../ui/button";
 import { ClaudeSignIn } from "./ClaudeSignIn";
@@ -46,6 +46,15 @@ function savedCommand(config: unknown): string | null {
   if (config === null || typeof config !== "object" || !("binaryPath" in config)) return null;
   const path = config.binaryPath;
   return typeof path === "string" && path.trim() !== "" ? path.trim() : null;
+}
+
+function managedSetup(config: unknown): boolean {
+  return (
+    config !== null &&
+    typeof config === "object" &&
+    "setupMode" in config &&
+    config.setupMode === "managed"
+  );
 }
 
 function AccountName({ auth }: { readonly auth: ServerProviderAuth }) {
@@ -196,15 +205,17 @@ export function ProviderStatusRow({
 
   // Codex signs in again over the account it has, which is how its account is changed.
   // The Codex desktop app keeps a sign-in of its own, so switching there changes nothing here.
+  // A managed Codex signs in through the app, and a row with something else to do shows that.
   const canSwitchAccount =
-    instance.driver === "codex" &&
+    provider !== undefined &&
+    codexSignInCanSwitch(provider) &&
+    !managedSetup(instance.config) &&
     view.state === "ready" &&
+    view.action === null &&
+    !stalled &&
     !readOnly &&
     !hasSetupBlock &&
-    signInCommand !== null &&
-    provider !== undefined &&
-    provider.auth.status === "authenticated" &&
-    !isPerTokenProvider(provider);
+    signInCommand !== null;
 
   const checkAgain = () => {
     setCheckingAgain(true);

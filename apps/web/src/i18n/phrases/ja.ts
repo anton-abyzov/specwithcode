@@ -4937,7 +4937,7 @@ export const ja: PhraseCatalog = {
   "Not signed in": "未サインイン",
   "Sign in with {account}": "{account} でサインイン",
   "Switch account":
-    "アカウントを切り替え",
+    "アカウントを切り替える",
   "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
     "これはこのマシンの Codex コマンドラインのサインインです。Codex アプリは別にサインインするため、そちらでアカウントを変えてもここは変わりません。",
   "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":

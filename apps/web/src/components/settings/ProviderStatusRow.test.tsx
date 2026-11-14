@@ -46,6 +46,10 @@ vi.mock("../onboarding/AgentSetupPanel", () => ({
   agentSetupPanelKey: () => "panel",
   signInAccountKey: (auth: { email?: string; login?: string }) =>
     (auth.email ?? auth.login ?? "").toLowerCase(),
+  codexSignInCanSwitch: (provider: { driver: string; auth: { status: string; type?: string } }) =>
+    provider.driver === "codex" &&
+    provider.auth.status === "authenticated" &&
+    provider.auth.type === "chatgpt",
   useDetachedInstall: () => mocks.detached,
   useAgentSetupPanel: (options: unknown) => {
     mocks.panelOptions(options);
@@ -103,6 +107,7 @@ const agent = (driver: string, patch: Partial<ServerProvider> = {}): ServerProvi
   skills: [],
   ...patch,
 });
+const chatgpt = { status: "authenticated", type: "chatgpt", email: "ada@example.com" } as const;
 const signedOut = { status: "error", auth: { status: "unauthenticated" } } as const;
 const missing = { installed: false, status: "error", auth: { status: "unknown" } } as const;
 
@@ -339,7 +344,7 @@ describe("the selected agent's status row", () => {
   });
 
   it("lets a signed-in Codex switch account, and says the Codex app signs in separately", async () => {
-    await show(agent("codex", { auth: { status: "authenticated", email: "Ada@Example.com" } }), {
+    await show(agent("codex", { auth: { ...chatgpt, email: "Ada@Example.com" } }), {
       name: "Codex",
     });
     expect(text()).toContain("The Codex app signs in separately");
@@ -354,13 +359,28 @@ describe("the selected agent's status row", () => {
     });
   });
 
-  it("offers no account switch to a read-only connection or a Codex billed per token", async () => {
-    await show(agent("codex"), { name: "Codex", readOnly: true });
-    expect(button("Switch account")).toBeUndefined();
-    await show(agent("codex", { auth: { status: "authenticated", type: "apiKey" } }), {
+  it("offers no account switch where signing in again would not change the account", async () => {
+    const codex = agent("codex", { auth: chatgpt });
+    const none = () => {
+      expect(button("Switch account")).toBeUndefined();
+      expect(text()).not.toContain("The Codex app signs in separately");
+    };
+    await show(codex, { name: "Codex", readOnly: true });
+    none();
+    for (const type of ["apiKey", "amazonBedrock"]) {
+      await show(agent("codex", { auth: { status: "authenticated", type } }), { name: "Codex" });
+      none();
+    }
+    // The app's own managed sign-in never reads the command line's.
+    await show(codex, {
       name: "Codex",
+      instance: { driver: codex.driver, enabled: true, config: { setupMode: "managed" } } as never,
     });
-    expect(button("Switch account")).toBeUndefined();
+    none();
+    // Check again is the row's one button while no models are listed.
+    await show({ ...codex, models: [] }, { name: "Codex" });
+    none();
+    expect(button("Check again")).toBeDefined();
   });
 
   it("leaves the machine's words about running a command out of the row", async () => {

@@ -52,6 +52,7 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
+import { codexSignInCanSwitch } from "../onboarding/signInAccount";
 import "../studio/shell/usage.css";
 
 /** What a chat composer tells its picker about where and what is running. */
@@ -757,7 +758,7 @@ export function ModelPickerUsageBand({
   const heading = `${entry.displayName}${usage.machineLabel ? ` on ${usage.machineLabel}` : ""}`;
   const accountLine = accountEmailLine(entry.displayName, entry.snapshot);
   const switchAccount =
-    accountLine !== null && entry.driverKind === "codex" ? onSwitchAccount : undefined;
+    accountLine !== null && codexSignInCanSwitch(entry.snapshot) ? onSwitchAccount : undefined;
   // The same read time the state is judged on.
   const ago = readAgo(limits?.nativeAllowanceObservedAt ?? limits?.checkedAt, usage.nowMs);
   const sentence = usage.text(entry.instanceId, state);

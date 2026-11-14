@@ -4,7 +4,7 @@ import type {
   ServerConfig,
   ServerProvider,
 } from "@specweave-studio/contracts";
-import { signInAccountKey, signInFinished } from "./signInAccount";
+import { codexSignInCanSwitch, signInAccountKey, signInFinished } from "./signInAccount";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { AuthTerminalOperateScope, ThreadId } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
@@ -50,7 +50,7 @@ export interface AgentTerminalSession {
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-export { signInAccountKey };
+export { codexSignInCanSwitch, signInAccountKey };
 
 export type AgentPanelRequest = Pick<
   AgentTerminalSession,

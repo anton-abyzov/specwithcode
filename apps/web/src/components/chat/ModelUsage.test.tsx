@@ -99,7 +99,19 @@ describe("ModelPickerUsageBand", () => {
   });
 
   it("offers Switch account on a Codex account, and says why when it is out of room", () => {
-    const codex = { ...entry, driverKind: "codex", displayName: "Codex" } as ProviderInstanceEntry;
+    const codex = {
+      ...entry,
+      displayName: "Codex",
+      snapshot: {
+        ...entry.snapshot,
+        driver: "codex",
+        auth: { status: "authenticated", type: "chatgpt", email: "pat@example.com" },
+      },
+    } as unknown as ProviderInstanceEntry;
+    const bedrock = {
+      ...codex,
+      snapshot: { ...codex.snapshot, auth: { status: "authenticated", type: "amazonBedrock" } },
+    } as unknown as ProviderInstanceEntry;
     const blocked = usageIn(
       { kind: "denied", resetsAt: null } as unknown as ModelAvailability,
       "Codex is refusing new turns",
@@ -109,6 +121,11 @@ describe("ModelPickerUsageBand", () => {
     );
     expect(markup).toContain("data-model-picker-switch-account");
     expect(markup).toContain("It signs in separately");
+    expect(
+      renderToStaticMarkup(
+        <ModelPickerUsageBand entry={bedrock} usage={blocked} onSwitchAccount={() => {}} />,
+      ),
+    ).not.toContain("data-model-picker-switch-account");
     // Nothing to open, or another provider: no link.
     expect(
       renderToStaticMarkup(<ModelPickerUsageBand entry={codex} usage={blocked} />),
