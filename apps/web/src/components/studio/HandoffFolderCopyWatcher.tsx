@@ -256,16 +256,33 @@ export function HandoffFolderCopyWatcher({
         choice: saved.secrets ?? ALL_SECRETS,
       });
       if (!paths) return true;
-      const sent = await latest.current.commands.sendSecrets({
-        environmentId,
-        input: {
-          operationId,
-          paths,
-          destinationLabel: latest.current.machineLabel(saved.environmentId),
-        },
-      });
-      // Another tab may have changed the choice while it was sent: leave that copy to the person.
-      return !stopped && sent._tag === "Success" && unchanged(saved);
+      const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
+        latest.current.commands.sendSecrets({
+          environmentId,
+          input: {
+            operationId,
+            paths: list,
+            destinationLabel: latest.current.machineLabel(choice.environmentId),
+          },
+        });
+      const sent = await send(saved, paths);
+      if (sent._tag === "Success" && !unchanged(saved)) {
+        // Another tab changed the choice, and may have approved, while this list was on its way:
+        // put the current choice back on the source and leave the copy to the person.
+        const now = readPendingCopy(key);
+        const current =
+          now?.operationId === operationId &&
+          sendableSecrets({
+            summary,
+            plan: previewed,
+            repositories: null,
+            machine: undefined,
+            choice: now.secrets ?? ALL_SECRETS,
+          });
+        if (now && current) await send(now, current);
+        return false;
+      }
+      return !stopped && sent._tag === "Success";
     };
     /** The pointer still says what this run acted on: same copy, Replace all and secrets. */
     const unchanged = (acted: PendingCopy) => {

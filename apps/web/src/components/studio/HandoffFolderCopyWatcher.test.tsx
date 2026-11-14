@@ -501,7 +501,7 @@ it("sends an empty secrets list before a one-click approval that left secrets on
   }
 });
 
-it("does not approve when another tab unticks secrets while they are being sent", async () => {
+it("puts the current choice back and does not approve when another tab unticks secrets mid-send", async () => {
   vi.useFakeTimers();
   try {
     pointer({ auto: true });
@@ -512,7 +512,9 @@ it("does not approve when another tab unticks secrets while they are being sent"
       progress: null,
       error: null,
     });
-    state.handlers.copySecrets = () => {
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
       pointer({ auto: true, secrets: { included: false, out: [] } });
       return { state: "ready" };
     };
@@ -524,6 +526,8 @@ it("does not approve when another tab unticks secrets while they are being sent"
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(approvals).toBe(0);
+    // The other tab may already have approved: its empty list goes back on the source.
+    expect(sent).toEqual([[".env"], []]);
   } finally {
     vi.useRealTimers();
   }
