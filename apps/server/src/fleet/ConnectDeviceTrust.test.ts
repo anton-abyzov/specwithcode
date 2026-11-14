@@ -122,6 +122,42 @@ it.effect("a new device waits with one 6-character code until the owner types it
   ),
 );
 
+it.effect(
+  "other approved devices hear of an approval; the approver and the new device do not",
+  () =>
+    withMachine(
+      Effect.gen(function* () {
+        const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+        const approveNext = (thumbprint: string, label: string, by: string, key: string | null) =>
+          Effect.gen(function* () {
+            const code = refusedCode(yield* trust.check(connect(thumbprint, label)));
+            yield* trust.approve({ code, approvedBy: by, approverKey: key });
+            yield* TestClock.adjust("1 minute");
+          });
+        yield* approveNext("tablet-key", "iPad", "this machine", null);
+        yield* approveNext("laptop-key", "Work laptop", "this machine", null);
+        yield* approveNext("phone-key", "Anton's iPhone", "Work laptop", "jkt:laptop-key");
+
+        const snapshot = yield* trust.snapshot;
+        const seenBy = (key: string | null) =>
+          ConnectDeviceTrust.noticesFor(snapshot, key).map((notice) => notice.message);
+        const byOwner = "New device approved on this machine by this machine.";
+        const byLaptop = "New device approved on this machine by Work laptop.";
+        // This machine's own app approved two, and hears that the laptop approved the phone.
+        expect(seenBy(null)).toEqual([byLaptop]);
+        // The laptop approved the phone itself; the tablet's approval came before it joined.
+        expect(seenBy("jkt:laptop-key")).toEqual([]);
+        // The phone was the device let in, and joined after the others.
+        expect(seenBy("jkt:phone-key")).toEqual([]);
+        // The tablet hears of both later approvals, once each, by id.
+        const tablet = ConnectDeviceTrust.noticesFor(snapshot, "jkt:tablet-key");
+        expect(tablet.map((notice) => notice.message)).toEqual([byOwner, byLaptop]);
+        expect(new Set(tablet.map((notice) => notice.id)).size).toBe(2);
+        expect(Object.keys(tablet[0]!).toSorted()).toEqual(["at", "id", "message"]);
+      }),
+    ),
+);
+
 it.effect("caps waiting devices at 3 per account and 20 overall", () =>
   withMachine(
     Effect.gen(function* () {

@@ -126,6 +126,7 @@ export const layer = HttpApiBuilder.group(
           const snapshot = yield* trust.snapshot.pipe(Effect.mapError(storageFailure));
           return {
             ...snapshot,
+            notices: ConnectDeviceTrust.noticesFor(snapshot, caller.key),
             canApprove: snapshot.health === "ok",
             canRepair: caller.kind === "owner",
           };
