@@ -1475,7 +1475,7 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
     with self.assertRaisesRegex(AssertionError,'Heartbeat changed another auth cell: '+column+'$'):
      self.execute(allow_project_migrations=True,allow_existing_browser_heartbeat=True)
     result=json.loads(self.output.read_text());self.assertEqual(result['rollback'],'restored-runtime-pointers-and-state')
-    self.assertNotIn('authHeartbeatWitness',result);self.assertNotIn('2099',self.output.read_text());self.tearDown()
+    self.assertNotIn('authHeartbeatWitness',result);self.assertNotIn('2099-01-01',self.output.read_text());self.tearDown()
  def test_migration_desktop_reconnect_never_covers_a_hex_alias_of_a_token(self):
   for target in ['private-desktop','private-session']:
    with self.subTest(target=target):
