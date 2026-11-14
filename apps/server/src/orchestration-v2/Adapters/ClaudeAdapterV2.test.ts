@@ -69,6 +69,7 @@ import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
+import { CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS } from "../../provider/ClaudeWorkflowPolicy.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import {
@@ -265,6 +266,23 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal(options.env?.CLAUDE_CODE_DISABLE_WORKFLOWS, "1");
     assert.include(options.settings, { enableWorkflows: false, ultracode: false });
     assert.equal(options.extraArgs?.effort, "xhigh");
+  });
+
+  it("makeClaudeQueryOptions keeps Claude from publishing provider-hosted documents in every workflow mode", () => {
+    // Replays recorded before 1320 tolerate this set, so this is what fails when it is dropped.
+    for (const claudeWorkflowMode of ["disabled", "on-request", "automatic"] as const) {
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: `hosted-documents-${claudeWorkflowMode}`,
+        resume: false,
+        cwd: "/workspace",
+        claudeWorkflowMode,
+      });
+      for (const tool of CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS) {
+        assert.include(options.disallowedTools ?? [], tool);
+      }
+      assert.notInclude(options.disallowedTools ?? [], "mcp__claude_ai_Claude_Docs__read");
+    }
   });
 
   it("makeClaudeQueryOptions starts Claude Code with the headless browser environment", () => {

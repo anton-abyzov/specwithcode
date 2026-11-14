@@ -414,31 +414,117 @@ function ownFrontMatter(text: string): { readonly lines: string[]; readonly body
   return { lines, body: text.slice(match[0].length).trim() };
 }
 
-/** The title and body of a saved report, or null when it cannot be read. */
-async function readSavedReport(file: string): Promise<{
-  readonly title: string | null;
-  readonly hasSource: boolean;
+/**
+ * macOS 11 and later: the open fails when any component of the path, the
+ * last one too, is a link. It replaces O_NOFOLLOW there: macOS refuses the
+ * two together with EINVAL.
+ */
+const O_NOFOLLOW_ANY = 0x2000_0000;
+/** Windows has no O_NOFOLLOW; the checks around the open cover it there. */
+const NO_FOLLOW =
+  process.platform === "darwin" ? O_NOFOLLOW_ANY : (NodeFS.constants.O_NOFOLLOW ?? 0);
+
+function leadsOutside(relativePath: string): ProjectLibraryProblem {
+  return new ProjectLibraryProblem("invalid", `${relativePath} leads outside the project.`);
+}
+
+/**
+ * Opens a file of the project by a path from its real root that holds no link
+ * anywhere, and only when it is one regular file there: a link at its name or
+ * in a folder above it, or a second name for a file elsewhere, is never read
+ * or written through. macOS refuses a link in any component as it opens; on
+ * Linux the kernel's record of the opened file must be that path; everywhere
+ * the opened file must be the one found at that path with no link on the
+ * way, before (when it exists) and after the open.
+ */
+async function openInside(
+  realRoot: string,
+  relativePath: string,
+  flags: number,
+): Promise<NodeFSP.FileHandle> {
+  const expected = NodePath.join(realRoot, ...relativePath.split("/"));
+  const creating = (flags & NodeFS.constants.O_CREAT) !== 0;
+  const before = creating ? null : await NodeFSP.lstat(expected, { bigint: true });
+  if (before !== null && !before.isFile()) throw leadsOutside(relativePath);
+  const handle = await NodeFSP.open(expected, flags | NO_FOLLOW, 0o644);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile() || opened.nlink !== 1n) throw leadsOutside(relativePath);
+    if (before !== null && (before.dev !== opened.dev || before.ino !== opened.ino)) {
+      throw leadsOutside(relativePath);
+    }
+    if (process.platform === "linux") {
+      const actual = await NodeFSP.readlink(`/proc/self/fd/${handle.fd}`).catch(() => null);
+      if (actual !== null && actual !== expected) throw leadsOutside(relativePath);
+    }
+    const real = await NodeFSP.realpath(expected).catch(() => null);
+    const named = await NodeFSP.lstat(expected, { bigint: true }).catch(() => null);
+    if (
+      real !== expected ||
+      named === null ||
+      named.dev !== opened.dev ||
+      named.ino !== opened.ino
+    ) {
+      throw leadsOutside(relativePath);
+    }
+    return handle;
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Writes all of it from the start of the file: one write may take only part. */
+async function writeAll(handle: NodeFSP.FileHandle, bytes: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset, offset);
+    if (bytesWritten <= 0) throw new Error("The report could not be written.");
+    offset += bytesWritten;
+  }
+}
+
+interface StoredReport {
+  readonly title: string | null | undefined;
+  readonly thread: string | null | undefined;
+  readonly source: string | null | undefined;
+  readonly original: string | null | undefined;
   readonly body: string;
   readonly content: string;
   readonly blockEnd: number;
-} | null> {
-  // Only a regular file is a saved report: never read or write through a link.
-  const stat = await NodeFSP.lstat(file).catch(() => null);
-  if (stat === null || !stat.isFile()) return null;
-  const content = await NodeFSP.readFile(file, "utf8").catch(() => null);
-  if (content === null) return null;
+}
+
+/**
+ * A flat front-matter string: JSON or single quoted, or bare. Undefined when
+ * the key is absent, null when its value is not a plain string.
+ */
+function storedValue(block: string, key: string): string | null | undefined {
+  const found = new RegExp(`^${key}[ \\t]*:(.*)$`, "im").exec(block);
+  if (found === null) return undefined;
+  const raw = found[1]!.trim();
+  if (raw.startsWith('"')) {
+    try {
+      const value: unknown = JSON.parse(raw);
+      return typeof value === "string" ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  if (raw.startsWith("'")) {
+    return raw.length >= 2 && raw.endsWith("'") ? raw.slice(1, -1).replace(/''/g, "'") : null;
+  }
+  const bare = raw.replace(/\s+#.*$/, "").trim();
+  return bare.length === 0 || /^[[{|>&*!%@`]/.test(bare) ? null : bare;
+}
+
+function parseStoredReport(content: string): StoredReport {
   const match = FRONTMATTER.exec(content);
   const block = match?.[1] ?? "";
-  let title: string | null = null;
-  try {
-    const value: unknown = JSON.parse(/^title: (.+)$/m.exec(block)?.[1] ?? "null");
-    title = typeof value === "string" ? value : null;
-  } catch {
-    title = null;
-  }
   return {
-    title,
-    hasSource: /^source:/m.test(block),
+    title: storedValue(block, "title"),
+    thread: storedValue(block, "thread"),
+    source: storedValue(block, "source"),
+    original: storedValue(block, "original"),
     body: match ? content.slice(match[0].length) : content,
     content,
     // Where the closing rule starts, for properties added later.
@@ -446,9 +532,113 @@ async function readSavedReport(file: string): Promise<{
   };
 }
 
-/** Same words in the same order: whitespace and line endings aside. */
+function sameLink(left: string, right: string): boolean {
+  try {
+    return new URL(left).href === new URL(right).href;
+  } catch {
+    return left === right;
+  }
+}
+
+/** The same text: line endings and the blank lines around it aside. Indentation counts. */
 function sameBody(left: string, right: string): boolean {
-  return left.replace(/\s+/g, " ").trim() === right.replace(/\s+/g, " ").trim();
+  return left.replace(/\r\n?/g, "\n").trim() === right.replace(/\r\n?/g, "\n").trim();
+}
+
+/**
+ * The provenance lines a saved copy of the same text lacks, each added on
+ * its own. A copy that records another source or original, or one that
+ * cannot be read, is refused, so neither origin is lost.
+ */
+function missingProvenance(
+  stored: StoredReport,
+  provenance: ReportProvenance,
+  relativePath: string,
+): string[] {
+  const conflict = (recorded: string | null) =>
+    new ProjectLibraryProblem(
+      "conflict",
+      `This text is already saved at ${relativePath} from ${recorded ?? "an origin that cannot be read"}. Link that report.`,
+    );
+  const lines: string[] = [];
+  if (stored.source === undefined) lines.push(`source: ${frontMatterValue(provenance.source)}`);
+  else if (stored.source !== provenance.source) throw conflict(stored.source);
+  if (provenance.original !== undefined) {
+    if (stored.original === undefined) {
+      lines.push(`original: ${frontMatterValue(provenance.original)}`);
+    } else if (stored.original === null || !sameLink(stored.original, provenance.original)) {
+      throw conflict(stored.original);
+    }
+  }
+  if (lines.length > 0 && stored.blockEnd <= 0) throw conflict(null);
+  return lines;
+}
+
+/**
+ * Adds provenance lines to a saved report through a second, writable handle
+ * on the same file, and only while it still holds what was read. A report
+ * that is only read needs no write access, so a read-only copy is still found.
+ */
+async function addProvenance(
+  realRoot: string,
+  relativePath: string,
+  reader: NodeFSP.FileHandle,
+  stored: StoredReport,
+  lines: ReadonlyArray<string>,
+): Promise<void> {
+  const writer = await openInside(realRoot, relativePath, NodeFS.constants.O_RDWR).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "EACCES" || error.code === "EPERM") {
+        throw new ProjectLibraryProblem(
+          "conflict",
+          `This text is already saved at ${relativePath}, which is read-only, so its source was not added. Link that report.`,
+        );
+      }
+      throw error;
+    },
+  );
+  try {
+    const [read, write] = await Promise.all([
+      reader.stat({ bigint: true }),
+      writer.stat({ bigint: true }),
+    ]);
+    if (read.dev !== write.dev || read.ino !== write.ino) throw leadsOutside(relativePath);
+    if ((await writer.readFile("utf8")) !== stored.content) {
+      throw new ProjectLibraryProblem(
+        "conflict",
+        `${relativePath} changed while this save read it. Save again.`,
+      );
+    }
+    const updated = Buffer.from(
+      `${stored.content.slice(0, stored.blockEnd)}\n${lines.join("\n")}${stored.content.slice(stored.blockEnd)}`,
+      "utf8",
+    );
+    await writeAll(writer, updated);
+    await writer.truncate(updated.length);
+  } finally {
+    await writer.close();
+  }
+}
+
+/**
+ * Saves of the same text by one thread run one at a time in this server, so
+ * the second finds the first whatever title either gave it.
+ */
+const savesInFlight = new Map<string, Promise<void>>();
+
+async function oneSaveAtATime<T>(lock: string, run: () => Promise<T>): Promise<T> {
+  const previous = savesInFlight.get(lock) ?? Promise.resolve();
+  const current = previous.then(run);
+  const settled = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  savesInFlight.set(lock, settled);
+  try {
+    return await current;
+  } finally {
+    if (savesInFlight.get(lock) === settled) savesInFlight.delete(lock);
+  }
 }
 
 /** The provenance as it is written: one-line source, normalized https link. */
@@ -540,111 +730,132 @@ export async function saveReport(
       : requested.toLowerCase() === "none"
         ? null
         : await namedIncrement(root, requested);
-  const before = await readThreadReports(root, source);
   const key = reportKey(source.threadId, normalizedText);
-  const own = ownFrontMatter(normalizedText);
-  const provenanceLines = provenance
-    ? [
-        `source: ${frontMatterValue(provenance.source)}`,
-        ...(provenance.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
-      ]
-    : [];
-  // The key is short, so a hit is the same report only when the words match.
-  // An import of a text saved before without provenance adds it there.
-  const already = async (relativePath: string): Promise<SavedReport | null> => {
-    const absolutePath = NodePath.join(root, ...relativePath.split("/"));
-    const stored = await readSavedReport(absolutePath);
-    if (stored === null || !sameBody(stored.body, own.body)) return null;
-    if (provenanceLines.length > 0 && !stored.hasSource && stored.blockEnd > 0) {
-      await NodeFSP.writeFile(
-        absolutePath,
-        `${stored.content.slice(0, stored.blockEnd)}\n${provenanceLines.join("\n")}${stored.content.slice(stored.blockEnd)}`,
-        "utf8",
+  return oneSaveAtATime(`${root}\0${key}`, async () => {
+    const before = await readThreadReports(root, source);
+    // Files are opened from the real root, by paths that hold no link.
+    const realRoot = await NodeFSP.realpath(root);
+    const own = ownFrontMatter(normalizedText);
+    const provenanceLines = provenance
+      ? [
+          `source: ${frontMatterValue(provenance.source)}`,
+          ...(provenance.original ? [`original: ${frontMatterValue(provenance.original)}`] : []),
+        ]
+      : [];
+    // The key is short and shared by texts that differ only in spacing, so a
+    // hit is this report only when its thread and its text match exactly. An
+    // import of a text saved before adds the provenance that copy lacks.
+    const already = async (relativePath: string): Promise<SavedReport | null> => {
+      const absolutePath = NodePath.join(root, ...relativePath.split("/"));
+      const reader = await openInside(realRoot, relativePath, NodeFS.constants.O_RDONLY).catch(
+        () => null,
       );
-    }
-    const snapshot = await readThreadReports(root, source);
-    return {
-      snapshot,
-      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
-        key,
-        path: relativePath,
-        savedAt: now.toISOString(),
-      },
-      title: stored.title ?? title,
-      alreadySaved: true,
-      absolutePath,
-    };
-  };
-  for (const report of before.reports) {
-    if (report.key !== key) continue;
-    const found = await already(report.path);
-    if (found !== null) return found;
-  }
-
-  const increment =
-    explicit !== undefined
-      ? explicit
-      : (before.increment?.id ??
-        (options.resolveFromText
-          ? await resolveReportIncrement(root, source, normalizedText)
-          : null));
-  const relativeDir =
-    increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
-  const target = await ensureDirectoryWithin(root, relativeDir);
-  const savedAt = now.toISOString();
-  const content = [
-    "---",
-    `title: ${frontMatterValue(title)}`,
-    `thread: ${frontMatterValue(source.threadId)}`,
-    ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
-    ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
-    `savedAt: ${frontMatterValue(savedAt)}`,
-    ...provenanceLines,
-    ...own.lines,
-    "---",
-    "",
-    own.body,
-    "",
-  ].join("\n");
-  const first = reportFileName({ savedAt, title, threadId: source.threadId, text: normalizedText });
-  for (let attempt = 1; attempt <= 9; attempt += 1) {
-    // A second report under the same day, title and key gets a number before the key.
-    const name = attempt === 1 ? first : first.replace(`-${key}.md`, `-${attempt}-${key}.md`);
-    const relativePath = posix(NodePath.join(relativeDir, name));
-    try {
-      await NodeFSP.writeFile(NodePath.join(target, name), content, {
-        encoding: "utf8",
-        flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
-        mode: 0o644,
-      });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      // A save of the same text that ran alongside this one wrote it first; it
-      // may still be writing, so read again briefly before calling it different.
-      for (let read = 0; read < 5; read += 1) {
-        const found = await already(relativePath);
-        if (found !== null) return found;
-        await NodeTimers.setTimeout(20);
+      if (reader === null) return null;
+      try {
+        const stored = parseStoredReport(await reader.readFile("utf8"));
+        if (stored.thread !== source.threadId || !sameBody(stored.body, own.body)) return null;
+        const missing =
+          provenance === undefined ? [] : missingProvenance(stored, provenance, relativePath);
+        if (missing.length > 0) {
+          await addProvenance(realRoot, relativePath, reader, stored, missing);
+        }
+        const snapshot = await readThreadReports(root, source);
+        return {
+          snapshot,
+          report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+            key,
+            path: relativePath,
+            savedAt: now.toISOString(),
+          },
+          title: stored.title ?? title,
+          alreadySaved: true,
+          absolutePath,
+        };
+      } finally {
+        await reader.close();
       }
-      continue;
-    }
-    const snapshot = await readThreadReports(root, source);
-    return {
-      snapshot,
-      report: snapshot.reports.find((report) => report.path === relativePath) ?? {
-        key,
-        path: relativePath,
-        savedAt,
-      },
-      title,
-      alreadySaved: false,
-      absolutePath: NodePath.join(root, relativeDir, name),
     };
-  }
-  throw new ProjectLibraryProblem(
-    "conflict",
-    "Nine reports already share this title today; save this one under its own title.",
-  );
+    for (const report of before.reports) {
+      if (report.key !== key) continue;
+      const found = await already(report.path);
+      if (found !== null) return found;
+    }
+
+    const increment =
+      explicit !== undefined
+        ? explicit
+        : (before.increment?.id ??
+          (options.resolveFromText
+            ? await resolveReportIncrement(root, source, normalizedText)
+            : null));
+    const relativeDir =
+      increment === null ? THREAD_REPORTS_DIR : `${INCREMENTS_DIR}/${increment}/reports`;
+    await ensureDirectoryWithin(root, relativeDir);
+    const savedAt = now.toISOString();
+    const content = [
+      "---",
+      `title: ${frontMatterValue(title)}`,
+      `thread: ${frontMatterValue(source.threadId)}`,
+      ...(source.title ? [`threadTitle: ${frontMatterValue(source.title)}`] : []),
+      ...(increment ? [`increment: ${frontMatterValue(increment)}`] : []),
+      `savedAt: ${frontMatterValue(savedAt)}`,
+      ...provenanceLines,
+      ...own.lines,
+      "---",
+      "",
+      own.body,
+      "",
+    ].join("\n");
+    const first = reportFileName({
+      savedAt,
+      title,
+      threadId: source.threadId,
+      text: normalizedText,
+    });
+    for (let attempt = 1; attempt <= 9; attempt += 1) {
+      // A second report under the same day, title and key gets a number before the key.
+      const name = attempt === 1 ? first : first.replace(`-${key}.md`, `-${attempt}-${key}.md`);
+      const relativePath = posix(NodePath.join(relativeDir, name));
+      try {
+        const writer = await openInside(
+          realRoot,
+          relativePath,
+          NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL,
+        );
+        try {
+          await writeAll(writer, Buffer.from(content, "utf8"));
+        } finally {
+          await writer.close();
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        // A save of the same text that ran alongside this one wrote it first; it
+        // may still be writing, so read again briefly before calling it different.
+        for (let read = 0; read < 5; read += 1) {
+          const found = await already(relativePath);
+          if (found !== null) return found;
+          await NodeTimers.setTimeout(20);
+        }
+        continue;
+      }
+      const snapshot = await readThreadReports(root, source);
+      return {
+        snapshot,
+        report: snapshot.reports.find((report) => report.path === relativePath) ?? {
+          key,
+          path: relativePath,
+          savedAt,
+        },
+        title,
+        alreadySaved: false,
+        absolutePath: NodePath.join(root, ...relativePath.split("/")),
+      };
+    }
+    throw new ProjectLibraryProblem(
+      "conflict",
+      "Nine reports already share this title today; save this one under its own title.",
+    );
+  });
 }
 
 /**
