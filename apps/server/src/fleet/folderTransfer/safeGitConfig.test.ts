@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { git, write } from "./folderFixture.testkit.ts";
 import { scanFolder } from "./manifest.ts";
-import { preparePortableGit } from "./portableGit.ts";
+import { cUnquote, preparePortableGit } from "./portableGit.ts";
 import {
   isUncarriedGitPath,
   parseNullConfigList,
@@ -405,6 +405,61 @@ describe("copied repositories", () => {
     expect(NodeFS.existsSync(NodePath.join(copied, "objects/info/alternates"))).toBe(false);
     expect(git(root, "--git-dir", copied, "cat-file", "-t", "HEAD")).toBe("commit");
     expect(git(root, "--git-dir", copied, "show", "HEAD:lib.txt")).toBe("lib");
+  });
+
+  it("keeps remote refs whose names look like Git folders in a dormant submodule", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const lib = NodePath.join(main, ".git/modules/lib");
+    git(root, "clone", "-q", "--bare", main, lib);
+    const names = ["main", "objects/topic", "hooks/topic", "Config"];
+    for (const name of names)
+      git(root, "--git-dir", lib, "update-ref", `refs/remotes/origin/${name}`, "HEAD");
+    git(
+      root,
+      "--git-dir",
+      lib,
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+      "refs/remotes/origin/main",
+    );
+    const scan = await scanFolder(main);
+    const overlay = NodePath.join(root, "overlay");
+    await preparePortableGit(scan, overlay);
+    const copied = NodePath.join(overlay, ".git/modules/lib");
+    const refs = git(root, "--git-dir", copied, "for-each-ref", "--format=%(refname)").split("\n");
+    for (const name of names) expect(refs).toContain(`refs/remotes/origin/${name}`);
+    // A ref folder that would act as a repository is refused, not carried.
+    write(
+      NodePath.join(lib, "refs/remotes/origin/config"),
+      "[core]\n\tfsmonitor = evil-fsmonitor\n",
+    );
+    await expect(sanitizeCopiedGitDir(NodePath.join(main, ".git"), main)).rejects.toThrow(
+      /refs\/remotes\/origin\/config looks like settings inside a ref folder/,
+    );
+  });
+
+  it("reads quoted and commented alternates lines", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const reference = NodePath.join(root, 'ref"q');
+    NodeFS.mkdirSync(reference);
+    git(reference, "init", "-q", "-b", "main");
+    write(NodePath.join(reference, "lib.txt"), "lib\n");
+    git(reference, "add", ".");
+    git(reference, "commit", "-qm", "lib");
+    const lib = NodePath.join(main, ".git/modules/lib");
+    git(root, "clone", "-q", "--bare", "--shared", reference, lib);
+    const objects = NodePath.join(reference, ".git/objects").replaceAll('"', '\\"');
+    write(NodePath.join(lib, "objects/info/alternates"), `# borrowed\n"${objects}"\n`);
+    expect(git(root, "--git-dir", lib, "cat-file", "-t", "HEAD")).toBe("commit");
+    const overlay = NodePath.join(root, "overlay");
+    await preparePortableGit(await scanFolder(main), overlay);
+    NodeFS.renameSync(reference, NodePath.join(root, "gone"));
+    expect(
+      git(root, "--git-dir", NodePath.join(overlay, ".git/modules/lib"), "show", "HEAD:lib.txt"),
+    ).toBe("lib");
+    expect(cUnquote('"a\\303\\251\\tb\\"c"')).toBe('aé\tb"c');
   });
 
   it("refuses a pending rebase that runs commands", async () => {

@@ -302,12 +302,12 @@ async function isGitDirectory(dir: string): Promise<boolean> {
 }
 
 /**
- * Every Git directory a copied `.git` holds: itself and each one anywhere
- * under `modules/` (a HEAD file and an objects folder), however submodule
- * names nest or overlap. No folder is trusted as a boundary: a repository
- * planted at a name prefix cannot hide a deeper one. Links are not followed.
+ * Every directory under `modules/` that looks like a Git directory (a HEAD
+ * file and an objects folder), however submodule names nest or overlap. No
+ * folder is trusted as a boundary: a repository planted at a name prefix
+ * cannot hide a deeper one. Links are not followed. Sorted shallow first.
  */
-export async function gitDirectoriesIn(gitDir: string): Promise<Array<string>> {
+async function lookalikesIn(gitDir: string): Promise<Array<string>> {
   const modules = NodePath.join(gitDir, "modules");
   const entries = await NodeFSP.readdir(modules, { withFileTypes: true, recursive: true }).catch(
     (cause: NodeJS.ErrnoException) => {
@@ -321,8 +321,66 @@ export async function gitDirectoriesIn(gitDir: string): Promise<Array<string>> {
     const dir = NodePath.join(entry.parentPath, entry.name);
     if (await isGitDirectory(dir)) found.push(dir);
   }
-  found.sort((left, right) => left.length - right.length || (left < right ? -1 : 1));
-  return [gitDir, ...found];
+  return found.sort((left, right) => left.length - right.length || (left < right ? -1 : 1));
+}
+
+/**
+ * Splits look-alikes into Git directories and folders inside another Git
+ * directory's `refs/` or `logs/`: remote refs named `origin/HEAD` and
+ * `origin/objects/topic` make `refs/remotes/origin` look like a repository,
+ * but its files are refs, so it must stay as it is.
+ */
+async function classifyGitDirectories(gitDir: string) {
+  const dirs = [gitDir];
+  const inRefs: Array<string> = [];
+  for (const dir of await lookalikesIn(gitDir)) {
+    const nested = dirs.some((owner) =>
+      ["refs", "logs"].some((space) => dir.startsWith(NodePath.join(owner, space) + NodePath.sep)),
+    );
+    (nested ? inRefs : dirs).push(dir);
+  }
+  return { dirs, inRefs };
+}
+
+/** Every Git directory a copied `.git` holds: itself and each one under `modules/`. */
+export async function gitDirectoriesIn(gitDir: string): Promise<Array<string>> {
+  return (await classifyGitDirectories(gitDir)).dirs;
+}
+
+/** What a ref or reflog file holds: an object id, a symbolic ref, or reflog lines. */
+const OBJECT_ID = "(?:[0-9a-f]{40}|[0-9a-f]{64})";
+const REF_TEXT = new RegExp(
+  `^(?:${OBJECT_ID}|ref: [^\\n]+|(?:${OBJECT_ID} ${OBJECT_ID} [^\\n]*\\n)*${OBJECT_ID} ${OBJECT_ID} [^\\n]*)\\n?$`,
+);
+
+/**
+ * A ref-namespace look-alike stays untouched, so it must stay inert even when
+ * a Git call is pointed at it: each file Git would read as settings holds ref
+ * text, and nothing under its `hooks` can run.
+ */
+async function refuseActiveLookalike(dir: string, root: string): Promise<void> {
+  const report = (path: string) =>
+    new Error(
+      `Git data at ${NodePath.relative(root, path).split(NodePath.sep).join("/")} looks like settings inside a ref folder. Remove it before copying.`,
+    );
+  for (const file of [
+    ...(await gitConfigFilesOf(dir)),
+    NodePath.join(dir, "commondir"),
+    NodePath.join(dir, "gitdir"),
+  ]) {
+    const stat = await NodeFSP.lstat(file).catch(() => null);
+    if (!stat) continue;
+    if (!stat.isFile() || !REF_TEXT.test(await NodeFSP.readFile(file, "utf8"))) throw report(file);
+  }
+  const hooks = await NodeFSP.readdir(NodePath.join(dir, "hooks"), {
+    withFileTypes: true,
+    recursive: true,
+  }).catch(() => []);
+  for (const entry of hooks) {
+    const path = NodePath.join(entry.parentPath, entry.name);
+    const stat = await NodeFSP.lstat(path);
+    if (stat.isSymbolicLink() || (stat.isFile() && (stat.mode & 0o111) !== 0)) throw report(path);
+  }
 }
 
 /** The config files of one Git directory: its own, and each worktree's `config.worktree`. */
@@ -471,7 +529,8 @@ export async function sanitizeCopiedGitDir(
 ): Promise<void> {
   // A Git directory is found under any spelling of HEAD and objects, so a
   // folder that is one only on a case-insensitive disk is refused here too.
-  const found = await gitDirectoriesIn(gitDir);
+  const { dirs: found, inRefs } = await classifyGitDirectories(gitDir);
+  for (const dir of inRefs) await refuseActiveLookalike(dir, root);
   for (const dir of found) await refuseAliasesIn(dir, root);
   for (const dir of found) {
     await refuseCommandTodo(dir);

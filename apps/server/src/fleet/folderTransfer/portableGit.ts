@@ -244,6 +244,8 @@ async function copyGitTree(
       if (
         child.name === "objects" &&
         path.startsWith("modules/") &&
+        // A ref folder can hold `HEAD` and `objects/<ref>` refs too: copied as is.
+        !path.split("/").some((part) => part === "refs" || part === "logs") &&
         children.some((sibling) => sibling.name === "HEAD" && sibling.isFile())
       ) {
         objectStores.push({ source: childSource, target: childTarget, required: false });
@@ -389,6 +391,46 @@ async function withSnapshotRetries(
   }
 }
 
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11 };
+
+/** Git's C-style quoting of an `alternates` line (`"a\"b\303\251"`), back to its path. */
+export function cUnquote(line: string): string {
+  const end = line.lastIndexOf('"');
+  if (!line.startsWith('"') || end <= 0) throw new Error(`Unreadable alternates line: ${line}`);
+  const bytes: Array<number> = [];
+  const body = line.slice(1, end);
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index]!;
+    if (char !== "\\") {
+      bytes.push(...Buffer.from(char, "utf8"));
+      continue;
+    }
+    const next = body[index + 1] ?? "";
+    if (/[0-7]/.test(next)) {
+      bytes.push(Number.parseInt(body.slice(index + 1, index + 4), 8));
+      index += 3;
+    } else {
+      bytes.push(C_ESCAPES[next] ?? next.charCodeAt(0));
+      index += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/** One `alternates` line for `path`, C-quoted when Git would misread it plain. */
+function alternatesLine(path: string): string {
+  if (!/["\\\n\r]/.test(path) && !path.startsWith("#")) return path;
+  const escaped = [...Buffer.from(path, "utf8")]
+    .map((byte) => {
+      if (byte === 0x22) return '\\"';
+      if (byte === 0x5c) return "\\\\";
+      if (byte < 0x20 || byte === 0x7f) return `\\${byte.toString(8).padStart(3, "0")}`;
+      return String.fromCharCode(byte);
+    })
+    .join("");
+  return `"${Buffer.from(escaped, "latin1").toString("utf8")}"`;
+}
+
 /**
  * Resolve object dependencies into the private copy, without copying another
  * working folder. Returns whether the copy borrowed objects. `gitDir` names a
@@ -404,11 +446,11 @@ async function materializeAlternates(
   const alternates = NodePath.join(targetGit, "objects/info/alternates");
   if (!(await NodeFSP.lstat(alternates).catch(() => null))) return false;
   const original = NodePath.join(common, "objects");
-  const lines = (await NodeFSP.readFile(alternates, "utf8")).split("\n").filter(Boolean);
-  await NodeFSP.writeFile(
-    alternates,
-    lines.map((line) => NodePath.resolve(original, line)).join("\n") + "\n",
-  );
+  const paths = (await NodeFSP.readFile(alternates, "utf8"))
+    .split("\n")
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .map((line) => NodePath.resolve(original, line.startsWith('"') ? cUnquote(line) : line));
+  await NodeFSP.writeFile(alternates, paths.map(alternatesLine).join("\n") + "\n");
   const env = gitDir ? { env: { GIT_DIR: gitDir } } : {};
   await runGit(target, ["repack", "-a", "-d"], { signal: context.signal, ...env });
   await NodeFSP.unlink(alternates);
