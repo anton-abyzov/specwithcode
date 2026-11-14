@@ -75,12 +75,16 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   ) => Effect.Effect<void, ProviderSetupError, Scope.Scope>;
   readonly logout: Effect.Effect<void | string, ProviderSetupError>;
   readonly timeoutMs?: number;
+  /** Sign-ins this machine already has (GitHub Copilot only), shown on the sign-in step. */
+  readonly copilotExistingSignIns?: Effect.Effect<
+    NonNullable<ProviderAuthState["copilotExistingSignIns"]>
+  >;
 }) {
   const scope = yield* Scope.Scope;
   const crypto = yield* Crypto.Crypto;
   const lock = yield* Semaphore.make(1);
   const timeoutMs = options.timeoutMs ?? 300_000;
-  const empty: ProviderAuthState = {
+  let empty: ProviderAuthState = {
     instanceId: options.instanceId,
     phase: "idle",
     flowId: null,
@@ -144,6 +148,20 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     ),
   );
   yield* refreshMethods.pipe(Effect.forkIn(scope));
+  // Resets start from `empty`, so the finding outlives each flow.
+  if (options.copilotExistingSignIns)
+    yield* options.copilotExistingSignIns.pipe(
+      Effect.flatMap((copilotExistingSignIns) =>
+        Effect.suspend(() => {
+          empty = { ...empty, copilotExistingSignIns };
+          return SubscriptionRef.update(snapshot, (current) => ({
+            ...current,
+            state: { ...current.state, copilotExistingSignIns },
+          }));
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
 
   const controller: ProviderAuthService.ProviderAuthController = {
     credentialBinding: options.credentialBinding,

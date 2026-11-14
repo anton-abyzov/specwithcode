@@ -29,6 +29,12 @@ vi.mock("../../studio/projectLink", () => ({
   },
 }));
 vi.mock("../studio/ProjectLinkDialog", () => ({ ProjectLinkDialog: () => null }));
+// The destination's tools are checked by their own component (DestinationReadiness.test.tsx).
+vi.mock("../machineTools/DestinationReadiness", () => ({
+  DestinationReadiness: ({ environmentId }: { readonly environmentId: string }) => (
+    <div data-destination-readiness={environmentId} />
+  ),
+}));
 vi.mock("../studio/RemoteFolderBrowser", () => ({
   RemoteFolderBrowser: (props: {
     machine: string;

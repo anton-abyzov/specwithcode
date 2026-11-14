@@ -1,11 +1,12 @@
 /**
- * First-run setup's machine basics over RPC: each machine's own server checks
- * Git, Node.js and gh and installs a missing one, streaming the install's log.
- * One install runs at a time per machine.
+ * Machine readiness over RPC: each machine's own server checks Git, Node.js,
+ * gh and SpecWeave and installs a missing one, streaming the install's log.
+ * One install runs at a time per machine, shared with the readiness check
+ * after an update (readinessSweep.ts).
  */
 import {
   MachineToolsError,
-  type MachineToolId,
+  type MachineReadinessToolId,
   type MachineToolInstallEvent,
   MACHINE_TOOLS_RPC_METHODS,
   WsMachineToolsRpcGroup,
@@ -16,149 +17,68 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
-import * as NodeOS from "node:os";
 
 import * as ServerConfig from "../config.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
-import { nodeToolDirs } from "../project/nodeToolDirs.ts";
-import { probeGit } from "../provider/providerDiscovery.ts";
-import { makeNodeProvisionHost } from "../provision/host.ts";
+import { checkMachineTools, machineToolName, MachineToolInstallError } from "./machineTools.ts";
 import {
-  checkMachineTools,
-  installMachineTool,
-  MachineToolInstallError,
-  managedToolDirs,
-  runsOnGlibc,
-  type MachineToolsContext,
-  withPathDirs,
-} from "./machineTools.ts";
+  machineToolsContext,
+  readSweepState,
+  seedManagedToolPath,
+  startInstall,
+} from "./runtime.ts";
 
-/**
- * Puts the folders the app installed tools into on this server's PATH, after
- * the person's own folders. Agents, terminals and Git spawns inherit it.
- */
-function addToServerPath(dirs: ReadonlyArray<string>): void {
-  const env = process.env;
-  // oxlint-disable-next-line studio/no-global-process-runtime -- the server's own PATH separator.
-  const platform = process.platform;
-  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
-  const next = withPathDirs(env[key], dirs, platform);
-  if (next !== undefined) env[key] = next;
-}
+export { seedManagedToolPath } from "./runtime.ts";
 
-const toolName = (tool: MachineToolId) =>
-  tool === "gh" ? "GitHub CLI" : tool === "node" ? "Node.js" : "Git";
-
-/** The install running on this machine. It is held until the install itself ends, not its stream. */
-let installing: MachineToolId | null = null;
-/** The handlers are built per connection; the PATH is seeded once per server. */
-let pathSeeded = false;
-
-/**
- * Puts the tools the app installed earlier on this server's PATH. Called at
- * server start, so agents resumed before any client connects find them.
- */
-export const seedManagedToolPath = (baseDir: string) =>
-  Effect.gen(function* () {
-    if (pathSeeded) return;
-    pathSeeded = true;
-    const fs = yield* FileSystem.FileSystem;
-    const host = makeNodeProvisionHost();
-    const installed: string[] = [];
-    for (const dir of managedToolDirs({
-      home: baseDir,
-      platform: host.platform,
-      arch: host.arch,
-      glibc: runsOnGlibc(),
-    })) {
-      if (yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false))) installed.push(dir);
-    }
-    addToServerPath(installed);
+const toError = (cause: unknown) =>
+  new MachineToolsError({
+    code: cause instanceof MachineToolInstallError ? cause.code : "failed",
+    reason: (cause instanceof Error ? cause.message : String(cause)).slice(0, 1900),
   });
 
 export const layerRpcHandlers = WsMachineToolsRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const host = makeNodeProvisionHost();
-    const glibc = runsOnGlibc();
+    const services = yield* Effect.context<
+      | ServerConfig.ServerConfig
+      | FileSystem.FileSystem
+      | Path.Path
+      | ChildProcessSpawner.ChildProcessSpawner
+    >();
     // Normally seeded at server start; this covers a server that skipped it.
     yield* seedManagedToolPath(config.baseDir);
-
-    const context = Effect.gen(function* () {
-      const env = process.env;
-      const nodeManagerDirs = yield* nodeToolDirs({
-        home: NodeOS.homedir(),
-        platform: host.platform as NodeJS.Platform,
-        execPath: process.execPath,
-        fnmDir: env.FNM_DIR,
-        nvmDir: env.NVM_DIR,
-        voltaHome: env.VOLTA_HOME,
-        xdgDataHome: env.XDG_DATA_HOME,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
-      const git = yield* probeGit(env, host.platform as NodeJS.Platform).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      // The host reads the live PATH, so a tool installed a moment ago is found.
-      const ctx: MachineToolsContext = {
-        host: makeNodeProvisionHost(),
-        home: config.baseDir,
-        glibc,
-        nodeManagerDirs,
-      };
-      return { ctx, git };
-    });
+    const context = machineToolsContext.pipe(Effect.provideContext(services));
 
     return {
       [MACHINE_TOOLS_RPC_METHODS.machineToolsCheck]: () =>
         context.pipe(
           Effect.flatMap(({ ctx, git }) =>
             Effect.tryPromise({
-              try: () => checkMachineTools(ctx, git),
-              catch: (cause) =>
-                new MachineToolsError({
-                  code: "failed",
-                  reason: (cause instanceof Error ? cause.message : String(cause)).slice(0, 1900),
-                }),
+              try: async () => {
+                const check = await checkMachineTools(ctx, git);
+                const lastSweep = await readSweepState(ctx.host, ctx.home).catch(() => null);
+                return lastSweep === null ? check : { ...check, lastSweep };
+              },
+              catch: toError,
             }),
           ),
         ),
-      [MACHINE_TOOLS_RPC_METHODS.machineToolsInstall]: (input: { readonly tool: MachineToolId }) =>
+      [MACHINE_TOOLS_RPC_METHODS.machineToolsInstall]: (input: {
+        readonly tool: MachineReadinessToolId;
+      }) =>
         Stream.callback<MachineToolInstallEvent, MachineToolsError>((queue) =>
           Effect.gen(function* () {
-            if (installing !== null)
-              return yield* new MachineToolsError({
-                code: "busy",
-                reason: `${toolName(installing)} is being installed on this machine. Wait for it to end.`,
-              });
-            // Taken before the first yield, so a second request sees it.
-            installing = input.tool;
-            const release = () => {
-              installing = null;
-            };
-            const { ctx, git } = yield* context.pipe(Effect.onError(() => Effect.sync(release)));
+            const { ctx, git } = yield* context;
             const log = (line: string) =>
               Queue.offerUnsafe(queue, { type: "log", line: line.slice(0, 3900) });
-            // A closed stream stops the waiting, not the install: the lock and the
-            // PATH follow the install to its end.
-            const run = installMachineTool(ctx, input.tool, git, log).then((outcome) => {
-              addToServerPath(outcome.pathDirs);
-              return outcome;
-            });
-            void run.then(release, release);
-            const outcome = yield* Effect.tryPromise({
-              try: () => run,
-              catch: (cause) =>
-                new MachineToolsError({
-                  code: cause instanceof MachineToolInstallError ? cause.code : "failed",
-                  reason: (cause instanceof Error ? cause.message : String(cause)).slice(0, 1900),
-                }),
-            });
+            // A closed stream stops the waiting, not the install.
+            const started = startInstall(ctx, input.tool, git, log);
+            if ("busyWith" in started)
+              return yield* new MachineToolsError({
+                code: "busy",
+                reason: `${machineToolName(started.busyWith)} is being installed on this machine. Wait for it to end.`,
+              });
+            const outcome = yield* Effect.tryPromise({ try: () => started.run, catch: toError });
             Queue.offerUnsafe(queue, {
               type: "done",
               ok: true,

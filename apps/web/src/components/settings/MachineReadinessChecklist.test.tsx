@@ -22,6 +22,12 @@ vi.mock("../../studio/useCoordinatorProvider", () => ({
   },
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.providers }));
+// Machine basics read their own RPC (MachineBasics.test.tsx); here only where they sit.
+vi.mock("../onboarding/MachineBasics", () => ({
+  MachineBasicsOn: ({ environmentId }: { readonly environmentId: string }) => (
+    <div data-machine-basics-on={environmentId} />
+  ),
+}));
 vi.mock("../../state/server", () => ({
   EMPTY_SERVER_PROVIDERS: [],
   serverEnvironment: { providersValueAtom: () => "providers" },
@@ -154,6 +160,13 @@ it("checks the machine and project, and lists what still needs a sign-in or acce
   expect(text).toContain("Git has no credential helper for GitHub");
   expect(text).toContain("gh auth setup-git --hostname github.com");
   expect(text).toContain("Coding-agent sign-ins are never copied between machines");
+});
+
+it("shows that machine's own basics (Git, Node.js, SpecWeave, gh) above its sign-ins", async () => {
+  await mount();
+  const basics = container.querySelector("[data-slot='machine-readiness-basics']");
+  expect(basics?.textContent).toContain("Machine basics");
+  expect(basics?.querySelector("[data-machine-basics-on='m3']")).not.toBeNull();
 });
 
 it("signs in on that machine itself and checks again on request", async () => {

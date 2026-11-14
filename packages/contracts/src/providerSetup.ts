@@ -125,6 +125,22 @@ export const ProviderAuthRespondInput = Schema.Struct({
 });
 export type ProviderAuthRespondInput = typeof ProviderAuthRespondInput.Type;
 
+/**
+ * GitHub Copilot sign-ins this machine already has, found without reading a
+ * token: whether VS Code has the Copilot extension, and the hosts and accounts
+ * `gh auth status` lists (github.com or an enterprise host).
+ */
+export const CopilotExistingSignIns = Schema.Struct({
+  vscodeCopilot: Schema.Boolean,
+  ghAccounts: Schema.Array(
+    Schema.Struct({
+      host: TrimmedNonEmptyString.check(Schema.isMaxLength(253)),
+      account: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+    }),
+  ).check(Schema.isMaxLength(16)),
+});
+export type CopilotExistingSignIns = typeof CopilotExistingSignIns.Type;
+
 export const ProviderAuthState = Schema.Struct({
   instanceId: ProviderInstanceId,
   phase: Schema.Literals([
@@ -147,6 +163,8 @@ export const ProviderAuthState = Schema.Struct({
   ),
   interaction: ForwardCompatibleOptional(Schema.NullOr(ProviderAuthInteraction)),
   credentialOwner: ForwardCompatibleOptional(Schema.Literals(["provider", "specweave-studio"])),
+  /** Only for the GitHub Copilot registry agent; older clients ignore it. */
+  copilotExistingSignIns: Schema.optionalKey(CopilotExistingSignIns),
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;
 

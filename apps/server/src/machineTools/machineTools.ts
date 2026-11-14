@@ -18,11 +18,14 @@
  */
 import type {
   MachinePackageManager,
+  MachineReadinessToolId,
   MachineToolId,
   MachineToolPresence,
   MachineToolsCheck,
+  MachineToolStatus,
 } from "@specweave-studio/contracts";
 import { cliArchiveTarCommand } from "@specweave-studio/shared/cliRelease";
+import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import * as NodePath from "node:path";
 
 import { mirroredUrl, type ProvisionHost } from "../provision/host.ts";
@@ -30,10 +33,19 @@ import { acquireProvisionLock } from "../provision/runner.ts";
 import {
   GH_VERSION,
   ghDownload,
+  NODE_MIN_MAJOR,
   NODE_VERSION,
   nodeDownload,
+  SPECWEAVE_MIN_VERSION,
+  SPECWEAVE_VERSION,
   type ToolPlatformKey,
 } from "../provision/manifest.ts";
+import {
+  installSpecweave,
+  managedSpecweaveDir,
+  SpecweaveInstallFailure,
+  specweaveVersionAt,
+} from "./specweaveTool.ts";
 
 const TOOL_PLATFORM_KEYS: ReadonlyArray<ToolPlatformKey> = [
   "darwin-arm64",
@@ -100,7 +112,7 @@ const windowsGitDirs = (env: Readonly<Record<string, string | undefined>>) =>
     .filter((dir): dir is string => Boolean(dir))
     .map((dir) => NodePath.win32.join(dir, "Git", "cmd"));
 
-/** Every folder the app may have installed a tool into, existing or not. */
+/** Every folder the app installs its current pins into, existing or not. */
 export function managedToolDirs(input: {
   readonly home: string;
   readonly platform: string;
@@ -108,7 +120,73 @@ export function managedToolDirs(input: {
   readonly glibc: boolean;
 }): ReadonlyArray<string> {
   const key = toolPlatformKey(input.platform, input.arch, input.glibc);
-  return key === null ? [] : [managedNodeDir(input.home, key), managedGhDir(input.home, key)];
+  const specweave = managedSpecweaveDir(input.home, input.platform);
+  return key === null
+    ? [specweave]
+    : [managedNodeDir(input.home, key), managedGhDir(input.home, key), specweave];
+}
+
+const VERSION_DIR = /^v?(\d+\.\d+\.\d+)$/u;
+const newestFirst = (a: string, b: string) => compareSemverVersions(b, a);
+
+/**
+ * The folders of the app's own copies that exist, one per tool: the current
+ * pin's, else the newest older one. An app update moves a pin before its
+ * quiet check installs the new build, and until then the older copy stays on
+ * the PATH, so agents never lose a tool they had.
+ */
+export async function existingManagedToolDirs(
+  host: Pick<ProvisionHost, "exists" | "listDir">,
+  input: {
+    readonly home: string;
+    readonly platform: string;
+    readonly arch: string;
+    readonly glibc: boolean;
+  },
+): Promise<ReadonlyArray<string>> {
+  const path = pathFor(input.platform);
+  const key = toolPlatformKey(input.platform, input.arch, input.glibc);
+  const found: string[] = [];
+  const pick = async (current: string, olderOf: () => Promise<ReadonlyArray<string>>) => {
+    if (await host.exists(current)) return found.push(current);
+    for (const dir of await olderOf()) if (await host.exists(dir)) return found.push(dir);
+  };
+  const versionDirs = async (root: string) =>
+    (await host.listDir(root))
+      .flatMap((name) => {
+        const version = VERSION_DIR.exec(name)?.[1];
+        return version === undefined ? [] : [version];
+      })
+      .toSorted(newestFirst);
+  if (key !== null) {
+    const nodeRoot = path.join(input.home, "runtime", "node");
+    const suffix = nodeDownload(key).stem.slice(`node-v${NODE_VERSION}`.length);
+    await pick(managedNodeDir(input.home, key), async () =>
+      (await host.listDir(nodeRoot))
+        .flatMap((name) => {
+          const version = /^node-v(\d+\.\d+\.\d+)(.*)$/u.exec(name);
+          return version && version[2] === suffix ? [version[1]!] : [];
+        })
+        .toSorted(newestFirst)
+        .map((version) => {
+          const root = path.join(nodeRoot, `node-v${version}${suffix}`);
+          return key.startsWith("win32") ? root : path.join(root, "bin");
+        }),
+    );
+    const ghRoot = path.join(input.home, "tools", "gh");
+    await pick(managedGhDir(input.home, key), async () =>
+      (await versionDirs(ghRoot)).map((version) => path.join(ghRoot, version, "bin")),
+    );
+  }
+  const specweaveRoot = path.join(input.home, "tools", "specweave");
+  await pick(managedSpecweaveDir(input.home, input.platform), async () =>
+    (await versionDirs(specweaveRoot)).map((version) =>
+      input.platform === "win32"
+        ? path.join(specweaveRoot, version)
+        : path.join(specweaveRoot, version, "bin"),
+    ),
+  );
+  return found;
 }
 
 const pathEntries = (env: Readonly<Record<string, string | undefined>>, platform: string) => {
@@ -184,10 +262,36 @@ async function packageManagerOf(ctx: MachineToolsContext): Promise<MachinePackag
   return null;
 }
 
+const isManaged = (ctx: MachineToolsContext, found: string) => {
+  const path = pathFor(ctx.host.platform);
+  const inside = (root: string) => {
+    const relative = path.relative(root, found);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  };
+  return inside(path.join(ctx.home, "runtime", "node")) || inside(path.join(ctx.home, "tools"));
+};
+
+const older = (version: string | null, than: string) =>
+  version !== null && compareSemverVersions(version, than) < 0;
+
+/** Where a tool was found, and the version that runs. */
+async function locate(
+  ctx: MachineToolsContext,
+  tool: "node" | "gh" | "specweave",
+  dirs: ReadonlyArray<string>,
+): Promise<{ readonly path: string; readonly version: string | null } | null> {
+  const { host } = ctx;
+  const found = await findCommand(host, host.platform, tool, dirs);
+  if (found === null) return null;
+  const version =
+    tool === "specweave" ? await specweaveVersionAt(host, found) : await versionOf(host, found);
+  return { path: found, version };
+}
+
 /**
- * Git, Node.js and gh on this machine, and which missing ones the app can
- * install. `git` comes from the agent search's own check (probeGit), which
- * knows the macOS developer-tools shim.
+ * Git, Node.js, gh and SpecWeave on this machine, their versions, and which
+ * ones the app can install or bring up to date. `git` comes from the agent
+ * search's own check (probeGit), which knows the macOS developer-tools shim.
  */
 export async function checkMachineTools(
   ctx: MachineToolsContext,
@@ -195,12 +299,15 @@ export async function checkMachineTools(
 ): Promise<MachineToolsCheck> {
   const { host } = ctx;
   const dirs = searchDirs(ctx);
-  const presence = (found: string | null): MachineToolPresence =>
+  const presence = (found: unknown): MachineToolPresence =>
     found === null ? "missing" : "present";
-  const node = presence(
-    await findCommand(host, host.platform, "node", [...new Set([...dirs, ...ctx.nodeManagerDirs])]),
-  );
-  const gh = presence(await findCommand(host, host.platform, "gh", dirs));
+  const nodeFound = await locate(ctx, "node", [...new Set([...dirs, ...ctx.nodeManagerDirs])]);
+  const ghFound = await locate(ctx, "gh", dirs);
+  const specweaveFound = await locate(ctx, "specweave", [
+    ...new Set([...dirs, ...ctx.nodeManagerDirs]),
+  ]);
+  const node = presence(nodeFound);
+  const gh = presence(ghFound);
   const packageManager = await packageManagerOf(ctx);
   const key = toolPlatformKey(host.platform, host.arch, ctx.glibc);
   const gitState: MachineToolPresence = git ?? "unknown";
@@ -209,7 +316,65 @@ export async function checkMachineTools(
     installable.push("git");
   if (node === "missing" && key !== null) installable.push("node");
   if (gh === "missing" && key !== null) installable.push("gh");
-  return { git: gitState, node, gh, packageManager, installable };
+
+  const status = (
+    tool: MachineReadinessToolId,
+    found: { readonly path: string; readonly version: string | null } | null,
+    outdatedFor: (version: string | null, managed: boolean) => boolean,
+    installableWhenMissing: boolean,
+    updatable: boolean,
+  ): MachineToolStatus => {
+    const managed = found !== null && isManaged(ctx, found.path);
+    const outdated = found !== null && outdatedFor(found.version, managed);
+    return {
+      tool,
+      presence: presence(found),
+      version: found?.version ?? null,
+      managed,
+      outdated,
+      // The person's own copy is never replaced; the app's own older one is.
+      canInstall: found === null ? installableWhenMissing : outdated && managed && updatable,
+    };
+  };
+  const nodeMajor = (version: string | null) =>
+    version === null ? null : Number.parseInt(version, 10);
+  const tools: MachineToolStatus[] = [
+    {
+      tool: "git",
+      presence: gitState,
+      version: null,
+      managed: false,
+      outdated: false,
+      canInstall: installable.includes("git"),
+    },
+    status(
+      "node",
+      nodeFound,
+      (version, managed) =>
+        (nodeMajor(version) ?? NODE_MIN_MAJOR) < NODE_MIN_MAJOR ||
+        (managed && older(version, NODE_VERSION)),
+      installable.includes("node"),
+      key !== null,
+    ),
+    status(
+      "gh",
+      ghFound,
+      (version, managed) => managed && older(version, GH_VERSION),
+      installable.includes("gh"),
+      key !== null,
+    ),
+    status(
+      "specweave",
+      specweaveFound,
+      (version, managed) =>
+        older(version, SPECWEAVE_MIN_VERSION) || (managed && older(version, SPECWEAVE_VERSION)),
+      // SpecWeave installs with a recent enough Node.js on the machine, or one the app installs first.
+      (nodeFound !== null && (nodeMajor(nodeFound.version) ?? NODE_MIN_MAJOR) >= NODE_MIN_MAJOR) ||
+        installable.includes("node"),
+      true,
+    ),
+  ];
+  return { git: gitState, node, gh, packageManager, installable, tools };
 }
 
 export type InstallLog = (line: string) => void;
@@ -264,6 +429,10 @@ async function installPinned(
   log: InstallLog,
   input: PinnedInstall,
 ): Promise<void> {
+  await withInstallLock(ctx, () => installPinnedUnlocked(ctx, log, input));
+}
+
+async function withInstallLock<A>(ctx: MachineToolsContext, run: () => Promise<A>): Promise<A> {
   const path = pathFor(ctx.host.platform);
   const provisionDir = path.join(ctx.home, "provision");
   await ctx.host.mkdirp(provisionDir);
@@ -274,10 +443,35 @@ async function installPinned(
       "SpecWithCode is setting this machine up right now. Try again when that ends.",
     );
   try {
-    await installPinnedUnlocked(ctx, log, input);
+    return await run();
   } finally {
     await release();
   }
+}
+
+/** The display name of each tool, for messages. */
+export const machineToolName = (tool: MachineReadinessToolId) =>
+  tool === "gh"
+    ? "GitHub CLI"
+    : tool === "node"
+      ? "Node.js"
+      : tool === "specweave"
+        ? "SpecWeave"
+        : "Git";
+
+/** The Node.js an npm install runs with: the machine's own first, else the app's; never one older than SpecWeave supports. */
+async function findNodeForNpm(ctx: MachineToolsContext): Promise<string | null> {
+  const found = await locate(ctx, "node", [
+    ...new Set([...searchDirs(ctx), ...ctx.nodeManagerDirs]),
+  ]);
+  if (found === null) return null;
+  const major = found.version === null ? null : Number.parseInt(found.version, 10);
+  if (major !== null && major < NODE_MIN_MAJOR)
+    throw new MachineToolInstallError(
+      "unsupported",
+      `SpecWeave needs Node.js ${NODE_MIN_MAJOR} or newer, and the Node.js at ${found.path} is version ${found.version}. Update it where you installed it, then install SpecWeave.`,
+    );
+  return found.path;
 }
 
 async function installPinnedUnlocked(
@@ -382,18 +576,39 @@ const WINGET_GIT_COMMAND = `winget ${WINGET_GIT_ARGS.slice(0, 6).join(" ")}`;
 /** Installs one missing tool. Refuses one that is already there or that needs an admin password. */
 export async function installMachineTool(
   ctx: MachineToolsContext,
-  tool: MachineToolId,
+  tool: MachineReadinessToolId,
   git: "present" | "missing" | undefined,
   log: InstallLog,
 ): Promise<InstallOutcome> {
   const { host } = ctx;
   const before = await checkMachineTools(ctx, git);
-  if (before[tool] === "present")
+  const current = before.tools?.find((entry) => entry.tool === tool);
+  const updating = current?.presence === "present" && current.outdated && current.managed;
+  if (current?.presence === "present" && !updating)
     throw new MachineToolInstallError(
       "present",
-      `${tool === "gh" ? "GitHub CLI" : tool === "node" ? "Node.js" : "Git"} is already on this machine, so nothing was changed.`,
+      `${machineToolName(tool)} is already on this machine, so nothing was changed.`,
     );
-  if (!before.installable.includes(tool))
+  if (tool === "specweave") {
+    if (!current?.canInstall) {
+      const node = before.tools?.find((entry) => entry.tool === "node");
+      throw new MachineToolInstallError(
+        "unsupported",
+        node?.presence === "present" && node.outdated && !node.managed
+          ? `SpecWeave needs Node.js ${NODE_MIN_MAJOR} or newer, and this machine has Node.js ${node.version ?? "of an older version"}. Update it where you installed it, then install SpecWeave.`
+          : "SpecWeave runs on Node.js, which this machine does not have. Install Node.js first.",
+      );
+    }
+    return withInstallLock(ctx, () => installSpecweave(ctx, log, findNodeForNpm)).catch(
+      (cause: unknown) => {
+        throw cause instanceof SpecweaveInstallFailure
+          ? new MachineToolInstallError(cause.code, cause.message)
+          : cause;
+      },
+    );
+  }
+  // The app's own older copy is replaced by the current pin, next to it.
+  if (!updating && !before.installable.includes(tool))
     throw new MachineToolInstallError(
       "unsupported",
       tool === "git"
@@ -484,6 +699,46 @@ export async function installMachineTool(
  * Adds folders to the end of a PATH that lacks them, so the person's own
  * tools keep coming first. Returns the new value, or undefined when unchanged.
  */
+/**
+ * The PATH with `dirs` in place of the app's other copies of the same tools
+ * (another version under the same `runtime/node`, `tools/gh` or
+ * `tools/specweave` folder), at the place the old copy had, so an update takes
+ * effect without a restart. Other entries keep their order.
+ */
+export function swapManagedPathDirs(
+  current: string | undefined,
+  dirs: ReadonlyArray<string>,
+  home: string,
+  platform: string,
+): string | undefined {
+  const path = pathFor(platform);
+  const delimiter = platform === "win32" ? ";" : ":";
+  const fold = (value: string) => (platform === "win32" ? value.toLowerCase() : value);
+  const roots = [
+    path.join(home, "runtime", "node"),
+    path.join(home, "tools", "gh"),
+    path.join(home, "tools", "specweave"),
+  ].map((root) => fold(root) + path.sep);
+  const rootOf = (dir: string) => roots.find((root) => fold(dir).startsWith(root));
+  const replaced = new Set(dirs.map(rootOf).filter((root) => root !== undefined));
+  const wanted = new Set(dirs.map(fold));
+  const entries = (current ?? "").split(delimiter).filter((entry) => entry !== "");
+  const out: string[] = [];
+  let placed = false;
+  for (const entry of entries) {
+    const root = rootOf(entry);
+    const stale = (root !== undefined && replaced.has(root)) || wanted.has(fold(entry));
+    if (!stale) out.push(entry);
+    else if (!placed) {
+      out.push(...dirs);
+      placed = true;
+    }
+  }
+  if (!placed) out.push(...dirs);
+  const next = out.join(delimiter);
+  return next === entries.join(delimiter) ? undefined : next;
+}
+
 export function withPathDirs(
   current: string | undefined,
   dirs: ReadonlyArray<string>,

@@ -4,8 +4,8 @@ import { EnvironmentAuthorizationError } from "./auth.ts";
 
 /**
  * The machine basics first-run setup checks on each machine: Git, which agents
- * use to track and undo their changes, Node.js, which SpecWeave runs on, and
- * the GitHub CLI, for publishing. The machine's own server answers and, where
+ * use to track and undo their changes, Node.js, which SpecWeave runs on, the
+ * GitHub CLI, for publishing, and the SpecWeave CLI itself. The machine's own server answers and, where
  * it can do so without an admin password, installs the missing ones: Node.js
  * and gh from pinned, SHA-256 checked downloads into the app's own folder, and
  * Git through Apple's developer tools or winget. Nothing installed elsewhere
@@ -24,6 +24,41 @@ export type MachineToolPresence = typeof MachineToolPresence.Type;
 export const MachinePackageManager = Schema.Literals(["winget", "apt", "dnf", "pacman", "zypper"]);
 export type MachinePackageManager = typeof MachinePackageManager.Type;
 
+/**
+ * Every tool machine readiness covers. SpecWeave was added after
+ * `MachineToolId`, so it never appears in `installable`, which an older
+ * client decodes with the narrower list.
+ */
+export const MachineReadinessToolId = Schema.Literals(["git", "node", "gh", "specweave"]);
+export type MachineReadinessToolId = typeof MachineReadinessToolId.Type;
+
+/** One tool's state on a machine. */
+export const MachineToolStatus = Schema.Struct({
+  tool: MachineReadinessToolId,
+  presence: MachineToolPresence,
+  /** The version that runs, or the app's older copy when only that is there. */
+  version: Schema.NullOr(bounded(64)),
+  /** The copy found is one the app installed into its own folder. */
+  managed: Schema.Boolean,
+  /** Older than SpecWithCode needs, or than the app's current pin for its own copy. */
+  outdated: Schema.Boolean,
+  /** The app can install it, or replace its own older copy, with no admin password. */
+  canInstall: Schema.Boolean,
+});
+export type MachineToolStatus = typeof MachineToolStatus.Type;
+
+/** What the last check after an app update did on this machine. */
+export const MachineReadinessSweep = Schema.Struct({
+  /** The app version the sweep ran for. */
+  version: bounded(64),
+  at: bounded(64),
+  /** `waiting`: work was running, so it waits for a quiet moment. */
+  state: Schema.Literals(["waiting", "done", "failed"]),
+  installed: Schema.Array(MachineReadinessToolId),
+  detail: Schema.NullOr(bounded(2000)),
+});
+export type MachineReadinessSweep = typeof MachineReadinessSweep.Type;
+
 export const MachineToolsCheck = Schema.Struct({
   git: MachineToolPresence,
   node: MachineToolPresence,
@@ -31,13 +66,18 @@ export const MachineToolsCheck = Schema.Struct({
   packageManager: Schema.NullOr(MachinePackageManager),
   /** The missing tools this machine's server can install itself, with no admin password. */
   installable: Schema.Array(MachineToolId),
+  /** Every tool with its version; absent from a server older than machine readiness. */
+  tools: Schema.optionalKey(Schema.Array(MachineToolStatus)),
+  /** The check after the last app update; absent before the first one. */
+  lastSweep: Schema.optionalKey(MachineReadinessSweep),
 });
 export type MachineToolsCheck = typeof MachineToolsCheck.Type;
 
 export const MachineToolsCheckInput = Schema.Struct({});
 export type MachineToolsCheckInput = typeof MachineToolsCheckInput.Type;
 
-export const MachineToolInstallInput = Schema.Struct({ tool: MachineToolId });
+/** An older server refuses `specweave`; a client offers it only when `tools` lists it. */
+export const MachineToolInstallInput = Schema.Struct({ tool: MachineReadinessToolId });
 export type MachineToolInstallInput = typeof MachineToolInstallInput.Type;
 
 /**

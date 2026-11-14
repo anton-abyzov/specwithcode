@@ -42,7 +42,8 @@ import * as ServerHttp from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { fixPath } from "./os-jank.ts";
-import { seedManagedToolPath } from "./machineTools/rpc.ts";
+import * as ReadinessSweep from "./machineTools/readinessSweep.ts";
+import { seedManagedToolPath } from "./machineTools/runtime.ts";
 import {
   installManualWorktreeGuard,
   setManualWorktreeGuard,
@@ -837,6 +838,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  // After an app update, installs missing machine tools once the machine is quiet.
+  ReadinessSweep.layerStart,
   // Deletes superseded event history every six hours, never during an update.
   StorageMaintenance.layerStart,
   // Unsent drafts of deleted threads and projects.

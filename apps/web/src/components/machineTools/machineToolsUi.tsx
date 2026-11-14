@@ -2,8 +2,9 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   MachinePackageManager,
-  MachineToolId,
+  MachineReadinessToolId,
   MachineToolsCheck,
+  MachineToolStatus,
 } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -15,18 +16,54 @@ import {
   machineTools,
 } from "../../studio/machineTools";
 
-export const MACHINE_TOOL_NAMES: Readonly<Record<MachineToolId, string>> = {
+export const MACHINE_TOOL_NAMES: Readonly<Record<MachineReadinessToolId, string>> = {
   git: "Git",
   node: "Node.js",
   gh: "GitHub CLI",
+  specweave: "SpecWeave",
 };
 
 /** Where to get a tool by hand when the app cannot install it on this machine. */
-export const MACHINE_TOOL_DOWNLOADS: Readonly<Record<MachineToolId, string>> = {
+export const MACHINE_TOOL_DOWNLOADS: Readonly<Record<MachineReadinessToolId, string>> = {
   git: "https://git-scm.com/downloads",
   node: "https://nodejs.org/en/download",
   gh: "https://cli.github.com",
+  specweave: "https://www.npmjs.com/package/specweave",
 };
+
+/**
+ * One tool's state from a check. A machine on a SpecWithCode from before
+ * machine readiness answers only presence for Git, Node.js and gh, and
+ * nothing for SpecWeave (null).
+ */
+export function machineToolStatus(
+  check: MachineToolsCheck,
+  tool: MachineReadinessToolId,
+): MachineToolStatus | null {
+  const reported = check.tools?.find((entry) => entry.tool === tool);
+  if (reported !== undefined) return reported;
+  if (tool === "specweave") return null;
+  return {
+    tool,
+    presence: check[tool],
+    version: null,
+    managed: false,
+    outdated: false,
+    canInstall: check.installable.includes(tool),
+  };
+}
+
+/** What "Install everything" runs, in order: Git last, since its installer may take over. */
+export function installTargets(check: MachineToolsCheck): ReadonlyArray<MachineReadinessToolId> {
+  return (["node", "gh", "specweave", "git"] as const).filter((tool) => {
+    const status = machineToolStatus(check, tool);
+    return (
+      status !== null &&
+      status.canInstall &&
+      (status.presence === "missing" || (status.outdated && status.managed))
+    );
+  });
+}
 
 /** The command a person runs to install Git with their Linux distribution's package manager. */
 export function linuxGitCommand(manager: MachinePackageManager | null): string | null {
@@ -102,7 +139,9 @@ export function useMachineTools(environmentId: EnvironmentId, enabled = true) {
   const waitingFor =
     install.status === "done" && install.handedOff && install.tool !== null ? install.tool : null;
   const stillMissing =
-    waitingFor !== null && state.kind === "ready" && state.check[waitingFor] === "missing";
+    waitingFor !== null &&
+    state.kind === "ready" &&
+    machineToolStatus(state.check, waitingFor)?.presence === "missing";
   useEffect(() => {
     if (!stillMissing) return;
     let polls = 0;
@@ -118,11 +157,36 @@ export function useMachineTools(environmentId: EnvironmentId, enabled = true) {
   }, [stillMissing, refresh]);
 
   const start = useCallback(
-    (tool: MachineToolId) => void installCommand({ environmentId, input: { tool } }),
+    (tool: MachineReadinessToolId) => void installCommand({ environmentId, input: { tool } }),
     [installCommand, environmentId],
   );
 
-  return { state, install, refresh, start };
+  // Install everything: one tool after another, each from a fresh check, until
+  // one fails or the list is done. A closed view stops the queue, not the install.
+  const [queue, setQueue] = useState<ReadonlyArray<MachineReadinessToolId>>([]);
+  const startAll = useCallback(
+    (tools: ReadonlyArray<MachineReadinessToolId>) => {
+      // An earlier install's ending is not this queue's: a failed Node.js must not stop it.
+      if (install.status !== "running") setInstall(IDLE_MACHINE_TOOL_INSTALL);
+      setQueue(tools);
+    },
+    [install.status, setInstall],
+  );
+  const queued = queue[0];
+  useEffect(() => {
+    if (queued === undefined || install.status === "running") return;
+    if (install.tool === queued && install.status === "failed") {
+      setQueue([]);
+      return;
+    }
+    if (install.tool === queued && install.status === "done") {
+      setQueue((rest) => rest.slice(1));
+      return;
+    }
+    void installCommand({ environmentId, input: { tool: queued } });
+  }, [queued, install.status, install.tool, installCommand, environmentId]);
+
+  return { state, install, refresh, start, startAll, installingAll: queue.length > 0 };
 }
 
 /** An install's own log lines, the latest in view, and how it ended. */

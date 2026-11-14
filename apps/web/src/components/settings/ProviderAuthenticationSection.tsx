@@ -28,6 +28,8 @@ import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { clearChatGptSignIn, noteChatGptSignInStarted } from "./chatGptWelcomeState";
 
+import { CopilotSignInHints } from "./CopilotSignInHints";
+
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
 /** All actions target the provider's environment, even when the browser is on another device. */
@@ -551,6 +553,13 @@ export function ProviderAuthenticationSection({
           ) : null}
         </>
       ) : null}
+      <CopilotSignInHints
+        environmentId={environmentId}
+        environmentLabel={environmentLabel}
+        found={auth?.copilotExistingSignIns}
+        message={statusMessage ?? error}
+        readOnly={readOnly}
+      />
     </SettingsRow>
   );
 }

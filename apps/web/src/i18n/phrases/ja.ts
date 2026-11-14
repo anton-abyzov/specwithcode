@@ -2314,12 +2314,9 @@ export const ja: PhraseCatalog = {
   "Rename machine": "マシン名を変更",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "実行先、スレッドの行、サイドバー、ほかのデバイスにこの名前が表示されます。",
-  "Machine name":
-    "マシン名",
-  "Computer name: {hostLabel}, unchanged.":
-    "コンピュータ名: {hostLabel}（変更されません）",
-  "Call it {name}":
-    "{name} と呼ぶ",
+  "Machine name": "マシン名",
+  "Computer name: {hostLabel}, unchanged.": "コンピュータ名: {hostLabel}（変更されません）",
+  "Call it {name}": "{name} と呼ぶ",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
     "接続できないこのコンピュータの古い記録が、まだ {name} という名前です。このマシンだけがこの名前になるよう削除してください。",
   "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
@@ -2328,33 +2325,25 @@ export const ja: PhraseCatalog = {
     "{host} がすでに {name} という名前です。同じ名前のマシンが2台あると見分けにくくなります。",
   "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
     "今は接続できない {host} がすでに {name} という名前です。もう使っていないなら「ほかのマシン」で削除してください。",
-  "Use the computer name":
-    "コンピュータ名を使う",
-  "Chip letters":
-    "チップの文字",
-  "Narrow chip":
-    "狭いチップ",
-  "Customize chip letters, color and icon":
-    "チップの文字・色・アイコンをカスタマイズ",
+  "Use the computer name": "コンピュータ名を使う",
+  "Chip letters": "チップの文字",
+  "Narrow chip": "狭いチップ",
+  "Customize chip letters, color and icon": "チップの文字・色・アイコンをカスタマイズ",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "名前が入らない狭いチップに表示する2〜3文字。空欄なら名前から決まります。",
   "Old record": "古い記録",
-  "Old record: this machine joined again as a new one": "古い記録: このマシンは新しいマシンとして再参加しました",
+  "Old record: this machine joined again as a new one":
+    "古い記録: このマシンは新しいマシンとして再参加しました",
   "Remove old record": "古い記録を削除",
   "Could not remove the old record": "古い記録を削除できませんでした",
-  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
-  "Use 2 or 3 characters.":
-    "2〜3文字にしてください。",
-  "Coordinator here":
-    "ここがコーディネーター",
-  "Coordinator here too":
-    "ここもコーディネーター",
-  "Workers only":
-    "ワーカーのみ",
-  "Moving coordinator":
-    "コーディネーター移動中",
-  "Not shared":
-    "共有なし",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
+    "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
+  "Use 2 or 3 characters.": "2〜3文字にしてください。",
+  "Coordinator here": "ここがコーディネーター",
+  "Coordinator here too": "ここもコーディネーター",
+  "Workers only": "ワーカーのみ",
+  "Moving coordinator": "コーディネーター移動中",
+  "Not shared": "共有なし",
   "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
     "このコピーでプロジェクトのコーディネーターが動いています（今作業中かどうかに関わらず）。他のマシンのコピーはここから作業を受け取ります。コピーの作り方ではなく、コーディネーターについての表示です。",
   "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
@@ -2365,40 +2354,25 @@ export const ja: PhraseCatalog = {
     "プロジェクトのコーディネーターが今マシン間を移動中です。",
   "No other machine has a copy of this project.":
     "このプロジェクトのコピーは他のどのマシンにもありません。",
-  "Connect to see its role":
-    "接続すると役割が表示されます",
+  "Connect to see its role": "接続すると役割が表示されます",
   "This app cannot see this machine, so it cannot tell what this copy does.":
     "このアプリからはこのマシンが見えないため、このコピーの役割はわかりません。",
-  "{name} wears {color}":
-    "{name} の色は {color}",
-  "Change the color of {name}, now {color}":
-    "{name} の色を変更（現在は {color}）",
-  "Change color":
-    "色を変更",
-  "Color of {name}":
-    "{name} の色",
-  "{color}, also on {names}":
-    "{color}（{names} も使用中）",
+  "{name} wears {color}": "{name} の色は {color}",
+  "Change the color of {name}, now {color}": "{name} の色を変更（現在は {color}）",
+  "Change color": "色を変更",
+  "Color of {name}": "{name} の色",
+  "{color}, also on {names}": "{color}（{names} も使用中）",
   "Letters under a color name the machines that wear it.":
     "色の下の文字は、その色を使っているマシンを示します。",
-  "Violet":
-    "バイオレット",
-  "Teal":
-    "ティール",
-  "Amber":
-    "アンバー",
-  "Rose":
-    "ローズ",
-  "Blue":
-    "ブルー",
-  "Green":
-    "グリーン",
-  "Orange":
-    "オレンジ",
-  "Slate":
-    "スレート",
-  "Computer name {hostLabel}":
-    "コンピュータ名 {hostLabel}",
+  Violet: "バイオレット",
+  Teal: "ティール",
+  Amber: "アンバー",
+  Rose: "ローズ",
+  Blue: "ブルー",
+  Green: "グリーン",
+  Orange: "オレンジ",
+  Slate: "スレート",
+  "Computer name {hostLabel}": "コンピュータ名 {hostLabel}",
   "Use {defaultName}": "{defaultName} を使う",
   "Waiting for sample": "サンプルを待っています",
   "Updated {span}{value}": "更新: {span}{value}",
@@ -4953,7 +4927,8 @@ export const ja: PhraseCatalog = {
     "未インストールです。公式サイトから入手するか、このマシンを管理できる人にここからインストールしてもらってください。",
   "Browse…": "参照…",
   "Add to this machine…": "このマシンに追加…",
-  "Runs on {machine}. No copy on this device.": "{machine} で実行されます。このデバイスにはコピーがありません。",
+  "Runs on {machine}. No copy on this device.":
+    "{machine} で実行されます。このデバイスにはコピーがありません。",
   "Agent status": "エージェントの状態",
   "Last time it was not signed in.": "前回はサインインしていませんでした。",
   "Last time it was signed in as {account}.": "前回は {account} としてサインインしていました。",
@@ -4972,7 +4947,8 @@ export const ja: PhraseCatalog = {
   "Reviewed, model not recorded": "レビュー済み、モデル未記録",
   "Stopped {time}. New work is refused": "{time} に停止しました。新しい作業は拒否されます",
   "Stopped. New work is refused": "停止しました。新しい作業は拒否されます",
-  "Time limit ended {time}. New work is refused": "{time} に期限が終了しました。新しい作業は拒否されます",
+  "Time limit ended {time}. New work is refused":
+    "{time} に期限が終了しました。新しい作業は拒否されます",
   "Until {date}": "{date} まで",
   "Until I stop it": "停止するまで",
   "Allow for": "許可する期間",
@@ -4981,4 +4957,44 @@ export const ja: PhraseCatalog = {
   "1 week": "1 週間",
   "Allow {machine} again for": "{machine} を再び許可する期間",
   "How long {machine} may start work here": "{machine} がここで作業を開始できる期間",
+  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
+    "GitHub Copilot CLI は Node.js で動作します。インストール後、もう一度サインインしてください。",
+  "Plans and tracks work in SpecWeave projects.":
+    "SpecWeave プロジェクトの作業を計画・追跡します。",
+  "Recommended. Plans and tracks work in SpecWeave projects.":
+    "推奨。SpecWeave プロジェクトの作業を計画・追跡します。",
+  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.":
+    "バージョン {version} は SpecWeave と Copilot に必要なバージョン (Node.js 20 以降) より古いです。インストールした場所で更新してください。",
+  "Version {version} is older than SpecWithCode needs. Update it where you installed it.":
+    "バージョン {version} は SpecWithCode に必要なバージョンより古いです。インストールした場所で更新してください。",
+  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.":
+    "SpecWithCode のコピーはバージョン {version} です。ワンクリックでこのリリースが使うバージョンに置き換えます。",
+  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.":
+    "未インストール。ワンクリックで Node.js と一緒に SpecWithCode 専用フォルダーにインストールします。管理者パスワードは不要です。",
+  "Update {tool}": "{tool} を更新",
+  "After the update to {version}, SpecWithCode checks these again once no work runs on this machine.":
+    "{version} への更新後、このマシンで作業が実行されていないときに SpecWithCode がこれらを再確認します。",
+  "After the update to {version}, an install did not finish: {detail}":
+    "{version} への更新後、インストールが完了しませんでした: {detail}",
+  "After the update to {version}, SpecWithCode installed {tools}.":
+    "{version} への更新後、SpecWithCode が {tools} をインストールしました。",
+  "Git, Node.js, SpecWeave and GitHub CLI are ready.":
+    "Git、Node.js、SpecWeave、GitHub CLI の準備ができています。",
+  "Git, Node.js and SpecWeave are ready.": "Git、Node.js、SpecWeave の準備ができています。",
+  "{count} tools are missing or out of date on this machine.":
+    "このマシンで {count} 個のツールが不足しているか古くなっています。",
+  "Install everything missing": "不足しているものをすべてインストール",
+  "Already on {environmentLabel}": "{environmentLabel} にすでにあります",
+  "GitHub Copilot in VS Code": "VS Code の GitHub Copilot",
+  "GitHub CLI signed in as {account} on {host}":
+    "GitHub CLI は {host} で {account} としてサインイン済み",
+  "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
+    "Copilot CLI は独自のサインインを使います。同じアカウントで一度サインインしてください。コードは {host} に送られます。",
+  "Copilot CLI keeps its own sign-in, and SpecWithCode never copies another app's. Sign in once with the same account.":
+    "Copilot CLI は独自のサインインを使い、SpecWithCode が他のアプリのサインインをコピーすることはありません。同じアカウントで一度サインインしてください。",
+  "Machine basics": "マシンの基本ツール",
+  "SpecWithCode's copy is version {version}, older than this release uses.":
+    "SpecWithCode のコピーはバージョン {version} で、このリリースが使うものより古いです。",
+  "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
+    "ツールは各マシンに残り、コピーされません。{machineName} でエージェントがこのプロジェクトを扱うには、まだいくつか必要です。",
 };

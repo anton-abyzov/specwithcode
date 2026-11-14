@@ -6,7 +6,7 @@ import { runStreamGuarded } from "@specweave-studio/client-runtime/rpc";
 import {
   type EnvironmentId,
   MACHINE_TOOLS_RPC_METHODS,
-  type MachineToolId,
+  type MachineReadinessToolId,
   type MachineToolInstallEvent,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
@@ -18,7 +18,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 
 /** One install on one machine; the log is the machine's own lines. */
 export interface MachineToolInstallState {
-  readonly tool: MachineToolId | null;
+  readonly tool: MachineReadinessToolId | null;
   readonly status: "idle" | "running" | "done" | "failed";
   readonly lines: ReadonlyArray<string>;
   /** The closing line: what was installed, or why it was not. */
@@ -67,7 +67,7 @@ export const machineTools = {
   }),
   install: createEnvironmentGuardedCommand(connectionAtomRuntime, {
     label: "machine-tools:install",
-    execute: (input: { readonly tool: MachineToolId }, registry, environmentId) => {
+    execute: (input: { readonly tool: MachineReadinessToolId }, registry, environmentId) => {
       const atom = machineToolInstallAtom(environmentId);
       return Effect.sync(() =>
         registry.set(atom, { ...IDLE_MACHINE_TOOL_INSTALL, tool: input.tool, status: "running" }),

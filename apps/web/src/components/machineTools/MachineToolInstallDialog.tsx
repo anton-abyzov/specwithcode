@@ -25,7 +25,7 @@ import {
   type MachineToolInstallRequest,
   useMachineToolInstallRequest,
 } from "./machineToolInstallRequest";
-import { MACHINE_TOOL_NAMES, useMachineTools } from "./machineToolsUi";
+import { MACHINE_TOOL_NAMES, machineToolStatus, useMachineTools } from "./machineToolsUi";
 
 export function MachineToolInstallDialogHost() {
   const request = useMachineToolInstallRequest((state) => state.request);
@@ -47,14 +47,15 @@ function MachineToolInstallDialog({
   readonly onClose: () => void;
 }) {
   const tx = useTx();
-  const { environmentId, tool, machineLabel } = request;
+  const { environmentId, tool, machineLabel, neededBy } = request;
   const os = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.platform
     .os;
   const { state, install, refresh, start } = useMachineTools(environmentId);
   // The row stays as Ready once the tool appears, instead of vanishing.
   const [wasMissing, setWasMissing] = useState(false);
   const check = state.kind === "ready" ? state.check : null;
-  if (check?.[tool] === "missing" && !wasMissing) setWasMissing(true);
+  const presence = check === null ? null : (machineToolStatus(check, tool)?.presence ?? null);
+  if (presence === "missing" && !wasMissing) setWasMissing(true);
   const name = MACHINE_TOOL_NAMES[tool];
   const running = install.tool === tool && install.status === "running";
 
@@ -68,11 +69,17 @@ function MachineToolInstallDialog({
               : tx("Install {tool}", { tool: name })}
           </DialogTitle>
           <DialogDescription>
-            {tool === "node"
-              ? tx("SpecWeave runs on Node.js. Once it is installed, set SpecWeave up again.")
-              : tool === "git"
-                ? tx("A new project is a Git repository. Once Git is installed, create it again.")
-                : tx("Publishing to GitHub uses the GitHub CLI.")}
+            {tool === "node" && neededBy === "copilot"
+              ? tx("GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.")
+              : tool === "node"
+                ? tx("SpecWeave runs on Node.js. Once it is installed, set SpecWeave up again.")
+                : tool === "specweave"
+                  ? tx("Plans and tracks work in SpecWeave projects.")
+                  : tool === "git"
+                    ? tx(
+                        "A new project is a Git repository. Once Git is installed, create it again.",
+                      )
+                    : tx("Publishing to GitHub uses the GitHub CLI.")}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -84,7 +91,7 @@ function MachineToolInstallDialog({
             </p>
           ) : check === null ? (
             <p className="text-sm text-muted-foreground">{tx("Checking…")}</p>
-          ) : check[tool] === "present" && !wasMissing ? (
+          ) : presence === "present" && !wasMissing ? (
             <p className="text-sm text-muted-foreground">
               {tx("{tool} is already on this machine.", { tool: name })}
             </p>
