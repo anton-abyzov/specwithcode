@@ -1973,9 +1973,9 @@ it("keeps the preview while repository clicks re-compare once", async () => {
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   const checkbox = (label: string) =>
     container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
-  const cloneApp = container.querySelector<HTMLElement>(
-    '[data-slot="copy-clone"] [data-slot="checkbox"]',
-  )!;
+  const cloneApp = container.querySelectorAll<HTMLElement>(
+    '[data-slot="copy-clone"] [role="radio"]',
+  )[1]!;
   await act(async () => cloneApp.click());
   await act(async () => checkbox("Copy repos/ec").click());
   // Shown at once, before the destination answers; the preview is not replaced.

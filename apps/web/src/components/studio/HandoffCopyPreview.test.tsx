@@ -236,7 +236,16 @@ describe("copy plan preview", () => {
         disabled={false}
       />,
     );
-    await act(async () => checkbox("copy-clone").click());
+    const download = container.querySelector<HTMLElement>(
+      '[data-slot="copy-clone"] [role="radio"][value="download"], [data-slot="copy-clone"] [data-value="download"]',
+    );
+    expect(container.querySelector('[data-slot="copy-clone"]')?.textContent).toContain(
+      "Download from GitHub, local changes from",
+    );
+    const radios = container.querySelectorAll<HTMLElement>(
+      '[data-slot="copy-clone"] [role="radio"]',
+    );
+    await act(async () => (download ?? radios[1]!).click());
     expect(onClone).toHaveBeenCalledExactlyOnceWith("repo:api", true);
   });
 });
@@ -301,17 +310,17 @@ describe("repository choices", () => {
       />,
     );
     expect(container.querySelector('[data-slot="copy-repositories-count"]')?.textContent).toBe(
-      "2 of 2 copied, 0 cloned from origin",
+      "3 copied from M4 · 0 downloaded from GitHub",
     );
     expect(container.querySelector('[data-slot="copy-clone-explained"]')?.textContent).toContain(
-      "Commits not pushed to origin, local-only branches and stashes stay on M4",
+      "Unpushed commits, local-only branches and stashes stay on M4",
     );
-    await act(async () => button("Copy none").click());
+    await act(async () => button("Leave all out").click());
     expect(onRepositories).toHaveBeenLastCalledWith({
       clone: [],
       skip: ["repo:api", "repo:ec"],
     });
-    await act(async () => button("Clone all from origin").click());
+    await act(async () => button("Download all from GitHub").click());
     expect(onRepositories).toHaveBeenLastCalledWith({
       clone: ["repo:.", "repo:api", "repo:ec"],
       skip: [],

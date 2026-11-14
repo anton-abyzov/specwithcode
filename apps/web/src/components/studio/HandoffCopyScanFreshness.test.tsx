@@ -25,7 +25,7 @@ it("labels historical age, checks without replacement and offers explicit recomp
     );
   try {
     await render(null);
-    expect(container.textContent).toBe("Measured earlier·Measure again");
+    expect(container.textContent).toBe("Measured earlierCheck for changes");
     await act(async () => container.querySelector("button")!.click());
     expect(refresh).toHaveBeenCalledOnce();
     expect(compare).not.toHaveBeenCalled();
@@ -44,7 +44,9 @@ it("labels historical age, checks without replacement and offers explicit recomp
     await render({ freshness: { checkedAt: 1793062000000, current: false } });
     expect(container.textContent).toContain("Compare again before copying.");
     expect(compare).not.toHaveBeenCalled();
-    await act(async () => container.querySelectorAll("button")[1]!.click());
+    // Once a change is found, the one control left measures and compares again.
+    expect(container.querySelectorAll("button")).toHaveLength(1);
+    await act(async () => container.querySelector("button")!.click());
     expect(compare).toHaveBeenCalledOnce();
     expect(measuredAgo(1000, 1000 + 2 * 86_400_000)).toBe("2 days ago");
     expect(measuredAgo(1000, 1000 + 30_000)).toBe("just now");

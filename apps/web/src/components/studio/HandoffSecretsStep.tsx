@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { formatBytes } from "../../studio/folderCopy";
+import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { isHomeSecretRow, receivableSecretFiles } from "./handoffCopySecrets";
 
@@ -101,15 +102,18 @@ export function HandoffSecretsStep({
                 </span>
               </span>
             </label>
-            <button
-              type="button"
-              className="shrink-0 text-xs text-primary hover:underline"
+            <Button
+              variant="outline"
+              size="xs"
+              className="shrink-0"
               aria-expanded={shown}
               data-slot="copy-secrets-show"
               onClick={() => setShown((open) => !open)}
             >
-              {shown ? "Hide" : "Show"}
-            </button>
+              {shown
+                ? "Hide files"
+                : `Show ${files.length === 1 ? "file" : `${files.length} files`}`}
+            </Button>
           </div>
           {shown && (
             <ul className="max-h-48 space-y-1 overflow-auto rounded-lg border p-2">

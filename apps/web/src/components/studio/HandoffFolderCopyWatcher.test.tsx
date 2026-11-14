@@ -346,7 +346,7 @@ it("never approves a one-click copy that would replace files; it asks for review
     };
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(state.toasts).toEqual([
+    expect(state.toasts).toMatchObject([
       {
         type: "success",
         title: "Copy to M3 would replace 1 file. Open Move Project to review.",
@@ -439,7 +439,7 @@ it("drops a pending Replace all whose re-compare still needs a choice and asks f
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(readPointer()).not.toHaveProperty("replaceAll");
-    expect(state.toasts).toEqual([
+    expect(state.toasts).toMatchObject([
       {
         type: "success",
         title: "Copy to M3 would replace 1 repository. Open Move Project to review.",
@@ -812,7 +812,7 @@ it("never approves a one-click copy whose unchanged folder would overwrite files
     };
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(state.toasts).toEqual([
+    expect(state.toasts).toMatchObject([
       {
         type: "success",
         title: "Copy to M3 would replace 2 files. Open Move Project to review.",

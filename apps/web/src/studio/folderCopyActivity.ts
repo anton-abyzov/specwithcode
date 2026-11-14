@@ -32,6 +32,8 @@ export interface CopyActivity {
   readonly progress?: CopyProgressView;
   /** The machine the folder is copied from, for the phase names. */
   readonly source?: string;
+  /** The project's name, so a waiting copy says what it copies. */
+  readonly project?: string;
 }
 
 /**
@@ -90,7 +92,11 @@ export function moveDestination(
  * held a project before the move: that project and its threads stay listed.
  */
 export function isMovingDestination(
-  project: { readonly environmentId: string; readonly id: string; readonly workspaceRoot: string },
+  project: {
+    readonly environmentId: string;
+    readonly id: string;
+    readonly workspaceRoot: string;
+  },
   activities: ReadonlyMap<string, CopyActivity>,
 ): boolean {
   for (const [source, activity] of activities) {
@@ -155,6 +161,7 @@ const sameActivity = (a: CopyActivity | undefined, b: CopyActivity | null) =>
       a.fraction === b.fraction &&
       a.waiting === b.waiting &&
       a.move === b.move &&
+      a.project === b.project &&
       a.destination?.environmentId === b.destination?.environmentId &&
       a.destination?.projectId === b.destination?.projectId &&
       a.destination?.folder === b.destination?.folder &&
@@ -208,14 +215,20 @@ export function useCopyActivities(): ReadonlyMap<string, CopyActivity> {
 
 /** The running copy of any of these projects (a sidebar row groups a project's checkouts). */
 export function useCopyActivity(
-  projects: ReadonlyArray<{ readonly environmentId: string; readonly id: string }>,
+  projects: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly id: string;
+  }>,
 ): CopyActivity | null {
   return useKeyedCopyActivity(projects)?.activity ?? null;
 }
 
 /** The running copy of any of these projects, with the key its dialog opens by. */
 export function useKeyedCopyActivity(
-  projects: ReadonlyArray<{ readonly environmentId: string; readonly id: string }>,
+  projects: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly id: string;
+  }>,
 ): { readonly key: string; readonly activity: CopyActivity } | null {
   const all = useCopyActivities();
   for (const project of projects) {
@@ -234,13 +247,17 @@ const PENDING_REVIEW_MS = 10_000;
 /** Registers the dialog that opens for a project's copy; returns the unregister. */
 export function registerCopyOpener(key: string, open: () => void): () => void {
   openers.set(key, open);
+  // The banner's Review button shows once the dialog it opens is mounted.
+  emit();
   if (pendingReview?.key === key && Date.now() <= pendingReview.until) {
     pendingReview = null;
     // After the mounting render: the dialog's own effects run first.
     queueMicrotask(() => openers.get(key)?.());
   }
   return () => {
-    if (openers.get(key) === open) openers.delete(key);
+    if (openers.get(key) !== open) return;
+    openers.delete(key);
+    emit();
   };
 }
 
@@ -289,6 +306,27 @@ export function copyDetailsOpener(key: string): (() => void) | null {
   };
 }
 
+/** Opens a waiting copy's review from anywhere: its project's page first when needed. */
+export function openCopyReview(key: string): void {
+  const open = copyDetailsOpener(key);
+  if (open) open();
+  else requestCopyReview(key);
+}
+
+/** Whether the project's copy dialog is mounted, kept current as it mounts and unmounts. */
+export function useCopyOpenerReady(key: string): boolean {
+  return useSyncExternalStore(subscribe, () => openers.has(key));
+}
+
+/** The copies waiting for the person, newest state first, for Needs you. */
+export function waitingCopies(
+  all: ReadonlyMap<string, CopyActivity>,
+): ReadonlyArray<{ readonly key: string; readonly activity: CopyActivity }> {
+  return [...all]
+    .filter(([, activity]) => activity.waiting)
+    .map(([key, activity]) => ({ key, activity }));
+}
+
 const ratio = (done: number, total: number) =>
   total > 0 ? Math.min(1, Math.max(0, done / total)) : null;
 
@@ -319,16 +357,41 @@ function statusActivity(status: FolderCopyStatus, machine: string): CopyActivity
   switch (status.state) {
     case "planned":
     case "scanning":
-      return { machine, label: "Comparing folders", fraction: null, waiting: false };
+      return {
+        machine,
+        label: "Comparing folders",
+        fraction: null,
+        waiting: false,
+      };
     case "previewed":
-      return { machine, label: "Ready to review", fraction: null, waiting: true };
+      return {
+        machine,
+        label: "Ready to review",
+        fraction: null,
+        waiting: true,
+      };
     case "approved":
     case "transferring":
-      return { machine, label: "Copying files", fraction: bytes ?? files, waiting: false };
+      return {
+        machine,
+        label: "Copying files",
+        fraction: bytes ?? files,
+        waiting: false,
+      };
     case "verifying":
-      return { machine, label: "Checking files", fraction: files ?? bytes, waiting: false };
+      return {
+        machine,
+        label: "Checking files",
+        fraction: files ?? bytes,
+        waiting: false,
+      };
     case "applying":
-      return { machine, label: "Applying files", fraction: files, waiting: false };
+      return {
+        machine,
+        label: "Applying files",
+        fraction: files,
+        waiting: false,
+      };
     case "applied":
       // Applied but not yet committed or registered: still finishing.
       return status.committed && status.projectId !== null
@@ -355,7 +418,12 @@ export function copyActivityFromSource(
 function sourceActivity(status: FolderCopySourceStatus, machine: string): CopyActivity | null {
   const progress = status.progress ?? null;
   if (status.state === "scanning")
-    return { machine, label: "Measuring the folder", fraction: null, waiting: false };
+    return {
+      machine,
+      label: "Measuring the folder",
+      fraction: null,
+      waiting: false,
+    };
   if (status.state === "building")
     return {
       machine,
@@ -376,8 +444,12 @@ function sourceActivity(status: FolderCopySourceStatus, machine: string): CopyAc
  * waits for the person says so, since nothing moves until they act.
  */
 export function copyActivityText(activity: CopyActivity): string {
-  if (activity.waiting)
-    return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine} is waiting for your review`;
+  if (activity.waiting) {
+    // "Copy specweave from m4 to m5": what travels, from where, to where.
+    const what = activity.project ? ` ${activity.project}` : "";
+    const from = activity.source ? ` from ${activity.source}` : "";
+    return `${activity.move ? "Hand off" : "Copy"}${what}${from} to ${activity.machine} is waiting for your review`;
+  }
   const fraction = activity.progress ? activity.progress.fraction : activity.fraction;
   const percent = fraction === null ? "" : `, ${Math.floor(fraction * 100)}%`;
   const step = activity.progress?.step ?? activity.label;
@@ -417,7 +489,10 @@ export function withoutMovingDestinations<
   visible: ArrangedGroups<G>,
   listedKeys: ArrangedGroups<string>,
   activities: ReadonlyMap<string, CopyActivity>,
-): { readonly visible: ArrangedGroups<G>; readonly listedKeys: ArrangedGroups<string> } {
+): {
+  readonly visible: ArrangedGroups<G>;
+  readonly listedKeys: ArrangedGroups<string>;
+} {
   if (activities.size === 0) return { visible, listedKeys };
   const hidden = new Set(
     [...visible.pinned, ...visible.unpinned]

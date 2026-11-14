@@ -799,7 +799,7 @@ it("refreshes a resumed saved scan without cancelling, reoffering or changing st
   await settle();
   const saved = pointerNow();
   const calls = state.calls.length;
-  await click("Measure again");
+  await click("Check for changes");
   expect(pageText()).toContain("Nothing changed since then, so your choices stay.");
   expect(pointerNow()).toEqual(saved);
   expect(state.calls.slice(calls).map(([name]) => name)).toEqual(["copySourceStatus"]);
@@ -829,21 +829,15 @@ it("replaces saved worktree notices with current counts after refreshing", async
       summary: { ...noSecrets, warnings: [fresh] },
     },
   });
-  await click("Measure again");
+  await click("Check for changes");
   expect(pageText()).toContain("22 worktrees outside the folder.");
   expect(pageText()).toContain("20 more names not included in this scan");
   expect(pageText()).not.toContain("removed-a");
   expect(pageText()).toContain("Destination contains local edits.");
   expect(pointerNow()).toEqual(saved);
-  state.handlers.copySourceStatus = () => ({
-    state: "ready",
-    summary: noSecrets,
-    freshness: { checkedAt: Date.now(), current: false, summary: { ...noSecrets, warnings: [] } },
-  });
-  await click("Measure again");
-  expect(document.querySelector('[data-slot="copy-not-copied-outside"]')).toBeNull();
-  expect(pageText()).toContain("Destination contains local edits.");
-  expect(pointerNow()).toEqual(saved);
+  // A found change leaves one way on: measure and compare again, not a second check.
+  expect(pageText()).not.toContain("Check for changes");
+  expect(button("Measure and compare again")).not.toBeNull();
 });
 
 it("unlocks a stalled read-only refresh without changing choices or accepting a late reply", async () => {
@@ -857,11 +851,11 @@ it("unlocks a stalled read-only refresh without changing choices or accepting a 
     });
   vi.useFakeTimers();
   try {
-    await act(async () => button("Measure again").click());
-    expect(isDisabled(button("Measure again"))).toBe(true);
+    await act(async () => button("Check for changes").click());
+    expect(isDisabled(button("Check for changes"))).toBe(true);
     await act(async () => vi.advanceTimersByTimeAsync(120_000));
     expect(pageText()).toContain("Checking this scan took too long.");
-    expect(isDisabled(button("Measure again"))).toBe(false);
+    expect(isDisabled(button("Check for changes"))).toBe(false);
     expect(pointerNow()).toEqual(saved);
     await act(async () =>
       finish({
@@ -955,7 +949,7 @@ it("requires approval of captured files and keeps later live changes separate fr
   expect(state.calls.filter(([name]) => name === "copyApprove")).toHaveLength(0);
   expect(pageText()).toContain("This copy uses files captured");
   const saved = pointerNow();
-  await click("Measure again");
+  await click("Check for changes");
   expect(pageText()).toContain("You can still copy the captured files");
   expect(pageText()).toContain(
     "measurements and notices show the current source, not new copy contents",

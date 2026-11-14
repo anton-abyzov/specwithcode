@@ -1,13 +1,17 @@
+import { useState } from "react";
 import { countsText, formatRate, timeLeftText } from "../../studio/copyProgress";
 import {
   copyActivityKey,
   copyActivityText,
   copyOpener,
+  requestCopyReview,
   useCopyActivity,
+  useCopyOpenerReady,
   type CopyActivity,
 } from "../../studio/folderCopyActivity";
 import { Button } from "../ui/button";
 import { CopyPhaseTrack, useCopyRate } from "./CopyProgressPanel";
+import { useCancelWaitingCopy } from "./useCopyReview";
 
 /**
  * A strip under the project's top bar while its folder is copied to another machine in
@@ -21,9 +25,14 @@ export function FolderCopyBanner({
   readonly environmentId: string;
   readonly projectId: string;
 }) {
+  const key = copyActivityKey(environmentId, projectId);
   const activity = useCopyActivity([{ environmentId, id: projectId }]);
+  // Follows the dialog mounting, so Review shows on the first visit too.
+  const ready = useCopyOpenerReady(key);
+  const cancelCopy = useCancelWaitingCopy();
+  const [cancelling, setCancelling] = useState(false);
   if (!activity) return null;
-  const open = copyOpener(copyActivityKey(environmentId, projectId));
+  const open = ready ? copyOpener(key) : null;
   return (
     <div
       role="status"
@@ -36,7 +45,7 @@ export function FolderCopyBanner({
           {activity.waiting ? (
             <span className="text-muted-foreground">
               {" "}
-              · Nothing is copied until you approve it. Review it to approve or cancel.
+              · Nothing is copied until you approve it.
             </span>
           ) : activity.progress ? null : (
             <span className="text-muted-foreground">
@@ -45,9 +54,31 @@ export function FolderCopyBanner({
             </span>
           )}
         </span>
-        {open ? (
-          <Button size="compact" variant={activity.waiting ? "default" : "outline"} onClick={open}>
-            {activity.waiting ? "Review" : "Details"}
+        {activity.waiting ? (
+          <>
+            <Button
+              size="compact"
+              variant="default"
+              // Opens once the dialog mounts when it has not yet.
+              onClick={() => (open ? open() : requestCopyReview(key))}
+            >
+              Review
+            </Button>
+            <Button
+              size="compact"
+              variant="outline"
+              disabled={cancelling}
+              onClick={() => {
+                setCancelling(true);
+                void cancelCopy(key, activity.machine).finally(() => setCancelling(false));
+              }}
+            >
+              Cancel
+            </Button>
+          </>
+        ) : open ? (
+          <Button size="compact" variant="outline" onClick={open}>
+            Details
           </Button>
         ) : null}
       </div>
