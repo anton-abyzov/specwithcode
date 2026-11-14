@@ -210,7 +210,7 @@ it.effect("Deny turns a key away for 24 hours, at mint and on every route", () =
       const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
       refusedCode(yield* trust.check(connect("intruder")));
       const [pending] = (yield* trust.snapshot).pending;
-      expect(yield* trust.deny(pending!.id)).toBe(true);
+      expect(yield* trust.deny(pending!.id)).not.toBeNull();
       const denied = yield* trust.check(connect("intruder"));
       expect(denied).toMatchObject({ _tag: "refused" });
       expect(denied).not.toHaveProperty("approvalCode");
@@ -336,32 +336,89 @@ it.effect("a credential a device minted lasts only as long as that approval", ()
     Effect.gen(function* () {
       const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
       const later = Date.UTC(2100, 0, 1);
-      // Only an approved device can bind anything.
-      expect(
-        yield* trust.bindCredential({ id: "session:a", key: "jkt:phone", expiresAtMillis: later }),
-      ).toBe(false);
+      // Only an approved device gets a binding.
+      expect(yield* trust.bindingFor("jkt:phone")).toBeNull();
       const code = refusedCode(yield* trust.check(connect("phone")));
       yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
-      expect(
-        yield* trust.bindCredential({ id: "session:a", key: "jkt:phone", expiresAtMillis: later }),
-      ).toBe(true);
-      expect(yield* trust.checkBound("session:a")).toEqual({
+      const binding = yield* trust.bindingFor("jkt:phone");
+      expect(binding?.key).toBe("jkt:phone");
+      if (binding === null) return;
+      yield* trust.trackCredential({ id: "session:a", binding, expiresAtMillis: later });
+      expect(yield* trust.checkBinding(binding)).toEqual({
         _tag: "allowed",
         deviceKey: "jkt:phone",
       });
-      expect(yield* trust.check({ subject: "mcp-client", sessionId: "a" })).toEqual({
+      expect(yield* trust.check({ subject: "mcp-client", boundDevice: binding })).toEqual({
         _tag: "allowed",
         deviceKey: "jkt:phone",
       });
-      expect(yield* trust.checkBound("session:unbound")).toEqual({ _tag: "allowed" });
+      expect(yield* trust.check({ subject: "mcp-client" })).toEqual({ _tag: "allowed" });
       expect(yield* trust.boundIds("jkt:phone")).toEqual(["session:a"]);
 
       yield* trust.remove("jkt:phone");
-      expect((yield* trust.check({ subject: "mcp-client", sessionId: "a" }))._tag).toBe("refused");
+      expect((yield* trust.check({ subject: "mcp-client", boundDevice: binding }))._tag).toBe(
+        "refused",
+      );
       // Approving the device again does not revive what it minted before.
       const again = refusedCode(yield* trust.check(connect("phone")));
       yield* trust.approve({ code: again, approvedBy: "this machine", approverKey: null });
-      expect((yield* trust.checkBound("session:a"))._tag).toBe("refused");
+      expect((yield* trust.checkBinding(binding))._tag).toBe("refused");
+    }),
+  ),
+);
+
+it.effect("a damaged or repaired list refuses what a device was given, never lets it through", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const code = refusedCode(yield* trust.check(connect("phone")));
+      yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
+      const binding = yield* trust.bindingFor("jkt:phone");
+      if (binding === null) throw new Error("expected a binding");
+      const bound = { subject: "mcp-client", boundDevice: binding };
+      expect((yield* trust.check(bound))._tag).toBe("allowed");
+
+      // The list stops parsing: the device's state is unknown, so its credential stops.
+      yield* fileSystem.writeFileString(yield* storePath, "{ not json");
+      const damaged = yield* ConnectDeviceTrust.make;
+      expect((yield* damaged.check(bound))._tag).toBe("refused");
+      expect((yield* damaged.checkBinding(binding))._tag).toBe("refused");
+      expect(yield* damaged.bindingFor("jkt:phone")).toBeNull();
+      // This machine's own sessions keep working.
+      expect(yield* damaged.check({ subject: "local-cli-owner" })).toEqual({ _tag: "allowed" });
+
+      // Repair empties the list; the binding the credential carries is still refused.
+      yield* damaged.repair;
+      expect((yield* damaged.check(bound))._tag).toBe("refused");
+    }),
+  ),
+);
+
+it.effect("a removed or denied key is refused even under subjects the gate exempts", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const exempt = (thumbprint: string) => ({
+        subject: "one-time-token",
+        proofKeyThumbprint: thumbprint,
+      });
+      expect(yield* trust.check(exempt("phone"))).toEqual({ _tag: "allowed" });
+      const code = refusedCode(yield* trust.check(connect("phone")));
+      yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
+      yield* trust.remove("jkt:phone");
+      expect(yield* trust.isTurnedAway("jkt:phone")).toBe(true);
+      expect((yield* trust.check(exempt("phone")))._tag).toBe("refused");
+
+      refusedCode(yield* trust.check(connect("laptop")));
+      const [waiting] = (yield* trust.snapshot).pending;
+      expect(yield* trust.deny(waiting!.id)).toBe("jkt:laptop");
+      expect((yield* trust.check(exempt("laptop")))._tag).toBe("refused");
+
+      // Approved again, the key is welcome under any subject.
+      const again = refusedCode(yield* trust.check(connect("phone")));
+      yield* trust.approve({ code: again, approvedBy: "this machine", approverKey: null });
+      expect(yield* trust.check(exempt("phone"))).toEqual({ _tag: "allowed" });
     }),
   ),
 );

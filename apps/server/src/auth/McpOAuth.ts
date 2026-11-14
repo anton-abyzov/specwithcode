@@ -711,6 +711,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                   ...(client.principal ? { principal: client.principal } : {}),
                   label: client.label,
                   access: client.access,
+                  ...(client.deviceKey === undefined ? {} : { deviceKey: client.deviceKey }),
                   ...withCoordinatorEpochs(request.headers[COORDINATOR_EPOCHS_HEADER]),
                 },
                 capabilities: new Set<McpInvocationContext.McpCapability>([
