@@ -5,6 +5,7 @@
  * with what runs now and what comes next on hover and for screen readers.
  * An increment with acceptance criteria adds "AC 2/4", criteria verified out
  * of all of them, where the row has room; narrow rows keep it on hover only.
+ * A compact chip (the Chats list) is the bare count; the rest is in the tooltip.
  * Never a button: it sits inside rows that are buttons.
  */
 import { ListChecksIcon, ListTodoIcon } from "lucide-react";
@@ -23,6 +24,7 @@ export function PlanProgressChip({
   className,
   tip = true,
   showCriteria = true,
+  compact = false,
 }: {
   plan: ThreadPlanCompact;
   className?: string;
@@ -30,6 +32,8 @@ export function PlanProgressChip({
   tip?: boolean;
   /** False in a narrow row: the criteria count stays in the tooltip and description. */
   showCriteria?: boolean;
+  /** True in a row whose name must keep the room: "3/4" alone. */
+  compact?: boolean;
 }) {
   const done = plan.total > 0 && plan.completed >= plan.total;
   const count = plan.total > 0 ? `${plan.completed}/${plan.total}` : null;
@@ -53,7 +57,9 @@ export function PlanProgressChip({
     >
       <Icon aria-hidden className="size-3.5" />
       <span aria-hidden>
-        {plan.source === "increment" && plan.label !== null ? (
+        {compact ? (
+          count
+        ) : plan.source === "increment" && plan.label !== null ? (
           <>
             <span className={count ? "sws-thread-plan-id" : undefined}>
               {incrementNumber(plan.label)}
@@ -64,7 +70,7 @@ export function PlanProgressChip({
         ) : (
           label
         )}
-        {criteria && showCriteria ? (
+        {criteria && showCriteria && !compact ? (
           <span className="sws-thread-plan-ac" data-plan-ac-segment>
             {" · "}AC {criteria}
           </span>

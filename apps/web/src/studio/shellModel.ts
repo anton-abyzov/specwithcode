@@ -653,6 +653,19 @@ export function threadStatusWord(
   return tone === "working" ? "Working" : null;
 }
 
+/**
+ * Why a failed run failed, short enough for a row's hover: an expired sign-in says
+ * what to do, anything else is the host's first sentence. Null when it gave none.
+ */
+export function runFailureReason(lastError: string | null | undefined): string | null {
+  const text = lastError?.replace(/\s+/gu, " ").trim();
+  if (!text) return null;
+  if (/token_expired|token is expired|401 Unauthorized/iu.test(text))
+    return "The provider's sign-in expired. Sign in again on that machine.";
+  const sentence = text.replace(/^Provider error after \d+\/\d+ retries:\s*/iu, "");
+  return sentence.length > 140 ? `${sentence.slice(0, 139).trimEnd()}…` : sentence;
+}
+
 export const THREAD_TONE_LABELS: Record<ThreadTone, string> = {
   waiting: "Needs you",
   working: "Working",

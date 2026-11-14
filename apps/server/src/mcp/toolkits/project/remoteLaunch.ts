@@ -357,6 +357,10 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
       ...(caller === undefined ? {} : { callerThreadId: caller.id }),
       launchedBy: principal.launchedBy,
       localProject,
+      // A scratch launch from a project thread stays on that project's page here.
+      ...(localProject === undefined && caller !== undefined
+        ? { listedUnder: caller.projectId }
+        : {}),
       machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
       title: params.title,
       explicitModelSelection: params.modelSelection,

@@ -143,7 +143,11 @@ import {
 } from "../../../studio/projectPaneThreads";
 import { checkProjectName, renameTargets, type NamedProject } from "../../../studio/projectRename";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
-import { asStandaloneChat, standaloneChatKeys } from "../../../studio/standaloneChats";
+import {
+  asStandaloneChat,
+  requesterProject,
+  standaloneChatKeys,
+} from "../../../studio/standaloneChats";
 import { requestThreadMove } from "../../ThreadMoveDialog";
 import { threadMoveBlockedReason } from "../../threadMove.logic";
 import { useProjectPaneThreadParam } from "../../../studio/useProjectPaneThreadParam";
@@ -160,6 +164,7 @@ import {
   modelLabel,
   nowFromMinute,
   parseChatListOptions,
+  runFailureReason,
   THREAD_TONE_LABELS,
   threadTone,
   threadToneShowsDot,
@@ -173,7 +178,7 @@ import { SidebarContent, useSidebar } from "../../ui/sidebar";
 import { Tip } from "./Tip";
 import { PlanProgressChip } from "../PlanProgressChip";
 import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
-import { describeThreadPlan } from "../../../studio/threadPlanProgress";
+import { chatRowPlan, describeThreadPlan } from "../../../studio/threadPlanProgress";
 import { canRenameChat, checkChatTitle } from "../../../studio/threadTitles";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { fallbackReason } from "../../chat/ModelStateTag";
@@ -446,18 +451,33 @@ export default function StudioSidebar() {
     showArchived ?? archivedProjects.some((group) => group.projectKey === activeProjectKey);
   const automatedOpen =
     showAutomated ?? automatedProjects.some((group) => group.projectKey === activeProjectKey);
+  // A chat another machine's project thread asked for groups with that project.
+  const requestedBy = useCallback(
+    (thread: EnvironmentThreadShell) =>
+      isStandaloneChat(thread)
+        ? requesterProject(thread, {
+            thread: (key) => threadByKey.get(key),
+            project: (requester) =>
+              isStandaloneChat(requester)
+                ? undefined
+                : projectByMember.get(`${requester.environmentId}:${requester.projectId}`),
+          })
+        : undefined,
+    [isStandaloneChat, projectByMember, threadByKey],
+  );
   const chatGroupInput = useMemo(
     () => ({
       now,
       projectLabel: (thread: EnvironmentThreadShell) =>
-        projectByMember.get(`${thread.environmentId}:${thread.projectId}`)?.displayName ??
-        "No project",
+        (requestedBy(thread) ?? projectByMember.get(`${thread.environmentId}:${thread.projectId}`))
+          ?.displayName ?? "No project",
       machine: (thread: EnvironmentThreadShell) => {
         const location = locateChat(thread);
         return { id: location.executionMachineId, label: location.label.split(" → ").at(-1)! };
       },
       // Threads a project started open from its project row, not from the chat list.
       isProjectThread: (thread: EnvironmentThreadShell) => {
+        if (requestedBy(thread) !== undefined) return true;
         const group = projectByMember.get(`${thread.environmentId}:${thread.projectId}`);
         return isProjectOwnedChat(thread, group, {
           displayedCheckout: group ? displayedCheckouts.get(group.projectKey) : undefined,
@@ -465,7 +485,7 @@ export default function StudioSidebar() {
         });
       },
     }),
-    [displayedCheckouts, locateChat, now, projectByMember, threadByKey],
+    [displayedCheckouts, locateChat, now, projectByMember, requestedBy, threadByKey],
   );
   // Every chat the list could show whatever its status and activity filters say, so the
   // column and the machine choices hold still while those filters change.
@@ -546,11 +566,11 @@ export default function StudioSidebar() {
       primaryEnvironmentId,
       anyMoved: chatsAnyState.some((thread) => locateChat(thread).moved),
     });
-  // Sized by what the rows show, so "→ Minis" fits as well as "M4".
-  const machineCh = useMemo(
-    () =>
-      chatMachineColumnCh(
-        chatsAnyState.map((thread) => {
+  // Sized per group by what its rows show, so "→ Minis" fits as well as "M4".
+  const machineColumnStyle = (threads: readonly EnvironmentThreadShell[]) =>
+    ({
+      "--sws-chat-machine-col": `${chatMachineColumnCh(
+        threads.map((thread) => {
           const location = locateChat(thread);
           return {
             name: location.label.split(" → ").at(-1)!,
@@ -560,9 +580,8 @@ export default function StudioSidebar() {
               unreachable.has(location.executionMachineId),
           };
         }),
-      ),
-    [chatsAnyState, locateChat, primaryEnvironmentId, unreachable],
-  );
+      )}ch`,
+    }) as CSSProperties;
   const chatTotal = chatGroups.reduce((sum, group) => sum + group.threads.length, 0);
   // Only worked out for an empty list: whether project threads are all that is left out.
   const hiddenProjectThreads = useMemo(
@@ -1220,7 +1239,6 @@ export default function StudioSidebar() {
             className="sws-side-section sws-side-chats"
             role="group"
             aria-labelledby="sws-side-chats"
-            style={{ "--sws-chat-machine-col": `${machineCh}ch` } as CSSProperties}
           >
             {/* Mounted once, apart from the groups: a choice that regroups the list must
                 not take the open menu and the keyboard with it. */}
@@ -1300,7 +1318,7 @@ export default function StudioSidebar() {
                         </h3>
                       </div>
                     ) : null}
-                    <ul className="sws-side-list">
+                    <ul className="sws-side-list" style={machineColumnStyle(rows)}>
                       {rows.map((thread) => {
                         const key = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -1374,13 +1392,16 @@ export default function StudioSidebar() {
                           `${thread.environmentId}:${thread.projectId}`,
                         );
                         const plan = chatPlans.get(key) ?? null;
+                        const rowPlan = chatRowPlan(plan, tone);
+                        const failure =
+                          tone === "failed" ? runFailureReason(thread.runtime?.lastError) : null;
                         const ref = scopeThreadRef(thread.environmentId, thread.id);
                         return (
                           <SidebarChatRow
                             key={key}
                             title={thread.title}
                             tone={tone}
-                            tip={`${title} · ${label.full}${stateDescription}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
+                            tip={`${title}${failure ? ` · ${tx("Run failed")}: ${failure}` : ""} · ${label.full}${stateDescription}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
                             current={currentChatKey === key}
                             icon={
                               <ModelBadgeMark
@@ -1442,9 +1463,7 @@ export default function StudioSidebar() {
                               </>
                             }
                           >
-                            {plan ? (
-                              <PlanProgressChip plan={plan} tip={false} showCriteria={false} />
-                            ) : null}
+                            {rowPlan ? <PlanProgressChip plan={rowPlan} tip={false} compact /> : null}
                             <span className="sr-only">
                               , {label.full}
                               {stateDescription}, {tx(THREAD_TONE_LABELS[tone])}

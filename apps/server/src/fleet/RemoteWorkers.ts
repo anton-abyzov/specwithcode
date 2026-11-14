@@ -146,6 +146,11 @@ export interface RemoteLaunchInput extends LauncherKey {
    * there, or without one starts a scratch (projectless) thread there.
    */
   readonly localProject: Project | undefined;
+  /**
+   * The project here whose page lists a scratch launch: a project thread's reviewer
+   * on a machine without that project is still the project's work.
+   */
+  readonly listedUnder?: ProjectId | undefined;
   readonly machineProjectId: ProjectId | undefined;
   readonly title: string;
   /** What the agent asked for; an unavailable model is then an error. */
@@ -1062,7 +1067,7 @@ const make = Effect.gen(function* () {
         id: rowId,
         callerThreadId: launcher.kind === "thread" ? launcher.threadId : "",
         launchedBy: launcher,
-        projectId: input.localProject?.id ?? "",
+        projectId: input.localProject?.id ?? input.listedUnder ?? "",
         machineId: machine.id,
         environmentId: machine.environmentId,
         remoteProjectId: target.projectId ?? null,

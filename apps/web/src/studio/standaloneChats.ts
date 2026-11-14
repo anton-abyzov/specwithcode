@@ -31,3 +31,34 @@ export function asStandaloneChat<T extends { readonly settledOverride?: string |
 ): T {
   return thread.settledOverride === "settled" ? { ...thread, settledOverride: null } : thread;
 }
+
+/**
+ * The project of the thread that asked for this chat from another machine: a
+ * reviewer a project's worker started on a machine without that project lands in
+ * that machine's "No project" folder, yet it is the project's work. Undefined
+ * when the chat was started by a person, by a client, or by another chat.
+ */
+export function requesterProject<T, G>(
+  chat: {
+    readonly origin?:
+      | {
+          readonly environmentId?: string | undefined;
+          readonly parentThreadRef?:
+            | { readonly environmentId?: string | undefined; readonly threadId: string }
+            | undefined;
+        }
+      | undefined;
+  },
+  input: {
+    /** A thread by `environmentId:threadId`. */
+    readonly thread: (key: string) => T | undefined;
+    /** That thread's project, undefined for a chat or an unknown project. */
+    readonly project: (thread: T) => G | undefined;
+  },
+): G | undefined {
+  const ref = chat.origin?.parentThreadRef;
+  const environmentId = ref?.environmentId ?? chat.origin?.environmentId;
+  if (ref === undefined || environmentId === undefined) return undefined;
+  const requester = input.thread(`${environmentId}:${ref.threadId}`);
+  return requester === undefined ? undefined : input.project(requester);
+}

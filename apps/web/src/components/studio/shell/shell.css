@@ -734,6 +734,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   .sws-row-machine-arrow {
     display: none;
   }
+  /* The chat's name wins: an open plan's count steps aside; the hover keeps it. */
+  .sws-chat-row .sws-thread-plan {
+    display: none;
+  }
 }
 .sws-side-row:hover {
   background: var(--sidebar-row-hover);

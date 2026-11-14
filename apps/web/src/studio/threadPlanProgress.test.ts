@@ -3,6 +3,7 @@ import { summarizeTodoPlanPayload } from "@specweave-studio/shared/planProgress"
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  chatRowPlan,
   compactThreadPlan,
   deriveThreadPlanView,
   describeThreadPlan,
@@ -330,5 +331,29 @@ describe("card lines and links", () => {
     expect(isDocumentPath("/repo/.specweave/increments/0996-x/reports/verify.json")).toBe(true);
     expect(isDocumentPath("/repo/.specweave/increments/0996-x/reports")).toBe(false);
     expect(isDocumentPath("/repo/.specweave/increments/0996-x")).toBe(false);
+  });
+});
+
+describe("chatRowPlan", () => {
+  const plan = (completed: number, total: number) => ({
+    source: "todo" as const,
+    label: null,
+    completed,
+    total,
+    current: null,
+    next: null,
+  });
+
+  it("shows an open plan and hides a finished one", () => {
+    expect(chatRowPlan(plan(3, 4), "idle")).toEqual(plan(3, 4));
+    expect(chatRowPlan(plan(4, 4), "idle")).toBeNull();
+    expect(chatRowPlan(plan(0, 0), "working")).toBeNull();
+    expect(chatRowPlan(null, "working")).toBeNull();
+  });
+
+  it("leaves a failed run's dot as the row's one status", () => {
+    expect(chatRowPlan(plan(3, 4), "failed")).toBeNull();
+    expect(chatRowPlan(plan(4, 4), "failed")).toBeNull();
+    expect(chatRowPlan(plan(3, 4), "resolved")).toBeNull();
   });
 });

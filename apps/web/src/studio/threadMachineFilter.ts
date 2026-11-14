@@ -35,10 +35,10 @@ export function machineFilterOptions<T extends MachineFilterThread>(
     .toSorted((left, right) => right.count - left.count || left.label.localeCompare(right.label));
 }
 
-/** The column fits the longest name between 4 and 10 characters; longer names end in an ellipsis. */
-export function machineColumnCh(labels: readonly string[]): number {
+/** The column fits the longest name between `min` and 10 characters; longer names end in an ellipsis. */
+export function machineColumnCh(labels: readonly string[], min = 4): number {
   const longest = labels.reduce((max, label) => Math.max(max, [...label].length), 0);
-  return Math.min(10, Math.max(4, longest));
+  return Math.min(10, Math.max(min, longest));
 }
 
 /** The column names the machine a thread runs on; a moved one marks it with an arrow. */
@@ -50,8 +50,9 @@ export function machineColumnLabel(location: {
 }
 
 /**
- * The Chats column's width: a row's arrow and offline mark take room from its name, which
- * matters most when every name is short and the column would otherwise be at its minimum.
+ * A Chats group's column width: a row's arrow and offline mark take room from its name.
+ * Sized per group and as narrow as the names, so "m5" never leaves a gap made for
+ * "linux-mini" further down the list.
  */
 export function chatMachineColumnCh(
   rows: readonly { readonly name: string; readonly moved: boolean; readonly offline: boolean }[],
@@ -60,6 +61,8 @@ export function chatMachineColumnCh(
     rows.map((row) =>
       "x".repeat([...row.name].length + (row.moved ? 3 : 0) + (row.offline ? 3 : 0)),
     ),
+    // "ch" is a digit's width; "m5" needs a little more than two.
+    3,
   );
 }
 

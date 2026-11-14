@@ -297,6 +297,124 @@ if (params.get("scenario") === "chat-machines") {
   });
 }
 
+// `?scenario=reviewers`: the November 14, 2026 report. Adversarial reviewer chats on m5
+// whose checklists are done or nearly done while the last run failed on an expired
+// sign-in, beside quiet chats on m1 and m4 and older increment chats.
+if (params.get("scenario") === "reviewers") {
+  const on = (environmentId: string, overrides: Partial<EnvironmentThreadShell> = {}) => ({
+    environmentId,
+    projectId: `${environmentId}-scratch`,
+    ...overrides,
+  });
+  const failed = {
+    status: "failed",
+    lastError:
+      "Provider error after 5/5 retries: unexpected status 401 Unauthorized: Provided authentication token is expired. auth error code: token_expired",
+    lastErrorClass: "provider_error",
+  } as unknown as EnvironmentThreadShell["runtime"];
+  const gpt = { instanceId: "codex", model: "gpt-6.1-sol" };
+  const reviewer = (id: string, title: string, minutes: number, fail = true) =>
+    shell(id, title, {
+      ...on("m5", { createdAt: minutesAgo(minutes), updatedAt: minutesAgo(minutes) }),
+      modelSelection: gpt,
+      ...(fail ? { runtime: failed } : {}),
+    } as Partial<EnvironmentThreadShell>);
+  const checklist = (completed: number, total: number) => ({
+    source: "todo",
+    label: null,
+    completed,
+    total,
+    current: completed < total ? "Re-run the folder copy probes" : null,
+    next: null,
+  });
+  const increment = (label: string, completed: number, total: number) => ({
+    ...checklist(completed, total),
+    source: "increment",
+    label,
+  });
+  publish({
+    environments: [
+      { environmentId: "host", label: "m4" },
+      { environmentId: "m1", label: "m1" },
+      { environmentId: "m5", label: "m5" },
+      { environmentId: "linux-mini", label: "linux-mini" },
+    ],
+    params: { environmentId: "m5", threadId: "review-354" },
+    // m5 has no specweave copy: its reviewers land in its "No project" folder.
+    configs: new Map([
+      ["m5", { scratchWorkspaceRoot: "/Users/me/.specwithcode/m5/scratch", providers: [] }],
+    ]),
+    groups: [
+      {
+        projectKey: "host:/Users/me/Projects/specweave",
+        displayName: "specweave",
+        workspaceRoot: "/Users/me/Projects/specweave",
+        memberProjects: [
+          {
+            environmentId: "host",
+            id: "p-specweave",
+            title: "specweave",
+            workspaceRoot: "/Users/me/Projects/specweave",
+            workspaceSettings: { kind: "code", archived: false, revision: 1 },
+          },
+        ],
+      },
+      {
+        projectKey: "m5:/Users/me/.specwithcode/m5/scratch",
+        displayName: "No project",
+        workspaceRoot: "/Users/me/.specwithcode/m5/scratch",
+        memberProjects: [
+          {
+            environmentId: "m5",
+            id: "m5-scratch",
+            title: "No project",
+            workspaceRoot: "/Users/me/.specwithcode/m5/scratch",
+          },
+        ],
+      },
+    ],
+    shells: [
+      shell("hourly", "EasyChamp hourly New York sessions", on("m1", { createdAt: minutesAgo(5) })),
+      shell("briefing", "Proactive briefing", on("host", { createdAt: minutesAgo(10) })),
+      reviewer("review-354", "Review: folder copy carries a safe Git config (1328, PR 354)", 20),
+      reviewer("review-351", "Review: machine color top line (PR 351)", 25),
+      reviewer("review-349", "Review: release train insiders channel (PR 349)", 30),
+      reviewer("review-347", "Review: first-run folder choice (PR 347)", 35),
+      reviewer("review-345", "Review: handoff scrub for secrets (PR 345)", 40),
+      reviewer("review-343", "Review: update pause setting (PR 343)", 45, false),
+      // Asked for by a specweave worker on m4: the project's work, not a chat.
+      shell("worker", "1328 folder copy safe Git config", {
+        environmentId: "host",
+        projectId: "p-specweave",
+        createdAt: minutesAgo(70),
+      }),
+      {
+        ...reviewer("review-341", "Review: asked for by the specweave worker (PR 341)", 22),
+        origin: {
+          kind: "fleet_machine",
+          label: "SpecWithCode",
+          machineLabel: "m4",
+          parentThreadRef: { environmentId: "host", threadId: "worker" },
+        },
+      } as EnvironmentThreadShell,
+      shell("verify", "Verify M4 to M5 specweave handoff", on("m5", { createdAt: minutesAgo(50) })),
+      shell("appstore", "App Store screenshots for 1039", on("m1", { createdAt: minutesAgo(60 * 26) })),
+      shell("sweep", "Sweep idle threads, finish the queue", on("m1", { createdAt: minutesAgo(60 * 27) })),
+      shell("build", "Build the Linux desktop package", on("linux-mini", { createdAt: minutesAgo(60 * 24 * 3) })),
+    ],
+    plans: new Map<string, unknown>([
+      ["m5:review-354", checklist(4, 4)],
+      ["m5:review-351", checklist(3, 4)],
+      ["m5:review-349", checklist(4, 5)],
+      ["m5:review-347", checklist(2, 4)],
+      ["m5:review-345", checklist(3, 4)],
+      ["m5:review-343", checklist(4, 4)],
+      ["m1:appstore", increment("1039-app-store-screenshots", 5, 6)],
+      ["linux-mini:build", increment("0001-linux-desktop", 26, 26)],
+    ]),
+  });
+}
+
 const LANES = ["lane-0949", "lane-0948", "lane-0951", "prep"];
 let tick = 0;
 /** One server event: a streamed item, a tool call or a status change on one lane. */
