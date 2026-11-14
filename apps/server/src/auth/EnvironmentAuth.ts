@@ -73,6 +73,7 @@ import {
 } from "../fleet/fleetRedemption.ts";
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 
 const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -120,6 +121,9 @@ const untilTeamRulesRefuse = (session: RuledSession): Effect.Effect<void> =>
     }
   });
 
+/** How often an open socket of a gated device rechecks its approval (AC-01: closed within 10 seconds). */
+const DEVICE_TRUST_SOCKET_CHECK = "5 seconds";
+
 export const MCP_CLIENT_SUBJECT = "mcp-client";
 /** The subject of the management token a fleet invitation hands another machine. */
 export const FLEET_INVITATION_SUBJECT = "fleet-invitation";
@@ -137,6 +141,8 @@ export interface McpClientSession extends PrincipalApproval {
   readonly sessionId: AuthSessionId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
+  /** The approved device this client acts for (1327); what its tools mint is bound to it. */
+  readonly deviceKey?: string;
 }
 
 export interface AuthenticatedSession extends PrincipalApproval {
@@ -150,6 +156,13 @@ export interface AuthenticatedSession extends PrincipalApproval {
   readonly clientDeviceType?: string;
   /** What the client calls itself, for `rules records`. Self-reported. */
   readonly clientLabel?: string;
+  /**
+   * The approved device behind this session (1327): its own key, or the key
+   * of the device whose credential minted it. What it mints is bound to it.
+   */
+  readonly deviceKey?: string;
+  /** The device and approval this session was minted for, from its signed claims. */
+  readonly boundDevice?: SessionStore.SessionDeviceBinding;
 }
 
 export * from "./EnvironmentAuthErrors.ts";
@@ -174,6 +187,7 @@ import {
   isServerAuthCredentialError,
   serverAuthCredentialReason,
   serverAuthTeamRulesMessage,
+  serverAuthDeviceRefusal,
   type ServerAuthCredentialError,
   type ServerAuthInternalError,
   type ServerAuthInvalidRequestError,
@@ -232,12 +246,22 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
+      /**
+       * The approved device asking (1327): the link carries its binding and
+       * stops working when that device is removed.
+       */
+      readonly creatorDeviceKey?: string | undefined;
     }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput & {
         readonly principalGeneration?: number | undefined;
+        readonly creatorDeviceKey?: string | undefined;
       },
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
+    /** Revokes the unredeemed pairing credentials one device created; answers how many. */
+    readonly revokeDeviceCredentials: (
+      key: string,
+    ) => Effect.Effect<number, ServerAuthInternalError>;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError
@@ -334,11 +358,20 @@ export class EnvironmentAuth extends Context.Service<
     readonly watchSessionEnd: (
       session: Pick<
         AuthenticatedSession,
-        "sessionId" | "method" | "expiresAt" | "subject" | "principal" | "clientDeviceType"
+        | "sessionId"
+        | "method"
+        | "expiresAt"
+        | "subject"
+        | "principal"
+        | "clientDeviceType"
+        | "clientLabel"
+        | "proofKeyThumbprint"
+        | "deviceKey"
+        | "boundDevice"
       >,
     ) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
     readonly issueWebSocketTicket: (
-      session: Pick<AuthenticatedSession, "sessionId">,
+      session: Pick<AuthenticatedSession, "sessionId" | "boundDevice">,
     ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
     readonly issueStartupPairingUrl: (
       baseUrl: string,
@@ -361,6 +394,8 @@ export class EnvironmentAuth extends Context.Service<
       readonly proofKeyThumbprint?: string;
       /** Lifetime; `MCP_CLIENT_SESSION_TTL` when left out. Static tokens set their own. */
       readonly ttl?: Duration.Duration;
+      /** The approved device asking: the session stays gated by that device (1327). */
+      readonly deviceKey?: string | undefined;
     }) => Effect.Effect<
       {
         readonly sessionId: AuthSessionId;
@@ -380,7 +415,12 @@ export class EnvironmentAuth extends Context.Service<
       code: string,
       access: AuthMcpClientAccess,
     ) => Effect.Effect<
-      { readonly principal?: AuthPrincipal; readonly principalGeneration?: number | undefined },
+      {
+        readonly principal?: AuthPrincipal;
+        readonly principalGeneration?: number | undefined;
+        /** A phone's pairing code: the MCP session it approves stays that phone's. */
+        readonly deviceKey?: string;
+      },
       ServerAuthMcpApprovalCodeError | ServerAuthInternalError
     >;
     /**
@@ -520,6 +560,8 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
+  // Unwired, it refuses every gated device: the gate fails closed.
+  const deviceTrust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
 
   const authenticateToken = (
     token: string,
@@ -549,6 +591,7 @@ export const make = Effect.gen(function* () {
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
         clientDeviceType: session.client.deviceType,
         ...(session.client.label === undefined ? {} : { clientLabel: session.client.label }),
+        ...(session.boundDevice === undefined ? {} : { boundDevice: session.boundDevice }),
       })),
     );
 
@@ -581,6 +624,70 @@ export const make = Effect.gen(function* () {
             );
       return refused === null ? session : yield* refusedByTeamRules(refused);
     });
+
+  /**
+   * The one device gate (1327): a Connect device or hub-linked phone this
+   * machine has not approved is refused here, on every route that turns a
+   * credential into a session (HTTP, WebSocket ticket, browser cookie, MCP).
+   * The refusal travels as `teamRulesMessage`, so older clients show the words
+   * instead of asking to pair again, plus `device_not_approved` and the code.
+   */
+  const refuseUnapprovedDevice = <
+    S extends ConnectDeviceTrust.DeviceSessionFacts & { readonly sessionId?: string },
+  >(
+    session: S,
+  ): Effect.Effect<S & { readonly deviceKey?: string }, ServerAuthInvalidCredentialError> =>
+    deviceTrust.check(session).pipe(
+      Effect.flatMap((verdict) => {
+        if (verdict._tag === "allowed") {
+          const deviceKey =
+            verdict.deviceKey ?? ConnectDeviceTrust.gatedDevice(session)?.key ?? undefined;
+          return Effect.succeed(deviceKey === undefined ? session : { ...session, deviceKey });
+        }
+        return Effect.fail(
+          new ServerAuthInvalidCredentialError({
+            diagnostic: "device_not_approved",
+            teamRulesMessage: verdict.message,
+            deviceRefusal: "device_not_approved",
+            ...(verdict.approvalCode === undefined
+              ? {}
+              : { deviceApprovalCode: verdict.approvalCode }),
+          }),
+        );
+      }),
+    );
+
+  /**
+   * A pairing credential an approved device created works only while that
+   * device's approval stands (1327): Remove revokes the ones not yet redeemed,
+   * and this catches any that slipped through, a damaged list included.
+   */
+  const refuseRemovedCreator = <
+    G extends { readonly creatorDevice?: ConnectDeviceTrust.DeviceBinding },
+  >(
+    grant: G,
+  ): Effect.Effect<G, ServerAuthInvalidCredentialError> =>
+    grant.creatorDevice === undefined
+      ? Effect.succeed(grant)
+      : deviceTrust.checkBinding(grant.creatorDevice).pipe(
+          Effect.flatMap((verdict) =>
+            verdict._tag === "allowed"
+              ? Effect.succeed(grant)
+              : Effect.fail(
+                  new ServerAuthInvalidCredentialError({
+                    diagnostic: "device_not_approved",
+                    teamRulesMessage: verdict.message,
+                    deviceRefusal: "device_not_approved",
+                  }),
+                ),
+          ),
+        );
+
+  /** Team rules first, then the device gate: every authenticated route calls this. */
+  const refuseSession = <S extends AuthenticatedSession>(
+    session: S,
+    request: HttpServerRequest.HttpServerRequest,
+  ) => refuseSessionByTeamRules(session, request).pipe(Effect.flatMap(refuseUnapprovedDevice));
 
   /** Refuses a new session the reach rules turn off, or that a hold could be hiding. */
   const refuseNewSessionByTeamRules = (input: {
@@ -700,6 +807,8 @@ export const make = Effect.gen(function* () {
         }
         return Effect.succeed(session);
       }),
+      // After the proof: only the key's holder learns its approval code.
+      Effect.flatMap(refuseUnapprovedDevice),
       Effect.map((session) => ({
         session,
         cookie: credential.source !== "bearer" && credential.source !== "dpop",
@@ -775,6 +884,7 @@ export const make = Effect.gen(function* () {
             : {}),
           // Why, in the owner's words: a client must not read this as a lost pairing.
           ...teamRulesMessageField(error),
+          ...serverAuthDeviceRefusal(error),
           auth: descriptor,
         } satisfies AuthSessionState),
       ),
@@ -870,7 +980,7 @@ export const make = Effect.gen(function* () {
           );
     const grant = yield* bootstrapCredentials
       .consume(credential)
-      .pipe(Effect.mapError(toBootstrapExchangeError));
+      .pipe(Effect.mapError(toBootstrapExchangeError), Effect.flatMap(refuseRemovedCreator));
     yield* refuseFleetRedeemGrant(grant);
     yield* refuseUnboundCoordinatorGrant(grant, options);
     // The rules can change while the credential is spent; the check above is the one that keeps it.
@@ -917,7 +1027,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label" | "principal" | "principalGeneration"
+    "scopes" | "subject" | "label" | "principal" | "principalGeneration" | "creatorDevice"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -933,15 +1043,14 @@ export const make = Effect.gen(function* () {
     ServerAuthInvalidCredentialError | ServerAuthInternalError | ServerAuthScopeNotGrantedError
   > => {
     if (!devAuth?.matches(credential)) {
-      return bootstrapCredentials
-        .consume(credential, input)
-        .pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "BootstrapCredentialScopeNotGrantedError"
-              ? new ServerAuthScopeNotGrantedError({})
-              : toBootstrapExchangeError(cause),
-          ),
-        );
+      return bootstrapCredentials.consume(credential, input).pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "BootstrapCredentialScopeNotGrantedError"
+            ? new ServerAuthScopeNotGrantedError({})
+            : toBootstrapExchangeError(cause),
+        ),
+        Effect.flatMap(refuseRemovedCreator),
+      );
     }
     return sessions.verify(credential).pipe(
       mapSessionVerificationErrors,
@@ -979,6 +1088,16 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* refuseFleetRedeemGrant(grant);
             yield* refuseUnboundCoordinatorGrant(grant, input);
+            // A removed or denied key gets no session under a subject the gate
+            // exempts. A gated one (its own Connect sign-in) may ask again.
+            if (
+              ConnectDeviceTrust.gatedDevice({ subject: grant.subject }) === null &&
+              (yield* refuseTurnedAwayKey(input?.proofKeyThumbprint))
+            )
+              return yield* new ServerAuthInvalidCredentialError({
+                diagnostic: "device_not_approved",
+                deviceRefusal: "device_not_approved",
+              });
             yield* refuseNewSessionByTeamRules({
               subject: grant.subject,
               deviceType: requestMetadata.deviceType,
@@ -1059,6 +1178,7 @@ export const make = Effect.gen(function* () {
     readonly label?: string;
     readonly ttl?: Duration.Duration;
     readonly purpose?: "startup";
+    readonly creatorDeviceKey?: string | undefined;
   }) =>
     createPairingLink({
       scopes: input.scopes,
@@ -1067,6 +1187,7 @@ export const make = Effect.gen(function* () {
       ...(input.label ? { label: input.label } : {}),
       ...(input.ttl ? { ttl: input.ttl } : {}),
       ...(input.purpose ? { purpose: input.purpose } : {}),
+      ...(input.creatorDeviceKey === undefined ? {} : { creatorDeviceKey: input.creatorDeviceKey }),
     }).pipe(
       Effect.map(
         (issued) =>
@@ -1084,7 +1205,17 @@ export const make = Effect.gen(function* () {
   )(
     function* (input) {
       const createdAt = yield* DateTime.now;
+      // Bound to its creator's approval, stored on the link itself (1327).
+      const creatorDevice =
+        input?.creatorDeviceKey === undefined
+          ? undefined
+          : yield* deviceTrust.bindingFor(input.creatorDeviceKey);
+      if (creatorDevice === null)
+        return yield* new ServerAuthPairingLinkCreationError({
+          cause: "The device asking is not approved here.",
+        });
       const issued = yield* bootstrapCredentials.issueOneTimeToken({
+        ...(creatorDevice === undefined ? {} : { creatorDevice }),
         scopes: input?.scopes ?? AuthStandardClientScopes,
         subject: input?.subject ?? "one-time-token",
         ...principalApproval(input ?? {}),
@@ -1169,6 +1300,7 @@ export const make = Effect.gen(function* () {
   ) =>
     bootstrapCredentials.consume(credential).pipe(
       Effect.mapError(toBootstrapExchangeError),
+      Effect.flatMap(refuseRemovedCreator),
       Effect.flatMap((grant) => {
         const days = parseFleetRedeemSubject(grant.subject);
         const principal = grant.principal;
@@ -1231,7 +1363,16 @@ export const make = Effect.gen(function* () {
         : {}),
       ...(input?.label ? { label: input.label } : {}),
       ...(input?.ttlSeconds ? { ttl: Duration.seconds(input.ttlSeconds) } : {}),
+      ...(input?.creatorDeviceKey === undefined
+        ? {}
+        : { creatorDeviceKey: input.creatorDeviceKey }),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
+
+  const revokeDeviceCredentials: EnvironmentAuth["Service"]["revokeDeviceCredentials"] = (key) =>
+    bootstrapCredentials.revokeByCreatorDevice(key).pipe(
+      Effect.mapError((cause) => new ServerAuthPairingLinkRevocationError({ cause })),
+      Effect.withSpan("EnvironmentAuth.revokeDeviceCredentials"),
+    );
 
   const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
     () => {
@@ -1323,17 +1464,22 @@ export const make = Effect.gen(function* () {
     );
 
   const issueWebSocketTicket: EnvironmentAuth["Service"]["issueWebSocketTicket"] = (session) =>
-    sessions.issueWebSocketToken(session.sessionId).pipe(
-      Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
-      Effect.map(
-        (issued) =>
-          ({
-            ticket: issued.token,
-            expiresAt: DateTime.toUtc(issued.expiresAt),
-          }) satisfies AuthWebSocketTicketResult,
-      ),
-      Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
-    );
+    sessions
+      .issueWebSocketToken(
+        session.sessionId,
+        session.boundDevice === undefined ? undefined : { boundDevice: session.boundDevice },
+      )
+      .pipe(
+        Effect.mapError((cause) => new ServerAuthWebSocketTokenIssueError({ cause })),
+        Effect.map(
+          (issued) =>
+            ({
+              ticket: issued.token,
+              expiresAt: DateTime.toUtc(issued.expiresAt),
+            }) satisfies AuthWebSocketTicketResult,
+        ),
+        Effect.withSpan("EnvironmentAuth.issueWebSocketTicket"),
+      );
 
   const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
     request,
@@ -1357,16 +1503,30 @@ export const make = Effect.gen(function* () {
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
+              // The device gate keys on it; a ticket session is the key holder's session.
+              ...(session.proofKeyThumbprint
+                ? { proofKeyThumbprint: session.proofKeyThumbprint }
+                : {}),
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
               clientDeviceType: session.client.deviceType,
               ...(session.client.label === undefined ? {} : { clientLabel: session.client.label }),
+              ...(session.boundDevice === undefined ? {} : { boundDevice: session.boundDevice }),
             })),
-            Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
+            Effect.flatMap((session) => refuseSession(session, request)),
           );
         }
       }
 
       return yield* authenticateSameOriginRequest(request);
+    });
+
+  const untilDeviceRefused = (
+    session: ConnectDeviceTrust.DeviceSessionFacts & { readonly sessionId: string },
+  ) =>
+    Effect.gen(function* () {
+      while ((yield* deviceTrust.check(session))._tag === "allowed") {
+        yield* Effect.sleep(DEVICE_TRUST_SOCKET_CHECK);
+      }
     });
 
   // Browser-cookie sockets end at expiry because re-pairing replaces the session.
@@ -1385,9 +1545,15 @@ export const make = Effect.gen(function* () {
             deviceType: session.clientDeviceType,
             coordinator: session.principal?.kind === "coordinator",
           };
-          return sessionFollowsReachRules(ruled)
+          const ruledEnd = sessionFollowsReachRules(ruled)
             ? Effect.raceFirst(ended, untilTeamRulesRefuse(ruled))
             : ended;
+          // A removed device's open socket closes within the check interval.
+          return ConnectDeviceTrust.gatedDevice(session) === null &&
+            session.deviceKey === undefined &&
+            session.boundDevice === undefined
+            ? ruledEnd
+            : Effect.raceFirst(ruledEnd, untilDeviceRefused(session));
         }),
       );
 
@@ -1424,8 +1590,22 @@ export const make = Effect.gen(function* () {
           Effect.as(session),
         );
       }),
+      // Only `mcp-client` sessions reach here. The gate exempts them unless a
+      // device approved the client: then that device's approval must stand.
+      // The binding rides in the token's signed claims, so a damaged or
+      // repaired device list refuses it instead of reading as unbound.
+      Effect.flatMap((session) =>
+        refuseUnapprovedDevice({
+          sessionId: session.sessionId,
+          subject: session.subject,
+          proofKeyThumbprint: session.proofKeyThumbprint,
+          clientLabel: session.client.label,
+          clientDeviceType: session.client.deviceType,
+          boundDevice: session.boundDevice,
+        }).pipe(Effect.map((checked) => ({ session, deviceKey: checked.deviceKey }))),
+      ),
       Effect.map(
-        (session) =>
+        ({ session, deviceKey }) =>
           ({
             sessionId: session.sessionId,
             ...principalApproval(session),
@@ -1433,34 +1613,58 @@ export const make = Effect.gen(function* () {
             access: session.scopes.includes(AuthOrchestrationOperateScope)
               ? (session.runtimeModeCeiling ?? "approval-required")
               : "read-only",
+            ...(deviceKey === undefined ? {} : { deviceKey }),
           }) satisfies McpClientSession,
       ),
       Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
     );
   };
 
+  const issueRefused = (message: string) =>
+    Effect.fail(new ServerAuthSessionTokenIssueError({ cause: new Error(message) }));
+
+  /** A key this machine removed or denied gets no new session, whatever its subject (1327). */
+  const refuseTurnedAwayKey = (proofKeyThumbprint: string | undefined) =>
+    proofKeyThumbprint === undefined || proofKeyThumbprint.trim() === ""
+      ? Effect.succeed(false)
+      : deviceTrust.isTurnedAway(ConnectDeviceTrust.deviceKeyOfThumbprint(proofKeyThumbprint));
+
   const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
-    sessions
-      .issue({
-        ...principalApproval(input),
-        subject: MCP_CLIENT_SUBJECT,
-        method: input.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-        ...(input.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
-        scopes: mcpClientScopes(input.access),
-        ttl: input.ttl ?? MCP_CLIENT_SESSION_TTL,
-        ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
-        client: { ...input.client, label: input.label, deviceType: "bot" },
-      })
-      .pipe(
-        Effect.map((issued) => ({
-          sessionId: issued.sessionId,
-          token: issued.token,
-          expiresAt: issued.expiresAt,
-          tokenType: input.proofKeyThumbprint ? ("DPoP" as const) : ("Bearer" as const),
-        })),
-        Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
-        Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
-      );
+    Effect.gen(function* () {
+      if (yield* refuseTurnedAwayKey(input.proofKeyThumbprint))
+        return yield* issueRefused("That key was removed from this machine.");
+      // The binding goes into the token itself, not only into the device list.
+      const binding =
+        input.deviceKey === undefined ? undefined : yield* deviceTrust.bindingFor(input.deviceKey);
+      if (binding === null)
+        return yield* issueRefused("The approving device is not approved here.");
+      const issued = yield* sessions
+        .issue({
+          ...principalApproval(input),
+          subject: MCP_CLIENT_SUBJECT,
+          method: input.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+          ...(input.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
+          scopes: mcpClientScopes(input.access),
+          ttl: input.ttl ?? MCP_CLIENT_SESSION_TTL,
+          ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
+          client: { ...input.client, label: input.label, deviceType: "bot" },
+          ...(binding === undefined ? {} : { boundDevice: binding }),
+        })
+        .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+      // Noted so Remove ends it at once; its claims refuse it either way.
+      if (binding !== undefined)
+        yield* deviceTrust.trackCredential({
+          id: ConnectDeviceTrust.sessionBindingId(issued.sessionId),
+          binding,
+          expiresAtMillis: issued.expiresAt.epochMilliseconds,
+        });
+      return {
+        sessionId: issued.sessionId,
+        token: issued.token,
+        expiresAt: issued.expiresAt,
+        tokenType: input.proofKeyThumbprint ? ("DPoP" as const) : ("Bearer" as const),
+      };
+    }).pipe(Effect.withSpan("EnvironmentAuth.issueMcpClientSession"));
 
   const authenticateBrowserSession: EnvironmentAuth["Service"]["authenticateBrowserSession"] = (
     request,
@@ -1475,10 +1679,29 @@ export const make = Effect.gen(function* () {
         (session) => session.method === "browser-session-cookie" && !session.proofKeyThumbprint,
         () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
       ),
-      Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
+      Effect.flatMap((session) => refuseSession(session, request)),
       Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
     );
   };
+
+  /**
+   * A human device's pairing code (a hub-linked phone's) approves an MCP
+   * client only once this machine approved that device, and the client stays
+   * tied to it: an MCP session is exempt from the gate, so it must not be a
+   * way around it (1327).
+   */
+  const approvedDeviceOfGrant = (grant: ResolvedBootstrapGrant) =>
+    Effect.gen(function* () {
+      const device = ConnectDeviceTrust.gatedDevice({ subject: grant.subject });
+      // A code an approved device created: the client it approves stays that device's.
+      if (device === null)
+        return grant.creatorDevice === undefined
+          ? principalApproval(grant)
+          : { ...principalApproval(grant), deviceKey: grant.creatorDevice.key };
+      if (device.key === null || !(yield* deviceTrust.isApproved(device.key)))
+        return yield* new ServerAuthMcpApprovalCodeError({ reason: "device_not_approved" });
+      return { ...principalApproval(grant), deviceKey: device.key };
+    });
 
   const consumeMcpApprovalCode: EnvironmentAuth["Service"]["consumeMcpApprovalCode"] = (
     code,
@@ -1487,8 +1710,12 @@ export const make = Effect.gen(function* () {
     // No proof key: a code bound to a Studio Connect client's key fails without being spent.
     resolveBootstrapGrant(code.trim(), { requiredScopes: mcpClientScopes(access) }).pipe(
       Effect.catchTags({
-        ServerAuthInvalidCredentialError: () =>
-          Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "unknown_or_used" })),
+        ServerAuthInvalidCredentialError: (error) =>
+          Effect.fail(
+            new ServerAuthMcpApprovalCodeError({
+              reason: error.deviceRefusal === undefined ? "unknown_or_used" : "device_not_approved",
+            }),
+          ),
         ServerAuthScopeNotGrantedError: () =>
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       }),
@@ -1499,7 +1726,7 @@ export const make = Effect.gen(function* () {
             ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "reapproval_required" }))
             : grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
               ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
-              : Effect.succeed(principalApproval(grant)),
+              : approvedDeviceOfGrant(grant),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
@@ -1519,6 +1746,7 @@ export const make = Effect.gen(function* () {
     exchangeBootstrapCredentialForAccessToken,
     createPairingLink,
     issuePairingCredential,
+    revokeDeviceCredentials,
     issueStartupPairingCredential,
     listPairingLinks,
     revokePairingLink,
@@ -1578,6 +1806,8 @@ export const mintStaticMcpClientToken = Effect.fn("EnvironmentAuth.mintStaticMcp
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly ttl?: Duration.Duration | undefined;
+      /** The approved device asking: the token stays gated by that device. */
+      readonly deviceKey?: string | undefined;
     },
   ) {
     const label = input.label.trim();
@@ -1608,6 +1838,7 @@ export const mintStaticMcpClientToken = Effect.fn("EnvironmentAuth.mintStaticMcp
       access: input.access,
       client: { label, deviceType: "bot" },
       ttl,
+      ...(input.deviceKey === undefined ? {} : { deviceKey: input.deviceKey }),
     });
     yield* Effect.logInfo("Issued a static MCP client token.", {
       sessionId: issued.sessionId,
@@ -1626,6 +1857,8 @@ export const mintStaticMcpClientToken = Effect.fn("EnvironmentAuth.mintStaticMcp
 );
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
+  // The device gate's store; merged so CloudLink and the settings routes share it.
+  Layer.provideMerge(ConnectDeviceTrust.layer),
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),

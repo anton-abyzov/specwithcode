@@ -27,6 +27,7 @@ import Migration0071 from "./Migrations/071_HotReadPartialIndexes.ts";
 import Migration0072 from "./Migrations/072_RetentionHorizon.ts";
 import Migration0073 from "./Migrations/073_TeamRulesRecords.ts";
 import Migration0074 from "./Migrations/074_ShellReadIndexes.ts";
+import Migration0075 from "./Migrations/075_DevicePairingCreators.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -178,6 +179,7 @@ export const migrationEntries = [
   [72, "RetentionHorizon", Migration0072],
   [73, "TeamRulesRecords", Migration0073],
   [74, "ShellReadIndexes", Migration0074],
+  [75, "DevicePairingCreators", Migration0075],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

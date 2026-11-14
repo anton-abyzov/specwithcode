@@ -54,6 +54,7 @@ import {
   annotateEnvironmentRequest,
   failEnvironmentScopeRequired,
   failEnvironmentAuthInvalid,
+  failEnvironmentAuthRefused,
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -333,11 +334,7 @@ const authenticateRawRouteWithScope = (
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        failEnvironmentAuthInvalid(
-          EnvironmentAuth.serverAuthCredentialReason(error),
-          EnvironmentAuth.serverAuthDpopFailureReason(error),
-          EnvironmentAuth.serverAuthTeamRulesMessage(error),
-        ),
+        failEnvironmentAuthRefused(error),
       ),
       Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
         failEnvironmentInternal("internal_error", error),

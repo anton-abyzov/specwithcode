@@ -186,6 +186,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   designCommentReplies: Schema.optionalKey(Schema.Boolean),
   /** Enforces a ceiling carried with work from another machine; older servers omit it. */
   teamRulesCarried: Schema.optionalKey(Schema.Boolean),
+  /** A new Connect device or linked phone needs one approval on this machine
+      (1327). Absent on older servers, which let any signed-in device in. */
+  deviceApproval: Schema.optionalKey(Schema.Boolean),
   /** Accepts format `svg` on `design.export`; older servers omit it. */
   designSvgExport: Schema.optionalKey(Schema.Boolean),
   /** Server removes a private machine from its list (`removeFleetMachine`).

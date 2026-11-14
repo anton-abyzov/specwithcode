@@ -291,6 +291,10 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
     /** Why Team rules refused this, in words a client can show. */
     teamRulesMessage: Schema.optionalKey(Schema.String),
+    /** This machine has not approved the device yet (ConnectDeviceTrust). */
+    deviceRefusal: Schema.optionalKey(Schema.Literal("device_not_approved")),
+    /** The code the owner types on this machine to approve it. */
+    deviceApprovalCode: Schema.optionalKey(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -319,6 +323,19 @@ export const serverAuthCredentialReason = (
 
 export const serverAuthTeamRulesMessage = (error: ServerAuthCredentialError): string | undefined =>
   error._tag === "ServerAuthInvalidCredentialError" ? error.teamRulesMessage : undefined;
+
+/** The device refusal fields an error carries, for response bodies. */
+export const serverAuthDeviceRefusal = (
+  error: ServerAuthCredentialError,
+): { readonly refusal: "device_not_approved"; readonly approvalCode?: string } | undefined =>
+  error._tag === "ServerAuthInvalidCredentialError" && error.deviceRefusal !== undefined
+    ? {
+        refusal: error.deviceRefusal,
+        ...(error.deviceApprovalCode === undefined
+          ? {}
+          : { approvalCode: error.deviceApprovalCode }),
+      }
+    : undefined;
 
 export const serverAuthDpopFailureReason = (
   error: ServerAuthCredentialError,
@@ -362,10 +379,13 @@ export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAut
       "not_a_pairing_code",
       "insufficient_scope",
       "reapproval_required",
+      "device_not_approved",
     ]),
   },
 ) {
   override get message(): string {
+    if (this.reason === "device_not_approved")
+      return "That code belongs to a device this machine has not approved. Approve the device on this machine first.";
     return this.reason === "reapproval_required"
       ? "Approve this device again with a new pairing code from this machine."
       : this.reason === "insufficient_scope"

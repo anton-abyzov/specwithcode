@@ -44,6 +44,7 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -55,6 +56,9 @@ import { browserCookieAttributes } from "./browserCookiePolicy.ts";
 import {
   arrivedOverConnect,
   countsAsCredentialGuess,
+  countsAsDeviceRefusal,
+  gateDeviceRefusals,
+  recordDeviceRefusal,
   type CredentialRateLimited,
   gateRequest,
   recordRequestFailure,
@@ -84,14 +88,20 @@ const failRateLimited = failEnvironmentRateLimited;
  */
 const recordInvalidCredential =
   (request: HttpServerRequest.HttpServerRequest) => (error: unknown) =>
-    countsAsCredentialGuess(error) ? recordRequestFailure(request) : Effect.void;
+    countsAsCredentialGuess(error)
+      ? recordRequestFailure(request)
+      : countsAsDeviceRefusal(error)
+        ? recordDeviceRefusal(request)
+        : Effect.void;
 
 /** For long-lived credentials: refuses a blocked client, else counts the guess. */
 const gateAndRecordInvalidCredential =
   (request: HttpServerRequest.HttpServerRequest) => (error: unknown) =>
     countsAsCredentialGuess(error)
       ? gateRequest(request).pipe(Effect.andThen(recordRequestFailure(request)))
-      : Effect.void;
+      : countsAsDeviceRefusal(error)
+        ? gateDeviceRefusals(request).pipe(Effect.andThen(recordDeviceRefusal(request)))
+        : Effect.void;
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -161,6 +171,7 @@ export function failEnvironmentAuthInvalid(
   reason: EnvironmentAuthInvalidReason,
   dpopFailureReason?: DpopFailureReason,
   teamRulesMessage?: string,
+  device?: { readonly refusal: "device_not_approved"; readonly approvalCode?: string },
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -170,12 +181,22 @@ export function failEnvironmentAuthInvalid(
           reason,
           ...(dpopFailureReason === undefined ? {} : { dpopFailureReason }),
           ...(teamRulesMessage === undefined ? {} : { teamRulesMessage }),
+          ...(device === undefined ? {} : device),
           traceId,
         }),
       ),
     ),
   );
 }
+
+/** The 401 for a refused credential, with every reason the server knows. */
+export const failEnvironmentAuthRefused = (error: EnvironmentAuth.ServerAuthCredentialError) =>
+  failEnvironmentAuthInvalid(
+    EnvironmentAuth.serverAuthCredentialReason(error),
+    EnvironmentAuth.serverAuthDpopFailureReason(error),
+    EnvironmentAuth.serverAuthTeamRulesMessage(error),
+    EnvironmentAuth.serverAuthDeviceRefusal(error),
+  );
 
 export function failEnvironmentInvalidRequest(reason: EnvironmentRequestInvalidReason) {
   return currentEnvironmentTraceId.pipe(
@@ -423,11 +444,7 @@ export const layerAuthenticatedAuth = Layer.effect(
           Effect.tapError(gateAndRecordInvalidCredential(request)),
           Effect.catchTag("CredentialRateLimited", failRateLimited),
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
-              EnvironmentAuth.serverAuthTeamRulesMessage(error),
-            ),
+            failEnvironmentAuthRefused(error),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
@@ -439,6 +456,8 @@ export const layerAuthenticatedAuth = Layer.effect(
             ...session,
             scopes: new Set(session.scopes),
           }),
+          // What this request mints (asset URLs, copies) is bound to its device (1327).
+          Effect.provideService(ConnectDeviceTrust.RequestDevice, session.deviceKey ?? null),
         );
         return yield* session.subject === "cloud-connect"
           ? traceAuthenticatedRelayRequest(handler, { startTime, endTime })
@@ -538,11 +557,7 @@ export const layer = HttpApiBuilder.group(
             return result.response;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
-              EnvironmentAuth.serverAuthTeamRulesMessage(error),
-            ),
+            failEnvironmentAuthRefused(error),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("browser_session_issuance_failed", error),
@@ -606,11 +621,7 @@ export const layer = HttpApiBuilder.group(
           },
           traceRelayRequest,
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-            failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
-              EnvironmentAuth.serverAuthTeamRulesMessage(error),
-            ),
+            failEnvironmentAuthRefused(error),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
             failEnvironmentInvalidRequest(EnvironmentAuth.serverAuthInvalidRequestReason(error)),
@@ -715,6 +726,10 @@ export const layer = HttpApiBuilder.group(
                 "auth.pairingCredential",
                 serverAuth.issuePairingCredential({
                   ...args.payload,
+                  // A device's code dies with its approval (1327).
+                  ...(session.deviceKey === undefined
+                    ? {}
+                    : { creatorDeviceKey: session.deviceKey }),
                   ...(coordinator ? { coordinatorEnvironmentId: coordinator } : {}),
                   ...(session.principal?.kind === "coordinator"
                     ? { principalGeneration: session.principalGeneration }
@@ -756,6 +771,7 @@ export const layer = HttpApiBuilder.group(
             return yield* EnvironmentAuth.mintStaticMcpClientToken(serverAuth, {
               label: args.payload.label,
               access: args.payload.access,
+              deviceKey: session.deviceKey,
               ...(args.payload.ttlSeconds
                 ? { ttl: Duration.seconds(args.payload.ttlSeconds) }
                 : {}),
