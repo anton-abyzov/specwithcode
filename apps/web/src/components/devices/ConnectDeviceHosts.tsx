@@ -14,7 +14,7 @@ import {
   approveOutcomeMessage,
   connectDevices,
   describeConnectDevice,
-  takeUnseenNotices,
+  makeSeenNotices,
 } from "../../studio/connectDevices";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -27,32 +27,17 @@ const POLL_MS = 4_000;
 const HIDDEN_POLL_MS = 20_000;
 /** Other machines are only watched for approval notices, so less often. */
 const NOTICE_POLL = { visibleMs: 30_000, hiddenMs: 120_000 } as const;
-const SEEN_NOTICES_KEY = "specwithcode:connect-device-notices-seen";
-
-function readSeenNotices(): Record<string, ReadonlyArray<string>> {
+const takeFreshNotices = makeSeenNotices(() => {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(SEEN_NOTICES_KEY) ?? "{}");
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, ReadonlyArray<string>>)
-      : {};
+    return localStorage;
   } catch {
-    return {};
+    return null;
   }
-}
+});
 
 /** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
 function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
-  if (notices.length === 0) return;
-  const all = readSeenNotices();
-  const before = Array.isArray(all[environmentId]) ? all[environmentId] : [];
-  const { fresh, seen } = takeUnseenNotices(before, notices);
-  if (fresh.length === 0) return;
-  try {
-    localStorage.setItem(SEEN_NOTICES_KEY, JSON.stringify({ ...all, [environmentId]: seen }));
-  } catch {
-    // Without storage a notice may show again after a reload; never more than once a session.
-  }
-  for (const notice of fresh)
+  for (const notice of takeFreshNotices(environmentId, notices))
     toastManager.add(stackedThreadToast({ type: "info", title: notice.message }));
 }
 

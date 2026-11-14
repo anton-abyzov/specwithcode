@@ -6,6 +6,7 @@ import {
   approveOutcomeMessage,
   describeConnectDevice,
   isCompleteApprovalCode,
+  makeSeenNotices,
   takeUnseenNotices,
 } from "../../studio/connectDevices.logic";
 import {
@@ -188,5 +189,33 @@ describe("New device approved notices on other devices", () => {
       id: `n-${index}`,
     }));
     expect(takeUnseenNotices([], many, 3).seen).toEqual(["n-2", "n-3", "n-4"]);
+  });
+});
+
+describe("approval notices when storage cannot save", () => {
+  it("shows each notice once per session when localStorage refuses to save", () => {
+    const storage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("QuotaExceededError");
+      },
+    };
+    const take = makeSeenNotices(() => storage);
+    const notice = { id: "n1", at: "2026-11-13T15:00:00.000Z", message: "New device approved" };
+    expect(take("env-1", [notice])).toEqual([notice]);
+    // The next poll returns the same notice: it is not shown again.
+    expect(take("env-1", [notice])).toEqual([]);
+    expect(take("env-2", [notice])).toEqual([notice]);
+  });
+
+  it("keeps seen notices across reloads when storage works", () => {
+    const saved = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => void saved.set(key, value),
+    };
+    const notice = { id: "n1", at: "2026-11-13T15:00:00.000Z", message: "New device approved" };
+    expect(makeSeenNotices(() => storage)("env-1", [notice])).toEqual([notice]);
+    expect(makeSeenNotices(() => storage)("env-1", [notice])).toEqual([]);
   });
 });
