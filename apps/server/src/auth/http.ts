@@ -764,6 +764,7 @@ export const layer = HttpApiBuilder.group(
             return yield* EnvironmentAuth.mintStaticMcpClientToken(serverAuth, {
               label: args.payload.label,
               access: args.payload.access,
+              deviceKey: session.deviceKey,
               ...(args.payload.ttlSeconds
                 ? { ttl: Duration.seconds(args.payload.ttlSeconds) }
                 : {}),

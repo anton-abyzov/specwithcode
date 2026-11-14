@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { AuthStandardClientScopes } from "@specweave-studio/contracts";
+import { RpcScopeAuthorization } from "@specweave-studio/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -14,10 +16,12 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
+import * as DeviceBoundTransfers from "../fleet/deviceBoundTransfers.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { countsAsCredentialGuess, countsAsDeviceRefusal } from "./CredentialFailureLimiter.ts";
 import { makeTestDpopKey, type TestDpopKey } from "./dpopProof.testkit.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as RpcAuthorization from "./RpcAuthorization.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 const layerMachine = () =>
@@ -80,7 +84,7 @@ const withMachine = <A, E>(test: Effect.Effect<A, E, Machine>) =>
       // DPoP proofs carry wall-clock time.
       // @effect-diagnostics-next-line globalDateInEffect:off
       yield* TestClock.setTime(Date.now());
-      // The store's first read is the update's moment: nothing is live yet.
+      // The store is read at start, before any session exists here.
       yield* (yield* ConnectDeviceTrust.ConnectDeviceTrust).snapshot;
       return yield* test;
     }).pipe(Effect.provide(layerMachine())),
@@ -312,4 +316,114 @@ it.effect("a removed device's open socket ends within 10 seconds", () =>
       yield* Fiber.interrupt(sockets[0]!);
     }),
   ),
+);
+
+it.effect("a waiting phone's pairing code cannot approve an MCP client around the gate", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const phoneCode = (subject: string) =>
+        auth
+          .createPairingLink({
+            subject,
+            scopes: AuthStandardClientScopes,
+            ttl: Duration.minutes(5),
+          })
+          .pipe(Effect.map((link) => link.credential));
+
+      // A phone this machine never approved: its code approves nothing.
+      const waiting = yield* auth
+        .consumeMcpApprovalCode(yield* phoneCode("phone-link:hub-1:waiting"), "read-only")
+        .pipe(Effect.flip);
+      expect(waiting).toMatchObject({ reason: "device_not_approved" });
+
+      // An approved phone may; the MCP session it approves stays that phone's.
+      const approvedSubject = "phone-link:hub-1:approved";
+      const code = asInvalidCredential(
+        yield* auth
+          .authenticateHttpRequest(
+            request("/api/auth/session", {
+              authorization: `Bearer ${(yield* auth.issueSession({ subject: approvedSubject, scopes: AuthStandardClientScopes })).token}`,
+            }),
+          )
+          .pipe(Effect.flip),
+      ).deviceApprovalCode!;
+      yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
+      const approval = yield* auth.consumeMcpApprovalCode(
+        yield* phoneCode(approvedSubject),
+        "read-only",
+      );
+      expect(approval.deviceKey).toBe(`link:${approvedSubject}`);
+      const mcp = yield* auth.issueMcpClientSession({
+        ...approval,
+        label: "Phone agent",
+        access: "read-only",
+        client: {},
+      });
+      const mcpRequest = request("/mcp", { authorization: `Bearer ${mcp.token}` }, "tailnet");
+      expect((yield* auth.authenticateMcpClient(mcpRequest)).sessionId).toBe(mcp.sessionId);
+
+      // Removing the phone stops the MCP client it approved.
+      yield* trust.remove(`link:${approvedSubject}`);
+      const removed = yield* auth.authenticateMcpClient(mcpRequest).pipe(Effect.flip);
+      expect(removed).toMatchObject({ deviceRefusal: "device_not_approved" });
+      // And a device that is not approved cannot be named as the approver.
+      const refused = yield* auth
+        .issueMcpClientSession({
+          label: "Agent",
+          access: "read-only",
+          client: {},
+          deviceKey: `link:${approvedSubject}`,
+        })
+        .pipe(Effect.flip);
+      expect(refused._tag).toBe("ServerAuthSessionTokenIssueError");
+    }),
+  ),
+);
+
+it.effect("a folder copy a device offered stops when that device is removed", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const operationId = "0f8b6a1c-2d3e-4f50-8a9b-0c1d2e3f4a5b";
+      const path = `/${operationId}/hello`;
+      // No device behind the request (this machine's own app): nothing is bound.
+      expect(yield* DeviceBoundTransfers.bindOfferToRequestDevice(trust, operationId)).toBe(true);
+      expect(yield* DeviceBoundTransfers.transferRefusedForDevice(trust, path)).toBe(false);
+
+      const key = makeTestDpopKey();
+      const session = yield* connectSession(key, "Laptop");
+      const code = asInvalidCredential(
+        yield* (yield* EnvironmentAuth.EnvironmentAuth)
+          .authenticateHttpRequest(dpopRequest(key, session.token))
+          .pipe(Effect.flip),
+      ).deviceApprovalCode!;
+      yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
+      const device = `jkt:${key.thumbprint}`;
+      const offer = DeviceBoundTransfers.bindOfferToRequestDevice(trust, operationId).pipe(
+        Effect.provideService(ConnectDeviceTrust.RequestDevice, device),
+      );
+      expect(yield* offer).toBe(true);
+      expect(yield* DeviceBoundTransfers.transferRefusedForDevice(trust, path)).toBe(false);
+
+      yield* trust.remove(device);
+      expect(yield* DeviceBoundTransfers.transferRefusedForDevice(trust, path)).toBe(true);
+      // A removed device cannot offer a new copy either.
+      expect(yield* offer).toBe(false);
+    }),
+  ),
+);
+
+it.effect("each RPC on a device's connection knows that device", () =>
+  Effect.gen(function* () {
+    const middleware = yield* RpcScopeAuthorization.pipe(
+      Effect.provide(RpcAuthorization.layer(AuthStandardClientScopes, undefined, "jkt:laptop")),
+    );
+    const seen = yield* middleware(ConnectDeviceTrust.RequestDevice, {
+      rpc: { _tag: "server.getConfig" },
+      payload: {},
+    } as never);
+    expect(seen).toBe("jkt:laptop");
+  }),
 );

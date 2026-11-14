@@ -148,6 +148,8 @@ import {
   type RawResponse,
 } from "./folderTransfer/sourceRoutes.ts";
 import { SourceTransfers } from "./folderTransfer/sourceService.ts";
+import * as ConnectDeviceTrust from "./ConnectDeviceTrust.ts";
+import { bindOfferToRequestDevice, transferRefusedForDevice } from "./deviceBoundTransfers.ts";
 import { registerHandoff } from "./folderTransfer/folderWork.ts";
 import {
   busyCopyWarnings,
@@ -255,6 +257,7 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const deviceTrust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
   const store = yield* MachineHandoffStore.MachineHandoffStore;
   const git = yield* HandoffGit.HandoffGit;
   const sql = yield* SqlClient.SqlClient;
@@ -559,6 +562,10 @@ const make = Effect.gen(function* () {
             secretPatterns: current.workspaceSettings?.secretFiles,
           }),
         );
+        if (!(yield* bindOfferToRequestDevice(deviceTrust, input.operationId))) {
+          yield* attempt(() => sources.cancel(input.operationId, "device_not_approved"));
+          return yield* new FolderCopyError({ code: "refused" });
+        }
         return offerResult({
           ...offered,
           sourceEnvironmentId,
@@ -725,6 +732,13 @@ const make = Effect.gen(function* () {
           body: new TextEncoder().encode('{"error":"team_rules"}'),
         };
       }
+      // A copy a device offered stops when that device is removed (1327).
+      if (yield* transferRefusedForDevice(deviceTrust, request.path))
+        return {
+          status: 401,
+          contentType: "application/json",
+          body: new TextEncoder().encode('{"error":"unauthorized"}'),
+        };
       return yield* Effect.promise(() => handleSourceRequest(sources, environmentId, request));
     });
   const folderCopyManifest = makeFolderCopyManifest(sources, idle);

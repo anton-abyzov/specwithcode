@@ -1,3 +1,4 @@
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
@@ -398,8 +399,14 @@ export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | u
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   principal?: AuthPrincipal | undefined,
+  /** The approved device behind this connection (1327); what its calls mint is bound to it. */
+  deviceKey?: string | undefined,
 ) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+  Layer.succeed(RpcScopeAuthorization)((call, { rpc, payload }) => {
+    const effect =
+      deviceKey === undefined
+        ? call
+        : call.pipe(Effect.provideService(ConnectDeviceTrust.RequestDevice, deviceKey));
     if (refusesOwnerOnlyRpc(rpc._tag, principal)) {
       return Effect.fail(
         new EnvironmentAuthorizationError({

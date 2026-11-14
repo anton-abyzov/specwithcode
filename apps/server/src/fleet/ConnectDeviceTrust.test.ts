@@ -203,11 +203,23 @@ it.effect("Remove takes only that device off the list", () =>
   ),
 );
 
+const markerPath = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+  return path.join(config.stateDir, "connect-devices.migrated");
+});
+
+/** This machine's first start after the update: no list and no marker yet. */
+const forgetSetup = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  yield* fileSystem.remove(yield* storePath, { force: true });
+  yield* fileSystem.remove(yield* markerPath, { force: true });
+});
+
 it.effect("the first start keeps devices with a live session, flagged for one review", () =>
   withMachine(
     Effect.gen(function* () {
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
-      // Sessions that exist before the store is first read: the update's moment.
       yield* auth.issueSession({
         subject: "cloud-connect",
         proofKeyThumbprint: "kept-key",
@@ -215,7 +227,9 @@ it.effect("the first start keeps devices with a live session, flagged for one re
         label: "MacBook",
       });
       yield* auth.issueSession({ subject: "local-cli-owner" });
-      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      // The update's moment: a start with no list and no marker, before any request.
+      yield* forgetSetup;
+      const trust = yield* ConnectDeviceTrust.make;
       const snapshot = yield* trust.snapshot;
       expect(snapshot.devices).toEqual([
         expect.objectContaining({
@@ -230,6 +244,88 @@ it.effect("the first start keeps devices with a live session, flagged for one re
       const reviewed = yield* trust.snapshot;
       expect(reviewed.needsReview).toBe(false);
       expect(reviewed.devices[0]?.keptByUpdate).toBe(false);
+    }),
+  ),
+);
+
+it.effect("a device that signs in after the start is never kept by the update", () =>
+  withMachine(
+    Effect.gen(function* () {
+      // The machine has started; a phone redeems a Connect code only now.
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      yield* auth.issueSession({
+        subject: "cloud-connect",
+        proofKeyThumbprint: "late-phone",
+        scopes: AuthStandardClientScopes,
+        label: "Late iPhone",
+      });
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      expect((yield* trust.snapshot).devices).toEqual([]);
+      refusedCode(yield* trust.check(connect("late-phone")));
+    }),
+  ),
+);
+
+it.effect("a lost list after setup refuses remote devices instead of keeping them", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      // A device that is waiting, with a live session, when the list goes missing.
+      yield* auth.issueSession({
+        subject: "cloud-connect",
+        proofKeyThumbprint: "waiting-key",
+        scopes: AuthStandardClientScopes,
+      });
+      refusedCode(yield* trust.check(connect("waiting-key")));
+      yield* fileSystem.remove(yield* storePath);
+
+      const restarted = yield* ConnectDeviceTrust.make;
+      const refused = yield* restarted.check(connect("waiting-key"));
+      expect(refused).toMatchObject({ _tag: "refused" });
+      expect(refused).not.toHaveProperty("approvalCode");
+      expect((yield* restarted.snapshot).health).toBe("damaged");
+      expect(yield* restarted.check({ subject: "local-cli-owner" })).toEqual({ _tag: "allowed" });
+
+      yield* restarted.repair;
+      expect((yield* restarted.snapshot).devices).toEqual([]);
+      refusedCode(yield* restarted.check(connect("waiting-key")));
+    }),
+  ),
+);
+
+it.effect("a credential a device minted lasts only as long as that approval", () =>
+  withMachine(
+    Effect.gen(function* () {
+      const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+      const later = Date.UTC(2100, 0, 1);
+      // Only an approved device can bind anything.
+      expect(
+        yield* trust.bindCredential({ id: "session:a", key: "jkt:phone", expiresAtMillis: later }),
+      ).toBe(false);
+      const code = refusedCode(yield* trust.check(connect("phone")));
+      yield* trust.approve({ code, approvedBy: "this machine", approverKey: null });
+      expect(
+        yield* trust.bindCredential({ id: "session:a", key: "jkt:phone", expiresAtMillis: later }),
+      ).toBe(true);
+      expect(yield* trust.checkBound("session:a")).toEqual({
+        _tag: "allowed",
+        deviceKey: "jkt:phone",
+      });
+      expect(yield* trust.check({ subject: "mcp-client", sessionId: "a" })).toEqual({
+        _tag: "allowed",
+        deviceKey: "jkt:phone",
+      });
+      expect(yield* trust.checkBound("session:unbound")).toEqual({ _tag: "allowed" });
+      expect(yield* trust.boundIds("jkt:phone")).toEqual(["session:a"]);
+
+      yield* trust.remove("jkt:phone");
+      expect((yield* trust.check({ subject: "mcp-client", sessionId: "a" }))._tag).toBe("refused");
+      // Approving the device again does not revive what it minted before.
+      const again = refusedCode(yield* trust.check(connect("phone")));
+      yield* trust.approve({ code: again, approvedBy: "this machine", approverKey: null });
+      expect((yield* trust.checkBound("session:a"))._tag).toBe("refused");
     }),
   ),
 );

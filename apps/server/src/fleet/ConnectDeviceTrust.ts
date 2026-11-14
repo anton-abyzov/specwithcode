@@ -16,11 +16,18 @@
  * The list lives in `connect-devices.json` beside `work-grants.json`, written
  * the same way (temp file, 0600, fsync, rename) under one lock. Codes are kept
  * only as hashes; the plain code lives in memory so the asking device can be
- * told it again, and a restart gives a waiting device a fresh one. A missing
- * file is the first start after the update: devices with a live session are
- * kept, marked for one review. A file that does not parse refuses every gated
- * device until the owner repairs it on this machine; local sessions are never
- * affected.
+ * told it again, and a restart gives a waiting device a fresh one.
+ *
+ * The first start after the update (no list and no `connect-devices.migrated`
+ * marker) keeps the devices that hold a session at that moment, before this
+ * machine answers any request, marked for one review; then it writes the
+ * marker. After that a missing list is a fault, like one that does not parse:
+ * every gated device is refused until the owner repairs it on this machine.
+ * Local sessions are never affected.
+ *
+ * Credentials a device turns into something else (an MCP client session, a
+ * folder-copy bearer) are bound here to that device's key and approval, so
+ * Remove ends them too and a waiting device cannot launder its credential.
  *
  * @module ConnectDeviceTrust
  */
@@ -48,6 +55,8 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 const FILE_NAME = "connect-devices.json";
+/** Written once, after the first start kept its devices; never removed. */
+const MARKER_NAME = "connect-devices.migrated";
 export const DEVICE_APPROVAL_PENDING_TTL_MS = 10 * 60_000;
 export const DEVICE_APPROVAL_DENY_MS = 24 * 60 * 60_000;
 export const DEVICE_APPROVAL_MAX_PENDING = 20;
@@ -119,6 +128,8 @@ const DeviceRecord = Schema.Struct({
   /** Who approved it, in words: "this machine", a device's name, or "the update". */
   approvedBy: Schema.String,
   keptByUpdate: Schema.Boolean,
+  /** Names this approval: what the device minted dies with it, even if approved again. */
+  approvalId: Schema.optionalKey(Schema.String),
 });
 export type DeviceRecord = typeof DeviceRecord.Type;
 
@@ -143,6 +154,16 @@ const NoticeRecord = Schema.Struct({
   message: Schema.String,
 });
 
+/** A credential minted from a device's session; valid while that approval stands. */
+const BoundRecord = Schema.Struct({
+  id: Schema.String,
+  key: Schema.String,
+  /** The device's approval when bound: a later re-approval does not revive it. */
+  approval: Schema.String,
+  expiresAt: Schema.String,
+});
+type BoundRecord = typeof BoundRecord.Type;
+
 const StoreFile = Schema.Struct({
   version: Schema.Literal(1),
   initializedAt: Schema.String,
@@ -152,6 +173,7 @@ const StoreFile = Schema.Struct({
   pending: Schema.Array(PendingRecord),
   denied: Schema.Array(DeniedRecord),
   notices: Schema.Array(NoticeRecord),
+  bound: Schema.optionalKey(Schema.Array(BoundRecord)),
 });
 type StoreFile = typeof StoreFile.Type;
 
@@ -162,8 +184,16 @@ const encodeStoreFile = Schema.encodeEffect(StoreFileJson);
 // ---------------------------------------------------------------------------
 // The service.
 
+/** Binding ids for what a device can mint. */
+export const sessionBindingId = (sessionId: string) => `session:${sessionId}`;
+export const transferBindingId = (operationId: string) => `transfer:${operationId}`;
+
 export type TrustVerdict =
-  | { readonly _tag: "allowed" }
+  | {
+      readonly _tag: "allowed";
+      /** Set when the session was minted from a device's credential. */
+      readonly deviceKey?: string;
+    }
   | {
       readonly _tag: "refused";
       /** Shown on the device as is. */
@@ -215,8 +245,27 @@ export class DeviceTrustError extends Schema.TaggedError<DeviceTrustError>()("De
 }
 
 export interface ConnectDeviceTrustShape {
-  /** Whether a gated device may go on. Exempt sessions are always allowed. Never fails. */
-  readonly check: (session: DeviceSessionFacts) => Effect.Effect<TrustVerdict>;
+  /**
+   * Whether a gated device may go on. Other sessions are allowed unless a
+   * device minted them (see `bindCredential`) and that device is no longer
+   * approved. Never fails.
+   */
+  readonly check: (
+    session: DeviceSessionFacts & { readonly sessionId?: string | undefined },
+  ) => Effect.Effect<TrustVerdict>;
+  /**
+   * Ties a credential minted from an approved device's session to that
+   * device. False, with nothing recorded, when the key is not approved.
+   */
+  readonly bindCredential: (input: {
+    readonly id: string;
+    readonly key: string;
+    readonly expiresAtMillis: number;
+  }) => Effect.Effect<boolean, DeviceTrustError>;
+  /** Allowed when `id` is unbound or its device's approval still stands. */
+  readonly checkBound: (id: string) => Effect.Effect<TrustVerdict>;
+  /** The live credentials bound to one device, for Remove. */
+  readonly boundIds: (key: string) => Effect.Effect<ReadonlyArray<string>>;
   /**
    * Called when Connect mints a pairing credential for a device key: answers
    * the refusal that stops the mint (denied key, too many waiting), else null
@@ -248,6 +297,9 @@ const refusedUnwired: TrustVerdict = {
 const unwired: ConnectDeviceTrustShape = {
   check: (session) =>
     Effect.succeed(gatedDevice(session) === null ? { _tag: "allowed" } : refusedUnwired),
+  bindCredential: () => Effect.fail(new DeviceTrustError({ reason: "unwired" })),
+  checkBound: () => Effect.succeed({ _tag: "allowed" }),
+  boundIds: () => Effect.succeed([]),
   refuseAtMint: () => Effect.succeed(refusedUnwired.message),
   isApproved: () => Effect.succeed(false),
   snapshot: Effect.fail(new DeviceTrustError({ reason: "unwired" })),
@@ -263,6 +315,15 @@ export const ConnectDeviceTrust = Context.Reference<ConnectDeviceTrustShape>(
   { defaultValue: () => unwired },
 );
 
+/**
+ * The approved device behind the current request, when there is one: set per
+ * RPC from its connection's session, so what the request mints can be bound.
+ */
+export const RequestDevice = Context.Reference<string | null>(
+  "studio/fleet/ConnectDeviceTrust/RequestDevice",
+  { defaultValue: () => null },
+);
+
 const hashCode = (code: string) =>
   createHash("sha256").update(normalizeDeviceSignInCode(code), "utf8").digest("hex");
 
@@ -271,6 +332,8 @@ const codeMatches = (code: string, hash: string) => {
   const stored = Buffer.from(hash, "hex");
   return presented.length === stored.length && timingSafeEqual(presented, stored);
 };
+
+const approvalOf = (device: DeviceRecord) => device.approvalId ?? device.approvedAt;
 
 const isoOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 const millisOf = (iso: string) => Date.parse(iso);
@@ -294,6 +357,7 @@ export const makeWith = (options: MakeOptions = {}) =>
     const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
     const random = options.random ?? randomBytes;
     const filePath = path.join(config.stateDir, FILE_NAME);
+    const markerPath = path.join(config.stateDir, MARKER_NAME);
     const lock = yield* Semaphore.make(1);
     const state = yield* Ref.make<State>({ _tag: "unread" });
     // Plain codes by device key, so a waiting device can be told its code again.
@@ -324,7 +388,7 @@ export const makeWith = (options: MakeOptions = {}) =>
         yield* Ref.set(state, { _tag: "ok", file });
       }).pipe(Effect.mapError(storageError));
 
-    /** Devices with a live session at the first start after the update: kept, flagged. */
+    /** Devices with a live session at the first start after the update, before any request: kept, flagged. */
     const keptByUpdate = (now: string) =>
       Effect.gen(function* () {
         const active = yield* sessions.listActive();
@@ -350,17 +414,29 @@ export const makeWith = (options: MakeOptions = {}) =>
             approvedAt: now,
             approvedBy: "the update",
             keptByUpdate: true,
+            approvalId: random(9).toString("base64url"),
           });
         }
         return [...kept.values()];
       }).pipe(Effect.orElseSucceed((): ReadonlyArray<DeviceRecord> => []));
 
-    /** The file, read once; later reads come from memory. Only the lock holder writes. */
+    const writeMarker = (at: string) =>
+      fileSystem
+        .writeFileString(markerPath, `${at}\n`, { mode: 0o600 })
+        .pipe(Effect.mapError(storageError));
+
+    /**
+     * The file, read once at start; later reads come from memory. Only the
+     * lock holder writes. With no file, the marker tells the first start after
+     * the update (keep the devices in use now) from a lost list (refuse).
+     */
     const load: Effect.Effect<State> = Effect.gen(function* () {
       const current = yield* Ref.get(state);
       if (current._tag !== "unread") return current;
-      const exists = yield* fileSystem.exists(filePath).pipe(Effect.orElseSucceed(() => false));
-      if (exists) {
+      const exists = (file: string) =>
+        fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false));
+      const marked = yield* exists(markerPath);
+      if (yield* exists(filePath)) {
         const text = yield* fileSystem.readFileString(filePath).pipe(Effect.option);
         const decoded = Option.flatMap(text, decodeStoreFile);
         const next: State = Option.isSome(decoded)
@@ -370,8 +446,21 @@ export const makeWith = (options: MakeOptions = {}) =>
           yield* Effect.logWarning(
             "The list of devices that can use this machine is damaged; remote devices are refused until it is repaired.",
           );
+        else if (!marked)
+          yield* writeMarker(next.file.initializedAt).pipe(
+            Effect.catch(() =>
+              Effect.logWarning("Could not mark the device list as set up; it is kept as is."),
+            ),
+          );
         yield* Ref.set(state, next);
         return next;
+      }
+      if (marked) {
+        yield* Effect.logWarning(
+          "The list of devices that can use this machine is missing; remote devices are refused until it is repaired.",
+        );
+        yield* Ref.set(state, { _tag: "damaged" });
+        return { _tag: "damaged" } as const;
       }
       const now = isoOf(yield* Clock.currentTimeMillis);
       const devices = yield* keptByUpdate(now);
@@ -384,11 +473,15 @@ export const makeWith = (options: MakeOptions = {}) =>
         denied: [],
         notices: [],
       };
-      const written = yield* write(file).pipe(Effect.result);
+      // List first, then the marker: a start that dies between them keeps this list.
+      const written = yield* write(file).pipe(Effect.andThen(writeMarker(now)), Effect.result);
       if (written._tag === "Failure") {
-        // Keep working from memory; the next change tries the file again.
-        yield* Effect.logWarning("Could not save the list of devices that can use this machine.");
-        yield* Ref.set(state, { _tag: "ok", file });
+        // Another start must not take a later snapshot, so refuse until repaired.
+        yield* Effect.logWarning(
+          "Could not save the list of devices that can use this machine; remote devices are refused until it is repaired.",
+        );
+        yield* Ref.set(state, { _tag: "damaged" });
+        return { _tag: "damaged" } as const;
       }
       return { _tag: "ok", file } as const;
     });
@@ -401,12 +494,14 @@ export const makeWith = (options: MakeOptions = {}) =>
       pending: file.pending.filter((entry) => millisOf(entry.expiresAt) > now),
       denied: file.denied.filter((entry) => millisOf(entry.until) > now),
       notices: file.notices.filter((entry) => millisOf(entry.at) + NOTICE_KEEP_MS > now),
+      bound: (file.bound ?? []).filter((entry) => millisOf(entry.expiresAt) > now),
     });
 
     const changed = (before: StoreFile, after: StoreFile) =>
       before.pending.length !== after.pending.length ||
       before.denied.length !== after.denied.length ||
-      before.notices.length !== after.notices.length;
+      before.notices.length !== after.notices.length ||
+      (before.bound ?? []).length !== (after.bound ?? []).length;
 
     /** Runs `change` on the current file under the lock; writes only when it says so. */
     const modify = <A>(
@@ -520,10 +615,66 @@ export const makeWith = (options: MakeOptions = {}) =>
     const damagedMessage = (machineName: string) =>
       `The device list on ${machineName} is damaged. Open SpecWithCode on ${machineName} to repair it.`;
 
+    const removedMessage = (machineName: string) =>
+      `${machineName} no longer lets this device in. Approve it again in SpecWithCode on ${machineName}.`;
+
+    const checkBound: ConnectDeviceTrustShape["checkBound"] = (id) =>
+      Effect.gen(function* () {
+        const loaded = yield* withLock(load);
+        // A lost or damaged list cannot say; local sessions keep working, and Remove revoked the rest.
+        if (loaded._tag !== "ok") return { _tag: "allowed" } as const;
+        const now = yield* Clock.currentTimeMillis;
+        const binding = (loaded.file.bound ?? []).find(
+          (entry) => entry.id === id && millisOf(entry.expiresAt) > now,
+        );
+        if (binding === undefined) return { _tag: "allowed" } as const;
+        const standing = loaded.file.devices.some(
+          (entry) => entry.key === binding.key && approvalOf(entry) === binding.approval,
+        );
+        return standing
+          ? ({ _tag: "allowed", deviceKey: binding.key } as const)
+          : ({ _tag: "refused", message: removedMessage(yield* machine) } as const);
+      });
+
+    const bindCredential: ConnectDeviceTrustShape["bindCredential"] = (input) =>
+      modify((file, now) => {
+        const device = file.devices.find((entry) => entry.key === input.key);
+        if (device === undefined || input.expiresAtMillis <= now)
+          return [false, undefined] as const;
+        return [
+          true,
+          {
+            ...file,
+            bound: [
+              ...(file.bound ?? []).filter((entry) => entry.id !== input.id),
+              {
+                id: input.id,
+                key: input.key,
+                approval: approvalOf(device),
+                expiresAt: isoOf(input.expiresAtMillis),
+              },
+            ],
+          },
+        ] as const;
+      });
+
+    const boundIds: ConnectDeviceTrustShape["boundIds"] = (key) =>
+      Effect.gen(function* () {
+        const loaded = yield* withLock(load);
+        if (loaded._tag !== "ok") return [];
+        const now = yield* Clock.currentTimeMillis;
+        return (loaded.file.bound ?? []).flatMap((entry) =>
+          entry.key === key && millisOf(entry.expiresAt) > now ? [entry.id] : [],
+        );
+      });
+
     const check: ConnectDeviceTrustShape["check"] = (session) =>
       Effect.gen(function* () {
         const device = gatedDevice(session);
-        if (device === null) return { _tag: "allowed" } as const;
+        if (device === null)
+          return session.sessionId === undefined
+            ? ({ _tag: "allowed" } as const)
+            : yield* checkBound(sessionBindingId(session.sessionId));
         const machineName = yield* machine;
         if (device.key === null)
           return {
@@ -635,6 +786,7 @@ export const makeWith = (options: MakeOptions = {}) =>
             approvedAt: isoOf(now),
             approvedBy: input.approvedBy,
             keptByUpdate: false,
+            approvalId: random(9).toString("base64url"),
           };
           codes.delete(match.key);
           const notice = {
@@ -708,14 +860,21 @@ export const makeWith = (options: MakeOptions = {}) =>
           denied: [],
           notices: [],
         });
+        yield* writeMarker(now);
         yield* Effect.logInfo(
           "Repaired the list of devices that can use this machine; it is empty.",
         );
       }),
     );
 
+    // Read (and on the first start, take the update's snapshot) before any request.
+    yield* withLock(load);
+
     return {
       check,
+      bindCredential,
+      checkBound,
+      boundIds,
       refuseAtMint,
       isApproved,
       snapshot,

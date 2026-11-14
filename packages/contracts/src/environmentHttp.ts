@@ -646,6 +646,8 @@ export interface EnvironmentSessionPrincipalShape {
   readonly expiresAt?: DateTime.DateTime;
   /** What the client said it is, such as a phone. Self-reported. */
   readonly clientDeviceType?: string;
+  /** The approved device behind this session, when it is one or was minted by one. */
+  readonly deviceKey?: string;
 }
 
 export class EnvironmentAuthenticatedPrincipal extends Context.Service<

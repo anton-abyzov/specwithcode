@@ -379,10 +379,13 @@ export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAut
       "not_a_pairing_code",
       "insufficient_scope",
       "reapproval_required",
+      "device_not_approved",
     ]),
   },
 ) {
   override get message(): string {
+    if (this.reason === "device_not_approved")
+      return "That code belongs to a device this machine has not approved. Approve the device on this machine first.";
     return this.reason === "reapproval_required"
       ? "Approve this device again with a new pairing code from this machine."
       : this.reason === "insufficient_scope"
