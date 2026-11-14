@@ -37,6 +37,8 @@ import {
   type ServerProvider,
   ThreadId,
   ThreadMetadataMcpUpdateResult,
+  NodeId,
+  RuntimeRequestId,
   TurnItemId,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -2054,14 +2056,61 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatus.resultContextTransferId).not.toBeNull();
             expect(delegatedStatus.latestTerminalResultContextTransferId).not.toBeNull();
 
+            // The child asked the user something before it finished; the card stays open.
+            const childRun = (yield* orchestrator.getThreadProjection(
+              delegated.childThreadId,
+            )).runs.find((run) => run.id === delegated.childRunId);
+            const childQuestionId = RuntimeRequestId.make("ask-user:child:leftover-question");
+            yield* orchestrator.dispatch({
+              type: "user_input_request.record",
+              commandId: CommandId.make("command:test:child-ask-user"),
+              threadId: delegated.childThreadId,
+              runId: delegated.childRunId!,
+              nodeId: childRun!.rootNodeId!,
+              requestNodeId: NodeId.make("node:ask-user:child:leftover-question"),
+              requestId: childQuestionId,
+              turnItemId: TurnItemId.make("turn-item:ask-user:child:leftover-question"),
+              questions: [
+                {
+                  id: "q1",
+                  header: "Dev servers",
+                  question: "Stop the two leftover dev servers before removing the folder?",
+                  options: [{ label: "Stop them", description: "Stop them by PID." }],
+                  allowCustomAnswer: true,
+                },
+              ],
+            });
+            const childQuestionStatus = () =>
+              orchestrator
+                .getThreadProjection(delegated.childThreadId)
+                .pipe(
+                  Effect.map(
+                    (projection) =>
+                      projection.runtimeRequests.find((request) => request.id === childQuestionId)
+                        ?.status,
+                  ),
+                );
+            expect(yield* childQuestionStatus()).toBe("pending");
+            // A plain message leaves the card open, and the sender is told so.
             const childFollowupCall = yield* invoke("studio_thread_send", {
               threadId: delegated.childThreadId,
               message: "Confirm the delegated API boundary remains inspected.",
               clientRequestId: "delegated-child-followup-1",
+              // A question the child never asked closes nothing and is reported.
+              answersRequestIds: ["ask-user:child:no-such-question"],
             });
             const childFollowup = yield* decodeThreadSendResult(
               childFollowupCall.structuredContent,
             ).pipe(Effect.orDie);
+            expect(childFollowup.openQuestions).toEqual([
+              {
+                requestId: childQuestionId,
+                header: "Dev servers",
+                question: "Stop the two leftover dev servers before removing the folder?",
+              },
+            ]);
+            expect(childFollowup.notice).toContain("ask-user:child:no-such-question");
+            expect(yield* childQuestionStatus()).toBe("pending");
             const childFollowupWaitCall = yield* invoke("studio_thread_wait", {
               threadId: delegated.childThreadId,
               runId: childFollowup.runId,
@@ -2091,14 +2140,30 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(delegatedStatusAfterFollowup.latestTerminalSummary).not.toBeNull();
 
+            // A message that answers the question closes its card.
             const activeChildFollowupCall = yield* invoke("studio_thread_send", {
               threadId: delegated.childThreadId,
               message: cancellationPrompt,
               clientRequestId: "delegated-child-active-followup-1",
+              answersRequestIds: [childQuestionId],
             });
             const activeChildFollowup = yield* decodeThreadSendResult(
               activeChildFollowupCall.structuredContent,
             ).pipe(Effect.orDie);
+            expect(activeChildFollowup.openQuestions).toBeUndefined();
+            expect(yield* childQuestionStatus()).toBe("resolved");
+            // A retry of that send delivers nothing new and is not refused for the closed card.
+            const retriedAnswer = yield* invoke("studio_thread_send", {
+              threadId: delegated.childThreadId,
+              message: cancellationPrompt,
+              clientRequestId: "delegated-child-active-followup-1",
+              answersRequestIds: [childQuestionId],
+            });
+            expect(retriedAnswer.isError).toBe(false);
+            expect(
+              (yield* decodeThreadSendResult(retriedAnswer.structuredContent).pipe(Effect.orDie))
+                .runId,
+            ).toBe(activeChildFollowup.runId);
             yield* waitForProjection(orchestrator, delegated.childThreadId, (projection) =>
               projection.runs.some(
                 (run) => run.id === activeChildFollowup.runId && run.status === "running",

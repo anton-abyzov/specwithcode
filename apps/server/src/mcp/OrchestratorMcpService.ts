@@ -1558,6 +1558,42 @@ const make = Effect.gen(function* () {
       return undefined;
     });
 
+  /**
+   * Questions a thread still shows to the user that a message answers: async
+   * ask_user cards, which stay open across turns until their card is answered.
+   */
+  const openMessageQuestions = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      // Only the cards still waiting are read, never the thread's answered history.
+      const cards = yield* threadManagement.getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["user_input_request"],
+        turnItemStatuses: ["waiting"],
+        messageRoles: [],
+      });
+      const waiting = (cards.turnItems ?? []).flatMap((item) =>
+        item.type === "user_input_request" && item.responseMode === "message" ? [item] : [],
+      );
+      if (waiting.length === 0) return [];
+      // A Stop can cancel a request and leave its card waiting; only a pending request is open.
+      const requests = yield* threadManagement.getThreadRecords(threadId, ["runtimeRequests"]);
+      const pending = new Set(
+        (requests.runtimeRequests ?? [])
+          .filter((request) => request.status === "pending" && request.kind === "user_input")
+          .map((request) => request.id),
+      );
+      return waiting
+        .filter((item) => pending.has(item.requestId))
+        .map((item) => ({
+          requestId: item.requestId,
+          header: item.questions[0]?.header ?? "Question",
+          question: (item.questions[0]?.question ?? "").slice(0, 240),
+        }));
+    }).pipe(
+      Effect.mapError((error) =>
+        failure("orchestration_error", `Unable to read questions: ${errorMessage(error)}`),
+      ),
+    );
+
   const loadScopedThread = (scope: McpInvocationScope, threadId: ThreadId) =>
     Effect.gen(function* () {
       const caller = yield* loadCaller(scope);
@@ -3793,6 +3829,8 @@ const make = Effect.gen(function* () {
         if (squashed !== null)
           return yield* failure("invalid_request", squashedTextMessage(squashed));
 
+        const answers = [...new Set(input.answersRequestIds ?? [])];
+
         const mode = input.mode ?? "auto";
         // A forwarded message has one delivery per target, however often it is retried.
         const key = yield* requestKey(
@@ -3833,6 +3871,55 @@ const make = Effect.gen(function* () {
                   ),
             ),
           );
+        // The message carries the answer, so its cards close without a second reply.
+        // An id that is no longer open (answered meanwhile, closed by an earlier try of
+        // this send, or never asked) is reported, not refused: the message is delivered
+        // once and a retry still closes whatever is left open.
+        const before =
+          answers.length > 0 || (parent !== undefined && target.thread.id !== parent.thread.id)
+            ? yield* openMessageQuestions(input.threadId).pipe(
+                Effect.orElseSucceed(() => [] as const),
+              )
+            : [];
+        const openIds = new Set(before.map((question) => question.requestId));
+        const notOpen = answers.filter((requestId) => !openIds.has(requestId));
+        const closed = new Set<string>();
+        // A message held in the queue has not reached the thread, so its cards stay open.
+        const delivered = !(result.run.status === "queued" && result.run.queueHeld === true);
+        for (const requestId of delivered ? answers : []) {
+          if (!openIds.has(requestId)) continue;
+          const dismissed = yield* threadManagement
+            .dispatch({
+              type: "thread.user-input.dismiss",
+              commandId: stableCommandId({
+                scope,
+                requestKey: `${key}:${requestId}`,
+                operation: "thread-send-answer",
+              }),
+              threadId: input.threadId,
+              requestId,
+            })
+            .pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+          if (dismissed) closed.add(requestId);
+        }
+        // Whatever is still open keeps the thread under Needs you; say so to the sender.
+        const openQuestions =
+          parent !== undefined && target.thread.id !== parent.thread.id
+            ? before.filter((question) => !closed.has(question.requestId))
+            : [];
+        const answerNotice =
+          notOpen.length > 0
+            ? `Not open in this thread, so nothing was closed for: ${notOpen.join(", ")}.`
+            : undefined;
+        const heldReport = threadSendHeldQueueReport({
+          run: result.run,
+          runs: result.projection.runs,
+          releasedHeldMessages: result.releasedHeldRuns ?? 0,
+        });
+        const notice = [heldReport.notice, answerNotice].filter(Boolean).join(" ");
         return {
           threadId: input.threadId,
           threadLink: formatStudioThreadLink(input.threadId, target.thread.title || "thread"),
@@ -3840,11 +3927,9 @@ const make = Effect.gen(function* () {
           runId: result.run.id,
           status: result.run.status,
           delivery: result.delivery,
-          ...threadSendHeldQueueReport({
-            run: result.run,
-            runs: result.projection.runs,
-            releasedHeldMessages: result.releasedHeldRuns ?? 0,
-          }),
+          ...(openQuestions.length > 0 ? { openQuestions } : {}),
+          ...heldReport,
+          ...(notice === "" ? {} : { notice }),
         } satisfies OrchestratorMcpThreadSendResult;
       }),
     forwardedMessageText: (scope, messageId) =>
