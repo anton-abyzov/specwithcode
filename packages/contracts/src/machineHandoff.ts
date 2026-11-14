@@ -338,6 +338,32 @@ export const MachineHandoffPreviewMetadata = Schema.Struct({
   digest: MachineHandoffBundle.fields.digest,
 });
 export type MachineHandoffPreviewMetadata = typeof MachineHandoffPreviewMetadata.Type;
+/**
+ * Why a Git move did not bring the destination's existing copy to the source heads (1326).
+ * `reason` is a short code (see `MachineHandoffUpdateSkipReason`); a newer machine may send
+ * one this client does not know, so read `message` for the words.
+ */
+export const MachineHandoffUpdateSkipped = Schema.Struct({
+  reason: bounded(64),
+  message: bounded(1_000),
+  /** The repository it stopped at, relative to the project folder ("." for the root). */
+  repository: Schema.optional(bounded(1_024)),
+  /** `.git/config` keys outside the safe list; never their values. */
+  unsafeConfig: Schema.optional(Schema.Array(bounded(256)).check(Schema.isMaxLength(32))),
+});
+export type MachineHandoffUpdateSkipped = typeof MachineHandoffUpdateSkipped.Type;
+export type MachineHandoffUpdateSkipReason =
+  | "unsafe-git-config"
+  | "detached-head"
+  | "dirty"
+  | "local-commits"
+  | "missing-repository"
+  | "identity-mismatch"
+  | "in-use"
+  | "not-published"
+  | "needs-lfs"
+  | "lfs-failed"
+  | "git-failed";
 export const MachineHandoffReceiveInput = Schema.Union([
   Schema.Struct({
     ...MachineHandoffPreviewMetadata.fields,
@@ -353,6 +379,12 @@ export const MachineHandoffReceiveInput = Schema.Union([
     operationId: MachineHandoffOperationId,
     mode: Schema.Literal("start"),
     bundle: MachineHandoffBundle,
+    /**
+     * A Git move into an existing copy that cannot reach the source heads: "refuse" stops
+     * before the coordinator moves, with the reason; "accept" moves on the old copy and
+     * says why. Omitted (older clients) moves on, updating when it can, as before.
+     */
+    staleCopy: Schema.optional(Schema.Literals(["refuse", "accept"])),
   }),
 ]);
 export type MachineHandoffReceiveInput = typeof MachineHandoffReceiveInput.Type;
@@ -370,6 +402,11 @@ export const MachineHandoffReceiveResult = Schema.Struct({
   replayed: Schema.Boolean,
   /** Moved memory notes read back on this machine with the bundle's exact content. */
   verifiedNotes: Schema.optional(Schema.Number),
+  /**
+   * A Git move into an existing copy: why that copy is not (or, on a preview, will not be)
+   * brought to the source heads. Absent when it was updated or already there.
+   */
+  updateSkipped: Schema.optional(MachineHandoffUpdateSkipped),
 });
 export type MachineHandoffReceiveResult = typeof MachineHandoffReceiveResult.Type;
 export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>()(
@@ -402,10 +439,13 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
     busy: Schema.optional(MachineHandoffBusyThreads),
     /** Refused by Team rules, in words that name the owner. */
     teamRulesMessage: Schema.optional(Schema.String),
+    /** A move with `staleCopy: "refuse"` stopped: the existing copy cannot reach the source heads. */
+    updateSkipped: Schema.optional(MachineHandoffUpdateSkipped),
   },
 ) {
   override get message(): string {
     if (this.teamRulesMessage !== undefined) return this.teamRulesMessage;
+    if (this.updateSkipped !== undefined) return this.updateSkipped.message;
     return {
       not_found: "The handoff project or source chat is no longer available.",
       busy: this.busy?.total

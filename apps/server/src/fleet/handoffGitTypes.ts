@@ -41,7 +41,17 @@ export class HandoffGitError extends Schema.TaggedError<HandoffGitError>()("Hand
     "operation-conflict",
     "worktree-conflict",
     "worker-checkpoint",
+    // An existing copy's update (1326): what stopped it before or during the update.
+    "unsafe-git-config",
+    "detached-head",
+    "in-use",
+    "needs-lfs",
+    "lfs-failed",
   ]),
+  /** The manifest repository it stopped at, relative to the project folder. */
+  repository: Schema.optional(Schema.String),
+  /** `.git/config` keys outside the safe list, never their values. */
+  unsafeConfig: Schema.optional(Schema.Array(Schema.String)),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {

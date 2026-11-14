@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { parseNullConfigList, safeGitConfigEntries } from "./folderTransfer/safeGitConfig.ts";
 import {
   canonicalOrigin,
   HANDOFF_HEAD,
@@ -31,6 +32,13 @@ type ManifestInput = {
   readonly manifest: HandoffGitManifest;
   readonly resumeProjectFolder?: boolean;
 };
+/**
+ * Updating a destination's existing copy (1326): `inUse` says whether a thread or another
+ * project works in a folder; it is asked again right before each repository moves.
+ */
+export interface ExistingCopyGuard {
+  readonly inUse: (folder: string) => Effect.Effect<boolean>;
+}
 
 export class HandoffGit extends Context.Service<
   HandoffGit,
@@ -60,14 +68,29 @@ export class HandoffGit extends Context.Service<
     readonly reportWorkerCheckpoints: (
       input: ManifestInput & { readonly workers: ReadonlyArray<CheckpointWorker> },
     ) => Effect.Effect<ReadonlyArray<CheckpointWorker>, HandoffGitError>;
+    /** `allowChanges`: a Git sync move publishes each repository's HEAD whatever is uncommitted. */
     readonly publish: (
-      input: ManifestInput & { readonly publish: true },
+      input: ManifestInput & { readonly publish: true; readonly allowChanges?: boolean },
     ) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
-    /** workspaceRoot must come from a registered project; worktreeParent is server-owned configuration. */
+    /**
+     * Whether an existing copy can be brought to the manifest heads, without changing it:
+     * fails with the reason it cannot (a Git sync move's preview).
+     */
+    readonly checkExistingCopy: (
+      input: ManifestInput & { readonly existingCopy: ExistingCopyGuard },
+    ) => Effect.Effect<void, HandoffGitError>;
+    /**
+     * workspaceRoot must come from a registered project; worktreeParent is server-owned configuration.
+     * `existingCopy` (with useProjectFolder): the folder is a copy that predates this move, so its
+     * `.git/config` is checked against the safe list first, its root must be on a branch, each
+     * repository is re-checked for use right before it moves, and Git LFS files download as their
+     * own step.
+     */
     readonly materialize: (
       input: ManifestInput & {
         readonly worktreeParent: string;
         readonly useProjectFolder?: boolean;
+        readonly existingCopy?: ExistingCopyGuard;
       },
     ) => Effect.Effect<HandoffGitMaterialization, HandoffGitError>;
   }
@@ -80,6 +103,113 @@ const EXCLUDED = new Set([".git", "node_modules"]);
 const MAX_DIRECTORIES = 20_000;
 const MAX_ENTRIES = 200_000;
 const MAX_DEPTH = 24;
+/**
+ * `.git/config` keys an existing copy may hold beyond the folder copy's safe list
+ * (`safeGitConfig.ts`): they name people, signing and push defaults, and run nothing
+ * during a fetch and fast-forward.
+ */
+const LOCAL_INERT_KEYS = new Set([
+  "user.name",
+  "user.email",
+  "user.signingkey",
+  "commit.gpgsign",
+  "tag.gpgsign",
+  "gpg.format",
+  "push.default",
+  "push.autosetupremote",
+  "init.defaultbranch",
+  "gc.auto",
+  "rerere.enabled",
+  "rerere.autoupdate",
+  "merge.conflictstyle",
+  "maintenance.auto",
+  "maintenance.strategy",
+]);
+/** `git lfs install --local` writes these; the update turns LFS filters off either way. */
+const STANDARD_LFS_FILTER = new Map([
+  ["filter.lfs.clean", "git-lfs clean -- %f"],
+  ["filter.lfs.smudge", "git-lfs smudge -- %f"],
+  ["filter.lfs.process", "git-lfs filter-process"],
+  ["filter.lfs.required", "true"],
+]);
+const HELPER_URL = /^[A-Za-z][A-Za-z0-9+.-]*::/;
+
+/**
+ * The keys of a destination's own `.git/config` entries that could run a command or reach
+ * elsewhere during the update, sorted and without values (a URL may hold a token). Remote
+ * URLs are judged for running something, not for carrying: a local path is fine here.
+ */
+export function unsafeExistingCopyConfig(
+  entries: ReadonlyArray<readonly [string, string]>,
+): Array<string> {
+  const unsafe = new Set<string>();
+  for (const [rawKey, value] of entries) {
+    const key = rawKey.trim();
+    const lower = key.toLowerCase();
+    if (LOCAL_INERT_KEYS.has(lower) || STANDARD_LFS_FILTER.get(lower) === value.trim()) continue;
+    const first = lower.indexOf(".");
+    const last = lower.lastIndexOf(".");
+    const section = lower.slice(0, first);
+    const name = lower.slice(last + 1);
+    if (first > 0 && last > first) {
+      if (section === "branch" && name !== "mergeoptions") continue;
+      if (
+        (section === "remote" && (name === "url" || name === "pushurl")) ||
+        (section === "submodule" && name === "url")
+      ) {
+        if (!HELPER_URL.test(value.trim())) continue;
+        unsafe.add(key);
+        continue;
+      }
+      if (section === "remote" && ["push", "prune", "mirror", "skipdefaultupdate"].includes(name))
+        continue;
+      if (section === "submodule" && name === "ignore") continue;
+      if (section === "maintenance" && (name === "enabled" || name === "schedule")) continue;
+    }
+    if (safeGitConfigEntries([[key, value]]).length === 1) continue;
+    unsafe.add(key);
+  }
+  return [...unsafe].sort();
+}
+
+/** `.lfsconfig` keys that only choose what LFS fetches; endpoints are pinned anyway. */
+const LFSCONFIG_KEYS = new Set([
+  "lfs.url",
+  "lfs.pushurl",
+  "lfs.fetchinclude",
+  "lfs.fetchexclude",
+  "lfs.locksverify",
+]);
+/** The keys of a repository's `.lfsconfig` beyond what it may set, sorted. */
+export function unsafeLfsConfig(entries: ReadonlyArray<readonly [string, string]>): Array<string> {
+  const unsafe = new Set<string>();
+  for (const [rawKey] of entries) {
+    const key = rawKey.trim().toLowerCase();
+    if (LFSCONFIG_KEYS.has(key) || /^remote\.[^.]+(\..+)?\.(lfsurl|lfspushurl)$/.test(key))
+      continue;
+    unsafe.add(key);
+  }
+  return [...unsafe].sort();
+}
+/**
+ * The LFS endpoint Git LFS itself derives from an origin URL, pinned so a repository's
+ * `.lfsconfig` cannot send the download elsewhere. Null for a form it does not know.
+ */
+export function lfsEndpoint(origin: string): string | null {
+  const value = origin.trim();
+  if (/^https?:\/\//i.test(value)) {
+    const base = value.replace(/\/+$/, "");
+    return `${base.endsWith(".git") ? base : `${base}.git`}/info/lfs`;
+  }
+  if (/^(ssh|file):\/\//i.test(value)) return value;
+  if (value.startsWith("/")) return `file://${value}`;
+  const drive = /^([A-Za-z]):[\\/](.*)$/.exec(value);
+  if (drive) return `file:///${drive[1]}:/${drive[2]!.replace(/\\/g, "/")}`;
+  const scp = /^([A-Za-z0-9._-]+@[A-Za-z0-9.-]+):(?!\/\/)(.+)$/.exec(value);
+  if (scp) return `ssh://${scp[1]}/${scp[2]!.replace(/^\/+/, "")}`;
+  return null;
+}
+
 /** A report walks at most this many surviving worker worktrees, a few at a time. */
 export const MAX_REPORTED_WORKTREES = 100;
 const WORKTREE_CONCURRENCY = 8;
@@ -91,8 +221,36 @@ const make = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const lock = yield* Semaphore.make(1);
 
-  const blocked = (stage: Stage, reason: HandoffGitError["reason"]) =>
-    Effect.fail(new HandoffGitError({ stage, reason }));
+  const blocked = (
+    stage: Stage,
+    reason: HandoffGitError["reason"],
+    detail: { readonly repository?: string; readonly unsafeConfig?: ReadonlyArray<string> } = {},
+  ) =>
+    Effect.fail(
+      new HandoffGitError({
+        stage,
+        reason,
+        ...(detail.repository === undefined ? {} : { repository: detail.repository }),
+        ...(detail.unsafeConfig === undefined ? {} : { unsafeConfig: [...detail.unsafeConfig] }),
+      }),
+    );
+  /** Names the repository a refusal stopped at, when it does not already. */
+  const at =
+    (repository: string) =>
+    <A, R>(effect: Effect.Effect<A, HandoffGitError, R>) =>
+      effect.pipe(
+        Effect.mapError((error) =>
+          error.repository !== undefined
+            ? error
+            : new HandoffGitError({
+                stage: error.stage,
+                reason: error.reason,
+                repository,
+                ...(error.unsafeConfig === undefined ? {} : { unsafeConfig: error.unsafeConfig }),
+                ...(error.cause === undefined ? {} : { cause: error.cause }),
+              }),
+        ),
+      );
   const io = <A, E, R>(effect: Effect.Effect<A, E, R>, stage: Stage) =>
     effect.pipe(
       Effect.mapError(
@@ -107,13 +265,26 @@ const make = Effect.gen(function* () {
     args: ReadonlyArray<string>,
     stage: Stage,
     allowFailure = false,
+    options: {
+      /** `-c` settings for this call alone, such as the pinned LFS endpoint. */
+      readonly config?: ReadonlyArray<string>;
+      /** Pathspec magic (`:(glob)`) for this call; every other call reads pathspecs literally. */
+      readonly pathspecMagic?: boolean;
+    } = {},
   ) {
+    // Git LFS downloads are their own step, so a missing file or server names itself.
+    const lfs = args[0] === "lfs";
     const result = yield* runner
       .run({
         command: "git",
         args: [
           "--no-optional-locks",
-          ...(args[0] === "push" ? [] : ["-c", "core.hooksPath=/dev/null"]),
+          // Publication keeps the source's own pre-push checks; nothing else runs a hook,
+          // and no file-system monitor command runs in either machine's checkout.
+          ...(args[0] === "push"
+            ? []
+            : ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]),
+          ...(options.config ?? []).flatMap((setting) => ["-c", setting]),
           "-C",
           cwd,
           ...args,
@@ -122,12 +293,22 @@ const make = Effect.gen(function* () {
         env: {
           GIT_TERMINAL_PROMPT: "0",
           GIT_OPTIONAL_LOCKS: "0",
-          GIT_LITERAL_PATHSPECS: "1",
+          // git-lfs checks files out through its own `:(attr)` pathspecs, and with literal
+          // pathspecs its pull downloads objects but leaves every file as a pointer.
+          GIT_LITERAL_PATHSPECS: options.pathspecMagic || lfs ? "0" : "1",
+          // A commit is what its ID names: replace refs and grafts in a checkout could
+          // otherwise substitute other trees while HEAD and status look right.
+          GIT_NO_REPLACE_OBJECTS: "1",
+          GIT_GRAFT_FILE: "/dev/null",
           // Even cat-file/status/ancestry reads can fetch missing promisor objects and
           // rewrite clone config. Only authorized transfer operations may hydrate them.
-          GIT_NO_LAZY_FETCH: ["fetch", "push", "worktree"].includes(args[0] ?? "") ? "0" : "1",
+          GIT_NO_LAZY_FETCH: ["fetch", "push", "worktree", "lfs"].includes(args[0] ?? "")
+            ? "0"
+            : "1",
+          // A checkout writes LFS pointers instead of downloading during a merge.
+          ...(lfs ? {} : { GIT_LFS_SKIP_SMUDGE: "1" }),
         },
-        timeout: "60 seconds",
+        timeout: lfs ? "10 minutes" : "60 seconds",
         outputMode: "error",
         maxOutputBytes: 8 * 1024 * 1024,
       })
@@ -342,26 +523,227 @@ const make = Effect.gen(function* () {
     if (ahead.code !== 0 && behind.code !== 0) return yield* blocked(stage, "diverged-repository");
   });
 
+  /** The repository's own config files, read without following includes or running anything. */
+  const ownConfig = Effect.fn("HandoffGit.ownConfig")(function* (cwd: string, stage: Stage) {
+    const gitDir = yield* text(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"], stage);
+    const common = yield* text(
+      cwd,
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      stage,
+    );
+    const entries: Array<readonly [string, string]> = [];
+    for (const file of new Set([
+      path.join(common, "config"),
+      path.join(common, "config.worktree"),
+      path.join(gitDir, "config.worktree"),
+    ])) {
+      if (!(yield* io(fs.exists(file), stage))) continue;
+      const listed = yield* git(
+        cwd,
+        ["config", "--file", file, "--no-includes", "--null", "--list"],
+        stage,
+      );
+      entries.push(...parseNullConfigList(listed.stdout));
+    }
+    return entries;
+  });
+  /**
+   * One repository's config, then each initialized submodule's, since `status
+   * --ignore-submodules=none` runs Git (and its filters) in every one of them, listed in the
+   * manifest or not.
+   */
+  const guardConfigTree: (
+    cwd: string,
+    relativePath: string,
+    stage: Stage,
+    guarded: Set<string>,
+    depth: number,
+  ) => Effect.Effect<void, HandoffGitError> = Effect.fn("HandoffGit.guardConfigTree")(function* (
+    cwd: string,
+    relativePath: string,
+    stage: Stage,
+    guarded: Set<string>,
+    depth: number,
+  ) {
+    const real = yield* io(fs.realPath(cwd), stage);
+    if (guarded.has(real)) return;
+    guarded.add(real);
+    if (depth > 16 || guarded.size > 512)
+      return yield* blocked(stage, "scan-limit", { repository: relativePath });
+    const unsafeConfig = unsafeExistingCopyConfig(yield* ownConfig(cwd, stage));
+    if (unsafeConfig.length > 0)
+      return yield* blocked(stage, "unsafe-git-config", {
+        repository: relativePath,
+        unsafeConfig: unsafeConfig.slice(0, 32),
+      });
+    for (const entry of (yield* git(cwd, ["ls-files", "--stage", "-z"], stage)).stdout.split(
+      "\0",
+    )) {
+      if (!entry.startsWith("160000 ")) continue;
+      const submodule = entry.slice(entry.indexOf("\t") + 1);
+      const child = relativePath === "." ? submodule : `${relativePath}/${submodule}`;
+      if (!safeRelativePath(submodule))
+        return yield* blocked(stage, "unsafe-path", { repository: child });
+      const folder = path.join(cwd, submodule);
+      if (!(yield* io(fs.exists(path.join(folder, ".git")), stage))) continue;
+      yield* guardConfigTree(folder, child, stage, guarded, depth + 1);
+    }
+  });
+  /**
+   * Before any status, fetch or merge in an existing copy: every manifest repository is there,
+   * holds only safe config, and the root is on a branch.
+   */
+  const guardExistingCopy = Effect.fn("HandoffGit.guardExistingCopy")(function* (
+    input: ManifestInput,
+    stage: Stage,
+  ) {
+    const guarded = new Set<string>();
+    for (const repository of input.manifest.repositories) {
+      const relativePath = repository.relativePath;
+      const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, stage).pipe(
+        at(relativePath),
+      );
+      yield* guardConfigTree(cwd, relativePath, stage, guarded, 0);
+      if (
+        relativePath === "." &&
+        (yield* git(cwd, ["symbolic-ref", "-q", "HEAD"], stage, true)).code !== 0
+      )
+        return yield* blocked(stage, "detached-head", { repository: relativePath });
+    }
+  });
+  /** Whether any `.gitattributes` in a commit, at any depth, sends files through Git LFS. */
+  const usesLfs = Effect.fn("HandoffGit.usesLfs")(function* (
+    cwd: string,
+    commit: string,
+    stage: Stage,
+  ) {
+    const found = yield* git(
+      cwd,
+      ["grep", "-l", "-I", "-z", "-e", "filter=lfs", commit, "--", ":(glob)**/.gitattributes"],
+      stage,
+      true,
+      { pathspecMagic: true },
+    );
+    if (found.code !== 0 && found.code !== 1) return yield* blocked(stage, "git-failed");
+    return found.code === 0;
+  });
+  /**
+   * A repository's `.lfsconfig` (the incoming commit's, or an untracked one in the folder) may
+   * only narrow what LFS fetches: no includes, no access or transfer settings. Its endpoints
+   * are overridden by the pinned one.
+   */
+  const checkLfsConfig = Effect.fn("HandoffGit.checkLfsConfig")(function* (
+    cwd: string,
+    commit: string,
+    relativePath: string,
+    stage: Stage,
+  ) {
+    const entries: Array<readonly [string, string]> = [];
+    if ((yield* git(cwd, ["cat-file", "-e", `${commit}:.lfsconfig`], stage, true)).code === 0)
+      entries.push(
+        ...parseNullConfigList(
+          (yield* git(
+            cwd,
+            ["config", "--blob", `${commit}:.lfsconfig`, "--no-includes", "--null", "--list"],
+            stage,
+          )).stdout,
+        ),
+      );
+    const file = path.join(cwd, ".lfsconfig");
+    if (
+      (yield* io(fs.exists(file), stage)) &&
+      (yield* text(cwd, ["ls-files", "-z", "--", ".lfsconfig"], stage)) === ""
+    )
+      entries.push(
+        ...parseNullConfigList(
+          (yield* git(cwd, ["config", "--file", file, "--no-includes", "--null", "--list"], stage))
+            .stdout,
+        ),
+      );
+    const unsafeConfig = unsafeLfsConfig(entries);
+    if (unsafeConfig.length > 0)
+      return yield* blocked(stage, "unsafe-git-config", {
+        repository: relativePath,
+        unsafeConfig: unsafeConfig.slice(0, 32).map((key) => `.lfsconfig ${key}`),
+      });
+  });
+  const lfsInstalled = (cwd: string, stage: Stage) =>
+    git(cwd, ["lfs", "version"], stage, true).pipe(
+      Effect.map((result) => result.code === 0),
+      Effect.orElseSucceed(() => false),
+    );
+  /** The folder, and every linked worktree of its repository, is free of running work. */
+  const notInUse = Effect.fn("HandoffGit.notInUse")(function* (
+    guard: ExistingCopyGuard,
+    cwd: string,
+    relativePath: string,
+    stage: Stage,
+  ) {
+    const listed = yield* text(cwd, ["worktree", "list", "--porcelain", "-z"], stage);
+    const folders = new Set([cwd]);
+    for (const line of listed.split("\0"))
+      if (line.startsWith("worktree ")) folders.add(path.resolve(line.slice("worktree ".length)));
+    for (const folder of folders)
+      if (yield* guard.inUse(folder))
+        return yield* blocked(stage, "in-use", { repository: relativePath });
+  });
+  /** Downloads the LFS files a fast-forward left as pointers; a failure names itself. */
+  const pullLfs = Effect.fn("HandoffGit.pullLfs")(function* (
+    cwd: string,
+    relativePath: string,
+    stage: Stage,
+  ) {
+    const endpoint = lfsEndpoint(yield* text(cwd, ["remote", "get-url", "origin"], stage));
+    if (endpoint === null) return yield* blocked(stage, "lfs-failed", { repository: relativePath });
+    // Only the approved origin's LFS store, whatever `.lfsconfig` names.
+    const config = [`lfs.url=${endpoint}`, `remote.origin.lfsurl=${endpoint}`];
+    const pulled = yield* git(cwd, ["lfs", "pull", "origin"], stage, true, { config }).pipe(
+      Effect.catchTag("HandoffGitError", () => Effect.succeed(null)),
+    );
+    if (pulled === null || pulled.code !== 0)
+      return yield* blocked(stage, "lfs-failed", { repository: relativePath });
+    // Every LFS file is downloaded: `-` marks one left as a pointer.
+    const listed = yield* git(cwd, ["lfs", "ls-files"], stage, true, { config }).pipe(
+      Effect.catchTag("HandoffGitError", () => Effect.succeed(null)),
+    );
+    if (
+      listed === null ||
+      listed.code !== 0 ||
+      listed.stdout.split("\n").some((line) => /^\S+ - /.test(line))
+    )
+      return yield* blocked(stage, "lfs-failed", { repository: relativePath });
+  });
+
   const inspect: HandoffGit["Service"]["inspect"] = Effect.fn("HandoffGit.inspect")(
     function* (input) {
       if (!HANDOFF_OPERATION.test(input.operationId))
         return yield* blocked("inspect", "invalid-manifest");
-      // A Git move continues in the destination's own checkout, identified by its root alone.
+      // A Git sync move names every repository it can, so the destination's copy reaches
+      // each head (1326). Its root is required; a nested repository without a commit or an
+      // origin, or a tree past the scan limits, is left out rather than refusing the move.
       const relativePaths = input.allowChanges
-        ? ["."]
+        ? yield* discover(input.workspaceRoot, "inspect").pipe(
+            Effect.catchTag("HandoffGitError", () => Effect.succeed(["."])),
+          )
         : yield* discover(input.workspaceRoot, "inspect");
       const repositories: Array<HandoffGitRepository> = [];
       for (const relativePath of relativePaths) {
-        const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, "inspect");
-        if (!input.allowChanges) yield* clean(cwd, "inspect");
-        const head = yield* text(cwd, ["rev-parse", "HEAD"], "inspect");
-        if (!HANDOFF_HEAD.test(head)) return yield* blocked("inspect", "missing-repository");
-        repositories.push({
-          relativePath,
-          identity: yield* identity(cwd, "inspect"),
-          head,
-          ref: handoffRef(input.operationId, head),
+        const described = Effect.gen(function* () {
+          const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, "inspect");
+          if (!input.allowChanges) yield* clean(cwd, "inspect");
+          const head = yield* text(cwd, ["rev-parse", "HEAD"], "inspect");
+          if (!HANDOFF_HEAD.test(head)) return yield* blocked("inspect", "missing-repository");
+          return {
+            relativePath,
+            identity: yield* identity(cwd, "inspect"),
+            head,
+            ref: handoffRef(input.operationId, head),
+          };
         });
+        if (input.allowChanges && relativePath !== ".") {
+          const found = yield* described.pipe(Effect.option);
+          if (found._tag === "Some") repositories.push(found.value);
+        } else repositories.push(yield* described);
       }
       const manifest: HandoffGitManifest = {
         version: 1,
@@ -392,30 +774,76 @@ const make = Effect.gen(function* () {
     // Validate only the exact paths being transferred; extra checkouts are not
     // read, fetched, copied, or changed by the handoff.
     for (const repository of input.manifest.repositories) {
-      const cwd = yield* resolveRepository(input.workspaceRoot, repository.relativePath, stage);
-      if ((yield* identity(cwd, stage)) !== repository.identity)
-        return yield* blocked(stage, "identity-mismatch");
-      const appliedGitlinks = new Map<string, string>();
-      if (
-        input.resumeProjectFolder &&
-        (yield* text(cwd, ["rev-parse", "HEAD"], stage)) === repository.head
-      ) {
-        const prefix = repository.relativePath === "." ? "" : `${repository.relativePath}/`;
-        for (const child of input.manifest.repositories) {
-          if (
-            child.relativePath !== repository.relativePath &&
-            child.relativePath.startsWith(prefix)
-          )
-            appliedGitlinks.set(child.relativePath.slice(prefix.length), child.head);
+      yield* Effect.gen(function* () {
+        const cwd = yield* resolveRepository(input.workspaceRoot, repository.relativePath, stage);
+        if ((yield* identity(cwd, stage)) !== repository.identity)
+          return yield* blocked(stage, "identity-mismatch");
+        const appliedGitlinks = new Map<string, string>();
+        if (
+          input.resumeProjectFolder &&
+          (yield* text(cwd, ["rev-parse", "HEAD"], stage)) === repository.head
+        ) {
+          const prefix = repository.relativePath === "." ? "" : `${repository.relativePath}/`;
+          for (const child of input.manifest.repositories) {
+            if (
+              child.relativePath !== repository.relativePath &&
+              child.relativePath.startsWith(prefix)
+            )
+              appliedGitlinks.set(child.relativePath.slice(prefix.length), child.head);
+          }
         }
-      }
-      yield* clean(cwd, stage, true, appliedGitlinks);
-      const upstream = yield* git(cwd, ["rev-parse", "--verify", "@{upstream}"], stage, true);
-      if (upstream.code === 0) yield* compareAncestry(cwd, upstream.stdout.trim(), stage, false);
-      yield* compareAncestry(cwd, repository.head, stage, true);
+        yield* clean(cwd, stage, true, appliedGitlinks);
+        const upstream = yield* git(cwd, ["rev-parse", "--verify", "@{upstream}"], stage, true);
+        if (upstream.code === 0) yield* compareAncestry(cwd, upstream.stdout.trim(), stage, false);
+        yield* compareAncestry(cwd, repository.head, stage, true);
+      }).pipe(at(repository.relativePath));
     }
   });
   const preflight: HandoffGit["Service"]["preflight"] = (input) => preflightAt(input, "preflight");
+
+  const checkExistingCopy: HandoffGit["Service"]["checkExistingCopy"] = Effect.fn(
+    "HandoffGit.checkExistingCopy",
+  )(function* (input) {
+    const stage = "preflight" as const;
+    yield* checkManifest(input.manifest, stage);
+    yield* guardExistingCopy(input, stage);
+    const lfs = yield* lfsInstalled(input.workspaceRoot, stage);
+    for (const repository of input.manifest.repositories) {
+      yield* Effect.gen(function* () {
+        const cwd = yield* resolveRepository(input.workspaceRoot, repository.relativePath, stage);
+        if ((yield* identity(cwd, stage)) !== repository.identity)
+          return yield* blocked(stage, "identity-mismatch");
+        yield* clean(cwd, stage);
+        const upstream = yield* git(cwd, ["rev-parse", "--verify", "@{upstream}"], stage, true);
+        if (upstream.code === 0) yield* compareAncestry(cwd, upstream.stdout.trim(), stage, false);
+        const present =
+          (yield* git(cwd, ["cat-file", "-e", `${repository.head}^{commit}`], stage, true)).code ===
+          0;
+        if (present) {
+          // Already there, or strictly behind: anything else would discard this copy's commits.
+          if (
+            (yield* git(cwd, ["merge-base", "--is-ancestor", "HEAD", repository.head], stage, true))
+              .code !== 0
+          )
+            return yield* blocked(stage, "diverged-repository");
+        } else {
+          // The source heads arrive only with the move; commits no remote has are this copy's own.
+          const own = yield* text(
+            cwd,
+            ["rev-list", "--count", "HEAD", "--not", "--remotes"],
+            stage,
+          );
+          if (own !== "0") return yield* blocked(stage, "diverged-repository");
+        }
+        const commit = present ? repository.head : "HEAD";
+        if (yield* usesLfs(cwd, commit, stage)) {
+          if (!lfs) return yield* blocked(stage, "needs-lfs");
+          yield* checkLfsConfig(cwd, commit, repository.relativePath, stage);
+        }
+        yield* notInUse(input.existingCopy, cwd, repository.relativePath, stage);
+      }).pipe(at(repository.relativePath));
+    }
+  });
 
   /** A worker's checkout, if it still exists, holds only commits the source workspace includes. */
   const checkWorktree = Effect.fn("HandoffGit.checkWorktree")(function* (
@@ -613,6 +1041,7 @@ const make = Effect.gen(function* () {
         const actual = yield* inspect({
           workspaceRoot: input.workspaceRoot,
           operationId: input.manifest.operationId,
+          ...(input.allowChanges ? { allowChanges: true } : {}),
         });
         if (stringifyJson(actual) !== stringifyJson(input.manifest))
           return yield* blocked("publish", "source-changed");
@@ -645,7 +1074,8 @@ const make = Effect.gen(function* () {
             repository.relativePath,
             "publish",
           );
-          yield* clean(cwd, "publish");
+          // A Git sync move sends commits only; uncommitted work stays on this machine.
+          if (!input.allowChanges) yield* clean(cwd, "publish");
           if (
             (yield* identity(cwd, "publish")) !== repository.identity ||
             (yield* text(cwd, ["rev-parse", "HEAD"], "publish")) !== repository.head
@@ -671,6 +1101,13 @@ const make = Effect.gen(function* () {
     lock.withPermit(
       Effect.gen(function* () {
         const stage = "materialize" as const;
+        const existingCopy = input.existingCopy;
+        if (existingCopy && !input.useProjectFolder)
+          return yield* blocked(stage, "invalid-manifest");
+        if (existingCopy) {
+          yield* checkManifest(input.manifest, stage);
+          yield* guardExistingCopy(input, stage);
+        }
         const resuming =
           input.useProjectFolder &&
           (yield* io(
@@ -727,25 +1164,31 @@ const make = Effect.gen(function* () {
         // Fetch only the named immutable refs. Do not update FETCH_HEAD, branches,
         // remote tracking refs, or the original worktree/index.
         for (const repository of input.manifest.repositories) {
-          const cwd = yield* resolveRepository(input.workspaceRoot, repository.relativePath, stage);
-          if ((yield* remoteHead(cwd, repository.ref, stage)) !== repository.head)
-            return yield* blocked(stage, "remote-ref-mismatch");
-          yield* git(
-            cwd,
-            [
-              "fetch",
-              "--refmap=",
-              "--no-tags",
-              "--no-write-fetch-head",
-              "--no-recurse-submodules",
-              "origin",
-              repository.ref,
-            ],
-            stage,
-          );
-          if ((yield* remoteHead(cwd, repository.ref, stage)) !== repository.head)
-            return yield* blocked(stage, "remote-ref-mismatch");
-          yield* compareAncestry(cwd, repository.head, stage, false);
+          yield* Effect.gen(function* () {
+            const cwd = yield* resolveRepository(
+              input.workspaceRoot,
+              repository.relativePath,
+              stage,
+            );
+            if ((yield* remoteHead(cwd, repository.ref, stage)) !== repository.head)
+              return yield* blocked(stage, "remote-ref-mismatch");
+            yield* git(
+              cwd,
+              [
+                "fetch",
+                "--refmap=",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--no-recurse-submodules",
+                "origin",
+                repository.ref,
+              ],
+              stage,
+            );
+            if ((yield* remoteHead(cwd, repository.ref, stage)) !== repository.head)
+              return yield* blocked(stage, "remote-ref-mismatch");
+            yield* compareAncestry(cwd, repository.head, stage, false);
+          }).pipe(at(repository.relativePath));
         }
         yield* preflightAt(checkedInput, stage);
         if (input.useProjectFolder) {
@@ -764,8 +1207,26 @@ const make = Effect.gen(function* () {
                 true,
               )).code !== 0
             )
-              return yield* blocked(stage, "diverged-repository");
+              return yield* blocked(stage, "diverged-repository", {
+                repository: repository.relativePath,
+              });
           }
+          const lfs = yield* lfsInstalled(input.workspaceRoot, stage);
+          const needsLfs = new Set<string>();
+          for (const repository of input.manifest.repositories) {
+            const cwd = yield* resolveRepository(
+              input.workspaceRoot,
+              repository.relativePath,
+              stage,
+            );
+            if (yield* usesLfs(cwd, repository.head, stage)) {
+              needsLfs.add(repository.relativePath);
+              yield* checkLfsConfig(cwd, repository.head, repository.relativePath, stage);
+            }
+          }
+          // An existing copy refuses before any merge when its LFS files could not download.
+          if (existingCopy && !lfs && needsLfs.size > 0)
+            return yield* blocked(stage, "needs-lfs", { repository: [...needsLfs][0]! });
           const repositories: Array<HandoffGitRepository & { readonly worktreePath: string }> = [];
           // Advance the root before nested repositories, then validate the complete umbrella.
           for (const repository of input.manifest.repositories) {
@@ -775,7 +1236,9 @@ const make = Effect.gen(function* () {
               stage,
             );
             if ((yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head) {
-              yield* clean(cwd, stage, false);
+              // Right before this repository moves: nothing started in it since the checks.
+              if (existingCopy) yield* notInUse(existingCopy, cwd, repository.relativePath, stage);
+              yield* clean(cwd, stage, false).pipe(at(repository.relativePath));
               yield* git(
                 cwd,
                 ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", repository.head],
@@ -783,10 +1246,16 @@ const make = Effect.gen(function* () {
               );
             }
             if ((yield* text(cwd, ["rev-parse", "HEAD"], stage)) !== repository.head)
-              return yield* blocked(stage, "worktree-conflict");
+              return yield* blocked(stage, "worktree-conflict", {
+                repository: repository.relativePath,
+              });
             repositories.push({ ...repository, worktreePath: cwd });
           }
-          for (const repository of repositories) yield* clean(repository.worktreePath, stage);
+          for (const repository of repositories)
+            if (lfs && needsLfs.has(repository.relativePath))
+              yield* pullLfs(repository.worktreePath, repository.relativePath, stage);
+          for (const repository of repositories)
+            yield* clean(repository.worktreePath, stage).pipe(at(repository.relativePath));
           return {
             operationId: input.manifest.operationId,
             workspaceRoot: input.workspaceRoot,
@@ -849,6 +1318,18 @@ const make = Effect.gen(function* () {
             return yield* blocked(stage, "worktree-conflict");
           repositories.push({ ...repository, worktreePath });
         }
+        // Checkouts wrote LFS pointers; download the files where Git LFS is installed.
+        if (yield* lfsInstalled(input.workspaceRoot, stage))
+          for (const repository of repositories)
+            if (yield* usesLfs(repository.worktreePath, repository.head, stage)) {
+              yield* checkLfsConfig(
+                repository.worktreePath,
+                repository.head,
+                repository.relativePath,
+                stage,
+              );
+              yield* pullLfs(repository.worktreePath, repository.relativePath, stage);
+            }
         for (const repository of repositories) yield* clean(repository.worktreePath, stage);
         yield* preflightAt(input, stage);
         return {
@@ -864,6 +1345,7 @@ const make = Effect.gen(function* () {
     inspect: atRealRoot(inspect, "inspect"),
     verifyRootIdentity: atRealRoot(verifyRootIdentity, "preflight"),
     preflight: atRealRoot(preflight, "preflight"),
+    checkExistingCopy: atRealRoot(checkExistingCopy, "preflight"),
     verifyWorkerCheckpoints: atRealRoot(verifyWorkerCheckpoints, "inspect"),
     reportWorkerCheckpoints: atRealRoot(reportWorkerCheckpoints, "inspect"),
     publish: atRealRoot(publish, "publish"),

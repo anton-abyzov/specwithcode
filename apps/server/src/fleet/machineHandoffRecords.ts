@@ -4,6 +4,7 @@ import {
   MachineHandoffPrepareResult,
   MachineHandoffPreviewMetadata,
   MachineHandoffReceiveResult,
+  MachineHandoffUpdateSkipped,
   MessageId,
   ProjectId,
   ThreadId,
@@ -26,6 +27,8 @@ const PreparedLaunch = Schema.Struct({
   contextPath: Schema.String,
   prompt: Schema.String,
   verifiedNotes: Schema.optional(Schema.Number),
+  /** The existing copy was not brought to the source heads, and the move went on (1326). */
+  updateSkipped: Schema.optional(MachineHandoffUpdateSkipped),
 });
 export const DestinationRecord = Schema.Struct({
   digest: MachineHandoffBundle.fields.digest,
