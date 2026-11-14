@@ -81,6 +81,7 @@ import {
   AddProjectToMachineDialog,
   type AddProjectTarget,
 } from "./AddProjectToMachine";
+import { ConnectDevicesSection } from "./ConnectDevicesSection";
 import { MachineSetupState, MachineSummary, type MachineSetup } from "./MachineSummary";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { MachineLimits, MachineWorkSummary, machineLimitsOpen } from "./MachineWorkSummary";
@@ -308,6 +309,9 @@ export function MachinesSettingsPanel() {
       ) : null}
       {setup && fleet.primaryEnvironmentId ? (
         <MachineSummary environmentId={fleet.primaryEnvironmentId} rows={rows} setup={setup} />
+      ) : null}
+      {fleet.primaryEnvironmentId ? (
+        <ConnectDevicesSection environmentId={fleet.primaryEnvironmentId} />
       ) : null}
       {hereRow ? (
         <details data-machine-here-details className="rounded-xl border border-border/60 text-sm">

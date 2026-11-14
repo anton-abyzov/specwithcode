@@ -30,6 +30,11 @@ import { HandOffThreadDialogHost } from "../components/handoff/HandOffThreadDial
 import { AwayDialogHost } from "../components/away/AwayDialog";
 import { MachineToolInstallDialogHost } from "../components/machineTools/MachineToolInstallDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
+import {
+  DeviceApprovalNoticesHost,
+  DeviceApprovalPromptHost,
+  DeviceWaitingForApprovalHost,
+} from "../components/devices/ConnectDeviceHosts";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -277,6 +282,9 @@ function RootRouteView() {
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
+          {primaryEnvironmentAuthenticated ? <DeviceApprovalPromptHost /> : null}
+          <DeviceWaitingForApprovalHost />
+          <DeviceApprovalNoticesHost />
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
           <HandOffThreadDialogHost />

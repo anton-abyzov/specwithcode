@@ -1,5 +1,6 @@
 import {
   type ClientConnectionMethod,
+  EnvironmentAuthInvalidError,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
 } from "@specweave-studio/contracts";
@@ -36,6 +37,7 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
@@ -325,6 +327,9 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     },
   );
+
+  const isWaitingForApproval = (failure: { readonly _tag: string }) =>
+    Schema.is(EnvironmentAuthInvalidError)(failure) && failure.refusal === "device_not_approved";
 
   const sessionChanged = () =>
     new ConnectionBlockedError({
@@ -702,7 +707,11 @@ export const make = Effect.gen(function* () {
         yield* acceptSocketToken(selected.token);
         return authorized(selected.token, cachedSocket.success);
       }
-      if (cachedSocket.failure._tag === "ConnectionBlockedError") {
+      // Waiting for the owner's approval: the token is good, keep it (1327).
+      if (
+        cachedSocket.failure._tag === "ConnectionBlockedError" ||
+        isWaitingForApproval(cachedSocket.failure)
+      ) {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
       // An unreachable direct address says nothing about the token, so keep
@@ -720,8 +729,12 @@ export const make = Effect.gen(function* () {
       Effect.result,
     );
     if (Result.isFailure(socket)) {
-      // A direct address that refuses the socket says nothing about the token.
-      if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
+      // A direct address that refuses the socket says nothing about the token,
+      // and neither does a machine waiting for its owner to approve this device.
+      if (
+        (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") &&
+        !isWaitingForApproval(socket.failure)
+      ) {
         const failure = socket.failure;
         yield* tokenLock.withPermits(1)(
           Effect.gen(function* () {
@@ -730,10 +743,7 @@ export const make = Effect.gen(function* () {
               failure._tag === "EnvironmentAuthInvalidError" ||
               (failure._tag === "ConnectionBlockedError" && failure.reason === "authentication")
             ) {
-              yield* recordRejectedRenewal(
-                input.expectedEnvironmentId,
-                selected.token.accessToken,
-              );
+              yield* recordRejectedRenewal(input.expectedEnvironmentId, selected.token.accessToken);
             }
           }),
         );
