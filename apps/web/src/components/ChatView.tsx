@@ -757,6 +757,7 @@ import {
   environmentWaitsForReconnectGrace,
   THIS_MACHINE_BUSY_DESCRIPTION,
 } from "./ChatView.logic";
+import { useClockWhile } from "~/hooks/useClockWhile";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
@@ -3700,6 +3701,9 @@ function useChatViewState(props: ChatViewProps) {
   const activeMachineLastSeenAt = activeEnvironmentUnavailableState
     ? machineLastSeenAt(activeEnvironmentUnavailableState.environmentId)
     : null;
+  // Reconnect attempts can be minutes apart, and nothing else re-renders the
+  // banner between them, so "last seen 5m ago" needs its own clock.
+  const lastSeenNowMs = useClockWhile(activeEnvironmentUnavailableState !== null);
   // A sent thread whose machine can't be reached can carry on elsewhere: the
   // same project on another machine, or that machine's own chat folder for a
   // chat without a project.
@@ -3820,7 +3824,7 @@ function useChatViewState(props: ChatViewProps) {
       ? THIS_MACHINE_BUSY_DESCRIPTION
       : activeEnvironmentUnavailableState
         ? machineDetail(
-            lastSeenLabel(activeMachineLastSeenAt, Date.now()),
+            lastSeenLabel(activeMachineLastSeenAt, lastSeenNowMs),
             unavailableStatus?.reason ?? null,
           )
         : "";
@@ -3963,6 +3967,7 @@ function useChatViewState(props: ChatViewProps) {
     reconnectWarningGraceElapsed,
     serverUpdateState,
     activeMachineLastSeenAt,
+    lastSeenNowMs,
   ]);
   const providerInstanceEntries = useMemo(
     () =>
