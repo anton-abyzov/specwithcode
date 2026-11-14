@@ -2298,8 +2298,14 @@ export const ko: PhraseCatalog = {
     "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
   "Call it {name}":
     "{name}(으)로 부르기",
-  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
-    "다른 컴퓨터가 이미 {name}(이)라는 이름입니다. 이 컴퓨터의 오래된 사본이라면 다른 컴퓨터에서 제거하세요.",
+  "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
+    "연결할 수 없는 이 컴퓨터의 이전 기록이 아직 {name}(이)라는 이름입니다. 이 컴퓨터만 이 이름을 쓰도록 제거하세요.",
+  "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
+    "이 컴퓨터의 다른 기록이 이미 {name}(이)라는 이름입니다. 오래된 사본이라면 다른 컴퓨터에서 제거하세요.",
+  "{host} is already called {name}. Two machines with one name are hard to tell apart.":
+    "{host}이(가) 이미 {name}(이)라는 이름입니다. 이름이 같은 컴퓨터 두 대는 구별하기 어렵습니다.",
+  "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
+    "지금 연결할 수 없는 {host}이(가) 이미 {name}(이)라는 이름입니다. 더 이상 없다면 다른 컴퓨터에서 제거하세요.",
   "Use the computer name":
     "시스템 이름 사용",
   "Chip letters":

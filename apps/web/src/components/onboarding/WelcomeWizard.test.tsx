@@ -88,7 +88,10 @@ vi.mock("./SignInFirstStep", () => ({ SignInFirstStep: () => null }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: vi.fn() }));
 vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
 vi.mock("../clerk/useStudioConnectAuthPrompt", () => ({ useStudioConnectAuthPrompt: vi.fn() }));
-vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
+vi.mock("../../cloud/publicConfig", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../cloud/publicConfig")>()),
+  hasCloudPublicConfig: () => false,
+}));
 vi.mock("../ThreadTerminalDrawer", () => ({ TerminalViewport: () => null }));
 vi.mock("../settings/ChatGptWelcomeCoordinator", () => ({ ChatGptWelcomeCoordinator: () => null }));
 vi.mock("../settings/CodexSetupSection", () => ({

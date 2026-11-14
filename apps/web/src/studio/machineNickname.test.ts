@@ -2,6 +2,8 @@ import type { ServerConfig } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  findMachineNameHolder,
+  knownMachineLabels,
   machineNicknamePatch,
   mergeServerNicknames,
   renameMachineLockText,
@@ -66,4 +68,65 @@ it("explains why a rename is unavailable", () => {
   expect(renameMachineLockText("unsupported")).toMatch(/Update SpecWithCode/);
   expect(renameMachineLockText("no-access")).toMatch(/can't change settings/);
   expect(renameMachineLockText(null)).toBeNull();
+});
+
+describe("findMachineNameHolder", () => {
+  const nicknames = {
+    stale: { name: "m5", updatedAt: "2026-11-11T00:00:00.000Z" },
+    live: { name: "m5", updatedAt: "2026-11-13T00:00:00.000Z" },
+    m3: { name: "M3", updatedAt: "2026-11-13T00:00:00.000Z" },
+  };
+
+  it("ignores a nickname no known machine carries", () => {
+    const known = knownMachineLabels({
+      saved: new Map(),
+      labels: new Map([["live", "Anton M5MAX PROLED"]]),
+      fleet: new Map(),
+      removed: new Set(),
+    });
+    expect(findMachineNameHolder(nicknames, known, "live", "M5")).toBeNull();
+  });
+
+  it("names a known holder with its computer name, compared without case", () => {
+    const known = knownMachineLabels({
+      saved: new Map(),
+      labels: new Map([
+        ["live", "Anton M5MAX PROLED"],
+        ["m3", "Mac Studio M3"],
+      ]),
+      fleet: new Map([["stale", "Anton M5MAX PROLED"]]),
+      removed: new Set(),
+    });
+    expect(findMachineNameHolder(nicknames, known, "live", "m3")).toEqual({
+      environmentId: "m3",
+      name: "M3",
+      label: "Mac Studio M3",
+    });
+    expect(findMachineNameHolder(nicknames, known, "live", "M5")?.environmentId).toBe("stale");
+    expect(findMachineNameHolder(nicknames, known, "stale", "M5")?.environmentId).toBe("live");
+  });
+
+  it("forgets a fleet machine removed here", () => {
+    const known = knownMachineLabels({
+      saved: new Map(),
+      labels: new Map([["live", "Anton M5MAX PROLED"]]),
+      fleet: new Map([["stale", "Anton M5MAX PROLED"]]),
+      removed: new Set(["stale"]),
+    });
+    expect(findMachineNameHolder(nicknames, known, "live", "M5")).toBeNull();
+  });
+
+  it("counts a machine saved here with no config yet, removed before or not", () => {
+    const known = knownMachineLabels({
+      labels: new Map([["live", "Anton M5MAX PROLED"]]),
+      saved: new Map([["stale", "Anton M5MAX PROLED"]]),
+      fleet: new Map(),
+      removed: new Set(["stale"]),
+    });
+    expect(findMachineNameHolder(nicknames, known, "live", "M5")).toEqual({
+      environmentId: "stale",
+      name: "m5",
+      label: "Anton M5MAX PROLED",
+    });
+  });
 });

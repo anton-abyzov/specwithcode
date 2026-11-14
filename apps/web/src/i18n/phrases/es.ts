@@ -2332,8 +2332,14 @@ export const es: PhraseCatalog = {
     "Nombre del ordenador: {hostLabel}, sin cambios.",
   "Call it {name}":
     "Llamarlo {name}",
-  "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.":
-    "Otro equipo ya se llama {name}. Si es una copia antigua de este, quítala en Otros equipos.",
+  "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
+    "Un registro antiguo de este equipo, que no puede conectarse, todavía se llama {name}. Quítalo para que solo este equipo tenga el nombre.",
+  "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
+    "Otro registro de este equipo ya se llama {name}. Si es una copia antigua, quítalo en Otros equipos.",
+  "{host} is already called {name}. Two machines with one name are hard to tell apart.":
+    "{host} ya se llama {name}. Dos equipos con el mismo nombre son difíciles de distinguir.",
+  "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
+    "{host}, que ahora no puede conectarse, ya se llama {name}. Si ya no existe, quítalo en Otros equipos.",
   "Use the computer name":
     "Usar el nombre del ordenador",
   "Chip letters":

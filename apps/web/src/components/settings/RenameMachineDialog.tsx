@@ -13,7 +13,6 @@ import {
   suggestMachineNickname,
 } from "@specweave-studio/shared/machineNicknames";
 import {
-  assignMachineShortLabels,
   graphemeLength,
   MACHINE_SHORT_LABEL_MIN_LENGTH,
 } from "@specweave-studio/shared/machineShortLabel";
@@ -22,19 +21,22 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
   renameMachineLockText,
-  resolveMachineNickname,
   useCustomMachineNickname,
   useMachineNameHolder,
   useMachineNameSources,
+  type MachineNameHolder,
 } from "../../studio/machineNickname";
 import {
   MACHINE_COLOR_IDS,
   MACHINE_COLOR_LABELS,
   useMachineIdentity,
+  useMachineShortLabelPreview,
 } from "../../studio/machineIdentity";
 import { useRenameMachine } from "../../studio/useRenameMachine";
 import { cn } from "~/lib/utils";
 import { ENVIRONMENT_MACHINE_KIND_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useStudioFleet } from "../../studio/fleet";
 import { shortMachineName } from "../../studio/shellModel";
 import { Button } from "../ui/button";
 import { CharacterCount } from "../ui/character-count";
@@ -49,6 +51,84 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { RemoveOldRecord } from "./RemoveOldRecord";
+import { useReplacedMachineRecords } from "./useReplacedMachineRecords";
+
+/** Names compared as people read them: case and spacing aside. */
+const sameName = (a: string, b: string) =>
+  a.trim().replace(/\s+/g, " ").toLocaleLowerCase() ===
+  b.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+
+// The fleet atom needs an id; one that matches no environment reads as no fleet.
+const NO_ENVIRONMENT = "" as EnvironmentId;
+
+/**
+ * The machine already shown under a name, said plainly. Removal is offered only
+ * for a record proven to be an old copy of the machine being renamed: the same
+ * check machine cards use (`replacedMachineRecords`), which needs complete lists
+ * and the live machine alive, so a record that is only reconnecting is never one.
+ */
+function NameClash({
+  id,
+  environmentId,
+  holder,
+  hostLabel,
+}: {
+  readonly id: string;
+  readonly environmentId: EnvironmentId;
+  readonly holder: MachineNameHolder;
+  readonly hostLabel: string;
+}) {
+  const tx = useTx();
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { snapshot } = useStudioFleet(primaryEnvironmentId ?? NO_ENVIRONMENT);
+  const fleet = primaryEnvironmentId === null ? null : snapshot;
+  const replaced = useReplacedMachineRecords(fleet, primaryEnvironmentId);
+  const oldCopy = replaced.get(holder.environmentId) === environmentId;
+  const record = environments.find(
+    (environment) => environment.environmentId === holder.environmentId,
+  );
+  const connected =
+    record?.connection.phase === "connected" ||
+    fleet?.machines.some(
+      (machine) => machine.environmentId === holder.environmentId && machine.status === "reachable",
+    ) === true;
+  const host = holder.label.trim() === "" ? holder.environmentId : holder.label.trim();
+  const sameComputer = hostLabel.trim() !== "" && sameName(host, hostLabel);
+  const text = oldCopy
+    ? tx(
+        "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.",
+      )
+    : sameComputer
+      ? tx(
+          "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.",
+        )
+      : connected
+        ? tx("{host} is already called {name}. Two machines with one name are hard to tell apart.")
+        : tx(
+            "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.",
+          );
+  return (
+    <div
+      id={id}
+      className="grid gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground text-xs"
+      data-machine-name-clash={holder.environmentId}
+      data-machine-name-clash-kind={oldCopy ? "old-copy" : sameComputer ? "same-computer" : "other"}
+    >
+      <p>{renderRich(text, { name: holder.name, host })}</p>
+      {oldCopy ? (
+        <span className="justify-self-start">
+          <RemoveOldRecord
+            environmentId={holder.environmentId as EnvironmentId}
+            name={holder.name}
+            hostLabel={host}
+          />
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * Names a machine. One field, "Machine name", is what Runs on, thread rows,
@@ -93,8 +173,9 @@ export function RenameMachineDialog({
   const suggested = suggestMachineNickname(hostLabel);
   const [value, setValue] = useState(current);
   const [nameTouched, setNameTouched] = useState(false);
-  const { nicknames, labels } = useMachineNameSources();
+  const { nicknames } = useMachineNameSources();
   const nameHolder = useMachineNameHolder();
+  const previewShortLabel = useMachineShortLabelPreview();
   const storedShort = (environmentId ? nicknames[environmentId]?.short : undefined) ?? "";
   const [shortValue, setShortValue] = useState(storedShort);
   // Until the letters are typed here, a changed name brings its own letters.
@@ -132,23 +213,11 @@ export function RenameMachineDialog({
   // With nothing typed over it, the machine shows its whole computer name.
   const previewName = next === "" || (!nameTouched && custom === null) ? fullDefaultName : next;
   // Saving re-runs the fleet-wide letter assignment, so the preview runs it too,
-  // with this machine's new name and letters in place.
-  const derivedShort = useMemo(() => {
-    const ids = new Set([...Object.keys(nicknames), ...labels.keys()]);
-    if (environmentId !== null) ids.add(environmentId);
-    const assigned = assignMachineShortLabels(
-      [...ids].map((id) =>
-        id === environmentId
-          ? { environmentId: id, name: previewName, short: undefined }
-          : {
-              environmentId: id,
-              name: resolveMachineNickname(nicknames, id, labels.get(id)),
-              short: nicknames[id]?.short,
-            },
-      ),
-    );
-    return environmentId === null ? "" : (assigned.get(environmentId) ?? "");
-  }, [nicknames, labels, environmentId, previewName]);
+  // over the same machines, with this one's new name in place.
+  const derivedShort = useMemo(
+    () => (environmentId === null ? "" : previewShortLabel(environmentId, previewName)),
+    [previewShortLabel, environmentId, previewName],
+  );
   // Untouched letters on an unchanged name stay as shown now; a new name, or
   // letters cleared here, are assigned again.
   const previewShort =
@@ -157,7 +226,11 @@ export function RenameMachineDialog({
       : !nameChanged && !shortTouched && identity
         ? identity.short
         : derivedShort;
-  const clash = environmentId !== null && nameChanged ? nameHolder(environmentId, next) : null;
+  // Changing only the case or spacing of the name it already shows is never a new clash.
+  const clash =
+    environmentId !== null && nameChanged && !sameName(next, custom ?? fullDefaultName)
+      ? nameHolder(environmentId, next)
+      : null;
   const looksChanged =
     identity !== null &&
     (color !== identity.color || icon !== identity.icon || nextShort !== storedShort);
@@ -216,12 +289,17 @@ export function RenameMachineDialog({
               onChange={(event) => typeName(event.target.value)}
             />
             <div className="flex items-start justify-between gap-2">
-              <p id={hostId} className="text-muted-foreground min-w-0 text-xs" data-machine-host-name>
+              <p
+                id={hostId}
+                className="text-muted-foreground min-w-0 text-xs"
+                data-machine-host-name
+              >
                 {renderRich(tx("Computer name: {hostLabel}, unchanged."), { hostLabel })}
               </p>
               <CharacterCount id={countId} value={value} max={MACHINE_NICKNAME_MAX_LENGTH} />
             </div>
-            {suggested !== null && next !== suggested ? (
+            {/* Offered only when it changes the name: "M5" is no news to a machine called "m5". */}
+            {suggested !== null && !sameName(next, suggested) ? (
               <Button
                 type="button"
                 variant="outline"
@@ -238,19 +316,13 @@ export function RenameMachineDialog({
                 {renderRich(tx("Use {defaultName}"), { defaultName: suggested })}
               </Button>
             ) : null}
-            {clash !== null ? (
-              <p
+            {clash !== null && environmentId !== null ? (
+              <NameClash
                 id={clashId}
-                className="rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground text-xs"
-                data-machine-name-clash={clash.environmentId}
-              >
-                {renderRich(
-                  tx(
-                    "Another machine is already called {name}. If it is an old copy of this one, remove it under Other machines.",
-                  ),
-                  { name: clash.name },
-                )}
-              </p>
+                environmentId={environmentId}
+                holder={clash}
+                hostLabel={hostLabel}
+              />
             ) : null}
             <div
               className="mt-2 grid gap-2 rounded-lg border border-dashed border-border px-3 py-2.5 text-xs"
@@ -319,7 +391,9 @@ export function RenameMachineDialog({
                 />
                 <p id={shortHintId} className="text-muted-foreground text-xs">
                   {shortValid
-                    ? tx("2 or 3 characters for a chip too narrow for the name. Empty follows the name.")
+                    ? tx(
+                        "2 or 3 characters for a chip too narrow for the name. Empty follows the name.",
+                      )
                     : tx("Use 2 or 3 characters.")}
                 </p>
                 <span id={colorId} className="mt-2 text-sm font-medium">

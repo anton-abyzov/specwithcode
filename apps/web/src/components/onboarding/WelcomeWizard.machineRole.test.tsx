@@ -131,7 +131,10 @@ vi.mock("../clerk/useStudioConnectAuthPrompt", () => ({
 vi.mock("@clerk/react", () => ({
   useAuth: () => ({ isLoaded: cloud.loaded, isSignedIn: cloud.signedIn }),
 }));
-vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => cloud.configured }));
+vi.mock("../../cloud/publicConfig", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../cloud/publicConfig")>()),
+  hasCloudPublicConfig: () => cloud.configured,
+}));
 vi.mock("../../onboarding/targetEnvironment.logic", () => ({
   isOnboardingRelayEnvironment: () => false,
 }));
