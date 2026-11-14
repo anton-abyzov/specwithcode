@@ -106,7 +106,10 @@ import { Tip } from "./Tip";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
 import type { ProjectNameCheck } from "../../../studio/projectRename";
 import {
+  copyActivityKey,
   copyActivityText,
+  overallFraction,
+  registerCopyNavigator,
   requestCopyReview,
   useCopyActivities,
   useKeyedCopyActivity,
@@ -515,20 +518,18 @@ function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
 /** One project in the Projects list, with its move, pin and archive actions. */
 /** A thin bar along the row's bottom edge: how far a background copy is, or a sweep. */
 function CopyProgressLine({ activity }: { readonly activity: CopyActivity }) {
+  // The whole copy across its three phases, so the line never runs back to empty.
+  const fraction = overallFraction(activity);
   return (
     <span
       className="sws-copy-progress"
       data-waiting={activity.waiting || undefined}
-      data-indeterminate={(activity.fraction === null && !activity.waiting) || undefined}
+      data-indeterminate={(fraction === null && !activity.waiting) || undefined}
       aria-hidden
     >
       <span
         className="sws-copy-progress-fill"
-        style={
-          activity.fraction === null
-            ? undefined
-            : { width: `${Math.round(activity.fraction * 100)}%` }
-        }
+        style={fraction === null ? undefined : { width: `${Math.round(fraction * 100)}%` }}
       />
     </span>
   );
@@ -628,6 +629,24 @@ export function ProjectRow(props: {
   // A folder copy to another machine running in the background: dimmed with its progress.
   const keyedCopy = useKeyedCopyActivity(group.memberProjects);
   const copying = keyedCopy?.activity ?? null;
+  // A copy's toast opens its details from any project: this row knows the page to open.
+  // Every member stays registered, so a done or failed toast's button still works after
+  // the copy's activity clears, and a second copy in the same group has its own.
+  const memberKeys = group.memberProjects
+    .map((member) => copyActivityKey(member.environmentId, member.id))
+    .join("\n");
+  useEffect(() => {
+    const unregister = memberKeys.split("\n").map((key) =>
+      registerCopyNavigator(key, () => {
+        void navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: group.projectKey },
+          search: { checkout: key },
+        });
+      }),
+    );
+    return () => unregister.forEach((stop) => stop());
+  }, [memberKeys, group.projectKey, navigate]);
   const copyingText = copying ? copyActivityText(copying) : null;
   // A project with no copy on this device still opens and runs on its machine; the
   // row says where, mutes its name, and offers to bring a copy here.

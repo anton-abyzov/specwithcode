@@ -8,7 +8,10 @@ vi.mock("./HandoffCopyDone", () => ({
   HandoffCopyDoneActions: () => null,
   HandoffCopyFailedActions: () => null,
 }));
-vi.mock("./ProjectMoveOptions", () => ({ useProjectMoveDialog: () => null }));
+const dialog = vi.hoisted(() => ({ close: null as (() => void) | null }));
+vi.mock("./ProjectMoveOptions", () => ({
+  useProjectMoveDialog: () => (dialog.close ? { close: dialog.close } : null),
+}));
 let host: HTMLDivElement;
 let root: Root;
 const apply = vi.fn();
@@ -109,4 +112,26 @@ it("blocks both actions for disk refusal even after choices are resolved", async
   });
   expect(button("Copy with my choices").disabled).toBe(true);
   expect(button("Replace everything").disabled).toBe(true);
+});
+
+it("offers Run in background while the copy works, and closes the dialog with it", async () => {
+  const close = vi.fn();
+  dialog.close = close;
+  try {
+    for (const stage of ["scanning", "planning", "copying"] as const) {
+      await render({ stage, working: true });
+      const run = host.querySelector<HTMLButtonElement>('[data-slot="copy-run-in-background"]');
+      expect(run?.textContent).toBe("Run in background");
+      run!.click();
+    }
+    expect(close).toHaveBeenCalledTimes(3);
+    // Review waits for the person; nothing runs in the background there.
+    await render({ stage: "preview" });
+    expect(host.querySelector('[data-slot="copy-run-in-background"]')).toBeNull();
+  } finally {
+    dialog.close = null;
+  }
+  // A step that must finish here (no close): no button.
+  await render({ stage: "copying", working: true });
+  expect(host.querySelector('[data-slot="copy-run-in-background"]')).toBeNull();
 });

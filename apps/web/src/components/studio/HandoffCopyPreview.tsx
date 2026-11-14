@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   AlertTriangleIcon,
   CheckIcon,
@@ -25,12 +25,11 @@ import {
   FILE_CLASS_TEXT,
   formatBytes,
   isExactCopy,
-  copyTimingText,
-  progressFraction,
-  progressText,
   ROW_STATUS_TEXT,
   selectedTotals,
 } from "../../studio/folderCopy";
+import { statusProgressView } from "../../studio/copyProgress";
+import { CopyProgressPanel } from "./CopyProgressPanel";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -701,70 +700,25 @@ function CopyRow({
   );
 }
 
-const STEP_TEXT: Partial<Record<FolderCopyStatus["state"], string>> = {
-  approved: "Starting the copy…",
-  transferring: "Copying files…",
-  verifying: "Checking copied files…",
-  applying: "Applying to the folder…",
-  applied: "Registering the folder…",
-};
-
-/**
- * The copy's one progress line, with a bar. `line` is Copying {size}… (or what applying is
- * doing); the live counts sit muted under it.
- */
+/** A destination's copy as the shared progress panel; nothing while it waits for review. */
 export function CopyProgress({
   status,
-  line,
+  sourceLabel,
+  targetLabel,
 }: {
   readonly status: FolderCopyStatus;
-  /** Without one, the live counts are the line. */
-  readonly line?: string;
+  readonly sourceLabel: string;
+  readonly targetLabel: string;
 }) {
-  const counts = progressText(status);
-  const fraction = progressFraction(status);
-  const detail = line ? counts : null;
-  const timing = useCopyTiming(status);
-  line ??= counts ?? STEP_TEXT[status.state] ?? "Working…";
-  return (
-    <div className="space-y-2 text-sm" role="status" aria-live="polite" data-slot="copy-progress">
-      <p>
-        {line}
-        {detail && (
-          <span className="block text-xs text-muted-foreground" data-slot="copy-progress-detail">
-            {detail}
-          </span>
-        )}
-        {timing && (
-          <span
-            className="block text-xs text-muted-foreground tabular-nums"
-            aria-live="off"
-            data-slot="copy-progress-timing"
-          >
-            {timing}
-          </span>
-        )}
-      </p>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className={`h-full bg-primary transition-[width] ${fraction === null ? "w-1/3 animate-pulse" : ""}`}
-          style={fraction === null ? undefined : { width: `${Math.round(fraction * 100)}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-/** The running copy's elapsed time and estimate, ticking once a second while it runs. */
-function useCopyTiming(status: FolderCopyStatus): string | null {
-  const [now, setNow] = useState(() => Date.now());
-  const running = copyTimingText(status, now) !== null;
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  return copyTimingText(status, now);
+  const view = statusProgressView(status, sourceLabel, targetLabel);
+  return view ? (
+    <CopyProgressPanel
+      view={view}
+      sourceLabel={sourceLabel}
+      targetLabel={targetLabel}
+      startedAt={status.startedAt ?? null}
+    />
+  ) : null;
 }
 
 /** What Undo would restore, and which files changed after Apply. */

@@ -330,7 +330,7 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(
     await page.locator('[data-slot="copy-measuring"]').textContent(),
-    /^Measuring…/,
+    /^Measuring the folder on /,
     "one progress line while measuring",
   );
   NodeAssert.match(await body(), /You can close this window\. We’ll notify you when it’s done\./);
@@ -448,7 +448,7 @@ const choosing = async (page, w) => {
     steps: bar(["done", "done", "done", "current", "next"]),
     leading: "Stop copy",
   });
-  NodeAssert.match(await body(), /Copying 2\.0 KB…/);
+  NodeAssert.match(await body(), /Starting to send to ministorm…/);
   await release("copyApprove");
   await check("done", {
     primary: "Open on ministorm",

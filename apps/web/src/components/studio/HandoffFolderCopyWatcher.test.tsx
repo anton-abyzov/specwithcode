@@ -64,6 +64,14 @@ const copyStatus = (state: string, mode = "copy-only") => ({
   unstable: [],
 });
 
+/** The done toast's finished three-phase track. */
+const finishedTrack = {
+  progress: 1,
+  progressSegments: 3,
+  progressTone: "success",
+  progressLabel: "Copy progress",
+};
+
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
@@ -131,7 +139,9 @@ it("tells a person who closed the dialog when measuring or the copy is ready", a
     expect(state.toasts).toEqual([]);
     copied = true;
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(state.toasts).toEqual([{ type: "success", title: "Copy to M3 is ready to review." }]);
+    expect(state.toasts).toEqual([
+      { type: "success", title: "Copy to M3 is ready to review.", timeout: 0 },
+    ]);
   } finally {
     vi.useRealTimers();
   }
@@ -192,6 +202,7 @@ it("asks to reopen the dialog to finish linking a copy-only copy", async () => {
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
       },
     ]);
   } finally {
@@ -304,6 +315,7 @@ it("carries a one-click copy from measured through approval while the dialog is 
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
       },
     ]);
   } finally {
@@ -338,6 +350,7 @@ it("never approves a one-click copy that would replace files; it asks for review
       {
         type: "success",
         title: "Copy to M3 would replace 1 file. Open Move Project to review.",
+        timeout: 0,
       },
     ]);
   } finally {
@@ -404,6 +417,7 @@ it("approves a Replace all left running once the re-compare has nothing open, an
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
         description:
           "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
       },
@@ -429,6 +443,7 @@ it("drops a pending Replace all whose re-compare still needs a choice and asks f
       {
         type: "success",
         title: "Copy to M3 would replace 1 repository. Open Move Project to review.",
+        timeout: 0,
       },
     ]);
   } finally {
@@ -801,6 +816,7 @@ it("never approves a one-click copy whose unchanged folder would overwrite files
       {
         type: "success",
         title: "Copy to M3 would replace 2 files. Open Move Project to review.",
+        timeout: 0,
       },
     ]);
   } finally {
@@ -897,11 +913,13 @@ it("shows a background copy's progress app wide and clears it once the copy is d
       ),
     );
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(currentCopyActivities().get("m4:source")).toEqual({
+    expect(currentCopyActivities().get("m4:source")).toMatchObject({
       machine: "ministorm",
       label: "Copying files",
       fraction: 0.25,
       waiting: false,
+      // The same phase view the dialog shows, for the banner's track and numbers.
+      progress: { phase: "send", step: "Sending files to ministorm", fraction: 0.25 },
     });
     phase = "done";
     await act(async () => vi.advanceTimersByTimeAsync(2000));
@@ -1016,6 +1034,75 @@ it("forgets a copy closed on the machine, so its banner stays gone after a resta
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(localStorage.getItem(key)).toBeNull();
     expect(state.toasts).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a failed copy's toast until closed, with the reason and a Retry", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    state.handlers.copyStatus = () => ({
+      ...copyStatus("failed"),
+      error: { code: "source_unreachable", message: "m4 did not answer for 2 minutes" },
+    });
+    const opened = vi.fn();
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          onOpenDialog={opened}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(state.toasts).toEqual([
+      expect.objectContaining({
+        type: "error",
+        title: "Copy to M3 stopped",
+        description:
+          "m4 did not answer for 2 minutes. Open it to retry; files already copied are kept.",
+        timeout: 0,
+        actionProps: expect.objectContaining({ children: "Retry" }),
+      }),
+    ]);
+    (state.toasts[0] as { actionProps: { onClick: () => void } }).actionProps.onClick();
+    expect(opened).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("puts the next step on the Open button when the dialog can open", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    state.handlers.copyStatus = () => copyStatus("applied");
+    const opened = vi.fn();
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          onOpenDialog={opened}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(state.toasts).toEqual([
+      expect.objectContaining({
+        type: "success",
+        title: "Copy to M3 is done",
+        description: "Open it to finish setting it up.",
+        actionProps: expect.objectContaining({ children: "Open" }),
+      }),
+    ]);
   } finally {
     vi.useRealTimers();
   }

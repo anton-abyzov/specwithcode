@@ -75,9 +75,9 @@ import { copyNoticeWarnings, copyProblem, groupCopyNotices } from "./handoffCopy
 import { copyNeedsComparison, decideCopyClones } from "./handoffCopySnapshot";
 import {
   CopyCheckingStep,
-  CopyChoicesSummary,
   CopyResumeNote,
   CopyStepLine,
+  RunningCopyChoices,
 } from "./HandoffCopyGuide";
 import { useCopyStepView } from "./useCopyStepView";
 import { useCopyDraft } from "./useCopyDraft";
@@ -269,6 +269,7 @@ export function HandoffFolderCopy({
     existingDestination: pending?.existingDestination,
     scanStatus,
     machineName: targetLabel,
+    sourceName: sourceLabel,
     onBusyChange,
     onChoicesChange,
     onCloseLockChange,
@@ -830,10 +831,8 @@ export function HandoffFolderCopy({
       show(await pollCopy(machine, pending.operationId));
     });
 
-  /**
-   * Clone and skip clicks show at once and wait briefly, so several clicks re-compare
-   * once. The preview stays on screen while the destination compares; Copy waits for it.
-   */
+  // Clone and skip clicks show at once and wait briefly, so several clicks re-compare
+  // once. The preview stays on screen while the destination compares; Copy waits for it.
   const changeRepositories = (next: RepositoryChoices) => {
     repositoryDraft.current = next;
     setRepositoryChoices(next);
@@ -1410,29 +1409,20 @@ export function HandoffFolderCopy({
             notices={notices}
             next={next}
             working={workingLine({ stage, targetLabel, measured, copy, recompare })}
+            recompare={recompare}
             choices={
-              // Not on Review (its footer has Change setup) or after Apply: nothing to change.
-              pending &&
-              stage !== "setup" &&
-              stage !== "preview" &&
-              stage !== "done" &&
-              stage !== "undone" &&
-              (stage !== "failed" || failedBeforeApply) ? (
-                <CopyChoicesSummary
-                  pending={pending}
-                  copy={copy}
-                  sourceRoot={offer?.copyRoot ?? project.workspaceRoot}
-                  targetLabel={targetLabel}
-                  method={pending.method ?? method}
-                  // Before Apply only.
-                  onChange={
-                    (stage !== "copying" || !APPLYING.has(copy?.state ?? "")) && stage !== "moving"
-                      ? changeWhere
-                      : null
-                  }
-                  changeDisabled={closeLocked || (working && stage !== "scanning")}
-                />
-              ) : null
+              <RunningCopyChoices
+                pending={pending}
+                stage={stage}
+                failedBeforeApply={failedBeforeApply}
+                applying={APPLYING.has(copy?.state ?? "")}
+                copy={copy}
+                sourceRoot={offer?.copyRoot ?? project.workspaceRoot}
+                targetLabel={targetLabel}
+                method={pending?.method ?? method}
+                onChangeWhere={changeWhere}
+                changeDisabled={closeLocked || (working && stage !== "scanning")}
+              />
             }
             lastCopy={draft.lastCopy}
             onViewLast={draft.viewLastCopy}

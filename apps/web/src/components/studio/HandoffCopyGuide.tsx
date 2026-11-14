@@ -482,3 +482,37 @@ export function CopyNoticesBlock({
     </div>
   );
 }
+
+/**
+ * "Your choices" while a copy runs: not on setup, Review (its footer has Change setup) or
+ * after Apply. Changing them is offered only before Apply starts.
+ */
+export function RunningCopyChoices({
+  stage,
+  failedBeforeApply,
+  applying,
+  onChangeWhere,
+  ...summary
+}: Omit<Parameters<typeof CopyChoicesSummary>[0], "pending" | "onChange"> & {
+  readonly pending: PendingCopy | null;
+  readonly stage: string;
+  readonly failedBeforeApply: boolean;
+  /** Apply started: the copy's state is applying or applied. */
+  readonly applying: boolean;
+  readonly onChangeWhere: () => void;
+}) {
+  const { pending } = summary;
+  const shown =
+    pending !== null &&
+    !["setup", "preview", "done", "undone"].includes(stage) &&
+    (stage !== "failed" || failedBeforeApply);
+  if (!shown) return null;
+  const beforeApply = (stage !== "copying" || !applying) && stage !== "moving";
+  return (
+    <CopyChoicesSummary
+      {...summary}
+      pending={pending}
+      onChange={beforeApply ? onChangeWhere : null}
+    />
+  );
+}

@@ -15,6 +15,7 @@ import {
   setCopyActivity,
 } from "../../studio/folderCopyActivity";
 import { copiedProjectFolder } from "../../studio/folderCopy";
+import { movingProgressView } from "../../studio/copyProgress";
 import { CLOSABLE_WHILE_WORKING, type CopyStage } from "./handoffCopySteps";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 
@@ -103,6 +104,7 @@ export function useCopyReporting({
   existingDestination = false,
   scanStatus,
   machineName,
+  sourceName,
   onBusyChange,
   onChoicesChange,
   onCloseLockChange,
@@ -118,6 +120,8 @@ export function useCopyReporting({
   readonly existingDestination?: boolean | undefined;
   readonly scanStatus: FolderCopySourceStatus | null;
   readonly machineName: string;
+  /** The machine the folder is copied from, for the background progress's phase names. */
+  readonly sourceName?: string;
   readonly onBusyChange: (busy: boolean) => void;
   readonly onChoicesChange?:
     | ((choices: {
@@ -155,13 +159,29 @@ export function useCopyReporting({
   const activityKey = copyActivityKey(environmentId, projectId);
   useEffect(() => {
     if (!busy) return setCopyActivity(activityKey, null);
-    const fromCopy = copy ? copyActivityFromStatus(copy, machineName) : null;
-    const fromSource = scanStatus ? copyActivityFromSource(scanStatus, machineName) : null;
+    const fromCopy = copy
+      ? copyActivityFromStatus(copy, machineName, undefined, false, sourceName)
+      : null;
+    const fromSource = scanStatus
+      ? copyActivityFromSource(scanStatus, machineName, sourceName)
+      : null;
     const label = STAGE_ACTIVITY[stage];
     const activity =
+      // Comparing waits on the source reading files: its counts say more than "Comparing".
+      (stage === "planning" && fromSource && !fromSource.waiting ? fromSource : null) ??
       fromCopy ??
       (fromSource && !fromSource.waiting ? fromSource : null) ??
-      (label ? { machine: machineName, label, fraction: null, waiting: false } : null);
+      (label
+        ? {
+            machine: machineName,
+            label,
+            fraction: null,
+            waiting: false,
+            ...(stage === "moving" && sourceName
+              ? { progress: movingProgressView(machineName), source: sourceName }
+              : {}),
+          }
+        : null);
     // A move names its destination, so the sidebar shows one row while both copies exist.
     const destination =
       copy && machine && mode === "copy-and-move"
@@ -173,6 +193,17 @@ export function useCopyReporting({
         ? { ...activity, move: true, ...(destination ? { destination } : {}) }
         : activity,
     );
-  }, [activityKey, busy, copy, existingDestination, scanStatus, machineName, stage, mode, machine]);
+  }, [
+    activityKey,
+    busy,
+    copy,
+    existingDestination,
+    scanStatus,
+    machineName,
+    sourceName,
+    stage,
+    mode,
+    machine,
+  ]);
   return { busy, closeLocked };
 }

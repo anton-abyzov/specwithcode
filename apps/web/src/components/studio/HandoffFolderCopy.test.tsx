@@ -890,7 +890,9 @@ it("keeps live actions in the real dialog footer through measurement, preview, a
   await dialogClick("Copy to M3");
   // Measuring runs on the source: the dialog can close and the copy keeps going.
   dialogButton("Stop copy");
-  expect(document.querySelector('[data-slot="copy-measuring"]')?.textContent).toBe("Measuring…");
+  expect(document.querySelector('[data-slot="copy-measuring"]')?.textContent).toBe(
+    "Measuring the folder on M4…",
+  );
   expect(document.body.textContent).toContain(
     "You can close this window. We’ll notify you when it’s done.",
   );
@@ -922,8 +924,8 @@ it("keeps live actions in the real dialog footer through measurement, preview, a
       finishApply = () => resolve(copyStatus("approved"));
     });
   await dialogClick("Copy to M3");
-  expect(document.querySelector('[data-slot="copy-progress"]')?.textContent).toContain(
-    "Copying 50 B…",
+  expect(document.querySelector('[data-slot="copy-working"]')?.textContent).toBe(
+    "Starting to send to M3…",
   );
   expect(dialogButton("Stop copy").disabled).toBe(true);
   expect(
@@ -1333,10 +1335,15 @@ it("shows live measuring progress, then stops to choose and groups what is not c
   expect(container.textContent).not.toContain("What happens next");
   await click("Copy to M3");
   const measuring = () => container.querySelector('[data-slot="copy-measuring"]')?.textContent;
-  expect(measuring()).toBe("Measuring…");
+  expect(measuring()).toBe("Measuring the folder on M4…");
   expect(container.textContent).toContain("You can close this window");
   await waitPoll();
-  expect(measuring()).toBe("Measuring… 41,203 files, 1.2 GB");
+  expect(measuring()).toBe("Measuring the folder on M4…");
+  // Counts so far sit under the step; no total yet, so no percent.
+  expect(container.querySelector('[data-slot="copy-progress-counts"]')?.textContent).toBe(
+    "1.2 GB41,203 files",
+  );
+  expect(container.querySelector('[data-slot="copy-progress-percent"]')).toBeNull();
   state.handlers.copySourceStatus = () => ({
     state: "scanned",
     summary: skippedSummary,
@@ -1521,7 +1528,10 @@ it("keeps measuring when the dialog closes and resumes the same operation when r
     },
   });
   expect(container.querySelector('[data-slot="copy-measuring"]')?.textContent).toBe(
-    "Measuring… 7 files, 7.0 KB",
+    "Measuring the folder on M4…",
+  );
+  expect(container.querySelector('[data-slot="copy-progress-counts"]')?.textContent).toBe(
+    "7.0 KB7 files",
   );
   state.handlers.copySourceStatus = () => ({
     state: "scanned",
@@ -1649,9 +1659,10 @@ it("copies into an empty destination in one click without a preview", async () =
   expect(container.textContent).not.toContain("What happens next");
   const stages = watchStages();
   await click("Copy to M3");
-  expect(container.textContent).toContain(
-    "Copying 50 B…You can close this window. We’ll notify you when it’s done.",
+  expect(container.querySelector('[data-slot="copy-working"]')?.textContent).toBe(
+    "Starting to send to M3…",
   );
+  expect(container.textContent).toContain("You can close this window. We’ll notify you when it’s done.");
   expect(stepState()).toEqual(["Where:done", "Copy:current", "Done:next"]);
   await act(async () => finishApprove());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
