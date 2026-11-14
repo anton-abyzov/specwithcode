@@ -6,8 +6,8 @@ import { useStartCoordinator } from "./OrchestratorSwitcher";
 /**
  * Why the coordinator composer cannot send. A workers-only copy whose
  * coordinator runs on another machine also offers the way out: open that
- * coordinator, where work for this copy is started, or start a coordinator on
- * this copy through the switcher's own start action.
+ * coordinator, where work for this copy is started, or run the coordinator this
+ * copy kept from before again, through the switcher's own open action.
  */
 export function CoordinatorBlockedNotice({
   text,
@@ -48,7 +48,7 @@ export function CoordinatorBlockedNotice({
         ) : null}
         {here?.canStart ? (
           <Button variant="ghost" size="xs" onClick={() => void start(here.key)}>
-            Start a coordinator on {here.machine}
+            Run {here.machine}'s coordinator again
           </Button>
         ) : null}
       </div>

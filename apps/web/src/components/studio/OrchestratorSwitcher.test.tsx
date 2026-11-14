@@ -35,7 +35,7 @@ const copy = (
 const handlers = () => ({
   onView: vi.fn<(key: string) => void>(),
   onMove: vi.fn<(key: string) => void>(),
-  onStart: vi.fn<(key: string) => void>(),
+  onStart: vi.fn<(key: string) => Promise<boolean> | void>(),
   onAllowWorkers: vi.fn<() => void>(),
 });
 
@@ -88,7 +88,10 @@ it("switches the view only after its menu has closed", async () => {
 
 it("moves the coordinator only from its own item", async () => {
   const calls = handlers();
-  await renderSwitcher(calls);
+  await renderSwitcher({
+    ...calls,
+    copies: [copy("m4:p", "M4"), copy("minis:p", "Minis", "workers")],
+  });
   await act(async () => item("menuitem", "Move coordinator to Minis…")!.click());
   expect(calls.onMove).toHaveBeenCalledWith("minis:p");
   expect(calls.onView).not.toHaveBeenCalled();
@@ -106,12 +109,53 @@ it("offers the coordinator-only move only to copies that run workers", async () 
   expect(labels.some((label) => label?.startsWith("Sync to"))).toBe(false);
 });
 
-it("starts a coordinator on a ready workers-only copy", async () => {
+it("opens the coordinator a copy kept from before: runs it again, then shows it", async () => {
   const calls = handlers();
+  calls.onStart.mockResolvedValue(true);
   await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Start a coordinator on Minis")!.click());
+  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  // One action for that machine, never Move and Start side by side.
+  expect(labels).toContain("Open coordinator on Minis");
+  expect(labels).not.toContain("Move coordinator to Minis…");
+  expect(labels.some((label) => label?.startsWith("Start a coordinator"))).toBe(false);
+  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
   expect(calls.onStart).toHaveBeenCalledWith("minis:p");
+  expect(calls.onMove).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
+});
+
+it("stays on this machine when that coordinator did not start", async () => {
+  const calls = handlers();
+  calls.onStart.mockResolvedValue(false);
+  await renderSwitcher(calls);
+  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
+  expect(calls.onStart).toHaveBeenCalledWith("minis:p");
+  await act(async () => Promise.resolve());
   expect(calls.onView).not.toHaveBeenCalled();
+});
+
+it("offers nothing for a machine that already runs its own coordinator, but lists it to view", async () => {
+  const calls = handlers();
+  await renderSwitcher({
+    ...calls,
+    copies: [copy("m4:p", "M4"), copy("mini:p", "Mini"), copy("m1:p", "M1", "workers", true)],
+  });
+  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  expect(labels.filter((label) => label?.includes("Mini"))).toEqual([]);
+  expect(labels.filter((label) => label?.includes("M1"))).toEqual(["Open coordinator on M1"]);
+  expect(item("menuitemradio", "Mini")).toBeDefined();
+});
+
+it("moves when no kept coordinator can start there", async () => {
+  const calls = handlers();
+  // Never ran a coordinator there, or that machine's server cannot start one yet.
+  await renderSwitcher({
+    ...calls,
+    copies: [copy("m4:p", "M4"), copy("minis:p", "Minis", "workers", false)],
+  });
+  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  expect(labels).toContain("Move coordinator to Minis…");
+  expect(labels).not.toContain("Open coordinator on Minis");
 });
 
 it("opens thread migration as its own action, after the menu closes", async () => {
@@ -203,7 +247,7 @@ it("runs one coordinator start at a time across the switcher and the composer no
     { environmentId: "minis", id: "p", workspaceSettings: { logicalProject: { id: "atlas" } } },
   ] as unknown as EnvironmentProject[];
   const copies = [copy("minis:p", "Minis", "workers", true)];
-  const starts: Array<(key: string) => Promise<void>> = [];
+  const starts: Array<(key: string) => Promise<boolean>> = [];
   // Two buttons on one page, each with its own hook, as the switcher and the notice are.
   function Starter() {
     starts.push(useStartCoordinator(members, copies));
@@ -218,10 +262,10 @@ it("runs one coordinator start at a time across the switcher and the composer no
     ),
   );
   const first = starts[0]!("minis:p");
-  await starts[1]!("minis:p");
+  expect(await starts[1]!("minis:p")).toBe(false);
   expect(startCoordinator).toHaveBeenCalledTimes(1);
   finish({ _tag: "Success" });
-  await first;
+  expect(await first).toBe(true);
   // Once that start settles, another may run.
   await starts[1]!("minis:p");
   expect(startCoordinator).toHaveBeenCalledTimes(2);
@@ -275,8 +319,7 @@ it("names machines once and labels every group of actions", async () => {
   expect([...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)).toEqual(
     [
       "Copy to another machine…",
-      "Move coordinator to Minis…",
-      "Start a coordinator on Minis",
+      "Open coordinator on Minis",
       "Move running threads…M4 offline",
       "Leave this machine…",
       "Machine access settings",
