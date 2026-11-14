@@ -61,3 +61,49 @@ export function takeUnseenNotices(
   if (fresh.length === 0) return { fresh, seen };
   return { fresh, seen: [...seen, ...fresh.map((notice) => notice.id)].slice(-keep) };
 }
+
+/** Where seen notice ids are kept between reloads; localStorage in the app. */
+export interface SeenNoticeStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export const SEEN_NOTICES_KEY = "specwithcode:connect-device-notices-seen";
+
+/**
+ * Remembers which notices this device has shown, per machine. Storage keeps
+ * them across reloads; an in-memory copy keeps them when storage cannot be
+ * read or saved (private mode, quota), so a notice still shows once a session
+ * instead of on every poll.
+ */
+export function makeSeenNotices(storage: () => SeenNoticeStorage | null) {
+  const memory = new Map<string, ReadonlyArray<string>>();
+  const read = (): Record<string, ReadonlyArray<string>> => {
+    try {
+      const value: unknown = JSON.parse(storage()?.getItem(SEEN_NOTICES_KEY) ?? "{}");
+      return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, ReadonlyArray<string>>)
+        : {};
+    } catch {
+      return {};
+    }
+  };
+  return (
+    environmentId: string,
+    notices: ReadonlyArray<ConnectDevicesNotice>,
+  ): ReadonlyArray<ConnectDevicesNotice> => {
+    if (notices.length === 0) return [];
+    const all = read();
+    const stored = Array.isArray(all[environmentId]) ? all[environmentId] : [];
+    const before = [...new Set([...(memory.get(environmentId) ?? []), ...stored])];
+    const { fresh, seen } = takeUnseenNotices(before, notices);
+    if (fresh.length === 0) return fresh;
+    memory.set(environmentId, seen);
+    try {
+      storage()?.setItem(SEEN_NOTICES_KEY, JSON.stringify({ ...all, [environmentId]: seen }));
+    } catch {
+      // Kept in memory: shown again after a reload at most, never on every poll.
+    }
+    return fresh;
+  };
+}
