@@ -19,6 +19,7 @@ import {
   type ManifestHeader,
   isScanStopped,
   readManifestFile,
+  forEachLimited,
   scanFolder,
   selectEntries,
   writeManifest,
@@ -63,6 +64,7 @@ import {
   CHUNK_OK,
   CHUNK_UNKNOWN,
   type ChunkFrame,
+  MAX_BATCH_CHUNKS_LARGE,
   OPERATION_ID,
   sha256Hex,
 } from "./wire.ts";
@@ -185,6 +187,8 @@ interface ChunkLocation extends ChunkPlace {
 
 /** Other places kept per chunk, so one file changing does not fail its duplicates. */
 const MAX_CHUNK_ALTERNATES = 4;
+/** Chunk reads one batch runs at once. */
+const CHUNK_READ_CONCURRENCY = 8;
 
 interface Loaded {
   record: SourceOperationRecord;
@@ -647,6 +651,8 @@ export class SourceTransfers {
   hello(loaded: Loaded, environmentId: string) {
     return {
       version: 1,
+      // Chunks one batch may name; an older source omits it and takes MAX_BATCH_CHUNKS.
+      maxBatchChunks: MAX_BATCH_CHUNKS_LARGE,
       projectId: loaded.record.projectId,
       copyRoot: loaded.record.folder,
       projectRelativePath: loaded.record.projectRelativePath ?? ".",
@@ -1030,12 +1036,13 @@ export class SourceTransfers {
   async chunks(loaded: Loaded, hashes: ReadonlyArray<string>): Promise<Array<ChunkFrame>> {
     return this.snapshotRead(loaded, async () => {
       await this.ready(loaded);
-      const frames: Array<ChunkFrame> = [];
-      for (const sha256 of hashes) {
+      // Large batches of small chunks: read several at once, answer in the asked order.
+      const frames: Array<ChunkFrame> = Array.from({ length: hashes.length });
+      await forEachLimited(hashes, CHUNK_READ_CONCURRENCY, async (sha256, at) => {
         const location = loaded.chunks!.get(sha256);
         if (!location) {
-          frames.push({ sha256, status: CHUNK_UNKNOWN, data: Buffer.alloc(0) });
-          continue;
+          frames[at] = { sha256, status: CHUNK_UNKNOWN, data: Buffer.alloc(0) };
+          return;
         }
         let found: Buffer | null = null;
         // A file that changed since hashing may share the chunk with one that did not.
@@ -1046,12 +1053,10 @@ export class SourceTransfers {
             break;
           }
         }
-        frames.push(
-          found
-            ? { sha256, status: CHUNK_OK, data: found }
-            : { sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) },
-        );
-      }
+        frames[at] = found
+          ? { sha256, status: CHUNK_OK, data: found }
+          : { sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) };
+      });
       return frames;
     });
   }

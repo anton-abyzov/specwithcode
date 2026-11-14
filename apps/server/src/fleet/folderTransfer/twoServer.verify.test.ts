@@ -17,6 +17,7 @@ import { folderCopyAllConflictsKey } from "@specweave-studio/contracts";
 import { CopyError, DestinationCopies, type DestinationRecord } from "./destinationService.ts";
 import { git, makeUmbrella, write, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import { readManifestFile } from "./manifest.ts";
+import { zstdAvailable } from "./wire.ts";
 import { stagedPath } from "./pullWorker.ts";
 import { repoRowId } from "./reconcile.ts";
 import { SourceTransfers, type SourceOperationRecord } from "./sourceService.ts";
@@ -74,7 +75,13 @@ function network(onChunks?: (count: number) => Promise<void> | void) {
   return { fetch: wrapped, seen };
 }
 
-const fast = { allowLoopback: true, sleep: async () => undefined, pollMs: 20 } as const;
+// Small batches, so a restart can land between them.
+const fast = {
+  allowLoopback: true,
+  sleep: async () => undefined,
+  pollMs: 20,
+  maxBatchChunks: 32,
+} as const;
 
 async function settle(
   copies: DestinationCopies,
@@ -486,6 +493,33 @@ describe("folder copy between two isolated sides", () => {
       olderSource: (outdated as CopyError).message,
     });
     await Promise.all([copies.close(), small.close(), older.close()]);
+  }, 120_000);
+  it("pulls with the larger batches and zstd a newer source offers", async () => {
+    const folder = target("large-batches");
+    // No cap here: the batch size comes from the source's hello.
+    const { maxBatchChunks: _cap, ...uncapped } = fast;
+    const copies = new DestinationCopies(destinationState("large-batches"), {
+      ...uncapped,
+      register: async () => "project-large-batches",
+    });
+    const operation = await offer();
+    const before = served.requests.length;
+    await copies.start(startInput(operation.operationId, operation.token, folder));
+    expect((await copies.read(operation.operationId))?.sourceBatchChunks).toBe(1024);
+    await settle(copies, operation.operationId, ["previewed"]);
+    await copies.approve(operation.operationId);
+    const applied = await settle(copies, operation.operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+    const batches = served.requests
+      .slice(before)
+      .filter((request) => request.action === "chunks")
+      .map((request) => JSON.parse(request.body) as { chunks: string[]; encodings?: string[] });
+    const total = batches.reduce((sum, batch) => sum + batch.chunks.length, 0);
+    // Every needed chunk fits in one request when there are no more than 1024 of them.
+    expect(batches.length).toBe(Math.ceil(total / 1024));
+    if (zstdAvailable())
+      expect(batches.every((batch) => batch.encodings?.[0] === "zstd")).toBe(true);
+    await copies.close();
   }, 120_000);
   it("sends a ticked secret file privately and never records its value", async () => {
     const canary = `SWC_CANARY_${NodeCrypto.randomBytes(12).toString("hex")}`;

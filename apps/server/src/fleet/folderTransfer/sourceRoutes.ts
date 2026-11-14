@@ -3,9 +3,10 @@ import { SourceTransferError, type SourceTransfers } from "./sourceService.ts";
 import {
   encodeFrames,
   FOLDER_TRANSFER_PREFIX,
-  MAX_BATCH_CHUNKS,
+  MAX_BATCH_CHUNKS_LARGE,
   MAX_REQUEST_BYTES,
   SHA256,
+  zstdAvailable,
 } from "./wire.ts";
 
 export interface RawRequest {
@@ -90,13 +91,17 @@ export async function handleSourceRequest(
           : json(202, { state: result.record.state, progress: result.record.progress });
       }
       case "POST chunks": {
-        const hashes = stringList((await body()).chunks, MAX_BATCH_CHUNKS);
+        const input = await body();
+        const hashes = stringList(input.chunks, MAX_BATCH_CHUNKS_LARGE);
         if (hashes.some((hash) => !SHA256.test(hash)))
           throw new SourceTransferError(400, "invalid_request");
+        // A destination that reads zstd says so; an older one never asks and gets gzip.
+        const zstd =
+          Array.isArray(input.encodings) && input.encodings.includes("zstd") && zstdAvailable();
         return {
           status: 200,
           contentType: "application/x-swc-chunks",
-          body: encodeFrames(await transfers.chunks(loaded, hashes)),
+          body: encodeFrames(await transfers.chunks(loaded, hashes), zstd ? "zstd" : "gzip"),
         };
       }
       case "POST stat":
