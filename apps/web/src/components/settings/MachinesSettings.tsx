@@ -466,7 +466,7 @@ interface MachineHere {
   readonly seen: MachineSeen;
 }
 
-/** The machine a copy is on, as "ministorm (This app can see it)", so its dot is never the only clue. */
+/** The machine a copy is on, as "ministorm (Online)", so its dot is never the only clue. */
 function spokenMachine(machine: { name: string; seen: MachineSeen }): string {
   return `${machine.name} (${machine.seen.text})`;
 }
@@ -524,13 +524,7 @@ function MachineChip({
  * folder with the home folder as "~" and the end kept. Pressing it lists every
  * copy with its machine, status, role and full folder.
  */
-function ProjectWhere({
-  project,
-  here,
-}: {
-  project: MachineProject;
-  here: MachineHere;
-}) {
+function ProjectWhere({ project, here }: { project: MachineProject; here: MachineHere }) {
   const tx = useTx();
   const identities = useMachineIdentities();
   const shown = project.elsewhere.slice(0, MAX_MACHINE_CHIPS);

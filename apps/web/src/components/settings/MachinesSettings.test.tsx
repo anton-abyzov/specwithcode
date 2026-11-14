@@ -441,9 +441,9 @@ describe("Settings > Machines", () => {
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain("M4MAX");
     expect(html).toContain("This machine");
-    expect(html).toContain("This app can see it");
+    expect(html).toContain("Online");
     expect(html).toContain("not open in this window");
-    expect(html).not.toContain("This app cannot see it");
+    expect(html).not.toContain("Not connected");
     expect(html).toContain("This machine can start work on MacBook Pro");
     expect(html).not.toContain('href="/settings/machines"');
     // One sentence per direction with its one button; the rest sits under ⋯.
@@ -529,7 +529,7 @@ describe("Settings > Machines", () => {
     expect(html).toContain('~/Projects/github/</span><span class="shrink-0">specweave-umb');
     expect(html).toContain(">+1<");
     expect(html).toContain(
-      "Umbrella: Also on MacBook Pro (This app can see it); ministorm (This app can see it); M1Max (This app cannot see it). Folder on M4MAX: /Users/you/Projects/github/specweave-umb. Show every copy",
+      "Umbrella: Also on MacBook Pro (Online); ministorm (Online); M1Max (Not connected). Folder on M4MAX: /Users/you/Projects/github/specweave-umb. Show every copy",
     );
     expect(html).not.toContain("Also on MacBook Pro, ministorm");
   });

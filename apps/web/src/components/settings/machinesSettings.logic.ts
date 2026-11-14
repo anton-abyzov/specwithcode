@@ -261,7 +261,8 @@ function leadCoordinator(
         sharedProjectRole(candidate.workspaceSettings?.coordinatorBinding) === "coordinator",
     )
     .toSorted(
-      (a, b) => epoch(b) - epoch(a) || (copyKey(a) < copyKey(b) ? -1 : copyKey(a) > copyKey(b) ? 1 : 0),
+      (a, b) =>
+        epoch(b) - epoch(a) || (copyKey(a) < copyKey(b) ? -1 : copyKey(a) > copyKey(b) ? 1 : 0),
     );
   return lead ?? null;
 }
@@ -599,9 +600,9 @@ export function buildMachineRows(input: {
     if (environmentId === input.primaryEnvironmentId)
       return { state: "this-machine", text: "This machine" };
     const environment = environmentsById.get(environmentId);
-    if (!environment) return { state: "not-connected", text: "This app cannot see it" };
+    if (!environment) return { state: "not-connected", text: "Not connected" };
     return environment.phase === "connected"
-      ? { state: "connected", text: "This app can see it" }
+      ? { state: "connected", text: "Online" }
       : { state: "elsewhere", text: environment.statusText };
   };
   const machineOf = (environmentId: EnvironmentId) => ({
