@@ -676,12 +676,19 @@ it.each([
     pointer({ replaceAll: true, secrets: { included: true, out: [] } });
     state.handlers.copyStatus = () =>
       previewed([row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })]);
+    // The click staged .env on the source while a permitted window had the dialog.
     state.handlers.copySourceStatus = () => ({
       state: "ready",
       summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
       progress: null,
       error: null,
+      secrets: { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" },
     });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
     const inputs: unknown[] = [];
     state.handlers.copyApprove = (request) => {
       inputs.push((request as { input: unknown }).input);
@@ -689,6 +696,8 @@ it.each([
     };
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // A blocked window takes them off first: an older destination ignores withoutSecrets.
+    expect(sent).toEqual(access === "denied" ? [[]] : []);
     expect(inputs[0]).toEqual(
       access === "denied"
         ? { operationId: expect.any(String), withoutSecrets: true }

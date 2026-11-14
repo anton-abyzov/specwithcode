@@ -922,7 +922,7 @@ export function HandoffFolderCopy({
     const operationId = saved.operationId;
     if (sourceChanged)
       throw new Error("The source changed. Measure and compare again before copying.");
-    if (!secretsSent) await sendTickedSecrets(operationId);
+    if (!secretsSent || secretsGate.blocked) await sendTickedSecrets(operationId);
     setStage("copying");
     try {
       const input = approveInput(

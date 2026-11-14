@@ -365,7 +365,10 @@ export function HandoffFolderCopyWatcher({
         }
         return "ask" as const;
       }
-      if (!saved.replaceAll && !(await stageSecrets(previewed))) return "ask" as const;
+      // Replace all sent its secrets when clicked; a blocked window still takes staged ones
+      // off, since an older destination ignores the approval's withoutSecrets.
+      const stage = !saved.replaceAll || secretsBlockedNow(environmentId);
+      if (stage && !(await stageSecrets(previewed))) return "ask" as const;
       if (stopped || !unchanged(saved)) return "ask" as const;
       // Approved without secrets when this window may not send them or the choice leaves them.
       const input = approveInput(operationId, environmentId, pendingSecrets(saved).included);
