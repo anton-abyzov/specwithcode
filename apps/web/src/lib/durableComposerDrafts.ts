@@ -513,8 +513,9 @@ export function createDurableDraftSync(options: {
   };
 
   const restore: DurableDraftSync["restore"] = async ({ target, local, apply }) => {
-    const record = await options.transport.get(target.environmentId, target.key);
     const state = stateFor(target.key, target.environmentId);
+    const generation = state.generation;
+    const record = await options.transport.get(target.environmentId, target.key);
     if (state.fromJournal) {
       state.fromJournal = false;
       const journaledAt = state.journaled?.editedAt ?? 0;
@@ -526,6 +527,8 @@ export function createDurableDraftSync(options: {
         return record === null ? "none" : "kept";
       }
     }
+    // An edit or send made while the host answered wins, even one already saved.
+    if (state.generation !== generation) return record === null ? "none" : "kept";
     const showedHostCopy = showsHostCopy(state, local());
     state.showsSyncedJournal = false;
     if (record === null) {
@@ -569,8 +572,10 @@ export function createDurableDraftSync(options: {
    */
   function showsHostCopy(state: KeyState, current: DurableDraftSnapshot): boolean {
     if (state.pending !== null || state.holds > 0 || durableDraftIsEmpty(current)) return false;
-    if (state.showsSyncedJournal) return true;
-    return state.sent !== null && signatureOf(keepable(current)) === state.sent;
+    if (state.showsSyncedJournal) return signatureOf(keepable(current)) === signatureOf(current);
+    // The whole composer, not just what the host can keep: a file too large to
+    // keep exists only here, so the composer is not the host's copy.
+    return state.sent !== null && signatureOf(current) === state.sent;
   }
 
   function clearToHost(

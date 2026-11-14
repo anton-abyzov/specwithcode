@@ -543,6 +543,55 @@ describe("durable composer drafts", () => {
       expect(m5.composer()).toEqual(text(""));
     });
 
+    it("a restore an edit overtook never clears that edit, even once it is saved", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5"));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      let answer!: (value: null) => void;
+      host.transport.get = () => new Promise((resolve) => (answer = resolve));
+      const restoring = m5.sync.restore(m5.input);
+      await m5.type(text("typed during the restore", [image("mine", [4])]));
+      answer(null);
+      await restoring;
+      expect(m5.composer().prompt).toBe("typed during the restore");
+      expect(host.drafts.get(KEY)?.prompt).toBe("typed during the restore");
+    });
+
+    it("a failed read of the bytes never clears the composer", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("first", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.type(text("first, changed", shots()));
+      host.transport.get = async () => {
+        throw new Error("No read access to this machine's drafts.");
+      };
+      await expect(m5.sync.refresh(m5.input)).rejects.toThrow("No read access");
+      expect(m5.composer().prompt).toBe("first");
+      expect(m5.composer().attachments).toHaveLength(3);
+    });
+
+    it("a file too large for the host keeps the composer out of the host's hands", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("text only"));
+      await m5.sync.restore(m5.input);
+      const big = {
+        ...image("big"),
+        sizeBytes: 26 * 1024 * 1024,
+        file: new Blob([new Uint8Array(26 * 1024 * 1024)]),
+      };
+      await m5.type(text("text only", [big]));
+      await m4.send();
+      expect(await m5.sync.refresh(m5.input)).toBe("kept");
+      expect(m5.composer().attachments.map((attachment) => attachment.id)).toEqual(["big"]);
+    });
+
     it("an unreachable host does not stop a send", async () => {
       const host = makeHost();
       const m4 = makeWindow(host);

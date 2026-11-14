@@ -82,8 +82,9 @@ let editLog: Record<string, DurableDraftEdit> | null = null;
 export const durableComposerDrafts = createDurableDraftSync({
   transport: {
     get: async (environmentId, key) => {
+      // No read access is "could not look", never "no draft": null would clear the composer.
       if (!readEnvironmentScope(environmentId as EnvironmentId, AuthOrchestrationReadScope)) {
-        return null;
+        throw new Error("No read access to this machine's drafts.");
       }
       const result = await runAtomCommand(
         appAtomRegistry,
