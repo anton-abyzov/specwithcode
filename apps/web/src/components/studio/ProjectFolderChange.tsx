@@ -227,8 +227,11 @@ export function ProjectFolderChange({
   useWorktrees = null,
   onUseWorktreesChange,
   embedded = false,
+  members,
 }: {
   project: EnvironmentProject;
+  /** Every copy the sidebar groups as this project, so unlinked copies list their folders too. */
+  members?: readonly EnvironmentProject[] | undefined;
   disabled: boolean;
   /** Shown under the controls, which stay disabled, while set (unsaved edits elsewhere). */
   blockedReason?: string | null;
@@ -386,6 +389,7 @@ export function ProjectFolderChange({
             </div>
             <ProjectFolderCopies
               project={project}
+              members={members}
               disabled={locked}
               renderChange={(copy, done) => (
                 <ProjectFolderChange project={copy} disabled={disabled} embedded onChanged={done} />

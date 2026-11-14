@@ -7,18 +7,32 @@ import { useMachineNickname } from "../../studio/machineNickname";
 import { useProjectFolderHealth } from "../../studio/useProjectFolderHealth";
 import { ProjectLocation } from "./ProjectLocation";
 
-/** The project's copies on other machines: the same logical project, never matched by path. */
+const copyKey = (item: EnvironmentProject) => `${item.environmentId}:${item.id}`;
+
+/**
+ * The project's copies on other machines: the same logical project, plus the copies the
+ * sidebar shows as this one project (`members`, grouped by repository even when unlinked).
+ * Never matched by path.
+ */
 export function otherProjectCopies(
   project: EnvironmentProject,
   projects: ReadonlyArray<EnvironmentProject>,
+  members: ReadonlyArray<EnvironmentProject> = [],
 ): EnvironmentProject[] {
   const logicalId = project.workspaceSettings?.logicalProject?.id;
-  if (!logicalId) return [];
-  return projects.filter(
-    (item) =>
-      item.workspaceSettings?.logicalProject?.id === logicalId &&
-      !(item.environmentId === project.environmentId && item.id === project.id),
-  );
+  const self = copyKey(project);
+  const memberKeys = new Set(members.map(copyKey));
+  const seen = new Set<string>([self]);
+  const copies: EnvironmentProject[] = [];
+  for (const item of [...projects, ...members]) {
+    const key = copyKey(item);
+    if (seen.has(key)) continue;
+    const linked = Boolean(logicalId) && item.workspaceSettings?.logicalProject?.id === logicalId;
+    if (!linked && !memberKeys.has(key)) continue;
+    seen.add(key);
+    copies.push(item);
+  }
+  return copies;
 }
 
 /**
@@ -28,15 +42,18 @@ export function otherProjectCopies(
  */
 export function ProjectFolderCopies({
   project,
+  members,
   disabled,
   renderChange,
 }: {
   readonly project: EnvironmentProject;
+  /** Every copy the sidebar groups as this project, this one included. */
+  readonly members?: ReadonlyArray<EnvironmentProject> | undefined;
   readonly disabled: boolean;
   /** The folder check and change, run against the copy's own machine. */
   readonly renderChange: (copy: EnvironmentProject, done: () => void) => ReactNode;
 }) {
-  const copies = otherProjectCopies(project, useProjects());
+  const copies = otherProjectCopies(project, useProjects(), members);
   if (copies.length === 0) return null;
   return (
     <ul className="project-folder-copies" aria-label="This project on other machines">
