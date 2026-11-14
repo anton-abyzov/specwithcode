@@ -1564,32 +1564,25 @@ const make = Effect.gen(function* () {
    */
   const openMessageQuestions = (threadId: ThreadId) =>
     threadManagement
-      .getThreadRecords(threadId, ["runtimeRequests", "turnItems"], {
+      // Only the cards still waiting are read, never the thread's answered history.
+      .getThreadRecords(threadId, ["turnItems"], {
         turnItemTypes: ["user_input_request"],
+        turnItemStatuses: ["waiting"],
         messageRoles: [],
       })
       .pipe(
         Effect.map((records) =>
-          records.runtimeRequests.flatMap((request) => {
-            if (
-              request.status !== "pending" ||
-              request.kind !== "user_input" ||
-              request.responseCapability.type !== "message"
-            )
-              return [];
-            const item = records.turnItems.find(
-              (candidate) =>
-                candidate.type === "user_input_request" && candidate.requestId === request.id,
-            );
-            const first = item?.type === "user_input_request" ? item.questions[0] : undefined;
-            return [
-              {
-                requestId: request.id,
-                header: first?.header ?? "Question",
-                question: (first?.question ?? "").slice(0, 240),
-              },
-            ];
-          }),
+          records.turnItems.flatMap((item) =>
+            item.type === "user_input_request" && item.responseMode === "message"
+              ? [
+                  {
+                    requestId: item.requestId,
+                    header: item.questions[0]?.header ?? "Question",
+                    question: (item.questions[0]?.question ?? "").slice(0, 240),
+                  },
+                ]
+              : [],
+          ),
         ),
         Effect.mapError((error) =>
           failure("orchestration_error", `Unable to read questions: ${errorMessage(error)}`),
@@ -3831,19 +3824,7 @@ const make = Effect.gen(function* () {
         if (squashed !== null)
           return yield* failure("invalid_request", squashedTextMessage(squashed));
 
-        // A message that answers a question closes its card; check them before delivering.
         const answers = [...new Set(input.answersRequestIds ?? [])];
-        if (answers.length > 0) {
-          const open = new Set(
-            (yield* openMessageQuestions(input.threadId)).map((question) => question.requestId),
-          );
-          const unknown = answers.filter((requestId) => !open.has(requestId));
-          if (unknown.length > 0)
-            return yield* failure(
-              "invalid_request",
-              `answersRequestIds names questions that are not open in thread ${input.threadId}: ${unknown.join(", ")}. List them with studio_pending_request_list.`,
-            );
-        }
 
         const mode = input.mode ?? "auto";
         // A forwarded message has one delivery per target, however often it is retried.
@@ -3886,9 +3867,23 @@ const make = Effect.gen(function* () {
             ),
           );
         // The message carries the answer, so its cards close without a second reply.
-        // A card the person answered meanwhile is already closed; that is not a failure.
-        for (const requestId of answers)
-          yield* threadManagement
+        // An id that is no longer open (answered meanwhile, closed by an earlier try of
+        // this send, or never asked) is reported, not refused: the message is delivered
+        // once and a retry still closes whatever is left open.
+        const before =
+          answers.length > 0 || (parent !== undefined && target.thread.id !== parent.thread.id)
+            ? yield* openMessageQuestions(input.threadId).pipe(
+                Effect.orElseSucceed(() => [] as const),
+              )
+            : [];
+        const openIds = new Set(before.map((question) => question.requestId));
+        const notOpen = answers.filter((requestId) => !openIds.has(requestId));
+        const closed = new Set<string>();
+        // A message held in the queue has not reached the thread, so its cards stay open.
+        const delivered = !(result.run.status === "queued" && result.run.queueHeld === true);
+        for (const requestId of delivered ? answers : []) {
+          if (!openIds.has(requestId)) continue;
+          const dismissed = yield* threadManagement
             .dispatch({
               type: "thread.user-input.dismiss",
               commandId: stableCommandId({
@@ -3899,14 +3894,27 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
               requestId,
             })
-            .pipe(Effect.ignore);
+            .pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+          if (dismissed) closed.add(requestId);
+        }
         // Whatever is still open keeps the thread under Needs you; say so to the sender.
         const openQuestions =
           parent !== undefined && target.thread.id !== parent.thread.id
-            ? yield* openMessageQuestions(input.threadId).pipe(
-                Effect.orElseSucceed(() => [] as const),
-              )
+            ? before.filter((question) => !closed.has(question.requestId))
             : [];
+        const answerNotice =
+          notOpen.length > 0
+            ? `Not open in this thread, so nothing was closed for: ${notOpen.join(", ")}.`
+            : undefined;
+        const heldReport = threadSendHeldQueueReport({
+          run: result.run,
+          runs: result.projection.runs,
+          releasedHeldMessages: result.releasedHeldRuns ?? 0,
+        });
+        const notice = [heldReport.notice, answerNotice].filter(Boolean).join(" ");
         return {
           threadId: input.threadId,
           threadLink: formatStudioThreadLink(input.threadId, target.thread.title || "thread"),
@@ -3915,11 +3923,8 @@ const make = Effect.gen(function* () {
           status: result.run.status,
           delivery: result.delivery,
           ...(openQuestions.length > 0 ? { openQuestions } : {}),
-          ...threadSendHeldQueueReport({
-            run: result.run,
-            runs: result.projection.runs,
-            releasedHeldMessages: result.releasedHeldRuns ?? 0,
-          }),
+          ...heldReport,
+          ...(notice === "" ? {} : { notice }),
         } satisfies OrchestratorMcpThreadSendResult;
       }),
     forwardedMessageText: (scope, messageId) =>
