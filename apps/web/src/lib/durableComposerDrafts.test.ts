@@ -616,6 +616,28 @@ describe("durable composer drafts", () => {
       expect(m5.composer()).toEqual(text(""));
     });
 
+    it("a send right after returning does not trust the closed composer's pending check", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      let open = true;
+      const answers: Array<(value: null) => void> = [];
+      host.transport.peek = () => new Promise((resolve) => answers.push(resolve));
+      const closing = { ...m5.input, apply: () => {}, active: () => open };
+      void m5.sync.refresh(closing);
+      open = false;
+      // Back, and Send at once: the old check has not answered yet.
+      const sending = m5.sync.sentElsewhere(m5.input);
+      answers[0]!(null);
+      await vi.waitFor(() => expect(answers).toHaveLength(2));
+      answers[1]!(null);
+      expect(await sending).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
     it("an unreachable host does not stop a send", async () => {
       const host = makeHost();
       const m4 = makeWindow(host);

@@ -190,7 +190,10 @@ interface KeyState {
   /** Counts edits and sends, so a host check that an edit overtook is dropped. */
   generation: number;
   /** A check against the host that is still running. */
-  refreshing: Promise<DurableDraftRefresh> | null;
+  refreshing: {
+    readonly input: Parameters<DurableDraftSync["refresh"]>[0];
+    readonly result: Promise<DurableDraftRefresh>;
+  } | null;
 }
 
 /**
@@ -642,16 +645,24 @@ export function createDurableDraftSync(options: {
     return "replaced";
   };
 
-  const refresh: DurableDraftSync["refresh"] = (input) => {
+  const refresh: DurableDraftSync["refresh"] = async (input) => {
     const key = input.target.key;
     const state = keys.get(key);
-    if (!state || !showsHostCopy(state, input.local())) return Promise.resolve("kept");
-    if (state.refreshing) return state.refreshing;
-    const running = check(key, state, input).finally(() => {
+    if (!state) return "kept";
+    // Join a check for this same composer; one started for a composer that has
+    // closed since may answer "kept" without looking, so wait it out and check again.
+    while (state.refreshing) {
+      const running = state.refreshing;
+      if (running.input === input) return running.result;
+      await running.result.catch(() => undefined);
       if (state.refreshing === running) state.refreshing = null;
+    }
+    if (!showsHostCopy(state, input.local())) return "kept";
+    const result = check(key, state, input).finally(() => {
+      if (state.refreshing?.result === result) state.refreshing = null;
     });
-    state.refreshing = running;
-    return running;
+    state.refreshing = { input, result };
+    return result;
   };
 
   const sentElsewhere: DurableDraftSync["sentElsewhere"] = async (input) => {
