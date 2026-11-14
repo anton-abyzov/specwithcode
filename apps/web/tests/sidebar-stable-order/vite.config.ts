@@ -30,5 +30,8 @@ export default defineConfig({
     target: "esnext",
     outDir: "../../../../.artifacts/sidebar-stable-order/site",
     emptyOutDir: true,
+    // Code the sidebar imports but never runs here may name a hook the mocks lack:
+    // it resolves to undefined instead of failing the build. Mock what renders.
+    rollupOptions: { shimMissingExports: true },
   },
 });

@@ -188,6 +188,11 @@ export const useAideEnabled = () => true;
 export const useProjects = () => [];
 export const useEnvironmentsWithScope = () => ({ environments: [] });
 export const useEnvironmentScope = () => true;
+export const useEnvironment = () => null;
+export const useProject = () => null;
+export const useEnvironmentSettings = () => null;
+export const mergeEnvironmentSettings = <T,>(settings: T) => settings;
+export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE = "Settings are unavailable";
 export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<never> = [];
 // Newer settings code reads machine atoms from it; the fixture has none to give.
 export const serverEnvironment = new Proxy(
