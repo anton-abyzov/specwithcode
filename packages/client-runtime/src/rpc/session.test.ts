@@ -1085,7 +1085,7 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
-  it.effect("tolerates two missed pong windows before closing the session", () =>
+  it.effect("closes a remote session after about 30 seconds of silence", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
@@ -1097,13 +1097,13 @@ describe("RpcSessionFactory", () => {
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
 
-      yield* TestClock.adjust("15 seconds");
+      // Twenty seconds closed it before frames counted as proof of life.
+      yield* TestClock.adjust("25 seconds");
       expect(closedFiber.pollUnsafe()).toBeUndefined();
-      expect(socket.sent.map((message) => decodeJson(message)).filter(isPing)).toEqual([
-        { _tag: "Ping" },
-        { _tag: "Ping" },
-        { _tag: "Ping" },
-      ]);
+      // The server still gets every ping, and the pongs added for it are not
+      // traffic from the server.
+      expect(socket.sent.map((message) => decodeJson(message)).filter(isPing)).toHaveLength(5);
+      expect(yield* session.lastInboundAt!).toBe(0);
 
       yield* TestClock.adjust("5 seconds");
       const error = yield* Fiber.join(closedFiber);
@@ -1175,7 +1175,7 @@ describe("RpcSessionFactory", () => {
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
 
-      // A remote session would be closed after 20 seconds of this.
+      // A remote session would be closed after 30 seconds of this.
       yield* TestClock.adjust("55 seconds");
       expect(closedFiber.pollUnsafe()).toBeUndefined();
       // The server still gets every ping, and the pongs added for it are not
@@ -1192,7 +1192,9 @@ describe("RpcSessionFactory", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps the stock ping timeout for a remote server while frames arrive", () =>
+  // A remote machine short of memory answers slowly, with its Pong behind the
+  // replies. Dropping it costs it a reconnect on top of the load it has.
+  it.effect("keeps a remote socket alive while frames arrive without a pong", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
@@ -1204,12 +1206,25 @@ describe("RpcSessionFactory", () => {
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
 
-      for (let second = 0; second < 18; second += 2) {
+      // Two minutes of config updates and never a pong.
+      for (let second = 0; second < 120; second += 2) {
         yield* TestClock.adjust("2 seconds");
         yield* completeInitialConfig(socket);
       }
       expect(closedFiber.pollUnsafe()).toBeUndefined();
-      yield* TestClock.adjust("2 seconds");
+      expect(yield* session.lastInboundAt!).toBe(120_000);
+
+      // A frame every 12 seconds, slower than two ping windows, still holds it.
+      for (let second = 0; second < 60; second += 12) {
+        yield* TestClock.adjust("12 seconds");
+        yield* completeInitialConfig(socket);
+      }
+      expect(closedFiber.pollUnsafe()).toBeUndefined();
+
+      // Then about half a minute of silence closes it.
+      yield* TestClock.adjust("25 seconds");
+      expect(closedFiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("10 seconds");
       const error = yield* Fiber.join(closedFiber);
       expect(error).toMatchObject({
         reason: "transport",

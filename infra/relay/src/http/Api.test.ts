@@ -60,6 +60,7 @@ import {
   withoutCapturedParentSpan,
 } from "./Api.ts";
 import * as RelayHttpApi from "./Api.ts";
+import { ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS } from "../environments/EnvironmentConnector.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
@@ -1475,6 +1476,16 @@ describe("relay request tracing", () => {
       expect(spans[0]?.attributes.get("url.path")).toBe("/v1/mobile/devices");
     }),
   );
+
+  // The probe of a machine's endpoint starts after the link lookup and proof
+  // checks. If it may run as long as the request deadline, the deadline fires
+  // first and a slow machine comes back as a bare 504 that clients read as the
+  // relay being down, instead of a timed-out connect or an offline status.
+  it("leaves the endpoint probe room to answer inside the request deadline", () => {
+    expect(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS).toBeLessThanOrEqual(
+      RELAY_REQUEST_DEADLINE_MS - 2_000,
+    );
+  });
 
   it.effect("fails hung requests with a 504 before the client's 10s abort", () =>
     Effect.gen(function* () {

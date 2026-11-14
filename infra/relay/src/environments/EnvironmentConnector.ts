@@ -128,7 +128,16 @@ export type EnvironmentConnectorError =
   | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
   | ManagedEndpointAllocations.ManagedEndpointAllocationPersistenceError;
 
-export const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * How long the relay waits for the machine's own endpoint to answer a connect
+ * or status probe. It must stay well under the relay's 9 second request
+ * deadline (`RELAY_REQUEST_DEADLINE_MS` in `http/Api.ts`): the probe starts
+ * after the link lookup and proof checks, so at 10 seconds the deadline always
+ * fired first and a machine that was only slow came back as an unexplained 504,
+ * which clients read as the relay being down. Under the deadline, a slow
+ * machine gets its own answer: a timed-out connect, or an offline status.
+ */
+export const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 7_000;
 const ENVIRONMENT_HEALTH_CLOCK_SKEW_MILLIS = 60 * 1_000;
 
 export class EnvironmentConnector extends Context.Service<
