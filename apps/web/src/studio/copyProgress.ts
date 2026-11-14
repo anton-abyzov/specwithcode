@@ -162,10 +162,12 @@ export function statusProgressView(
         ...running,
         phase: "send",
         step: `Checking files on ${targetLabel}`,
-        fraction: progress
-          ? (ratio(progress.filesDone, progress.filesTotal) ??
-            ratio(progress.bytesDone, progress.bytesTotal))
-          : null,
+        // Until the check reports its own counts, the send's finished counts would read 100%.
+        fraction:
+          progress?.phase === "verify"
+            ? (ratio(progress.filesDone, progress.filesTotal) ??
+              ratio(progress.bytesDone, progress.bytesTotal))
+            : null,
         ...counts,
         rateKey: "send:verify",
       };
@@ -193,17 +195,25 @@ export function statusProgressView(
         outcome: finished ? "finished" : "running",
       };
     }
-    case "failed":
+    case "failed": {
+      const phase = failedPhase(status);
+      // How far the stopped phase got, when its counts belong to it: the red fill ends there.
+      const reached =
+        phase === "send" && progress?.phase === "files"
+          ? (ratio(progress.bytesDone, progress.bytesTotal) ??
+            ratio(progress.filesDone, progress.filesTotal))
+          : null;
       return {
-        phase: failedPhase(status),
+        phase,
         step: "Stopped",
-        fraction: null,
+        fraction: reached,
         bytes: null,
         files: null,
         bytesLocal: 0,
         rateKey: null,
         outcome: "failed",
       };
+    }
     default:
       return null;
   }
@@ -303,6 +313,11 @@ export interface RateSample {
 export const RATE_WINDOW_MS = 12_000;
 /** Show no speed or time left before this much of a step has been watched. */
 export const RATE_MIN_SPAN_MS = 3_000;
+/**
+ * No bytes moved for this long: stalled, so no speed. Longer than one batch takes on a slow
+ * link (64 MB at 100 Mbit/s is about 5 s), so batch-sized steps do not blink the speed off.
+ */
+export const RATE_STALL_MS = 8_000;
 
 /** Keeps the readings inside the window, dropping all of them when the count goes back. */
 export function addRateSample(
@@ -321,6 +336,15 @@ export function rateOf(samples: ReadonlyArray<RateSample>): number | null {
   const first = samples[0];
   const last = samples.at(-1);
   if (!first || !last || last.at - first.at < RATE_MIN_SPAN_MS) return null;
+  // Stalled: no bytes moved over the newest readings, so no speed or time left is shown.
+  let flatSince = last.at;
+  for (
+    let index = samples.length - 2;
+    index >= 0 && samples[index]!.bytes === last.bytes;
+    index -= 1
+  )
+    flatSince = samples[index]!.at;
+  if (last.at - flatSince >= RATE_STALL_MS) return null;
   const rate = ((last.bytes - first.bytes) * 1000) / (last.at - first.at);
   return rate > 0 ? rate : null;
 }

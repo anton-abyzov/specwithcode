@@ -42,8 +42,11 @@ export function overallFraction(activity: CopyActivity): number | null {
   const progress = activity.progress;
   if (!progress) return activity.fraction;
   if (progress.outcome === "finished") return 1;
-  if (progress.fraction === null) return null;
-  return (COPY_PHASES.indexOf(progress.phase) + progress.fraction) / COPY_PHASES.length;
+  // A later phase that cannot say how far it is keeps the phases already done: the line
+  // never runs back to a sweep at Comparing or Apply.
+  const index = COPY_PHASES.indexOf(progress.phase);
+  if (progress.fraction === null) return index > 0 ? index / COPY_PHASES.length : null;
+  return (index + progress.fraction) / COPY_PHASES.length;
 }
 
 /** The project a move registers on the destination, by id once known and by folder. */
@@ -255,6 +258,31 @@ export function copyOpener(key: string): (() => void) | null {
   return open ? () => openers.get(key)?.() : null;
 }
 
+/** Sidebar rows that can open the page a copy's dialog lives on, from any project. */
+const navigators = new Map<string, () => void>();
+
+/** Registers how to open the page of a copy's project; returns the unregister. */
+export function registerCopyNavigator(key: string, navigate: () => void): () => void {
+  navigators.set(key, navigate);
+  return () => {
+    if (navigators.get(key) === navigate) navigators.delete(key);
+  };
+}
+
+/**
+ * Opens a copy's details from anywhere: its dialog when the project is on screen, else
+ * its project's page first, then the dialog once it mounts. Null when neither is known.
+ */
+export function copyDetailsOpener(key: string): (() => void) | null {
+  if (!openers.has(key) && !navigators.has(key)) return null;
+  return () => {
+    const open = openers.get(key);
+    if (open) return open();
+    navigators.get(key)?.();
+    requestCopyReview(key);
+  };
+}
+
 const ratio = (done: number, total: number) =>
   total > 0 ? Math.min(1, Math.max(0, done / total)) : null;
 
@@ -353,6 +381,7 @@ export function copyActivityText(activity: CopyActivity): string {
 
 /** Test helper: forgets every activity, watch and opener. */
 export function resetCopyActivityForTests(): void {
+  navigators.clear();
   activities = new Map();
   pendingReview = null;
   watches = new Map();

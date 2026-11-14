@@ -32,7 +32,7 @@ export function FolderCopyBanner({
     >
       <div className="flex min-w-0 items-center gap-3">
         <span className="min-w-0 flex-1 truncate">
-          {copyActivityText(activity)}
+          <LiveTitle activity={activity} />
           {activity.waiting ? (
             <span className="text-muted-foreground">
               {" "}
@@ -57,6 +57,28 @@ export function FolderCopyBanner({
 }
 
 /** The phase track and the numbers under it; a copy from an older machine keeps one bar. */
+/**
+ * The banner's line without its percent in the live region: the percent changes on every
+ * poll, so a screen reader would hear the whole line again every 2 s. The track's
+ * progressbar carries the value for anyone who asks.
+ */
+function LiveTitle({ activity }: { readonly activity: CopyActivity }) {
+  const full = copyActivityText(activity);
+  const still = copyActivityText({
+    ...activity,
+    fraction: null,
+    ...(activity.progress ? { progress: { ...activity.progress, fraction: null } } : {}),
+  });
+  return (
+    <>
+      {still}
+      {full.startsWith(still) && full.length > still.length ? (
+        <span aria-hidden="true">{full.slice(still.length)}</span>
+      ) : null}
+    </>
+  );
+}
+
 function BannerProgress({ activity }: { readonly activity: CopyActivity }) {
   const view = activity.progress ?? null;
   const rate = useCopyRate(view);
