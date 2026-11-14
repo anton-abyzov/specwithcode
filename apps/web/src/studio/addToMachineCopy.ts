@@ -12,6 +12,7 @@ import type {
   ProjectId,
 } from "@specweave-studio/contracts";
 import { folderCopyAllConflictsKey } from "@specweave-studio/contracts";
+import { approveInput, sendSecretsOrWithdraw, sourceDeniesSecrets } from "./copySecretsPolicy";
 import { useAtomCommand } from "../state/use-atom-command";
 import { copySettled } from "./folderCopy";
 import { machineHandoff } from "./machineHandoff";
@@ -229,6 +230,8 @@ export async function applyCopy(
     readonly sourceEnvironmentId: EnvironmentId;
     readonly destinationEnvironmentId: EnvironmentId;
     readonly destinationLabel: string;
+    /** The source machine's name, for a message when staged secrets cannot come off. */
+    readonly sourceLabel?: string;
     readonly operationId: string;
     readonly secrets: ReadonlyArray<string>;
     readonly signal?: AbortSignal;
@@ -236,18 +239,30 @@ export async function applyCopy(
   },
 ): Promise<FolderCopyStatus> {
   const { operationId } = input;
-  if (input.secrets.length > 0)
-    unwrap(
-      await commands.secrets({
-        environmentId: input.sourceEnvironmentId,
-        input: { operationId, paths: input.secrets, destinationLabel: input.destinationLabel },
-      }),
-    );
+  // Only a window holding access:write on the source may send secrets; from any other
+  // window, or with none ticked, the copy is approved without them and staged ones come off.
+  const secrets = sourceDeniesSecrets(input.sourceEnvironmentId) ? [] : input.secrets;
+  await sendSecretsOrWithdraw(
+    {
+      blocked: sourceDeniesSecrets(input.sourceEnvironmentId),
+      sourceLabel: input.sourceLabel ?? "the source",
+      empty: secrets.length === 0,
+    },
+    {
+      send: () =>
+        commands.secrets({
+          environmentId: input.sourceEnvironmentId,
+          input: { operationId, paths: secrets, destinationLabel: input.destinationLabel },
+        }),
+      status: () =>
+        commands.sourceStatus({ environmentId: input.sourceEnvironmentId, input: { operationId } }),
+    },
+  );
   try {
     const approved = unwrap(
       await commands.approve({
         environmentId: input.destinationEnvironmentId,
-        input: { operationId },
+        input: approveInput(operationId, input.sourceEnvironmentId, secrets.length > 0),
       }),
     );
     input.onStatus?.(approved);

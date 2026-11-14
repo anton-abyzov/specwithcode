@@ -25,6 +25,12 @@ import {
   pendingSecrets,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
+import {
+  approveInput,
+  secretsBlockedNow,
+  withdrawStagedSecrets,
+  withoutSecrets,
+} from "./useSecretsGate";
 import { sendableSecrets } from "./handoffCopySecrets";
 import {
   copyStartInput,
@@ -248,14 +254,41 @@ export function HandoffFolderCopyWatcher({
       // Read the pointer again: a reopened dialog owns the choice and the approval from here.
       const saved = readPendingCopy(key);
       if (stopped || !summary || saved?.operationId !== operationId) return false;
+      const blocked = secretsBlockedNow(environmentId);
       const paths = sendableSecrets({
         summary,
         plan: previewed,
         repositories: null,
         machine: undefined,
-        choice: pendingSecrets(saved),
+        choice: blocked ? withoutSecrets(pendingSecrets(saved)) : pendingSecrets(saved),
       });
       if (!paths) return true;
+      // Only the source's own window may send secrets: from here staged ones come off.
+      if (blocked && paths.length === 0)
+        return withdrawStagedSecrets({
+          staged: async () => {
+            const read = await latest.current.commands.sourceStatus({
+              environmentId,
+              input: { operationId },
+            });
+            return read._tag === "Success" ? (read.value.secrets?.files.length ?? 0) : null;
+          },
+          withdraw: async () =>
+            (
+              await latest.current.commands.sendSecrets({
+                environmentId,
+                input: {
+                  operationId,
+                  paths: [],
+                  destinationLabel: latest.current.machineLabel(saved.environmentId),
+                },
+              })
+            )._tag === "Success",
+          sourceLabel: latest.current.machineLabel(environmentId),
+        }).then(
+          () => !stopped,
+          () => false,
+        );
       const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
         latest.current.commands.sendSecrets({
           environmentId,
@@ -332,9 +365,14 @@ export function HandoffFolderCopyWatcher({
         }
         return "ask" as const;
       }
-      if (!saved.replaceAll && !(await stageSecrets(previewed))) return "ask" as const;
+      // Replace all sent its secrets when clicked; a blocked window still takes staged ones
+      // off, since an older destination ignores the approval's withoutSecrets.
+      const stage = !saved.replaceAll || secretsBlockedNow(environmentId);
+      if (stage && !(await stageSecrets(previewed))) return "ask" as const;
       if (stopped || !unchanged(saved)) return "ask" as const;
-      const approved = await approve({ environmentId: destination, input: { operationId } });
+      // Approved without secrets when this window may not send them or the choice leaves them.
+      const input = approveInput(operationId, environmentId, pendingSecrets(saved).included);
+      const approved = await approve({ environmentId: destination, input });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.
       const current = await status({ environmentId: destination, input: { operationId } });

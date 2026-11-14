@@ -66,6 +66,7 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { RemoteFolderBrowser } from "../studio/RemoteFolderBrowser";
 import { DestinationReadiness } from "../machineTools/DestinationReadiness";
 import { AddToMachineConsolidate } from "./AddToMachineConsolidate";
+import { useSecretsGate } from "../studio/useSecretsGate";
 
 const INSPECT_DEBOUNCE_MS = 300;
 
@@ -302,7 +303,10 @@ function AddToMachineBody({
     secretFiles,
     capabilities?.homeSecretFiles === true,
   ).map((file) => file.path);
-  const secrets = includeSecrets
+  // A window on another machine may not send secrets from the source: they stay there.
+  const secretsGate = useSecretsGate(source.environmentId, sourceName);
+  const secretsIncluded = includeSecrets && !secretsGate.blocked;
+  const secrets = secretsIncluded
     ? secretCandidates.filter((path) => !secretsOut.includes(path))
     : [];
   const locked = busy || stage.kind !== "setup";
@@ -527,7 +531,8 @@ function AddToMachineBody({
               files={secretFiles}
               hints={scan.state === "ready" ? scan.summary.secretHints : undefined}
               selected={secrets}
-              included={includeSecrets}
+              included={secretsIncluded}
+              locked={secretsGate.note}
               sourceLabel={sourceName}
               targetLabel={destName}
               homeSupported={capabilities?.homeSecretFiles === true}

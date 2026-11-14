@@ -44,6 +44,9 @@ const NODE_FILE_TEXT: Record<string, (path: string, action: HandoffAction) => st
   EISDIR: (path) => `${path} is a folder where a file was expected. Move it aside, then try again.`,
 };
 
+/** The client or server refused a call this connection's grant does not cover. */
+const MISSING_SCOPE = /^This connection requires ([a-z-]+:[a-z]+)\.?$/;
+
 /** A message written for people: a capitalised sentence, not a code or a stack line. */
 const isPlainSentence = (text: string) => /^[A-Z“"‘'(]/.test(text) && !/^[A-Z_]{3,}\b/.test(text);
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
@@ -86,6 +89,17 @@ function view(
   if (link) {
     const machine = ON_DESTINATION.test(text) ? places.destination : undefined;
     return { text: linkText(link[1], link[2], machine, action), recognised: true };
+  }
+  const scope = MISSING_SCOPE.exec(detail);
+  if (scope) {
+    const source = places.source ?? "the source machine";
+    return {
+      text:
+        scope[1] === "access:write"
+          ? `Only SpecWithCode on ${source} can send secrets. Untick Secrets to copy without them, or start this copy in the SpecWithCode window on ${source}.`
+          : `This window's sign-in on ${source} doesn't allow this step (${scope[1]}). Start this ${action} in the SpecWithCode window on ${source}.`,
+      recognised: true,
+    };
   }
   if (INTERRUPTED.test(detail))
     return {

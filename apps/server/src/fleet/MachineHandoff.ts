@@ -54,6 +54,7 @@ import {
   type FolderCopyDriftResult,
   type FolderCopyOffer,
   type FolderCopyOfferInput,
+  type FolderCopyApproveInput,
   type FolderCopyOperationInput,
   type FolderCopyReleaseInput,
   type FolderCopySourceStatus,
@@ -217,7 +218,7 @@ export class MachineHandoff extends Context.Service<
       input: FolderCopyDecideInput,
     ) => Effect.Effect<FolderCopyStatus, FolderCopyError>;
     readonly copyApprove: (
-      input: FolderCopyOperationInput,
+      input: FolderCopyApproveInput,
     ) => Effect.Effect<FolderCopyStatus, FolderCopyError>;
     readonly copyRetry: (
       input: FolderCopyOperationInput,
@@ -667,7 +668,9 @@ const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.flatMap(destinationStatus));
   const copyApprove: MachineHandoff["Service"]["copyApprove"] = (input) =>
-    attempt(() => copies.approve(input.operationId)).pipe(Effect.flatMap(destinationStatus));
+    attempt(() =>
+      copies.approve(input.operationId, { withoutSecrets: input.withoutSecrets === true }),
+    ).pipe(Effect.flatMap(destinationStatus));
   const copyRetry: MachineHandoff["Service"]["copyRetry"] = (input) =>
     attempt(() => copies.retry(input.operationId)).pipe(Effect.flatMap(destinationStatus));
   const copyCancel: MachineHandoff["Service"]["copyCancel"] = (input) =>

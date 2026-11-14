@@ -142,4 +142,25 @@ describe("home secret files", () => {
     await copies.undo(operationId, false);
     expect(NodeFS.existsSync(dotnet)).toBe(false);
   }, 120_000);
+
+  it("takes no secret files when approved without secrets, whatever the source staged", async () => {
+    write(NodePath.join(fixture.root, "ops/staged.creds"), "fixture-staged");
+    const state = NodePath.join(base, "dest-state-without");
+    const copies = new DestinationCopies(state, { ...fast, home: () => sourceHome });
+    const { operationId, token: grant } = await offer();
+    const target = NodePath.join(base, "targets", "without");
+    await copies.start(startInput(operationId, grant, target));
+    await settle(copies, operationId, ["previewed"]);
+    // An allowed window staged it earlier; this approval comes from one that may not send it.
+    await transfers.approveSecrets({
+      operationId,
+      paths: ["ops/staged.creds"],
+      destinationLabel: "M3",
+    });
+    await copies.approve(operationId, { withoutSecrets: true });
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+    expect(applied.secrets ?? []).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(target, "ops/staged.creds"))).toBe(false);
+  }, 120_000);
 });

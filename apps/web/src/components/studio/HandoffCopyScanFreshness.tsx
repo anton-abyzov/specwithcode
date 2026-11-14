@@ -64,8 +64,8 @@ export function HandoffCopyScanFreshness({
             Measure and compare again
           </Button>
           <p>
-            It keeps the machine, folder and file types. You review the choices again, and secret
-            files stay out until you tick them.
+            It keeps the machine, folder, file types and secrets choice. You review the choices
+            again before anything is copied.
           </p>
         </div>
       )}

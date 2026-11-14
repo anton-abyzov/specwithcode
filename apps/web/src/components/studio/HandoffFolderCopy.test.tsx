@@ -29,6 +29,13 @@ const state = vi.hoisted(() => ({
   uuid: 0,
   homes: {} as Record<string, string | null>,
   link: null as unknown as (...args: unknown[]) => Promise<unknown>,
+  /** This window's access:write on the source, as the session reports it. */
+  sourceAccess: "unknown" as "granted" | "denied" | "unknown",
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScopeAccess: () => state.sourceAccess,
+  readEnvironmentScopeAccess: () => state.sourceAccess,
 }));
 vi.mock("../../state/filesystem", () => ({
   filesystemEnvironment: { browse: (input: unknown) => input },
