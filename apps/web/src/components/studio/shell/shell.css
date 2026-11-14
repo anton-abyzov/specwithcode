@@ -155,6 +155,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-dot[data-tone="resolved"] {
   background: var(--shell-done);
 }
+/* Connected, inside a machine chip: the machine's own color. */
+.sws-dot[data-tone="machine"] {
+  background: var(--machine, var(--shell-done));
+}
 
 .sws-kbd {
   flex: none;
