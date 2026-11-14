@@ -20,7 +20,10 @@ import { useTx } from "../../i18n";
 import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { highestEpoch, projectLink } from "../../studio/projectLink";
-import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
+import {
+  checkoutKeyEnvironmentId,
+  type OrchestratorCopy,
+} from "../../studio/projectCoordinatorMachine";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { requestAway } from "../../studio/awayRequest";
@@ -181,16 +184,21 @@ export function OrchestratorSwitcher({
   const others = listed.filter((copy) => copy.key !== current);
   // One coordinator action per machine. A copy that kept its coordinator from before is
   // opened (run again); moving this one there would leave two conversations for one
-  // place. A copy running its own coordinator already has one: moving there is refused
-  // and viewing it opens it, so it gets nothing here.
-  const coordinatorActions = others.flatMap(
-    (copy): Array<{ copy: OrchestratorCopy; kind: "open" | "move" }> =>
-      onStart && copy.canStart
-        ? [{ copy, kind: "open" }]
-        : onMove && (copy.role === "workers" || copy.role === "independent")
-          ? [{ copy, kind: "move" }]
-          : [],
-  );
+  // place. A machine where any copy runs its own coordinator, listed or not, already has
+  // one: viewing it opens it, so it gets nothing here.
+  const hostOf = (copy: OrchestratorCopy) => checkoutKeyEnvironmentId(copy.key);
+  const coordinating = new Set(copies.filter((copy) => copy.role === "coordinator").map(hostOf));
+  const coordinatorActions: Array<{ copy: OrchestratorCopy; kind: "open" | "move" }> = [];
+  for (const host of new Set(others.map(hostOf))) {
+    if (coordinating.has(host)) continue;
+    const there = others.filter((copy) => hostOf(copy) === host);
+    const open = onStart ? there.find((copy) => copy.canStart) : undefined;
+    const move = onMove
+      ? there.find((copy) => copy.role === "workers" || copy.role === "independent")
+      : undefined;
+    if (open) coordinatorActions.push({ copy: open, kind: "open" });
+    else if (move) coordinatorActions.push({ copy: move, kind: "move" });
+  }
   // Copy and the coordinator actions act on this project; threads and Leave on the machine.
   const projectActions = onCopy !== null || coordinatorActions.length > 0;
   return (

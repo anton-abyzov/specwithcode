@@ -223,11 +223,41 @@ export function orchestratorCopies<T extends EnvironmentProject>(
       machine: machineOf(member),
       folder: member.workspaceRoot,
       role,
+      // Narrowed by keptCoordinatorCopies once the page has the threads.
       canStart:
         role === "workers" &&
         member.workspaceSettings?.coordinatorBinding?.state === "transferred" &&
         startReady(member.environmentId),
     };
+  });
+}
+
+/**
+ * Narrows `canStart` to copies that really kept a coordinator of their own: a
+ * conversation exists in that copy's coordinator thread, and its coordinator moved
+ * to another machine. A transferred binding alone does not say so: a copy that
+ * joined as workers only is transferred too, and a move into a separate worktree
+ * leaves the registered copy transferred with a successor on its own machine. Those
+ * copies get "Move coordinator to" instead of "Open coordinator on".
+ */
+export function keptCoordinatorCopies<T extends EnvironmentProject>(
+  copies: readonly OrchestratorCopy[],
+  members: readonly T[],
+  hasThread: (environmentId: T["environmentId"], threadId: string) => boolean,
+): OrchestratorCopy[] {
+  return copies.map((copy) => {
+    if (!copy.canStart) return copy;
+    const member = members.find((candidate) => coordinatorMachineKey(candidate) === copy.key);
+    const successor = member?.workspaceSettings?.coordinatorBinding?.successor;
+    const kept =
+      member !== undefined &&
+      successor !== undefined &&
+      successor.environmentId !== member.environmentId &&
+      hasThread(
+        member.environmentId,
+        member.workspaceSettings?.coordinatorThreadId ?? `project-coordinator:${member.id}`,
+      );
+    return kept ? copy : { ...copy, canStart: false };
   });
 }
 

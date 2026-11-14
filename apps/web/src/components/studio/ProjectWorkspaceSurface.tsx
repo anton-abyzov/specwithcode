@@ -197,7 +197,11 @@ import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import { CoordinatorBlockedNotice } from "./CoordinatorBlockedNotice";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
-import { type OrchestratorCopy, workersOnlyProblem } from "../../studio/projectCoordinatorMachine";
+import {
+  keptCoordinatorCopies,
+  type OrchestratorCopy,
+  workersOnlyProblem,
+} from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -265,7 +269,7 @@ export function ProjectWorkspaceSurface({
   project,
   projectKey,
   iconCheckouts,
-  checkouts,
+  checkouts: linkedCopies,
   unknownMachines = [],
   savedMachineMissing,
   onCheckout,
@@ -344,6 +348,14 @@ export function ProjectWorkspaceSurface({
     iconCheckouts,
     mainCoordinatorId,
     true,
+  );
+  // "Open coordinator on X" only where X kept a conversation of its own.
+  const checkouts = useMemo(
+    () =>
+      keptCoordinatorCopies(linkedCopies, iconCheckouts, (environmentId, threadId) =>
+        shells.some((t) => t.id === threadId && t.environmentId === environmentId),
+      ),
+    [linkedCopies, iconCheckouts, shells],
   );
   const { workers: remoteWorkers, loaded: remoteWorkersLoaded } = useProjectRemoteWorkers(
     project.environmentId,

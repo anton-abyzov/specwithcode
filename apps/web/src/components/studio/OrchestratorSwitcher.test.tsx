@@ -7,7 +7,8 @@ import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
 
 const startCoordinator = vi.hoisted(() => vi.fn());
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => startCoordinator }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("../ui/toast", () => ({ toastManager: { add: toast } }));
 
 import { OrchestratorSwitcher, useStartCoordinator } from "./OrchestratorSwitcher";
 
@@ -155,6 +156,47 @@ it("never switches the view once the switcher has left the page", async () => {
   await act(async () => root.render(<></>));
   await act(async () => finish(true));
   expect(calls.onView).not.toHaveBeenCalled();
+});
+
+it("offers one item per machine, preferring Open, and none where any copy there coordinates", async () => {
+  const calls = handlers();
+  await renderSwitcher({
+    ...calls,
+    copies: [
+      copy("m4:p", "M4"),
+      // Two checkouts on m1: one kept its coordinator, one only runs workers.
+      { ...copy("m1:a", "M1", "workers"), folder: "/w/a" },
+      { ...copy("m1:b", "M1", "workers", true), folder: "/w/b" },
+      // On m3 one copy runs its own coordinator, so the workers copy beside it gets nothing.
+      copy("m3:a", "M3"),
+      { ...copy("m3:b", "M3", "workers", true), folder: "/w/b" },
+    ],
+  });
+  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
+  expect(labels.filter((label) => /coordinator/.test(label ?? ""))).toEqual([
+    "Open coordinator on M1 · /w/b",
+  ]);
+});
+
+it("says why when a coordinator does not start, and stays on this machine", async () => {
+  toast.mockReset();
+  startCoordinator.mockReset().mockResolvedValue({
+    _tag: "Failure",
+    cause: { _tag: "Fail", error: new Error("Reconnect M1 first.") },
+  });
+  const members = [
+    { environmentId: "minis", id: "p", workspaceSettings: { logicalProject: { id: "atlas" } } },
+  ] as unknown as EnvironmentProject[];
+  let start!: (key: string) => Promise<boolean>;
+  function Starter() {
+    start = useStartCoordinator(members, [copy("minis:p", "Minis", "workers", true)]);
+    return null;
+  }
+  await act(async () => root.render(<Starter />));
+  expect(await start("minis:p")).toBe(false);
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "error", title: "Minis did not start a coordinator" }),
+  );
 });
 
 it("offers nothing for a machine that already runs its own coordinator, but lists it to view", async () => {
