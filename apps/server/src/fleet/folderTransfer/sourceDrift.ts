@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { readJson, writeJson } from "./durable.ts";
 import { runGit } from "./git.ts";
+import { gitConfigFilesOf, gitDirectoriesIn, safeGitConfigBytes } from "./safeGitConfig.ts";
 import {
   forEachLimited,
   hashFile,
@@ -28,7 +29,7 @@ export interface DriftRepository {
   readonly indexChanged: boolean;
   /** A tag, note, remote-tracking or other ref differs; branches and stashes are listed apart. */
   readonly refsChanged?: boolean;
-  /** The repository's config, exclude rules or hooks differ from what the copy carried. */
+  /** The repository's Git settings or exclude rules differ from what the copy carried. */
   readonly settingsChanged?: boolean;
 }
 
@@ -88,9 +89,9 @@ const STAT_CONCURRENCY = 16;
 
 const UNREADABLE = /^Could not read (.+)$/;
 const UNCOPYABLE = /^Skipped an entry whose name cannot be copied safely below (.+)$/;
-/** What the copy carries of a main repository's own Git folder besides refs, objects and logs. */
-const SETTINGS = (path: string) =>
-  path === "config" || path === "info/exclude" || path.startsWith("hooks/");
+/** What the copy carries byte for byte of a main repository's Git settings; config is compared apart. */
+const SETTINGS_FILES = ["info/exclude", "info/sparse-checkout"] as const;
+const SETTINGS = (path: string) => (SETTINGS_FILES as ReadonlyArray<string>).includes(path);
 
 export const driftBasisFile = (directory: string) => NodePath.join(directory, "drift-basis.json");
 export const servedSecretsFile = (directory: string) =>
@@ -255,12 +256,91 @@ async function gitFilesDiffer(
   return false;
 }
 
-/** Config, exclude rules and hooks. */
-const settingsDiffer = (
+/**
+ * Config, exclude and sparse-checkout rules. The copy carries only a config's
+ * safe entries and no hooks (1328), so each config it carries (main, per
+ * worktree, per submodule) is compared as the copy would carry it (or byte for
+ * byte, for a record from before that), and hooks not at all. A linked
+ * worktree's admin folder counts only when the copy carried it.
+ */
+async function settingsDiffer(
   folder: string,
   repo: RepositoryInfo,
   copiedEntries: ReadonlyMap<string, ManifestEntry>,
-) => gitFilesDiffer(folder, repo, copiedEntries, SETTINGS, ["config", "info/exclude"], ["hooks"]);
+): Promise<boolean> {
+  if (await gitFilesDiffer(folder, repo, copiedEntries, SETTINGS, [...SETTINGS_FILES], []))
+    return true;
+  if (repo.kind !== "main") return false;
+  const prefix = gitPrefix(repo.path);
+  const gitDir = NodePath.join(folder, prefix);
+  const relativeOf = (file: string) =>
+    NodePath.relative(folder, file).split(NodePath.sep).join("/");
+  const carried = (dir: string) => {
+    const relative = `${relativeOf(dir)}/`;
+    for (const path of copiedEntries.keys()) if (path.startsWith(relative)) return true;
+    return false;
+  };
+  // Config path -> whether it is a main repository's own config (which keeps no worktree).
+  const configs = new Map<string, boolean>();
+  const rules = new Set<string>();
+  for (const dir of await gitDirectoriesIn(gitDir)) {
+    const isMain = dir === gitDir;
+    if (!isMain) for (const name of SETTINGS_FILES) rules.add(relativeOf(NodePath.join(dir, name)));
+    for (const file of await gitConfigFilesOf(dir)) {
+      const admin = NodePath.dirname(file);
+      if (admin !== dir) {
+        // A linked worktree's admin folder: only one the copy carried.
+        if (!carried(admin)) continue;
+        rules.add(relativeOf(NodePath.join(admin, "info/sparse-checkout")));
+      }
+      configs.set(relativeOf(file), isMain);
+    }
+  }
+  // A copied Git directory under `modules/`: its HEAD and objects travelled,
+  // and it is no ref folder inside another Git directory's `refs/` or `logs/`.
+  const copiedGitDir = (dir: string): boolean => {
+    if (!dir.startsWith(`${prefix}/modules/`) || !copiedEntries.has(`${dir}/HEAD`)) return false;
+    const parts = dir.split("/");
+    for (let index = 1; index < parts.length; index++) {
+      if (parts[index] !== "refs" && parts[index] !== "logs") continue;
+      const owner = parts.slice(0, index).join("/");
+      if (owner === prefix || copiedGitDir(owner)) return false;
+    }
+    if (copiedEntries.has(`${dir}/objects`)) return true;
+    for (const path of copiedEntries.keys()) if (path.startsWith(`${dir}/objects/`)) return true;
+    return false;
+  };
+  for (const path of copiedEntries.keys()) {
+    if (!path.startsWith(`${prefix}/`)) continue;
+    const match = /^(.*?)(?:\/worktrees\/[^/]+)?\/config(?:\.worktree)?$/.exec(path);
+    if (match === null) continue;
+    const owner = match[1]!;
+    const isWorktreeAdmin = path.slice(owner.length).startsWith("/worktrees/");
+    if (isWorktreeAdmin && !path.endsWith("/config.worktree")) continue;
+    // Only configs Git reads: never a ref or log that happens to be named config.
+    if (owner === prefix) configs.set(path, true);
+    else if (copiedGitDir(owner)) configs.set(path, configs.get(path) ?? false);
+  }
+  for (const [path, isMain] of configs) {
+    const copied = copiedEntries.get(path)?.sha256 ?? null;
+    const live = NodePath.join(folder, path);
+    const raw = await smallFileHash(live);
+    if (raw === copied) continue;
+    // A file Git cannot read as config is a change, not an error.
+    const safe = await safeGitConfigBytes(live, isMain ? null : folder).catch(() => undefined);
+    if (safe === undefined) return true;
+    // An empty safe config the copy left out is no change either.
+    if (copied === null && (safe === null || safe.length === 0)) continue;
+    if ((safe === null ? null : sha256Hex(safe)) !== copied) return true;
+  }
+  for (const path of rules)
+    if (
+      (await smallFileHash(NodePath.join(folder, path))) !==
+      (copiedEntries.get(path)?.sha256 ?? null)
+    )
+      return true;
+  return false;
+}
 
 /** Older records keep no ref digest: the copied loose refs and packed-refs files instead. */
 const refFilesDiffer = (

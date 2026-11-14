@@ -581,6 +581,8 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
     }
     children.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     let scope = repos;
+    // A `.git` Git cannot read is never copied as plain files: its config and hooks would run unchecked.
+    let skipGitEntry = false;
     if (!insideGitData) {
       const gitChild = children.find((child) => child.name === ".git");
       // A linked worktree of a repository inside the root is not walked or read
@@ -596,7 +598,13 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
       if (gitChild) {
         try {
           const stat = await NodeFSP.lstat(NodePath.join(absolute, ".git"));
-          if (stat.isDirectory() || stat.isFile()) {
+          if (stat.isSymbolicLink()) {
+            // A linked `.git` would carry its target's config and hooks as plain files.
+            skipGitEntry = true;
+            warnings.push(
+              `${relativeOf(realRoot, absolute)} has a .git link; its Git data is not copied. Its other files are.`,
+            );
+          } else if (stat.isDirectory() || stat.isFile()) {
             const read = await readRepository(realRoot, absolute, stat);
             const inside = read.info.worktrees.filter((tree) => tree.path !== null);
             if (!options.keepLinkedWorktrees)
@@ -622,8 +630,9 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
           }
         } catch (cause) {
           if (!(cause instanceof FolderGitError)) throw cause;
+          skipGitEntry = true;
           warnings.push(
-            `${relativeOf(realRoot, absolute)} has a .git entry Git cannot read; it is copied as plain files.`,
+            `${relativeOf(realRoot, absolute)} has a .git entry Git cannot read; its Git data is not copied. Its other files are.`,
           );
         }
       }
@@ -638,6 +647,15 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
       stats[index] = await NodeFSP.lstat(NodePath.join(absolute, child.name)).catch(() => null);
     });
     for (const [index, child] of children.entries()) {
+      if (skipGitEntry && child.name === ".git") continue;
+      // `.GIT` and other spellings are `.git` on a case-insensitive disk, where
+      // they would arrive as unchecked Git data.
+      if (child.name !== ".git" && child.name.toLowerCase() === ".git") {
+        warnings.push(
+          `${relativeOf(realRoot, absolute)} has a ${child.name} entry; it is not copied, since some disks read it as .git.`,
+        );
+        continue;
+      }
       const location = NodePath.join(absolute, child.name);
       const relative = relativeOf(realRoot, location);
       if (!safe[index]) {

@@ -7,6 +7,13 @@ import * as NodePath from "node:path";
 import { privateDirectory } from "./durable.ts";
 import { FolderGitError, runGit } from "./git.ts";
 import {
+  gitDirectoriesIn,
+  isUncarriedGitPath,
+  refuseObjectInfoAlias,
+  safeRemoteUrl,
+  sanitizeCopiedGitDir,
+} from "./safeGitConfig.ts";
+import {
   emptyTotals,
   FolderScanError,
   forEachLimited,
@@ -237,6 +244,8 @@ async function copyGitTree(
       if (
         child.name === "objects" &&
         path.startsWith("modules/") &&
+        // A ref folder can hold `HEAD` and `objects/<ref>` refs too: copied as is.
+        !path.split("/").some((part) => part === "refs" || part === "logs") &&
         children.some((sibling) => sibling.name === "HEAD" && sibling.isFile())
       ) {
         objectStores.push({ source: childSource, target: childTarget, required: false });
@@ -292,8 +301,16 @@ async function copyObjects(context: CopyContext, source: string, target: string)
     await copyGitFile(context, job.source, job.target);
   });
   await copyGitTree(context, NodePath.join(source, "info"), NodePath.join(target, "info"), {
-    skip: (relative) =>
-      relative === "commit-graph" || relative === "commit-graphs" || relative === "packs",
+    skip: (relative) => {
+      // Another spelling of an object-store pointer refuses the copy (1328).
+      refuseObjectInfoAlias(NodePath.join(source, "info", relative), relative);
+      return (
+        relative === "commit-graph" ||
+        relative === "commit-graphs" ||
+        relative === "packs" ||
+        relative === "http-alternates"
+      );
+    },
   });
   const done = new Set<string>();
   for (let pass = 0; pass < 2; pass += 1) {
@@ -374,23 +391,91 @@ async function withSnapshotRetries(
   }
 }
 
-/** Resolve object dependencies into the private copy, without copying another working folder. */
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11 };
+
+/** Git's C-style quoting of an `alternates` line (`"a\"b\303\251"`), back to its path. */
+export function cUnquote(line: string): string {
+  const end = line.lastIndexOf('"');
+  if (!line.startsWith('"') || end <= 0) throw new Error(`Unreadable alternates line: ${line}`);
+  const bytes: Array<number> = [];
+  // Whole code points, so a character outside the BMP (an emoji) stays intact.
+  const body = Array.from(line.slice(1, end));
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index]!;
+    if (char !== "\\") {
+      bytes.push(...Buffer.from(char, "utf8"));
+      continue;
+    }
+    const next = body[index + 1] ?? "";
+    if (/[0-7]/.test(next)) {
+      bytes.push(Number.parseInt(body.slice(index + 1, index + 4).join(""), 8));
+      index += 3;
+    } else {
+      bytes.push(C_ESCAPES[next] ?? next.charCodeAt(0));
+      index += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/** One `alternates` line for `path`, C-quoted when Git would misread it plain. */
+function alternatesLine(path: string): string {
+  if (!/["\\\n\r]/.test(path) && !path.startsWith("#")) return path;
+  const escaped = [...Buffer.from(path, "utf8")]
+    .map((byte) => {
+      if (byte === 0x22) return '\\"';
+      if (byte === 0x5c) return "\\\\";
+      if (byte < 0x20 || byte === 0x7f) return `\\${byte.toString(8).padStart(3, "0")}`;
+      return String.fromCharCode(byte);
+    })
+    .join("");
+  return `"${Buffer.from(escaped, "latin1").toString("utf8")}"`;
+}
+
+/**
+ * Resolve object dependencies into the private copy, without copying another
+ * working folder. Returns whether the copy borrowed objects. `gitDir` names a
+ * Git directory with no working folder of its own (a copied submodule's).
+ */
 async function materializeAlternates(
   context: CopyContext,
   common: string,
   targetGit: string,
   target: string,
-) {
+  gitDir?: string,
+): Promise<boolean> {
   const alternates = NodePath.join(targetGit, "objects/info/alternates");
-  if (!(await NodeFSP.lstat(alternates).catch(() => null))) return;
+  if (!(await NodeFSP.lstat(alternates).catch(() => null))) return false;
   const original = NodePath.join(common, "objects");
-  const lines = (await NodeFSP.readFile(alternates, "utf8")).split("\n").filter(Boolean);
-  await NodeFSP.writeFile(
-    alternates,
-    lines.map((line) => NodePath.resolve(original, line)).join("\n") + "\n",
-  );
-  await runGit(target, ["repack", "-a", "-d"], { signal: context.signal });
+  const paths = (await NodeFSP.readFile(alternates, "utf8"))
+    .split("\n")
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .map((line) => NodePath.resolve(original, line.startsWith('"') ? cUnquote(line) : line));
+  await NodeFSP.writeFile(alternates, paths.map(alternatesLine).join("\n") + "\n");
+  const env = gitDir ? { env: { GIT_DIR: gitDir } } : {};
+  await runGit(target, ["repack", "-a", "-d"], { signal: context.signal, ...env });
   await NodeFSP.unlink(alternates);
+  return true;
+}
+
+/**
+ * A submodule cloned with `--reference` borrows objects too, even dormant: each
+ * copied submodule Git directory becomes self-contained and is checked whole.
+ */
+async function materializeSubmoduleAlternates(
+  context: CopyContext,
+  sourceGit: string,
+  targetGit: string,
+) {
+  for (const dir of (await gitDirectoriesIn(targetGit)).slice(1)) {
+    context.checkStop();
+    const source = NodePath.join(sourceGit, NodePath.relative(targetGit, dir));
+    if (await materializeAlternates(context, source, dir, dir, dir))
+      await runGit(dir, ["fsck", "--connectivity-only", "--no-progress"], {
+        signal: context.signal,
+        env: { GIT_DIR: dir },
+      });
+  }
 }
 
 /** Shown with any repository: the Git snapshot is taken when copying starts, not while measuring. */
@@ -585,12 +670,18 @@ async function snapshotMain(
     required: new Set(["HEAD", "config"]),
     skip: (relative, isDirectory) =>
       relative === "objects" ||
+      isUncarriedGitPath(relative, isDirectory) ||
       (isDirectory &&
         relative.startsWith("worktrees/") &&
         !relative.slice("worktrees/".length).includes("/") &&
         !admins.has(relative.slice("worktrees/".length))),
   });
   const after = await readRefs(context, sourceFolder);
+  // Only plain settings travel: hooks, drivers, helpers and credentialed URLs stay here (1328).
+  await sanitizeCopiedGitDir(targetGit, snapshotRoot, {
+    signal: context.signal,
+    sourceRoot: scan.root,
+  });
   // Objects AFTER all HEAD/index/refs/reflogs are frozen: every object they
   // name existed before they were written.
   await copyObjects(
@@ -599,6 +690,7 @@ async function snapshotMain(
     NodePath.join(targetGit, "objects"),
   );
   await materializeAlternates(context, sourceGit, targetGit, NodePath.dirname(targetGit));
+  await materializeSubmoduleAlternates(context, sourceGit, targetGit);
   // Internal worktrees retain their relationship using deterministic relative
   // pointers. They never read the original Mac admin directory during checks.
   for (const linked of scan.repositories.filter(
@@ -687,7 +779,8 @@ async function snapshotExternal(
     for (const name of await NodeFSP.readdir(directory))
       if (/^sharedindex\.[a-f0-9]+$/.test(name))
         await copyGitFile(context, NodePath.join(directory, name), NodePath.join(targetGit, name));
-  if (info.origin) await git(target, ["config", "remote.origin.url", info.origin]);
+  const origin = info.origin ? safeRemoteUrl(info.origin) : null;
+  if (origin) await git(target, ["config", "remote.origin.url", origin]);
   await git(target, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
   await copyObjects(context, NodePath.join(common, "objects"), NodePath.join(targetGit, "objects"));
   await materializeAlternates(context, common, targetGit, target);
