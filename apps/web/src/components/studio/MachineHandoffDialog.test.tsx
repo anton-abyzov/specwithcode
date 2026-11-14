@@ -85,7 +85,7 @@ function radio(label: string) {
 }
 const folderField = (machine: string) =>
   document.querySelector<HTMLInputElement>(`input[aria-label="Folder on ${machine}"]`);
-/** A "Where should the coordinator run?" option, found by its label. */
+/** A Copy or Move option, found by its label. */
 const coordinator = (label: string) => {
   const element = [
     ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
@@ -442,9 +442,9 @@ describe("shared handoff controls", () => {
         </Tip>
       </TooltipProvider>,
     );
-    const control = button("Copy to another machine");
+    const control = button("Send to another machine");
     expect(trigger).toBe(control);
-    expect(control.getAttribute("aria-label")).toBe("Copy this project to another machine");
+    expect(control.getAttribute("aria-label")).toBe("Send this project to another machine");
     expect(control.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     await act(async () => {
       control.focus();
@@ -595,7 +595,7 @@ describe("handoff file method and intent", () => {
   it("titles the dialog by intent and keeps Git for moves only", async () => {
     const onMethodChange = vi.fn();
     await handoff({ method: "copy", intent: "copy", onMethodChange, copyFlow });
-    expect(document.querySelector("h2")?.textContent).toBe("Copy Product to another machine");
+    expect(document.querySelector("h2")?.textContent).toBe("Send Product to another machine");
     await handoff({
       method: "copy",
       intent: "copy",
@@ -603,7 +603,7 @@ describe("handoff file method and intent", () => {
       copyFlow,
       copyTargetLabel: "m5",
     });
-    expect(document.querySelector("h2")?.textContent).toBe("Copy Product to m5");
+    expect(document.querySelector("h2")?.textContent).toBe("Send Product to m5");
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
       "From MacBook M4. Nothing on m5 is replaced without asking.",
     );
@@ -626,10 +626,103 @@ describe("handoff file method and intent", () => {
     await handoff({ method: "folder", onMethodChange: vi.fn(), onIntentChange });
     expect(document.querySelector('[data-slot="handoff-intent"]')).toBeNull();
     const choice = document.querySelector('[data-slot="handoff-coordinator"]')!;
-    expect(choice.querySelector("legend")?.textContent).toBe("Where should the coordinator run?");
+    expect(choice.querySelector("legend")?.textContent).toBe("Copy or move");
     expect(coordinator("Move to MacBook Pro").getAttribute("aria-checked")).toBe("true");
-    await click(coordinator("Keep on MacBook M4"));
+    await click(coordinator("Copy to MacBook Pro"));
     expect(onIntentChange).toHaveBeenCalledExactlyOnceWith("copy");
+  });
+
+  describe("Send: what the machine holds, Copy or Move, and the plan", () => {
+    const copyAt = (id: string, workspaceRoot: string) => ({ id, workspaceRoot });
+    const facts = (over: Record<string, unknown> = {}) => ({
+      holding: { kind: "copy" as const, copy: copyAt("p", "/Users/anton/specweave") },
+      picked: null,
+      onPick: vi.fn(),
+      mainLabel: "MacBook M4",
+      localFiles: 3,
+      ...over,
+    });
+    const text = (slot: string) =>
+      document.querySelector(`[data-slot="${slot}"]`)?.textContent ?? null;
+
+    it("names the existing copy once and says what Move does before the click", async () => {
+      await handoff({
+        method: "folder",
+        onMethodChange: vi.fn(),
+        onIntentChange: vi.fn(),
+        send: facts(),
+      });
+      expect(text("send-existing-copy")).toBe(
+        "MacBook Pro already has a copy, at ~/specweave. Only what it is missing is copied.",
+      );
+      expect(coordinator("Copy to MacBook Pro").closest("label")?.textContent).toContain(
+        "Keep working here.",
+      );
+      expect(coordinator("Move to MacBook Pro").closest("label")?.textContent).toContain(
+        "Work continues there, and this copy stops starting work.",
+      );
+      expect(text("send-plan")).toBe(
+        "Push this machine's commits, then move Main to MacBook Pro's copy at ~/specweave. Work continues on MacBook Pro, and this copy stops starting work. 3 uncommitted files stay here.",
+      );
+    });
+
+    it("offers no Move to the machine that holds Main, and falls back to Copy", async () => {
+      const onIntentChange = vi.fn();
+      await handoff({
+        method: "folder",
+        onMethodChange: vi.fn(),
+        onIntentChange,
+        send: facts({ holding: { kind: "main", copy: copyAt("p", "/Users/anton/specweave") } }),
+      });
+      expect(text("send-existing-copy")).toBe(
+        "MacBook Pro already has Main, at ~/specweave, so there is nothing to move.",
+      );
+      expect(document.querySelector('[data-slot="handoff-coordinator"] [role="radio"]')).toBeNull();
+      expect(onIntentChange).toHaveBeenCalledWith("copy");
+    });
+
+    it("keeps each copy's role among several: picking the one that is Main hides Move", async () => {
+      const onPick = vi.fn();
+      const several = {
+        kind: "several" as const,
+        copies: [copyAt("a", "/Users/anton/a"), copyAt("b", "/Users/anton/b")],
+        mainId: "b",
+      };
+      await handoff({
+        method: "folder",
+        onMethodChange: vi.fn(),
+        onIntentChange: vi.fn(),
+        send: facts({ holding: several, onPick }),
+      });
+      expect(text("send-existing-copy")).toBe(
+        "MacBook Pro has 2 copies of this project. Pick the one to send to.",
+      );
+      expect(text("send-plan")).toBeNull();
+      const picker = document.querySelector('[data-slot="send-copy-picker"]')!;
+      expect(picker.textContent).toContain("Main");
+      await click(
+        [...picker.querySelectorAll<HTMLElement>('[role="radio"]')].find((node) =>
+          node.closest("label")?.textContent?.includes("~/a"),
+        )!,
+      );
+      expect(onPick).toHaveBeenCalledWith("a");
+      await handoff({
+        method: "folder",
+        onMethodChange: vi.fn(),
+        onIntentChange: vi.fn(),
+        send: facts({ holding: several, picked: "b" }),
+      });
+      expect(document.querySelector('[data-send-choice="move"]')).toBeNull();
+      expect(text("send-plan")).toContain("Main stays on MacBook Pro.");
+      await handoff({
+        method: "folder",
+        onMethodChange: vi.fn(),
+        onIntentChange: vi.fn(),
+        send: facts({ holding: several, picked: "a" }),
+      });
+      expect(document.querySelector('[data-send-choice="move"]')).not.toBeNull();
+      expect(text("send-plan")).toContain("move Main to MacBook Pro's copy at ~/a");
+    });
   });
 
   it("shows no close control and freezes the method while the copy runs locked", async () => {

@@ -18,7 +18,6 @@ import {
   AuthSourceControlWriteScope,
   AuthSettingsWriteScope,
   logicalProjectTitle,
-  repositoryGroupingKeyOf,
   repositoryRelativePathOf,
   type MachineHandoffPrepareResult,
   type MachineHandoffReceiveResult,
@@ -52,6 +51,9 @@ import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { toastManager } from "../ui/toast";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
+import { repositoryKeyOf } from "@specweave-studio/shared/existingCopy";
+import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
+import { machineHoldings, pickedHolding } from "../../studio/sendToMachine";
 import {
   copyActivityKey,
   registerCopyOpener,
@@ -144,7 +146,7 @@ export function ProjectMachineHandoff({
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
   readonly requestedTarget?: string | null;
-  /** Set by the project's machine menu: "Copy to another machine…". */
+  /** Set by the project's machine menu: "Send to another machine…". */
   readonly openRequest?: MachineHandoffOpenRequest | null;
   /** Off where the machine menu opens the dialog instead of its own button. */
   readonly showTrigger?: boolean;
@@ -221,6 +223,8 @@ export function ProjectMachineHandoff({
   const [syncKey, setSyncKey] = useState<string | null>(null);
   // The copy flow's machine, so switching to Git keeps it.
   const [copyMachine, setCopyMachine] = useState<EnvironmentId | null>(null);
+  // The copy the person picked on a machine that holds several, by machine.
+  const [pickedCopies, setPickedCopies] = useState<Readonly<Record<string, string>>>({});
   const [copyDone, setCopyDone] = useState(false);
   const [copyBusy, setCopyBusyState] = useState(false);
   const [copyLocked, setCopyLocked] = useState(false);
@@ -241,9 +245,8 @@ export function ProjectMachineHandoff({
     unpublished.current = operationId;
     setUnpublishedOperation(operationId);
   };
-  const repositoryKey = project.repositoryIdentity
-    ? repositoryGroupingKeyOf(project.repositoryIdentity)
-    : null;
+  // One repository key for every check here, compared without case as existingCopyOn does.
+  const repositoryKey = repositoryKeyOf(project);
   // Sidebar grouping is presentation only. Shell projects omit deleted registrations;
   // transfers still require a known matching repository on another environment.
   const logicalId = project.workspaceSettings?.logicalProject?.id ?? null;
@@ -257,8 +260,7 @@ export function ProjectMachineHandoff({
           !isArchivedMember(item) &&
           isProjectFolder(item.workspaceRoot, item.id) &&
           ((logicalId !== null && item.workspaceSettings?.logicalProject?.id === logicalId) ||
-            (item.repositoryIdentity != null &&
-              repositoryGroupingKeyOf(item.repositoryIdentity) === repositoryKey)),
+            (repositoryKey !== null && repositoryKeyOf(item) === repositoryKey)),
       ),
     [projects, project.environmentId, repositoryKey, logicalId],
   );
@@ -775,6 +777,50 @@ export function ProjectMachineHandoff({
     syncCopy && syncLabel && (copyMachine === null || copyMachine === syncCopy.environmentId)
       ? { machine: syncLabel, folder: syncCopy.workspaceRoot }
       : null;
+  // What each machine already holds of this project: one detection rule and one role
+  // derivation, with re-joined machines' old records left out as Settings does.
+  const retired = useRetiredMachineRecords();
+  const holdings = machineHoldings({
+    source: project,
+    machineIds: machines.map((item) => item.id),
+    projects: [project, ...candidates],
+    retired,
+  });
+  // The machine the dialog sends to: the copy form's, or the Git move's.
+  const sendMachine = method === "folder" ? gitMachine : copyMachine;
+  const sendHolding = sendMachine ? holdings.byMachine.get(sendMachine) : undefined;
+  // The Git move names its folder; among several copies that is the one it picked.
+  const sendPicked =
+    sendMachine === null
+      ? null
+      : method === "folder" && target?.environmentId === sendMachine
+        ? target.id
+        : (pickedCopies[sendMachine] ?? null);
+  const mainLabel =
+    machines.find((item) => item.id === holdings.mainEnvironmentId)?.label ??
+    source?.label ??
+    "this machine";
+  const send =
+    sendMachine && sendHolding
+      ? {
+          holding: sendHolding,
+          picked: sendPicked,
+          onPick: (id: string) => {
+            setPickedCopies((current) => ({ ...current, [sendMachine]: id }));
+            // In the Git move the picked copy is its destination folder.
+            if (method === "folder") setSelected(`${sendMachine}:${id}`);
+          },
+          mainLabel,
+          localFiles: sourceChanges?.state === "dirty" ? sourceChanges.fileCount : null,
+        }
+      : null;
+  /** The folder the copy fills on a machine: its one copy, or the copy picked among several. */
+  const copyFolderOn = (environmentId: EnvironmentId) => {
+    const holding = holdings.byMachine.get(environmentId);
+    if (!holding) return null;
+    const picks = pickedHolding(holding, pickedCopies[environmentId] ?? null);
+    return picks.kind === "main" || picks.kind === "copy" ? picks.copy.workspaceRoot : null;
+  };
 
   /**
    * Opens the dialog. Every request but an unfinished Git handoff starts on the copy, with
@@ -857,7 +903,7 @@ export function ProjectMachineHandoff({
   return (
     <>
       {showTrigger ? (
-        <Tip label={blockedReason ?? "Copy this project to another machine"}>
+        <Tip label={blockedReason ?? "Send this project to another machine"}>
           {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
             tooltip and screen readers read the reason it describes. */}
           <span className="inline-flex" data-slot="handoff-trigger-wrap">
@@ -936,6 +982,7 @@ export function ProjectMachineHandoff({
           copyDone ? (machines.find((item) => item.id === copyMachine)?.label ?? null) : null
         }
         copyTargetLabel={machines.find((item) => item.id === copyMachine)?.label ?? null}
+        send={send}
         copyFlow={
           method === "folder" ? undefined : (
             <HandoffFolderCopy
@@ -957,10 +1004,16 @@ export function ProjectMachineHandoff({
                   configs.get(item.id)?.environment.capabilities?.memoryThreeWay === true,
               }))}
               savedFolder={(environmentId) =>
-                (syncCopy?.environmentId === environmentId
+                syncCopy?.environmentId === environmentId
                   ? syncCopy.workspaceRoot
-                  : candidates.find((item) => item.environmentId === environmentId)
-                      ?.workspaceRoot) ?? null
+                  : copyFolderOn(environmentId)
+              }
+              // Several copies there: nothing starts until the person picks one.
+              chooseCopyFirst={
+                syncCopy === undefined &&
+                copyMachine !== null &&
+                holdings.byMachine.get(copyMachine)?.kind === "several" &&
+                pickedCopies[copyMachine] === undefined
               }
               preferredMachine={
                 requestedMachine ?? syncCopy?.environmentId ?? gitMachine ?? suggestedMachine

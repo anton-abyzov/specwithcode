@@ -174,7 +174,7 @@ function linkWorkersOnlyCopy() {
   });
 }
 const COPY_LINE =
-  "This request is for the copy on ministorm, in /ministorm/repo. That copy runs workers only. Delegate the work to a worker there.";
+  "This request is for the copy on ministorm, in /ministorm/repo. That copy is not Main: its work starts here. Delegate the work to a worker there.";
 it("opens a workers-only copy's coordinator on the other machine instead of the copy", async () => {
   linkWorkersOnlyCopy();
   const model = { instanceId: ProviderInstanceId.make("codex"), model: "chosen" };

@@ -2345,19 +2345,7 @@ export const pt: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "Remover deste dispositivo o registro antigo de {name} ({host})?\nA máquina entrou de novo como uma nova e continua funcionando; só o registro morto e as conversas em cache aqui saem.",
   "Use 2 or 3 characters.": "Use 2 ou 3 caracteres.",
-  "Coordinator here": "Coordenador aqui",
-  "Coordinator here too": "Também coordenador",
-  "Workers only": "Só workers",
-  "Moving coordinator": "Coordenador em transferência",
   "Not shared": "Não compartilhado",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "O coordenador do projeto roda nesta cópia, esteja trabalhando agora ou não. Cópias em outras máquinas recebem trabalho dele. Isso se refere ao coordenador, não a como a cópia foi feita.",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "Esta cópia também roda um coordenador próprio, como cada máquina pode, mas o coordenador do projeto é o de outra cópia. Transferir move o coordenador e deixa aqui só workers.",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "O coordenador foi para outra máquina. Esta cópia só roda os workers que ele envia para cá.",
-  "The project's coordinator is moving between machines right now.":
-    "O coordenador do projeto está mudando de máquina agora.",
   "No other machine has a copy of this project.":
     "Nenhuma outra máquina tem uma cópia deste projeto.",
   "Connect to see its role": "Conecte para ver o papel",
@@ -3175,7 +3163,7 @@ export const pt: PhraseCatalog = {
   "Run this draft on": "Executar este rascunho em",
   "Auto balance matching projects": "Balancear automaticamente os projetos correspondentes",
   "Add to another machine…": "Adicionar a outra máquina…",
-  "Copy to another machine…": "Copiar para outra máquina…",
+  "Send to another machine…": "Enviar para outra máquina…",
   "Leave this machine…": "Sair desta máquina…",
   "Another project or no project": "Outro projeto ou nenhum projeto",
   "Rename a machine": "Renomear uma máquina",
@@ -4600,8 +4588,6 @@ export const pt: PhraseCatalog = {
   "Machine access settings": "Configurações de acesso entre máquinas",
   "{machine} offline": "{machine} offline",
   "workers only": "apenas workers",
-  "move pending": "mudança pendente",
-  "separate project": "projeto separado",
   "{value}Messages go to Percy. {value2}": "{value}As mensagens vão para o Percy. {value2}",
   "Show only topics that need you in {project}":
     "Mostrar só os tópicos que precisam de você em {project}",
@@ -5001,4 +4987,20 @@ export const pt: PhraseCatalog = {
     "A cópia do SpecWithCode é a versão {version}, mais antiga que a usada por esta versão.",
   "Tools stay on each machine and are not copied. {machineName} still needs some before agents can work on this project there.":
     "As ferramentas ficam em cada máquina e não são copiadas. {machineName} ainda precisa de algumas antes que os agentes possam trabalhar neste projeto lá.",
+  "Main":
+    "Principal",
+  "Moving main":
+    "Movendo a principal",
+  "Copy · main on {machine}":
+    "Cópia · principal em {machine}",
+  "Separate project":
+    "Projeto separado",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "O trabalho deste projeto começa aqui. As cópias em outras máquinas recebem trabalho daqui.",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "A principal está em {machine}. Esta cópia também pode iniciar trabalho próprio.",
+  "Work starts on {machine}. This copy takes work from there.":
+    "O trabalho começa em {machine}. Esta cópia recebe trabalho de lá.",
+  "Main is moving between machines right now.":
+    "A principal está mudando de máquina agora.",
 };

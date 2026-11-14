@@ -331,6 +331,8 @@ export const useAtomCommand =
     return { _tag: "Success", value };
   };
 export const squashAtomCommandFailure = (value: any) => value.error;
+// Send to another machine… reads copy roles, whose module also reads interrupted commands.
+export const isAtomCommandInterrupted = () => false;
 export const MachineReadinessChecklist = () => (
   <p className="text-xs text-muted-foreground">
     Synthetic readiness fixture; no provider session started.
