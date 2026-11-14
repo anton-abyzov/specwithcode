@@ -2314,12 +2314,9 @@ export const ja: PhraseCatalog = {
   "Rename machine": "マシン名を変更",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "実行先、スレッドの行、サイドバー、ほかのデバイスにこの名前が表示されます。",
-  "Machine name":
-    "マシン名",
-  "Computer name: {hostLabel}, unchanged.":
-    "コンピュータ名: {hostLabel}（変更されません）",
-  "Call it {name}":
-    "{name} と呼ぶ",
+  "Machine name": "マシン名",
+  "Computer name: {hostLabel}, unchanged.": "コンピュータ名: {hostLabel}（変更されません）",
+  "Call it {name}": "{name} と呼ぶ",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
     "接続できないこのコンピュータの古い記録が、まだ {name} という名前です。このマシンだけがこの名前になるよう削除してください。",
   "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
@@ -2328,33 +2325,25 @@ export const ja: PhraseCatalog = {
     "{host} がすでに {name} という名前です。同じ名前のマシンが2台あると見分けにくくなります。",
   "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
     "今は接続できない {host} がすでに {name} という名前です。もう使っていないなら「ほかのマシン」で削除してください。",
-  "Use the computer name":
-    "コンピュータ名を使う",
-  "Chip letters":
-    "チップの文字",
-  "Narrow chip":
-    "狭いチップ",
-  "Customize chip letters, color and icon":
-    "チップの文字・色・アイコンをカスタマイズ",
+  "Use the computer name": "コンピュータ名を使う",
+  "Chip letters": "チップの文字",
+  "Narrow chip": "狭いチップ",
+  "Customize chip letters, color and icon": "チップの文字・色・アイコンをカスタマイズ",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "名前が入らない狭いチップに表示する2〜3文字。空欄なら名前から決まります。",
   "Old record": "古い記録",
-  "Old record: this machine joined again as a new one": "古い記録: このマシンは新しいマシンとして再参加しました",
+  "Old record: this machine joined again as a new one":
+    "古い記録: このマシンは新しいマシンとして再参加しました",
   "Remove old record": "古い記録を削除",
   "Could not remove the old record": "古い記録を削除できませんでした",
-  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
-  "Use 2 or 3 characters.":
-    "2〜3文字にしてください。",
-  "Coordinator here":
-    "ここがコーディネーター",
-  "Coordinator here too":
-    "ここもコーディネーター",
-  "Workers only":
-    "ワーカーのみ",
-  "Moving coordinator":
-    "コーディネーター移動中",
-  "Not shared":
-    "共有なし",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
+    "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
+  "Use 2 or 3 characters.": "2〜3文字にしてください。",
+  "Coordinator here": "ここがコーディネーター",
+  "Coordinator here too": "ここもコーディネーター",
+  "Workers only": "ワーカーのみ",
+  "Moving coordinator": "コーディネーター移動中",
+  "Not shared": "共有なし",
   "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
     "このコピーでプロジェクトのコーディネーターが動いています（今作業中かどうかに関わらず）。他のマシンのコピーはここから作業を受け取ります。コピーの作り方ではなく、コーディネーターについての表示です。",
   "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
@@ -2365,40 +2354,25 @@ export const ja: PhraseCatalog = {
     "プロジェクトのコーディネーターが今マシン間を移動中です。",
   "No other machine has a copy of this project.":
     "このプロジェクトのコピーは他のどのマシンにもありません。",
-  "Connect to see its role":
-    "接続すると役割が表示されます",
+  "Connect to see its role": "接続すると役割が表示されます",
   "This app cannot see this machine, so it cannot tell what this copy does.":
     "このアプリからはこのマシンが見えないため、このコピーの役割はわかりません。",
-  "{name} wears {color}":
-    "{name} の色は {color}",
-  "Change the color of {name}, now {color}":
-    "{name} の色を変更（現在は {color}）",
-  "Change color":
-    "色を変更",
-  "Color of {name}":
-    "{name} の色",
-  "{color}, also on {names}":
-    "{color}（{names} も使用中）",
+  "{name} wears {color}": "{name} の色は {color}",
+  "Change the color of {name}, now {color}": "{name} の色を変更（現在は {color}）",
+  "Change color": "色を変更",
+  "Color of {name}": "{name} の色",
+  "{color}, also on {names}": "{color}（{names} も使用中）",
   "Letters under a color name the machines that wear it.":
     "色の下の文字は、その色を使っているマシンを示します。",
-  "Violet":
-    "バイオレット",
-  "Teal":
-    "ティール",
-  "Amber":
-    "アンバー",
-  "Rose":
-    "ローズ",
-  "Blue":
-    "ブルー",
-  "Green":
-    "グリーン",
-  "Orange":
-    "オレンジ",
-  "Slate":
-    "スレート",
-  "Computer name {hostLabel}":
-    "コンピュータ名 {hostLabel}",
+  Violet: "バイオレット",
+  Teal: "ティール",
+  Amber: "アンバー",
+  Rose: "ローズ",
+  Blue: "ブルー",
+  Green: "グリーン",
+  Orange: "オレンジ",
+  Slate: "スレート",
+  "Computer name {hostLabel}": "コンピュータ名 {hostLabel}",
   "Use {defaultName}": "{defaultName} を使う",
   "Waiting for sample": "サンプルを待っています",
   "Updated {span}{value}": "更新: {span}{value}",
@@ -4973,7 +4947,8 @@ export const ja: PhraseCatalog = {
   "Reviewed, model not recorded": "レビュー済み、モデル未記録",
   "Stopped {time}. New work is refused": "{time} に停止しました。新しい作業は拒否されます",
   "Stopped. New work is refused": "停止しました。新しい作業は拒否されます",
-  "Time limit ended {time}. New work is refused": "{time} に期限が終了しました。新しい作業は拒否されます",
+  "Time limit ended {time}. New work is refused":
+    "{time} に期限が終了しました。新しい作業は拒否されます",
   "Until {date}": "{date} まで",
   "Until I stop it": "停止するまで",
   "Allow for": "許可する期間",
@@ -4982,13 +4957,6 @@ export const ja: PhraseCatalog = {
   "1 week": "1 週間",
   "Allow {machine} again for": "{machine} を再び許可する期間",
   "How long {machine} may start work here": "{machine} がここで作業を開始できる期間",
-  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.": "GitHub Copilot CLI は Node.js で動作します。インストール後、もう一度サインインしてください。",
-  "Plans and tracks work in SpecWeave projects.": "SpecWeave プロジェクトの作業を計画・追跡します。",
-  "Recommended. Plans and tracks work in SpecWeave projects.": "推奨。SpecWeave プロジェクトの作業を計画・追跡します。",
-  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.": "バージョン {version} は SpecWeave と Copilot に必要なバージョン (Node.js 20 以降) より古いです。インストールした場所で更新してください。",
-  "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "バージョン {version} は SpecWithCode に必要なバージョンより古いです。インストールした場所で更新してください。",
-  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "SpecWithCode のコピーはバージョン {version} です。ワンクリックでこのリリースが使うバージョンに置き換えます。",
-  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "未インストール。ワンクリックで Node.js と一緒に SpecWithCode 専用フォルダーにインストールします。管理者パスワードは不要です。",
   "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
     "GitHub Copilot CLI は Node.js で動作します。インストール後、もう一度サインインしてください。",
   "Plans and tracks work in SpecWeave projects.":

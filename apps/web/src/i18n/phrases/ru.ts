@@ -2308,12 +2308,9 @@ export const ru: PhraseCatalog = {
   "Rename machine": "Переименовать машину",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Это имя показывают «Запуск на», строки тредов, боковая панель и другие ваши устройства.",
-  "Machine name":
-    "Имя машины",
-  "Computer name: {hostLabel}, unchanged.":
-    "Имя компьютера: {hostLabel}, не меняется.",
-  "Call it {name}":
-    "Назвать {name}",
+  "Machine name": "Имя машины",
+  "Computer name: {hostLabel}, unchanged.": "Имя компьютера: {hostLabel}, не меняется.",
+  "Call it {name}": "Назвать {name}",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
     "Старая запись этого компьютера, которая не может подключиться, всё ещё называется {name}. Удалите её, чтобы это имя было только у этой машины.",
   "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
@@ -2322,33 +2319,25 @@ export const ru: PhraseCatalog = {
     "{host} уже называется {name}. Две машины с одним именем трудно различить.",
   "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
     "{host} сейчас не может подключиться и уже называется {name}. Если этой машины больше нет, удалите её в разделе «Другие машины».",
-  "Use the computer name":
-    "Использовать имя компьютера",
-  "Chip letters":
-    "Буквы на чипе",
-  "Narrow chip":
-    "Узкий чип",
-  "Customize chip letters, color and icon":
-    "Настроить буквы на чипе, цвет и значок",
+  "Use the computer name": "Использовать имя компьютера",
+  "Chip letters": "Буквы на чипе",
+  "Narrow chip": "Узкий чип",
+  "Customize chip letters, color and icon": "Настроить буквы на чипе, цвет и значок",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 или 3 символа для чипа, в который не помещается имя. Пусто — берутся из имени.",
   "Old record": "Старая запись",
-  "Old record: this machine joined again as a new one": "Старая запись: эта машина подключилась заново как новая",
+  "Old record: this machine joined again as a new one":
+    "Старая запись: эта машина подключилась заново как новая",
   "Remove old record": "Удалить старую запись",
   "Could not remove the old record": "Не удалось удалить старую запись",
-  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
-  "Use 2 or 3 characters.":
-    "Используйте 2 или 3 символа.",
-  "Coordinator here":
-    "Координатор здесь",
-  "Coordinator here too":
-    "Тоже координатор",
-  "Workers only":
-    "Только воркеры",
-  "Moving coordinator":
-    "Координатор переезжает",
-  "Not shared":
-    "Не общий",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
+    "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
+  "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
+  "Coordinator here": "Координатор здесь",
+  "Coordinator here too": "Тоже координатор",
+  "Workers only": "Только воркеры",
+  "Moving coordinator": "Координатор переезжает",
+  "Not shared": "Не общий",
   "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
     "Координатор проекта работает в этой копии, даже если сейчас он ничего не делает. Копии на других машинах берут работу у него. Речь о координаторе, а не о том, как копия была сделана.",
   "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
@@ -2359,40 +2348,25 @@ export const ru: PhraseCatalog = {
     "Координатор проекта прямо сейчас переезжает между машинами.",
   "No other machine has a copy of this project.":
     "Ни на одной другой машине нет копии этого проекта.",
-  "Connect to see its role":
-    "Подключитесь, чтобы увидеть роль",
+  "Connect to see its role": "Подключитесь, чтобы увидеть роль",
   "This app cannot see this machine, so it cannot tell what this copy does.":
     "Приложение не видит эту машину, поэтому не может сказать, что делает эта копия.",
-  "{name} wears {color}":
-    "У {name} цвет {color}",
-  "Change the color of {name}, now {color}":
-    "Изменить цвет {name}, сейчас {color}",
-  "Change color":
-    "Изменить цвет",
-  "Color of {name}":
-    "Цвет {name}",
-  "{color}, also on {names}":
-    "{color}, также у {names}",
+  "{name} wears {color}": "У {name} цвет {color}",
+  "Change the color of {name}, now {color}": "Изменить цвет {name}, сейчас {color}",
+  "Change color": "Изменить цвет",
+  "Color of {name}": "Цвет {name}",
+  "{color}, also on {names}": "{color}, также у {names}",
   "Letters under a color name the machines that wear it.":
     "Буквы под цветом — машины, у которых он уже есть.",
-  "Violet":
-    "Фиолетовый",
-  "Teal":
-    "Бирюзовый",
-  "Amber":
-    "Янтарный",
-  "Rose":
-    "Розовый",
-  "Blue":
-    "Синий",
-  "Green":
-    "Зелёный",
-  "Orange":
-    "Оранжевый",
-  "Slate":
-    "Графитовый",
-  "Computer name {hostLabel}":
-    "Имя компьютера {hostLabel}",
+  Violet: "Фиолетовый",
+  Teal: "Бирюзовый",
+  Amber: "Янтарный",
+  Rose: "Розовый",
+  Blue: "Синий",
+  Green: "Зелёный",
+  Orange: "Оранжевый",
+  Slate: "Графитовый",
+  "Computer name {hostLabel}": "Имя компьютера {hostLabel}",
   "Use {defaultName}": "Использовать {defaultName}",
   "Waiting for sample": "Ожидание замера",
   "Updated {span}{value}": "Обновлено {span}{value}",
@@ -4980,13 +4954,6 @@ export const ru: PhraseCatalog = {
   "1 week": "1 неделю",
   "Allow {machine} again for": "Снова разрешить {machine} на",
   "How long {machine} may start work here": "Как долго {machine} может запускать работу здесь",
-  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.": "GitHub Copilot CLI работает на Node.js. После установки войдите снова.",
-  "Plans and tracks work in SpecWeave projects.": "Планирует и отслеживает работу в проектах SpecWeave.",
-  "Recommended. Plans and tracks work in SpecWeave projects.": "Рекомендуется. Планирует и отслеживает работу в проектах SpecWeave.",
-  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.": "Версия {version} старее, чем нужно SpecWeave и Copilot (Node.js 20 или новее). Обновите там, где устанавливали.",
-  "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "Версия {version} старее, чем нужно SpecWithCode. Обновите там, где устанавливали.",
-  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "Копия SpecWithCode имеет версию {version}. Один клик заменит её версией, которую использует этот релиз.",
-  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "Не установлено. Один клик установит вместе с Node.js в собственную папку SpecWithCode, без пароля администратора.",
   "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
     "GitHub Copilot CLI работает на Node.js. После установки войдите снова.",
   "Plans and tracks work in SpecWeave projects.":

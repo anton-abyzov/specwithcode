@@ -2231,12 +2231,9 @@ export const zh: PhraseCatalog = {
   "Rename machine": "重命名电脑",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "“运行于”、线程行、侧边栏和你的其他设备都会显示这个名称。",
-  "Machine name":
-    "机器名称",
-  "Computer name: {hostLabel}, unchanged.":
-    "电脑名称：{hostLabel}，保持不变。",
-  "Call it {name}":
-    "命名为 {name}",
+  "Machine name": "机器名称",
+  "Computer name: {hostLabel}, unchanged.": "电脑名称：{hostLabel}，保持不变。",
+  "Call it {name}": "命名为 {name}",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
     "这台电脑有一条无法连接的旧记录仍叫 {name}。移除它，让只有这台机器使用这个名字。",
   "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
@@ -2245,33 +2242,24 @@ export const zh: PhraseCatalog = {
     "{host} 已经叫 {name}。两台同名的机器很难区分。",
   "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
     "{host} 现在无法连接，已经叫 {name}。如果它已不在，请在“其他机器”中移除。",
-  "Use the computer name":
-    "使用电脑名称",
-  "Chip letters":
-    "标签字母",
-  "Narrow chip":
-    "窄标签",
-  "Customize chip letters, color and icon":
-    "自定义标签字母、颜色和图标",
+  "Use the computer name": "使用电脑名称",
+  "Chip letters": "标签字母",
+  "Narrow chip": "窄标签",
+  "Customize chip letters, color and icon": "自定义标签字母、颜色和图标",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "标签太窄放不下名称时显示的 2 或 3 个字符。留空则跟随名称。",
   "Old record": "旧记录",
   "Old record: this machine joined again as a new one": "旧记录：这台机器已作为新机器重新加入",
   "Remove old record": "删除旧记录",
   "Could not remove the old record": "无法删除旧记录",
-  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
-  "Use 2 or 3 characters.":
-    "请使用 2 或 3 个字符。",
-  "Coordinator here":
-    "协调者在此",
-  "Coordinator here too":
-    "这里也有协调者",
-  "Workers only":
-    "仅运行 worker",
-  "Moving coordinator":
-    "协调者迁移中",
-  "Not shared":
-    "未共享",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
+    "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
+  "Use 2 or 3 characters.": "请使用 2 或 3 个字符。",
+  "Coordinator here": "协调者在此",
+  "Coordinator here too": "这里也有协调者",
+  "Workers only": "仅运行 worker",
+  "Moving coordinator": "协调者迁移中",
+  "Not shared": "未共享",
   "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
     "项目的协调者在这个副本上运行，无论它现在是否在工作。其他机器上的副本从它那里接收工作。这里说的是协调者，不是副本是怎么创建的。",
   "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
@@ -2280,42 +2268,26 @@ export const zh: PhraseCatalog = {
     "协调者已迁移到另一台机器。这个副本只运行它派来的 worker。",
   "The project's coordinator is moving between machines right now.":
     "项目的协调者正在机器之间迁移。",
-  "No other machine has a copy of this project.":
-    "没有其他机器有这个项目的副本。",
-  "Connect to see its role":
-    "连接后可查看角色",
+  "No other machine has a copy of this project.": "没有其他机器有这个项目的副本。",
+  "Connect to see its role": "连接后可查看角色",
   "This app cannot see this machine, so it cannot tell what this copy does.":
     "此应用看不到这台机器，因此无法判断这个副本的作用。",
-  "{name} wears {color}":
-    "{name} 的颜色是{color}",
-  "Change the color of {name}, now {color}":
-    "更改 {name} 的颜色，当前为{color}",
-  "Change color":
-    "更改颜色",
-  "Color of {name}":
-    "{name} 的颜色",
-  "{color}, also on {names}":
-    "{color}，{names} 也在用",
+  "{name} wears {color}": "{name} 的颜色是{color}",
+  "Change the color of {name}, now {color}": "更改 {name} 的颜色，当前为{color}",
+  "Change color": "更改颜色",
+  "Color of {name}": "{name} 的颜色",
+  "{color}, also on {names}": "{color}，{names} 也在用",
   "Letters under a color name the machines that wear it.":
     "颜色下方的字母表示正在使用该颜色的机器。",
-  "Violet":
-    "紫罗兰",
-  "Teal":
-    "青绿",
-  "Amber":
-    "琥珀",
-  "Rose":
-    "玫瑰",
-  "Blue":
-    "蓝色",
-  "Green":
-    "绿色",
-  "Orange":
-    "橙色",
-  "Slate":
-    "石板灰",
-  "Computer name {hostLabel}":
-    "电脑名称 {hostLabel}",
+  Violet: "紫罗兰",
+  Teal: "青绿",
+  Amber: "琥珀",
+  Rose: "玫瑰",
+  Blue: "蓝色",
+  Green: "绿色",
+  Orange: "橙色",
+  Slate: "石板灰",
+  "Computer name {hostLabel}": "电脑名称 {hostLabel}",
   "Use {defaultName}": "使用 {defaultName}",
   "Waiting for sample": "等待样本",
   "Updated {span}{value}": "已更新 {span}{value}",
@@ -4790,7 +4762,6 @@ export const zh: PhraseCatalog = {
   "1 week": "1 周",
   "Allow {machine} again for": "再次允许 {machine} 的时长",
   "How long {machine} may start work here": "{machine} 可在此启动工作的时长",
-  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.": "GitHub Copilot CLI 依赖 Node.js 运行。安装完成后请重新登录。",
   "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
     "GitHub Copilot CLI 依赖 Node.js 运行。安装完成后请重新登录。",
   "Plans and tracks work in SpecWeave projects.": "在 SpecWeave 项目中规划和跟踪工作。",

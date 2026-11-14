@@ -2325,12 +2325,9 @@ export const de: PhraseCatalog = {
   "Rename machine": "Rechner umbenennen",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Ausführen auf, Thread-Zeilen, die Seitenleiste und deine anderen Geräte zeigen diesen Namen.",
-  "Machine name":
-    "Rechnername",
-  "Computer name: {hostLabel}, unchanged.":
-    "Computername: {hostLabel}, bleibt unverändert.",
-  "Call it {name}":
-    "Nenne ihn {name}",
+  "Machine name": "Rechnername",
+  "Computer name: {hostLabel}, unchanged.": "Computername: {hostLabel}, bleibt unverändert.",
+  "Call it {name}": "Nenne ihn {name}",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
     "Ein alter Eintrag dieses Computers, der sich nicht verbinden kann, heißt noch {name}. Entferne ihn, damit nur dieser Rechner den Namen trägt.",
   "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
@@ -2339,33 +2336,25 @@ export const de: PhraseCatalog = {
     "{host} heißt schon {name}. Zwei Rechner mit einem Namen sind schwer auseinanderzuhalten.",
   "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
     "{host} kann sich gerade nicht verbinden und heißt schon {name}. Wenn es ihn nicht mehr gibt, entferne ihn unter Andere Rechner.",
-  "Use the computer name":
-    "Computernamen verwenden",
-  "Chip letters":
-    "Chip-Buchstaben",
-  "Narrow chip":
-    "Schmaler Chip",
-  "Customize chip letters, color and icon":
-    "Chip-Buchstaben, Farbe und Symbol anpassen",
+  "Use the computer name": "Computernamen verwenden",
+  "Chip letters": "Chip-Buchstaben",
+  "Narrow chip": "Schmaler Chip",
+  "Customize chip letters, color and icon": "Chip-Buchstaben, Farbe und Symbol anpassen",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 oder 3 Zeichen für einen Chip, der für den Namen zu schmal ist. Leer folgt dem Namen.",
   "Old record": "Alter Eintrag",
-  "Old record: this machine joined again as a new one": "Alter Eintrag: Diese Maschine ist neu beigetreten",
+  "Old record: this machine joined again as a new one":
+    "Alter Eintrag: Diese Maschine ist neu beigetreten",
   "Remove old record": "Alten Eintrag entfernen",
   "Could not remove the old record": "Der alte Eintrag konnte nicht entfernt werden",
-  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Den alten Eintrag von {name} ({host}) von diesem Gerät entfernen?\nDie Maschine ist neu beigetreten und läuft weiter; nur der tote Eintrag und seine zwischengespeicherten Threads hier verschwinden.",
-  "Use 2 or 3 characters.":
-    "Verwende 2 oder 3 Zeichen.",
-  "Coordinator here":
-    "Koordinator hier",
-  "Coordinator here too":
-    "Auch Koordinator",
-  "Workers only":
-    "Nur Worker",
-  "Moving coordinator":
-    "Koordinator zieht um",
-  "Not shared":
-    "Nicht geteilt",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
+    "Den alten Eintrag von {name} ({host}) von diesem Gerät entfernen?\nDie Maschine ist neu beigetreten und läuft weiter; nur der tote Eintrag und seine zwischengespeicherten Threads hier verschwinden.",
+  "Use 2 or 3 characters.": "Verwende 2 oder 3 Zeichen.",
+  "Coordinator here": "Koordinator hier",
+  "Coordinator here too": "Auch Koordinator",
+  "Workers only": "Nur Worker",
+  "Moving coordinator": "Koordinator zieht um",
+  "Not shared": "Nicht geteilt",
   "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
     "Der Koordinator des Projekts läuft in dieser Kopie, ob er gerade arbeitet oder nicht. Kopien auf anderen Maschinen übernehmen Arbeit von ihm. Es geht um den Koordinator, nicht darum, wie die Kopie erstellt wurde.",
   "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
@@ -2376,40 +2365,25 @@ export const de: PhraseCatalog = {
     "Der Koordinator des Projekts zieht gerade zwischen Maschinen um.",
   "No other machine has a copy of this project.":
     "Keine andere Maschine hat eine Kopie dieses Projekts.",
-  "Connect to see its role":
-    "Verbinden, um die Rolle zu sehen",
+  "Connect to see its role": "Verbinden, um die Rolle zu sehen",
   "This app cannot see this machine, so it cannot tell what this copy does.":
     "Diese App sieht die Maschine nicht und kann daher nicht sagen, was diese Kopie tut.",
-  "{name} wears {color}":
-    "{name} trägt {color}",
-  "Change the color of {name}, now {color}":
-    "Farbe von {name} ändern, jetzt {color}",
-  "Change color":
-    "Farbe ändern",
-  "Color of {name}":
-    "Farbe von {name}",
-  "{color}, also on {names}":
-    "{color}, auch auf {names}",
+  "{name} wears {color}": "{name} trägt {color}",
+  "Change the color of {name}, now {color}": "Farbe von {name} ändern, jetzt {color}",
+  "Change color": "Farbe ändern",
+  "Color of {name}": "Farbe von {name}",
+  "{color}, also on {names}": "{color}, auch auf {names}",
   "Letters under a color name the machines that wear it.":
     "Die Buchstaben unter einer Farbe nennen die Maschinen, die sie tragen.",
-  "Violet":
-    "Violett",
-  "Teal":
-    "Petrol",
-  "Amber":
-    "Bernstein",
-  "Rose":
-    "Rosé",
-  "Blue":
-    "Blau",
-  "Green":
-    "Grün",
-  "Orange":
-    "Orange",
-  "Slate":
-    "Schiefer",
-  "Computer name {hostLabel}":
-    "Computername {hostLabel}",
+  Violet: "Violett",
+  Teal: "Petrol",
+  Amber: "Bernstein",
+  Rose: "Rosé",
+  Blue: "Blau",
+  Green: "Grün",
+  Orange: "Orange",
+  Slate: "Schiefer",
+  "Computer name {hostLabel}": "Computername {hostLabel}",
   "Use {defaultName}": "{defaultName} verwenden",
   "Waiting for sample": "Warten auf Messwert",
   "Updated {span}{value}": "Aktualisiert {span}{value}",
@@ -5006,7 +4980,8 @@ export const de: PhraseCatalog = {
   "Reviewed, model not recorded": "Geprüft, Modell nicht erfasst",
   "Stopped {time}. New work is refused": "Gestoppt {time}. Neue Arbeit wird abgelehnt",
   "Stopped. New work is refused": "Gestoppt. Neue Arbeit wird abgelehnt",
-  "Time limit ended {time}. New work is refused": "Zeitlimit endete {time}. Neue Arbeit wird abgelehnt",
+  "Time limit ended {time}. New work is refused":
+    "Zeitlimit endete {time}. Neue Arbeit wird abgelehnt",
   "Until {date}": "Bis {date}",
   "Until I stop it": "Bis ich es stoppe",
   "Allow for": "Erlauben für",
@@ -5015,13 +4990,6 @@ export const de: PhraseCatalog = {
   "1 week": "1 Woche",
   "Allow {machine} again for": "{machine} erneut erlauben für",
   "How long {machine} may start work here": "Wie lange {machine} hier Arbeit starten darf",
-  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.": "GitHub Copilot CLI läuft mit Node.js. Melde dich nach der Installation erneut an.",
-  "Plans and tracks work in SpecWeave projects.": "Plant und verfolgt die Arbeit in SpecWeave-Projekten.",
-  "Recommended. Plans and tracks work in SpecWeave projects.": "Empfohlen. Plant und verfolgt die Arbeit in SpecWeave-Projekten.",
-  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.": "Version {version} ist älter, als SpecWeave und Copilot brauchen (Node.js 20 oder neuer). Aktualisiere es dort, wo du es installiert hast.",
-  "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "Version {version} ist älter, als SpecWithCode braucht. Aktualisiere es dort, wo du es installiert hast.",
-  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "Die Kopie von SpecWithCode hat Version {version}. Ein Klick ersetzt sie durch die Version, die dieses Release nutzt.",
-  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "Nicht installiert. Ein Klick installiert es mit Node.js im eigenen Ordner von SpecWithCode, ohne Admin-Passwort.",
   "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
     "GitHub Copilot CLI läuft mit Node.js. Melde dich nach der Installation erneut an.",
   "Plans and tracks work in SpecWeave projects.":

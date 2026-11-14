@@ -2331,12 +2331,9 @@ export const fr: PhraseCatalog = {
   "Rename machine": "Renommer la machine",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "Exécuter sur, les lignes de fil, la barre latérale et vos autres appareils affichent ce nom.",
-  "Machine name":
-    "Nom de la machine",
-  "Computer name: {hostLabel}, unchanged.":
-    "Nom de l’ordinateur : {hostLabel}, inchangé.",
-  "Call it {name}":
-    "L’appeler {name}",
+  "Machine name": "Nom de la machine",
+  "Computer name: {hostLabel}, unchanged.": "Nom de l’ordinateur : {hostLabel}, inchangé.",
+  "Call it {name}": "L’appeler {name}",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
     "Un ancien enregistrement de cet ordinateur, qui ne peut pas se connecter, s’appelle encore {name}. Retirez-le pour que seule cette machine porte ce nom.",
   "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
@@ -2345,33 +2342,25 @@ export const fr: PhraseCatalog = {
     "{host} s’appelle déjà {name}. Deux machines du même nom sont difficiles à distinguer.",
   "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
     "{host}, qui ne peut pas se connecter pour l’instant, s’appelle déjà {name}. Si elle n’existe plus, retirez-la sous Autres machines.",
-  "Use the computer name":
-    "Utiliser le nom de l’ordinateur",
-  "Chip letters":
-    "Lettres de la puce",
-  "Narrow chip":
-    "Puce étroite",
-  "Customize chip letters, color and icon":
-    "Personnaliser les lettres, la couleur et l’icône",
+  "Use the computer name": "Utiliser le nom de l’ordinateur",
+  "Chip letters": "Lettres de la puce",
+  "Narrow chip": "Puce étroite",
+  "Customize chip letters, color and icon": "Personnaliser les lettres, la couleur et l’icône",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "2 ou 3 caractères pour une puce trop étroite pour le nom. Vide suit le nom.",
   "Old record": "Ancien enregistrement",
-  "Old record: this machine joined again as a new one": "Ancien enregistrement : cette machine a rejoint à nouveau comme une nouvelle",
+  "Old record: this machine joined again as a new one":
+    "Ancien enregistrement : cette machine a rejoint à nouveau comme une nouvelle",
   "Remove old record": "Supprimer l'ancien enregistrement",
   "Could not remove the old record": "Impossible de supprimer l'ancien enregistrement",
-  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "Supprimer de cet appareil l'ancien enregistrement de {name} ({host}) ?\nLa machine a rejoint à nouveau comme une nouvelle et continue de fonctionner ; seuls l'enregistrement mort et ses fils en cache ici disparaissent.",
-  "Use 2 or 3 characters.":
-    "Utilisez 2 ou 3 caractères.",
-  "Coordinator here":
-    "Coordinateur ici",
-  "Coordinator here too":
-    "Coordinateur ici aussi",
-  "Workers only":
-    "Workers seulement",
-  "Moving coordinator":
-    "Coordinateur en transfert",
-  "Not shared":
-    "Non partagé",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
+    "Supprimer de cet appareil l'ancien enregistrement de {name} ({host}) ?\nLa machine a rejoint à nouveau comme une nouvelle et continue de fonctionner ; seuls l'enregistrement mort et ses fils en cache ici disparaissent.",
+  "Use 2 or 3 characters.": "Utilisez 2 ou 3 caractères.",
+  "Coordinator here": "Coordinateur ici",
+  "Coordinator here too": "Coordinateur ici aussi",
+  "Workers only": "Workers seulement",
+  "Moving coordinator": "Coordinateur en transfert",
+  "Not shared": "Non partagé",
   "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
     "Le coordinateur du projet tourne sur cette copie, qu'il travaille en ce moment ou non. Les copies des autres machines reçoivent du travail de lui. Il s'agit du coordinateur, pas de la façon dont la copie a été faite.",
   "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
@@ -2380,42 +2369,26 @@ export const fr: PhraseCatalog = {
     "Le coordinateur est passé sur une autre machine. Cette copie ne fait tourner que les workers qu'il envoie ici.",
   "The project's coordinator is moving between machines right now.":
     "Le coordinateur du projet passe d'une machine à l'autre en ce moment.",
-  "No other machine has a copy of this project.":
-    "Aucune autre machine n'a de copie de ce projet.",
-  "Connect to see its role":
-    "Connectez-vous pour voir son rôle",
+  "No other machine has a copy of this project.": "Aucune autre machine n'a de copie de ce projet.",
+  "Connect to see its role": "Connectez-vous pour voir son rôle",
   "This app cannot see this machine, so it cannot tell what this copy does.":
     "Cette app ne voit pas cette machine et ne peut donc pas dire ce que fait cette copie.",
-  "{name} wears {color}":
-    "{name} porte {color}",
-  "Change the color of {name}, now {color}":
-    "Changer la couleur de {name}, actuellement {color}",
-  "Change color":
-    "Changer la couleur",
-  "Color of {name}":
-    "Couleur de {name}",
-  "{color}, also on {names}":
-    "{color}, aussi sur {names}",
+  "{name} wears {color}": "{name} porte {color}",
+  "Change the color of {name}, now {color}": "Changer la couleur de {name}, actuellement {color}",
+  "Change color": "Changer la couleur",
+  "Color of {name}": "Couleur de {name}",
+  "{color}, also on {names}": "{color}, aussi sur {names}",
   "Letters under a color name the machines that wear it.":
     "Les lettres sous une couleur indiquent les machines qui la portent.",
-  "Violet":
-    "Violet",
-  "Teal":
-    "Bleu canard",
-  "Amber":
-    "Ambre",
-  "Rose":
-    "Rose",
-  "Blue":
-    "Bleu",
-  "Green":
-    "Vert",
-  "Orange":
-    "Orange",
-  "Slate":
-    "Ardoise",
-  "Computer name {hostLabel}":
-    "Nom de l’ordinateur {hostLabel}",
+  Violet: "Violet",
+  Teal: "Bleu canard",
+  Amber: "Ambre",
+  Rose: "Rose",
+  Blue: "Bleu",
+  Green: "Vert",
+  Orange: "Orange",
+  Slate: "Ardoise",
+  "Computer name {hostLabel}": "Nom de l’ordinateur {hostLabel}",
   "Use {defaultName}": "Utiliser {defaultName}",
   "Waiting for sample": "En attente d’un échantillon",
   "Updated {span}{value}": "Mis à jour {span}{value}",
@@ -5014,7 +4987,8 @@ export const fr: PhraseCatalog = {
   "Reviewed, model not recorded": "Relu, modèle non enregistré",
   "Stopped {time}. New work is refused": "Arrêté {time}. Les nouveaux travaux sont refusés",
   "Stopped. New work is refused": "Arrêté. Les nouveaux travaux sont refusés",
-  "Time limit ended {time}. New work is refused": "Limite de temps terminée {time}. Les nouveaux travaux sont refusés",
+  "Time limit ended {time}. New work is refused":
+    "Limite de temps terminée {time}. Les nouveaux travaux sont refusés",
   "Until {date}": "Jusqu’au {date}",
   "Until I stop it": "Jusqu’à ce que je l’arrête",
   "Allow for": "Autoriser pendant",
@@ -5022,14 +4996,8 @@ export const fr: PhraseCatalog = {
   "1 day": "1 jour",
   "1 week": "1 semaine",
   "Allow {machine} again for": "Autoriser de nouveau {machine} pendant",
-  "How long {machine} may start work here": "Pendant combien de temps {machine} peut lancer du travail ici",
-  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.": "GitHub Copilot CLI fonctionne avec Node.js. Une fois installé, reconnectez-vous.",
-  "Plans and tracks work in SpecWeave projects.": "Planifie et suit le travail dans les projets SpecWeave.",
-  "Recommended. Plans and tracks work in SpecWeave projects.": "Recommandé. Planifie et suit le travail dans les projets SpecWeave.",
-  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.": "La version {version} est plus ancienne que ce dont SpecWeave et Copilot ont besoin (Node.js 20 ou plus récent). Mettez-le à jour là où vous l'avez installé.",
-  "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "La version {version} est plus ancienne que ce dont SpecWithCode a besoin. Mettez-le à jour là où vous l'avez installé.",
-  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "La copie de SpecWithCode est en version {version}. Un clic la remplace par la version utilisée par cette release.",
-  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "Non installé. Un clic l'installe avec Node.js dans le dossier propre à SpecWithCode, sans mot de passe administrateur.",
+  "How long {machine} may start work here":
+    "Pendant combien de temps {machine} peut lancer du travail ici",
   "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
     "GitHub Copilot CLI fonctionne avec Node.js. Une fois installé, reconnectez-vous.",
   "Plans and tracks work in SpecWeave projects.":

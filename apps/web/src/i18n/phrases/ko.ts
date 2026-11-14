@@ -2292,12 +2292,9 @@ export const ko: PhraseCatalog = {
   "Rename machine": "컴퓨터 이름 변경",
   "Runs on, thread rows, the sidebar and your other devices show this name.":
     "실행 위치, 스레드 행, 사이드바, 다른 기기에 이 이름이 표시됩니다.",
-  "Machine name":
-    "컴퓨터 이름",
-  "Computer name: {hostLabel}, unchanged.":
-    "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
-  "Call it {name}":
-    "{name}(으)로 부르기",
+  "Machine name": "컴퓨터 이름",
+  "Computer name: {hostLabel}, unchanged.": "시스템 이름: {hostLabel}, 바뀌지 않습니다.",
+  "Call it {name}": "{name}(으)로 부르기",
   "An old record of this computer, which can't connect, is still called {name}. Remove it so only this machine has the name.":
     "연결할 수 없는 이 컴퓨터의 이전 기록이 아직 {name}(이)라는 이름입니다. 이 컴퓨터만 이 이름을 쓰도록 제거하세요.",
   "Another record of this computer is already called {name}. If it is an old copy, remove it under Other machines.":
@@ -2306,33 +2303,25 @@ export const ko: PhraseCatalog = {
     "{host}이(가) 이미 {name}(이)라는 이름입니다. 이름이 같은 컴퓨터 두 대는 구별하기 어렵습니다.",
   "{host}, which can't connect now, is already called {name}. If it is gone, remove it under Other machines.":
     "지금 연결할 수 없는 {host}이(가) 이미 {name}(이)라는 이름입니다. 더 이상 없다면 다른 컴퓨터에서 제거하세요.",
-  "Use the computer name":
-    "시스템 이름 사용",
-  "Chip letters":
-    "칩 글자",
-  "Narrow chip":
-    "좁은 칩",
-  "Customize chip letters, color and icon":
-    "칩 글자, 색상, 아이콘 사용자 지정",
+  "Use the computer name": "시스템 이름 사용",
+  "Chip letters": "칩 글자",
+  "Narrow chip": "좁은 칩",
+  "Customize chip letters, color and icon": "칩 글자, 색상, 아이콘 사용자 지정",
   "2 or 3 characters for a chip too narrow for the name. Empty follows the name.":
     "이름이 들어가지 않는 좁은 칩에 표시할 2~3자입니다. 비워 두면 이름을 따릅니다.",
   "Old record": "이전 기록",
-  "Old record: this machine joined again as a new one": "이전 기록: 이 머신은 새 머신으로 다시 참여했습니다",
+  "Old record: this machine joined again as a new one":
+    "이전 기록: 이 머신은 새 머신으로 다시 참여했습니다",
   "Remove old record": "이전 기록 제거",
   "Could not remove the old record": "이전 기록을 제거하지 못했습니다",
-  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.": "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
-  "Use 2 or 3 characters.":
-    "2~3자를 사용하세요.",
-  "Coordinator here":
-    "여기가 코디네이터",
-  "Coordinator here too":
-    "여기도 코디네이터",
-  "Workers only":
-    "워커만",
-  "Moving coordinator":
-    "코디네이터 이동 중",
-  "Not shared":
-    "공유 안 함",
+  "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
+    "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
+  "Use 2 or 3 characters.": "2~3자를 사용하세요.",
+  "Coordinator here": "여기가 코디네이터",
+  "Coordinator here too": "여기도 코디네이터",
+  "Workers only": "워커만",
+  "Moving coordinator": "코디네이터 이동 중",
+  "Not shared": "공유 안 함",
   "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
     "프로젝트의 코디네이터가 이 복사본에서 실행됩니다(지금 작업 중이든 아니든). 다른 머신의 복사본은 여기서 작업을 받습니다. 복사본을 만든 방식이 아니라 코디네이터에 관한 표시입니다.",
   "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
@@ -2343,40 +2332,25 @@ export const ko: PhraseCatalog = {
     "프로젝트의 코디네이터가 지금 머신 사이를 이동하고 있습니다.",
   "No other machine has a copy of this project.":
     "다른 어떤 머신에도 이 프로젝트의 복사본이 없습니다.",
-  "Connect to see its role":
-    "연결하면 역할이 보입니다",
+  "Connect to see its role": "연결하면 역할이 보입니다",
   "This app cannot see this machine, so it cannot tell what this copy does.":
     "이 앱에서 이 머신이 보이지 않아 이 복사본의 역할을 알 수 없습니다.",
-  "{name} wears {color}":
-    "{name}의 색은 {color}",
-  "Change the color of {name}, now {color}":
-    "{name}의 색 변경, 현재 {color}",
-  "Change color":
-    "색 변경",
-  "Color of {name}":
-    "{name}의 색",
-  "{color}, also on {names}":
-    "{color}, {names}에서도 사용 중",
+  "{name} wears {color}": "{name}의 색은 {color}",
+  "Change the color of {name}, now {color}": "{name}의 색 변경, 현재 {color}",
+  "Change color": "색 변경",
+  "Color of {name}": "{name}의 색",
+  "{color}, also on {names}": "{color}, {names}에서도 사용 중",
   "Letters under a color name the machines that wear it.":
     "색 아래 글자는 그 색을 쓰는 머신을 나타냅니다.",
-  "Violet":
-    "바이올렛",
-  "Teal":
-    "틸",
-  "Amber":
-    "앰버",
-  "Rose":
-    "로즈",
-  "Blue":
-    "블루",
-  "Green":
-    "그린",
-  "Orange":
-    "오렌지",
-  "Slate":
-    "슬레이트",
-  "Computer name {hostLabel}":
-    "시스템 이름 {hostLabel}",
+  Violet: "바이올렛",
+  Teal: "틸",
+  Amber: "앰버",
+  Rose: "로즈",
+  Blue: "블루",
+  Green: "그린",
+  Orange: "오렌지",
+  Slate: "슬레이트",
+  "Computer name {hostLabel}": "시스템 이름 {hostLabel}",
   "Use {defaultName}": "{defaultName} 사용",
   "Waiting for sample": "샘플 대기 중",
   "Updated {span}{value}": "업데이트 {span}{value}",
@@ -4926,13 +4900,6 @@ export const ko: PhraseCatalog = {
   "1 week": "1주",
   "Allow {machine} again for": "{machine} 다시 허용 기간",
   "How long {machine} may start work here": "{machine}이(가) 여기서 작업을 시작할 수 있는 기간",
-  "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.": "GitHub Copilot CLI는 Node.js에서 실행됩니다. 설치가 끝나면 다시 로그인하세요.",
-  "Plans and tracks work in SpecWeave projects.": "SpecWeave 프로젝트의 작업을 계획하고 추적합니다.",
-  "Recommended. Plans and tracks work in SpecWeave projects.": "권장. SpecWeave 프로젝트의 작업을 계획하고 추적합니다.",
-  "Version {version} is older than SpecWeave and Copilot need (Node.js 20 or newer). Update it where you installed it.": "버전 {version}은(는) SpecWeave와 Copilot에 필요한 버전(Node.js 20 이상)보다 오래되었습니다. 설치한 곳에서 업데이트하세요.",
-  "Version {version} is older than SpecWithCode needs. Update it where you installed it.": "버전 {version}은(는) SpecWithCode에 필요한 버전보다 오래되었습니다. 설치한 곳에서 업데이트하세요.",
-  "SpecWithCode's copy is version {version}. One click replaces it with the version this release uses.": "SpecWithCode의 사본은 버전 {version}입니다. 클릭 한 번으로 이번 릴리스가 사용하는 버전으로 바꿉니다.",
-  "Not installed. One click installs it in SpecWithCode's own folder with Node.js, with no admin password.": "설치되지 않음. 클릭 한 번으로 Node.js와 함께 SpecWithCode 전용 폴더에 설치합니다. 관리자 암호는 필요 없습니다.",
   "GitHub Copilot CLI runs on Node.js. Once it is installed, sign in again.":
     "GitHub Copilot CLI는 Node.js에서 실행됩니다. 설치가 끝나면 다시 로그인하세요.",
   "Plans and tracks work in SpecWeave projects.":
