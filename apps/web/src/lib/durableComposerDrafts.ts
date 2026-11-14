@@ -144,6 +144,21 @@ function hasBytes(record: ComposerDraftRecord): boolean {
   );
 }
 
+/** The promise's value, or undefined if it fails or takes longer than `ms`. */
+async function settledOrTimedOut<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.catch(() => undefined),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function snapshotFromRecord(record: ComposerDraftRecord): DurableDraftSnapshot {
   return {
     prompt: record.prompt,
@@ -276,6 +291,8 @@ export function createDurableDraftSync(options: {
   readonly journal?: DurableDraftJournal | undefined;
   /** Waits between retries of a save the host refused or never answered. */
   readonly retryDelaysMs?: ReadonlyArray<number>;
+  /** How long a send waits for the host to confirm its draft is still current. */
+  readonly sendCheckTimeoutMs?: number;
   readonly now?: () => number;
   readonly onError?: (error: unknown) => void;
 }): DurableDraftSync {
@@ -284,6 +301,8 @@ export function createDurableDraftSync(options: {
   const holdTimeoutMs = options.holdTimeoutMs ?? 10 * 60_000;
   const now = options.now ?? Date.now;
   const retryDelays = options.retryDelaysMs ?? [1_000, 2_000, 5_000, 10_000, 30_000];
+  const sendCheckTimeoutMs = options.sendCheckTimeoutMs ?? 8_000;
+  const staleCheckWaitMs = Math.min(3_000, sendCheckTimeoutMs);
   const journal = options.journal;
   const keys = new Map<string, KeyState>();
 
@@ -649,12 +668,14 @@ export function createDurableDraftSync(options: {
     const key = input.target.key;
     const state = keys.get(key);
     if (!state) return "kept";
+    if (!showsHostCopy(state, input.local())) return "kept";
     // Join a check for this same composer; one started for a composer that has
-    // closed since may answer "kept" without looking, so wait it out and check again.
+    // closed since may answer "kept" without looking, so wait it out (a while at
+    // most: a stalled read must not hold this send) and check again.
     while (state.refreshing) {
       const running = state.refreshing;
       if (running.input === input) return running.result;
-      await running.result.catch(() => undefined);
+      await settledOrTimedOut(running.result, staleCheckWaitMs);
       if (state.refreshing === running) state.refreshing = null;
     }
     if (!showsHostCopy(state, input.local())) return "kept";
@@ -668,8 +689,10 @@ export function createDurableDraftSync(options: {
   const sentElsewhere: DurableDraftSync["sentElsewhere"] = async (input) => {
     try {
       // Any draft the host has confirmed, typed here or not, may have been
-      // sent from another window since: ask the host (without the bytes).
-      return (await refresh(input)) !== "kept";
+      // sent from another window since: ask the host (without the bytes). A host
+      // that does not answer in time does not hold the send.
+      const result = await settledOrTimedOut(refresh(input), sendCheckTimeoutMs);
+      return result !== undefined && result !== "kept";
     } catch (error) {
       options.onError?.(error);
       return false;

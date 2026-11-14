@@ -82,6 +82,10 @@ export async function submitCoordinatorDraft(input: {
       onError(DRAFT_SENT_ELSEWHERE_MESSAGE);
       return;
     }
+    // The composer changed while the host answered (typed here, or cleared by a restore):
+    // what was captured above is no longer what the box holds, so it is not sent.
+    const after = composer.getSnapshot();
+    if (after.promptRevision !== promptRevision || after.attachments !== images) return;
     const attachments = await attached.prepare(images);
     release = attached.hold(images);
     const sent = await onSend(

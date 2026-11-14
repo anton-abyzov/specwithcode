@@ -638,6 +638,21 @@ describe("durable composer drafts", () => {
       expect(m5.composer()).toEqual(text(""));
     });
 
+    it("a stalled check never holds a send for long", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("shared"));
+      await m5.sync.restore(m5.input);
+      host.transport.peek = () => new Promise(() => {});
+      const closing = { ...m5.input, apply: () => {}, active: () => false };
+      void m5.sync.refresh(closing);
+      const sending = m5.sync.sentElsewhere(m5.input);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await sending).toBe(false);
+      expect(m5.composer().prompt).toBe("shared");
+    });
+
     it("an unreachable host does not stop a send", async () => {
       const host = makeHost();
       const m4 = makeWindow(host);

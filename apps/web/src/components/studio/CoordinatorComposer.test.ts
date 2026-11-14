@@ -5,10 +5,12 @@ import { submitCoordinatorDraft } from "./CoordinatorComposer";
 
 const composerWith = (prompt: string) => {
   const setPrompt = vi.fn();
+  // Like the real composer: one snapshot object until something changes.
+  const snapshot = { prompt, promptRevision: 1, attachments: [], submitting: false };
   return {
     setPrompt,
     composer: {
-      getSnapshot: () => ({ prompt, promptRevision: 1, attachments: [], submitting: false }),
+      getSnapshot: () => snapshot,
       setPrompt,
       setSubmitting: vi.fn(),
     } as never,
@@ -75,5 +77,35 @@ describe("submitCoordinatorDraft and another window's send", () => {
       sentElsewhere: async () => false,
     });
     expect(onSend).toHaveBeenCalledWith("Use M5", undefined);
+  });
+});
+
+describe("submitCoordinatorDraft when the box changes during the check", () => {
+  it("does not send what was captured before the check", async () => {
+    const onSend = vi.fn();
+    let revision = 1;
+    const composer = {
+      getSnapshot: () => ({
+        prompt: "Use M5",
+        promptRevision: revision,
+        attachments: [],
+        submitting: false,
+      }),
+      setPrompt: vi.fn(),
+      setSubmitting: vi.fn(),
+    } as never;
+    await submitCoordinatorDraft({
+      composer,
+      attached: { dismissProblem: vi.fn(), prepare: vi.fn(async () => []) } as never,
+      onAppCommand: null,
+      onSend,
+      onError: vi.fn(),
+      // A restore cleared the box (a new revision) while the host answered "kept".
+      sentElsewhere: async () => {
+        revision = 2;
+        return false;
+      },
+    });
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
