@@ -87,11 +87,13 @@ export const layer = HttpApiBuilder.group(
 
     /**
      * Ends every session of one device here: its key's or its phone link's,
-     * and the MCP sessions it approved. Its other bound credentials (folder
-     * copies) stop on their next use, since the approval they name is gone.
+     * the MCP sessions it approved, and the pairing codes it made that no one
+     * redeemed yet. Its other bound credentials (folder copies, asset URLs)
+     * stop on their next use, since the approval they carry is gone.
      */
     const endSessions = (key: string) =>
       Effect.gen(function* () {
+        yield* auth.revokeDeviceCredentials(key);
         let ended = 0;
         for (const id of yield* trust.boundIds(key))
           if (
@@ -149,9 +151,10 @@ export const layer = HttpApiBuilder.group(
       .handle("deny", ({ payload }) =>
         Effect.gen(function* () {
           yield* requireApprover;
-          return {
-            denied: yield* trust.deny(payload.requestId).pipe(Effect.mapError(storageFailure)),
-          };
+          const denied = yield* trust.deny(payload.requestId).pipe(Effect.mapError(storageFailure));
+          // A key turned away keeps nothing it was handed before (1327).
+          if (denied !== null) yield* endSessions(denied);
+          return { denied: denied !== null };
         }),
       )
       .handle("remove", ({ payload }) =>

@@ -32,6 +32,8 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@specweave-studio/shared/imageDimensions";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
+import { bindingRefused, requestDeviceClaim } from "../fleet/deviceBoundTransfers.ts";
 import { githubMediaFetchUrl, githubMediaFileName } from "@specweave-studio/shared/githubMedia";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@specweave-studio/shared/projectFavicon";
 import { toolOutputImages } from "@specweave-studio/shared/toolOutput";
@@ -91,9 +93,20 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".woff2",
 ]);
 
+/**
+ * The approved device a URL was signed for (1327): it stops working when that
+ * device's approval ends, like everything else the device was given.
+ */
+const DeviceBoundClaim = {
+  approvedDevice: Schema.optionalKey(
+    Schema.Struct({ key: Schema.String, approval: Schema.String }),
+  ),
+};
+
 const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("workspace-file"),
     workspaceRoot: Schema.String,
     baseRelativePath: Schema.String,
@@ -101,6 +114,7 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("workspace-file-exact"),
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
@@ -108,6 +122,7 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("media-file-exact"),
     filePath: Schema.String,
     device: Schema.String,
@@ -118,6 +133,7 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
     /** Decided at mint time. Absent tokens (from before this field) serve
@@ -131,6 +147,7 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("project-favicon"),
     workspaceRoot: Schema.String,
     relativePath: Schema.NullOr(Schema.String),
@@ -138,18 +155,21 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("project-favicon-external"),
     filePath: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("native-app-icon"),
     app: ToolActivityNativeAppReference,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("tool-output-image"),
     threadId: ThreadId,
     itemId: TurnItemId,
@@ -158,6 +178,7 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("design-asset"),
     /** Resolved from the design's owner at mint time; content-addressed, so it never changes. */
     filePath: Schema.String,
@@ -166,6 +187,7 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    ...DeviceBoundClaim,
     kind: Schema.Literal("github-media"),
     /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
     url: Schema.String,
@@ -869,6 +891,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       PROJECT_FAVICON_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
+  const approvedDevice = yield* requestDeviceClaim(yield* ConnectDeviceTrust.ConnectDeviceTrust);
+  if (approvedDevice !== undefined) claims = { ...claims, approvedDevice };
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
   return {
@@ -906,6 +930,7 @@ export const issueLocalReferenceUrls = Effect.fn("AssetAccess.issueLocalReferenc
   const urls = new Map<string, string>();
   if (!signingSecret) return urls;
   const expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
+  const approvedDevice = yield* requestDeviceClaim(yield* ConnectDeviceTrust.ConnectDeviceTrust);
   yield* Effect.forEach(
     paths,
     (requestedPath) =>
@@ -930,6 +955,7 @@ export const issueLocalReferenceUrls = Effect.fn("AssetAccess.issueLocalReferenc
             filePath: canonicalFile,
             ...identity,
             expiresAt,
+            ...(approvedDevice === undefined ? {} : { approvedDevice }),
           }),
         );
         const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
@@ -960,6 +986,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+  // Signed for a device: only while that device's approval stands (1327).
+  if (yield* bindingRefused(yield* ConnectDeviceTrust.ConnectDeviceTrust, claims.approvedDevice))
+    return null;
   const path = yield* Path.Path;
 
   if (claims.kind === "attachment") {
