@@ -234,6 +234,12 @@ const SAVED_DISPLAY_WAIT_MS = 2 * 60 * 1000;
 // several steps. Moves until this long after the last one are the system's.
 const DISPLAY_REMOVED_SETTLE_MS = 3000;
 
+// macOS can drop a full-screen request made while a freshly launched app is
+// still activating, which is how an update relaunch starts it (`open` from
+// the swap script). The request is made again after each of these delays
+// until the window is full screen, the user leaves full screen, or they run out.
+export const FULL_SCREEN_RESTORE_RETRY_DELAYS_MS: readonly number[] = [300, 1000, 2500, 5000];
+
 function windowBoundsEqual(
   left: DesktopAppSettings.DesktopWindowBounds,
   right: DesktopAppSettings.DesktopWindowBounds,
@@ -490,6 +496,21 @@ export const make = Effect.gen(function* () {
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
+  const readOzoneSwitch = (name: string): string => {
+    try {
+      return Electron.app?.commandLine?.getSwitchValue(name) ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const windowPositionReported = WindowPlacement.windowPositionIsReported({
+    platform: environment.platform,
+    env: process.env,
+    ozonePlatform:
+      readOzoneSwitch("ozone-platform") ||
+      readOzoneSwitch("ozone-platform-hint") ||
+      (process.env.ELECTRON_OZONE_PLATFORM_HINT ?? ""),
+  });
   const readConnectedDisplaysSync = (): readonly WindowPlacement.ConnectedDisplay[] =>
     Electron.screen.getAllDisplays().map(WindowPlacement.toConnectedDisplay);
   const readConnectedDisplays = Effect.gen(function* () {
@@ -522,14 +543,18 @@ export const make = Effect.gen(function* () {
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedBounds = spec.persisted.bounds;
+    // A monitor saved where positions cannot be read (Wayland) is a guess.
+    const persisted = windowPositionReported
+      ? spec.persisted
+      : { ...spec.persisted, display: null };
     const connectedDisplays = yield* readConnectedDisplays;
-    const placement = WindowPlacement.resolveWindowPlacement(spec.persisted, connectedDisplays);
+    const placement = WindowPlacement.resolveWindowPlacement(persisted, connectedDisplays);
     const restoredPersistedBounds = persistedBounds !== null && placement.kind === "saved";
     if (persistedBounds !== null && placement.kind !== "saved") {
       // The numbers say why: a monitor that is missing, moved or smaller.
       const details = {
         saved: persistedBounds,
-        savedDisplayId: spec.persisted.display?.id ?? null,
+        savedDisplayId: persisted.display?.id ?? null,
         savedDisplayMissing: placement.savedDisplayMissing,
         displays: connectedDisplays.map((display) => ({ id: display.id, ...display.bounds })),
       };
@@ -550,7 +575,7 @@ export const make = Effect.gen(function* () {
     // Full screen is put back only on the monitor it was on, or wherever the
     // window lands when no monitor was recorded.
     const restoreFullScreen =
-      spec.persisted.fullScreen && placement.kind !== "default" && !placement.savedDisplayMissing;
+      persisted.fullScreen && placement.kind !== "default" && !placement.savedDisplayMissing;
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -614,11 +639,20 @@ export const make = Effect.gen(function* () {
     // Set once a quit hides the window, so leaving full screen on the way out
     // is not saved as the user's choice.
     let placementFrozen = false;
+    // Asks for the restored full screen again while macOS has not applied it.
+    let fullScreenRestoreFiber: Fiber.Fiber<void, never> | undefined;
+    // A restore still under way counts as full screen, so a resize while the
+    // window opens does not save it as windowed.
+    const isEffectivelyFullScreen = () =>
+      window.isFullScreen() || fullScreenRestoreFiber !== undefined;
     const readPlacementExtras = (
       bounds: DesktopAppSettings.DesktopWindowBounds,
     ): DesktopAppSettings.DesktopWindowPlacementExtras => {
-      const fullScreen = window.isFullScreen();
+      const fullScreen = isEffectivelyFullScreen();
       let display: DesktopAppSettings.DesktopWindowDisplay | null = null;
+      // Wayland does not tell a client where its window is, so the monitor
+      // cannot be known; the compositor picks it.
+      if (!windowPositionReported) return { fullScreen, display };
       try {
         // In full screen the frame is the monitor itself, so a full-screen
         // Space moved to another display in Mission Control is followed.
@@ -644,13 +678,13 @@ export const make = Effect.gen(function* () {
         ? null
         : (readPlacementExtras(fallbackWindowBounds).display?.id ?? null);
     // The monitor last saved for this window.
-    let savedDisplay = spec.persisted.display;
+    let savedDisplay = persisted.display;
     // Running while macOS moves the window off a monitor that just went away.
     let displayRemovedSettleFiber: Fiber.Fiber<void, never> | undefined;
     // A missing saved monitor the user has since worked without: their changes
     // are saved. One missing at launch already waits for the user's change.
     let acceptedMissingDisplayId: number | null = placement.savedDisplayMissing
-      ? (spec.persisted.display?.id ?? null)
+      ? (persisted.display?.id ?? null)
       : null;
     const savedDisplayIsGone = (): boolean => {
       if (savedDisplay === null || savedDisplay.id === acceptedMissingDisplayId) return false;
@@ -693,7 +727,7 @@ export const make = Effect.gen(function* () {
               if (bounds === null) return;
               fallbackWindowBounds = bounds;
               fallbackWindowMaximized = window.isMaximized();
-              fallbackWindowFullScreen = window.isFullScreen();
+              fallbackWindowFullScreen = isEffectivelyFullScreen();
               fallbackWindowDisplayId = readPlacementExtras(bounds).display?.id ?? null;
             }),
           ),
@@ -744,7 +778,7 @@ export const make = Effect.gen(function* () {
           (fallbackWindowBounds !== null &&
             windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
             window.isMaximized() === fallbackWindowMaximized &&
-            window.isFullScreen() === fallbackWindowFullScreen &&
+            isEffectivelyFullScreen() === fallbackWindowFullScreen &&
             (readPlacementExtras(currentBounds).display?.id ?? null) === fallbackWindowDisplayId)
         ) {
           return;
@@ -783,6 +817,41 @@ export const make = Effect.gen(function* () {
         fiber === undefined ? Effect.void : Fiber.join(fiber).pipe(Effect.asVoid),
       ),
     );
+    const stopFullScreenRestore = () => {
+      if (fullScreenRestoreFiber === undefined) return;
+      const fiber = fullScreenRestoreFiber;
+      fullScreenRestoreFiber = undefined;
+      runFork(Fiber.interrupt(fiber));
+    };
+    // Puts the window back into its saved full screen and keeps asking until
+    // it is (see FULL_SCREEN_RESTORE_RETRY_DELAYS_MS).
+    const requestSavedFullScreen = () => {
+      stopFullScreenRestore();
+      if (window.isDestroyed() || placementFrozen || window.isFullScreen()) return;
+      window.setFullScreen(true);
+      let finished = false;
+      const fiber = runFork(
+        Effect.gen(function* () {
+          let attempt = 0;
+          for (const delayMs of FULL_SCREEN_RESTORE_RETRY_DELAYS_MS) {
+            yield* Effect.sleep(delayMs);
+            if (window.isDestroyed() || placementFrozen || window.isFullScreen()) break;
+            attempt += 1;
+            yield* logWindowInfo(`${windowLabel} full screen not applied yet; asking again`, {
+              attempt,
+              afterMs: delayMs,
+            });
+            window.setFullScreen(true);
+          }
+          finished = true;
+          fullScreenRestoreFiber = undefined;
+          if (!window.isDestroyed() && !placementFrozen && !window.isFullScreen()) {
+            yield* logWindowWarning(`${windowLabel} could not be put back into full screen`);
+          }
+        }),
+      );
+      if (!finished) fullScreenRestoreFiber = fiber;
+    };
     const windowId = window.id;
     windowBoundsFlushers.set(windowId, flushBoundsPersist);
     let title = spec.title;
@@ -942,6 +1011,7 @@ export const make = Effect.gen(function* () {
         clearBoundsPersist();
         void persistCurrentBounds();
         placementFrozen = true;
+        stopFullScreenRestore();
         concealPendingQuitWindow(window);
       },
       quit: () => {
@@ -975,6 +1045,7 @@ export const make = Effect.gen(function* () {
       runFork(flushBoundsPersist);
     });
     window.on("enter-full-screen", () => {
+      stopFullScreenRestore();
       try {
         fullScreenDisplay = WindowPlacement.toSavedDisplay(
           WindowPlacement.displayForBounds(window.getBounds(), readConnectedDisplaysSync()),
@@ -988,6 +1059,8 @@ export const make = Effect.gen(function* () {
       }
     });
     window.on("leave-full-screen", () => {
+      // Leaving full screen is the user's choice; stop asking for it.
+      stopFullScreenRestore();
       fullScreenDisplay = null;
       scheduleBoundsPersist();
       if (environment.platform === "darwin") {
@@ -1043,10 +1116,7 @@ export const make = Effect.gen(function* () {
           }
           let next: WindowPlacement.WindowPlacement;
           try {
-            next = WindowPlacement.resolveWindowPlacement(
-              spec.persisted,
-              readConnectedDisplaysSync(),
-            );
+            next = WindowPlacement.resolveWindowPlacement(persisted, readConnectedDisplaysSync());
           } catch {
             return;
           }
@@ -1058,7 +1128,7 @@ export const make = Effect.gen(function* () {
           if (maximized) window.maximize();
           boundsPersistenceEnabled = true;
           if (spec.persisted.fullScreen) {
-            if (revealedWindows.has(window)) window.setFullScreen(true);
+            if (revealedWindows.has(window)) requestSavedFullScreen();
             else fullScreenOnReveal = true;
           }
           runFork(logWindowInfo(`${windowLabel} moved to its saved display`));
@@ -1216,9 +1286,7 @@ export const make = Effect.gen(function* () {
       // Full screen only once the window is on screen: macOS ignores or
       // half-applies it on a window that is not ordered in yet.
       const enterSavedFullScreen = Effect.sync(() => {
-        if (fullScreenOnReveal && !window.isDestroyed() && !window.isFullScreen()) {
-          window.setFullScreen(true);
-        }
+        if (fullScreenOnReveal) requestSavedFullScreen();
       });
       void runPromise(
         spec.role === "main"
@@ -1237,6 +1305,7 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      stopFullScreenRestore();
       windowTitleSetters.delete(windowId);
       // A write started by "close" may still be running. Quit has to be able
       // to wait for it, so the entry stays until that write settles.

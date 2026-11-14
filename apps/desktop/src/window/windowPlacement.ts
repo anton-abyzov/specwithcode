@@ -191,3 +191,24 @@ export function resolveWindowPlacement(
   }
   return { kind: "default", savedDisplayMissing };
 }
+
+// Whether Electron can read where a window is. Under native Wayland it cannot
+// (x and y read back as 0 and setting them does nothing; the compositor places
+// windows), so no monitor is recorded there. macOS, Windows, X11 and XWayland
+// report it. `ozonePlatform` is the --ozone-platform switch, else the
+// --ozone-platform-hint switch or ELECTRON_OZONE_PLATFORM_HINT; Electron's
+// default "auto" picks Wayland in a Wayland session.
+export function windowPositionIsReported(input: {
+  readonly platform: NodeJS.Platform;
+  readonly env: NodeJS.ProcessEnv;
+  readonly ozonePlatform: string;
+}): boolean {
+  if (input.platform !== "linux") return true;
+  const ozone = input.ozonePlatform.trim().toLowerCase();
+  if (ozone === "x11") return true;
+  if (ozone === "wayland") return false;
+  return !(
+    input.env.XDG_SESSION_TYPE?.toLowerCase() === "wayland" ||
+    (Boolean(input.env.WAYLAND_DISPLAY) && !input.env.DISPLAY)
+  );
+}
