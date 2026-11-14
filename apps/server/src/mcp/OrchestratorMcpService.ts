@@ -1563,31 +1563,36 @@ const make = Effect.gen(function* () {
    * ask_user cards, which stay open across turns until their card is answered.
    */
   const openMessageQuestions = (threadId: ThreadId) =>
-    threadManagement
+    Effect.gen(function* () {
       // Only the cards still waiting are read, never the thread's answered history.
-      .getThreadRecords(threadId, ["turnItems"], {
+      const cards = yield* threadManagement.getThreadRecords(threadId, ["turnItems"], {
         turnItemTypes: ["user_input_request"],
         turnItemStatuses: ["waiting"],
         messageRoles: [],
-      })
-      .pipe(
-        Effect.map((records) =>
-          (records.turnItems ?? []).flatMap((item) =>
-            item.type === "user_input_request" && item.responseMode === "message"
-              ? [
-                  {
-                    requestId: item.requestId,
-                    header: item.questions[0]?.header ?? "Question",
-                    question: (item.questions[0]?.question ?? "").slice(0, 240),
-                  },
-                ]
-              : [],
-          ),
-        ),
-        Effect.mapError((error) =>
-          failure("orchestration_error", `Unable to read questions: ${errorMessage(error)}`),
-        ),
+      });
+      const waiting = (cards.turnItems ?? []).flatMap((item) =>
+        item.type === "user_input_request" && item.responseMode === "message" ? [item] : [],
       );
+      if (waiting.length === 0) return [];
+      // A Stop can cancel a request and leave its card waiting; only a pending request is open.
+      const requests = yield* threadManagement.getThreadRecords(threadId, ["runtimeRequests"]);
+      const pending = new Set(
+        (requests.runtimeRequests ?? [])
+          .filter((request) => request.status === "pending" && request.kind === "user_input")
+          .map((request) => request.id),
+      );
+      return waiting
+        .filter((item) => pending.has(item.requestId))
+        .map((item) => ({
+          requestId: item.requestId,
+          header: item.questions[0]?.header ?? "Question",
+          question: (item.questions[0]?.question ?? "").slice(0, 240),
+        }));
+    }).pipe(
+      Effect.mapError((error) =>
+        failure("orchestration_error", `Unable to read questions: ${errorMessage(error)}`),
+      ),
+    );
 
   const loadScopedThread = (scope: McpInvocationScope, threadId: ThreadId) =>
     Effect.gen(function* () {
