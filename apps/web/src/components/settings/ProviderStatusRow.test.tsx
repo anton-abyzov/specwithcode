@@ -44,12 +44,16 @@ vi.mock("../../hooks/useCopyToClipboard", () => ({ writeTextToClipboard: mocks.c
 vi.mock("../onboarding/AgentSetupPanel", () => ({
   AGENT_CHECK_TIMEOUT_MS: 15_000,
   agentSetupPanelKey: () => "panel",
-  signInAccountKey: (auth: { email?: string; login?: string }) =>
-    (auth.email ?? auth.login ?? "").toLowerCase(),
-  codexSignInCanSwitch: (provider: { driver: string; auth: { status: string; type?: string } }) =>
+  signInAccountKey: (auth: { email?: string; login?: string; label?: string }) =>
+    `${(auth.email ?? auth.login ?? "").toLowerCase()}|${(auth.label ?? "").toLowerCase()}`,
+  codexSignInCanSwitch: (provider: {
+    driver: string;
+    auth: { status: string; type?: string; subscriptionSharing?: boolean };
+  }) =>
     provider.driver === "codex" &&
     provider.auth.status === "authenticated" &&
-    provider.auth.type === "chatgpt",
+    provider.auth.type === "chatgpt" &&
+    provider.auth.subscriptionSharing !== true,
   useDetachedInstall: () => mocks.detached,
   useAgentSetupPanel: (options: unknown) => {
     mocks.panelOptions(options);
@@ -355,7 +359,7 @@ describe("the selected agent's status row", () => {
       providerInstanceId: ProviderInstanceId.make("codex"),
       command: "codex login",
       purpose: "signIn",
-      switchFrom: "ada@example.com",
+      switchFrom: "ada@example.com|",
     });
   });
 

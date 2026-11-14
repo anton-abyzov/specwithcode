@@ -521,7 +521,7 @@ describe("model picker usage limits", () => {
       .find((node) => node.textContent === name)
       ?.getAttribute("data-disabled-reason") ?? null;
 
-  it("opens the selected Codex in Settings from Switch account, by click and by keyboard", async () => {
+  it("opens the selected Codex in Settings from Switch account, a focusable button", async () => {
     const codexId = ProviderInstanceId.make("codex");
     const codex = deriveProviderInstanceEntries([
       {

@@ -40,6 +40,9 @@ describe("signInFinished", () => {
     expect(
       codexSignInCanSwitch({ driver: ProviderDriverKind.make("grok"), auth: auth("chatgpt") }),
     ).toBe(false);
+    expect(
+      codexSignInCanSwitch({ driver: codex, auth: { ...auth("chatgpt"), subscriptionSharing: true } }),
+    ).toBe(false);
     expect(codexSignInCanSwitch(undefined)).toBe(false);
   });
 });

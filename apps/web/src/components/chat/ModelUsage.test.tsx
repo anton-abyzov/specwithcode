@@ -126,6 +126,18 @@ describe("ModelPickerUsageBand", () => {
         <ModelPickerUsageBand entry={bedrock} usage={blocked} onSwitchAccount={() => {}} />,
       ),
     ).not.toContain("data-model-picker-switch-account");
+    const managed = {
+      ...codex,
+      snapshot: {
+        ...codex.snapshot,
+        auth: { status: "authenticated", type: "chatgpt", subscriptionSharing: true },
+      },
+    } as unknown as ProviderInstanceEntry;
+    expect(
+      renderToStaticMarkup(
+        <ModelPickerUsageBand entry={managed} usage={blocked} onSwitchAccount={() => {}} />,
+      ),
+    ).not.toContain("data-model-picker-switch-account");
     // Nothing to open, or another provider: no link.
     expect(
       renderToStaticMarkup(<ModelPickerUsageBand entry={codex} usage={blocked} />),

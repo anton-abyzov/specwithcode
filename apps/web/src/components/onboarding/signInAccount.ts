@@ -32,6 +32,8 @@ export function codexSignInCanSwitch(
   return (
     provider?.driver === "codex" &&
     provider.auth.status === "authenticated" &&
-    provider.auth.type === "chatgpt"
+    provider.auth.type === "chatgpt" &&
+    // The app's own managed sign-in reports a ChatGPT account it shares out.
+    provider.auth.subscriptionSharing !== true
   );
 }
