@@ -402,6 +402,31 @@ describe("authenticated environment HTTP requests", () => {
       }),
   );
 
+  it.effect("keeps a waiting device's token instead of asking for a new one", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() =>
+        Response.json(
+          {
+            _tag: "EnvironmentAuthInvalidError",
+            code: "auth_invalid",
+            reason: "invalid_credential",
+            refusal: "device_not_approved",
+            approvalCode: "K7QX2M",
+            traceId: "trace-waiting",
+          },
+          { status: 401 },
+        ),
+      );
+      yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
+
+      expect(harness.authorizations).toEqual([{ expectedEnvironmentId: TARGET.environmentId }]);
+      expect(harness.calls).toHaveLength(1);
+    }),
+  );
+
   it.effect("renews credentials captured by the bounded snapshot loader", () =>
     Effect.gen(function* () {
       const harness = makeHarness((requestNumber) =>
