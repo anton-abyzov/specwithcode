@@ -16,13 +16,12 @@ import type { LeftOnSource } from "./HandoffSourceChanges";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { formatBytes } from "../../studio/folderCopy";
 import { HandoffSecretsStep } from "./HandoffSecretsStep";
+import { CopyClassPicker, CopyPlanPreview, CopyProgress } from "./HandoffCopyPreview";
 import {
-  CopyClassPicker,
-  CopyPlanPreview,
-  CopyProgress,
   planRepositoryChoices,
+  secretFilesCopied,
   type RepositoryChoices,
-} from "./HandoffCopyPreview";
+} from "./handoffCopySecrets";
 import type { useCopyScope } from "./HandoffCopyScope";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopySetup, type CopyMachine } from "./HandoffCopySetup";
@@ -32,19 +31,6 @@ import { replacesNothing } from "./handoffCopyAuto";
 import type { CopyNotices } from "./handoffCopyNotices";
 import { CopyNextStep, CopyNoticesBlock, CopyWorkingHint } from "./HandoffCopyGuide";
 import { Button } from "../ui/button";
-
-/** Secret files outside the repositories left out of the copy: those stay here anyway. */
-function secretFilesCopied(
-  files: FolderCopySourceSummary["secretFiles"],
-  copy: FolderCopyStatus,
-  skip: ReadonlyArray<string>,
-): FolderCopySourceSummary["secretFiles"] {
-  const prefixes = copy.rows
-    .filter((row) => skip.includes(row.id) && row.path !== ".")
-    .map((row) => `${row.path}/`);
-  if (prefixes.length === 0) return files;
-  return files.filter((file) => !prefixes.some((prefix) => file.path.startsWith(prefix)));
-}
 
 /** The body of the live stage, from the setup form to Done. Actions live in the footer. */
 export function HandoffCopyStepPanels({
@@ -81,9 +67,11 @@ export function HandoffCopyStepPanels({
   onRepositories,
   replanning,
   secretPaths,
-  secretsConfirmed,
-  onSecretPathsChange,
-  onSecretsConfirmedChange,
+  includeSecrets,
+  onSecretsChange,
+  onIncludeSecretsChange,
+  uncommittedFiles,
+  details,
   failedBeforeApply,
   undoPreview,
   contextTransferred,
@@ -145,9 +133,15 @@ export function HandoffCopyStepPanels({
   readonly onRepositories: (next: RepositoryChoices) => void;
   readonly replanning: boolean;
   readonly secretPaths: ReadonlyArray<string>;
-  readonly secretsConfirmed: boolean;
-  readonly onSecretPathsChange: (paths: ReadonlyArray<string>) => void;
-  readonly onSecretsConfirmedChange: (confirmed: boolean) => void;
+  /** Secret files travel unless this is off; on by default, and seeing it on is the consent. */
+  readonly includeSecrets: boolean;
+  /** The review's secrets choice: whether they travel, and which files. */
+  readonly onSecretsChange: (included: boolean, paths: ReadonlyArray<string>) => void;
+  readonly onIncludeSecretsChange: (include: boolean) => void;
+  /** Uncommitted files in the source, for What comes along; null when unknown. */
+  readonly uncommittedFiles: number | null;
+  /** The Workspace locations rows, shown under Details on the setup screen. */
+  readonly details: ReactNode;
   readonly failedBeforeApply: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly contextTransferred: boolean;
@@ -205,6 +199,13 @@ export function HandoffCopyStepPanels({
             onMachineChange={onMachineChange}
             targetLabel={targetLabel}
             sourceLabel={sourceLabel}
+            sourceRoot={project.workspaceRoot}
+            along={{
+              uncommittedFiles,
+              includeSecrets,
+              onIncludeSecretsChange,
+              details,
+            }}
             folder={folder}
             onFolderChange={onFolderChange}
             findingHome={findingHome}
@@ -318,14 +319,14 @@ export function HandoffCopyStepPanels({
               )}
               hints={summary.secretHints}
               selected={secretPaths}
-              confirmed={secretsConfirmed}
+              included={includeSecrets}
+              sourceLabel={sourceLabel}
               targetLabel={targetLabel}
               homeSupported={
                 machines.find((entry) => entry.id === machine)?.homeSecretFiles === true
               }
               disabled={busy}
-              onSelectedChange={onSecretPathsChange}
-              onConfirmedChange={onSecretsConfirmedChange}
+              onChange={onSecretsChange}
             />
           )}
         </>

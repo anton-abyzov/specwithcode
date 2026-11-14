@@ -223,13 +223,18 @@ const includeSecrets = () =>
     '[data-slot="copy-secrets-include"] [data-slot="checkbox"]',
   );
 
-it("keeps secrets out until Include secrets is ticked", async () => {
+const showSecrets = () =>
+  act(async () =>
+    document.body.querySelector<HTMLElement>('[data-slot="copy-secrets-show"]')!.click(),
+  );
+
+it("includes secrets by default and lists them on Show", async () => {
   await render();
   expect(document.body.querySelector('[aria-label="Send .env"]')).toBeNull();
-  expect(includeSecrets()?.getAttribute("aria-checked")).toBe("false");
-  expect(text()).toContain("Include secrets (.env and similar)");
+  expect(includeSecrets()?.getAttribute("aria-checked")).toBe("true");
+  expect(text()).toContain("Secrets (.env, keys): 1 file, included");
   expect(text()).toContain("Doppler");
-  await act(async () => includeSecrets()!.click());
+  await showSecrets();
   const box = document.body.querySelector<HTMLElement>('[aria-label="Send .env"]');
   expect(box?.getAttribute("aria-checked")).toBe("true");
   // This destination cannot write into its home folder, so the .NET file is not offered.
@@ -239,7 +244,7 @@ it("keeps secrets out until Include secrets is ticked", async () => {
 it("offers home-folder secrets to a destination that writes them", async () => {
   state.environments.mini = machine("Mini", { ...capabilities, homeSecretFiles: true });
   await render();
-  await act(async () => includeSecrets()!.click());
+  await showSecrets();
   expect(text()).toContain("~/.microsoft/usersecrets/api-1/secrets.json");
   expect(text()).toContain("in your home folder");
 });
@@ -318,21 +323,17 @@ it("clones, stores the follow-up job and hands the new project to the menu", asy
     source: { environmentId: "m4", projectId: "app", workspaceRoot: "/Users/me/Projects/app" },
     destination: { environmentId: "mini", workspaceRoot: "/Users/me/Projects/app" },
     copyIgnored: false,
-    secrets: [],
+    secrets: [".env"],
   });
   expect(state.waitForProject).toHaveBeenCalled();
   expect(onAdded).toHaveBeenCalledWith({ environmentId: "mini", projectId: "project-new" });
 });
 
-it("carries ticked secrets and ignored files into the follow-up job", async () => {
+it("carries no secrets once the line is unticked, and ignored files when asked", async () => {
   await render();
   await act(async () => includeSecrets()!.click());
-  expect(button("Clone to Mini")?.disabled).toBe(true);
-  await act(async () =>
-    document.body
-      .querySelector<HTMLElement>('[data-slot="copy-secrets-confirm"] [data-slot="checkbox"]')!
-      .click(),
-  );
+  expect(text()).toContain("Secrets (.env, keys): 1 file, left on M4");
+  expect(button("Clone to Mini")?.disabled).toBe(false);
   const ignored = [...document.body.querySelectorAll("label")].find((entry) =>
     entry.textContent?.includes("Copy ignored files"),
   );
@@ -340,7 +341,7 @@ it("carries ticked secrets and ignored files into the follow-up job", async () =
   await act(async () => button("Clone to Mini")!.click());
   expect(readAddToMachineJob("mini" as EnvironmentId, "project-new" as ProjectId)).toMatchObject({
     copyIgnored: true,
-    secrets: [".env"],
+    secrets: [],
   });
 });
 
@@ -375,7 +376,10 @@ it("links and consolidates an existing checkout after the copy is applied", asyn
     },
   ]);
   await act(async () => button("Apply and link")!.click());
-  expect(calls("copySecrets")).toEqual([]);
+  // Secrets travel by default.
+  expect(calls("copySecrets")).toEqual([
+    expect.objectContaining({ input: expect.objectContaining({ paths: [".env"] }) }),
+  ]);
   expect(calls("linkCopyAsWorkers")).toEqual([
     expect.objectContaining({
       kept: { environmentId: "m4", projectId: "app" },

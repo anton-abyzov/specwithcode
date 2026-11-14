@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { formatBytes } from "../../studio/folderCopy";
 import { Checkbox } from "../ui/checkbox";
+import { isHomeSecretRow, receivableSecretFiles } from "./handoffCopySecrets";
 
 export interface SecretFileRow {
   readonly path: string;
@@ -14,157 +15,126 @@ export interface SecretHintRow {
   readonly hint: string;
 }
 
-/** A `~/` path is a file in the home folder (for example .NET user secrets), not in the project. */
-export const isHomeSecretRow = (path: string) => path.startsWith("~/");
-
 /**
- * The secret files a destination can receive. A `~/` file needs a destination
- * that writes it into its home folder; an older one would put it in the project,
- * so it is left out there.
- */
-export function receivableSecretFiles<F extends SecretFileRow>(
-  files: ReadonlyArray<F>,
-  homeSupported: boolean,
-): ReadonlyArray<F> {
-  return homeSupported ? files : files.filter((file) => !isHomeSecretRow(file.path));
-}
-
-/**
- * The opt-in step for secret-like files (`.env`, keys, credentials, .NET user
- * secrets). They never travel with the folder: one "Include secrets" checkbox,
- * off by default, opens the per-file list, and the ticked ones are sent on Apply
- * after one confirmation naming the machine that receives them. Secrets kept in
- * a vault or the keychain are listed as not copied. Only paths and sizes show.
+ * Secret-like files (`.env`, keys, credentials, .NET user secrets) on the review. They
+ * travel by default, shown as one checked line, "Secrets (.env, keys): N files, included";
+ * Show lists each file with its own checkbox. Seeing the line checked is the consent: the
+ * files go on Copy to the one machine named, readable only by your user there. Unticking
+ * the line, or every file, leaves them on the source. Secrets kept in a vault or the
+ * keychain are listed as not copied. Only paths and sizes show. The parent owns the
+ * choice: it keeps the files the person unticked, so a new measure never ticks them again.
  */
 export function HandoffSecretsStep({
   files: allFiles,
   hints = [],
   selected: chosen,
-  confirmed,
+  included,
+  sourceLabel,
   targetLabel,
   homeSupported,
   disabled,
-  onSelectedChange,
-  onConfirmedChange,
+  onChange,
 }: {
   readonly files: ReadonlyArray<SecretFileRow>;
   readonly hints?: ReadonlyArray<SecretHintRow> | undefined;
+  /** The files that travel: every receivable file but the ones unticked, or none. */
   readonly selected: ReadonlyArray<string>;
-  readonly confirmed: boolean;
+  /** Secrets travel: on by default, from the setup screen's What comes along. */
+  readonly included: boolean;
+  readonly sourceLabel: string;
   readonly targetLabel: string;
   /** The destination writes `~/` files into its home folder; older ones would not. */
   readonly homeSupported: boolean;
   readonly disabled: boolean;
-  readonly onSelectedChange: (paths: ReadonlyArray<string>) => void;
-  readonly onConfirmedChange: (confirmed: boolean) => void;
+  /** One choice: whether secrets travel, and which of the shown files. */
+  readonly onChange: (included: boolean, selected: ReadonlyArray<string>) => void;
 }) {
   const files = receivableSecretFiles(allFiles, homeSupported);
-  // Only files this step shows can be sent: a ticked file it hides is unticked.
+  // Only files this step shows can be sent.
   const selected = chosen.filter((path) => files.some((file) => file.path === path));
-  const hidden = chosen.length !== selected.length;
-  useEffect(() => {
-    if (hidden) onSelectedChange(selected);
-  });
-  const [opened, setOpened] = useState(false);
-  const included = opened || selected.length > 0;
+  const [shown, setShown] = useState(false);
   if (files.length === 0 && hints.length === 0) return null;
-  const choose = (paths: ReadonlyArray<string>) => {
-    onSelectedChange(files.map((file) => file.path).filter((path) => paths.includes(path)));
-    onConfirmedChange(false);
+  const all = files.map((file) => file.path);
+  const toggle = (path: string, on: boolean) => {
+    const next = all.filter((item) => (item === path ? on : selected.includes(item)));
+    // Unticking every file is leaving the secrets here.
+    onChange(next.length > 0, next);
   };
-  const toggle = (path: string, on: boolean) =>
-    choose(on ? [...selected, path] : selected.filter((item) => item !== path));
+  const count = selected.length;
+  const counted =
+    included && count < files.length
+      ? `${count} of ${files.length} files`
+      : `${files.length} ${files.length === 1 ? "file" : "files"}`;
   return (
     <fieldset className="min-w-0 space-y-2 text-sm" data-slot="copy-secrets" disabled={disabled}>
-      <legend className="mb-1 font-medium">Secret files</legend>
       {files.length > 0 && (
         <>
-          <label className="flex cursor-pointer items-start gap-2" data-slot="copy-secrets-include">
-            <span className="flex h-5 items-center">
-              <Checkbox
-                checked={included}
-                disabled={disabled}
-                onCheckedChange={(checked) => {
-                  const on = checked === true;
-                  setOpened(on);
-                  choose(on ? files.map((file) => file.path) : []);
-                }}
-              />
-            </span>
-            <span className="leading-5">
-              Include secrets (.env and similar)
-              <span className="block text-xs text-muted-foreground">
-                {files.length} {files.length === 1 ? "file looks" : "files look"} like passwords,
-                keys or tokens, so they stay here unless you include them. Sign-ins to Claude, Codex
-                and GitHub are never copied; sign in on {targetLabel} instead.
-              </span>
-            </span>
-          </label>
-          {included && (
-            <>
-              {files.length > 1 && (
-                <div className="flex flex-wrap gap-2 text-xs" data-slot="copy-secrets-all">
-                  <button
-                    type="button"
-                    disabled={disabled || files.every((file) => selected.includes(file.path))}
-                    className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
-                    onClick={() => choose(files.map((file) => file.path))}
-                  >
-                    Tick all
-                  </button>
-                  <button
-                    type="button"
-                    disabled={disabled || selected.length === 0}
-                    className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
-                    onClick={() => choose([])}
-                  >
-                    Untick all
-                  </button>
-                </div>
-              )}
-              <ul className="max-h-48 space-y-1 overflow-auto rounded-lg border p-2">
-                {files.map((file) => (
-                  <li key={file.path}>
-                    <label className="flex min-w-0 cursor-pointer items-center gap-2">
-                      <Checkbox
-                        checked={selected.includes(file.path)}
-                        disabled={disabled}
-                        onCheckedChange={(checked) => toggle(file.path, checked === true)}
-                        aria-label={`Send ${file.path}`}
-                      />
-                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
-                      {isHomeSecretRow(file.path) && (
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          in your home folder
-                        </span>
-                      )}
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatBytes(file.size)}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {selected.length > 0 && (
+          <div className="flex min-w-0 items-start justify-between gap-2">
             <label
               className="flex cursor-pointer items-start gap-2"
-              data-slot="copy-secrets-confirm"
+              data-slot="copy-secrets-include"
             >
               <span className="flex h-5 items-center">
                 <Checkbox
-                  checked={confirmed}
+                  checked={included}
                   disabled={disabled}
-                  onCheckedChange={(checked) => onConfirmedChange(checked === true)}
+                  aria-label="Include secrets (.env, keys)"
+                  onCheckedChange={(checked) => {
+                    const on = checked === true;
+                    onChange(on, on ? all : []);
+                  }}
                 />
               </span>
               <span className="leading-5">
-                Send {selected.length} secret {selected.length === 1 ? "file" : "files"} to{" "}
-                {targetLabel}. Only your user can read {selected.length === 1 ? "it" : "them"}{" "}
-                there.
+                Secrets (.env, keys): {counted}, {included ? "included" : `left on ${sourceLabel}`}
+                <span className="block text-xs text-muted-foreground">
+                  {included
+                    ? `Copied to ${targetLabel}, where only your user can read them.`
+                    : `They stay on ${sourceLabel}.`}{" "}
+                  Sign-ins to Claude, Codex and GitHub are never copied; sign in on {targetLabel}{" "}
+                  instead.
+                </span>
               </span>
             </label>
+            <button
+              type="button"
+              className="shrink-0 text-xs text-primary hover:underline"
+              aria-expanded={shown}
+              data-slot="copy-secrets-show"
+              onClick={() => setShown((open) => !open)}
+            >
+              {shown ? "Hide" : "Show"}
+            </button>
+          </div>
+          {shown && (
+            <ul className="max-h-48 space-y-1 overflow-auto rounded-lg border p-2">
+              {files.map((file) => (
+                <li key={file.path}>
+                  <label className="flex min-w-0 cursor-pointer items-center gap-2">
+                    <Checkbox
+                      checked={included && selected.includes(file.path)}
+                      disabled={disabled}
+                      onCheckedChange={(checked) =>
+                        // Ticking one file while secrets stay here sends that file only.
+                        checked === true && !included
+                          ? onChange(true, [file.path])
+                          : toggle(file.path, checked === true)
+                      }
+                      aria-label={`Send ${file.path}`}
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs">{file.path}</span>
+                    {isHomeSecretRow(file.path) && (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        in your home folder
+                      </span>
+                    )}
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {formatBytes(file.size)}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
           )}
         </>
       )}

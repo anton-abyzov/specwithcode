@@ -22,8 +22,10 @@ import {
   folderCopyStorageKey,
   isFolderCopyNotFound,
   readPendingCopy,
+  pendingSecrets,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
+import { sendableSecrets } from "./handoffCopySecrets";
 import {
   copyStartInput,
   replaceAllReady,
@@ -143,8 +145,8 @@ const writePointer = (key: string, value: PendingCopy) => {
  * its progress on the project's sidebar row and banner, and says when it is ready, then
  * stops. A one-click copy
  * keeps going here: once measured it starts comparing, and a plan that replaces nothing
- * and has no secret files to choose is approved, as the dialog would. Reopening the
- * dialog unmounts it; the dialog resumes the operation itself.
+ * is approved, as the dialog would, after the saved secrets choice goes to the source.
+ * Reopening the dialog unmounts it; the dialog resumes the operation itself.
  */
 export function HandoffFolderCopyWatcher({
   environmentId,
@@ -177,7 +179,8 @@ export function HandoffFolderCopyWatcher({
   const start = useAtomCommand(machineHandoff.copyStart, { reportFailure: false });
   const decide = useAtomCommand(machineHandoff.copyDecide, { reportFailure: false });
   const approve = useAtomCommand(machineHandoff.copyApprove, { reportFailure: false });
-  const commands = { status, sourceStatus, offerCopy, start, decide, approve };
+  const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
+  const commands = { status, sourceStatus, offerCopy, start, decide, approve, sendSecrets };
   const latest = useRef({ commands, machineLabel, sourceLabel, onOpenDialog, onDone });
   latest.current = { commands, machineLabel, sourceLabel, onOpenDialog, onDone };
 
@@ -236,11 +239,71 @@ export function HandoffFolderCopyWatcher({
     };
 
     /**
+     * Sends the copy's saved secrets choice (What comes along showed it) before a one-click
+     * approval here. Whether that machine takes `~/` files is unknown here, so they stay on
+     * the source. False when the source's list cannot be read or the send failed.
+     */
+    const stageSecrets = async (previewed: FolderCopyStatus) => {
+      const summary = await readSummary();
+      // Read the pointer again: a reopened dialog owns the choice and the approval from here.
+      const saved = readPendingCopy(key);
+      if (stopped || !summary || saved?.operationId !== operationId) return false;
+      const paths = sendableSecrets({
+        summary,
+        plan: previewed,
+        repositories: null,
+        machine: undefined,
+        choice: pendingSecrets(saved),
+      });
+      if (!paths) return true;
+      const send = (choice: PendingCopy, list: ReadonlyArray<string>) =>
+        latest.current.commands.sendSecrets({
+          environmentId,
+          input: {
+            operationId,
+            paths: list,
+            destinationLabel: latest.current.machineLabel(choice.environmentId),
+          },
+        });
+      const sent = await send(saved, paths);
+      if (sent._tag === "Success" && !unchanged(saved)) {
+        // Another tab changed the choice, and may have approved, while this list was on its way:
+        // put the current choice back on the source and leave the copy to the person.
+        const now = readPendingCopy(key);
+        const current =
+          now?.operationId === operationId &&
+          sendableSecrets({
+            summary,
+            plan: previewed,
+            repositories: null,
+            machine: undefined,
+            choice: pendingSecrets(now),
+          });
+        if (now && current) await send(now, current);
+        return false;
+      }
+      return !stopped && sent._tag === "Success";
+    };
+    /** The pointer still says what this run acted on: same copy, Replace all and secrets. */
+    const unchanged = (acted: PendingCopy) => {
+      const now = readPendingCopy(key);
+      const choice = (copy: PendingCopy) => JSON.stringify(pendingSecrets(copy));
+      return (
+        now?.operationId === operationId &&
+        Boolean(now.replaceAll) === Boolean(acted.replaceAll) &&
+        choice(now) === choice(acted)
+      );
+    };
+
+    /**
      * A preview to carry on: the clone choice once, then approve a one-click plan that
      * replaces nothing, or a plan answered with Replace all once nothing is left open.
-     * Secret-like files never stop it; they stay on the source.
+     * Replace all sent its secrets when it was clicked; a one-click plan sends them here.
      */
-    const settle = async (saved: PendingCopy, previewed: FolderCopyStatus) => {
+    const settle = async (read: PendingCopy, previewed: FolderCopyStatus) => {
+      // Another tab may have changed the pointer while the status was read: act on the current one.
+      const saved = readPendingCopy(key);
+      if (stopped || saved?.operationId !== read.operationId) return "ask" as const;
       const { decide, approve, status } = latest.current.commands;
       const destination = saved.environmentId as EnvironmentId;
       if (saved.auto && saved.method === "clone" && !saved.cloneDecided) {
@@ -251,20 +314,26 @@ export function HandoffFolderCopyWatcher({
               input: { operationId, clone: cloneableRows(previewed.rows) },
             }),
           );
-        writePointer(key, { ...saved, cloneDecided: true });
+        // A reopened dialog may have changed the pointer meanwhile: mark only this operation's.
+        const now = readPendingCopy(key);
+        if (stopped || now?.operationId !== operationId) return "ask" as const;
+        writePointer(key, { ...now, cloneDecided: true });
         return "again" as const;
       }
       const approvable = saved.replaceAll
         ? replaceAllReady(previewed)
         : saved.auto === true && replacesNothing(previewed);
       if (!approvable) {
-        if (saved.replaceAll) {
+        const now = readPendingCopy(key);
+        if (now?.replaceAll && now.operationId === operationId) {
           // The re-compared plan needs the person: the old click no longer approves it.
-          const { replaceAll: _dropped, ...rest } = saved;
+          const { replaceAll: _dropped, ...rest } = now;
           writePointer(key, rest);
         }
         return "ask" as const;
       }
+      if (!saved.replaceAll && !(await stageSecrets(previewed))) return "ask" as const;
+      if (stopped || !unchanged(saved)) return "ask" as const;
       const approved = await approve({ environmentId: destination, input: { operationId } });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.
@@ -301,7 +370,8 @@ export function HandoffFolderCopyWatcher({
         // Closed on the machine, by a person or a later finished copy: nothing to come back to.
         if (destination.value.state === "cancelled") {
           try {
-            localStorage.removeItem(key);
+            // Another tab may have started a newer copy meanwhile: keep its pointer.
+            if (readPendingCopy(key)?.operationId === operationId) localStorage.removeItem(key);
           } catch {
             /* A kept pointer only re-reads this closed copy at the next start. */
           }

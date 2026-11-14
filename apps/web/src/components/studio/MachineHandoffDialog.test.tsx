@@ -85,11 +85,12 @@ function radio(label: string) {
 }
 const folderField = (machine: string) =>
   document.querySelector<HTMLInputElement>(`input[aria-label="Folder on ${machine}"]`);
-const toggle = (label: string) => {
-  const element = [...document.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-    (node) => node.textContent?.trim() === label,
-  );
-  if (!element) throw new Error(`Missing toggle ${label}`);
+/** A "Where should the coordinator run?" option, found by its label. */
+const coordinator = (label: string) => {
+  const element = [
+    ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
+  ].find((node) => node.closest("label")?.textContent?.includes(label));
+  if (!element) throw new Error(`Missing coordinator option ${label}`);
   return element;
 };
 async function escape() {
@@ -137,9 +138,9 @@ describe("machine handoff dialog", () => {
     await handoff();
     const popup = document.querySelector('[role="dialog"]')!;
     expect(popup.getAttribute("aria-labelledby")).toBe(document.querySelector("h2")?.id);
-    expect(document.querySelector("h2")?.textContent).toBe("Hand off Product");
+    expect(document.querySelector("h2")?.textContent).toBe("Move Product to MacBook Pro");
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-      "From MacBook M4 to another machine. Nothing there is replaced without asking.",
+      "From MacBook M4. Nothing on MacBook Pro is replaced without asking.",
     );
     expect(radio("MacBook Pro").getAttribute("aria-checked")).toBe("true");
     expect(folderField("MacBook Pro")?.value).toBe("/projects/product");
@@ -341,9 +342,9 @@ describe("machine handoff dialog", () => {
     await handoff({ destinations: [], machines: [], machine: null, selected: "" });
     expect(document.body.textContent).toContain("No other machine is connected.");
     // No machine picked: one filled primary, off, with what it waits for said beside it.
-    expect(button("Hand off").disabled).toBe(true);
+    expect(button("Move project").disabled).toBe(true);
     expect(document.body.textContent).toContain("Choose a machine above.");
-    await click(button("Hand off"));
+    await click(button("Move project"));
     expect(props.onReview).not.toHaveBeenCalled();
   });
 
@@ -441,11 +442,9 @@ describe("shared handoff controls", () => {
         </Tip>
       </TooltipProvider>,
     );
-    const control = button("Add or move to another machine");
+    const control = button("Copy to another machine");
     expect(trigger).toBe(control);
-    expect(control.getAttribute("aria-label")).toBe(
-      "Add this project to another machine, or move it there",
-    );
+    expect(control.getAttribute("aria-label")).toBe("Copy this project to another machine");
     expect(control.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     await act(async () => {
       control.focus();
@@ -509,7 +508,10 @@ describe("shared handoff controls", () => {
     const changes = { state: "dirty", fileCount: 3, committing: false, error: null, onCommit };
     await handoff({ sourceChanges: changes as NonNullable<HandoffProps["sourceChanges"]> });
     const note = document.querySelector('[data-slot="handoff-source-changes"]')!;
-    expect(note.textContent).toContain("3 uncommitted files stay on MacBook M4.");
+    expect(note.textContent).toContain(
+      "3 uncommitted files stay on MacBook M4: Git carries commits only.",
+    );
+    expect(note.closest('[data-slot="handoff-along"]')).not.toBeNull();
     await click(button("Commit for me"));
     expect(onCommit).toHaveBeenCalledOnce();
     await handoff({
@@ -525,9 +527,11 @@ describe("shared handoff controls", () => {
         HandoffProps["sourceChanges"]
       >,
     });
-    expect(document.querySelector('[data-slot="handoff-source-changes"]')!.textContent).toContain(
+    // Nothing uncommitted: one checked line says so, with no Commit for me.
+    expect(document.querySelector('[data-slot="handoff-source-changes"]')?.textContent).toContain(
       "No uncommitted changes on MacBook M4.",
     );
+    expect(document.body.textContent).not.toContain("Commit for me");
   });
 
   it("saves the machine silently: there is no remember-this-machine control", async () => {
@@ -545,14 +549,14 @@ describe("handoff file method and intent", () => {
     if (!element) throw new Error(`Missing method ${label}`);
     return element;
   };
-  // The copy flow shows the method under its own More options, read from the dialog.
+  // The copy flow shows the method under its own Details, read from the dialog.
   const copyFlow = (
     <div data-testid="copy-flow">
       <FilesTravelChoice />
     </div>
   );
 
-  it("puts how files travel under More options, in the copy flow and the Git move alike", async () => {
+  it("puts how files travel under Details, in the copy flow and the Git move alike", async () => {
     const onMethodChange = vi.fn();
     await handoff({ method: "copy", onMethodChange, copyFlow });
     expect(document.querySelector('[data-testid="copy-flow"]')).not.toBeNull();
@@ -560,13 +564,21 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector('[data-slot="handoff-method"] legend')?.textContent).toBe(
       "How files travel",
     );
-    expect(methodRadio("Copy everything except secrets").getAttribute("aria-checked")).toBe("true");
-    await click(methodRadio("Use Git, no file copy"));
+    expect(methodRadio("Copy everything").getAttribute("aria-checked")).toBe("true");
+    await click(methodRadio("Git only, no file copy"));
     expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("folder");
-    await handoff({ method: "folder", onMethodChange, copyFlow: undefined });
+    await handoff({
+      method: "folder",
+      onMethodChange,
+      copyFlow: undefined,
+      workspaceContext: { projectFolder: "/Users/me/product" },
+    });
     const more = document.querySelector('[data-slot="handoff-more-options"]')!;
+    expect(more.textContent).toContain("Details");
     expect(more.querySelector('[data-slot="handoff-method"]')).not.toBeNull();
-    expect(methodRadio("Use Git, no file copy").getAttribute("aria-checked")).toBe("true");
+    // The Workspace locations rows live under Details, not on top of the screen.
+    expect(more.querySelector('[data-slot="handoff-workspace-summary"]')).not.toBeNull();
+    expect(methodRadio("Git only, no file copy").getAttribute("aria-checked")).toBe("true");
     expect(button("Move project to MacBook Pro")).toBeDefined();
     await click(methodRadio("Clone clean repositories from Git"));
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
@@ -583,12 +595,23 @@ describe("handoff file method and intent", () => {
   it("titles the dialog by intent and keeps Git for moves only", async () => {
     const onMethodChange = vi.fn();
     await handoff({ method: "copy", intent: "copy", onMethodChange, copyFlow });
-    expect(document.querySelector("h2")?.textContent).toBe("Copy local files: Product");
-    expect(methodRadio("Use Git, no file copy").getAttribute("aria-disabled")).toBe("true");
-    await click(methodRadio("Use Git, no file copy"));
+    expect(document.querySelector("h2")?.textContent).toBe("Copy Product to another machine");
+    await handoff({
+      method: "copy",
+      intent: "copy",
+      onMethodChange,
+      copyFlow,
+      copyTargetLabel: "m5",
+    });
+    expect(document.querySelector("h2")?.textContent).toBe("Copy Product to m5");
+    expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
+      "From MacBook M4. Nothing on m5 is replaced without asking.",
+    );
+    expect(methodRadio("Git only, no file copy").getAttribute("aria-disabled")).toBe("true");
+    await click(methodRadio("Git only, no file copy"));
     expect(onMethodChange).not.toHaveBeenCalled();
-    await handoff({ intent: "move" });
-    expect(document.querySelector("h2")?.textContent).toBe("Hand off Product");
+    await handoff({ intent: "move", copyFlow: undefined, copyTargetLabel: null, method: "folder" });
+    expect(document.querySelector("h2")?.textContent).toBe("Move Product to MacBook Pro");
   });
 
   it("titles a finished copy of files only as copied, and a finished move as on", async () => {
@@ -598,14 +621,14 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
   });
 
-  it("switches the Git move to a files-only copy from the segmented choice", async () => {
+  it("keeps the coordinator here by switching the Git move to the copy", async () => {
     const onIntentChange = vi.fn();
     await handoff({ method: "folder", onMethodChange: vi.fn(), onIntentChange });
-    expect(document.querySelector('[data-slot="handoff-intent"]')?.getAttribute("aria-label")).toBe(
-      "What to do",
-    );
-    expect(toggle("Hand off and continue there").getAttribute("aria-pressed")).toBe("true");
-    await click(toggle("Copy local files"));
+    expect(document.querySelector('[data-slot="handoff-intent"]')).toBeNull();
+    const choice = document.querySelector('[data-slot="handoff-coordinator"]')!;
+    expect(choice.querySelector("legend")?.textContent).toBe("Where should the coordinator run?");
+    expect(coordinator("Move to MacBook Pro").getAttribute("aria-checked")).toBe("true");
+    await click(coordinator("Keep on MacBook M4"));
     expect(onIntentChange).toHaveBeenCalledExactlyOnceWith("copy");
   });
 
@@ -616,7 +639,7 @@ describe("handoff file method and intent", () => {
     expect(document.querySelector('[data-slot="dialog-close"]')).toBeNull();
     await escape();
     expect(props.onOpenChange).not.toHaveBeenCalled();
-    await click(methodRadio("Use Git, no file copy"));
+    await click(methodRadio("Git only, no file copy"));
     expect(onMethodChange).not.toHaveBeenCalled();
   });
 
@@ -636,7 +659,7 @@ describe("handoff file method and intent", () => {
       document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
         ?.disabled,
     ).toBe(false);
-    await click(methodRadio("Use Git, no file copy"));
+    await click(methodRadio("Git only, no file copy"));
     expect(onMethodChange).not.toHaveBeenCalled();
     await escape();
     expect(props.onOpenChange).toHaveBeenCalledWith(false);

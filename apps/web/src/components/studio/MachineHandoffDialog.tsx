@@ -11,12 +11,14 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
 import { HandoffCopyActionsTarget } from "./HandoffCopyActions";
 import {
+  AlongLine,
+  CoordinatorChoice,
   FilesTravelChoice,
   FolderField,
   MoreOptions,
-  MoveIntentToggle,
   ProjectMoveDialog,
   useProjectMoveDialog,
+  WhatComesAlong,
   type MoveIntent,
 } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
@@ -68,10 +70,10 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
       size="sm"
       className={cn("h-6 gap-1.5 px-2 text-xs sm:h-6 sm:text-xs", className)}
       data-slot="handoff-trigger"
-      aria-label="Add this project to another machine, or move it there"
+      aria-label="Copy this project to another machine"
     >
       <LaptopIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Add or move to another machine</span>
+      <span>Copy to another machine</span>
     </Button>
   );
 }
@@ -110,7 +112,7 @@ export function MachineHandoffDialog({
   method = "folder",
   onMethodChange,
   copyFlow,
-  shareFlow,
+  copyTargetLabel = null,
   copyBusy = false,
   copyLocked,
   copyDoneOn = null,
@@ -133,8 +135,8 @@ export function MachineHandoffDialog({
   readonly leftBehind?: ReactNode;
   readonly onMethodChange?: (method: HandoffFolderMethod) => void;
   readonly copyFlow?: ReactNode;
-  /** The default screen, sharing the project with another machine; replaces every other view. */
-  readonly shareFlow?: ReactNode;
+  /** The machine the copy flow has chosen, named in the title; null before one is picked. */
+  readonly copyTargetLabel?: string | null;
   readonly copyBusy?: boolean;
   /**
    * Whether the copy flow must keep the dialog open. Measuring, comparing and copying
@@ -179,8 +181,7 @@ export function MachineHandoffDialog({
   readonly onBack?: (() => void) | undefined;
 }) {
   const target = destinations.find((item) => item.key === selected);
-  const sharing = shareFlow !== undefined;
-  const copying = sharing || (copyFlow !== undefined && method !== "folder");
+  const copying = copyFlow !== undefined && method !== "folder";
   const busy = copying ? copyBusy : phase === "checking" || phase === "transferring";
   const locked = copying ? (copyLocked ?? copyBusy) : busy;
   const complete = !copying && phase === "complete";
@@ -224,7 +225,9 @@ export function MachineHandoffDialog({
                   ? `Sync ${projectTitle} to ${sync.machine}`
                   : complete
                     ? `${projectTitle} is on ${targetLabel}`
-                    : `${intent === "copy" ? "Copy local files:" : "Hand off"} ${projectTitle}`}
+                    : copying
+                      ? `Copy ${projectTitle} to ${copyTargetLabel ?? "another machine"}`
+                      : `Move ${projectTitle} to ${machineLabel ?? "another machine"}`}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}
             {!(copying && copyDoneOn) && (
@@ -233,27 +236,14 @@ export function MachineHandoffDialog({
                   ? `The coordinator now runs on ${targetLabel}.`
                   : sync && copying
                     ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two copies and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
-                    : sharing
-                      ? "Share this project with another machine. Its code moves only through Git."
-                      : intent === "copy"
-                        ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
-                        : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}
+                    : `From ${sourceLabel}. Nothing on ${(copying ? copyTargetLabel : machineLabel) ?? "the other machine"} is replaced without asking.`}
               </DialogDescription>
             )}
           </DialogHeader>
           <DialogPanel>
-            {!copying && !complete && workspaceContext && (
-              <HandoffWorkspaceSummary
-                source={workspaceContext}
-                destinationFolder={target?.folder}
-                destinationCheckout={destinationCheckout}
-                destinationWorktreeStorage={destinationWorktreeStorage}
-              />
-            )}
-            {intent === "move" && !complete && !sharing && leftBehind}
             {copying ? (
               <HandoffCopyActionsTarget.Provider value={copyActionsTarget}>
-                {sharing ? shareFlow : copyFlow}
+                {copyFlow}
               </HandoffCopyActionsTarget.Provider>
             ) : complete ? (
               <div
@@ -288,6 +278,19 @@ export function MachineHandoffDialog({
                 sourceChanges={sourceChanges}
                 busy={busy}
                 loading={machinesLoading}
+                details={
+                  <>
+                    {workspaceContext && (
+                      <HandoffWorkspaceSummary
+                        source={workspaceContext}
+                        destinationFolder={target?.folder}
+                        destinationCheckout={destinationCheckout}
+                        destinationWorktreeStorage={destinationWorktreeStorage}
+                      />
+                    )}
+                    {leftBehind}
+                  </>
+                }
               />
             )}
             {!copying && error && (
@@ -366,7 +369,7 @@ export function MachineHandoffDialog({
                     ? "Checking…"
                     : machineLabel
                       ? `Move project to ${machineLabel}`
-                      : "Hand off"}
+                      : "Move project"}
                 </Button>
               </>
             )}
@@ -377,7 +380,10 @@ export function MachineHandoffDialog({
   );
 }
 
-/** Screen 1 when files travel through Git: the move always continues there. */
+/**
+ * Screen 1 when files travel through Git only: the coordinator always moves, so choosing
+ * Keep switches back to the copy. The paths and what Git leaves behind sit under Details.
+ */
 function GitWhere({
   sourceLabel,
   destinations,
@@ -392,7 +398,9 @@ function GitWhere({
   sourceChanges,
   busy,
   loading,
+  details,
 }: {
+  readonly details: ReactNode;
   readonly loading: boolean;
   readonly sourceLabel: string;
   readonly destinations: ReadonlyArray<HandoffDestination>;
@@ -415,13 +423,6 @@ function GitWhere({
   const picking = folderPicker != null && (saved.length === 0 || changing === selected);
   return (
     <div className="flex flex-col gap-4">
-      <MoveIntentToggle
-        value="move"
-        canMove
-        disabled={busy || !onIntentChange}
-        onChange={(next) => onIntentChange?.(next)}
-      />
-      <SourceChangesNote changes={sourceChanges} sourceLabel={sourceLabel} busy={busy} />
       <fieldset disabled={busy} className="min-w-0">
         <legend className="mb-2 text-sm font-medium">Machine</legend>
         {machines.length === 0 && !loading ? (
@@ -476,7 +477,25 @@ function GitWhere({
           </>
         )
       ) : null}
-      <MoreOptions defaultOpen disabled={busy}>
+      <WhatComesAlong>
+        <AlongLine>Committed work in every repository, through Git</AlongLine>
+        <AlongLine>Project goal, instructions, memory and the coordinator's threads</AlongLine>
+        <SourceChangesLine changes={sourceChanges} sourceLabel={sourceLabel} busy={busy} />
+        <AlongLine stays>
+          Stays on {sourceLabel}: secrets, sign-ins to Claude, Codex and GitHub, and running
+          processes
+        </AlongLine>
+      </WhatComesAlong>
+      <CoordinatorChoice
+        value="move"
+        canMove
+        sourceLabel={sourceLabel}
+        targetLabel={machineLabel}
+        disabled={busy || !onIntentChange}
+        onChange={(next) => onIntentChange?.(next)}
+      />
+      <MoreOptions disabled={busy}>
+        {details}
         <FilesTravelChoice />
       </MoreOptions>
     </div>
@@ -650,7 +669,8 @@ function GitReview({
   );
 }
 
-function SourceChangesNote({
+/** Uncommitted work as one line of What comes along: Git carries commits only. */
+function SourceChangesLine({
   changes,
   sourceLabel,
   busy,
@@ -659,44 +679,43 @@ function SourceChangesNote({
   readonly sourceLabel: string;
   readonly busy: boolean;
 }) {
-  if (!changes || changes.state === "unknown")
+  // Clean, as after Commit for me: say so, so the commit visibly took effect.
+  if (changes?.state === "clean")
     return (
-      <p className="text-sm text-muted-foreground" data-slot="handoff-source-changes">
-        Uncommitted work stays on {sourceLabel}. Commit and push it to take it through Git, or use
-        Copy local files.
-      </p>
+      <AlongLine slot="handoff-source-changes">No uncommitted changes on {sourceLabel}.</AlongLine>
     );
-  if (changes.state === "clean")
-    return (
-      <p className="text-sm text-muted-foreground" data-slot="handoff-source-changes">
-        No uncommitted changes on {sourceLabel}.
-      </p>
-    );
+  const count =
+    changes?.state === "dirty"
+      ? changes.fileCount === 1
+        ? "1 uncommitted file stays"
+        : `${changes.fileCount.toLocaleString("en-US")} uncommitted files stay`
+      : "Uncommitted work stays";
+  const commit = changes?.state === "dirty" ? changes.onCommit : null;
   return (
-    <div
-      className="space-y-2 rounded-lg border border-warning/40 bg-warning/8 p-3 text-sm"
-      data-slot="handoff-source-changes"
-    >
-      <p className="wrap-anywhere">
-        {changes.fileCount === 1 ? "1 uncommitted file" : `${changes.fileCount} uncommitted files`}{" "}
-        stay on {sourceLabel}. Commit and push them to take them through Git, or use Copy local
-        files.
-      </p>
-      {changes.onCommit && (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || changes.committing}
-          onClick={changes.onCommit}
-        >
-          {changes.committing ? "Committing…" : "Commit for me"}
-        </Button>
+    <>
+      <AlongLine stays slot="handoff-source-changes">
+        {count} on {sourceLabel}: Git carries commits only. Commit them, or choose Copy everything
+        under Details.
+      </AlongLine>
+      {(commit || changes?.error) && (
+        <li className="min-w-0 space-y-1.5 ps-6.5">
+          {commit && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || changes?.committing}
+              onClick={commit}
+            >
+              {changes?.committing ? "Committing…" : "Commit for me"}
+            </Button>
+          )}
+          {changes?.error && (
+            <p role="alert" className="wrap-anywhere text-destructive-foreground">
+              {changes.error}
+            </p>
+          )}
+        </li>
       )}
-      {changes.error && (
-        <p role="alert" className="wrap-anywhere text-destructive-foreground">
-          {changes.error}
-        </p>
-      )}
-    </div>
+    </>
   );
 }

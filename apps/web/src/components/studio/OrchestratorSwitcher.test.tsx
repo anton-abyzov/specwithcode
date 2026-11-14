@@ -89,27 +89,21 @@ it("switches the view only after its menu has closed", async () => {
 it("moves the coordinator only from its own item", async () => {
   const calls = handlers();
   await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Move to Minis…")!.click());
+  await act(async () => item("menuitem", "Move coordinator to Minis…")!.click());
   expect(calls.onMove).toHaveBeenCalledWith("minis:p");
   expect(calls.onView).not.toHaveBeenCalled();
 });
 
-it("offers Sync, not Move, for a machine that runs its own coordinator", async () => {
+it("offers the coordinator-only move only to copies that run workers", async () => {
   const calls = handlers();
-  const onSync = vi.fn<(key: string) => void>();
   await renderSwitcher({
     ...calls,
-    onSync,
     copies: [copy("m4:p", "M4"), copy("mini:p", "Mini"), copy("minis:p", "Minis", "workers")],
   });
   const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
-  expect(labels).not.toContain("Move to Mini…");
-  expect(labels).toContain("Sync to Mini…");
-  expect(labels).toContain("Move to Minis…");
-  expect(labels).toContain("Sync to Minis…");
-  await act(async () => item("menuitem", "Sync to Mini…")!.click());
-  await vi.waitFor(() => expect(onSync).toHaveBeenCalledWith("mini:p"));
-  expect(calls.onMove).not.toHaveBeenCalled();
+  expect(labels).not.toContain("Move coordinator to Mini…");
+  expect(labels).toContain("Move coordinator to Minis…");
+  expect(labels.some((label) => label?.startsWith("Sync to"))).toBe(false);
 });
 
 it("starts a coordinator on a ready workers-only copy", async () => {
@@ -233,9 +227,8 @@ it("runs one coordinator start at a time across the switcher and the composer no
   expect(startCoordinator).toHaveBeenCalledTimes(2);
 });
 
-it("offers Add, Move and Leave in one machine menu, even with one copy", async () => {
-  const onAdd = vi.fn<() => void>();
-  const onMoveElsewhere = vi.fn<() => void>();
+it("offers one Copy to another machine and Leave, even with one copy", async () => {
+  const onCopy = vi.fn<() => void>();
   const onLeave = vi.fn<() => void>();
   await act(async () =>
     root.render(
@@ -251,8 +244,7 @@ it("offers Add, Move and Leave in one machine menu, even with one copy", async (
         onMove={null}
         onStart={null}
         onAllowWorkers={null}
-        onAdd={onAdd}
-        onMoveElsewhere={onMoveElsewhere}
+        onCopy={onCopy}
         onLeave={onLeave}
       />,
     ),
@@ -263,17 +255,17 @@ it("offers Add, Move and Leave in one machine menu, even with one copy", async (
       .click(),
   );
   expect(document.querySelector('[role="menuitemradio"]')).toBeNull();
-  expect(item("menuitem", "Add to another machine…")).toBeDefined();
   expect(item("menuitem", "Leave this machine…")).toBeDefined();
-  await act(async () => item("menuitem", "Move to another machine…")!.click());
-  await vi.waitFor(() => expect(onMoveElsewhere).toHaveBeenCalledTimes(1));
-  expect(onAdd).not.toHaveBeenCalled();
+  expect(item("menuitem", "Add to another machine…")).toBeUndefined();
+  expect(item("menuitem", "Move to another machine…")).toBeUndefined();
+  await act(async () => item("menuitem", "Copy to another machine…")!.click());
+  await vi.waitFor(() => expect(onCopy).toHaveBeenCalledTimes(1));
   expect(onLeave).not.toHaveBeenCalled();
 });
 
 it("names machines once and labels every group of actions", async () => {
   const calls = handlers();
-  await renderSwitcher({ ...calls, onAdd: vi.fn(), onMoveElsewhere: vi.fn(), onLeave: vi.fn() });
+  await renderSwitcher({ ...calls, onCopy: vi.fn(), onLeave: vi.fn() });
   expect(
     [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
   ).toEqual(["M4", "Minisworkers only"]);
@@ -282,9 +274,8 @@ it("names machines once and labels every group of actions", async () => {
   ).toEqual(["View this project on", "This project", "On M4"]);
   expect([...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)).toEqual(
     [
-      "Add to another machine…",
-      "Move to Minis…",
-      "Move to another machine…",
+      "Copy to another machine…",
+      "Move coordinator to Minis…",
       "Start a coordinator on Minis",
       "Move running threads…M4 offline",
       "Leave this machine…",

@@ -4,10 +4,21 @@ const totals = Object.fromEntries(
     { files: 2, bytes: 512 },
   ]),
 );
+// `?secrets=1`: the folder holds secret files, which travel by default.
+const SECRET_FILES = new URLSearchParams(location.search).has("secrets")
+  ? [
+      { path: ".env", size: 412 },
+      { path: ".env.local", size: 188 },
+      { path: "repositories/anton-abyzov/specweave/.env", size: 96 },
+      { path: "repositories/anton-abyzov/vskill-platform/.dev.vars", size: 233 },
+      { path: "repositories/anton-abyzov/vskill/.npmrc", size: 64 },
+      { path: "keys/deploy_ed25519", size: 411 },
+    ]
+  : [];
 const summary = {
   totals,
   repositories: [],
-  secretFiles: [],
+  secretFiles: SECRET_FILES,
   linksOutside: 0,
   warnings: [
     "Work is still running here. Files that change during the copy won't be included, and the project moves once that work stops.",
@@ -242,6 +253,17 @@ export const useAtomCommand =
         copyRoot,
         projectRelativePath,
         status: { state: "scanned", summary, error: null, scanCompletedAt: 1793061000000 },
+      };
+    } else if (name === "copySecrets") {
+      value = {
+        state: "scanned",
+        summary,
+        error: null,
+        secrets: {
+          files: (input.paths as string[]).map((path) => ({ path, size: 100 })),
+          approvedAt: 1,
+          destinationLabel: input.destinationLabel,
+        },
       };
     } else if (name === "copySourceStatus") {
       // A reopened copy reads the measured summary back from the source.

@@ -1,10 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
   FolderCopyFileClass,
   FolderCopyMode,
-  FolderCopyRow,
   FolderCopySourceStatus,
   FolderCopyStatus,
 } from "@specweave-studio/contracts";
@@ -61,16 +60,20 @@ export const APPLYING: ReadonlySet<string> = new Set(["applying", "applied"]);
 /** Repository clicks closer together than this re-compare once. */
 export const REPOSITORY_SETTLE_MS = 400;
 
-/** True when `path` sits inside a repository row the person left out. */
-export function insideSkipped(
-  path: string,
-  skip: ReadonlyArray<string>,
-  rows: ReadonlyArray<FolderCopyRow>,
-): boolean {
-  return rows.some(
-    (row) => skip.includes(row.id) && row.path !== "." && path.startsWith(`${row.path}/`),
-  );
+/**
+ * State that long async runs read through the ref: a copy that runs straight through, or a
+ * resumed one, started in an older render and would otherwise read that render's value.
+ */
+export function useLiveState<T>(initial: T) {
+  const [value, setValue] = useState(initial);
+  const ref = useRef(initial);
+  const set = useCallback((next: T) => {
+    ref.current = next;
+    setValue(next);
+  }, []);
+  return [value, set, ref] as const;
 }
+
 export const NOT_ABSOLUTE =
   "Enter the full absolute path of the folder on the destination machine.";
 export const absolute = (folder: string) =>

@@ -70,7 +70,7 @@ export function useCopyScope(project: EnvironmentProject, enabled = true) {
 }
 
 /**
- * The copy root, under More options. The whole umbrella is the default when the project sits
+ * The copy root, under Details. The whole umbrella is the default when the project sits
  * in one; "Copy only this project folder" narrows it. A plain project has nothing to choose.
  */
 export function HandoffCopyScope({

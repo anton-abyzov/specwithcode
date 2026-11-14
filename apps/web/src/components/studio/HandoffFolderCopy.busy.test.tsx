@@ -103,12 +103,12 @@ const handOff = async () => {
   await act(async () => root.render(<CopyFixture />));
   await settle();
   await act(async () => {
-    [...container.querySelectorAll<HTMLElement>('[data-slot="toggle"]')]
-      .find((node) => node.textContent === "Hand off and continue there")!
+    [...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]')]
+      .find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!
       .click();
   });
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
 };
 const links = () =>
   [...container.querySelectorAll<HTMLAnchorElement>('[data-slot="handoff-busy-thread"] a')].map(

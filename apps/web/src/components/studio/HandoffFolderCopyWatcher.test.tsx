@@ -431,7 +431,7 @@ it("drops a pending Replace all whose re-compare still needs a choice and asks f
 it("approves a one-click copy with secret-like files and keeps watching an approval whose answer was lost", async () => {
   vi.useFakeTimers();
   try {
-    pointer({ auto: true });
+    pointer({ auto: true, secrets: { included: true, out: [] } });
     let destination: "previewed" | "approved" | "applied" = "previewed";
     state.handlers.copyStatus = () =>
       destination === "previewed" ? previewed([row()]) : copyStatus(destination);
@@ -441,6 +441,12 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
       progress: null,
       error: null,
     });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      expect(approvals).toBe(0);
+      return { state: "ready" };
+    };
     let approvals = 0;
     state.handlers.copyApprove = () => {
       approvals += 1;
@@ -450,6 +456,8 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(approvals).toBe(1);
+    // What comes along showed the secrets included: they go first, to the source.
+    expect(sent).toEqual([[".env"]]);
     expect(state.toasts).toEqual([]);
     destination = "applied";
     await act(async () => vi.advanceTimersByTimeAsync(2000));
@@ -458,6 +466,197 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
     expect((state.toasts[0] as { title: string }).title).toBe(
       "Copy to M3 is done. Open Move Project to finish setting it up.",
     );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps secrets on the source for a one-click copy saved before the choice existed", async () => {
+  vi.useFakeTimers();
+  try {
+    // Saved by an older version, which left secrets out unless the person ticked them.
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(sent).toEqual([[]]);
+    expect(approvals).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("sends an empty secrets list before a one-click approval that left secrets on the source", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true, secrets: { included: false, out: [] } });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(sent).toEqual([[]]);
+    expect(approvals).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("puts the current choice back and does not approve when another tab unticks secrets mid-send", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true, secrets: { included: true, out: [] } });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      pointer({ auto: true, secrets: { included: false, out: [] } });
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
+    // The other tab may already have approved: its empty list goes back on the source.
+    expect(sent).toEqual([[".env"], []]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not approve a Replace all after another tab changes the secrets choice", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ replaceAll: true });
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // The other tab's review unticks secrets: its choice drops the old click's Replace all.
+    pointer({ secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer(
+        previewed([row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })]),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("waits for the person when the secrets choice cannot be sent", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    state.handlers.copySecrets = () => {
+      throw new Error("The source is offline.");
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("leaves secrets and the approval to a reopened dialog while the source summary is in flight", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copySourceStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // The dialog reopens (the watcher unmounts) and the person leaves the secrets on the source.
+    await act(async () => root.render(<></>));
+    pointer({ auto: true, secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer({
+        state: "ready",
+        summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+        progress: null,
+        error: null,
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(sent).toEqual([]);
+    expect(approvals).toBe(0);
   } finally {
     vi.useRealTimers();
   }
@@ -488,6 +687,31 @@ it("never approves a one-click copy whose unchanged folder would overwrite files
         title: "Copy to M3 would replace 2 files. Open Move Project to review.",
       },
     ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a reopened dialog's secrets choice when the clone choice answers after unmount", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true, method: "clone" });
+    state.handlers.copyStatus = () => previewed([row({ cloneAvailable: true })]);
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyDecide = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await act(async () => root.render(<></>));
+    pointer({ auto: true, method: "clone", secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer(previewed([row({ cloneAvailable: true, clone: true })]));
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(readPointer()).toMatchObject({ secrets: { included: false, out: [] } });
+    expect(readPointer()).not.toHaveProperty("cloneDecided");
   } finally {
     vi.useRealTimers();
   }
@@ -596,6 +820,53 @@ it("never announces again a copy that finished before a reload", async () => {
     expect(state.toasts).toEqual([]);
     expect(done).toBe(1);
     expect(currentCopyActivities().size).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a newer copy another tab saved while a closed copy's status was in flight", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    pointer({ operationId: "00000000-0000-4000-8000-000000000010" });
+    await act(async () => {
+      answer(copyStatus("cancelled"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(readPointer()).toMatchObject({ operationId: "00000000-0000-4000-8000-000000000010" });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("drops a stale Replace all without undoing a secrets choice another tab saved meanwhile", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ replaceAll: true });
+    let answer: (value: unknown) => void = () => {};
+    state.handlers.copyStatus = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    pointer({ replaceAll: true, secrets: { included: false, out: [] } });
+    await act(async () => {
+      answer(
+        previewed([row({ status: "diverged", choices: ["take-theirs"], needsDecision: true })], 1),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(readPointer()).toMatchObject({ secrets: { included: false, out: [] } });
+    expect(readPointer()).not.toHaveProperty("replaceAll");
   } finally {
     vi.useRealTimers();
   }

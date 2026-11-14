@@ -172,17 +172,36 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
   });
 });
 
-it("sends no secret file unless it is ticked and confirmed for that machine", async () => {
-  state.handlers.copySecrets = ({ input }: any) => ({
-    state: "scanned",
-    summary,
-    error: null,
-    secrets: {
-      files: [{ path: ".env", size: 10 }],
-      approvedAt: 1,
-      destinationLabel: input.destinationLabel,
-    },
+/** The source lists two secret files, .env and .env.local. */
+const twoSecrets = () => {
+  const both = {
+    ...summary,
+    secretFiles: [
+      { path: ".env", size: 10 },
+      { path: ".env.local", size: 12 },
+    ],
+  };
+  const offer = state.handlers.copyOffer!;
+  state.handlers.copyOffer = (input) => ({
+    ...(offer(input) as object),
+    status: { state: "scanned", summary: both, error: null },
   });
+  state.handlers.copySourceStatus = () => ({ state: "scanned", summary: both, error: null });
+};
+const sendBox = (path: string) =>
+  container.querySelector<HTMLElement>(`[aria-label="Send ${path}"]`);
+const showSecrets = async () => {
+  if (!sendBox(".env"))
+    await act(async () =>
+      container.querySelector<HTMLElement>('[data-slot="copy-secrets-show"]')!.click(),
+    );
+};
+const sentSecrets = () =>
+  state.calls
+    .filter(([name]) => name === "copySecrets")
+    .map(([, request]) => (request as { input: { paths: string[] } }).input.paths);
+
+it("sends secret files by default, shown as one included line that lists them on Show", async () => {
   statuses = [
     copyStatus("previewed"),
     copyStatus("applied", {
@@ -190,24 +209,25 @@ it("sends no secret file unless it is ticked and confirmed for that machine", as
     }),
   ];
   await mount();
+  const along = container.querySelector('[data-slot="copy-along-secrets"]')!;
+  expect(along.textContent).toContain("Secrets (.env, keys): included");
   await click("Copy to M3");
-  expect(container.querySelector('[aria-label="Send .env"]')).toBeNull();
   const include = container.querySelector<HTMLElement>(
     '[data-slot="copy-secrets-include"] [data-slot="checkbox"]',
   )!;
-  expect(include.getAttribute("aria-checked")).toBe("false");
+  expect(include.getAttribute("aria-checked")).toBe("true");
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 file, included");
   expect(container.textContent).not.toContain("API_TOKEN");
-  await act(async () => include.click());
-  const box = container.querySelector<HTMLElement>('[aria-label="Send .env"]')!;
-  expect(box.getAttribute("aria-checked")).toBe("true");
-  expect(button("Copy to M3").disabled).toBe(true);
-  expect(container.textContent).toContain(
-    "Send 1 secret file to M3. Only your user can read it there.",
+  // No second confirmation: the checked line is the consent.
+  expect(container.querySelector('[data-slot="copy-secrets-confirm"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Send .env"]')).toBeNull();
+  await act(async () =>
+    container.querySelector<HTMLElement>('[data-slot="copy-secrets-show"]')!.click(),
   );
-  const confirm = container.querySelector<HTMLElement>(
-    '[data-slot="copy-secrets-confirm"] [data-slot="checkbox"]',
-  )!;
-  await act(async () => confirm.click());
+  expect(
+    container.querySelector<HTMLElement>('[aria-label="Send .env"]')!.getAttribute("aria-checked"),
+  ).toBe("true");
+  expect(button("Copy to M3").disabled).toBe(false);
   await click("Copy to M3");
   const order = names();
   expect(order.indexOf("copySecrets")).toBeLessThan(order.indexOf("copyApprove"));
@@ -223,11 +243,132 @@ it("sends no secret file unless it is ticked and confirmed for that machine", as
   expect(container.textContent).toContain("Readiness m3 copied");
 });
 
-it("copies without asking the source for secrets when none are ticked", async () => {
+it("leaves secrets on the source when What comes along unticks them", async () => {
+  await mount();
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-along-secrets"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  expect(container.querySelector('[data-slot="copy-along-secrets"]')!.textContent).toContain(
+    "Secrets (.env, keys): left on M4",
+  );
+  await click("Copy to M3");
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
+  await click("Copy to M3");
+  // An empty list before approval: nothing travels, and nothing sent earlier stays staged.
+  expect(sentSecrets()).toEqual([[]]);
+  expect(names().indexOf("copySecrets")).toBeLessThan(names().indexOf("copyApprove"));
+});
+
+it("withdraws secrets sent before a refused approval when they are unticked for the retry", async () => {
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  let approvals = 0;
+  state.handlers.copyApprove = () => {
+    if (++approvals === 1) throw new Error("The connection dropped.");
+    return copyStatus("approved");
+  };
   await mount();
   await click("Copy to M3");
   await click("Copy to M3");
-  expect(names()).not.toContain("copySecrets");
+  expect(container.querySelector('[data-slot="copy-preview"]')).not.toBeNull();
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-secrets-include"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  await click("Copy to M3");
+  // The retry sends the current choice, an empty list, so the earlier .env does not travel.
+  expect(sentSecrets()).toEqual([[".env"], []]);
+  expect(approvals).toBe(2);
+});
+
+it("keeps an unticked secret file out through Change setup and a new measure", async () => {
+  twoSecrets();
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await showSecrets();
+  await act(async () => sendBox(".env.local")!.click());
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 of 2 files, included");
+  await click("Change setup");
+  await click("Copy to M3");
+  await showSecrets();
+  // The new measure lists both files again; the one unticked stays unticked.
+  expect(sendBox(".env")!.getAttribute("aria-checked")).toBe("true");
+  expect(sendBox(".env.local")!.getAttribute("aria-checked")).toBe("false");
+  await click("Copy to M3");
+  expect(sentSecrets()).toEqual([[".env"]]);
+});
+
+it("keeps an unticked secret file out after Change setup, a close and a reopen", async () => {
+  twoSecrets();
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await showSecrets();
+  await act(async () => sendBox(".env.local")!.click());
+  await click("Change setup");
+  // Change setup dropped the pointer; the setup draft keeps the secrets choice.
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await click("Copy to M3");
+  await showSecrets();
+  expect(sendBox(".env.local")!.getAttribute("aria-checked")).toBe("false");
+  await click("Copy to M3");
+  expect(sentSecrets()).toEqual([[".env"]]);
+});
+
+it("keeps a saved opt-out when a reopened one-click copy approves on its own", async () => {
+  localStorage.setItem(
+    "specwithcode:folder-copy:m4:source",
+    JSON.stringify({
+      operationId: "00000000-0000-4000-8000-000000000009",
+      environmentId: "m3",
+      mode: "copy-only",
+      targetFolder: "/target",
+      projectId: null,
+      auto: true,
+      secrets: { included: false, out: [] },
+    }),
+  );
+  state.handlers.copySourceStatus = () => ({
+    state: "ready",
+    summary,
+    progress: null,
+    error: null,
+  });
+  statuses = [copyStatus("previewed", { rows: [newRow(".")] }), copyStatus("applied")];
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(names()).toContain("copyApprove");
+  // The resumed run reads the pointer's choice, not the default the first render held.
+  expect(sentSecrets()).toEqual([[]]);
+});
+
+it("keeps secrets left on the source when the dialog closes and reopens before Copy", async () => {
+  statuses = [copyStatus("previewed"), copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-secrets-include"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
+  const pointer = JSON.parse(localStorage.getItem("specwithcode:folder-copy:m4:source")!);
+  expect(pointer.secrets).toEqual({ included: false, out: [] });
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await mount();
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(container.textContent).toContain("Secrets (.env, keys): 1 file, left on M4");
+  await click("Copy to M3");
+  expect(names()).toContain("copyApprove");
+  expect(sentSecrets()).toEqual([[]]);
 });
 
 it("keeps Apply disabled until every conflict has a decision", async () => {
@@ -250,14 +391,14 @@ it("checks the destination after Apply before fencing the source and starting co
     }),
   ];
   await mount();
-  const move = [...container.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-    (node) => node.textContent === "Hand off and continue there",
-  )!;
+  const move = [
+    ...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
+  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
   await act(async () => move.click());
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   const start = state.calls.find(([name]) => name === "copyStart")![1] as any;
   expect(start.input.projectId).toBe("00000000-0000-4000-8000-000000000002");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   const order = names().filter((name) => ["prepare", "copyApprove", "receive"].includes(name));
   expect(order).toEqual(["copyApprove", "prepare", "receive", "prepare", "receive"]);
   const published = state.calls.filter(([name]) => name === "prepare")[1]![1] as any;
@@ -327,8 +468,8 @@ const editFolder = async (value: string) =>
   });
 const selectMove = async () =>
   act(async () => {
-    [...container.querySelectorAll<HTMLElement>('[data-slot="toggle"]')]
-      .find((node) => node.textContent === "Hand off and continue there")!
+    [...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]')]
+      .find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!
       .click();
   });
 const deferredCopy = () => {
@@ -383,8 +524,8 @@ it("finishes the copy while busy and transfers context only on an explicit retry
   };
   await mount();
   await selectMove();
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
   expect(container.textContent).toContain(
     "Work is still running on M4, so the coordinator stayed there.",
@@ -413,8 +554,8 @@ it("keeps a changed-source copy successful and asks for a fresh copy", async () 
   };
   await mount();
   await selectMove();
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
   expect(container.textContent).toContain("Copy again before moving the coordinator");
   expect(button("Copy again")).toBeTruthy();
@@ -446,8 +587,8 @@ it("does not fence or transfer after copied files were unstable", async () => {
   statuses[1] = { ...statuses[1], unstable: ["work-in-progress.ts"] };
   await mount();
   await selectMove();
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
   expect(button("Copy again")).toBeTruthy();
   expect(names()).not.toContain("prepare");
@@ -464,8 +605,8 @@ it.each(["offline", "busy"])(
     };
     await mount();
     await selectMove();
-    await click("Hand off to M3");
-    await click("Hand off to M3");
+    await click("Copy and move to M3");
+    await click("Copy and move to M3");
     expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
     expect(container.textContent).toContain("Moving the coordinator didn't finish");
     await openMore();
@@ -545,8 +686,8 @@ it.each(["same", "folder", "machine"])(
     };
     await mount({ m1Available: true });
     await selectMove();
-    await click("Hand off to M3");
-    await click("Hand off to M3");
+    await click("Copy and move to M3");
+    await click("Copy and move to M3");
     await openMore();
     await click("Start a new copy");
     if (change === "folder") await editFolder("/home/anton/other-project");
@@ -561,7 +702,7 @@ it.each(["same", "folder", "machine"])(
       );
     }
     statuses = [copyStatus("previewed", { mode: "copy-and-move" })];
-    await click(`Hand off to ${change === "machine" ? "M1" : "M3"}`);
+    await click(`Copy and move to ${change === "machine" ? "M1" : "M3"}`);
     const starts = state.calls.filter(([name]) => name === "copyStart");
     const request = starts.at(-1)![1] as any;
     if (change === "same") expect(request.input.projectId).toBe(originalId);
@@ -579,7 +720,7 @@ it("uses the existing project registration for a known destination folder", asyn
         : null,
   });
   await selectMove();
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   const request = state.calls.find(([name]) => name === "copyStart")![1] as any;
   expect(request.input.projectId).toBe("existing-project");
 });
@@ -619,8 +760,8 @@ it.each(["project-coordinator:existing-project", "custom-coordinator"])(
     };
     await mount({ savedFolder: "/srv/project/", savedProject: () => existing });
     await selectMove();
-    await click("Hand off to M3");
-    await click("Hand off to M3");
+    await click("Copy and move to M3");
+    await click("Copy and move to M3");
     const prepares = state.calls.filter(([name]) => name === "prepare");
     expect((prepares[0]![1] as any).input.destination).toMatchObject({
       projectId: "existing-project",
@@ -653,8 +794,8 @@ it.each(["busy", "conflict", "invalid"])(
     };
     await mount();
     await selectMove();
-    await click("Hand off to M3");
-    await click("Hand off to M3");
+    await click("Copy and move to M3");
+    await click("Copy and move to M3");
     expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
     expect(container.textContent).toContain("M3 is not ready for the coordinator");
     expect(container.textContent).not.toContain("Work is still running on M4");
@@ -666,7 +807,7 @@ it.each(["busy", "conflict", "invalid"])(
     expect(localStorage.getItem("specwithcode:folder-copy:m4:source")).not.toBeNull();
     await click("Start a new copy");
     expect(names()).toContain("copyRelease");
-    expect(button("Hand off to M3")).toBeTruthy();
+    expect(button("Copy and move to M3")).toBeTruthy();
   },
 );
 
@@ -717,8 +858,8 @@ it("reads a destination registration that arrived while Apply was running", asyn
   };
   await mount(options);
   await selectMove();
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
   const prepared = state.calls.find(([name]) => name === "prepare")![1] as any;
   expect(prepared.input.destination).toMatchObject({
     coordinatorThreadId: "arrived-coordinator",
@@ -830,13 +971,13 @@ it("keeps deferred context retry in the footer with current handlers", async () 
   };
   await mount({ dialog: true });
   await act(async () => {
-    const choice = [...document.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-      (element) => element.textContent === "Hand off and continue there",
-    );
+    const choice = [
+      ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
+    ].find((element) => element.closest("label")?.textContent?.startsWith("Move to") === true);
     choice!.click();
   });
-  await dialogClick("Hand off to M3");
-  await dialogClick("Hand off to M3");
+  await dialogClick("Copy and move to M3");
+  await dialogClick("Copy and move to M3");
   expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
     "Work is still running",
   );
@@ -1082,11 +1223,11 @@ it("registers, previews context and opens the child project while copying the wh
       machine === "m3" && folder === childDestination ? existing : null,
   });
   await selectMove();
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   expect(state.calls.find(([name]) => name === "copyStart")?.[1]).toMatchObject({
     input: { projectId: existing.id, targetFolder: umbrellaDestination },
   });
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   expect(state.calls.find(([name]) => name === "prepare")?.[1]).toMatchObject({
     input: { destination: { projectId: existing.id, coordinatorThreadId: "child-coordinator" } },
   });
@@ -1121,8 +1262,8 @@ it.each(["same", "child-only", "different-root"])(
     };
     await mount({ workspaceRoot: childRoot });
     await selectMove();
-    await click("Hand off to M3");
-    await click("Hand off to M3");
+    await click("Copy and move to M3");
+    await click("Copy and move to M3");
     await openMore();
     await click("Start a new copy");
     expect(inputFolder().value).toBe(canonical);
@@ -1133,7 +1274,7 @@ it.each(["same", "child-only", "different-root"])(
       await editFolder(canonicalChild);
     }
     statuses = [copyStatus("previewed")];
-    await click("Hand off to M3");
+    await click("Copy and move to M3");
     const start = state.calls.findLast(([name]) => name === "copyStart")?.[1] as any;
     if (nextScope === "different-root") expect(start.input.projectId).not.toBe(registration);
     else expect(start.input.projectId).toBe(registration);
@@ -1154,9 +1295,9 @@ const scanning = (progress: { files: number; bytes: number } | null = null) => (
 });
 const waitPoll = () => act(async () => new Promise((resolve) => setTimeout(resolve, 1100)));
 const moveMode = async () => {
-  const move = [...document.querySelectorAll<HTMLElement>('[data-slot="toggle"]')].find(
-    (node) => node.textContent === "Hand off and continue there",
-  )!;
+  const move = [
+    ...document.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
+  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
   await act(async () => move.click());
 };
 const skippedSummary = {
@@ -1272,7 +1413,7 @@ it("cancels measuring on the source, releases a move and returns to setup withou
   state.handlers.copySourceStatus = () => scanning({ files: 10, bytes: 10 });
   await mount();
   await moveMode();
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
   const key = "specwithcode:folder-copy:m4:source";
   expect(localStorage.getItem(key)).not.toBeNull();
   const { operationId } = JSON.parse(localStorage.getItem(key)!);
@@ -1289,7 +1430,7 @@ it("cancels measuring on the source, releases a move and returns to setup withou
   expect(
     container.querySelector('[data-slot="handoff-folder-copy"]')?.getAttribute("data-stage"),
   ).toBe("setup");
-  expect(button("Hand off to M3").disabled).toBe(false);
+  expect(button("Copy and move to M3").disabled).toBe(false);
   expect(container.querySelector('[role="alert"]')).toBeNull();
   await waitPoll();
   // The cancelled loop never polls again.
@@ -1308,8 +1449,8 @@ it("keeps the dialog open only while coordinator context transfers", async () =>
     });
   await mount({ dialog: true });
   await moveMode();
-  await dialogClick("Hand off to M3");
-  await dialogClick("Hand off to M3");
+  await dialogClick("Copy and move to M3");
+  await dialogClick("Copy and move to M3");
   expect(document.querySelector('[data-slot="copy-working"]')?.textContent).toBe(
     "Starting the coordinator on M3…",
   );
@@ -1496,8 +1637,8 @@ it("copies into an empty destination in one click without a preview", async () =
       finishApprove = () => resolve(copyStatus("approved"));
     });
   await mount();
-  // One click: no What screen, and no Review unless the plan needs one.
-  expect(stepState()).toEqual(["Where:current", "Copy:next", "Done:next"]);
+  // The fresh setup screen shows no steps line.
+  expect(stepState()).toEqual([]);
   expect(container.textContent).not.toContain("What happens next");
   const stages = watchStages();
   await click("Copy to M3");
@@ -1911,17 +2052,66 @@ it("asks before copying over a folder an older destination cannot count", async 
   );
 });
 
-it("copies in one click with secret-like files left on the source, and says so when done", async () => {
-  // The default summary has a secret-like .env.
-  statuses = [copyStatus("previewed", { rows: [newRow(".")] }), copyStatus("applied")];
+it("copies in one click with the included secret files, sent before the approval", async () => {
+  // The default summary has a secret-like .env; What comes along shows it included.
+  statuses = [
+    copyStatus("previewed", { rows: [newRow(".")] }),
+    copyStatus("applied", {
+      secrets: [{ path: ".env", writtenAs: ".env", size: 10, state: "written" }],
+    }),
+  ];
   await mount();
   await click("Copy to M3");
   expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
-  expect(names()).not.toContain("copySecrets");
-  expect(container.querySelector('[data-slot="copy-secrets"]')).toBeNull();
-  expect(container.querySelector('[data-slot="copy-secrets-left"]')?.textContent).toBe(
-    "1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
+  expect(sentSecrets()).toEqual([[".env"]]);
+  expect(names().indexOf("copySecrets")).toBeLessThan(names().indexOf("copyApprove"));
+  expect(container.querySelector('[data-slot="copy-secrets-left"]')).toBeNull();
+});
+
+it("copies in one click without secrets when What comes along leaves them on the source", async () => {
+  statuses = [copyStatus("previewed", { rows: [newRow(".")] }), copyStatus("applied")];
+  await mount();
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-along-secrets"] [data-slot="checkbox"]')!
+      .click(),
   );
+  await click("Copy to M3");
+  expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
+  expect(sentSecrets()).toEqual([[]]);
+  expect(container.querySelector('[data-slot="copy-secrets-left"]')?.textContent).toContain(
+    "1 secret-like file (.env and similar) stayed on M4.",
+  );
+});
+
+it("clears another tab's Replace all when the review here changes the secrets choice", async () => {
+  const diverged = newRow("repos/app", {
+    status: "diverged",
+    choices: ["keep-mine", "take-theirs", "leave-both"],
+    needsDecision: true,
+  });
+  statuses = [
+    copyStatus("previewed", {
+      rows: [diverged],
+      totals: { filesToMove: 1, bytesToMove: 10, bytesPresent: 0, decisionsNeeded: 1 },
+    }),
+  ];
+  state.handlers.copyStatus = () => statuses[0] ?? copyStatus("previewed");
+  await mount();
+  await click("Copy to M3");
+  expect(container.querySelector('[data-slot="copy-preview"]')).not.toBeNull();
+  // Another tab clicks Replace all for the same copy and closes; its watcher waits to approve.
+  localStorage.setItem(
+    "specwithcode:folder-copy:m4:source",
+    JSON.stringify({ ...pointerNow(), replaceAll: true }),
+  );
+  await act(async () =>
+    container
+      .querySelector<HTMLElement>('[data-slot="copy-secrets-include"] [data-slot="checkbox"]')!
+      .click(),
+  );
+  expect(pointerNow()).toMatchObject({ secrets: { included: false } });
+  expect(pointerNow()).not.toHaveProperty("replaceAll");
 });
 
 it("keeps Replace all when the dialog closes during the re-compare and approves on reopen", async () => {
@@ -2124,7 +2314,7 @@ it("leaves a full destination to its own alert after Replace all and names open 
 it("does not promise to wait for idle work before transferring context", async () => {
   await mount();
   await selectMove();
-  expect(button("Hand off to M3")).toBeTruthy();
+  expect(button("Copy and move to M3")).toBeTruthy();
   expect(container.textContent).not.toContain("when source work is idle");
 });
 
@@ -2248,8 +2438,8 @@ it("holds a fresh move whose checks failed instead of showing a bare error", asy
   statuses = [copyStatus("previewed", { mode: "copy-and-move" }), heldMove()];
   await mount();
   await selectMove();
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-problems"]')?.textContent).toContain(
     "so the coordinator stayed here",
   );

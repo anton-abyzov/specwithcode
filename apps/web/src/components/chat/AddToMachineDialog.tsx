@@ -48,6 +48,7 @@ import {
 import { useMachineNicknames } from "~/studio/machineNickname";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { HandoffSecretsStep } from "../studio/HandoffSecretsStep";
+import { receivableSecretFiles } from "../studio/handoffCopySecrets";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -174,8 +175,10 @@ function AddToMachineBody({
   const remoteUrl = urls ? cloneUrlFor(urls, protocol) : null;
   const [folder, setFolder] = useState(() => defaultDestinationFolder(source.workspaceRoot));
   const [copyIgnored, setCopyIgnored] = useState(false);
-  const [secrets, setSecrets] = useState<ReadonlyArray<string>>([]);
-  const [secretsConfirmed, setSecretsConfirmed] = useState(false);
+  // Secrets travel by default, shown as one checked line; unticking it leaves them here.
+  const [includeSecrets, setIncludeSecrets] = useState(true);
+  // Secret files the person unticked: a new scan never ticks them again.
+  const [secretsOut, setSecretsOut] = useState<ReadonlyArray<string>>([]);
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [scan, setScan] = useState<Scan>({ state: "scanning" });
   const [scanRound, setScanRound] = useState(0);
@@ -294,7 +297,13 @@ function AddToMachineBody({
   const plan = result ? destinationPlan(result) : null;
   const secretFiles = scan.state === "ready" ? scan.summary.secretFiles : [];
   const extrasBlocked = scan.state === "failed";
-  const secretsReady = secrets.length === 0 || secretsConfirmed;
+  const secretCandidates = receivableSecretFiles(
+    secretFiles,
+    capabilities?.homeSecretFiles === true,
+  ).map((file) => file.path);
+  const secrets = includeSecrets
+    ? secretCandidates.filter((path) => !secretsOut.includes(path))
+    : [];
   const locked = busy || stage.kind !== "setup";
 
   const blocker = !connected
@@ -426,8 +435,6 @@ function AddToMachineBody({
         }}
         onCancelled={() => {
           offerRef.current = null;
-          setSecrets([]);
-          setSecretsConfirmed(false);
           setStage({ kind: "setup" });
           setScanRound((round) => round + 1);
         }}
@@ -438,7 +445,7 @@ function AddToMachineBody({
   const primary =
     plan?.kind === "consolidate" ? (
       <Button
-        disabled={locked || !ready || !linkSupported || scan.state !== "ready" || !secretsReady}
+        disabled={locked || !ready || !linkSupported || scan.state !== "ready"}
         onClick={() => void consolidate()}
       >
         {tx("Link and consolidate")}
@@ -446,11 +453,7 @@ function AddToMachineBody({
     ) : (
       <Button
         disabled={
-          locked ||
-          !ready ||
-          plan?.kind !== "clone" ||
-          capabilities?.projectCloneTracking !== true ||
-          !secretsReady
+          locked || !ready || plan?.kind !== "clone" || capabilities?.projectCloneTracking !== true
         }
         onClick={() => void clone()}
       >
@@ -523,12 +526,19 @@ function AddToMachineBody({
               files={secretFiles}
               hints={scan.state === "ready" ? scan.summary.secretHints : undefined}
               selected={secrets}
-              confirmed={secretsConfirmed}
+              included={includeSecrets}
+              sourceLabel={sourceName}
               targetLabel={destName}
               homeSupported={capabilities?.homeSecretFiles === true}
               disabled={locked}
-              onSelectedChange={setSecrets}
-              onConfirmedChange={setSecretsConfirmed}
+              onChange={(included, paths) => {
+                setIncludeSecrets(included);
+                if (included)
+                  setSecretsOut([
+                    ...secretsOut.filter((path) => !secretCandidates.includes(path)),
+                    ...secretCandidates.filter((path) => !paths.includes(path)),
+                  ]);
+              }}
             />
           )}
 

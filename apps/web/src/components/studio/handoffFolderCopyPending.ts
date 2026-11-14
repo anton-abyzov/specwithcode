@@ -29,6 +29,11 @@ export interface PendingCopy {
   /** What to copy, kept so a reopened dialog shows the same choice. */
   readonly selection?: ReadonlyArray<FolderCopyFileClass>;
   /**
+   * Whether secret files travel and the ones the person unticked, kept so a reopened or
+   * re-measured copy never ticks them again. Absent: all secret files travel.
+   */
+  readonly secrets?: SecretsChoice;
+  /**
    * One-click copy: measuring, comparing and an approval that replaces nothing run
    * straight through. Absent for copies that stop to choose what to copy.
    */
@@ -135,9 +140,12 @@ function parsePendingCopy(value: unknown): PendingCopy | null {
     planShown,
     reopened,
     needsComparison,
+    secrets: savedSecrets,
     ...fields
   } = pointer;
+  const secrets = readSecretsChoice(savedSecrets);
   const rest: PendingCopy = {
+    ...(secrets ? { secrets } : {}),
     ...fields,
     ...(auto === true ? { auto } : {}),
     ...(method === "copy" || method === "clone" ? { method } : {}),
@@ -242,12 +250,36 @@ export function readoptLastCopy(input: {
 }
 
 /** The setup choices while no copy has started, so closing the dialog on Where loses nothing. */
+/** Whether secret files travel, and the ones the person unticked. */
+export interface SecretsChoice {
+  readonly included: boolean;
+  readonly out: ReadonlyArray<string>;
+}
+
 export interface CopyDraft {
   readonly machine: string | null;
   readonly folder: string;
   readonly copyRoot?: string;
   readonly mode: FolderCopyMode;
   readonly chooseFirst: boolean;
+  readonly secrets?: SecretsChoice;
+}
+
+/** The default: every secret file travels. */
+export const ALL_SECRETS: SecretsChoice = { included: true, out: [] };
+/**
+ * A copy's saved secrets choice. Every copy started since secrets became included by default
+ * saves one; an older copy has none, and it started with secrets left on the source.
+ */
+export const pendingSecrets = (saved: PendingCopy): SecretsChoice =>
+  saved.secrets ?? { included: false, out: [] };
+
+/** A saved secrets choice, or undefined when it is missing or malformed. */
+export function readSecretsChoice(value: unknown): SecretsChoice | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { included, out } = value as Partial<SecretsChoice>;
+  if (typeof included !== "boolean" || !Array.isArray(out)) return undefined;
+  return { included, out: out.filter((path): path is string => typeof path === "string") };
 }
 
 export const folderCopyDraftKey = (environmentId: string, projectId: string) =>
@@ -258,6 +290,7 @@ export function readCopyDraft(key: string): CopyDraft | null {
     const value = JSON.parse(localStorage.getItem(key) ?? "null") as Partial<CopyDraft> | null;
     if (!value || typeof value !== "object") return null;
     const { machine, folder, copyRoot, mode, chooseFirst } = value;
+    const secrets = readSecretsChoice(value.secrets);
     if (machine !== null && typeof machine !== "string") return null;
     if (typeof folder !== "string" || typeof chooseFirst !== "boolean") return null;
     if (mode !== "copy-only" && mode !== "copy-and-move") return null;
@@ -267,6 +300,7 @@ export function readCopyDraft(key: string): CopyDraft | null {
       ...(typeof copyRoot === "string" && copyRoot ? { copyRoot } : {}),
       mode,
       chooseFirst,
+      ...(secrets ? { secrets } : {}),
     };
   } catch {
     return null;

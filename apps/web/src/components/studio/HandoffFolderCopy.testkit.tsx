@@ -130,6 +130,17 @@ export const copyHandlers = ({
     status: { state: "scanned", summary, error: null },
   }),
   copySourceStatus: () => ({ state: "scanned", summary, error: null }),
+  // Secrets travel by default, so a copy of a folder with secret files sends them first.
+  copySecrets: ({ input }: any) => ({
+    state: "scanned",
+    summary,
+    error: null,
+    secrets: {
+      files: (input.paths as string[]).map((path) => ({ path, size: 10 })),
+      approvedAt: 1,
+      destinationLabel: input.destinationLabel,
+    },
+  }),
   copyStart: () => copyStatus("scanning"),
   copyStatus: () => nextStatus(),
   copyApprove: () => copyStatus("approved"),

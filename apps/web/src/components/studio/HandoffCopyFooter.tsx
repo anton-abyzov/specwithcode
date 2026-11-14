@@ -92,7 +92,6 @@ export function HandoffCopyFooter({
   setupBlocked,
   replaced,
   approveLabel,
-  secretsUnconfirmed,
   failedBeforeApply,
   undoPreview,
   copyAgain,
@@ -140,7 +139,6 @@ export function HandoffCopyFooter({
   readonly setupBlocked: boolean;
   readonly replaced: string | null;
   readonly approveLabel: string;
-  readonly secretsUnconfirmed: boolean;
   readonly failedBeforeApply: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly copyAgain: boolean;
@@ -176,7 +174,6 @@ export function HandoffCopyFooter({
     ...(busy ? ["Wait for the current check to finish."] : []),
     ...(sourceChanged ? ["The source changed. Measure and compare again."] : []),
     ...(copy?.disk ? ["The destination needs more disk space before copying."] : []),
-    ...(secretsUnconfirmed ? ["Confirm sending the selected secret files, or deselect them."] : []),
   ];
   const decisions = copy?.totals?.decisionsNeeded;
   const choicesReason =
@@ -216,7 +213,7 @@ export function HandoffCopyFooter({
           <SetupActions
             disabled={busy || setupBlocked}
             hint={machine ? null : "Choose a machine above."}
-            label={`${mode === "copy-and-move" ? "Hand off" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
+            label={`${mode === "copy-and-move" ? "Copy and move" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
             onStart={onMeasure}
           />
         ))}

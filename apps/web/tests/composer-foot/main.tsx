@@ -177,14 +177,19 @@ function CoordinatorPane() {
               onMove={() => {}}
               onStart={null}
               onAllowWorkers={null}
-              onAdd={() => {}}
+              onCopy={() => {}}
             />
             <span className="sws-composer-aside" data-composer-aside="">
               <ComposerVoiceMenu dictation={dictation} call={call} shortcut={null} />
-              <Tip label={`${THREAD_TONE_LABELS[tone]}. Coordinator status: show its latest message`}>
+              <Tip
+                label={`${THREAD_TONE_LABELS[tone]}. Coordinator status: show its latest message`}
+              >
                 <button type="button" className="sws-state" data-tone={tone}>
                   <span className="sws-dot" data-tone={tone} aria-hidden />
-                  <span className={STATE_WORDS.has(tone) ? undefined : "sr-only"} data-state-label="">
+                  <span
+                    className={STATE_WORDS.has(tone) ? undefined : "sr-only"}
+                    data-state-label=""
+                  >
                     {THREAD_TONE_LABELS[tone]}
                   </span>
                 </button>

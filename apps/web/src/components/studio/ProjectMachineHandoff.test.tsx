@@ -11,7 +11,6 @@ import type { ComponentProps } from "react";
 import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
 import { buildProjectGroups } from "../../logicalProject";
-import type { HandoffShareProps } from "./HandoffShare";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { handoffMachinePreferenceKey } from "../../studio/handoffMachinePreference";
 import { MoveDialogHold } from "../../studio/moveDialogHold";
@@ -24,7 +23,6 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: null, isPending: false }),
 }));
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
-vi.mock("./HandoffShare", () => ({ HandoffShare: () => null }));
 vi.mock("./HandoffAccountMachines", () => ({ HandoffAccountMachines: () => null }));
 vi.mock("../chat/AddToMachineDialog", () => ({ AddToMachineDialog: () => null }));
 vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
@@ -155,13 +153,19 @@ const started = {
 const key = machineHandoffStorageKey("m4", "source");
 let root: Root, container: HTMLDivElement;
 const props = () => state.props!;
-const mount = async () => {
+/**
+ * Opens the dialog the way its button does. It opens on the copy; most of these tests then
+ * pick "Git only, no file copy" under Details, as a person would for the Git handoff.
+ */
+const mount = async (method: "git" | "as-opened" = "git") => {
   await act(async () =>
     root.render(
       <ProjectMachineHandoff project={source as never} coordinatorId={"coordinator" as never} />,
     ),
   );
   await act(async () => container.querySelector("button")!.click());
+  if (method === "git" && state.props?.open && state.props.onMethodChange)
+    await act(async () => props().onMethodChange!("folder"));
 };
 const review = () => act(async () => props().onReview());
 const consent = () => act(async () => props().onConsent(true));
@@ -798,45 +802,34 @@ it("remembers the machine silently, only once a move succeeds", async () => {
   });
 });
 
-it("opens on Git where the project is already saved", async () => {
+it("opens on the copy with the coordinator kept here, even where the project is saved", async () => {
   state.environments = machineEnvironments;
-  await mount();
-  expect(props().method).toBe("folder");
+  await mount("as-opened");
+  expect(props().method).toBe("copy");
+  expect(props().intent).toBe("copy");
   expect(props().selected).toBe("m1:target");
+  expect((props().copyFlow as { props: Record<string, unknown> }).props.defaultMode).toBe(
+    "copy-only",
+  );
 });
 
 it("opens on a copy where the project has no saved folder", async () => {
   state.environments = machineEnvironments;
   state.projects = [source];
-  await mount();
+  await mount("as-opened");
   expect(props().method).toBe("copy");
 });
 
-it("opens on sharing, and Hand off goes to the Git review of that machine's folder", async () => {
-  state.environments = machineEnvironments;
-  await mount();
-  const share = () =>
-    (props().shareFlow as React.ReactElement<HandoffShareProps> | undefined)?.props;
-  expect(share()).toMatchObject({ machine: "m1", linked: true });
-  await act(async () => share()!.onMove());
-  expect(share()).toBeUndefined();
-  expect(props().method).toBe("folder");
-  expect(state.prepare.mock.calls.at(-1)?.[0]?.input.destination).toMatchObject({
-    environmentId: "m1",
-    transport: "git-sync",
-  });
-});
-
-it("Copy files instead leaves sharing for the files-only copy", async () => {
+it("names the copy flow's machine in the title once one is chosen", async () => {
   state.environments = machineEnvironments;
   state.projects = [source];
-  await mount();
-  const share = (props().shareFlow as React.ReactElement<HandoffShareProps>).props;
-  expect(share.linked).toBe(false);
-  await act(async () => share.onCopyInstead());
-  expect(props().shareFlow).toBeUndefined();
-  expect(props().intent).toBe("copy");
-  expect(props().method).toBe("copy");
+  await mount("as-opened");
+  expect(props().copyTargetLabel).toBeNull();
+  const copy = (props().copyFlow as { props: Record<string, (...args: never[]) => void> }).props;
+  await act(async () =>
+    copy.onChoicesChange!({ mode: "copy-only", machine: "m3", done: false } as never),
+  );
+  expect(props().copyTargetLabel).toBe("M3");
 });
 
 it("opens straight on the folder copy review, on the machine Run on picked", async () => {
@@ -852,7 +845,6 @@ it("opens straight on the folder copy review, on the machine Run on picked", asy
       />,
     ),
   );
-  expect(props().shareFlow).toBeUndefined();
   expect(props().intent).toBe("copy");
   expect(props().method).toBe("copy");
   expect((props().copyFlow as { props: Record<string, unknown> }).props).toMatchObject({
@@ -917,11 +909,29 @@ it("refuses a sync whose copy is gone instead of guessing a folder", async () =>
   expect(props().open).toBe(false);
 });
 
-it("resumes an unfinished handoff instead of opening on sharing", async () => {
+it("resumes an unfinished Git handoff on Git, not on the copy", async () => {
   localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
-  await mount();
-  expect(props().shareFlow).toBeUndefined();
+  await mount("as-opened");
   expect(props().method).toBe("folder");
+  expect(props().intent).toBe("move");
+});
+
+it("resumes an unfinished Git handoff on Git when the menu asks for a copy", async () => {
+  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
+  await act(async () =>
+    root.render(
+      <ProjectMachineHandoff
+        project={source as never}
+        coordinatorId={"coordinator" as never}
+        showTrigger={false}
+        openRequest={{ mode: "copy", seq: 1 }}
+      />,
+    ),
+  );
+  // A handoff that may already be published is never replaced by a fresh copy flow.
+  expect(props().method).toBe("folder");
+  expect(props().intent).toBe("move");
+  expect(props().selected).toBe("m1:target");
 });
 
 it("asks a saved folder to update from Git, so uncommitted work never stops the move", async () => {
@@ -1038,7 +1048,8 @@ it("starts over from the default choices after closing a review", async () => {
   await act(async () => container.querySelector("button")!.click());
   expect(props().phase).toBe("choose");
   expect(props().preview).toBeNull();
-  expect(props().method).toBe("folder");
+  // Reopening starts on the defaults: the copy, with the coordinator kept here.
+  expect(props().method).toBe("copy");
 });
 
 it("keeps a published checkpoint frozen until it finishes or is recovered", async () => {
@@ -1063,10 +1074,11 @@ it("keeps a published checkpoint frozen until it finishes or is recovered", asyn
 it("suggests the preferred machine in the folder picker and the copy flow", async () => {
   state.environments = machineEnvironments;
   localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m3" }));
-  await mount();
-  expect(picker()).toMatchObject({ machine: "m3" });
+  await mount("as-opened");
   const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
   expect(copy.preferredMachine).toBe("m3");
+  await act(async () => props().onMethodChange!("folder"));
+  expect(picker()).toMatchObject({ machine: "m3" });
 });
 
 it("keeps a review whose publish attempt failed, since the source may be fenced", async () => {
@@ -1095,7 +1107,7 @@ it("starts fresh after closing a review whose destination check failed", async (
   await act(async () => props().onOpenChange(false));
   expect(localStorage.getItem(key)).toBeNull();
   await act(async () => container.querySelector("button")!.click());
-  expect(props().method).toBe("folder");
+  expect(props().method).toBe("copy");
   expect(props().error).toBeNull();
 });
 
@@ -1370,15 +1382,4 @@ it("holds the workspace page on this checkout while the move dialog is open", as
   // Leaving the page lets go of the hold.
   await act(async () => root.render(<div>Another checkout</div>));
   expect(hold).toHaveBeenLastCalledWith(false);
-});
-
-it("routes umbrella review to cloning with local files without moving the coordinator", async () => {
-  state.environments = machineEnvironments;
-  state.projects = [source];
-  await mount();
-  const share = (props().shareFlow as React.ReactElement<HandoffShareProps>).props;
-  await act(async () => share.onPrepareRepositories());
-  expect(props().shareFlow).toBeUndefined();
-  expect(props().intent).toBe("copy");
-  expect(props().method).toBe("clone");
 });

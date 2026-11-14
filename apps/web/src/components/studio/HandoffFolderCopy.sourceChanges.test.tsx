@@ -132,15 +132,15 @@ const moveCopy = () => {
     }),
   ];
 };
-/** Measures, compares and copies with Hand off and continue there; the move then runs. */
+/** Measures, compares and copies with the coordinator moving; the move then runs. */
 const handOff = async () => {
   await act(async () => {
-    [...container.querySelectorAll<HTMLElement>('[data-slot="toggle"]')]
-      .find((node) => node.textContent === "Hand off and continue there")!
+    [...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]')]
+      .find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!
       .click();
   });
-  await click("Hand off to M3");
-  await click("Hand off to M3");
+  await click("Copy and move to M3");
+  await click("Copy and move to M3");
 };
 /** The source refuses until the person accepts exactly this list. */
 const refuseUnlessAccepted = (list = changes()) => {

@@ -36,6 +36,7 @@ import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { changedRows } from "./handoffCopyAuto";
 import { Radio, RadioGroup } from "../ui/radio-group";
+import { planRepositoryChoices, type RepositoryChoices } from "./handoffCopySecrets";
 
 /** Sizes per file class before anything moves; secret-like files stay out of this step. */
 export function CopyClassPicker({
@@ -145,20 +146,6 @@ export function CopyClassPicker({
         ))}
     </fieldset>
   );
-}
-
-/** Which repository rows are cloned from origin and which are left out of the copy. */
-export interface RepositoryChoices {
-  readonly clone: ReadonlyArray<string>;
-  readonly skip: ReadonlyArray<string>;
-}
-
-/** The repository choices the destination's plan holds now. */
-export function planRepositoryChoices(rows: ReadonlyArray<FolderCopyRow>): RepositoryChoices {
-  return {
-    clone: rows.filter((row) => row.clone).map((row) => row.id),
-    skip: rows.filter((row) => row.status === "skipped").map((row) => row.id),
-  };
 }
 
 /** Repository rows the person can leave out: every repository except the folder's own root. */
