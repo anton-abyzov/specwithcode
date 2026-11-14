@@ -831,10 +831,8 @@ export function HandoffFolderCopy({
       show(await pollCopy(machine, pending.operationId));
     });
 
-  /**
-   * Clone and skip clicks show at once and wait briefly, so several clicks re-compare
-   * once. The preview stays on screen while the destination compares; Copy waits for it.
-   */
+  // Clone and skip clicks show at once and wait briefly, so several clicks re-compare
+  // once. The preview stays on screen while the destination compares; Copy waits for it.
   const changeRepositories = (next: RepositoryChoices) => {
     repositoryDraft.current = next;
     setRepositoryChoices(next);
