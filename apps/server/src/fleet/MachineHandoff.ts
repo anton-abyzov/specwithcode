@@ -119,7 +119,7 @@ import {
 } from "./handoffLaunchPrompt.ts";
 import { copiedContextPaths } from "./folderCopyContextPaths.ts";
 import { makeCopyRegistration } from "./folderCopyRegistration.ts";
-import { gitGuarded, gitRefusalCode, updateSkippedOf } from "./machineHandoffGitGuard.ts";
+import { existingCopyUpdate, gitGuarded } from "./machineHandoffGitGuard.ts";
 import { decodeDestinationRecord, decodeSourceRecord } from "./machineHandoffRecords.ts";
 import { leftBehindOf, markProjectMoved, projectRepositories } from "./repositorySync.ts";
 import { discoverCopyScopes, resolveCopyScope } from "./folderCopyScope.ts";
@@ -1277,19 +1277,14 @@ const make = Effect.gen(function* () {
             );
             // The preview reads, never changes, the copy: the dialog offers to move anyway.
             if (input.mode === "preview")
-              updateSkipped = yield* git
-                .checkExistingCopy({
-                  workspaceRoot: current.workspaceRoot,
-                  manifest: metadata.manifest,
-                  existingCopy,
-                })
-                .pipe(
-                  Effect.as(null),
-                  Effect.catchTag("HandoffGitError", (error) => {
-                    const skipped = updateSkippedOf(error);
-                    return skipped ? Effect.succeed(skipped) : gitGuarded(Effect.fail(error));
+              updateSkipped =
+                (yield* existingCopyUpdate(
+                  git.checkExistingCopy({
+                    workspaceRoot: current.workspaceRoot,
+                    manifest: metadata.manifest,
+                    existingCopy,
                   }),
-                );
+                ))?.skipped ?? null;
           } else if (folderCopy) {
             if (!useProjectFolder) return yield* new MachineHandoffError({ code: "invalid" });
             yield* appliedCopy(
@@ -1322,23 +1317,15 @@ const make = Effect.gen(function* () {
           // Bring the existing copy to the source heads through the same steps as any Git move,
           // still under this project's admission lock, and before anything else changes here.
           if (gitSync) {
-            const refusal = yield* git
-              .materialize({
+            const refusal = yield* existingCopyUpdate(
+              git.materialize({
                 workspaceRoot: current.workspaceRoot,
                 manifest: input.bundle.manifest,
                 worktreeParent: yield* store.prepareWorktreeParent,
                 useProjectFolder: true,
                 existingCopy,
-              })
-              .pipe(
-                Effect.as(null),
-                Effect.catchTag("HandoffGitError", (error) => {
-                  const skipped = updateSkippedOf(error);
-                  return skipped
-                    ? Effect.succeed({ skipped, code: gitRefusalCode(error) })
-                    : gitGuarded(Effect.fail(error));
-                }),
-              );
+              }),
+            );
             updateSkipped = refusal?.skipped ?? null;
             // A client that offers "Move anyway" stops here first; the coordinator stays put.
             if (refusal && input.staleCopy === "refuse")
