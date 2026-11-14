@@ -83,3 +83,18 @@ export const updateSkippedOf = (error: HandoffGitError): MachineHandoffUpdateSki
 /** Maps a Git refusal to the handoff error its caller and the dialog understand. */
 export const gitGuarded = <A>(effect: Effect.Effect<A, HandoffGitError>) =>
   effect.pipe(Effect.mapError((error) => new MachineHandoffError({ code: gitRefusalCode(error) })));
+
+/**
+ * Runs an existing copy's check or update (1326): null when it reached the source heads,
+ * the reason and refusal code when it did not; any other refusal fails as `gitGuarded` does.
+ */
+export const existingCopyUpdate = (effect: Effect.Effect<unknown, HandoffGitError>) =>
+  effect.pipe(
+    Effect.as(null),
+    Effect.catchTag("HandoffGitError", (error) => {
+      const skipped = updateSkippedOf(error);
+      return skipped
+        ? Effect.succeed({ skipped, code: gitRefusalCode(error) })
+        : gitGuarded(Effect.fail(error));
+    }),
+  );
