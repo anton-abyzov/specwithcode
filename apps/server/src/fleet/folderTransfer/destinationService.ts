@@ -1169,6 +1169,7 @@ export class DestinationCopies {
       last = now;
       void this.update(op, { progress: { phase: "files", ...progress } }).catch(() => undefined);
     };
+    const batchSize = batchChunksFor(this.hooks.maxBatchChunks ?? record.sourceBatchChunks);
     const pulled = await pullFiles({
       client,
       stagingRoot: paths.staging,
@@ -1176,11 +1177,12 @@ export class DestinationCopies {
       directories: needs.directories,
       signal,
       onProgress,
-      maxBatchChunks: batchChunksFor(this.hooks.maxBatchChunks ?? record.sourceBatchChunks),
+      maxBatchChunks: batchSize,
     });
     await this.update(op, { state: "verifying" });
     const final = await finalPass({
       client,
+      maxBatchChunks: batchSize,
       stagingRoot: paths.staging,
       files: needs.files,
       links: plan.actions
