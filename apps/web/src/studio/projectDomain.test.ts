@@ -225,3 +225,29 @@ it("retains the current host scope while a new project's member list is empty", 
     { environmentId: "m4", projectId: "m4", coordinatorThreadId: null },
   ]);
 });
+
+describe("copyRolesSummary with retired records", () => {
+  it("names the live machine Main, never a re-joined machine's old record", () => {
+    const member = (environmentId: string, id: string, epoch: number) =>
+      ({
+        environmentId,
+        id,
+        environmentLabel: environmentId,
+        workspaceSettings: {
+          logicalProject: { id: "L", title: "L", coordinatorId: "c", members: [] },
+          coordinatorBinding: { epoch, state: "active" },
+        },
+      }) as never;
+    const members = [member("old", "a", 9), member("m4", "b", 3)];
+    expect(copyRolesSummary(members, (m: { environmentId: string }) => m.environmentId)).toBe(
+      "old: Main · m4: Copy",
+    );
+    expect(
+      copyRolesSummary(
+        members,
+        (m: { environmentId: string }) => m.environmentId,
+        new Map([["old", "m1"]]),
+      ),
+    ).toBe("old: Copy · m4: Main");
+  });
+});

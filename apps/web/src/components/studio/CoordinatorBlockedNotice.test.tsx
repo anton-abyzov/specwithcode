@@ -38,7 +38,7 @@ async function show(props: Partial<Parameters<typeof CoordinatorBlockedNotice>[0
   await act(async () =>
     root.render(
       <CoordinatorBlockedNotice
-        text="This copy runs workers only."
+        text="Work starts on M4. This copy takes work from there."
         coordinator={{ key: "m4:main", machine: "Anton's MacBook" }}
         current="minis:copy"
         members={[]}
@@ -69,7 +69,7 @@ it("offers no start where a coordinator cannot start, and no open before choices
     onOpen: null,
   });
   expect(buttons()).toEqual([]);
-  expect(container.textContent).toBe("This copy runs workers only.");
+  expect(container.textContent).toBe("Work starts on M4. This copy takes work from there.");
 });
 
 it("says any other reason plainly, with no actions", async () => {
