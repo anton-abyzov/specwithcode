@@ -6,6 +6,7 @@ import {
   approveOutcomeMessage,
   describeConnectDevice,
   isCompleteApprovalCode,
+  takeUnseenNotices,
 } from "../../studio/connectDevices.logic";
 import {
   ConnectDevicesList,
@@ -149,5 +150,43 @@ describe("Devices that can use this machine", () => {
     );
     expect(html).not.toContain(">Allow<");
     expect(html).not.toContain(">Remove<");
+  });
+});
+
+describe("New device approved notices on other devices", () => {
+  const approvedByLaptop = {
+    id: "notice-1",
+    at: "2026-11-13T15:12:00.000Z",
+    message: "New device approved on m4 by Anton's MacBook.",
+  };
+  const approvedByOwner = {
+    id: "notice-2",
+    at: "2026-11-13T15:14:00.000Z",
+    message: "New device approved on m4 by this machine.",
+  };
+
+  it("shows each notice once, however often the list is polled", () => {
+    const first = takeUnseenNotices([], [approvedByLaptop]);
+    expect(first.fresh.map((notice) => notice.message)).toEqual([
+      "New device approved on m4 by Anton's MacBook.",
+    ]);
+    const again = takeUnseenNotices(first.seen, [approvedByLaptop]);
+    expect(again.fresh).toEqual([]);
+    expect(again.seen).toBe(first.seen);
+    const next = takeUnseenNotices(again.seen, [
+      approvedByLaptop,
+      approvedByOwner,
+      approvedByOwner,
+    ]);
+    expect(next.fresh.map((notice) => notice.id)).toEqual(["notice-2"]);
+    expect(next.seen).toEqual(["notice-1", "notice-2"]);
+  });
+
+  it("keeps only the newest seen ids", () => {
+    const many = Array.from({ length: 5 }, (_, index) => ({
+      ...approvedByOwner,
+      id: `n-${index}`,
+    }));
+    expect(takeUnseenNotices([], many, 3).seen).toEqual(["n-2", "n-3", "n-4"]);
   });
 });

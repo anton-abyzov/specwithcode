@@ -39,3 +39,25 @@ export function approveOutcomeMessage(result: ConnectDevicesApproveResult, machi
       return `Too many wrong codes. Type the code on ${machine} itself, or wait 10 minutes.`;
   }
 }
+
+export type ConnectDevicesNotice = ConnectDevicesSnapshot["notices"][number];
+
+/**
+ * The notices this device has not shown yet, each once, and the seen ids to keep.
+ * The machine already leaves out approvals this device made or was let in by.
+ */
+export function takeUnseenNotices(
+  seen: ReadonlyArray<string>,
+  notices: ReadonlyArray<ConnectDevicesNotice>,
+  keep = 100,
+): { readonly fresh: ReadonlyArray<ConnectDevicesNotice>; readonly seen: ReadonlyArray<string> } {
+  const known = new Set(seen);
+  const fresh: Array<ConnectDevicesNotice> = [];
+  for (const notice of notices) {
+    if (known.has(notice.id)) continue;
+    known.add(notice.id);
+    fresh.push(notice);
+  }
+  if (fresh.length === 0) return { fresh, seen };
+  return { fresh, seen: [...seen, ...fresh.map((notice) => notice.id)].slice(-keep) };
+}

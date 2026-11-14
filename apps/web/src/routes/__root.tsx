@@ -31,6 +31,7 @@ import { AwayDialogHost } from "../components/away/AwayDialog";
 import { MachineToolInstallDialogHost } from "../components/machineTools/MachineToolInstallDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import {
+  DeviceApprovalNoticesHost,
   DeviceApprovalPromptHost,
   DeviceWaitingForApprovalHost,
 } from "../components/devices/ConnectDeviceHosts";
@@ -283,6 +284,7 @@ function RootRouteView() {
           <ConfirmDialogHost />
           {primaryEnvironmentAuthenticated ? <DeviceApprovalPromptHost /> : null}
           <DeviceWaitingForApprovalHost />
+          <DeviceApprovalNoticesHost />
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
           <HandOffThreadDialogHost />

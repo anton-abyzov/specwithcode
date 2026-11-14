@@ -14,6 +14,7 @@ import {
   approveOutcomeMessage,
   connectDevices,
   describeConnectDevice,
+  takeUnseenNotices,
 } from "../../studio/connectDevices";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -24,6 +25,36 @@ import {
 
 const POLL_MS = 4_000;
 const HIDDEN_POLL_MS = 20_000;
+/** Other machines are only watched for approval notices, so less often. */
+const NOTICE_POLL = { visibleMs: 30_000, hiddenMs: 120_000 } as const;
+const SEEN_NOTICES_KEY = "specwithcode:connect-device-notices-seen";
+
+function readSeenNotices(): Record<string, ReadonlyArray<string>> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(SEEN_NOTICES_KEY) ?? "{}");
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, ReadonlyArray<string>>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
+function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
+  if (notices.length === 0) return;
+  const all = readSeenNotices();
+  const before = Array.isArray(all[environmentId]) ? all[environmentId] : [];
+  const { fresh, seen } = takeUnseenNotices(before, notices);
+  if (fresh.length === 0) return;
+  try {
+    localStorage.setItem(SEEN_NOTICES_KEY, JSON.stringify({ ...all, [environmentId]: seen }));
+  } catch {
+    // Without storage a notice may show again after a reload; never more than once a session.
+  }
+  for (const notice of fresh)
+    toastManager.add(stackedThreadToast({ type: "info", title: notice.message }));
+}
 
 /** True when that machine's server checks new devices; older ones never answer the list. */
 export function useDeviceApprovalSupported(environmentId: EnvironmentId | null): boolean {
@@ -33,7 +64,15 @@ export function useDeviceApprovalSupported(environmentId: EnvironmentId | null):
 }
 
 /** Polls one machine's device list while mounted; faster while the window is in view. */
-export function useConnectDevices(environmentId: EnvironmentId | null, enabled: boolean) {
+export function useConnectDevices(
+  environmentId: EnvironmentId | null,
+  enabled: boolean,
+  poll: { readonly visibleMs: number; readonly hiddenMs: number } = {
+    visibleMs: POLL_MS,
+    hiddenMs: HIDDEN_POLL_MS,
+  },
+) {
+  const { visibleMs, hiddenMs } = poll;
   const [snapshot, setSnapshot] = useState<ConnectDevicesSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
@@ -46,6 +85,7 @@ export function useConnectDevices(environmentId: EnvironmentId | null, enabled: 
       if (mine !== generation.current) return;
       setSnapshot(next);
       setError(null);
+      announceNotices(environmentId, next.notices);
     } catch (cause) {
       if (mine !== generation.current) return;
       setError(cause instanceof Error ? cause.message : "Could not reach this machine.");
@@ -64,7 +104,7 @@ export function useConnectDevices(environmentId: EnvironmentId | null, enabled: 
       if (stopped) return;
       timer = window.setTimeout(
         () => void tick(),
-        document.visibilityState === "visible" ? POLL_MS : HIDDEN_POLL_MS,
+        document.visibilityState === "visible" ? visibleMs : hiddenMs,
       );
     };
     void tick();
@@ -79,7 +119,7 @@ export function useConnectDevices(environmentId: EnvironmentId | null, enabled: 
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [environmentId, enabled, refresh]);
+  }, [environmentId, enabled, refresh, visibleMs, hiddenMs]);
 
   return { snapshot, error, refresh };
 }
@@ -233,5 +273,38 @@ export function DeviceWaitingForApprovalHost() {
         </div>
       ))}
     </div>
+  );
+}
+
+function DeviceNoticesWatcher({ environmentId }: { environmentId: EnvironmentId }) {
+  useConnectDevices(environmentId, true, NOTICE_POLL);
+  return null;
+}
+
+/**
+ * On this device, for each other machine it is approved on: shows that
+ * machine's "New device approved" notices once each. The pop-up host already
+ * covers this machine's own list.
+ */
+export function DeviceApprovalNoticesHost() {
+  const { environments } = useEnvironments();
+  const primary = usePrimaryEnvironmentId();
+  const configs = useServerConfigs();
+  const watched = environments.filter(
+    (environment) =>
+      environment.environmentId !== primary &&
+      environment.connection.phase === "connected" &&
+      environment.connection.deviceApprovalCode === undefined &&
+      configs.get(environment.environmentId)?.environment.capabilities.deviceApproval === true,
+  );
+  return (
+    <>
+      {watched.map((environment) => (
+        <DeviceNoticesWatcher
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+        />
+      ))}
+    </>
   );
 }
