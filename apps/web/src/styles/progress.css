@@ -1,0 +1,134 @@
+/*
+ * Segmented progress: the copy's three-phase track in the dialog, banner and toast.
+ * Motion follows the app's curve and answers what changed: the fill eases between polls,
+ * the running segment carries a sheen only while bytes move, a finished phase's check
+ * pops in, a finished copy sweeps to success left to right, and a stopped one marks where.
+ * With reduced motion the colours still change and nothing moves.
+ */
+.seg-fill {
+  transition:
+    width 600ms var(--ease-out-quint),
+    background-color 300ms ease;
+}
+
+/* Bytes are moving: a soft light travels along the filled part of the running segment. */
+.seg-sheen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+.seg-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--primary-foreground) 45%, transparent),
+    transparent
+  );
+  animation: seg-sheen 1.9s ease-in-out infinite;
+}
+@keyframes seg-sheen {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(240%);
+  }
+}
+
+/* A phase just finished: its check arrives instead of appearing. */
+.seg-check {
+  animation: seg-check 220ms var(--ease-out-quint) both;
+}
+@keyframes seg-check {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+/* The copy finished: the segments turn to success one after another. */
+[data-outcome="finished"] .seg-fill {
+  animation: seg-finish 560ms var(--ease-out-quint) both;
+}
+[data-outcome="finished"] [data-segment="send"] .seg-fill,
+.seg-finished > :nth-child(2) .seg-fill {
+  animation-delay: 90ms;
+}
+[data-outcome="finished"] [data-segment="apply"] .seg-fill,
+.seg-finished > :nth-child(3) .seg-fill {
+  animation-delay: 180ms;
+}
+.seg-finished .seg-fill {
+  animation: seg-finish 560ms var(--ease-out-quint) both;
+}
+@keyframes seg-finish {
+  from {
+    background-color: var(--primary);
+    filter: brightness(1.25);
+  }
+  to {
+    background-color: var(--success);
+    filter: none;
+  }
+}
+
+/* The copy stopped: a notch marks where, and rings once. */
+.seg-notch {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--destructive);
+  animation: seg-notch 900ms var(--ease-out-quint) both;
+}
+@keyframes seg-notch {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--destructive) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+/* Toast icons answer the outcome: success settles in, a failure rings once. */
+[data-type="success"] [data-slot="toast-icon"] > svg {
+  animation: seg-check 320ms var(--ease-out-quint) both;
+}
+[data-type="error"] [data-slot="toast-icon"] > svg {
+  animation: toast-alert 640ms var(--ease-out-quint) both;
+}
+@keyframes toast-alert {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  45% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seg-fill,
+  .seg-check,
+  .seg-notch,
+  .seg-sheen::after,
+  [data-type="success"] [data-slot="toast-icon"] > svg,
+  [data-type="error"] [data-slot="toast-icon"] > svg {
+    animation: none;
+    transition: none;
+  }
+  .seg-sheen {
+    display: none;
+  }
+}

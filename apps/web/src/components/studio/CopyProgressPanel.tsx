@@ -73,12 +73,15 @@ export function CopyPhaseTrack({
   sourceLabel,
   targetLabel,
   compact = false,
+  live = false,
 }: {
   readonly view: CopyProgressView;
   readonly sourceLabel: string;
   readonly targetLabel: string;
   /** The banner's slim track: no phase names under it. */
   readonly compact?: boolean;
+  /** Bytes are moving (a speed is known): the running segment carries a sheen. */
+  readonly live?: boolean;
 }) {
   const percent = view.fraction === null ? null : Math.floor(view.fraction * 100);
   return (
@@ -108,10 +111,10 @@ export function CopyPhaseTrack({
               key={phase}
               data-segment={phase}
               data-state={state}
-              className={`relative overflow-hidden rounded-full bg-muted ${compact ? "h-1" : "h-2"}`}
+              className={`relative rounded-full bg-muted ${state === "failed" ? "" : "overflow-hidden"} ${compact ? "h-1" : "h-2"}`}
             >
               <span
-                className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none ${
+                className={`seg-fill absolute inset-y-0 left-0 rounded-full ${
                   view.outcome === "finished"
                     ? "bg-success"
                     : state === "failed"
@@ -119,7 +122,18 @@ export function CopyPhaseTrack({
                       : "bg-primary"
                 }`}
                 style={{ width: `${fill}%` }}
-              />
+              >
+                {live && state === "active" && view.fraction !== null && (
+                  <span className="seg-sheen" data-slot="copy-phase-sheen" />
+                )}
+              </span>
+              {state === "failed" && view.fraction !== null && (
+                <span
+                  className="seg-notch"
+                  data-slot="copy-phase-stop"
+                  style={{ left: `${fill}%` }}
+                />
+              )}
               {state === "active" && view.fraction === null && (
                 <span className="copy-phase-sweep absolute inset-y-0 w-1/3 rounded-full bg-primary/70" />
               )}
@@ -146,8 +160,8 @@ export function CopyPhaseTrack({
                 <span
                   className={`flex items-center gap-1 ${state === "active" || state === "failed" ? "font-medium" : ""}`}
                 >
-                  {state === "done" && <CheckIcon className="size-3 shrink-0" />}
-                  {state === "failed" && <XIcon className="size-3 shrink-0" />}
+                  {state === "done" && <CheckIcon className="seg-check size-3 shrink-0" />}
+                  {state === "failed" && <XIcon className="seg-check size-3 shrink-0" />}
                   {phaseParts(phase, sourceLabel, targetLabel)[0]}
                 </span>
                 <span className="block truncate text-muted-foreground">
@@ -206,7 +220,9 @@ export function CopyProgressPanel({
         </div>
         {percent !== null && (
           <span
-            className="shrink-0 text-2xl font-semibold leading-none tracking-tight tabular-nums"
+            className={`shrink-0 text-2xl font-semibold leading-none tracking-tight tabular-nums transition-colors duration-500 ${
+              view.outcome === "finished" ? "text-success-foreground" : ""
+            }`}
             data-slot="copy-progress-percent"
             aria-hidden
           >
@@ -215,7 +231,12 @@ export function CopyProgressPanel({
           </span>
         )}
       </div>
-      <CopyPhaseTrack view={view} sourceLabel={sourceLabel} targetLabel={targetLabel} />
+      <CopyPhaseTrack
+        view={view}
+        sourceLabel={sourceLabel}
+        targetLabel={targetLabel}
+        live={rate !== null}
+      />
       {(counts.bytes || counts.files || rate || elapsed) && (
         <div className="space-y-0.5 text-xs tabular-nums" aria-live="off">
           {(counts.bytes || counts.files) && (

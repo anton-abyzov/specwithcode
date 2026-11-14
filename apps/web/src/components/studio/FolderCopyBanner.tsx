@@ -111,6 +111,7 @@ function BannerProgress({ activity }: { readonly activity: CopyActivity }) {
         sourceLabel={activity.source ?? "this machine"}
         targetLabel={activity.machine}
         compact
+        live={rate !== null}
       />
       <p
         className="flex flex-wrap gap-x-4 text-xs text-muted-foreground tabular-nums"
