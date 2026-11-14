@@ -7,7 +7,14 @@ import * as NodePath from "node:path";
 import { CHUNK_SIZE, forEachLimited, hashFile, type ManifestEntry } from "./manifest.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import type { SourceClient } from "./sourceClient.ts";
-import { CHUNK_CHANGED, CHUNK_OK, MAX_BATCH_BYTES, MAX_BATCH_CHUNKS, sha256Hex } from "./wire.ts";
+import {
+  CHUNK_CHANGED,
+  CHUNK_OK,
+  MAX_BATCH_BYTES,
+  MAX_BATCH_CHUNKS,
+  MAX_BATCH_CHUNKS_LARGE,
+  sha256Hex,
+} from "./wire.ts";
 
 /** One file the destination needs, with a local copy to reuse when it has one. */
 export interface PullFile {
@@ -39,7 +46,13 @@ export interface PullResult {
   readonly refreshed: ReadonlyMap<string, ManifestEntry>;
 }
 
-const BATCH_CONCURRENCY = 4;
+const BATCH_CONCURRENCY = 8;
+
+/** The batch size a source offered in its hello, within what this side accepts. */
+export const batchChunksFor = (offered: unknown): number =>
+  typeof offered === "number" && Number.isSafeInteger(offered)
+    ? Math.min(Math.max(offered, MAX_BATCH_CHUNKS), MAX_BATCH_CHUNKS_LARGE)
+    : MAX_BATCH_CHUNKS;
 const MAX_REFRESH_ROUNDS = 3;
 
 /** Path in staging for a manifest path; staging never holds links, so no escape is possible. */
@@ -105,7 +118,10 @@ export async function pullFiles(input: {
   readonly directories: ReadonlyArray<string>;
   readonly signal?: AbortSignal;
   readonly onProgress?: (progress: PullProgress) => void;
+  /** Chunks per request the source accepts (its hello); MAX_BATCH_CHUNKS when unknown. */
+  readonly maxBatchChunks?: number;
 }): Promise<PullResult> {
+  const maxBatchChunks = input.maxBatchChunks ?? MAX_BATCH_CHUNKS;
   const stagingRoot = await NodeFSP.realpath(input.stagingRoot);
   for (const directory of input.directories) {
     const absolute = stagedPath(stagingRoot, directory);
@@ -191,7 +207,7 @@ export async function pullFiles(input: {
     for (const [sha, targets] of needed) {
       const first = targets[0]!;
       const length = Math.min(CHUNK_SIZE, first.file.size - first.index * CHUNK_SIZE);
-      if (batch.length >= MAX_BATCH_CHUNKS || batchBytes + length > MAX_BATCH_BYTES) {
+      if (batch.length >= maxBatchChunks || batchBytes + length > MAX_BATCH_BYTES) {
         batches.push(batch);
         batch = [];
         batchBytes = 0;

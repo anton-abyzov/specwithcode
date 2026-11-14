@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - binary framing and gzip of chunk batches.
+// @effect-diagnostics nodeBuiltinImport:off - binary framing and gzip or zstd of chunk batches.
 import * as NodeCrypto from "node:crypto";
 import * as NodeZlib from "node:zlib";
 
@@ -10,6 +10,12 @@ export const FOLDER_TRANSFER_PREFIX = "/api/folder-transfer/v1";
 export const FOLDER_TRANSFER_VERSION = 1;
 /** A chunk batch request names at most this many chunks... */
 export const MAX_BATCH_CHUNKS = 32;
+/**
+ * ...or this many, when the source's hello offers it (`maxBatchChunks`). Small files are
+ * one chunk each, so a larger batch cuts the request count for many small files. An older
+ * source never offers it, and an older destination never asks for more than 32.
+ */
+export const MAX_BATCH_CHUNKS_LARGE = 1024;
 /** ...and the destination keeps each batch under this many bytes. */
 export const MAX_BATCH_BYTES = 64 * 1024 * 1024;
 export const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
@@ -26,8 +32,22 @@ export interface ChunkFrame {
   readonly data: Buffer;
 }
 
-/** Frames: 32-byte SHA-256, 1-byte status, 4-byte big-endian length, data. Gzipped. */
-export function encodeFrames(frames: ReadonlyArray<ChunkFrame>): Buffer {
+/** Batch compression. zstd only when this runtime has it and the destination asked for it. */
+export type FrameEncoding = "gzip" | "zstd";
+export const zstdAvailable = (): boolean =>
+  typeof NodeZlib.zstdCompressSync === "function" &&
+  typeof NodeZlib.zstdDecompressSync === "function";
+const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+
+/**
+ * Frames: 32-byte SHA-256, 1-byte status, 4-byte big-endian length, data. Gzipped, or zstd
+ * when asked. The decoder tells them apart by their magic bytes, so no header has to survive
+ * the relay.
+ */
+export function encodeFrames(
+  frames: ReadonlyArray<ChunkFrame>,
+  encoding: FrameEncoding = "gzip",
+): Buffer {
   const parts: Array<Buffer> = [];
   for (const frame of frames) {
     const head = Buffer.alloc(37);
@@ -36,11 +56,19 @@ export function encodeFrames(frames: ReadonlyArray<ChunkFrame>): Buffer {
     head.writeUInt32BE(frame.data.length, 33);
     parts.push(head, frame.data);
   }
-  return NodeZlib.gzipSync(Buffer.concat(parts), { level: 1 });
+  const raw = Buffer.concat(parts);
+  return encoding === "zstd" && zstdAvailable()
+    ? NodeZlib.zstdCompressSync(raw, {
+        params: { [NodeZlib.constants.ZSTD_c_compressionLevel]: 3 },
+      })
+    : NodeZlib.gzipSync(raw, { level: 1 });
 }
 
 export function decodeFrames(body: Uint8Array): Array<ChunkFrame> {
-  const raw = NodeZlib.gunzipSync(body, { maxOutputLength: MAX_BATCH_BYTES + 1024 * 1024 });
+  const limit = { maxOutputLength: MAX_BATCH_BYTES + 1024 * 1024 };
+  const zstd = body.length >= 4 && ZSTD_MAGIC.equals(Buffer.from(body.subarray(0, 4)));
+  if (zstd && !zstdAvailable()) throw new Error("This machine cannot read zstd chunk batches.");
+  const raw = zstd ? NodeZlib.zstdDecompressSync(body, limit) : NodeZlib.gunzipSync(body, limit);
   const frames: Array<ChunkFrame> = [];
   let offset = 0;
   while (offset < raw.length) {
