@@ -134,28 +134,62 @@ describe("who can run work on this Mac", () => {
     );
   });
 
-  it("offers Revoke on an active grant and Allow again on a revoked one", () => {
+  it("offers Stop on an active grant and Allow again on a revoked one", () => {
     const onChange = vi.fn();
     const row = (value: StudioWorkGrant) =>
       MachineWorkGrantRow({ grant: value, snapshot, canManage: true, pending: false, onChange });
-    // Revoke sits in a tooltip trigger that renders the button.
+    // Stop sits in a tooltip trigger that renders the button.
     const clickOf = (element: { props: Record<string, unknown> } | null) =>
       (element?.props.onClick ??
         (element?.props.render as { props: Record<string, unknown> } | undefined)?.props
           .onClick) as () => void;
-    const revoke = visitElements(row(grant), (element) => children(element) === "Revoke");
+    const revoke = visitElements(row(grant), (element) => children(element) === "Stop");
     clickOf(revoke)();
     expect(onChange).toHaveBeenLastCalledWith({
       action: "revoke",
       input: { coordinatorEnvironmentId: m4 },
     });
     const revoked = row({ ...grant, status: "revoked" });
-    expect(visitElements(revoked, (element) => children(element) === "Revoke")).toBeNull();
+    expect(visitElements(revoked, (element) => children(element) === "Stop")).toBeNull();
     const restore = visitElements(revoked, (element) => children(element) === "Allow again");
     (restore!.props.onClick as () => void)();
     expect(onChange).toHaveBeenLastCalledWith({
       action: "restore",
       input: { coordinatorEnvironmentId: m4 },
+    });
+  });
+
+  it("offers a time limit to a machine that accepts one, and Allow again for a set time", () => {
+    const onChange = vi.fn();
+    const timed = { ...snapshot, durations: true };
+    const row = (value: StudioWorkGrant) =>
+      MachineWorkGrantRow({
+        grant: value,
+        snapshot: timed,
+        canManage: true,
+        pending: false,
+        onChange,
+      });
+    const limit = visitElements(
+      row({ ...grant, endsAt: "2026-11-20T12:00:00.000Z" as never }),
+      (element) => element.props.label === "How long M4MAX may start work here",
+    );
+    (limit!.props.onChange as (value: string) => void)("1d");
+    expect(onChange).toHaveBeenLastCalledWith({
+      action: "update",
+      input: { coordinatorEnvironmentId: m4, duration: "1d" },
+    });
+    const ended = row({ ...grant, status: "revoked", ended: true });
+    // An ended grant is allowed again by choosing a new limit, not by Restore.
+    expect(visitElements(ended, (element) => children(element) === "Allow again")).toBeNull();
+    const again = visitElements(
+      ended,
+      (element) => element.props.label === "Allow M4MAX again for",
+    );
+    (again!.props.onChange as (value: string) => void)("until-stopped");
+    expect(onChange).toHaveBeenLastCalledWith({
+      action: "update",
+      input: { coordinatorEnvironmentId: m4, duration: "until-stopped" },
     });
   });
 

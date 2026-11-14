@@ -21,6 +21,8 @@ export const sweepRevoked = Effect.gen(function* () {
   const grants = yield* WorkGrants.WorkGrants;
   if (!grants.enabled) return 0;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // A grant whose time limit passed becomes a revoke first, so its grace starts now.
+  yield* grants.expireDue;
   const now = yield* Clock.currentTimeMillis;
   const due = (yield* grants.policies).filter(
     (policy) =>

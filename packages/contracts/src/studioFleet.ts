@@ -435,6 +435,13 @@ export const StudioWorkGrant = Schema.Struct({
   runtimeCap: Schema.NullOr(StudioFleetWorkerAccess),
   /** When its newest live grant lapses; null when none is live. */
   expiresAt: Schema.NullOr(IsoDateTime),
+  /**
+   * When the owner's chosen time limit ends it; null or absent when it lasts
+   * until stopped. After this time the grant reads `revoked` with `ended`.
+   */
+  endsAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+  /** Set when it stopped because its time limit passed, not by Stop. */
+  ended: Schema.optionalKey(Schema.Boolean),
   status: Schema.Literals(["active", "revoked", "expired"]),
   revokedAt: Schema.NullOr(IsoDateTime),
   /** Set while revoked threads still run: when they are interrupted. */
@@ -466,6 +473,8 @@ export type StudioWorkGrant = typeof StudioWorkGrant.Type;
 
 export const StudioWorkGrantsSnapshot = Schema.Struct({
   grants: Schema.Array(StudioWorkGrant),
+  /** This machine accepts `duration` on a grant update. Absent from older servers. */
+  durations: Schema.optionalKey(Schema.Boolean),
   projects: Schema.Array(
     Schema.Struct({
       id: ProjectId,
@@ -500,12 +509,32 @@ export const StudioWorkGrantsSnapshot = Schema.Struct({
 });
 export type StudioWorkGrantsSnapshot = typeof StudioWorkGrantsSnapshot.Type;
 
+/**
+ * How long an Allow lasts, counted by the machine doing the work on its own
+ * clock. "until-stopped" keeps it until someone stops it.
+ */
+export const StudioWorkGrantDuration = Schema.Literals(["1h", "1d", "7d", "until-stopped"]);
+export type StudioWorkGrantDuration = typeof StudioWorkGrantDuration.Type;
+
+export const WORK_GRANT_DURATION_MS: Readonly<
+  Record<Exclude<StudioWorkGrantDuration, "until-stopped">, number>
+> = {
+  "1h": 60 * 60 * 1000,
+  "1d": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+};
+
 export const StudioWorkGrantUpdateInput = exactStruct({
   coordinatorEnvironmentId: EnvironmentId,
   projects: Schema.optionalKey(StudioWorkGrantProjects),
   accounts: Schema.optionalKey(StudioWorkGrantAccounts),
   owner: Schema.optionalKey(StudioWorkGrantOwner),
   routines: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Starts a fresh period from now, also after the grant ended or was
+   * stopped. Send it only to a machine whose snapshot reports `durations`.
+   */
+  duration: Schema.optionalKey(StudioWorkGrantDuration),
 });
 export type StudioWorkGrantUpdateInput = typeof StudioWorkGrantUpdateInput.Type;
 

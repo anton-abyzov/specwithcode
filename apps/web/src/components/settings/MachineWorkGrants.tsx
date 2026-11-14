@@ -8,6 +8,7 @@ import {
 } from "@specweave-studio/contracts";
 import {
   type StudioWorkGrant,
+  type StudioWorkGrantDuration,
   type StudioWorkGrantOwner,
   type StudioWorkGrantProjects,
   type StudioWorkGrantsSnapshot,
@@ -15,6 +16,7 @@ import {
 } from "@specweave-studio/contracts/studioFleet";
 import { requestConfirmDialog } from "../../confirmDialog";
 import {
+  WORK_GRANT_DURATION_CHOICES,
   formatTime,
   workGrantAccessName,
   workGrantAccessNote,
@@ -269,9 +271,53 @@ function ChoiceSelect<Value extends string>({
 }
 
 /**
+ * How long the grant lasts: the time limit it has now, and the choices that
+ * start a fresh one. Shown only for a machine that accepts durations.
+ */
+function DurationSelect({
+  grant,
+  label,
+  disabled,
+  onChange,
+}: {
+  grant: StudioWorkGrant;
+  label: string;
+  disabled: boolean;
+  onChange: (duration: StudioWorkGrantDuration) => void;
+}) {
+  const tx = useTx();
+  const current = grant.endsAt
+    ? tx("Until {date}", { date: formatTime(grant.endsAt) })
+    : tx("Until I stop it");
+  return (
+    <Select
+      value={grant.endsAt ? "" : "until-stopped"}
+      disabled={disabled}
+      onValueChange={(next) => {
+        if (next) onChange(next as StudioWorkGrantDuration);
+      }}
+    >
+      <SelectTrigger size="xs" className="w-auto min-w-0" aria-label={label}>
+        <SelectValue>{current}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="start" alignItemWithTrigger={false}>
+        <SelectGroup>
+          <SelectGroupLabel>{tx("Allow for")}</SelectGroupLabel>
+          {WORK_GRANT_DURATION_CHOICES.map((choice) => (
+            <SelectItem key={choice.value} value={choice.value}>
+              {tx(choice.label)}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectPopup>
+    </Select>
+  );
+}
+
+/**
  * One machine that may start work here: its name, one summary line
- * ("All projects, All sign-ins, up to Full access, renews automatically"),
- * Revoke, and the limits folded under Limits.
+ * ("All projects, All sign-ins, up to Full access, until Nov 20"), its time
+ * limit, Stop, and the limits folded under Limits.
  */
 export function MachineWorkGrantRow({
   grant,
@@ -329,16 +375,30 @@ export function MachineWorkGrantRow({
             {workGrantSummary(grant, snapshot, tx)}
           </p>
         </div>
+        {snapshot.durations === true && canManage ? (
+          <DurationSelect
+            grant={grant}
+            label={
+              revoked
+                ? tx("Allow {machine} again for", { machine })
+                : tx("How long {machine} may start work here", { machine })
+            }
+            disabled={pending}
+            onChange={(duration) => update({ duration })}
+          />
+        ) : null}
         {revoked ? (
-          <Button
-            className="shrink-0"
-            size="xs"
-            variant="outline"
-            disabled={pending || !canManage}
-            onClick={() => onChange({ action: "restore", input: { coordinatorEnvironmentId } })}
-          >
-            {tx("Allow again")}
-          </Button>
+          snapshot.durations === true ? null : (
+            <Button
+              className="shrink-0"
+              size="xs"
+              variant="outline"
+              disabled={pending || !canManage}
+              onClick={() => onChange({ action: "restore", input: { coordinatorEnvironmentId } })}
+            >
+              {tx("Allow again")}
+            </Button>
+          )
         ) : (
           <Tooltip>
             <TooltipTrigger
@@ -354,7 +414,7 @@ export function MachineWorkGrantRow({
                 />
               }
             >
-              {tx("Revoke")}
+              {tx("Stop")}
             </TooltipTrigger>
             <TooltipPopup side="top">
               {tx(
@@ -628,11 +688,15 @@ export function MachineWorkGrants({
       const label = grant?.machineLabel ?? "this machine";
       // Fail closed: no mounted confirm host means no revoke.
       const confirmed = await requestConfirmDialog(
-        `Revoke ${label}?\n${label} can no longer start work here. Threads it started here stop in 2 minutes; their worktrees and changes stay. To undo, choose Allow again here, then, on ${label}, choose Allow on this machine's card.`,
+        `Stop ${label}?\n${label} can no longer start work here. Threads it started here stop in 2 minutes; their worktrees and changes stay. To undo, choose a time limit here, then, on ${label}, choose Allow on this machine's card.`,
         { variant: "destructive" },
       );
       if (confirmed !== true) return;
     }
+    const wasRevoked =
+      snapshot?.grants.find(
+        (candidate) => candidate.coordinatorEnvironmentId === next.input.coordinatorEnvironmentId,
+      )?.status === "revoked";
     setPending(next.input.coordinatorEnvironmentId);
     setError(null);
     setNotice(null);
@@ -651,7 +715,10 @@ export function MachineWorkGrants({
             ? `${grant.machineLabel} can no longer start work here. Its ${grant.runningThreads} running thread${grant.runningThreads === 1 ? "" : "s"} stop at ${formatTime(grant.interruptAt)}.`
             : `${grant.machineLabel} can no longer start work here.`,
         );
-      else if (next.action === "restore")
+      else if (
+        next.action === "restore" ||
+        (next.action === "update" && next.input.duration !== undefined && wasRevoked)
+      )
         setNotice(
           `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, open Settings > Machines and choose Allow on this machine's card.`,
         );

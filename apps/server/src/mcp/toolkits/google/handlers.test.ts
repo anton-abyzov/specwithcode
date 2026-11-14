@@ -152,7 +152,11 @@ it.effect.each(["read-only", "full-access"] as const)(
 );
 
 /** The calling thread was started by another machine's work, under the grant given. */
-const startedByAnotherMachine = (kind: "own" | "team", allowed: ReadonlyArray<string>) => {
+const startedByAnotherMachine = (
+  kind: "own" | "team",
+  allowed: ReadonlyArray<string>,
+  revoked = false,
+) => {
   const m4 = EnvironmentId.make("env-m4");
   const asked: Array<string> = [];
   return {
@@ -162,7 +166,7 @@ const startedByAnotherMachine = (kind: "own" | "team", allowed: ReadonlyArray<st
         ...WorkGrants.WorkGrants.defaultValue(),
         enabled: true,
         originOf: () => Effect.succeed({ coordinatorEnvironmentId: m4, path: [m4], hops: 1 }),
-        forCoordinator: (id) => Effect.succeed({ ...unscopedGrant(id), kind }),
+        forCoordinator: (id) => Effect.succeed({ ...unscopedGrant(id), kind, revoked }),
       }),
       Layer.succeed(PersonalDataAccess.PersonalDataAccess, {
         ...PersonalDataAccess.PersonalDataAccess.defaultValue(),
@@ -211,6 +215,21 @@ it.effect("reads only the sources the owner allowed that machine", () =>
         .pipe(Stream.unwrap, Stream.runCollect);
       expect(calendar.at(-1)?.result).toMatchObject({ code: "capability_denied" });
       expect(f.calls.map((call) => call.operation)).toEqual(["gmailSearch"]);
+    }).pipe(Effect.provide(Layer.merge(other.layer, f.layer)));
+  }),
+);
+
+it.effect("reads nothing for a machine whose grant was stopped or ran out", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const other = startedByAnotherMachine("own", ["gmail"], true);
+    yield* Effect.gen(function* () {
+      const toolkit = yield* GoogleToolkit;
+      const result = yield* toolkit
+        .handle("studio_google_gmail_search", { query: "is:unread" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(result.at(-1)?.result).toMatchObject({ code: "machine_not_authorized" });
+      expect(f.calls).toEqual([]);
     }).pipe(Effect.provide(Layer.merge(other.layer, f.layer)));
   }),
 );

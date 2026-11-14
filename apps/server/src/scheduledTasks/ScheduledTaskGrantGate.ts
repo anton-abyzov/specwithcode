@@ -4,13 +4,14 @@ import {
   type ScheduledTaskGrantedBy,
 } from "@specweave-studio/contracts";
 import type { StudioWorkGrantAccounts } from "@specweave-studio/contracts/studioFleet";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type * as WorkGrants from "../fleet/WorkGrants.ts";
-import { effectiveGrant, type WorkGrantPolicyRecord } from "../fleet/WorkGrants.ts";
+import { effectiveGrant, grantEnded, type WorkGrantPolicyRecord } from "../fleet/WorkGrants.ts";
 import { accountInGrant, projectInGrant, type WorkOrigin } from "../fleet/workGrantPolicy.ts";
 import { exceededDispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -61,10 +62,14 @@ export function routineGrantRefusal(input: {
   readonly task?: Pick<ScheduledTask, "runtimeMode" | "modelSelection"> | undefined;
   /** What the routine recorded when it was saved: a fallback cap for a policy without one. */
   readonly recorded?: ScheduledTaskGrantedBy | undefined;
+  /** Epoch milliseconds: a grant past its time limit is refused like a revoked one. */
+  readonly now?: number;
 }): string | null {
   if (input.policy === undefined) return ROUTINE_GRANT_GONE_NOTE;
   if (input.policy.revokedAt !== null) return ROUTINE_GRANT_REVOKED_NOTE;
-  const grant = effectiveGrant(input.policy, input.managers);
+  if (input.now !== undefined && grantEnded(input.policy, input.now))
+    return ROUTINE_GRANT_REVOKED_NOTE;
+  const grant = effectiveGrant(input.policy, input.managers, input.now);
   if (grant.legacy !== true && !grant.routines) return ROUTINE_GRANT_NO_ROUTINES_NOTE;
   if (
     input.project === undefined ||
@@ -177,6 +182,7 @@ export const makeRoutineGrantGate =
             : { id: row.value.projectId, workspaceSettings: row.value.workspaceSettings ?? null },
           task,
           recorded,
+          now: yield* Clock.currentTimeMillis,
         });
         if (note === null)
           return {

@@ -10,7 +10,7 @@ import * as Google from "../../../integrations/google/GoogleAccountService.ts";
 import { requirePersonalData } from "../../../personalData/personalDataGate.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
-import { workGrantOf } from "../../workGrantAccess.ts";
+import { refuseRevoked, workGrantOf } from "../../workGrantAccess.ts";
 import { proposeSend, sendApproved } from "./sendApproval.ts";
 import { GoogleToolkit } from "./tools.ts";
 
@@ -36,6 +36,8 @@ const callerProject = Effect.fn("mcp.google.callerProject")(function* (tool: str
     });
   }
   const work = yield* workGrantOf({ scope: context.scope, caller: context.caller });
+  // A stopped or ended grant reads nothing, even while its threads wind down.
+  if (work !== undefined) yield* refuseRevoked(work);
   yield* requirePersonalData(work, tool);
   return context.caller.projectId;
 });

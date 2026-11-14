@@ -1,6 +1,7 @@
 import type {
   StudioWorkGrant,
   StudioWorkGrantAccounts,
+  StudioWorkGrantDuration,
   StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
 import { englishPhrase, type TranslatePhrase } from "../../i18n";
@@ -10,6 +11,19 @@ import { FLEET_WORKER_ACCESS_CHOICES } from "../../studio/fleetWorkers";
  * Words for "Who can run work here", shared by its section and the machine rows.
  * Each takes the screen's `tx` last; without one it says it in English.
  */
+
+/** The time limits an Allow offers, in the order shown; one week is the default. */
+export const WORK_GRANT_DURATION_CHOICES = [
+  { value: "1h", label: "1 hour" },
+  { value: "1d", label: "1 day" },
+  { value: "7d", label: "1 week" },
+  { value: "until-stopped", label: "Until I stop it" },
+] as const satisfies ReadonlyArray<{
+  readonly value: StudioWorkGrantDuration;
+  readonly label: string;
+}>;
+
+export const DEFAULT_WORK_GRANT_DURATION: StudioWorkGrantDuration = "7d";
 
 export function formatTime(value: string): string {
   return new Date(value).toLocaleString(undefined, {
@@ -192,8 +206,9 @@ export function workGrantSummary(
             )
             .join(", ");
   const access = workGrantAccessName(grant, tx);
-  const lasts =
-    grant.renews === true
+  const lasts = grant.endsAt
+    ? tx("until {date}", { date: formatTime(grant.endsAt) })
+    : grant.renews === true
       ? tx("renews automatically")
       : grant.expiresAt
         ? tx("until {date}", { date: formatTime(grant.expiresAt) })
@@ -242,9 +257,11 @@ export function workGrantStatus(
   const count = grant.runningThreads;
   if (grant.status === "revoked")
     return [
-      grant.revokedAt
-        ? tx("Revoked {time}. New work is refused", { time: formatTime(grant.revokedAt) })
-        : tx("Revoked. New work is refused"),
+      grant.ended === true && grant.endsAt
+        ? tx("Time limit ended {time}. New work is refused", { time: formatTime(grant.endsAt) })
+        : grant.revokedAt
+          ? tx("Stopped {time}. New work is refused", { time: formatTime(grant.revokedAt) })
+          : tx("Stopped. New work is refused"),
       grant.interruptAt && count > 0
         ? count === 1
           ? tx("1 running thread stops at {time}", { time: formatTime(grant.interruptAt) })
@@ -259,9 +276,12 @@ export function workGrantStatus(
   const parts = [
     grant.status === "expired"
       ? tx("Expired: that machine must allow workers here again")
-      : grant.expiresAt
-        ? tx("Active until {time}", { time: formatTime(grant.expiresAt) })
-        : tx("Active"),
+      : grant.endsAt
+        ? tx("Active until {time}", { time: formatTime(grant.endsAt) })
+        : // An owner's limit of "until stopped" is null; an older machine sends none.
+          grant.endsAt === undefined && grant.expiresAt
+          ? tx("Active until {time}", { time: formatTime(grant.expiresAt) })
+          : tx("Active"),
     count === 0
       ? null
       : count === 1
