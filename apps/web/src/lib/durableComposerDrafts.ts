@@ -47,6 +47,12 @@ export interface DurableDraftTransport {
     environmentId: string,
     key: ComposerDraftKey,
   ) => Promise<ComposerDraftRecord | null>;
+  /**
+   * What the host holds, attachment bytes optional (an empty `dataBase64`
+   * means left out). Unlike `get` it throws when the host cannot be read, so
+   * "no draft" is never mistaken for "could not look". Falls back to `get`.
+   */
+  readonly peek?: (environmentId: string, key: ComposerDraftKey) => Promise<ComposerDraftRecord | null>;
 }
 
 /**
@@ -120,6 +126,24 @@ function blobFromBase64(dataBase64: string, mimeType: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
+/** A record's text and attachment metadata, for comparing without the bytes. */
+function metadataSnapshot(record: ComposerDraftRecord): DurableDraftSnapshot {
+  return {
+    prompt: record.prompt,
+    attachments: record.attachments.map(({ dataBase64: _data, ...attachment }) => ({
+      ...attachment,
+      file: new Blob([]),
+    })),
+  };
+}
+
+/** The record carries every attachment's bytes (a metadata-only answer leaves them empty). */
+function hasBytes(record: ComposerDraftRecord): boolean {
+  return record.attachments.every(
+    (attachment) => attachment.dataBase64.length > 0 || attachment.sizeBytes === 0,
+  );
+}
+
 export function snapshotFromRecord(record: ComposerDraftRecord): DurableDraftSnapshot {
   return {
     prompt: record.prompt,
@@ -163,8 +187,8 @@ interface KeyState {
   fromJournal: boolean;
   /** The composer shows a journaled copy the host had confirmed; the host may have cleared it since. */
   showsSyncedJournal: boolean;
-  /** The composer shows a copy another window saved, not one typed here. */
-  adopted: boolean;
+  /** Counts edits and sends, so a host check that an edit overtook is dropped. */
+  generation: number;
   /** A check against the host that is still running. */
   refreshing: Promise<DurableDraftRefresh> | null;
 }
@@ -270,7 +294,7 @@ export function createDurableDraftSync(options: {
         failures: 0,
         fromJournal: false,
         showsSyncedJournal: false,
-        adopted: false,
+        generation: 0,
         refreshing: null,
       };
       keys.set(key, state);
@@ -384,6 +408,7 @@ export function createDurableDraftSync(options: {
   const schedule: DurableDraftSync["schedule"] = (target, snapshot) => {
     const state = stateFor(target.key, target.environmentId);
     if (state.applying) return;
+    state.generation += 1;
     const next = keepable(snapshot);
     const signature = signatureOf(next);
     if (state.pending === null && signature === state.sent) return;
@@ -395,8 +420,6 @@ export function createDurableDraftSync(options: {
       options.edits.write(target.key, { at, empty: durableDraftIsEmpty(next) });
       // Every change reaches this window's disk at once, host or not.
       journalWrite(target.key, state, next, at, false);
-      // Typed here: from now on this window's own draft.
-      state.adopted = false;
       state.showsSyncedJournal = false;
     }
     state.pending = next;
@@ -413,6 +436,7 @@ export function createDurableDraftSync(options: {
   const hold: DurableDraftSync["hold"] = (key) => {
     const state = stateFor(key, keys.get(key)?.environmentId ?? "");
     state.holds += 1;
+    state.generation += 1;
     let released = false;
     const release = () => {
       if (released) return;
@@ -474,7 +498,6 @@ export function createDurableDraftSync(options: {
       if (!same) applySnapshot(target.key, state, entry.snapshot, apply);
       // A copy the host had confirmed may have been sent elsewhere since.
       state.showsSyncedJournal = entry.synced;
-      state.adopted ||= entry.synced;
     }
     options.edits.write(target.key, {
       at: entry.editedAt,
@@ -537,7 +560,6 @@ export function createDurableDraftSync(options: {
     options.edits.write(target.key, { at: record.editedAt, empty: durableDraftIsEmpty(snapshot) });
     journalWrite(target.key, state, snapshot, record.editedAt, true);
     applySnapshot(target.key, state, snapshot, apply);
-    state.adopted = !durableDraftIsEmpty(snapshot);
     return "restored";
   };
 
@@ -558,7 +580,6 @@ export function createDurableDraftSync(options: {
   ) {
     state.sent = signatureOf(EMPTY_DURABLE_DRAFT);
     state.stored = new Set();
-    state.adopted = false;
     state.showsSyncedJournal = false;
     journalWrite(key, state, EMPTY_DURABLE_DRAFT, now(), true);
     applySnapshot(key, state, EMPTY_DURABLE_DRAFT, apply);
@@ -569,25 +590,38 @@ export function createDurableDraftSync(options: {
     state: KeyState,
     input: Parameters<DurableDraftSync["refresh"]>[0],
   ): Promise<DurableDraftRefresh> => {
-    const record = await options.transport.get(input.target.environmentId, key);
-    // An edit made while the host answered wins.
-    if (!showsHostCopy(state, input.local())) return "kept";
+    const environmentId = input.target.environmentId;
+    const generation = state.generation;
+    // An edit or send that started while the host answered wins, saved or not.
+    const overtaken = () =>
+      state.generation !== generation || !showsHostCopy(state, input.local());
+    const peek = options.transport.peek ?? options.transport.get;
+    let record = await peek(environmentId, key);
+    if (overtaken()) return "kept";
     if (record === null) {
       clearToHost(key, state, input.apply);
       return "cleared";
     }
-    const snapshot = snapshotFromRecord(record);
-    const signature = signatureOf(snapshot);
-    if (signature === signatureOf(keepable(input.local()))) return "kept";
+    const metadata = metadataSnapshot(record);
+    if (signatureOf(metadata) === signatureOf(keepable(input.local()))) return "kept";
     const edit = options.edits.read(key);
     if (edit !== undefined && edit.at > record.editedAt) return "kept";
+    if (!hasBytes(record)) {
+      // Another window changed it: now fetch the bytes.
+      record = await options.transport.get(environmentId, key);
+      if (overtaken()) return "kept";
+      if (record === null) {
+        clearToHost(key, state, input.apply);
+        return "cleared";
+      }
+    }
+    const snapshot = snapshotFromRecord(record);
     state.stored = new Set(record.attachments.map((attachment) => attachment.id));
-    state.sent = signature;
+    state.sent = signatureOf(snapshot);
     state.showsSyncedJournal = false;
     options.edits.write(key, { at: record.editedAt, empty: durableDraftIsEmpty(snapshot) });
     journalWrite(key, state, snapshot, record.editedAt, true);
     applySnapshot(key, state, snapshot, input.apply);
-    state.adopted = !durableDraftIsEmpty(snapshot);
     return "replaced";
   };
 
@@ -604,16 +638,10 @@ export function createDurableDraftSync(options: {
   };
 
   const sentElsewhere: DurableDraftSync["sentElsewhere"] = async (input) => {
-    const state = keys.get(input.target.key);
-    if (!state) return false;
     try {
-      // A copy from another window is checked now; this window's own draft
-      // only waits for a check already running (the window just got focus).
-      const result =
-        state.adopted || state.showsSyncedJournal
-          ? await refresh(input)
-          : await (state.refreshing ?? Promise.resolve<DurableDraftRefresh>("kept"));
-      return result !== "kept";
+      // Any draft the host has confirmed, typed here or not, may have been
+      // sent from another window since: ask the host (without the bytes).
+      return (await refresh(input)) !== "kept";
     } catch (error) {
       options.onError?.(error);
       return false;

@@ -15,6 +15,7 @@ import {
   type DurableDraftEdit,
   type DurableDraftJournalEntry,
   type DurableDraftSnapshot,
+  type DurableDraftTransport,
 } from "./durableComposerDrafts";
 
 const snapshotSource = {
@@ -98,7 +99,20 @@ function makeHost() {
         const draft = drafts.get(key);
         return draft ? Schema.decodeSync(DraftRecordSchema)(draft) : null;
       },
-    },
+      /** Like the host with `metadataOnly`: no attachment bytes. */
+      peek: async (_environmentId: string, key: ComposerDraftKey) => {
+        const draft = drafts.get(key);
+        return draft
+          ? Schema.decodeSync(DraftRecordSchema)({
+              ...draft,
+              attachments: draft.attachments.map((attachment) => ({
+                ...attachment,
+                dataBase64: "",
+              })),
+            })
+          : null;
+      },
+    } as { -readonly [K in keyof DurableDraftTransport]: DurableDraftTransport[K] },
   };
 }
 
@@ -466,13 +480,76 @@ describe("durable composer drafts", () => {
       expect(m5.composer().prompt).toBe("shared, edited on the M5");
     });
 
+    it("a check an edit overtook never clears that edit, even once it is saved", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("Use M5"));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      // The host answers slowly; meanwhile the user types here and it saves.
+      let answer!: (value: null) => void;
+      host.transport.peek = () => new Promise((resolve) => (answer = resolve));
+      const checking = m5.sync.refresh(m5.input);
+      await m5.type(text("my own new text", [image("mine", [4])]));
+      expect(host.drafts.get(KEY)?.prompt).toBe("my own new text");
+      answer(null);
+      expect(await checking).toBe("kept");
+      expect(m5.composer().prompt).toBe("my own new text");
+      expect(host.drafts.get(KEY)?.attachments.map((attachment) => attachment.id)).toEqual([
+        "mine",
+      ]);
+    });
+
+    it("a draft typed here, then sent from another window, is not sent here again", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      // Typed and saved here; no focus check ran since.
+      await m5.type(text("typed on the M5", shots()));
+      await m4.sync.restore(m4.input);
+      await m4.send();
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
+    it("checks without downloading attachment bytes unless the draft changed", async () => {
+      const host = makeHost();
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("with shots", shots()));
+      await m5.sync.restore(m5.input);
+      const get = vi.spyOn(host.transport, "get");
+      expect(await m5.sync.refresh(m5.input)).toBe("kept");
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(false);
+      expect(get).not.toHaveBeenCalled();
+
+      await m4.type(text("with shots, edited", shots()));
+      expect(await m5.sync.refresh(m5.input)).toBe("replaced");
+      expect(get).toHaveBeenCalledTimes(1);
+      const bytes = new Uint8Array(await m5.composer().attachments[2]!.file.arrayBuffer());
+      expect([...bytes]).toEqual([3]);
+    });
+
+    it("works against a host that sends the bytes anyway (older hosts)", async () => {
+      const host = makeHost();
+      delete (host.transport as { peek?: unknown }).peek;
+      const m4 = makeWindow(host);
+      const m5 = makeWindow(host);
+      await m4.type(text("old host", shots()));
+      await m5.sync.restore(m5.input);
+      await m4.send();
+      expect(await m5.sync.sentElsewhere(m5.input)).toBe(true);
+      expect(m5.composer()).toEqual(text(""));
+    });
+
     it("an unreachable host does not stop a send", async () => {
       const host = makeHost();
       const m4 = makeWindow(host);
       const m5 = makeWindow(host);
       await m4.type(text("shared"));
       await m5.sync.restore(m5.input);
-      host.transport.get = async () => {
+      host.transport.peek = async () => {
         throw new Error("offline");
       };
       expect(await m5.sync.sentElsewhere(m5.input)).toBe(false);

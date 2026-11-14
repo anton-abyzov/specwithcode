@@ -93,6 +93,19 @@ export const durableComposerDrafts = createDurableDraftSync({
       );
       return unwrap(result).draft;
     },
+    peek: async (environmentId, key) => {
+      // No read access is "could not look", never "no draft".
+      if (!readEnvironmentScope(environmentId as EnvironmentId, AuthOrchestrationReadScope)) {
+        throw new Error("No read access to this machine's drafts.");
+      }
+      const result = await runAtomCommand(
+        appAtomRegistry,
+        commands.get,
+        { environmentId: environmentId as EnvironmentId, input: { key, metadataOnly: true } },
+        quiet,
+      );
+      return unwrap(result).draft;
+    },
     put: async (environmentId, input) => {
       if (!readEnvironmentScope(environmentId as EnvironmentId, AuthOrchestrationOperateScope)) {
         throw new Error("This window may not save drafts to the host.");
@@ -402,14 +415,21 @@ export function holdDurableThreadDraft(target: ComposerThreadTarget): () => void
  */
 export async function durableThreadDraftSentElsewhere(
   target: ComposerThreadTarget,
-): Promise<boolean> {
+): Promise<"send" | "sent-elsewhere" | "edited"> {
+  const storeKey = composerTargetKey(target);
   const state = useComposerDraftStore.getState();
+  const before = state.draftsByThreadKey[storeKey];
   const durable = durableTargetForStoreKey(
-    composerTargetKey(target),
+    storeKey,
     (key) => state.draftThreadsByThreadKey[key]?.environmentId,
   );
   const input = durable ? openComposerInput(durable.environmentId, durable.key) : undefined;
-  return input ? durableComposerDrafts.sentElsewhere(input) : false;
+  if (!input) return "send";
+  if (await durableComposerDrafts.sentElsewhere(input)) return "sent-elsewhere";
+  // Typed while the host answered: the send's snapshot is older than the composer.
+  return useComposerDraftStore.getState().draftsByThreadKey[storeKey] === before
+    ? "send"
+    : "edited";
 }
 
 // ── Project coordinator composer ─────────────────────────────────────────
