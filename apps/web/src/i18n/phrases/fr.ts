@@ -4976,6 +4976,12 @@ export const fr: PhraseCatalog = {
   "Last time it was signed in.": "La dernière fois, il était connecté.",
   "Not signed in": "Non connecté",
   "Sign in with {account}": "Se connecter avec {account}",
+  "Switch account":
+    "Changer de compte",
+  "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
+    "C’est la connexion de la ligne de commande Codex sur cette machine. L’app Codex se connecte séparément, donc y changer de compte ne change rien ici.",
+  "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
+    "Vous utilisez un autre compte ChatGPT dans l’app Codex ? Elle se connecte séparément. Changez de compte pour l’utiliser ici.",
   "Turn it on to use it in chat.": "Activez-le pour l'utiliser dans le chat.",
   "On other machines": "Sur d’autres machines",
   "Reviewed by {model}": "Relu par {model}",

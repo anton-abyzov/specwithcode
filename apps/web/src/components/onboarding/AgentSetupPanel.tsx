@@ -4,6 +4,7 @@ import type {
   ServerConfig,
   ServerProvider,
 } from "@specweave-studio/contracts";
+import { codexSignInCanSwitch, signInAccountKey, signInFinished } from "./signInAccount";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { AuthTerminalOperateScope, ThreadId } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
@@ -41,12 +42,19 @@ export interface AgentTerminalSession {
    * when it did not. `tools` installs something agents need, such as Git.
    */
   readonly purpose: "signIn" | "install" | "tools";
+  /**
+   * Set when the agent was already signed in as this account and the sign-in is
+   * to change it: the panel is done when the machine reads a different account.
+   */
+  readonly switchFrom?: string | undefined;
   readonly keybindings: ServerConfig["keybindings"];
 }
 
+export { codexSignInCanSwitch, signInAccountKey };
+
 export type AgentPanelRequest = Pick<
   AgentTerminalSession,
-  "agent" | "agentName" | "command" | "purpose"
+  "agent" | "agentName" | "command" | "purpose" | "switchFrom"
 > & {
   readonly providerInstanceId?: ServerProvider["instanceId"];
 };
@@ -145,10 +153,12 @@ export function useAgentSetupPanel({
   // A sign-in in the panel is done when the machine reads the agent as signed in.
   const signInInstanceId =
     session?.purpose === "signIn" ? (session.providerInstanceId ?? null) : null;
-  const signedIn =
-    signInInstanceId !== null &&
-    providers?.find((provider) => provider.instanceId === signInInstanceId)?.auth.status ===
-      "authenticated";
+  const signInAuth =
+    signInInstanceId === null
+      ? undefined
+      : providers?.find((provider) => provider.instanceId === signInInstanceId)?.auth;
+  // An account switch starts signed in, so only another account ends it.
+  const signedIn = signInFinished(signInAuth, session?.switchFrom);
   if (signedIn) setSession(null);
   // The line about a sign-in that ended is about that sign-in only.
   if (

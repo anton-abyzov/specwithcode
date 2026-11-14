@@ -98,6 +98,57 @@ describe("ModelPickerUsageBand", () => {
     expect(markup).toContain("Signed in as pat@example.com");
   });
 
+  it("offers Switch account on a Codex account, and says why when it is out of room", () => {
+    const codex = {
+      ...entry,
+      displayName: "Codex",
+      snapshot: {
+        ...entry.snapshot,
+        driver: "codex",
+        auth: { status: "authenticated", type: "chatgpt", email: "pat@example.com" },
+      },
+    } as unknown as ProviderInstanceEntry;
+    const bedrock = {
+      ...codex,
+      snapshot: { ...codex.snapshot, auth: { status: "authenticated", type: "amazonBedrock" } },
+    } as unknown as ProviderInstanceEntry;
+    const blocked = usageIn(
+      { kind: "denied", resetsAt: null } as unknown as ModelAvailability,
+      "Codex is refusing new turns",
+    );
+    const markup = renderToStaticMarkup(
+      <ModelPickerUsageBand entry={codex} usage={blocked} onSwitchAccount={() => {}} />,
+    );
+    expect(markup).toContain("data-model-picker-switch-account");
+    expect(markup).toContain("It signs in separately");
+    expect(
+      renderToStaticMarkup(
+        <ModelPickerUsageBand entry={bedrock} usage={blocked} onSwitchAccount={() => {}} />,
+      ),
+    ).not.toContain("data-model-picker-switch-account");
+    const managed = {
+      ...codex,
+      snapshot: {
+        ...codex.snapshot,
+        auth: { status: "authenticated", type: "chatgpt", subscriptionSharing: true },
+      },
+    } as unknown as ProviderInstanceEntry;
+    expect(
+      renderToStaticMarkup(
+        <ModelPickerUsageBand entry={managed} usage={blocked} onSwitchAccount={() => {}} />,
+      ),
+    ).not.toContain("data-model-picker-switch-account");
+    // Nothing to open, or another provider: no link.
+    expect(
+      renderToStaticMarkup(<ModelPickerUsageBand entry={codex} usage={blocked} />),
+    ).not.toContain("data-model-picker-switch-account");
+    expect(
+      renderToStaticMarkup(
+        <ModelPickerUsageBand entry={entry} usage={blocked} onSwitchAccount={() => {}} />,
+      ),
+    ).not.toContain("data-model-picker-switch-account");
+  });
+
   it("shows no bars from the previous account while the account switches", () => {
     const markup = renderToStaticMarkup(
       <ModelPickerUsageBand

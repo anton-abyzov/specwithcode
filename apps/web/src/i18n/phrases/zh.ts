@@ -4742,6 +4742,12 @@ export const zh: PhraseCatalog = {
   "Last time it was signed in.": "上次已登录。",
   "Not signed in": "未登录",
   "Sign in with {account}": "使用 {account} 登录",
+  "Switch account":
+    "切换账号",
+  "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
+    "这是本机 Codex 命令行的登录。Codex 应用单独登录，在那里切换账号不会改变这里。",
+  "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
+    "在 Codex 应用里用的是另一个 ChatGPT 账号？它单独登录。切换账号即可在这里使用。",
   "Turn it on to use it in chat.": "开启后即可在聊天中使用。",
   "On other machines": "在其他机器上",
   "Reviewed by {model}": "由 {model} 审查",

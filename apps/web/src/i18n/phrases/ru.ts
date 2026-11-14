@@ -4934,6 +4934,12 @@ export const ru: PhraseCatalog = {
   "Last time it was signed in.": "В прошлый раз вход был выполнен.",
   "Not signed in": "Вход не выполнен",
   "Sign in with {account}": "Войти через {account}",
+  "Switch account":
+    "Сменить аккаунт",
+  "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
+    "Это вход командной строки Codex на этом компьютере. Приложение Codex входит отдельно, поэтому смена аккаунта там здесь ничего не меняет.",
+  "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
+    "В приложении Codex другой аккаунт ChatGPT? Оно входит отдельно. Смените аккаунт, чтобы использовать его здесь.",
   "Turn it on to use it in chat.": "Включите его, чтобы использовать в чате.",
   "On other machines": "На других компьютерах",
   "Reviewed by {model}": "Проверено: {model}",

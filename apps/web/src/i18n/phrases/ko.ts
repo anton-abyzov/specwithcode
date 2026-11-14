@@ -4880,6 +4880,12 @@ export const ko: PhraseCatalog = {
   "Last time it was signed in.": "지난번에는 로그인되어 있었습니다.",
   "Not signed in": "로그인 안 됨",
   "Sign in with {account}": "{account} 계정으로 로그인",
+  "Switch account":
+    "계정 전환",
+  "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.":
+    "이 컴퓨터의 Codex 명령줄 로그인입니다. Codex 앱은 따로 로그인하므로 거기서 계정을 바꿔도 여기는 바뀌지 않습니다.",
+  "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.":
+    "Codex 앱에서 다른 ChatGPT 계정을 쓰고 있나요? 앱은 따로 로그인합니다. 여기서 쓰려면 계정을 전환하세요.",
   "Turn it on to use it in chat.": "채팅에서 사용하려면 켜세요.",
   "On other machines": "다른 컴퓨터에 있음",
   "Reviewed by {model}": "{model} 검토 완료",

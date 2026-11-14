@@ -521,6 +521,35 @@ describe("model picker usage limits", () => {
       .find((node) => node.textContent === name)
       ?.getAttribute("data-disabled-reason") ?? null;
 
+  it("opens the selected Codex in Settings from Switch account, a focusable button", async () => {
+    const codexId = ProviderInstanceId.make("codex");
+    const codex = deriveProviderInstanceEntries([
+      {
+        ...ready.snapshot,
+        instanceId: codexId,
+        driver: ProviderDriverKind.make("codex"),
+        displayName: "Codex",
+        auth: { status: "authenticated", type: "chatgpt", email: "pat@example.com" },
+      },
+    ])[0]!;
+    const onOpenProviderSetup = vi.fn();
+    const { calls } = await mount({
+      activeInstanceId: codexId,
+      instanceEntries: [codex, ready],
+      modelOptionsByInstance: new Map([[codexId, [{ slug: "alpha", name: "Alpha" }]]]),
+      model: "alpha",
+      usage: spent,
+      onOpenProviderSetup,
+    });
+    const link = container.querySelector<HTMLButtonElement>("[data-model-picker-switch-account]")!;
+    expect(link.tagName).toBe("BUTTON");
+    expect(link.tabIndex).toBe(0);
+    expect(container.textContent).toContain("It signs in separately");
+    await act(async () => link.click());
+    expect(calls).toEqual(["close"]);
+    expect(onOpenProviderSetup).toHaveBeenCalledExactlyOnceWith(codexId);
+  });
+
   it("keeps a spent model selectable and names its warning", async () => {
     await mount({ model: "alpha", modelOptionsByInstance: options, usage: spent });
     expect(rowReason("Beta")).toBeNull();
