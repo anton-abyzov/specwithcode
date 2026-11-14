@@ -214,8 +214,10 @@ export function orchestratorCopies<T extends EnvironmentProject>(
   members: readonly T[],
   machineOf: (member: T) => string,
   startReady: (environmentId: T["environmentId"]) => boolean,
+  /** Old records of machines that joined again; the same set Settings passes. */
+  retired?: { has(environmentId: string): boolean },
 ): OrchestratorCopy[] {
-  const roles = copyRoles(members);
+  const roles = copyRoles(members, retired);
   const machineNamed = (environmentId: string) => {
     const member = members.find((candidate) => candidate.environmentId === environmentId);
     return member ? machineOf(member) : null;
