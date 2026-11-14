@@ -389,3 +389,17 @@ describe("heldCheckoutKey", () => {
     expect(heldCheckoutKey(held, "logical:one", [destination])).toBeNull();
   });
 });
+
+describe("roles with a machine that joined again", () => {
+  it("never lets the old record of a re-joined machine be Main in the menu", () => {
+    // m1's old record kept a higher epoch; m1 joined again as a new machine.
+    const old = linked("env-m1-old", "proj-old", "active", 9);
+    const current = linked("env-m4", "proj-a", "active", 3);
+    const name = (member: EnvironmentProject) => member.environmentId;
+    const without = orchestratorCopies([old, current], name, () => true);
+    expect(without.find((copy) => copy.main)?.key).toBe("env-m1-old:proj-old");
+    const retired = new Map([["env-m1-old", "env-m1"]]);
+    const copies = orchestratorCopies([old, current], name, () => true, retired);
+    expect(copies.find((copy) => copy.main)?.key).toBe("env-m4:proj-a");
+  });
+});

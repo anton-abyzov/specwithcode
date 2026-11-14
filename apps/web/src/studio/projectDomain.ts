@@ -287,10 +287,11 @@ export function copyRolesSummary<
   members: readonly T[],
   nameOf: (member: T) => string = (member) =>
     shortMachineName(member.environmentLabel ?? "Machine"),
+  retired?: { has(environmentId: string): boolean },
 ): string | null {
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
-  const roles = copyRoles(shared);
+  const roles = copyRoles(shared, retired);
   return shared
     .map((member) => {
       const role = roles.get(memberKey(member))?.role ?? "copy";

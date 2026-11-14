@@ -29,6 +29,15 @@ const copy = (
 describe("existingCopyOn", () => {
   const source = copy("s", "/Users/a/app", repo("/Users/a/app"), "logical-app");
 
+  it("never matches a record whose repository root is unknown", () => {
+    // A stale record of a subfolder (no root recorded) is not the source's root checkout.
+    const stale = copy("stale", "/home/b/app/packages/web", {
+      ...repo("/home/b/app"),
+      rootPath: undefined,
+    } as RepositoryIdentity);
+    expect(existingCopyOn({ source, candidates: [stale] })).toEqual({ kind: "none" });
+  });
+
   it("takes the linked copy before any same-repository checkout", () => {
     const linked = copy("l", "/home/b/elsewhere", null, "logical-app");
     const same = copy("r", "/home/b/app", repo("/home/b/app"));

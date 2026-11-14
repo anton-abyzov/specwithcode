@@ -43,12 +43,16 @@ const repositoryKeyOf = (project: CopyCandidate): string | null =>
 export const repositoryPlaceOf = (project: CopyCandidate): string | null =>
   repositoryRelativePathOf(project.workspaceRoot, project.repositoryIdentity?.rootPath);
 
-/** The same repository at the same place inside it. The source's place must be known. */
+/**
+ * The same repository at the same place inside it. Both places must be known: a record
+ * without its repository root could be a subfolder, so it is never the same copy.
+ */
 export function sameRepositoryPlace(source: CopyCandidate, candidate: CopyCandidate): boolean {
   const key = repositoryKeyOf(source);
   const place = repositoryPlaceOf(source);
-  if (key === null || place === null) return false;
-  return repositoryKeyOf(candidate) === key && (repositoryPlaceOf(candidate) ?? "") === place;
+  const there = repositoryPlaceOf(candidate);
+  if (key === null || place === null || there === null) return false;
+  return repositoryKeyOf(candidate) === key && there === place;
 }
 
 /**
