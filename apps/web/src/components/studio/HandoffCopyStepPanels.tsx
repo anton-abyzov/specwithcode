@@ -16,7 +16,8 @@ import type { LeftOnSource } from "./HandoffSourceChanges";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { formatBytes } from "../../studio/folderCopy";
 import { HandoffSecretsStep } from "./HandoffSecretsStep";
-import { CopyClassPicker, CopyPlanPreview, CopyProgress } from "./HandoffCopyPreview";
+import { CopyClassPicker, CopyPlanPreview } from "./HandoffCopyPreview";
+import { CopyProgressPanel } from "./CopyProgressPanel";
 import {
   planRepositoryChoices,
   secretFilesCopied,
@@ -26,7 +27,12 @@ import type { useCopyScope } from "./HandoffCopyScope";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopySetup, type CopyMachine } from "./HandoffCopySetup";
 import { HandoffCopyDone, HandoffCopyFailed, HandoffCopyUndone } from "./HandoffCopyDone";
-import { sourceProgressText, type CopyStage, type TransferBusy } from "./handoffCopySteps";
+import {
+  workingView,
+  type CopyRecompare,
+  type CopyStage,
+  type TransferBusy,
+} from "./handoffCopySteps";
 import { replacesNothing } from "./handoffCopyAuto";
 import type { CopyNotices } from "./handoffCopyNotices";
 import { CopyNextStep, CopyNoticesBlock, CopyWorkingHint } from "./HandoffCopyGuide";
@@ -93,6 +99,7 @@ export function HandoffCopyStepPanels({
   notices,
   next,
   working,
+  recompare = null,
   choices,
   lastCopy,
   onViewLast,
@@ -170,15 +177,22 @@ export function HandoffCopyStepPanels({
   readonly next: ReactNode;
   /** The one progress line while measuring, comparing, copying or moving. */
   readonly working: string | null;
+  /** Why the destination compares again, for the panel's note. */
+  readonly recompare?: CopyRecompare;
   /** Your choices, with its Change link, once a copy has started. */
   readonly choices: ReactNode;
   /** The last finished copy, kept for View and Undo while a new one is set up. */
   readonly lastCopy: { readonly targetFolder: string; readonly label: string } | null;
   readonly onViewLast: () => void;
 }) {
+  const view = working
+    ? workingView({ stage, sourceLabel, targetLabel, measured, copy, recompare })
+    : null;
   return (
     <>
-      {(stage === "setup" || stage === "scanning") && (
+      {/* Once a copy runs, its choices summary replaces the form: machines, folder and
+          options cannot change mid-copy, and account notices about other machines are noise. */}
+      {(stage === "setup" || (stage === "scanning" && pending === null)) && (
         <>
           {/* On top: a reopen after a finished copy shows it before the next copy's choices. */}
           {stage === "setup" && !pending && lastCopy && (
@@ -246,22 +260,18 @@ export function HandoffCopyStepPanels({
       )}
 
       {working && (
-        <div className="space-y-1.5">
-          {stage === "copying" && copy ? (
-            <CopyProgress status={copy} line={working} />
+        <div className="space-y-2">
+          {view ? (
+            <CopyProgressPanel
+              view={view}
+              sourceLabel={sourceLabel}
+              targetLabel={targetLabel}
+              startedAt={copy?.startedAt ?? null}
+              stepSlot={stage === "scanning" ? "copy-measuring" : "copy-working"}
+            />
           ) : (
-            <p
-              role="status"
-              aria-live="polite"
-              className="text-sm"
-              data-slot={stage === "scanning" ? "copy-measuring" : "copy-working"}
-            >
+            <p role="status" aria-live="polite" className="text-sm" data-slot="copy-working">
               {working}
-              {stage === "planning" && measured?.step && measured.step !== "listing" && (
-                <span className="block text-xs text-muted-foreground" data-slot="copy-source-step">
-                  {sourceProgressText(measured, sourceLabel)}
-                </span>
-              )}
             </p>
           )}
           {/* Moving the coordinator must finish here; everything else carries on closed. */}

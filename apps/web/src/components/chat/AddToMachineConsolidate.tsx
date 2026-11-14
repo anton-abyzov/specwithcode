@@ -264,7 +264,7 @@ export function AddToMachineConsolidate(props: {
           )}
 
           {!reviewing && !applied && !failed && copy.state !== "undone" && (
-            <CopyProgress status={copy} />
+            <CopyProgress status={copy} sourceLabel={sourceName} targetLabel={destName} />
           )}
 
           {failed && (

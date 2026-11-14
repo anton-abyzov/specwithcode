@@ -107,6 +107,7 @@ import { requestProjectSettings } from "../../../studio/projectSettingsRequests"
 import type { ProjectNameCheck } from "../../../studio/projectRename";
 import {
   copyActivityText,
+  overallFraction,
   requestCopyReview,
   useCopyActivities,
   useKeyedCopyActivity,
@@ -515,20 +516,18 @@ function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
 /** One project in the Projects list, with its move, pin and archive actions. */
 /** A thin bar along the row's bottom edge: how far a background copy is, or a sweep. */
 function CopyProgressLine({ activity }: { readonly activity: CopyActivity }) {
+  // The whole copy across its three phases, so the line never runs back to empty.
+  const fraction = overallFraction(activity);
   return (
     <span
       className="sws-copy-progress"
       data-waiting={activity.waiting || undefined}
-      data-indeterminate={(activity.fraction === null && !activity.waiting) || undefined}
+      data-indeterminate={(fraction === null && !activity.waiting) || undefined}
       aria-hidden
     >
       <span
         className="sws-copy-progress-fill"
-        style={
-          activity.fraction === null
-            ? undefined
-            : { width: `${Math.round(activity.fraction * 100)}%` }
-        }
+        style={fraction === null ? undefined : { width: `${Math.round(fraction * 100)}%` }}
       />
     </span>
   );

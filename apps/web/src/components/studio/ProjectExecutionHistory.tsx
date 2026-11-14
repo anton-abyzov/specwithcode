@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { requestConnectionRetry } from "../../connection/retryRequests";
 import { paneWords } from "../../studio/assistantTerms";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
@@ -142,6 +143,34 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
 
 const RAW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
 
+/** How often a shown offline notice asks its machine's connection to try again. */
+export const OFFLINE_RETRY_MS = 30_000;
+
+/**
+ * Tries the offline machine again now, and every 30 s while the notice shows. After the
+ * machine restarts (an update), its connection can otherwise wait up to 10 minutes.
+ */
+function OfflineRetry() {
+  useEffect(() => {
+    requestConnectionRetry();
+    const timer = window.setInterval(requestConnectionRetry, OFFLINE_RETRY_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <>
+      {" "}
+      <button
+        type="button"
+        className="underline underline-offset-2"
+        data-slot="offline-retry"
+        onClick={requestConnectionRetry}
+      >
+        Try again
+      </button>
+    </>
+  );
+}
+
 /** Also names declared hosts absent from the local catalog, so missing rows are never silently complete. */
 export function ProjectThreadAvailability({
   scopes,
@@ -186,6 +215,7 @@ export function ProjectThreadAvailability({
           >
             {environment ? `${name} is offline` : `This app is not connected to ${name}`} —{" "}
             {say("the thread list may be incomplete. Cached threads may be out of date.")}
+            {environment ? <OfflineRetry /> : null}
           </p>
         );
       })}

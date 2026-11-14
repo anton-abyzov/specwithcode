@@ -897,11 +897,13 @@ it("shows a background copy's progress app wide and clears it once the copy is d
       ),
     );
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(currentCopyActivities().get("m4:source")).toEqual({
+    expect(currentCopyActivities().get("m4:source")).toMatchObject({
       machine: "ministorm",
       label: "Copying files",
       fraction: 0.25,
       waiting: false,
+      // The same phase view the dialog shows, for the banner's track and numbers.
+      progress: { phase: "send", step: "Sending files to ministorm", fraction: 0.25 },
     });
     phase = "done";
     await act(async () => vi.advanceTimersByTimeAsync(2000));

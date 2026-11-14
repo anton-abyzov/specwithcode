@@ -14,7 +14,10 @@ const state = vi.hoisted(() => ({
   missingHistory: false,
   olderLoaded: false,
   checking: new Set<string>(),
+  m4Offline: false,
+  retry: vi.fn(),
 }));
+vi.mock("../../connection/retryRequests", () => ({ requestConnectionRetry: state.retry }));
 vi.mock("../../studio/machineChecking", () => ({
   useMachineStillChecking: () => (environmentId: string) => state.checking.has(environmentId),
 }));
@@ -22,7 +25,13 @@ vi.mock("../../state/environments", () => ({
   useEnvironment: (id: string) =>
     id === "m3" ? null : { label: id.toUpperCase(), connection: { phase: "connected" } },
   useEnvironments: () => ({
-    environments: [{ environmentId: "m4", label: "M4", connection: { phase: "connected" } }],
+    environments: [
+      {
+        environmentId: "m4",
+        label: "M4",
+        connection: { phase: state.m4Offline ? "disconnected" : "connected" },
+      },
+    ],
   }),
 }));
 vi.mock("../../state/entities", async () => {
@@ -281,4 +290,35 @@ it("renders the banner as its own slot, so the coordinator page gives it a row o
   const banner = container.querySelector('[aria-label="Coordinator handoff history"]');
   expect(banner?.getAttribute("data-slot")).toBe("handoff-history");
   expect(banner?.textContent).toContain("Continued from another machine.");
+});
+
+it("tries an offline machine again now, on Try again and every 30 s while it shows", async () => {
+  vi.useFakeTimers();
+  state.m4Offline = true;
+  state.retry.mockClear();
+  try {
+    await act(async () => root.render(<ProjectThreadAvailability scopes={[scopes[0]!]} />));
+    expect(container.textContent).toContain("M4 is offline");
+    // A machine back from an update is tried at once, not after its long retry delay.
+    expect(state.retry).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-slot="offline-retry"]')!.click(),
+    );
+    expect(state.retry).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(state.retry).toHaveBeenCalledTimes(3);
+    // Unmounted (back online): no more tries.
+    await act(async () => root.render(<></>));
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(state.retry).toHaveBeenCalledTimes(3);
+  } finally {
+    state.m4Offline = false;
+    vi.useRealTimers();
+  }
+});
+
+it("offers no Try again for a machine this app was never connected to", async () => {
+  await act(async () => root.render(<ProjectThreadAvailability scopes={[scopes[2]!]} />));
+  expect(container.textContent).toContain("This app is not connected to m3");
+  expect(container.querySelector('[data-slot="offline-retry"]')).toBeNull();
 });

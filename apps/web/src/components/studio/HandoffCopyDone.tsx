@@ -11,7 +11,9 @@ import type {
 } from "@specweave-studio/contracts";
 import { retentionMovedText } from "./handoffRetention";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
-import { copiedProjectFolder, copyDurationText } from "../../studio/folderCopy";
+import { copiedProjectFolder, copyDurationText, formatBytes } from "../../studio/folderCopy";
+import { statusProgressView } from "../../studio/copyProgress";
+import { CopyPhaseTrack } from "./CopyProgressPanel";
 import { EllipsisIcon } from "lucide-react";
 import { MachineReadinessChecklist } from "../settings/MachineReadinessChecklist";
 import { Button } from "../ui/button";
@@ -93,8 +95,17 @@ export function HandoffCopyDone({
   const titled = useProjectMoveDialog() !== null;
   const moved = mode === "copy-and-move" && contextTransferred;
   const duration = copyDurationText(copy);
+  const finished = statusProgressView(copy, sourceLabel, targetLabel);
+  // "Sent 7.5 GB in 121,868 files": what moved, without what was already there.
+  const sent =
+    finished?.bytes && finished.files && finished.files.done > 0
+      ? `Sent ${formatBytes(finished.bytes.done)} in ${finished.files.done.toLocaleString()} ${finished.files.done === 1 ? "file" : "files"}`
+      : null;
   return (
     <div className="space-y-3 text-sm" data-slot="copy-done">
+      {finished && (
+        <CopyPhaseTrack view={finished} sourceLabel={sourceLabel} targetLabel={targetLabel} />
+      )}
       {!titled && (
         <p className="text-base font-medium wrap-anywhere" data-slot="copy-done-title">
           {project.title} is on {targetLabel}
@@ -132,9 +143,13 @@ export function HandoffCopyDone({
               : copy.targetFolder}
           </span>
         </p>
-        {duration && (
-          <p className="text-xs text-muted-foreground tabular-nums" data-slot="copy-done-duration">
-            {duration}
+        {(duration || sent) && (
+          <p
+            className="flex flex-wrap gap-x-4 text-xs text-muted-foreground tabular-nums"
+            data-slot="copy-done-duration"
+          >
+            {sent && <span>{sent}</span>}
+            {duration && <span>{duration}</span>}
           </p>
         )}
       </div>
@@ -450,8 +465,12 @@ export function HandoffCopyFailed({
         undoPreview={undoPreview}
       />
     );
+  const stopped = statusProgressView(copy, sourceLabel, targetLabel);
   return (
     <div className="space-y-2 text-sm">
+      {stopped?.outcome === "failed" && (
+        <CopyPhaseTrack view={stopped} sourceLabel={sourceLabel} targetLabel={targetLabel} />
+      )}
       <p role="alert" className="wrap-anywhere text-destructive-foreground">
         {copy.state === "applied"
           ? `The files are on ${targetLabel}, but the coordinator did not start there.`
