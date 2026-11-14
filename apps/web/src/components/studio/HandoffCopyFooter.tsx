@@ -62,7 +62,7 @@ function SetupActions({
 function RunInBackgroundButton() {
   const close = useProjectMoveDialog()?.close ?? null;
   return close ? (
-    <Button data-slot="copy-run-in-background" onClick={close}>
+    <Button variant="outline" data-slot="copy-run-in-background" onClick={close}>
       Run in background
     </Button>
   ) : null;
