@@ -648,6 +648,14 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
     });
     for (const [index, child] of children.entries()) {
       if (skipGitEntry && child.name === ".git") continue;
+      // `.GIT` and other spellings are `.git` on a case-insensitive disk, where
+      // they would arrive as unchecked Git data.
+      if (child.name !== ".git" && child.name.toLowerCase() === ".git") {
+        warnings.push(
+          `${relativeOf(realRoot, absolute)} has a ${child.name} entry; it is not copied, since some disks read it as .git.`,
+        );
+        continue;
+      }
       const location = NodePath.join(absolute, child.name);
       const relative = relativeOf(realRoot, location);
       if (!safe[index]) {

@@ -296,20 +296,32 @@ async function settingsDiffer(
       configs.set(relativeOf(file), isMain);
     }
   }
-  for (const path of copiedEntries.keys())
-    if (path.startsWith(`${prefix}/`) && /(?:^|\/)config(?:\.worktree)?$/.test(path)) {
-      const parent = path.slice(0, path.lastIndexOf("/"));
-      if (parent === prefix || parent === `${prefix}/worktrees/${parent.split("/").at(-1)}`)
-        configs.set(path, true);
-      else if (copiedEntries.has(`${parent}/HEAD`) || /\/worktrees\/[^/]+$/.test(parent))
-        configs.set(path, configs.get(path) ?? false);
-    }
+  // A copied Git directory under `modules/`: its HEAD and objects travelled.
+  const copiedGitDir = (dir: string) => {
+    if (!dir.startsWith(`${prefix}/modules/`) || !copiedEntries.has(`${dir}/HEAD`)) return false;
+    if (copiedEntries.has(`${dir}/objects`)) return true;
+    for (const path of copiedEntries.keys()) if (path.startsWith(`${dir}/objects/`)) return true;
+    return false;
+  };
+  for (const path of copiedEntries.keys()) {
+    if (!path.startsWith(`${prefix}/`)) continue;
+    const match = /^(.*?)(?:\/worktrees\/[^/]+)?\/config(?:\.worktree)?$/.exec(path);
+    if (match === null) continue;
+    const owner = match[1]!;
+    const isWorktreeAdmin = path.slice(owner.length).startsWith("/worktrees/");
+    if (isWorktreeAdmin && !path.endsWith("/config.worktree")) continue;
+    // Only configs Git reads: never a ref or log that happens to be named config.
+    if (owner === prefix) configs.set(path, true);
+    else if (copiedGitDir(owner)) configs.set(path, configs.get(path) ?? false);
+  }
   for (const [path, isMain] of configs) {
     const copied = copiedEntries.get(path)?.sha256 ?? null;
     const live = NodePath.join(folder, path);
     const raw = await smallFileHash(live);
     if (raw === copied) continue;
-    const safe = await safeGitConfigBytes(live, isMain ? null : folder);
+    // A file Git cannot read as config is a change, not an error.
+    const safe = await safeGitConfigBytes(live, isMain ? null : folder).catch(() => undefined);
+    if (safe === undefined) return true;
     // An empty safe config the copy left out is no change either.
     if (copied === null && (safe === null || safe.length === 0)) continue;
     if ((safe === null ? null : sha256Hex(safe)) !== copied) return true;

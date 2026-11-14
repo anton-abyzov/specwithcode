@@ -295,6 +295,45 @@ describe("copied repositories", () => {
     expect(NodeFS.readFileSync(configFile, "utf8")).not.toContain("evil-clean");
   });
 
+  it("finds a submodule a planted repository at its name prefix would hide, and drops case aliases", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const gitDir = NodePath.join(main, ".git");
+    const evil = "[core]\n\tfsmonitor = evil-fsmonitor\n";
+    // A real submodule `a/lib`, and a repository planted at `modules/a`.
+    for (const dir of ["modules/a", "modules/a/lib"]) {
+      write(NodePath.join(gitDir, dir, "HEAD"), "ref: refs/heads/main\n");
+      NodeFS.mkdirSync(NodePath.join(gitDir, dir, "objects"), { recursive: true });
+      write(NodePath.join(gitDir, dir, "config"), evil);
+    }
+    // Aliases exist only on a case-sensitive disk (Linux); macOS folds them already.
+    write(NodePath.join(root, "probe"), "");
+    const caseSensitive = !NodeFS.existsSync(NodePath.join(root, "PROBE"));
+    write(NodePath.join(gitDir, "HOOKS/post-checkout"), "#!/bin/sh\nexit 1\n", 0o755);
+    write(NodePath.join(gitDir, "modules/a/lib/Hooks/pre-commit"), "#!/bin/sh\nexit 1\n", 0o755);
+    write(NodePath.join(gitDir, "Modules/x/HEAD"), "ref: refs/heads/main\n");
+    await sanitizeCopiedGitDir(gitDir, main);
+    for (const dir of ["modules/a", "modules/a/lib"])
+      expect(NodeFS.readFileSync(NodePath.join(gitDir, dir, "config"), "utf8")).not.toContain(
+        "evil",
+      );
+    const names = (dir: string) => NodeFS.readdirSync(dir);
+    expect(names(gitDir)).not.toContain("HOOKS");
+    expect(names(NodePath.join(gitDir, "modules/a/lib"))).not.toContain("Hooks");
+    if (caseSensitive) expect(names(gitDir)).not.toContain("Modules");
+    expect(isUncarriedGitPath("HOOKS", true)).toBe(true);
+  });
+
+  it("does not copy a .GIT folder some disks read as .git", async () => {
+    const root = tempRoot();
+    const folder = NodePath.join(root, "folder");
+    write(NodePath.join(folder, "file.txt"), "kept\n");
+    write(NodePath.join(folder, "sub/.GIT/config"), "[core]\n\tfsmonitor = evil-fsmonitor\n");
+    const scan = await scanFolder(folder);
+    expect(scan.entries.some((entry) => entry.path.toLowerCase().includes(".git"))).toBe(false);
+    expect(scan.warnings.join(" ")).toContain("some disks read it as .git");
+  });
+
   it("refuses a pending rebase that runs commands", async () => {
     const root = tempRoot();
     const main = repository(root);

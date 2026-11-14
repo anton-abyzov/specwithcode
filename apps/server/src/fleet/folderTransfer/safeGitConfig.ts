@@ -288,8 +288,6 @@ export async function safeGitConfigBytes(
   }
 }
 
-const MAX_MODULE_DEPTH = 64;
-
 /** A Git directory has a HEAD file and an objects folder; a name prefix has neither. */
 async function isGitDirectory(dir: string): Promise<boolean> {
   const head = await NodeFSP.lstat(NodePath.join(dir, "HEAD")).catch(() => null);
@@ -298,29 +296,27 @@ async function isGitDirectory(dir: string): Promise<boolean> {
 }
 
 /**
- * Every Git directory in a repository's Git folder: the folder itself, then
- * each submodule's under `modules/` (names may hold slashes, so a folder
- * without HEAD is a name prefix and is entered; a folder with HEAD is a Git
- * directory and only its own `modules/` is entered). Fails rather than skip
- * a nesting deeper than any real one.
+ * Every Git directory a copied `.git` holds: itself and each one anywhere
+ * under `modules/` (a HEAD file and an objects folder), however submodule
+ * names nest or overlap. No folder is trusted as a boundary: a repository
+ * planted at a name prefix cannot hide a deeper one. Links are not followed.
  */
 export async function gitDirectoriesIn(gitDir: string): Promise<Array<string>> {
-  const found = [gitDir];
-  const walk = async (dir: string, depth: number): Promise<void> => {
-    if (depth > MAX_MODULE_DEPTH)
-      throw new Error(`Submodules under ${dir} nest too deep to copy safely.`);
-    const children = await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => []);
-    for (const child of children) {
-      if (!child.isDirectory()) continue;
-      const nested = NodePath.join(dir, child.name);
-      if (await isGitDirectory(nested)) {
-        found.push(nested);
-        await walk(NodePath.join(nested, "modules"), depth + 1);
-      } else await walk(nested, depth + 1);
-    }
-  };
-  await walk(NodePath.join(gitDir, "modules"), 0);
-  return found;
+  const modules = NodePath.join(gitDir, "modules");
+  const entries = await NodeFSP.readdir(modules, { withFileTypes: true, recursive: true }).catch(
+    (cause: NodeJS.ErrnoException) => {
+      if (cause?.code === "ENOENT" || cause?.code === "ENOTDIR") return [];
+      throw cause;
+    },
+  );
+  const found: Array<string> = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = NodePath.join(entry.parentPath, entry.name);
+    if (await isGitDirectory(dir)) found.push(dir);
+  }
+  found.sort((left, right) => left.length - right.length || (left < right ? -1 : 1));
+  return [gitDir, ...found];
 }
 
 /** The config files of one Git directory: its own, and each worktree's `config.worktree`. */
@@ -361,6 +357,47 @@ async function refuseCommandTodo(dir: string): Promise<void> {
  * pending rebase with `exec` lines refuses the copy. `root` is the copied
  * folder `core.worktree` must stay inside.
  */
+/**
+ * Names Git reads inside a Git directory. Another spelling of one (`HOOKS`,
+ * `Config`) is plain data on a case-sensitive disk but becomes that entry on a
+ * case-insensitive one, so it is removed rather than carried unchecked.
+ */
+const GIT_NAMES = [
+  "HEAD",
+  "config",
+  "config.worktree",
+  "hooks",
+  "commondir",
+  "gitdir",
+  "remotes",
+  "branches",
+  "info",
+  "objects",
+  "refs",
+  "logs",
+  "modules",
+  "worktrees",
+  "packed-refs",
+  "index",
+  "shallow",
+  "sequencer",
+  "rebase-merge",
+  "rebase-apply",
+  "attributes",
+  "exclude",
+  "sparse-checkout",
+  "alternates",
+];
+const GIT_NAME_OF = new Map(GIT_NAMES.map((name) => [name.toLowerCase(), name]));
+
+async function removeCaseAliases(dir: string): Promise<void> {
+  for (const entry of await NodeFSP.readdir(dir).catch(() => [] as Array<string>)) {
+    const canonical = GIT_NAME_OF.get(entry.toLowerCase());
+    if (canonical !== undefined && canonical !== entry)
+      await NodeFSP.rm(NodePath.join(dir, entry), { recursive: true, force: true });
+  }
+}
+
 export async function sanitizeCopiedGitDir(
   gitDir: string,
   root: string,
@@ -370,6 +407,21 @@ export async function sanitizeCopiedGitDir(
     readonly sourceRoot?: string;
   } = {},
 ): Promise<void> {
+  // Aliases first, so the walk below sees only the names Git will read.
+  const aliasDirs = async (dir: string) => {
+    const dirs = [dir, NodePath.join(dir, "info"), NodePath.join(dir, "objects", "info")];
+    for (const admin of await NodeFSP.readdir(NodePath.join(dir, "worktrees"), {
+      withFileTypes: true,
+    }).catch(() => []))
+      if (admin.isDirectory()) {
+        const path = NodePath.join(dir, "worktrees", admin.name);
+        dirs.push(path, NodePath.join(path, "info"));
+      }
+    return dirs;
+  };
+  await removeCaseAliases(gitDir);
+  for (const dir of await gitDirectoriesIn(gitDir))
+    for (const path of await aliasDirs(dir)) await removeCaseAliases(path);
   for (const dir of await gitDirectoriesIn(gitDir)) {
     await refuseCommandTodo(dir);
     for (const name of ["hooks", "commondir", "remotes", "branches"])
@@ -387,5 +439,5 @@ export async function sanitizeCopiedGitDir(
 
 /** Git directory parts not copied at all: the main hooks folder (removed again by sanitizing). */
 export function isUncarriedGitPath(relative: string, isDirectory: boolean): boolean {
-  return isDirectory && relative === "hooks";
+  return isDirectory && relative.toLowerCase() === "hooks";
 }

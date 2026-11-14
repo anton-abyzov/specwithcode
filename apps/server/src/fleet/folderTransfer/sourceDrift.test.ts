@@ -258,6 +258,19 @@ it("compares Git settings as the copy carried them: submodule rules, no uncarrie
   expect(await changed()).toEqual(["."]);
 });
 
+it("reads a remote branch named config as a ref, not a Git setting", async () => {
+  git(folder, "update-ref", "refs/remotes/origin/HEAD", "HEAD");
+  git(folder, "update-ref", "refs/remotes/origin/config", "HEAD");
+  await committed();
+  write(Path.join(folder, "docs/guide.md"), "guide, edited\n");
+  git(folder, "commit", "-qam", "second");
+  git(folder, "update-ref", "refs/remotes/origin/config", "HEAD");
+  const drift = await sources.driftSince(id);
+  expect(
+    drift.rows.some((row) => row.kind === "repository" && row.repository?.settingsChanged),
+  ).toBe(false);
+});
+
 it.skipIf(process.platform === "win32")(
   "lists a folder holding a new file it cannot copy, not nothing",
   async () => {
