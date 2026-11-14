@@ -64,6 +64,14 @@ const copyStatus = (state: string, mode = "copy-only") => ({
   unstable: [],
 });
 
+/** The done toast's finished three-phase track. */
+const finishedTrack = {
+  progress: 1,
+  progressSegments: 3,
+  progressTone: "success",
+  progressLabel: "Copy progress",
+};
+
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
@@ -194,6 +202,7 @@ it("asks to reopen the dialog to finish linking a copy-only copy", async () => {
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
       },
     ]);
   } finally {
@@ -306,6 +315,7 @@ it("carries a one-click copy from measured through approval while the dialog is 
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
       },
     ]);
   } finally {
@@ -407,6 +417,7 @@ it("approves a Replace all left running once the re-compare has nothing open, an
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
         description:
           "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
       },

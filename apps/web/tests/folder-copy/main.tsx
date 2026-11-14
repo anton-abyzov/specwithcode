@@ -1,6 +1,7 @@
 import { PreviewClarity } from "./previewClarity";
 import { ProgressGallery } from "./progressGallery";
 import { ToastGallery } from "./toastGallery";
+import { MotionScene } from "./motionScene";
 import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import { HandoffFolderCopy } from "../../src/components/studio/HandoffFolderCopy";
@@ -153,6 +154,8 @@ function Fixture() {
 createRoot(document.getElementById("root")!).render(
   params.has("progress") ? (
     <ProgressGallery />
+  ) : params.has("motion") ? (
+    <MotionScene />
   ) : params.has("toasts") ? (
     <ToastGallery />
   ) : params.has("preview-clarity") ? (

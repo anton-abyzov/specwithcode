@@ -30,6 +30,7 @@ import {
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
+import { ToastProgress } from "./toastProgress";
 
 export type ThreadToastData = {
   threadRef?: ScopedThreadRef | null;
@@ -41,6 +42,14 @@ export type ThreadToastData = {
   hideCopyButton?: boolean;
   /** 0 to 1: one progress bar under the description. */
   progress?: number;
+  /** Draws the bar as this many equal phases, like the copy's track. */
+  progressSegments?: number;
+  /** Work is moving: the running segment carries a sheen. */
+  progressLive?: boolean;
+  /** "success": the finished bar turns to success, segment by segment. */
+  progressTone?: "success";
+  /** The bar's accessible name; "Update progress" when unset. */
+  progressLabel?: string;
   additionalActions?: ReadonlyArray<{
     id: string;
     props: ComponentPropsWithoutRef<"button">;
@@ -196,22 +205,7 @@ function ToastDescriptionAndExpandable({
     return (
       <>
         <Toast.Description className={descriptionClassName} data-slot="toast-description" />
-        {toastData?.progress === undefined ? null : (
-          <div
-            aria-label="Update progress"
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={Math.round(toastData.progress * 100)}
-            className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted"
-            data-slot="toast-progress"
-            role="progressbar"
-          >
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-700 ease-out motion-reduce:transition-none"
-              style={{ width: `${Math.round(toastData.progress * 100)}%` }}
-            />
-          </div>
-        )}
+        {toastData?.progress === undefined ? null : <ToastProgress data={toastData} />}
       </>
     );
   }

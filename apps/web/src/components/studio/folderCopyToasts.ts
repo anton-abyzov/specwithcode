@@ -99,7 +99,15 @@ export function copyToastOptions(
     data: {
       hideCopyButton: true,
       onClose,
-      ...(fraction === null ? {} : { progress: fraction }),
+      ...(fraction === null
+        ? {}
+        : {
+            progress: fraction,
+            // The dialog's three phases, with the sheen while bytes move.
+            progressSegments: 3,
+            progressLive: rate !== null,
+            progressLabel: "Copy progress",
+          }),
     },
   });
 }

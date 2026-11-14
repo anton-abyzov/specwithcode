@@ -164,6 +164,13 @@ export function announceCopy(
           : status.mode === "copy-and-move"
             ? `Files are copied to ${machine}. ${REOPEN} to move the coordinator.`
             : `Copy to ${machine} is done. ${REOPEN} to finish setting it up.`,
+        // The finished track, turning to success phase by phase as in the dialog.
+        data: {
+          progress: 1,
+          progressSegments: 3,
+          progressTone: "success",
+          progressLabel: "Copy progress",
+        },
         ...(openDialog || left
           ? {
               description: [
