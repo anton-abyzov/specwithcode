@@ -501,6 +501,7 @@ export function ProjectWorkspaceSettings({
                         {(worktrees) => (
                           <ProjectFolderChange
                             project={project}
+                            members={iconCheckouts}
                             disabled={disabled}
                             blockedReason={
                               dirty

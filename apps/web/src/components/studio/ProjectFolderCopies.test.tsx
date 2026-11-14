@@ -68,6 +68,45 @@ it("lists the same logical project on other machines, never by path", () => {
   expect(otherProjectCopies({ ...here, workspaceSettings: null } as never, [m5])).toEqual([]);
 });
 
+it("lists the copies the sidebar groups as this project even when they are not linked", () => {
+  const unlinked = (environmentId: string, workspaceRoot: string) =>
+    ({ ...copy(environmentId, workspaceRoot), workspaceSettings: null }) as unknown as EnvironmentProject;
+  const m1Copy = unlinked("m1", "/Users/me/Projects/app-fleet");
+  const m4Copy = unlinked("m4", "/Users/me/Projects/app");
+  const stranger = unlinked("m5", "/Users/me/Projects/app");
+  const all = [m1Copy, m4Copy, stranger];
+  expect(otherProjectCopies(m1Copy, all, [m1Copy, m4Copy])).toEqual([m4Copy]);
+  expect(otherProjectCopies(m1Copy, all)).toEqual([]);
+  expect(otherProjectCopies(here, state.projects as EnvironmentProject[], [here, m5])).toEqual([
+    m5,
+    m1,
+  ]);
+});
+
+it("shows an unlinked member's folder in the list", async () => {
+  const m1Copy = {
+    ...copy("m1", "/Users/me/Projects/app-fleet"),
+    workspaceSettings: null,
+  } as unknown as EnvironmentProject;
+  const m4Copy = {
+    ...copy("m4", "/Users/me/Projects/sw-app"),
+    workspaceSettings: null,
+  } as unknown as EnvironmentProject;
+  state.projects = [m1Copy, m4Copy];
+  await act(async () =>
+    root.render(
+      <ProjectFolderCopies
+        project={m1Copy}
+        members={[m1Copy, m4Copy]}
+        disabled={false}
+        renderChange={change}
+      />,
+    ),
+  );
+  expect(row("m4")?.textContent).toContain("/Users/me/Projects/sw-app");
+  expect(row("m1")).toBeNull();
+});
+
 it("names each other machine with its folder", async () => {
   await show();
   expect(row("m5")?.textContent).toContain("M5");
