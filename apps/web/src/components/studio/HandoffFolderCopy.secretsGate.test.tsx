@@ -204,3 +204,27 @@ it("keeps the person's secrets choice for a window that may send them", async ()
   await click("Copy to M3");
   expect(sentSecrets()).toEqual([[".env"]]);
 });
+
+it("approves without secrets from a window that may not send them, so nothing staged travels", async () => {
+  state.sourceAccess = "denied";
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await click("Copy to M3");
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String), withoutSecrets: true });
+});
+
+it("approves with the secrets choice from a window that may send them", async () => {
+  state.sourceAccess = "granted";
+  statuses = [copyStatus("previewed"), copyStatus("applied")];
+  await mount();
+  await click("Copy to M3");
+  await click("Copy to M3");
+  const approval = state.calls.find(([name]) => name === "copyApprove")![1] as {
+    input: Record<string, unknown>;
+  };
+  expect(approval.input).toEqual({ operationId: expect.any(String) });
+});

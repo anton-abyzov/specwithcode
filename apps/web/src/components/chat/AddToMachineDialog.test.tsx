@@ -414,6 +414,8 @@ it("leaves secrets on the source in a window that may not send them", async () =
 
 it("links and consolidates without sending secrets from a window that may not send them", async () => {
   state.sourceAccess = "denied";
+  // The source reports nothing staged, so there is nothing to take off.
+  state.handlers.copySourceStatus = () => ({ state: "ready", secrets: null });
   const copyStatus = (copyState: string) => ({
     operationId: "00000000-0000-4000-8000-000000000001",
     state: copyState,
@@ -436,5 +438,8 @@ it("links and consolidates without sending secrets from a window that may not se
   await act(async () => button("Link and consolidate")!.click());
   await act(async () => button("Apply and link")!.click());
   expect(calls("copySecrets")).toEqual([]);
-  expect(calls("copyApprove")).toHaveLength(1);
+  // The destination takes no secrets, even ones an earlier allowed attempt staged.
+  expect(calls("copyApprove")).toEqual([
+    expect.objectContaining({ input: expect.objectContaining({ withoutSecrets: true }) }),
+  ]);
 });

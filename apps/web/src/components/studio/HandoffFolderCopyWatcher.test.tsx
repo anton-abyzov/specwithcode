@@ -629,40 +629,75 @@ it("waits for the person when the secrets choice cannot be sent", async () => {
   }
 });
 
-for (const staged of [true, false])
-  it(`from a window that may not send secrets, ${staged ? "takes staged ones off" : "sends nothing"} before approving`, async () => {
-    vi.useFakeTimers();
-    try {
-      state.sourceAccess = "denied";
-      pointer({ auto: true });
-      state.handlers.copyStatus = () => previewed([row()]);
-      state.handlers.copySourceStatus = () => ({
-        state: "ready",
-        summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
-        progress: null,
-        error: null,
-        secrets: staged
-          ? { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" }
-          : null,
-      });
-      const sent: unknown[] = [];
-      state.handlers.copySecrets = (request) => {
-        sent.push((request as { input: { paths: string[] } }).input.paths);
-        return { state: "ready" };
-      };
-      let approvals = 0;
-      state.handlers.copyApprove = () => {
-        approvals += 1;
-        return copyStatus("approved");
-      };
-      await renderWatcher();
-      await act(async () => vi.advanceTimersByTimeAsync(2000));
-      expect(sent).toEqual(staged ? [[]] : []);
-      expect(approvals).toBe(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+it.each([
+  { staged: true, does: "takes staged ones off" },
+  { staged: false, does: "sends nothing" },
+])("from a window that may not send secrets, $does before approving", async ({ staged }) => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = "denied";
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+      secrets: staged
+        ? { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" }
+        : null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(sent).toEqual(staged ? [[]] : []);
+    expect(approvals).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { access: "granted" as const, how: "with the secrets choice" },
+  { access: "denied" as const, how: "without secrets from a window that may not send them" },
+])("approves a Replace all left running $how", async ({ access }) => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = access;
+    pointer({ replaceAll: true, secrets: { included: true, out: [] } });
+    state.handlers.copyStatus = () =>
+      previewed([row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    const inputs: unknown[] = [];
+    state.handlers.copyApprove = (request) => {
+      inputs.push((request as { input: unknown }).input);
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(inputs[0]).toEqual(
+      access === "denied"
+        ? { operationId: expect.any(String), withoutSecrets: true }
+        : { operationId: expect.any(String) },
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("waits for the person when staged secrets cannot be taken off from that window", async () => {
   vi.useFakeTimers();

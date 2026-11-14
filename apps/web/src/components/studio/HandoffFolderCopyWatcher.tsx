@@ -25,7 +25,12 @@ import {
   pendingSecrets,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
-import { secretsBlockedNow, withdrawStagedSecrets, withoutSecrets } from "./useSecretsGate";
+import {
+  approveInput,
+  secretsBlockedNow,
+  withdrawStagedSecrets,
+  withoutSecrets,
+} from "./useSecretsGate";
 import { sendableSecrets } from "./handoffCopySecrets";
 import {
   copyStartInput,
@@ -362,7 +367,9 @@ export function HandoffFolderCopyWatcher({
       }
       if (!saved.replaceAll && !(await stageSecrets(previewed))) return "ask" as const;
       if (stopped || !unchanged(saved)) return "ask" as const;
-      const approved = await approve({ environmentId: destination, input: { operationId } });
+      // Approved without secrets when this window may not send them or the choice leaves them.
+      const input = approveInput(operationId, environmentId, pendingSecrets(saved).included);
+      const approved = await approve({ environmentId: destination, input });
       if (approved._tag === "Success") return "again" as const;
       // The approval may have landed although its answer was lost.
       const current = await status({ environmentId: destination, input: { operationId } });

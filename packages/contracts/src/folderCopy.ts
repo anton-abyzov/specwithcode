@@ -287,6 +287,16 @@ export const FolderCopySourceStatusInput = Schema.Struct({
 export type FolderCopySourceStatusInput = typeof FolderCopySourceStatusInput.Type;
 export const FolderCopyOperationInput = Schema.Struct({ operationId: MachineHandoffOperationId });
 export type FolderCopyOperationInput = typeof FolderCopyOperationInput.Type;
+/**
+ * Approves a previewed copy. `withoutSecrets` tells the destination to take no secret
+ * files, whatever the source has staged: a window that may not send secrets approves this
+ * way, so a list staged earlier or meanwhile never travels. Older destinations ignore it.
+ */
+export const FolderCopyApproveInput = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  withoutSecrets: Schema.optional(Schema.Boolean),
+});
+export type FolderCopyApproveInput = typeof FolderCopyApproveInput.Type;
 export const FolderCopyCancelInput = Schema.Struct({
   operationId: MachineHandoffOperationId,
   reason: bounded(400),

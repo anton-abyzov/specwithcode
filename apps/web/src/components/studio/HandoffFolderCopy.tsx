@@ -48,7 +48,7 @@ import {
 } from "./handoffFolderCopyPending";
 import type { CopyMachine } from "./HandoffCopySetup";
 import { copyHeld } from "./HandoffCopyDone";
-import { sendSecretsOrWithdraw, useSecretsGate } from "./useSecretsGate";
+import { approveInput, sendSecretsOrWithdraw, useSecretsGate } from "./useSecretsGate";
 import { messageOf } from "./useCoordinatorTransfer";
 import { useCoordinatorMove } from "./useCoordinatorMove";
 import {
@@ -925,7 +925,12 @@ export function HandoffFolderCopy({
     if (!secretsSent) await sendTickedSecrets(operationId);
     setStage("copying");
     try {
-      setCopy(unwrap(await approve({ environmentId, input: { operationId } })));
+      const input = approveInput(
+        operationId,
+        project.environmentId,
+        pendingSecrets(saved).included,
+      );
+      setCopy(unwrap(await approve({ environmentId, input })));
     } catch (cause) {
       let current: FolderCopyStatus | null = null;
       try {
@@ -961,10 +966,8 @@ export function HandoffFolderCopy({
       await applyNow(pending);
     });
 
-  /**
-   * Takes the source version of everything still open, then copies. The pointer records
-   * the click, so closing the dialog while the destination re-compares still approves.
-   */
+  // Takes the source version of everything still open, then copies. The pointer records
+  // the click, so closing the dialog while the destination re-compares still approves.
   const replaceAll = () =>
     run(async () => {
       if (!pending || !copy) return;
@@ -1135,10 +1138,8 @@ export function HandoffFolderCopy({
       setSourceDropped(true);
     });
 
-  /**
-   * Clears this copy so another can start. Copy again keeps the file classes and the
-   * ticked secret files; a new copy starts from the defaults.
-   */
+  // Clears this copy so another can start. Copy again keeps the file classes and the
+  // ticked secret files; a new copy starts from the defaults.
   const startOver = async (keepChoices = false) => {
     // A reload may have lost the publish result. The source must confirm that
     // abandoning this operation cannot orphan a fenced coordinator.

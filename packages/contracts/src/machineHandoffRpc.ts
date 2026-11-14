@@ -20,6 +20,7 @@ import {
   FolderCopyError,
   FolderCopyOffer,
   FolderCopyOfferInput,
+  FolderCopyApproveInput,
   FolderCopyOperationInput,
   FolderCopyReleaseInput,
   FolderCopyReleaseResult,
@@ -130,7 +131,7 @@ export const folderCopyRpcs = [
     error: copyError,
   }),
   Rpc.make(M.machineHandoffCopyApprove, {
-    payload: FolderCopyOperationInput,
+    payload: FolderCopyApproveInput,
     success: FolderCopyStatus,
     error: copyError,
   }),
