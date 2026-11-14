@@ -730,9 +730,16 @@ function readAgo(checkedAt: string | undefined, nowMs: number): string | null {
 export function ModelPickerUsageBand({
   entry,
   usage,
+  onSwitchAccount,
 }: {
   readonly entry: ProviderInstanceEntry;
   readonly usage: ModelPickerUsage;
+  /**
+   * Opens the place where this provider's account is changed. Codex only: its
+   * sign-in here is the command line's, which the Codex app does not share, so
+   * the account shown can differ from the one that app uses.
+   */
+  readonly onSwitchAccount?: (() => void) | undefined;
 }) {
   const tx = useTx();
   const state = usage.availability(entry.instanceId, null);
@@ -749,6 +756,8 @@ export function ModelPickerUsageBand({
     state.kind !== "switching";
   const heading = `${entry.displayName}${usage.machineLabel ? ` on ${usage.machineLabel}` : ""}`;
   const accountLine = accountEmailLine(entry.displayName, entry.snapshot);
+  const switchAccount =
+    accountLine !== null && entry.driverKind === "codex" ? onSwitchAccount : undefined;
   // The same read time the state is judged on.
   const ago = readAgo(limits?.nativeAllowanceObservedAt ?? limits?.checkedAt, usage.nowMs);
   const sentence = usage.text(entry.instanceId, state);
@@ -783,6 +792,26 @@ export function ModelPickerUsageBand({
           data-model-picker-band-account=""
         >
           {accountLine}
+          {switchAccount ? (
+            <>
+              {" · "}
+              <button
+                type="button"
+                className="rounded-sm text-foreground underline underline-offset-2 outline-none select-none hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={switchAccount}
+                data-model-picker-switch-account=""
+              >
+                {tx("Switch account")}
+              </button>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {switchAccount && isAvailabilityBlocking(state) ? (
+        <p className="mt-0.5 text-muted-foreground" data-model-picker-account-source="">
+          {tx(
+            "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.",
+          )}
         </p>
       ) : null}
       {showBars ? (

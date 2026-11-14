@@ -29,9 +29,11 @@ import {
   AGENT_CHECK_TIMEOUT_MS,
   AgentSetupPanel,
   agentSetupPanelKey,
+  signInAccountKey,
   useAgentSetupPanel,
   useDetachedInstall,
 } from "../onboarding/AgentSetupPanel";
+import { isPerTokenProvider } from "@specweave-studio/shared/providerFallback";
 import { useHeldFor } from "../onboarding/WizardFrame";
 import { Button } from "../ui/button";
 import { ClaudeSignIn } from "./ClaudeSignIn";
@@ -192,6 +194,18 @@ export function ProviderStatusRow({
     view.detail ?? ((noWayToSignIn || stalled) && provider?.message ? provider.message : null);
   const urlAuthAction = provider?.auth.action;
 
+  // Codex signs in again over the account it has, which is how its account is changed.
+  // The Codex desktop app keeps a sign-in of its own, so switching there changes nothing here.
+  const canSwitchAccount =
+    instance.driver === "codex" &&
+    view.state === "ready" &&
+    !readOnly &&
+    !hasSetupBlock &&
+    signInCommand !== null &&
+    provider !== undefined &&
+    provider.auth.status === "authenticated" &&
+    !isPerTokenProvider(provider);
+
   const checkAgain = () => {
     setCheckingAgain(true);
     void Promise.resolve(refreshProviders({ environmentId, input: { instanceId } })).finally(() =>
@@ -249,6 +263,25 @@ export function ProviderStatusRow({
     >
       {account ? tx("Sign in with {account}", { account }) : tx("Sign in")}
     </Button>
+  ) : canSwitchAccount ? (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={panel.session !== null || !panel.available}
+      onClick={() =>
+        panel.open({
+          agent,
+          agentName: name,
+          providerInstanceId: instanceId,
+          command: signInCommand,
+          purpose: "signIn",
+          switchFrom: signInAccountKey(provider.auth),
+        })
+      }
+      data-agent-switch-account=""
+    >
+      {tx("Switch account")}
+    </Button>
   ) : null;
 
   const signInEnded =
@@ -293,6 +326,16 @@ export function ProviderStatusRow({
               {signInEnded
                 ? tx("The sign-in ended before {agent} was signed in. Try again.", { agent: name })
                 : null}
+            </p>
+          ) : null}
+          {canSwitchAccount && !checking ? (
+            <p
+              className="text-xs leading-relaxed break-words text-muted-foreground"
+              data-agent-account-source=""
+            >
+              {tx(
+                "This is the Codex command line's sign-in on this machine. The Codex app signs in separately, so changing accounts there does not change it here.",
+              )}
             </p>
           ) : null}
           {view.action === "turnOn" && turnOnLockedBy ? (

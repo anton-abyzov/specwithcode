@@ -1254,7 +1254,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       <HarnessDescription entry={selectedEntry} />
                     ) : null}
                     {usage && selectedEntry && !isSearching && alternativesFor === null ? (
-                      <ModelPickerUsageBand entry={selectedEntry} usage={usage} />
+                      <ModelPickerUsageBand
+                        entry={selectedEntry}
+                        usage={usage}
+                        onSwitchAccount={
+                          props.onOpenProviderSetup
+                            ? () => {
+                                props.onRequestClose?.();
+                                props.onOpenProviderSetup?.(selectedEntry.instanceId);
+                              }
+                            : props.onManageProviders
+                        }
+                      />
                     ) : usage ? (
                       <ModelPickerLimitsStrip
                         entries={accountLineEntries}

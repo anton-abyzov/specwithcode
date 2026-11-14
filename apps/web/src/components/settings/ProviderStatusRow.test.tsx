@@ -44,6 +44,8 @@ vi.mock("../../hooks/useCopyToClipboard", () => ({ writeTextToClipboard: mocks.c
 vi.mock("../onboarding/AgentSetupPanel", () => ({
   AGENT_CHECK_TIMEOUT_MS: 15_000,
   agentSetupPanelKey: () => "panel",
+  signInAccountKey: (auth: { email?: string; login?: string }) =>
+    (auth.email ?? auth.login ?? "").toLowerCase(),
   useDetachedInstall: () => mocks.detached,
   useAgentSetupPanel: (options: unknown) => {
     mocks.panelOptions(options);
@@ -334,6 +336,31 @@ describe("the selected agent's status row", () => {
       command: "grok login",
       purpose: "signIn",
     });
+  });
+
+  it("lets a signed-in Codex switch account, and says the Codex app signs in separately", async () => {
+    await show(agent("codex", { auth: { status: "authenticated", email: "Ada@Example.com" } }), {
+      name: "Codex",
+    });
+    expect(text()).toContain("The Codex app signs in separately");
+    await press("Switch account");
+    expect(mocks.panel.open).toHaveBeenCalledExactlyOnceWith({
+      agent: "codex",
+      agentName: "Codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      command: "codex login",
+      purpose: "signIn",
+      switchFrom: "ada@example.com",
+    });
+  });
+
+  it("offers no account switch to a read-only connection or a Codex billed per token", async () => {
+    await show(agent("codex"), { name: "Codex", readOnly: true });
+    expect(button("Switch account")).toBeUndefined();
+    await show(agent("codex", { auth: { status: "authenticated", type: "apiKey" } }), {
+      name: "Codex",
+    });
+    expect(button("Switch account")).toBeUndefined();
   });
 
   it("leaves the machine's words about running a command out of the row", async () => {
