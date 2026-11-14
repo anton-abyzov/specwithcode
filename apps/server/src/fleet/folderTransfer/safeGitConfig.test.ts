@@ -295,7 +295,7 @@ describe("copied repositories", () => {
     expect(NodeFS.readFileSync(configFile, "utf8")).not.toContain("evil-clean");
   });
 
-  it("finds a submodule a planted repository at its name prefix would hide, and drops case aliases", async () => {
+  it("finds a submodule a planted repository at its name prefix would hide", async () => {
     const root = tempRoot();
     const main = repository(root);
     const gitDir = NodePath.join(main, ".git");
@@ -306,22 +306,37 @@ describe("copied repositories", () => {
       NodeFS.mkdirSync(NodePath.join(gitDir, dir, "objects"), { recursive: true });
       write(NodePath.join(gitDir, dir, "config"), evil);
     }
-    // Aliases exist only on a case-sensitive disk (Linux); macOS folds them already.
-    write(NodePath.join(root, "probe"), "");
-    const caseSensitive = !NodeFS.existsSync(NodePath.join(root, "PROBE"));
-    write(NodePath.join(gitDir, "HOOKS/post-checkout"), "#!/bin/sh\nexit 1\n", 0o755);
-    write(NodePath.join(gitDir, "modules/a/lib/Hooks/pre-commit"), "#!/bin/sh\nexit 1\n", 0o755);
-    write(NodePath.join(gitDir, "Modules/x/HEAD"), "ref: refs/heads/main\n");
     await sanitizeCopiedGitDir(gitDir, main);
     for (const dir of ["modules/a", "modules/a/lib"])
       expect(NodeFS.readFileSync(NodePath.join(gitDir, dir, "config"), "utf8")).not.toContain(
         "evil",
       );
-    const names = (dir: string) => NodeFS.readdirSync(dir);
-    expect(names(gitDir)).not.toContain("HOOKS");
-    expect(names(NodePath.join(gitDir, "modules/a/lib"))).not.toContain("Hooks");
-    if (caseSensitive) expect(names(gitDir)).not.toContain("Modules");
     expect(isUncarriedGitPath("HOOKS", true)).toBe(true);
+  });
+
+  it("refuses another spelling of a name Git reads, naming its path", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const gitDir = NodePath.join(main, ".git");
+    // `commondir` does not exist here, so `Commondir` keeps its spelling on every disk.
+    write(NodePath.join(gitDir, "Commondir"), "shadow\n");
+    await expect(sanitizeCopiedGitDir(gitDir, main)).rejects.toThrow(
+      /Git data at \.git\/Commondir is spelled differently from commondir/,
+    );
+    NodeFS.rmSync(NodePath.join(gitDir, "Commondir"));
+    // Aliases of existing names exist only on a case-sensitive disk (Linux).
+    write(NodePath.join(root, "probe"), "");
+    if (!NodeFS.existsSync(NodePath.join(root, "PROBE"))) {
+      write(NodePath.join(gitDir, "HOOKS/post-checkout"), "#!/bin/sh\nexit 1\n", 0o755);
+      await expect(sanitizeCopiedGitDir(gitDir, main)).rejects.toThrow(/\.git\/HOOKS/);
+      // Nothing is deleted when the copy is refused.
+      expect(NodeFS.existsSync(NodePath.join(gitDir, "HOOKS/post-checkout"))).toBe(true);
+    }
+    // Ref names are the user's own and are not checked.
+    git(main, "branch", "Config");
+    git(main, "update-ref", "refs/heads/HEAD-like/Index", "HEAD");
+    NodeFS.rmSync(NodePath.join(gitDir, "HOOKS"), { recursive: true, force: true });
+    await expect(sanitizeCopiedGitDir(gitDir, main)).resolves.toBeUndefined();
   });
 
   it("does not copy a .GIT folder some disks read as .git", async () => {
@@ -334,7 +349,7 @@ describe("copied repositories", () => {
     expect(scan.warnings.join(" ")).toContain("some disks read it as .git");
   });
 
-  it("cleans a submodule whose HEAD, todo or object store is spelled differently", async () => {
+  it("refuses a submodule whose HEAD or todo is spelled differently", async () => {
     const root = tempRoot();
     const main = repository(root);
     const gitDir = NodePath.join(main, ".git");
@@ -343,18 +358,19 @@ describe("copied repositories", () => {
     write(NodePath.join(dormant, "head"), "ref: refs/heads/main\n");
     NodeFS.mkdirSync(NodePath.join(dormant, "objects"), { recursive: true });
     write(NodePath.join(dormant, "config"), "[core]\n\tfsmonitor = evil-fsmonitor\n");
-    write(NodePath.join(dormant, "hooks/post-checkout"), "#!/bin/sh\nexit 1\n", 0o755);
-    await sanitizeCopiedGitDir(gitDir, main);
-    expect(NodeFS.readFileSync(NodePath.join(dormant, "config"), "utf8")).not.toContain("evil");
-    expect(NodeFS.existsSync(NodePath.join(dormant, "hooks"))).toBe(false);
-    // A rebase todo under another spelling is removed before Git could read it.
+    await expect(sanitizeCopiedGitDir(gitDir, main)).rejects.toThrow(
+      /\.git\/modules\/dormant\/head is spelled differently from HEAD/,
+    );
+    NodeFS.rmSync(dormant, { recursive: true });
+    // A rebase todo under another spelling.
     write(NodePath.join(gitDir, "rebase-merge/GIT-REBASE-TODO"), "exec touch /tmp/x\n");
-    await sanitizeCopiedGitDir(gitDir, main);
-    expect(NodeFS.readdirSync(NodePath.join(gitDir, "rebase-merge"))).toEqual([]);
+    await expect(sanitizeCopiedGitDir(gitDir, main)).rejects.toThrow(
+      /rebase-merge\/GIT-REBASE-TODO/,
+    );
   });
 
   it.skipIf(process.platform === "darwin" || process.platform === "win32")(
-    "does not carry an object store pointer spelled ALTERNATES",
+    "refuses an object store pointer spelled ALTERNATES",
     async () => {
       const root = tempRoot();
       const main = repository(root);
@@ -362,13 +378,34 @@ describe("copied repositories", () => {
       git(root, "init", "-q", "--bare", outside);
       write(NodePath.join(main, ".git/objects/info/ALTERNATES"), `${outside}/objects\n`);
       const scan = await scanFolder(main);
-      const overlay = NodePath.join(root, "overlay");
-      await preparePortableGit(scan, overlay);
-      const info = NodePath.join(overlay, ".git/objects/info");
-      const names = NodeFS.existsSync(info) ? NodeFS.readdirSync(info) : [];
-      expect(names.map((name) => name.toLowerCase())).not.toContain("alternates");
+      await expect(preparePortableGit(scan, NodePath.join(root, "overlay"))).rejects.toThrow(
+        /ALTERNATES is spelled differently from alternates/,
+      );
     },
   );
+
+  it("makes a submodule that borrows objects self-contained", async () => {
+    const root = tempRoot();
+    const main = repository(root);
+    const reference = NodePath.join(root, "reference");
+    NodeFS.mkdirSync(reference);
+    git(reference, "init", "-q", "-b", "main");
+    write(NodePath.join(reference, "lib.txt"), "lib\n");
+    git(reference, "add", ".");
+    git(reference, "commit", "-qm", "lib");
+    // A dormant submodule Git directory whose objects live in `reference`.
+    const lib = NodePath.join(main, ".git/modules/lib");
+    git(root, "clone", "-q", "--bare", "--shared", reference, lib);
+    expect(NodeFS.existsSync(NodePath.join(lib, "objects/info/alternates"))).toBe(true);
+    const scan = await scanFolder(main);
+    const overlay = NodePath.join(root, "overlay");
+    await preparePortableGit(scan, overlay);
+    NodeFS.renameSync(reference, NodePath.join(root, "gone"));
+    const copied = NodePath.join(overlay, ".git/modules/lib");
+    expect(NodeFS.existsSync(NodePath.join(copied, "objects/info/alternates"))).toBe(false);
+    expect(git(root, "--git-dir", copied, "cat-file", "-t", "HEAD")).toBe("commit");
+    expect(git(root, "--git-dir", copied, "show", "HEAD:lib.txt")).toBe("lib");
+  });
 
   it("refuses a pending rebase that runs commands", async () => {
     const root = tempRoot();

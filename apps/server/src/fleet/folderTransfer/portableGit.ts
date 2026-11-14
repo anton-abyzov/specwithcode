@@ -6,7 +6,13 @@ import * as NodePath from "node:path";
 
 import { privateDirectory } from "./durable.ts";
 import { FolderGitError, runGit } from "./git.ts";
-import { isUncarriedGitPath, safeRemoteUrl, sanitizeCopiedGitDir } from "./safeGitConfig.ts";
+import {
+  gitDirectoriesIn,
+  isUncarriedGitPath,
+  refuseObjectInfoAlias,
+  safeRemoteUrl,
+  sanitizeCopiedGitDir,
+} from "./safeGitConfig.ts";
 import {
   emptyTotals,
   FolderScanError,
@@ -293,13 +299,16 @@ async function copyObjects(context: CopyContext, source: string, target: string)
     await copyGitFile(context, job.source, job.target);
   });
   await copyGitTree(context, NodePath.join(source, "info"), NodePath.join(target, "info"), {
-    skip: (relative) =>
-      relative === "commit-graph" ||
-      relative === "commit-graphs" ||
-      relative === "packs" ||
-      // Another object store, under any spelling a case-insensitive disk would read.
-      relative.toLowerCase() === "http-alternates" ||
-      (relative.toLowerCase() === "alternates" && relative !== "alternates"),
+    skip: (relative) => {
+      // Another spelling of an object-store pointer refuses the copy (1328).
+      refuseObjectInfoAlias(NodePath.join(source, "info", relative), relative);
+      return (
+        relative === "commit-graph" ||
+        relative === "commit-graphs" ||
+        relative === "packs" ||
+        relative === "http-alternates"
+      );
+    },
   });
   const done = new Set<string>();
   for (let pass = 0; pass < 2; pass += 1) {
@@ -380,23 +389,50 @@ async function withSnapshotRetries(
   }
 }
 
-/** Resolve object dependencies into the private copy, without copying another working folder. */
+/**
+ * Resolve object dependencies into the private copy, without copying another
+ * working folder. Returns whether the copy borrowed objects. `gitDir` names a
+ * Git directory with no working folder of its own (a copied submodule's).
+ */
 async function materializeAlternates(
   context: CopyContext,
   common: string,
   targetGit: string,
   target: string,
-) {
+  gitDir?: string,
+): Promise<boolean> {
   const alternates = NodePath.join(targetGit, "objects/info/alternates");
-  if (!(await NodeFSP.lstat(alternates).catch(() => null))) return;
+  if (!(await NodeFSP.lstat(alternates).catch(() => null))) return false;
   const original = NodePath.join(common, "objects");
   const lines = (await NodeFSP.readFile(alternates, "utf8")).split("\n").filter(Boolean);
   await NodeFSP.writeFile(
     alternates,
     lines.map((line) => NodePath.resolve(original, line)).join("\n") + "\n",
   );
-  await runGit(target, ["repack", "-a", "-d"], { signal: context.signal });
+  const env = gitDir ? { env: { GIT_DIR: gitDir } } : {};
+  await runGit(target, ["repack", "-a", "-d"], { signal: context.signal, ...env });
   await NodeFSP.unlink(alternates);
+  return true;
+}
+
+/**
+ * A submodule cloned with `--reference` borrows objects too, even dormant: each
+ * copied submodule Git directory becomes self-contained and is checked whole.
+ */
+async function materializeSubmoduleAlternates(
+  context: CopyContext,
+  sourceGit: string,
+  targetGit: string,
+) {
+  for (const dir of (await gitDirectoriesIn(targetGit)).slice(1)) {
+    context.checkStop();
+    const source = NodePath.join(sourceGit, NodePath.relative(targetGit, dir));
+    if (await materializeAlternates(context, source, dir, dir, dir))
+      await runGit(dir, ["fsck", "--connectivity-only", "--no-progress"], {
+        signal: context.signal,
+        env: { GIT_DIR: dir },
+      });
+  }
 }
 
 /** Shown with any repository: the Git snapshot is taken when copying starts, not while measuring. */
@@ -611,6 +647,7 @@ async function snapshotMain(
     NodePath.join(targetGit, "objects"),
   );
   await materializeAlternates(context, sourceGit, targetGit, NodePath.dirname(targetGit));
+  await materializeSubmoduleAlternates(context, sourceGit, targetGit);
   // Internal worktrees retain their relationship using deterministic relative
   // pointers. They never read the original Mac admin directory during checks.
   for (const linked of scan.repositories.filter(

@@ -356,19 +356,13 @@ async function refuseCommandTodo(dir: string): Promise<void> {
 }
 
 /**
- * Makes a copied Git folder safe to carry (1328): in every Git directory it
- * holds, configs keep only safe entries, and the parts that run commands or
- * point elsewhere are removed: hooks, a top-level `commondir` (it would pick
- * another config), legacy `remotes/` and `branches/` (they hold URLs). A
- * pending rebase with `exec` lines refuses the copy. `root` is the copied
- * folder `core.worktree` must stay inside.
+ * Names Git reads in each part of a Git directory. Another spelling of one
+ * (`HOOKS`, `Config`, `head`) is plain data on a case-sensitive disk but that
+ * very entry on a case-insensitive one, so a copy holding one is refused and
+ * the path reported, rather than carried unchecked or silently deleted.
+ * Ref and log namespaces hold user-chosen names and are not checked.
  */
-/**
- * Names Git reads inside a Git directory. Another spelling of one (`HOOKS`,
- * `Config`) is plain data on a case-sensitive disk but becomes that entry on a
- * case-insensitive one, so it is removed rather than carried unchecked.
- */
-const GIT_NAMES = [
+const TOP_NAMES = [
   "HEAD",
   "config",
   "config.worktree",
@@ -389,31 +383,83 @@ const GIT_NAMES = [
   "sequencer",
   "rebase-merge",
   "rebase-apply",
-  "attributes",
-  "exclude",
-  "sparse-checkout",
-  "alternates",
-  "http-alternates",
-  "git-rebase-todo",
-  "todo",
-  "done",
   "ORIG_HEAD",
   "FETCH_HEAD",
   "MERGE_HEAD",
   "CHERRY_PICK_HEAD",
   "REVERT_HEAD",
   "REBASE_HEAD",
+  "AUTO_MERGE",
 ];
-const GIT_NAME_OF = new Map(GIT_NAMES.map((name) => [name.toLowerCase(), name]));
+const INFO_NAMES = ["attributes", "exclude", "sparse-checkout", "grafts", "refs"];
+const OBJECT_INFO_NAMES = [
+  "alternates",
+  "http-alternates",
+  "packs",
+  "commit-graph",
+  "commit-graphs",
+];
+/** Pending-operation folders: only their todo files run commands on `--continue`. */
+const PENDING_NAMES = ["git-rebase-todo", "todo", "done"];
 
-async function removeCaseAliases(dir: string): Promise<void> {
-  for (const entry of await NodeFSP.readdir(dir).catch(() => [] as Array<string>)) {
-    const canonical = GIT_NAME_OF.get(entry.toLowerCase());
-    if (canonical !== undefined && canonical !== entry)
-      await NodeFSP.rm(NodePath.join(dir, entry), { recursive: true, force: true });
+/** The canonical name `name` is another spelling of, if any. */
+function aliasOf(name: string, names: ReadonlyArray<string>): string | undefined {
+  const lower = name.toLowerCase();
+  return names.find((canonical) => canonical !== name && canonical.toLowerCase() === lower);
+}
+
+export class GitNameAliasError extends Error {
+  readonly path: string;
+  constructor(path: string, canonical: string) {
+    super(
+      `Git data at ${path} is spelled differently from ${canonical}, which some disks read as the same name. Rename or remove it before copying.`,
+    );
+    this.path = path;
   }
 }
 
+async function refuseCaseAliases(dir: string, names: ReadonlyArray<string>, root: string) {
+  for (const entry of await NodeFSP.readdir(dir).catch(() => [] as Array<string>)) {
+    const canonical = aliasOf(entry, names);
+    if (canonical !== undefined)
+      throw new GitNameAliasError(
+        NodePath.relative(root, NodePath.join(dir, entry)).split(NodePath.sep).join("/"),
+        canonical,
+      );
+  }
+}
+
+/** Refuses another spelling of a name Git reads in `dir`, its admins and their parts. */
+async function refuseAliasesIn(dir: string, root: string): Promise<void> {
+  const admins = [dir];
+  for (const admin of await NodeFSP.readdir(NodePath.join(dir, "worktrees"), {
+    withFileTypes: true,
+  }).catch(() => []))
+    if (admin.isDirectory()) admins.push(NodePath.join(dir, "worktrees", admin.name));
+  for (const admin of admins) {
+    await refuseCaseAliases(admin, TOP_NAMES, root);
+    await refuseCaseAliases(NodePath.join(admin, "info"), INFO_NAMES, root);
+    for (const pending of ["rebase-merge", "rebase-apply", "sequencer"])
+      await refuseCaseAliases(NodePath.join(admin, pending), PENDING_NAMES, root);
+  }
+  await refuseCaseAliases(NodePath.join(dir, "objects", "info"), OBJECT_INFO_NAMES, root);
+}
+
+/** Refuses an object-store pointer spelled differently from `alternates` or `http-alternates`. */
+export function refuseObjectInfoAlias(path: string, name: string): void {
+  const canonical = aliasOf(name, OBJECT_INFO_NAMES);
+  if (canonical !== undefined) throw new GitNameAliasError(path, canonical);
+}
+
+/**
+ * Makes a copied Git folder safe to carry (1328): in every Git directory it
+ * holds, configs keep only safe entries, and the parts that run commands or
+ * point elsewhere are removed: hooks, a top-level `commondir` (it would pick
+ * another config), legacy `remotes/` and `branches/` (they hold URLs). A
+ * pending rebase with `exec` lines, or another spelling of a name Git reads,
+ * refuses the copy. `root` is the copied folder `core.worktree` must stay
+ * inside, and the base of reported paths.
+ */
 export async function sanitizeCopiedGitDir(
   gitDir: string,
   root: string,
@@ -423,29 +469,11 @@ export async function sanitizeCopiedGitDir(
     readonly sourceRoot?: string;
   } = {},
 ): Promise<void> {
-  // Aliases first, so the walk below sees only the names Git will read.
-  const aliasDirs = async (dir: string) => {
-    // Pending-operation folders hold todo files Git runs on `--continue`.
-    const inside = (base: string) =>
-      ["info", "rebase-merge", "rebase-apply", "sequencer"].map((name) =>
-        NodePath.join(base, name),
-      );
-    const dirs = [dir, ...inside(dir), NodePath.join(dir, "objects", "info")];
-    for (const admin of await NodeFSP.readdir(NodePath.join(dir, "worktrees"), {
-      withFileTypes: true,
-    }).catch(() => []))
-      if (admin.isDirectory()) {
-        const path = NodePath.join(dir, "worktrees", admin.name);
-        dirs.push(path, ...inside(path));
-      }
-    return dirs;
-  };
-  await removeCaseAliases(gitDir);
+  // A Git directory is found under any spelling of HEAD and objects, so a
+  // folder that is one only on a case-insensitive disk is refused here too.
   const found = await gitDirectoriesIn(gitDir);
-  for (const dir of found) for (const path of await aliasDirs(dir)) await removeCaseAliases(path);
-  // A folder that only looked like a Git directory through another spelling
-  // is still cleaned: it would be one on a case-insensitive disk.
-  for (const dir of new Set([...found, ...(await gitDirectoriesIn(gitDir))])) {
+  for (const dir of found) await refuseAliasesIn(dir, root);
+  for (const dir of found) {
     await refuseCommandTodo(dir);
     for (const name of ["hooks", "commondir", "remotes", "branches"])
       await NodeFSP.rm(NodePath.join(dir, name), { recursive: true, force: true });
