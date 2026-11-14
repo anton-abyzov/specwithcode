@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import {
   EnvironmentId,
+  ProjectId,
   type MachineHandoffBundle,
   type MachineHandoffPrepareInput,
 } from "@specweave-studio/contracts";
@@ -18,6 +19,9 @@ import {
 } from "./MachineHandoff.test-fixtures.ts";
 import { takeProjectMoved } from "./repositorySync.ts";
 import { HandoffGitError } from "./handoffGitTypes.ts";
+import * as ProjectAdmission from "../project/ProjectAdmission.ts";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 
 const gitSyncPreview = {
   ...preview,
@@ -228,6 +232,96 @@ describe("an existing copy that cannot reach the source heads (1326)", () => {
       const refused = yield* Effect.result(service.receive(start(bundle, "accept")));
       expect(Result.isFailure(refused) && refused.failure.code).toBe("unsafe_path");
       expect(h.state.starts).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("holds every overlapping project's admission lock while the copy updates", () => {
+    const h = makeHarness();
+    const nested = ProjectId.make("nested-project");
+    h.projects.set(nested, {
+      ...h.projects.get(projectId)!,
+      id: nested,
+      workspaceRoot: `${h.projects.get(projectId)!.workspaceRoot}/packages/app`,
+    });
+    const elsewhere = ProjectId.make("elsewhere-project");
+    h.projects.set(elsewhere, {
+      ...h.projects.get(projectId)!,
+      id: elsewhere,
+      workspaceRoot: "/elsewhere/project",
+    });
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const admission = yield* ProjectAdmission.ProjectAdmission;
+      const admitted: Record<string, boolean> = {};
+      // Work starting in another project, from another fiber, while the copy updates.
+      // The test clock never advances, so the probe yields, polls, then interrupts.
+      const tryAdmit = (id: ProjectId) =>
+        Effect.gen(function* () {
+          const fiber = yield* Effect.forkChild(admission.withLock(id, Effect.void));
+          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          admitted[id] = fiber.pollUnsafe() !== undefined;
+          yield* Fiber.interrupt(fiber);
+        });
+      h.state.duringExistingCopyUpdate = Effect.gen(function* () {
+        yield* tryAdmit(projectId);
+        yield* tryAdmit(nested);
+        yield* tryAdmit(elsewhere);
+      });
+      const bundle = gitSyncBundle((yield* service.prepare(gitSyncPreview)).bundle);
+      expect((yield* service.receive(start(bundle, "refuse"))).phase).toBe("started");
+      expect(admitted).toEqual({ [projectId]: false, [nested]: false, [elsewhere]: true });
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("cancels a refused move after the source fenced, and moves with accept", () => {
+    const h = makeHarness();
+    h.state.existingCopyRefusal = localCommits;
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const first = yield* service.prepare(gitSyncPreview);
+      const published = yield* service.prepare({
+        ...gitSyncPreview,
+        publish: true,
+        expectedDigest: first.bundle.digest,
+      });
+      const binding = () => h.projects.get(projectId)!.workspaceSettings!.coordinatorBinding!;
+      expect(binding().state).toBe("transferring");
+      const bundle = gitSyncBundle(published.bundle);
+      const refused = yield* Effect.result(service.receive(start(bundle, "refuse")));
+      expect(Result.isFailure(refused) && refused.failure.updateSkipped?.reason).toBe(
+        "local-commits",
+      );
+      expect(binding().state).toBe("transferring");
+      // "Cancel": the source releases its fence and keeps its coordinator.
+      const released = yield* service.copyRelease({
+        projectId,
+        operationId: id,
+        reason: "The copy there has its own commits.",
+      });
+      expect(released.released).toBe(true);
+      expect(binding().state).toBe("active");
+      expect(h.state.starts).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("moves the coordinator with accept: active there at the next epoch", () => {
+    const h = makeHarness();
+    h.state.existingCopyRefusal = localCommits;
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const first = yield* service.prepare(gitSyncPreview);
+      const published = yield* service.prepare({
+        ...gitSyncPreview,
+        publish: true,
+        expectedDigest: first.bundle.digest,
+      });
+      const bundle = gitSyncBundle(published.bundle);
+      const moved = yield* service.receive(start(bundle, "accept"));
+      expect(moved.updateSkipped?.reason).toBe("local-commits");
+      const binding = h.projects.get(projectId)!.workspaceSettings!.coordinatorBinding!;
+      expect(binding.state).toBe("active");
+      expect(binding.epoch).toBe(bundle.coordinatorBinding!.epoch + 1);
+      expect(h.state.starts).toHaveLength(1);
     }).pipe(Effect.provide(h.layer));
   });
 });
