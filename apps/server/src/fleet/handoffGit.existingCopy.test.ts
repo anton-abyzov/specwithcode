@@ -344,4 +344,177 @@ describe("existing copy update (1326)", () => {
       "remote.origin.url",
     ]);
   });
+
+  // --- Review findings on #366 (Sol, November 14, 2026) ---
+
+  it.effect("checks every initialized submodule's config before status runs in it", () =>
+    Effect.gen(function* () {
+      const f = fixture(true);
+      const marker = NodePath.join(f.base, "submodule-filter-ran");
+      const full = yield* sync(f);
+      // An older source names only the root; status still recurses into the submodule.
+      const manifest = { ...full, repositories: full.repositories.slice(0, 1) };
+      git(f.destinationNested, "config", "filter.evil.clean", `touch ${marker}`);
+      const gitDir = git(f.destinationNested, "rev-parse", "--absolute-git-dir");
+      NodeFS.mkdirSync(NodePath.join(gitDir, "info"), { recursive: true });
+      write(NodePath.join(gitDir, "info", "attributes"), "* filter=evil\n");
+      // A changed timestamp makes status run the clean filter on the file again.
+      const later = 4_102_444_800; // 2100, in seconds
+      NodeFS.utimesSync(NodePath.join(f.destinationNested, "feature.ts"), later, later);
+      expect(yield* refusal(check(f, manifest))).toEqual({
+        reason: "unsafe-git-config",
+        repository: "repositories/nested",
+        unsafeConfig: ["filter.evil.clean"],
+      });
+      expect(NodeFS.existsSync(marker)).toBe(false);
+    }),
+  );
+
+  it.effect("refuses an incoming .lfsconfig that includes other config", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      write(
+        NodePath.join(f.base, "elsewhere.config"),
+        "[lfs]\n\turl = https://elsewhere.invalid/lfs\n",
+      );
+      write(
+        NodePath.join(f.source, ".gitattributes"),
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+      );
+      write(
+        NodePath.join(f.source, ".lfsconfig"),
+        `[include]\n\tpath = ${NodePath.join(f.base, "elsewhere.config")}\n`,
+      );
+      commit(f.source);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      const before = git(f.destination, "rev-parse", "HEAD");
+      expect(yield* refusal(update(f, manifest))).toEqual({
+        reason: "unsafe-git-config",
+        repository: ".",
+        unsafeConfig: [".lfsconfig include.path"],
+      });
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
+    }),
+  );
+
+  it.effect("reads each commit as itself, whatever replace refs the copy holds", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      changeCode(f);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      const incoming = manifest.repositories[0]!.head;
+      // A commit on top of the copy's HEAD, then a replace ref naming the incoming commit.
+      write(NodePath.join(f.destination, "root.ts"), "export const value = 'substituted';\n");
+      commit(f.destination);
+      const substitute = git(f.destination, "rev-parse", "HEAD");
+      git(f.destination, "reset", "--hard", "HEAD~1");
+      git(f.destination, "update-ref", `refs/replace/${incoming}`, substitute);
+      yield* update(f, manifest);
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(incoming);
+      expect(NodeFS.readFileSync(NodePath.join(f.destination, "root.ts"), "utf8")).toBe(
+        "export const value = 42;\n",
+      );
+    }),
+  );
+
+  it.effect("finds LFS files through a nested .gitattributes", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      NodeFS.mkdirSync(NodePath.join(f.source, "assets"));
+      write(
+        NodePath.join(f.source, "assets", ".gitattributes"),
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+      );
+      write(NodePath.join(f.source, "assets", "model.bin"), "binary\n");
+      commit(f.source);
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      pathOverride = NodeChildProcess.execFileSync("git", ["--exec-path"], {
+        encoding: "utf8",
+      }).trim();
+      const before = git(f.destination, "rev-parse", "HEAD");
+      expect(yield* refusal(update(f, manifest))).toMatchObject({
+        reason: "needs-lfs",
+        repository: ".",
+      });
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(before);
+    }),
+  );
+
+  const lfsInstalled =
+    NodeChildProcess.spawnSync("git", ["lfs", "version"], { stdio: "ignore" }).status === 0;
+  /** A source with real LFS objects in its file origin, and a copy set up for LFS. */
+  const lfsFixture = () => {
+    const f = fixture();
+    git(f.source, "lfs", "install", "--local");
+    git(f.destination, "lfs", "install", "--local");
+    // The source's own pushes upload to its origin; `.lfsconfig` below names elsewhere.
+    git(f.source, "config", "lfs.url", `file://${f.rootRemote}`);
+    write(NodePath.join(f.source, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+    write(NodePath.join(f.source, ".lfsconfig"), "[lfs]\n\turl = file:///nonexistent/lfs-store\n");
+    NodeFS.mkdirSync(NodePath.join(f.source, "assets"));
+    write(NodePath.join(f.source, "assets", "model.bin"), "real model bytes\n".repeat(64));
+    commit(f.source);
+    return f;
+  };
+
+  it.effect.skipIf(!lfsInstalled)(
+    "downloads every LFS file from the approved origin, not .lfsconfig's endpoint",
+    () =>
+      Effect.gen(function* () {
+        const f = lfsFixture();
+        const manifest = yield* sync(f);
+        yield* publishSync(f, manifest);
+        yield* check(f, manifest);
+        yield* update(f, manifest);
+        expect(
+          NodeFS.readFileSync(NodePath.join(f.destination, "assets", "model.bin"), "utf8"),
+        ).toBe("real model bytes\n".repeat(64));
+        expect(git(f.destination, "status", "--porcelain=v1", "--untracked-files=all")).toBe("");
+        const pull = calls.find((call) => call.args.includes("lfs") && call.args.includes("pull"));
+        expect(pull?.args).toContain(`lfs.url=file://${f.rootRemote}`);
+      }),
+  );
+
+  it.effect.skipIf(!lfsInstalled)("names a failed LFS download as its own step", () =>
+    Effect.gen(function* () {
+      const f = lfsFixture();
+      const manifest = yield* sync(f);
+      yield* publishSync(f, manifest);
+      // The origin lost its LFS store after the source published.
+      NodeFS.rmSync(NodePath.join(f.rootRemote, "lfs"), { recursive: true, force: true });
+      expect(yield* refusal(update(f, manifest))).toMatchObject({
+        reason: "lfs-failed",
+        repository: ".",
+      });
+      // The commits arrived; a retry of the same operation downloads only the files.
+      expect(git(f.destination, "rev-parse", "HEAD")).toBe(manifest.repositories[0]!.head);
+    }),
+  );
+
+  it("pins the LFS endpoint Git LFS derives from each origin form", () => {
+    expect(HandoffGit.lfsEndpoint("https://github.com/owner/app")).toBe(
+      "https://github.com/owner/app.git/info/lfs",
+    );
+    expect(HandoffGit.lfsEndpoint("https://github.com/owner/app.git/")).toBe(
+      "https://github.com/owner/app.git/info/lfs",
+    );
+    expect(HandoffGit.lfsEndpoint("git@github.com:owner/app.git")).toBe(
+      "ssh://git@github.com/owner/app.git",
+    );
+    expect(HandoffGit.lfsEndpoint("/srv/git/app.git")).toBe("file:///srv/git/app.git");
+    expect(HandoffGit.lfsEndpoint("ext::sh -c evil")).toBeNull();
+    expect(
+      HandoffGit.unsafeLfsConfig([
+        ["lfs.url", "x"],
+        ["remote.origin.lfsurl", "x"],
+        ["lfs.fetchexclude", "x"],
+        ["include.path", "x"],
+        ["lfs.https://example.com/.access", "basic"],
+        ["lfs.customtransfer.evil.path", "x"],
+      ]),
+    ).toEqual(["include.path", "lfs.customtransfer.evil.path", "lfs.https://example.com/.access"]);
+  });
 });

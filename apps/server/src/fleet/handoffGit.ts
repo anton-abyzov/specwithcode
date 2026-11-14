@@ -172,6 +172,44 @@ export function unsafeExistingCopyConfig(
   return [...unsafe].sort();
 }
 
+/** `.lfsconfig` keys that only choose what LFS fetches; endpoints are pinned anyway. */
+const LFSCONFIG_KEYS = new Set([
+  "lfs.url",
+  "lfs.pushurl",
+  "lfs.fetchinclude",
+  "lfs.fetchexclude",
+  "lfs.locksverify",
+]);
+/** The keys of a repository's `.lfsconfig` beyond what it may set, sorted. */
+export function unsafeLfsConfig(entries: ReadonlyArray<readonly [string, string]>): Array<string> {
+  const unsafe = new Set<string>();
+  for (const [rawKey] of entries) {
+    const key = rawKey.trim().toLowerCase();
+    if (LFSCONFIG_KEYS.has(key) || /^remote\.[^.]+(\..+)?\.(lfsurl|lfspushurl)$/.test(key))
+      continue;
+    unsafe.add(key);
+  }
+  return [...unsafe].sort();
+}
+/**
+ * The LFS endpoint Git LFS itself derives from an origin URL, pinned so a repository's
+ * `.lfsconfig` cannot send the download elsewhere. Null for a form it does not know.
+ */
+export function lfsEndpoint(origin: string): string | null {
+  const value = origin.trim();
+  if (/^https?:\/\//i.test(value)) {
+    const base = value.replace(/\/+$/, "");
+    return `${base.endsWith(".git") ? base : `${base}.git`}/info/lfs`;
+  }
+  if (/^(ssh|file):\/\//i.test(value)) return value;
+  if (value.startsWith("/")) return `file://${value}`;
+  const drive = /^([A-Za-z]):[\\/](.*)$/.exec(value);
+  if (drive) return `file:///${drive[1]}:/${drive[2]!.replace(/\\/g, "/")}`;
+  const scp = /^([A-Za-z0-9._-]+@[A-Za-z0-9.-]+):(?!\/\/)(.+)$/.exec(value);
+  if (scp) return `ssh://${scp[1]}/${scp[2]!.replace(/^\/+/, "")}`;
+  return null;
+}
+
 /** A report walks at most this many surviving worker worktrees, a few at a time. */
 export const MAX_REPORTED_WORKTREES = 100;
 const WORKTREE_CONCURRENCY = 8;
@@ -227,6 +265,12 @@ const make = Effect.gen(function* () {
     args: ReadonlyArray<string>,
     stage: Stage,
     allowFailure = false,
+    options: {
+      /** `-c` settings for this call alone, such as the pinned LFS endpoint. */
+      readonly config?: ReadonlyArray<string>;
+      /** Pathspec magic (`:(glob)`) for this call; every other call reads pathspecs literally. */
+      readonly pathspecMagic?: boolean;
+    } = {},
   ) {
     // Git LFS downloads are their own step, so a missing file or server names itself.
     const lfs = args[0] === "lfs";
@@ -240,6 +284,7 @@ const make = Effect.gen(function* () {
           ...(args[0] === "push"
             ? []
             : ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]),
+          ...(options.config ?? []).flatMap((setting) => ["-c", setting]),
           "-C",
           cwd,
           ...args,
@@ -248,7 +293,13 @@ const make = Effect.gen(function* () {
         env: {
           GIT_TERMINAL_PROMPT: "0",
           GIT_OPTIONAL_LOCKS: "0",
-          GIT_LITERAL_PATHSPECS: "1",
+          // git-lfs checks files out through its own `:(attr)` pathspecs, and with literal
+          // pathspecs its pull downloads objects but leaves every file as a pointer.
+          GIT_LITERAL_PATHSPECS: options.pathspecMagic || lfs ? "0" : "1",
+          // A commit is what its ID names: replace refs and grafts in a checkout could
+          // otherwise substitute other trees while HEAD and status look right.
+          GIT_NO_REPLACE_OBJECTS: "1",
+          GIT_GRAFT_FILE: "/dev/null",
           // Even cat-file/status/ancestry reads can fetch missing promisor objects and
           // rewrite clone config. Only authorized transfer operations may hydrate them.
           GIT_NO_LAZY_FETCH: ["fetch", "push", "worktree", "lfs"].includes(args[0] ?? "")
@@ -497,6 +548,48 @@ const make = Effect.gen(function* () {
     return entries;
   });
   /**
+   * One repository's config, then each initialized submodule's, since `status
+   * --ignore-submodules=none` runs Git (and its filters) in every one of them, listed in the
+   * manifest or not.
+   */
+  const guardConfigTree: (
+    cwd: string,
+    relativePath: string,
+    stage: Stage,
+    guarded: Set<string>,
+    depth: number,
+  ) => Effect.Effect<void, HandoffGitError> = Effect.fn("HandoffGit.guardConfigTree")(function* (
+    cwd: string,
+    relativePath: string,
+    stage: Stage,
+    guarded: Set<string>,
+    depth: number,
+  ) {
+    const real = yield* io(fs.realPath(cwd), stage);
+    if (guarded.has(real)) return;
+    guarded.add(real);
+    if (depth > 16 || guarded.size > 512)
+      return yield* blocked(stage, "scan-limit", { repository: relativePath });
+    const unsafeConfig = unsafeExistingCopyConfig(yield* ownConfig(cwd, stage));
+    if (unsafeConfig.length > 0)
+      return yield* blocked(stage, "unsafe-git-config", {
+        repository: relativePath,
+        unsafeConfig: unsafeConfig.slice(0, 32),
+      });
+    for (const entry of (yield* git(cwd, ["ls-files", "--stage", "-z"], stage)).stdout.split(
+      "\0",
+    )) {
+      if (!entry.startsWith("160000 ")) continue;
+      const submodule = entry.slice(entry.indexOf("\t") + 1);
+      const child = relativePath === "." ? submodule : `${relativePath}/${submodule}`;
+      if (!safeRelativePath(submodule))
+        return yield* blocked(stage, "unsafe-path", { repository: child });
+      const folder = path.join(cwd, submodule);
+      if (!(yield* io(fs.exists(path.join(folder, ".git")), stage))) continue;
+      yield* guardConfigTree(folder, child, stage, guarded, depth + 1);
+    }
+  });
+  /**
    * Before any status, fetch or merge in an existing copy: every manifest repository is there,
    * holds only safe config, and the root is on a branch.
    */
@@ -504,17 +597,13 @@ const make = Effect.gen(function* () {
     input: ManifestInput,
     stage: Stage,
   ) {
+    const guarded = new Set<string>();
     for (const repository of input.manifest.repositories) {
       const relativePath = repository.relativePath;
       const cwd = yield* resolveRepository(input.workspaceRoot, relativePath, stage).pipe(
         at(relativePath),
       );
-      const unsafeConfig = unsafeExistingCopyConfig(yield* ownConfig(cwd, stage));
-      if (unsafeConfig.length > 0)
-        return yield* blocked(stage, "unsafe-git-config", {
-          repository: relativePath,
-          unsafeConfig: unsafeConfig.slice(0, 32),
-        });
+      yield* guardConfigTree(cwd, relativePath, stage, guarded, 0);
       if (
         relativePath === "." &&
         (yield* git(cwd, ["symbolic-ref", "-q", "HEAD"], stage, true)).code !== 0
@@ -522,14 +611,61 @@ const make = Effect.gen(function* () {
         return yield* blocked(stage, "detached-head", { repository: relativePath });
     }
   });
-  /** Whether a commit's root `.gitattributes` sends files through Git LFS. */
+  /** Whether any `.gitattributes` in a commit, at any depth, sends files through Git LFS. */
   const usesLfs = Effect.fn("HandoffGit.usesLfs")(function* (
     cwd: string,
     commit: string,
     stage: Stage,
   ) {
-    const attributes = yield* git(cwd, ["cat-file", "-p", `${commit}:.gitattributes`], stage, true);
-    return attributes.code === 0 && /\bfilter=lfs\b/.test(attributes.stdout);
+    const found = yield* git(
+      cwd,
+      ["grep", "-l", "-I", "-z", "-e", "filter=lfs", commit, "--", ":(glob)**/.gitattributes"],
+      stage,
+      true,
+      { pathspecMagic: true },
+    );
+    if (found.code !== 0 && found.code !== 1) return yield* blocked(stage, "git-failed");
+    return found.code === 0;
+  });
+  /**
+   * A repository's `.lfsconfig` (the incoming commit's, or an untracked one in the folder) may
+   * only narrow what LFS fetches: no includes, no access or transfer settings. Its endpoints
+   * are overridden by the pinned one.
+   */
+  const checkLfsConfig = Effect.fn("HandoffGit.checkLfsConfig")(function* (
+    cwd: string,
+    commit: string,
+    relativePath: string,
+    stage: Stage,
+  ) {
+    const entries: Array<readonly [string, string]> = [];
+    if ((yield* git(cwd, ["cat-file", "-e", `${commit}:.lfsconfig`], stage, true)).code === 0)
+      entries.push(
+        ...parseNullConfigList(
+          (yield* git(
+            cwd,
+            ["config", "--blob", `${commit}:.lfsconfig`, "--no-includes", "--null", "--list"],
+            stage,
+          )).stdout,
+        ),
+      );
+    const file = path.join(cwd, ".lfsconfig");
+    if (
+      (yield* io(fs.exists(file), stage)) &&
+      (yield* text(cwd, ["ls-files", "-z", "--", ".lfsconfig"], stage)) === ""
+    )
+      entries.push(
+        ...parseNullConfigList(
+          (yield* git(cwd, ["config", "--file", file, "--no-includes", "--null", "--list"], stage))
+            .stdout,
+        ),
+      );
+    const unsafeConfig = unsafeLfsConfig(entries);
+    if (unsafeConfig.length > 0)
+      return yield* blocked(stage, "unsafe-git-config", {
+        repository: relativePath,
+        unsafeConfig: unsafeConfig.slice(0, 32).map((key) => `.lfsconfig ${key}`),
+      });
   });
   const lfsInstalled = (cwd: string, stage: Stage) =>
     git(cwd, ["lfs", "version"], stage, true).pipe(
@@ -557,10 +693,24 @@ const make = Effect.gen(function* () {
     relativePath: string,
     stage: Stage,
   ) {
-    const pulled = yield* git(cwd, ["lfs", "pull"], stage, true).pipe(
+    const endpoint = lfsEndpoint(yield* text(cwd, ["remote", "get-url", "origin"], stage));
+    if (endpoint === null) return yield* blocked(stage, "lfs-failed", { repository: relativePath });
+    // Only the approved origin's LFS store, whatever `.lfsconfig` names.
+    const config = [`lfs.url=${endpoint}`, `remote.origin.lfsurl=${endpoint}`];
+    const pulled = yield* git(cwd, ["lfs", "pull", "origin"], stage, true, { config }).pipe(
       Effect.catchTag("HandoffGitError", () => Effect.succeed(null)),
     );
     if (pulled === null || pulled.code !== 0)
+      return yield* blocked(stage, "lfs-failed", { repository: relativePath });
+    // Every LFS file is downloaded: `-` marks one left as a pointer.
+    const listed = yield* git(cwd, ["lfs", "ls-files"], stage, true, { config }).pipe(
+      Effect.catchTag("HandoffGitError", () => Effect.succeed(null)),
+    );
+    if (
+      listed === null ||
+      listed.code !== 0 ||
+      listed.stdout.split("\n").some((line) => /^\S+ - /.test(line))
+    )
       return yield* blocked(stage, "lfs-failed", { repository: relativePath });
   });
 
@@ -685,8 +835,11 @@ const make = Effect.gen(function* () {
           );
           if (own !== "0") return yield* blocked(stage, "diverged-repository");
         }
-        if (!lfs && (yield* usesLfs(cwd, present ? repository.head : "HEAD", stage)))
-          return yield* blocked(stage, "needs-lfs");
+        const commit = present ? repository.head : "HEAD";
+        if (yield* usesLfs(cwd, commit, stage)) {
+          if (!lfs) return yield* blocked(stage, "needs-lfs");
+          yield* checkLfsConfig(cwd, commit, repository.relativePath, stage);
+        }
         yield* notInUse(input.existingCopy, cwd, repository.relativePath, stage);
       }).pipe(at(repository.relativePath));
     }
@@ -1066,7 +1219,10 @@ const make = Effect.gen(function* () {
               repository.relativePath,
               stage,
             );
-            if (yield* usesLfs(cwd, repository.head, stage)) needsLfs.add(repository.relativePath);
+            if (yield* usesLfs(cwd, repository.head, stage)) {
+              needsLfs.add(repository.relativePath);
+              yield* checkLfsConfig(cwd, repository.head, repository.relativePath, stage);
+            }
           }
           // An existing copy refuses before any merge when its LFS files could not download.
           if (existingCopy && !lfs && needsLfs.size > 0)
@@ -1165,8 +1321,15 @@ const make = Effect.gen(function* () {
         // Checkouts wrote LFS pointers; download the files where Git LFS is installed.
         if (yield* lfsInstalled(input.workspaceRoot, stage))
           for (const repository of repositories)
-            if (yield* usesLfs(repository.worktreePath, repository.head, stage))
+            if (yield* usesLfs(repository.worktreePath, repository.head, stage)) {
+              yield* checkLfsConfig(
+                repository.worktreePath,
+                repository.head,
+                repository.relativePath,
+                stage,
+              );
               yield* pullLfs(repository.worktreePath, repository.relativePath, stage);
+            }
         for (const repository of repositories) yield* clean(repository.worktreePath, stage);
         yield* preflightAt(input, stage);
         return {
