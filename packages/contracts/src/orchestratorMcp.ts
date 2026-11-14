@@ -774,6 +774,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   ),
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  answersRequestIds: Schema.optional(
+    Schema.Array(RuntimeRequestId).annotate({
+      description:
+        "Questions this message answers, from the target's openQuestions or studio_pending_request_list. The message is delivered as usual and those cards close, so the thread stops showing them as waiting on the user.",
+    }),
+  ),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 
@@ -801,6 +807,18 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   releasedHeldMessages: Schema.optional(
     NonNegativeInt.annotate({
       description: "Held queued messages this send released: they run after it, in their order.",
+    }),
+  ),
+  openQuestions: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        requestId: RuntimeRequestId,
+        header: Schema.String,
+        question: Schema.String,
+      }),
+    ).annotate({
+      description:
+        "Questions the target still shows to the user after this send; each counts as waiting on the user until answered. If your message already answered one, answer it with studio_pending_request_respond so the card closes, and next time pass answersRequestIds with the message. Leave a question open only when it is still the user's to answer. Omitted when none are open.",
     }),
   ),
   notice: Schema.optional(Schema.String),

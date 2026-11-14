@@ -1558,6 +1558,44 @@ const make = Effect.gen(function* () {
       return undefined;
     });
 
+  /**
+   * Questions a thread still shows to the user that a message answers: async
+   * ask_user cards, which stay open across turns until their card is answered.
+   */
+  const openMessageQuestions = (threadId: ThreadId) =>
+    threadManagement
+      .getThreadRecords(threadId, ["runtimeRequests", "turnItems"], {
+        turnItemTypes: ["user_input_request"],
+        messageRoles: [],
+      })
+      .pipe(
+        Effect.map((records) =>
+          records.runtimeRequests.flatMap((request) => {
+            if (
+              request.status !== "pending" ||
+              request.kind !== "user_input" ||
+              request.responseCapability.type !== "message"
+            )
+              return [];
+            const item = records.turnItems.find(
+              (candidate) =>
+                candidate.type === "user_input_request" && candidate.requestId === request.id,
+            );
+            const first = item?.type === "user_input_request" ? item.questions[0] : undefined;
+            return [
+              {
+                requestId: request.id,
+                header: first?.header ?? "Question",
+                question: (first?.question ?? "").slice(0, 240),
+              },
+            ];
+          }),
+        ),
+        Effect.mapError((error) =>
+          failure("orchestration_error", `Unable to read questions: ${errorMessage(error)}`),
+        ),
+      );
+
   const loadScopedThread = (scope: McpInvocationScope, threadId: ThreadId) =>
     Effect.gen(function* () {
       const caller = yield* loadCaller(scope);
@@ -3793,6 +3831,20 @@ const make = Effect.gen(function* () {
         if (squashed !== null)
           return yield* failure("invalid_request", squashedTextMessage(squashed));
 
+        // A message that answers a question closes its card; check them before delivering.
+        const answers = [...new Set(input.answersRequestIds ?? [])];
+        if (answers.length > 0) {
+          const open = new Set(
+            (yield* openMessageQuestions(input.threadId)).map((question) => question.requestId),
+          );
+          const unknown = answers.filter((requestId) => !open.has(requestId));
+          if (unknown.length > 0)
+            return yield* failure(
+              "invalid_request",
+              `answersRequestIds names questions that are not open in thread ${input.threadId}: ${unknown.join(", ")}. List them with studio_pending_request_list.`,
+            );
+        }
+
         const mode = input.mode ?? "auto";
         // A forwarded message has one delivery per target, however often it is retried.
         const key = yield* requestKey(
@@ -3833,6 +3885,28 @@ const make = Effect.gen(function* () {
                   ),
             ),
           );
+        // The message carries the answer, so its cards close without a second reply.
+        // A card the person answered meanwhile is already closed; that is not a failure.
+        for (const requestId of answers)
+          yield* threadManagement
+            .dispatch({
+              type: "thread.user-input.dismiss",
+              commandId: stableCommandId({
+                scope,
+                requestKey: `${key}:${requestId}`,
+                operation: "thread-send-answer",
+              }),
+              threadId: input.threadId,
+              requestId,
+            })
+            .pipe(Effect.ignore);
+        // Whatever is still open keeps the thread under Needs you; say so to the sender.
+        const openQuestions =
+          parent !== undefined && target.thread.id !== parent.thread.id
+            ? yield* openMessageQuestions(input.threadId).pipe(
+                Effect.orElseSucceed(() => [] as const),
+              )
+            : [];
         return {
           threadId: input.threadId,
           threadLink: formatStudioThreadLink(input.threadId, target.thread.title || "thread"),
@@ -3840,6 +3914,7 @@ const make = Effect.gen(function* () {
           runId: result.run.id,
           status: result.run.status,
           delivery: result.delivery,
+          ...(openQuestions.length > 0 ? { openQuestions } : {}),
           ...threadSendHeldQueueReport({
             run: result.run,
             runs: result.projection.runs,
