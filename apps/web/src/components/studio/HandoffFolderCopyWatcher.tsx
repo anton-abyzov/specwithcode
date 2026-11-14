@@ -212,7 +212,6 @@ export function announceCopy(
       "Retry",
     );
   }
-
 }
 
 const writePointer = (key: string, value: PendingCopy) => {
@@ -551,7 +550,11 @@ export function HandoffFolderCopyWatcher({
             const review = () => openCopyReview(activityKey);
             const title = copyActivityText(activity);
             addWithOpen(
-              { type: "success", title: `${title}. Nothing is copied until you approve it.`, timeout: 0 },
+              {
+                type: "success",
+                title: `${title}. Nothing is copied until you approve it.`,
+                timeout: 0,
+              },
               review,
               "Review",
             );
@@ -606,7 +609,10 @@ export function HandoffFolderCopyWatcher({
         if (gone) setCopyActivity(activityKey, null);
         return !gone;
       }
-      setCopyActivity(activityKey, named(copyActivityFromSource(source.value, machine, sourceLabel)));
+      setCopyActivity(
+        activityKey,
+        named(copyActivityFromSource(source.value, machine, sourceLabel)),
+      );
       if (source.value.state === "scanning") return true;
       if (firstCheck && !saved.auto) return false;
       if (source.value.summary && source.value.state !== "failed") {

@@ -1662,7 +1662,9 @@ it("copies into an empty destination in one click without a preview", async () =
   expect(container.querySelector('[data-slot="copy-working"]')?.textContent).toBe(
     "Starting to send to M3…",
   );
-  expect(container.textContent).toContain("You can close this window. We’ll notify you when it’s done.");
+  expect(container.textContent).toContain(
+    "You can close this window. We’ll notify you when it’s done.",
+  );
   expect(stepState()).toEqual(["Where:done", "Copy:current", "Done:next"]);
   await act(async () => finishApprove());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
