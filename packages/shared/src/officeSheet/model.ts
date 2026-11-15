@@ -62,9 +62,12 @@ export interface SheetCellStyle {
   readonly heading?: boolean;
   /** A rule above the cell, as on a totals row. */
   readonly topBorder?: boolean;
+  /** A soft band behind the cell, as on a table's header row. */
+  readonly fill?: boolean;
 }
 
-export type SheetChartType = "bar" | "line" | "donut";
+/** bar is horizontal, for ranked categories; column is vertical, for a sequence. */
+export type SheetChartType = "bar" | "column" | "line" | "donut";
 
 export interface SheetChart {
   readonly id: string;
@@ -75,6 +78,8 @@ export interface SheetChart {
   readonly labels: string;
   /** Range of numbers, the same length as labels. */
   readonly values: string;
+  /** The cell under the chart's top-left corner. Without it the chart sits beside its data. */
+  readonly at?: string;
 }
 
 export interface SheetTab {
@@ -89,6 +94,8 @@ export interface SheetTab {
   /** Column widths in pixels by column letter. */
   readonly widths?: Readonly<Record<string, number>>;
   readonly charts?: ReadonlyArray<SheetChart>;
+  /** False hides the grid lines, for a tab laid out as a report. */
+  readonly gridlines?: boolean;
 }
 
 export interface SheetDocument {
@@ -207,7 +214,7 @@ export type SheetValidation =
 const TONES: ReadonlySet<string> = new Set(["accent", "muted", "positive", "negative", "warning"]);
 const ALIGNS: ReadonlySet<string> = new Set(["left", "center", "right"]);
 const FORMAT_KINDS: ReadonlySet<string> = new Set(["number", "currency", "percent", "text"]);
-const CHART_TYPES: ReadonlySet<string> = new Set(["bar", "line", "donut"]);
+const CHART_TYPES: ReadonlySet<string> = new Set(["bar", "column", "line", "donut"]);
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 const DESIGN_SYSTEM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const CHART_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
@@ -260,6 +267,7 @@ function readStyle(value: unknown): SheetCellStyle | null {
       : {}),
     ...(value.heading === true ? { heading: true } : {}),
     ...(value.topBorder === true ? { topBorder: true } : {}),
+    ...(value.fill === true ? { fill: true } : {}),
   };
 }
 
@@ -429,6 +437,7 @@ export function validateSheetDocument(value: unknown): SheetValidation {
         if (!labels || !values) {
           return fail(`Tab "${name}": chart "${chartTitle}" needs labels and values ranges.`);
         }
+        const at = typeof rawChart.at === "string" ? parseCellAddress(rawChart.at.trim()) : null;
         let id =
           typeof rawChart.id === "string" && CHART_ID_PATTERN.test(rawChart.id)
             ? rawChart.id
@@ -441,6 +450,7 @@ export function validateSheetDocument(value: unknown): SheetValidation {
           title: chartTitle,
           labels: (rawChart.labels as string).trim(),
           values: (rawChart.values as string).trim(),
+          ...(at ? { at: cellName(at) } : {}),
         });
       }
     }
@@ -453,6 +463,7 @@ export function validateSheetDocument(value: unknown): SheetValidation {
       ...(chips.length > 0 ? { chips } : {}),
       ...(Object.keys(widths).length > 0 ? { widths } : {}),
       ...(charts.length > 0 ? { charts } : {}),
+      ...(rawTab.gridlines === false ? { gridlines: false as const } : {}),
     });
   }
 
@@ -612,6 +623,7 @@ export function mergeSheetInput(base: SheetDocument, update: unknown): unknown {
       ...(next.chips !== undefined ? { chips: next.chips } : {}),
       ...(next.widths !== undefined ? { widths: next.widths } : {}),
       ...(next.charts !== undefined ? { charts: next.charts } : {}),
+      ...(next.gridlines !== undefined ? { gridlines: next.gridlines } : {}),
     };
   }
   return {

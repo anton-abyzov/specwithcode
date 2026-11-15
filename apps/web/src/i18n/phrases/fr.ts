@@ -4621,14 +4621,16 @@ export const fr: PhraseCatalog = {
   "View this project on": "Voir ce projet sur",
   "Move coordinator to {machine}…": "Déplacer le coordinateur vers {machine}…",
   "coordinator paused": "coordinateur en pause",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} a gardé son coordinateur d'avant et n'exécute plus que des workers. Affichez-le pour lire cette conversation ou le relancer.",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} a gardé son coordinateur d'avant et n'exécute plus que des workers. Affichez-le pour lire cette conversation ou le relancer.",
   "Machine access settings": "Réglages d’accès entre machines",
   "{machine} offline": "{machine} hors ligne",
   "workers only": "workers uniquement",
   "move pending": "déplacement en attente",
-  "coordinator": "coordinateur",
+  coordinator: "coordinateur",
   "not linked": "non lié",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Non lié : {machine} a son propre coordinateur, ses fils et sa mémoire pour ce dépôt.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "Non lié : {machine} a son propre coordinateur, ses fils et sa mémoire pour ce dépôt.",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
   "Show only topics that need you in {project}":
     "Afficher seulement les sujets qui ont besoin de vous dans {project}",
@@ -5057,7 +5059,6 @@ export const fr: PhraseCatalog = {
   "Add chart": "Ajouter le graphique",
   "Showing the first {rows} rows and {columns} columns.":
     "Affichage des {rows} premières lignes et {columns} premières colonnes.",
-  Charts: "Graphiques",
   "Sheet tabs": "Onglets de la feuille",
   "This sheet is too large to open here.": "Cette feuille est trop volumineuse pour s'ouvrir ici.",
   Sheet: "Feuille",
@@ -5073,4 +5074,5 @@ export const fr: PhraseCatalog = {
   "not reachable": "injoignable",
   "unable to connect": "dans l’impossibilité de se connecter",
   extra: "en plus",
+  Column: "Colonnes",
 };

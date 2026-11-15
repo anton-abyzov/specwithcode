@@ -4609,14 +4609,16 @@ export const de: PhraseCatalog = {
   "View this project on": "Projekt ansehen auf",
   "Move coordinator to {machine}…": "Koordinator auf {machine} verschieben…",
   "coordinator paused": "Koordinator pausiert",
-  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} hat seinen Koordinator von vorher behalten und führt jetzt nur Worker aus. Öffne es, um dieses Gespräch zu lesen oder ihn wieder zu starten.",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.":
+    "{machine} hat seinen Koordinator von vorher behalten und führt jetzt nur Worker aus. Öffne es, um dieses Gespräch zu lesen oder ihn wieder zu starten.",
   "Machine access settings": "Zugriffseinstellungen der Rechner",
   "{machine} offline": "{machine} offline",
   "workers only": "nur Worker",
   "move pending": "Umzug ausstehend",
-  "coordinator": "Koordinator",
+  coordinator: "Koordinator",
   "not linked": "nicht verknüpft",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.": "Nicht verknüpft: {machine} hat für dieses Repository einen eigenen Koordinator, eigene Threads und eigenen Speicher.",
+  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
+    "Nicht verknüpft: {machine} hat für dieses Repository einen eigenen Koordinator, eigene Threads und eigenen Speicher.",
   "{value}Messages go to Percy. {value2}": "{value}Nachrichten gehen an Percy. {value2}",
   "Show only topics that need you in {project}":
     "Nur Themen zeigen, die dich in {project} brauchen",
@@ -5048,7 +5050,6 @@ export const de: PhraseCatalog = {
   "Add chart": "Diagramm hinzufügen",
   "Showing the first {rows} rows and {columns} columns.":
     "Die ersten {rows} Zeilen und {columns} Spalten werden angezeigt.",
-  Charts: "Diagramme",
   "Sheet tabs": "Tabellenblätter",
   "This sheet is too large to open here.": "Diese Tabelle ist zu groß, um sie hier zu öffnen.",
   Sheet: "Tabelle",
@@ -5064,4 +5065,5 @@ export const de: PhraseCatalog = {
   "not reachable": "nicht erreichbar",
   "unable to connect": "kann keine Verbindung herstellen",
   extra: "zusätzlich",
+  Column: "Säulen",
 };

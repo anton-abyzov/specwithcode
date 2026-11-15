@@ -12,6 +12,9 @@ import {
   chartSeries,
   columnLetters,
   evaluateSheet,
+  layoutSheetCharts,
+  sheetColumnWidth,
+  SHEET_GRID,
   formatSheetValue,
   isSheetError,
   rangeLookup,
@@ -51,6 +54,7 @@ const CHIP_COLORS = 8;
 
 const CHART_TYPES: ReadonlyArray<{ readonly type: SheetChartType; readonly label: string }> = [
   { type: "bar", label: "Bar" },
+  { type: "column", label: "Column" },
   { type: "line", label: "Line" },
   { type: "donut", label: "Donut" },
 ];
@@ -114,10 +118,18 @@ export function SheetView(props: {
   const tab = document?.tabs[activeIndex];
 
   const grid = useMemo(() => {
-    if (!tab) return null;
+    if (!tab || !document || !evaluation) return null;
     const used = usedRange(tab);
-    const lastRow = used ? used.end.row : 0;
-    const lastCol = used ? used.end.col : 0;
+    const series = (tab.charts ?? []).map((chart) =>
+      chartSeries(document, evaluation, activeIndex, chart),
+    );
+    const boxes = layoutSheetCharts(
+      tab,
+      series.map((entry) => entry.points.length),
+    );
+    // The grid reaches under every chart, so a chart never hangs off its edge.
+    const lastRow = Math.max(used ? used.end.row : 0, ...boxes.map((box) => box.endRow));
+    const lastCol = Math.max(used ? used.end.col : 0, ...boxes.map((box) => box.endCol));
     const rows = Math.min(SHEET_VIEW_ROWS, Math.max(MIN_ROWS, lastRow + 3));
     const columns = Math.min(SHEET_VIEW_COLUMNS, Math.max(MIN_COLUMNS, lastCol + 2));
     const chipRanges = (tab.chips ?? [])
@@ -126,12 +138,20 @@ export function SheetView(props: {
     return {
       rows,
       columns,
-      clipped: lastRow + 1 > rows || lastCol + 1 > columns,
+      clipped: (used ? used.end.row : 0) + 1 > rows || (used ? used.end.col : 0) + 1 > columns,
       chipRanges,
+      width:
+        SHEET_GRID.gutterWidth +
+        Array.from({ length: columns }, (_, col) => sheetColumnWidth(tab, col)).reduce(
+          (sum, width) => sum + width,
+          0,
+        ),
+      series,
+      boxes,
       formatOf: rangeLookup(tab.formats),
       styleOf: rangeLookup(tab.styles),
     };
-  }, [tab]);
+  }, [activeIndex, document, evaluation, tab]);
 
   if (!parsed.ok) {
     return (
@@ -293,122 +313,139 @@ export function SheetView(props: {
           aria-label={tab.name}
           onKeyDown={move}
         >
-          <table className="office-grid">
-            <colgroup>
-              <col className="office-grid-gutter" />
-              {Array.from({ length: grid.columns }, (_, col) => {
-                const width = tab.widths?.[columnLetters(col)];
-                return (
-                  <col
-                    key={col}
-                    style={width ? { width: Math.max(40, Math.min(600, width)) } : undefined}
-                  />
-                );
-              })}
-            </colgroup>
-            <thead>
-              <tr>
-                <th className="office-grid-corner" aria-hidden />
+          <div className="office-grid-plane" style={{ width: grid.width }}>
+            <table
+              className="office-grid"
+              style={{ width: grid.width }}
+              data-gridlines={tab.gridlines === false ? "off" : undefined}
+            >
+              <colgroup>
+                <col style={{ width: SHEET_GRID.gutterWidth }} />
                 {Array.from({ length: grid.columns }, (_, col) => (
-                  <th
-                    key={col}
-                    scope="col"
-                    data-selected={range !== null && col >= range.start.col && col <= range.end.col}
-                  >
-                    {columnLetters(col)}
-                  </th>
+                  <col key={col} style={{ width: sheetColumnWidth(tab, col) }} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: grid.rows }, (_, row) => (
-                <tr key={row}>
-                  <th
-                    scope="row"
-                    data-selected={range !== null && row >= range.start.row && row <= range.end.row}
-                  >
-                    {row + 1}
-                  </th>
-                  {Array.from({ length: grid.columns }, (_, col) => {
-                    const address = { col, row };
-                    const value = evaluation.valueAt(activeIndex, address);
-                    const selected = range !== null && rangeContains(range, address);
-                    const focused =
-                      selection !== null &&
-                      selection.focus.col === col &&
-                      selection.focus.row === row;
-                    const pick = (extend: boolean) =>
-                      setSelection((current) =>
-                        extend && current
-                          ? { anchor: current.anchor, focus: address }
-                          : { anchor: address, focus: address },
-                      );
-                    const common = {
-                      "data-cell": cellName(address),
-                      "data-selected": selected,
-                      "data-focused": focused,
-                      onMouseDown: (event: { shiftKey: boolean }) => pick(event.shiftKey),
-                      onMouseEnter: (event: { buttons: number }) => {
-                        if (event.buttons === 1) pick(true);
-                      },
-                    };
-                    if (value === null) return <td key={col} {...common} />;
-                    const cellStyle = grid.styleOf(address);
-                    const text = formatSheetValue(value, grid.formatOf(address));
-                    const numeric = typeof value === "number";
-                    const href = typeof value === "string" ? safeLinkHref(value) : null;
-                    const chip =
-                      typeof value === "string" &&
-                      grid.chipRanges.some((entry) => rangeContains(entry, address));
-                    if (chip && !chipColor.has(text)) {
-                      chipColor.set(text, (chipColor.size % CHIP_COLORS) + 1);
-                    }
-                    return (
-                      <td
-                        key={col}
-                        {...common}
-                        data-align={cellStyle?.align ?? (numeric ? "right" : undefined)}
-                        data-tone={isSheetError(value) ? "negative" : cellStyle?.tone}
-                        data-bold={cellStyle?.bold}
-                        data-italic={cellStyle?.italic}
-                        data-heading={cellStyle?.heading}
-                        data-rule={cellStyle?.topBorder}
-                      >
-                        {chip ? (
-                          <span className="office-chip" data-chip={chipColor.get(text)}>
-                            {text}
-                          </span>
-                        ) : href ? (
-                          <a href={href} target="_blank" rel="noreferrer noopener">
-                            {text}
-                          </a>
-                        ) : (
-                          text
-                        )}
-                      </td>
-                    );
-                  })}
+              </colgroup>
+              <thead>
+                <tr>
+                  <th className="office-grid-corner" aria-hidden />
+                  {Array.from({ length: grid.columns }, (_, col) => (
+                    <th
+                      key={col}
+                      scope="col"
+                      data-selected={
+                        range !== null && col >= range.start.col && col <= range.end.col
+                      }
+                    >
+                      {columnLetters(col)}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {Array.from({ length: grid.rows }, (_, row) => (
+                  <tr key={row}>
+                    <th
+                      scope="row"
+                      data-selected={
+                        range !== null && row >= range.start.row && row <= range.end.row
+                      }
+                    >
+                      {row + 1}
+                    </th>
+                    {Array.from({ length: grid.columns }, (_, col) => {
+                      const address = { col, row };
+                      const value = evaluation.valueAt(activeIndex, address);
+                      const selected = range !== null && rangeContains(range, address);
+                      const focused =
+                        selection !== null &&
+                        selection.focus.col === col &&
+                        selection.focus.row === row;
+                      const pick = (extend: boolean) =>
+                        setSelection((current) =>
+                          extend && current
+                            ? { anchor: current.anchor, focus: address }
+                            : { anchor: address, focus: address },
+                        );
+                      const common = {
+                        "data-cell": cellName(address),
+                        "data-selected": selected,
+                        "data-focused": focused,
+                        onMouseDown: (event: { shiftKey: boolean }) => pick(event.shiftKey),
+                        onMouseEnter: (event: { buttons: number }) => {
+                          if (event.buttons === 1) pick(true);
+                        },
+                      };
+                      if (value === null) return <td key={col} {...common} />;
+                      const cellStyle = grid.styleOf(address);
+                      const text = formatSheetValue(value, grid.formatOf(address));
+                      const numeric = typeof value === "number";
+                      const href = typeof value === "string" ? safeLinkHref(value) : null;
+                      const chip =
+                        typeof value === "string" &&
+                        grid.chipRanges.some((entry) => rangeContains(entry, address));
+                      if (chip && !chipColor.has(text)) {
+                        chipColor.set(text, (chipColor.size % CHIP_COLORS) + 1);
+                      }
+                      return (
+                        <td
+                          key={col}
+                          {...common}
+                          data-align={cellStyle?.align ?? (numeric ? "right" : undefined)}
+                          data-tone={isSheetError(value) ? "negative" : cellStyle?.tone}
+                          data-bold={cellStyle?.bold}
+                          data-italic={cellStyle?.italic}
+                          data-heading={cellStyle?.heading}
+                          data-rule={cellStyle?.topBorder}
+                          data-fill={cellStyle?.fill}
+                        >
+                          {chip ? (
+                            <span className="office-chip" data-chip={chipColor.get(text)}>
+                              {text}
+                            </span>
+                          ) : href ? (
+                            <a href={href} target="_blank" rel="noreferrer noopener">
+                              {text}
+                            </a>
+                          ) : (
+                            text
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(tab.charts ?? []).map((chart, index) => {
+              const box = grid.boxes[index];
+              const series = grid.series[index];
+              if (!box || !series) return null;
+              return (
+                <div
+                  key={chart.id}
+                  className="office-grid-chart"
+                  style={{
+                    left: SHEET_GRID.gutterWidth + box.left,
+                    top: SHEET_GRID.headerHeight + box.top,
+                    width: box.width,
+                    height: box.height,
+                  }}
+                >
+                  <SheetChartCard
+                    chart={chart}
+                    series={series}
+                    tone={index}
+                    onRemove={
+                      props.onSave && !saving
+                        ? () => void save(removeChart(document, activeIndex, chart.id))
+                        : undefined
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
-        {tab.charts && tab.charts.length > 0 ? (
-          <aside className="office-sheet-charts" aria-label={tx("Charts")}>
-            {tab.charts.map((chart) => (
-              <SheetChartCard
-                key={chart.id}
-                chart={chart}
-                series={chartSeries(document, evaluation, activeIndex, chart)}
-                onRemove={
-                  props.onSave && !saving
-                    ? () => void save(removeChart(document, activeIndex, chart.id))
-                    : undefined
-                }
-              />
-            ))}
-          </aside>
-        ) : null}
       </div>
       <div className="office-sheet-tabs" role="tablist" aria-label={tx("Sheet tabs")}>
         {document.tabs.map((entry, index) => (

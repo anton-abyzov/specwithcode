@@ -104,7 +104,13 @@ describe("SheetView", () => {
     expect(root.findAllByProps({ className: "office-chip" }).map(textOf)).toEqual(["Paid", "Due"]);
     const chart = root.findByProps({ "data-chart-id": "chart-1" });
     expect(textOf(chart)).toContain("Revenue beats costs");
-    expect(chart.findAllByType("rect")).toHaveLength(2);
+    expect(chart.findAllByProps({ className: "office-bars-value" }).map(textOf)).toEqual([
+      "120K · 100%",
+      "-45K",
+    ]);
+    // The chart sits on the grid, two columns right of its data and level with it.
+    const placed = root.findByProps({ className: "office-grid-chart" });
+    expect(placed.props.style).toMatchObject({ left: 44 + 3 * 112, top: 28, width: 520 });
   });
 
   it("switches tabs", () => {
@@ -129,7 +135,7 @@ describe("SheetView", () => {
     act(() => cell(root, "A2").props.onMouseDown({ shiftKey: false }));
     act(() => cell(root, "B3").props.onMouseDown({ shiftKey: true }));
     act(() => root.findByProps({ "data-sheet-insert-chart": true }).props.onClick());
-    act(() => root.findAllByProps({ role: "radio" })[2]!.props.onClick());
+    act(() => root.findAllByProps({ role: "radio" })[3]!.props.onClick());
     act(() =>
       root.findByProps({ className: "office-sheet-input" }).props.onChange({
         target: { value: "Where the money goes" },
