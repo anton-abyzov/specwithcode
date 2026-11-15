@@ -318,6 +318,11 @@ export function planReconcile(input: PlanInput): Plan {
     }
     if (!destination) {
       const blocked = source.path !== "." && occupied(source.path);
+      // The root is merged, never replaced: a target already holding anything copies it
+      // with its history, since cloning beside those entries would let Undo carry them off.
+      const rootOccupied =
+        source.path === "." &&
+        (input.destination.files.length > 0 || input.destination.repositories.length > 0);
       const cloneOrigin = input.cloneOrigins?.[id];
       // Chosen, but this machine cannot read the origin: copied whole instead of failing late.
       const unreachable = clone.has(id) && cloneOrigin === null;
@@ -328,7 +333,8 @@ export function planReconcile(input: PlanInput): Plan {
         source.identity !== null &&
         !source.identity.startsWith("file://") &&
         !unreachable &&
-        !blocked;
+        !blocked &&
+        !rootOccupied;
       const cloned = cloneAvailable && clone.has(id);
       const cloneStep = () =>
         step({ kind: "clone", ...(cloneOrigin ? { origin: cloneOrigin } : {}) });

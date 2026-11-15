@@ -607,3 +607,26 @@ it("never clones over files already at the path: taking theirs replaces it whole
     "repos/app/scratch.txt",
   ]);
 });
+
+it("never clones the root into a folder that already holds files", () => {
+  const input = {
+    repositories: [sourceRepo(".")],
+    entries: [
+      file(".git/HEAD", "h", { class: "repository", repo: "." }),
+      file("README.md", "r", { repo: "." }),
+    ],
+    destination: { files: [], repositories: [] },
+    clone: [repoRowId(".")],
+    cloneOrigins: { [repoRowId(".")]: "https://github.com/acme/umbrella.git" },
+  };
+  expect(step(plan(input), ".").kind).toBe("clone");
+  const occupied = plan({
+    ...input,
+    destination: {
+      files: [here("notes.txt", "mine", { repo: null, class: "untracked" })],
+      repositories: [],
+    },
+  });
+  expect(row(occupied, repoRowId("."))).toMatchObject({ cloneAvailable: false, clone: false });
+  expect(step(occupied, ".").kind).toBe("copy");
+});
