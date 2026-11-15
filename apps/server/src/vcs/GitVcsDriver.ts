@@ -567,7 +567,8 @@ const gitCommand = (
 /**
  * Whether `git clean` output lists a path inside the workspace. Git for Windows removes an
  * emptied nested workspace directory itself and lists it as "./". The restore recreates
- * that directory, so it is neither a pass that made progress nor a file left behind.
+ * that directory, so a pass that removed only it made no progress. A dry run lists "./"
+ * alone for a workspace it could remove whole, so there the caller also checks for files.
  */
 export const gitCleanListsWorkspacePath = (
   stdout: string,
@@ -1361,6 +1362,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: ["reset", "--quiet", "--", "."],
         });
       });
+      const workspaceIsEmpty = fileSystem.readDirectory(input.cwd).pipe(
+        Effect.map((entries) => entries.length === 0),
+        Effect.orElseSucceed(() => false),
+      );
       // Restoring away the last tracked file can remove a nested workspace directory.
       yield* recreateWorkspace("git restore");
       const clean = execute({
@@ -1393,10 +1398,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           env: { LC_ALL: "C" },
           allowNonZeroExit: true,
         });
-        if (
-          remaining.exitCode !== 0 ||
-          gitCleanListsWorkspacePath(remaining.stdout, "Would remove")
-        ) {
+        // A dry run lists a nested workspace Git could remove whole as "./" alone, whatever
+        // is in it, so that line means files remain unless the workspace is empty.
+        const untrackedRemain =
+          gitCleanListsWorkspacePath(remaining.stdout, "Would remove") ||
+          (/^Would remove /m.test(remaining.stdout) && !(yield* workspaceIsEmpty));
+        if (remaining.exitCode !== 0 || untrackedRemain) {
           yield* resetIndex;
           return yield* new VcsProcessExitError({
             operation,
@@ -1415,10 +1422,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const emptiedWorkspace =
           cleaned.exitCode === 1 &&
           /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
-          (yield* fileSystem.readDirectory(input.cwd).pipe(
-            Effect.map((entries) => entries.length === 0),
-            Effect.orElseSucceed(() => false),
-          ));
+          (yield* workspaceIsEmpty);
         if (!emptiedWorkspace) {
           yield* resetIndex;
           return yield* new VcsProcessExitError({

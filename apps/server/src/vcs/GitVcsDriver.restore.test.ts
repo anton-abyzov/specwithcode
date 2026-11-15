@@ -315,6 +315,63 @@ it.effect("restoring a nested workspace that git clean removes whole cleans it o
   }).pipe(Effect.scoped, Effect.provide(makeGitForWindowsCleanLayer(cleanRuns)));
 });
 
+it.effect("restoring fails when clean never finishes and untracked files remain", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "GitVcsDriver.restore.test.git", cwd, args });
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-restore-runaway-" });
+    yield* git(root, ["init"]);
+    yield* git(root, ["config", "user.email", "test@example.com"]);
+    yield* git(root, ["config", "user.name", "Test"]);
+    yield* git(root, ["commit", "--allow-empty", "-m", "initial"]);
+    const cwd = path.join(root, "nested");
+    yield* fileSystem.makeDirectory(cwd);
+    const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/runaway");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    const restore = driver.checkpoints.restoreCheckpoint({
+      cwd,
+      checkpointRef,
+      fallbackToHead: false,
+    });
+
+    // Git lists this workspace as "./" alone in the dry run, with the file still in it.
+    yield* fileSystem.writeFileString(path.join(cwd, "stubborn.txt"), "stays\n");
+    const error = yield* restore.pipe(Effect.flip);
+    assert.include(error.message, "untracked files remain");
+    assert.isTrue(yield* fileSystem.exists(path.join(cwd, "stubborn.txt")));
+
+    // The same dry-run line for an empty workspace is the directory itself: nothing remains.
+    yield* fileSystem.remove(path.join(cwd, "stubborn.txt"));
+    assert.isTrue(yield* restore);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      // Every real clean pass claims to remove a file and removes nothing.
+      Layer.effect(
+        VcsProcess.VcsProcess,
+        Effect.gen(function* () {
+          const real = yield* VcsProcess.VcsProcess;
+          return VcsProcess.VcsProcess.of({
+            run: (input) =>
+              input.args.includes("clean") && input.args.includes("-fd")
+                ? Effect.succeed({
+                    exitCode: ChildProcessSpawner.ExitCode(0),
+                    stdout: "Removing ./stubborn.txt\n",
+                    stderr: "",
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                  })
+                : real.run(input),
+          });
+        }),
+      ).pipe(Layer.provide(VcsProcess.layer), Layer.provideMerge(NodeServices.layer)),
+    ),
+  ),
+);
+
 it("does not count the workspace directory itself in git clean output", () => {
   const lists = GitVcsDriver.gitCleanListsWorkspacePath;
   // Git for Windows, cleaning an emptied nested workspace.
