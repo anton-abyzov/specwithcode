@@ -96,7 +96,7 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   },
 ) {
   override get message(): string {
-    return `Workspace file '${this.relativePath}' in '${this.workspaceRoot}' is binary and cannot be previewed as text.`;
+    return `Workspace file '${this.relativePath}' in '${this.workspaceRoot}' is binary or not UTF-8 text and cannot be opened as text.`;
   }
 }
 
@@ -179,6 +179,56 @@ async function resolveWriteDestination(
     if (parent === current) return null;
     missing.push(NodePath.basename(current));
     current = parent;
+  }
+}
+
+const UTF8_BOM = "\uFEFF";
+
+/**
+ * Whether bytes are text the editor can round-trip: no NUL byte and valid UTF-8.
+ * A lossy decode would turn other encodings into U+FFFD and a save would keep it.
+ * `partial` allows a character the read limit split at the end.
+ */
+function decodeEditableText(bytes: Uint8Array, partial: boolean): string | null {
+  if (bytes.includes(0)) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: partial });
+  } catch {
+    return null;
+  }
+}
+
+/** What a save must respect in the file it replaces; null when nothing is there. */
+async function readExistingText(
+  filePath: string,
+): Promise<{ readonly editable: boolean; readonly bom: boolean } | null> {
+  // Non-blocking so a FIFO cannot hang the save; only regular files are checked.
+  const handle = await NodeFSP.open(
+    filePath,
+    NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
+  ).catch(() => null);
+  if (handle === null) return null;
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) return null;
+    // The editor only saves files it read whole, so the read limit bounds the check.
+    const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
+    const buffer = Buffer.alloc(bytesToRead);
+    let offset = 0;
+    while (offset < bytesToRead) {
+      const { bytesRead } = await handle.read(buffer, offset, bytesToRead - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const bytes = buffer.subarray(0, offset);
+    return {
+      editable: decodeEditableText(bytes, stat.size > offset) !== null,
+      bom: bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf,
+    };
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => undefined);
   }
 }
 
@@ -413,7 +463,11 @@ export const make = Effect.gen(function* () {
               }),
           });
           const fileBytes = buffer.subarray(0, bytesRead);
-          if (fileBytes.includes(0)) {
+          const truncated = size > limit;
+          // A file that is not UTF-8 text is refused, since a save of its lossy
+          // decode would corrupt it. A character the limit split is dropped.
+          const contents = decodeEditableText(fileBytes, truncated);
+          if (contents === null) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
               relativePath: input.relativePath,
@@ -423,9 +477,9 @@ export const make = Effect.gen(function* () {
 
           return {
             relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
+            contents,
             byteLength: size,
-            truncated: size > limit,
+            truncated,
           };
         }),
       (handle) =>
@@ -494,6 +548,20 @@ export const make = Effect.gen(function* () {
     ) {
       return yield* sensitivePathError(input, target.absolutePath, "write-file");
     }
+    // A file the editor cannot open as UTF-8 text is never overwritten from it,
+    // and a byte order mark the read decoded away is written back.
+    const existing = yield* Effect.promise(() => readExistingText(destination));
+    if (existing !== null && !existing.editable) {
+      return yield* new WorkspaceBinaryFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: destination,
+      });
+    }
+    const contents =
+      existing?.bom === true && !input.contents.startsWith(UTF8_BOM)
+        ? UTF8_BOM + input.contents
+        : input.contents;
 
     yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
       Effect.mapError(
@@ -508,7 +576,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* fileSystem.writeFileString(target.absolutePath, input.contents).pipe(
+    yield* fileSystem.writeFileString(target.absolutePath, contents).pipe(
       Effect.mapError(
         (cause) =>
           new WorkspaceFileSystemOperationError({

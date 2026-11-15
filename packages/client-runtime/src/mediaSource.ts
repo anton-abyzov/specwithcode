@@ -99,6 +99,13 @@ export function resolveMediaSource(
   return {
     ...common,
     access: "environment",
-    resource: { _tag: "media-file", threadId: input.threadId, path },
+    resource: {
+      _tag: "media-file",
+      threadId: input.threadId,
+      path,
+      ...(classified._tag === "WorkspaceFile" && classified.relative
+        ? { hostOnly: true as const }
+        : {}),
+    },
   };
 }

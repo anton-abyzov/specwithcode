@@ -35,10 +35,21 @@ import {
 import { modelSelectionCommandType } from "@specweave-studio/shared/model";
 import { derivePendingBackgroundWork } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  getInitialServerConfig,
+  isRpcClientError,
+  request,
+} from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -314,6 +325,62 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
+
+// The socket can close after the host accepted a send but before it replied. The
+// host answers a repeated command id from its receipt, so the same command waits
+// for the next session and goes again. The cap stops a frame that kills the
+// socket from looping.
+const MAX_LOST_TRANSPORT_RESENDS = 2;
+
+// A live socket can still carry a send the host never answers; without a limit
+// the composer would wait forever.
+const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
+
+const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
+  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const attempt = dispatch(command).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: `${supervisor.target.label} did not confirm the message within 60 seconds.`,
+          }),
+        ),
+    }),
+  );
+  for (let resends = 0; ; resends += 1) {
+    const attemptSession = yield* SubscriptionRef.get(supervisor.session);
+    const exit = yield* Effect.exit(attempt);
+    if (Exit.isSuccess(exit)) return exit.value;
+    // Closing the session interrupts the request, which can beat the protocol error.
+    const lostTransport =
+      Cause.hasInterruptsOnly(exit.cause) ||
+      exit.cause.reasons.some((reason) => reason._tag === "Fail" && isRpcClientError(reason.error));
+    if (!lostTransport || resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* exit;
+    // Wait for a session other than the one that dropped, unless the supervisor
+    // stops trying: the app disconnected, or the connection is blocked.
+    const replacement = yield* Effect.raceFirst(
+      SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.filter(
+          (session) =>
+            Option.isSome(session) &&
+            !(Option.isSome(attemptSession) && session.value === attemptSession.value),
+        ),
+        Stream.runHead,
+      ),
+      SubscriptionRef.changes(supervisor.state).pipe(
+        Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
+        Stream.runHead,
+        Effect.as(Option.none()),
+      ),
+    );
+    if (Option.isNone(replacement)) return yield* exit;
+  }
+});
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
@@ -803,7 +870,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
 
   const requestedMode = input.dispatchMode ?? "auto";
   if (requestedMode === "start") {
-    return yield* dispatch({
+    return yield* dispatchMessage({
       type: "message.dispatch",
       ...(input.manualCodexCreditIntent
         ? { manualCodexCreditIntent: input.manualCodexCreditIntent }
@@ -870,7 +937,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   const shouldSendTitleSeed =
     input.titleSeed !== undefined &&
     (serverResolvesCommandContext || projection?.messages.length === 0);
-  return yield* dispatch({
+  return yield* dispatchMessage({
     type: "message.dispatch",
     ...(input.manualCodexCreditIntent
       ? { manualCodexCreditIntent: input.manualCodexCreditIntent }

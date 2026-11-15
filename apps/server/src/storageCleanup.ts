@@ -47,6 +47,7 @@ import * as DiskSpaceMonitor from "./observability/DiskSpaceMonitor.ts";
 import { casesFoldOn } from "./scratchPrune.ts";
 import { worktreeHasNoAdditionalChanges } from "./git/worktreeIntegration.ts";
 import {
+  canonicalPath,
   isOpenThreadOwner,
   listWorktreeBindings,
   pathSpellings,
@@ -80,6 +81,7 @@ import {
 } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { hiddenTrackedChangeReason, nestedRepositoryReason } from "./worktreeHiddenWork.ts";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -285,19 +287,43 @@ export const make = Effect.gen(function* () {
   });
 
   // Local threads under another project need not have a worktreePath of their own.
+  // Takes every spelling of the worktree: a project may record either one.
   const containsProjectRoot = Effect.fn("StorageCleanup.containsProjectRoot")(function* (
-    worktreePath: string,
+    worktreePaths: ReadonlyArray<string>,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
   ) {
+    const contains = (projectPath: string) =>
+      worktreePaths.some(
+        (worktreePath) => projectPath === worktreePath || inside(worktreePath, projectPath),
+      );
     for (const project of projects) {
       const projectPath = path.resolve(project.workspaceRoot);
-      if (projectPath === worktreePath || inside(worktreePath, projectPath)) return true;
+      if (contains(projectPath)) return true;
       const realPath = yield* fs
         .realPath(projectPath)
         .pipe(Effect.orElseSucceed(() => projectPath));
-      if (realPath === worktreePath || inside(worktreePath, realPath)) return true;
+      if (contains(realPath)) return true;
     }
     return false;
+  });
+
+  /** Why a worktree must stay although Git status is clean, or null. */
+  const hiddenWorkReason = Effect.fn("StorageCleanup.hiddenWorkReason")(function* (
+    worktreePath: string,
+    options: { readonly nestedRepositories: boolean },
+  ) {
+    const hidden = yield* hiddenTrackedChangeReason(git, worktreePath);
+    if (hidden !== null || !options.nestedRepositories) return hidden;
+    return yield* nestedRepositoryReason(git, worktreePath);
+  });
+  const keptForHiddenWork = Effect.fn("StorageCleanup.keptForHiddenWork")(function* (
+    worktreePath: string,
+    options: { readonly nestedRepositories: boolean },
+  ) {
+    const reason = yield* hiddenWorkReason(worktreePath, options);
+    if (reason === null) return false;
+    yield* Effect.logDebug("storage cleanup kept worktree", { worktreePath, reason });
+    return true;
   });
 
   /** Commits on HEAD that no remote-tracking ref has; null when git's answer is not a count. */
@@ -358,18 +384,27 @@ export const make = Effect.gen(function* () {
     // Unreadable ownership skips the whole sweep: never remove on a guess.
     const bindings = yield* readBindings;
     const refreshedDefaultRefs = new Map<string, Set<string>>();
-    const groups = Map.groupBy(
-      snapshot.threads.filter((thread) => thread.worktreePath !== null),
-      (thread) => path.resolve(thread.worktreePath!),
+    // Threads may record one checkout through different symlinked spellings:
+    // group by real path, so a folder two threads share is never a single owner's.
+    const folderKey = (value: string) => canonicalPath(value).pipe(Effect.provideContext(services));
+    const recorded = snapshot.threads.filter((thread) => thread.worktreePath !== null);
+    const recordedKeys = yield* Effect.forEach(recorded, (thread) =>
+      folderKey(thread.worktreePath!),
+    );
+    const groups = Map.groupBy(recorded, (_thread, index) => recordedKeys[index]!);
+    const deletedKeys = yield* Effect.forEach(deletedThreads, (thread) =>
+      folderKey(thread.worktreePath!),
     );
     const candidates = [
       ...[...groups.values()].flatMap((group) => (group.length === 1 ? [group[0]!] : [])),
-      ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath!))),
+      ...deletedThreads.filter((_thread, index) => !groups.has(deletedKeys[index]!)),
     ];
     for (const thread of candidates) {
       const settings = resolveWorktreeCleanup(serverSettings, thread.projectId);
       if (!worktreeCleanupEnabled(settings)) continue;
       const worktreePath = path.resolve(thread.worktreePath!);
+      const worktreeKey = yield* folderKey(worktreePath);
+      const worktreePaths = [...new Set([worktreePath, worktreeKey])];
       const deleted = "workspaceRoot" in thread;
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
@@ -407,7 +442,7 @@ export const make = Effect.gen(function* () {
           if (!inside(localRoot, realPath)) return;
           if ((yield* fs.realPath(localRoot)) !== localRoot) return;
         }
-        if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects])) return;
+        if (yield* containsProjectRoot(worktreePaths, [project, ...snapshot.projects])) return;
         // A linked worktree has a .git file. Never remove a main checkout.
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File") return;
         const status = yield* git.statusDetailsLocal(worktreePath);
@@ -426,6 +461,7 @@ export const make = Effect.gen(function* () {
         if (ignored.stdoutTruncated || !onlyDependencyIgnores(ignored.stdout)) return;
         // status.showUntrackedFiles=no hides new files from the status check.
         if (!(yield* untrackedNone(worktreePath))) return;
+        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: false })) return;
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
@@ -482,14 +518,17 @@ export const make = Effect.gen(function* () {
           }
         }
         if (!eligible) return;
+        // Walks the untracked and ignored folders, so only for a folder that may go.
+        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: true })) return;
         // Re-read after Git/host calls so a queued turn, resumed session or new
         // thread sharing this path cancels the removal.
         const latestSnapshot = yield* readThreads();
-        if (yield* containsProjectRoot(worktreePath, [project, ...latestSnapshot.projects])) return;
-        const latest = latestSnapshot.threads.filter(
-          (entry) =>
-            entry.worktreePath !== null && path.resolve(entry.worktreePath) === worktreePath,
-        );
+        if (yield* containsProjectRoot(worktreePaths, [project, ...latestSnapshot.projects]))
+          return;
+        const latest: Array<OrchestrationV2ThreadShell> = [];
+        for (const entry of latestSnapshot.threads)
+          if (entry.worktreePath !== null && (yield* folderKey(entry.worktreePath)) === worktreeKey)
+            latest.push(entry);
         if (hasTerminal(worktreePath)) return;
         if (deleted) {
           if (
@@ -532,6 +571,7 @@ export const make = Effect.gen(function* () {
         });
         if (finalIgnored.stdoutTruncated || !onlyDependencyIgnores(finalIgnored.stdout)) return;
         if (!(yield* untrackedNone(worktreePath))) return;
+        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: false })) return;
         const current = resolveWorktreeCleanup(
           yield* settingsService.getSettings,
           thread.projectId,
@@ -867,6 +907,7 @@ export const make = Effect.gen(function* () {
         const status = yield* git.statusDetailsLocal(worktreePath);
         if (!status.isRepo || status.hasWorkingTreeChanges) return;
         if (!(yield* untrackedNone(worktreePath))) return;
+        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: false })) return;
         // `git worktree lock` keeps the whole folder, dependencies included.
         if (yield* fs.exists(path.join(gitDir, "locked"))) return;
         // A folder that stays and has nothing left to prune needs no PR lookup.
@@ -958,6 +999,8 @@ export const make = Effect.gen(function* () {
           idleMs,
         };
         if (!orphanWorktreeRemovable(facts)) return;
+        // Neither removal nor dependency pruning may delete a repository inside it.
+        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: true })) return;
         // Re-check after Git/host calls: any new change or commit cancels the removal.
         const finalStatus = yield* git.statusDetailsLocal(worktreePath);
         if (
@@ -972,6 +1015,7 @@ export const make = Effect.gen(function* () {
         )
           return;
         if (!(yield* untrackedNone(worktreePath))) return;
+        if (yield* keptForHiddenWork(worktreePath, { nestedRepositories: false })) return;
         const keepFolder =
           !(yield* ignoredOnlyDependencies(worktreePath)) ||
           (yield* reflogOnlyCommits(worktreePath)) > 0;

@@ -101,6 +101,7 @@ import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 import { useRenderErrorComponentStackLines } from "../lib/renderErrorDiagnostics";
 import { useRetryLoadOnBackendReady } from "../lib/retryLoadOnBackendReady";
+import { isChunkLoadError } from "../lib/chunkReloadGuard";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -454,7 +455,12 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
       />
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void router.invalidate()}>
+        <Button
+          size="sm"
+          onClick={() =>
+            isChunkLoadError(error) ? window.location.reload() : void router.invalidate()
+          }
+        >
           Try again
         </Button>
         <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
