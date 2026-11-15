@@ -1165,6 +1165,7 @@ function timelineItem(input: {
 
 import {
   projectDelegationTarget,
+  projectUsesTracks,
   callerWorkerModel,
   withProjectWorkerModel,
   workerModelUnderGrant,
@@ -2190,10 +2191,17 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const unrouted = { target: input.baseline, routing: null as TaskRoutingDecision | null };
+      const tracks = Option.isNone(serverSettings)
+        ? false
+        : yield* serverSettings.value.getSettings.pipe(
+            Effect.map((settings) => projectUsesTracks(settings, input.project)),
+            Effect.orElseSucceed(() => false),
+          );
       if (
         input.options?.autoRouting === false ||
         !autoRoutingApplies({
           pinned: targetPinsModel(input.requested),
+          tracks,
           isCoordinator:
             input.project.workspaceSettings?.coordinatorThreadId === input.parent.thread.id,
           taskClass: input.taskClass,

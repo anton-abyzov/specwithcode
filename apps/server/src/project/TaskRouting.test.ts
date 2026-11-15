@@ -262,3 +262,48 @@ it.effect("never asks the decision model when the coordinator named the lane", (
     assert.strictEqual(jev.calls.length, 0);
   }),
 );
+
+const codexSub = ProviderInstanceId.make("codex");
+const trackProviders = [
+  instance(claudeMax, { status: "authenticated", type: "max" }),
+  instance(
+    codexSub,
+    { status: "authenticated", type: "chatgpt" },
+    {
+      driver: ProviderDriverKind.make("codex"),
+      models: [{ slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false, capabilities: null }],
+    },
+  ),
+];
+const settingsWithMode = (mode: "tracks" | "model") =>
+  Option.some({
+    getSettings: Effect.succeed({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { threadModelMode: mode } },
+    }),
+  } as unknown as ServerSettings.ServerSettingsService["Service"]);
+const routeFromSol = (mode: "tracks" | "model") =>
+  routeWorkerTask({
+    project: projectFixture(projectId),
+    baseline: { instanceId: codexSub, model: "gpt-6.1-sol" },
+    providers: trackProviders,
+    task: { title: "Fix typo", text: "Fix the typo in README" },
+    laneHint: "routine",
+    settings: settingsWithMode(mode),
+  });
+
+it.effect("starts a Tracks project's worker on the first available Daily entry", () =>
+  Effect.gen(function* () {
+    // Nobody saved a track: the built-in Daily order (Opus 5.5 first) decides.
+    const decision = yield* routeFromSol("tracks");
+    assert.isTrue(decision?.moved);
+    assert.strictEqual(decision?.selection.instanceId, claudeMax);
+    assert.strictEqual(decision?.selection.model, "claude-opus-5-5");
+  }),
+);
+
+it.effect("leaves a One model project's worker alone while no track is saved", () =>
+  Effect.gen(function* () {
+    assert.isNull(yield* routeFromSol("model"));
+  }),
+);

@@ -18,6 +18,7 @@ import {
   type RoutingDecision,
 } from "@specweave-studio/shared/decisionModel";
 import { classifyLane, resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
+import { effectiveModelLanes } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   classifyTask,
@@ -55,10 +56,15 @@ export function autoRoutingApplies(input: {
   readonly isCoordinator: boolean;
   readonly taskClass: TaskClass | undefined;
   readonly taskLane?: ModelLane | undefined;
+  /** The project starts unnamed workers on its tracks, whoever launches them. */
+  readonly tracks?: boolean | undefined;
 }): boolean {
   return (
     !input.pinned &&
-    (input.isCoordinator || input.taskClass !== undefined || input.taskLane !== undefined)
+    (input.tracks === true ||
+      input.isCoordinator ||
+      input.taskClass !== undefined ||
+      input.taskLane !== undefined)
   );
 }
 
@@ -94,7 +100,13 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   const preferences = Option.isSome(settings)
     ? yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS))
     : DEFAULT_SERVER_SETTINGS;
-  const rule = resolveProjectSettings(preferences, input.project.id, input.project).settings;
+  const resolved = resolveProjectSettings(preferences, input.project.id, input.project).settings;
+  // A project on Tracks routes by its tracks even when nobody saved one: the
+  // built-in order, fitted to what is installed here, stands in for an empty track.
+  const rule =
+    resolved.threadModelMode === "tracks"
+      ? { ...resolved, modelLanes: effectiveModelLanes(resolved.modelLanes, input.providers).lanes }
+      : resolved;
   const lanesSet =
     rule.modelLanes.complex.length > 0 ||
     rule.modelLanes.routine.length > 0 ||

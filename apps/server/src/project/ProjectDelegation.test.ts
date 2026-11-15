@@ -10,6 +10,7 @@ import {
   projectDelegationTarget,
   needsExplicitWorkerTarget,
   projectLimitRule,
+  projectUsesTracks,
   replacesProjectModelOverride,
   projectWorkerModel,
   workerModelUnderGrant,
@@ -163,4 +164,19 @@ it("removes an older override only when the dialog saves a different model", () 
   expect(
     replacesProjectModelOverride({ ...base, settings: DEFAULT_SERVER_SETTINGS, next: sol }),
   ).toBe(false);
+});
+
+it("names no single project model on Tracks, so the track for the task decides", () => {
+  const id = ProjectId.make("aide");
+  const saved = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const project = { id, defaultModelSelection: saved };
+  const onTracks = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsOverrides: { [id]: { threadModelMode: "tracks" as const } },
+  };
+  expect(projectUsesTracks(onTracks, project)).toBe(true);
+  expect(projectWorkerModel(onTracks, project)).toBeNull();
+  // A project that existed before tracks has no mode saved and keeps its model.
+  expect(projectUsesTracks(DEFAULT_SERVER_SETTINGS, project)).toBe(false);
+  expect(projectWorkerModel(DEFAULT_SERVER_SETTINGS, project)).toEqual(saved);
 });

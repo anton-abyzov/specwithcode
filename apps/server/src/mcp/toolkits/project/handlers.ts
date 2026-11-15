@@ -47,7 +47,11 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
-import { projectWorkerModel, workerModelUnderGrant } from "../../../project/ProjectDelegation.ts";
+import {
+  projectUsesTracks,
+  projectWorkerModel,
+  workerModelUnderGrant,
+} from "../../../project/ProjectDelegation.ts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import {
   launchIncrementFields,
@@ -207,6 +211,18 @@ const projectWorkerModelOf = Effect.fn("mcp.projectWorkerModelOf")(function* (
     ? null
     : yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
   return settings === null ? project.defaultModelSelection : projectWorkerModel(settings, project);
+});
+
+/** Whether the project starts unnamed workers on its tracks (see projectUsesTracks). */
+const projectUsesTracksOf = Effect.fn("mcp.projectUsesTracksOf")(function* (
+  project: ProjectRecord,
+) {
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  if (Option.isNone(settingsService)) return false;
+  return yield* settingsService.value.getSettings.pipe(
+    Effect.map((settings) => projectUsesTracks(settings, project)),
+    Effect.orElseSucceed(() => false),
+  );
 });
 
 /** Whether the project's own "Use worktrees" switch is on. */
@@ -695,6 +711,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           autoRoutingApplies({
             // A project's own model is not moved by lanes or Auto.
             pinned: namedSelection !== undefined || projectModel !== null,
+            tracks: namedSelection === undefined && (yield* projectUsesTracksOf(project)),
             isCoordinator,
             taskClass: input.taskClass,
             taskLane: input.taskLane,

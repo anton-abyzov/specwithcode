@@ -22,11 +22,23 @@ export function projectWorkerModel(
   project: Pick<Project, "id" | "defaultModelSelection">,
 ): ModelSelection | null {
   const resolved = resolveProjectSettings(settings, project.id, project);
+  // On Tracks no single model is the project's: the track for the task decides.
+  if (resolved.settings.threadModelMode === "tracks") return null;
   if (resolved.sources.defaultModelSelection === "project")
     return resolved.settings.defaultModelSelection;
   // Like an override, a saved model on a disabled provider does not count.
   const saved = project.defaultModelSelection;
   return saved !== null && isModelSelectionProviderEnabled(settings, saved) ? saved : null;
+}
+
+/** Whether the project's unnamed workers start on a track ("Tracks") and not on one saved model. */
+export function projectUsesTracks(
+  settings: ServerSettings,
+  project: Pick<Project, "id" | "defaultModelSelection">,
+): boolean {
+  return (
+    resolveProjectSettings(settings, project.id, project).settings.threadModelMode === "tracks"
+  );
 }
 
 /**
