@@ -135,6 +135,16 @@ export const ModelLanes = Schema.Struct({
 });
 export type ModelLanes = typeof ModelLanes.Type;
 
+/**
+ * A project's own tracks. A lane left out follows the machine's; an empty
+ * list is the built-in order; a list is the project's own order.
+ */
+export const ModelLanesOverride = Schema.Struct({
+  complex: Schema.optionalKey(ModelLaneList),
+  routine: Schema.optionalKey(ModelLaneList),
+});
+export type ModelLanesOverride = typeof ModelLanesOverride.Type;
+
 export const DEFAULT_MODEL_LANES: ModelLanes = { complex: [], routine: [] };
 
 export const PreferenceKeyword = TrimmedNonEmptyString.check(Schema.isMaxLength(40));

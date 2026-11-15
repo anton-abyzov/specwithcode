@@ -31,9 +31,6 @@ import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { ProviderLimitSettings } from "./ProviderLimitSettings";
-import { ModelLanesSettings } from "./ModelLanesSettings";
-import { TaskRoutingSettings } from "./TaskRoutingSettings";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { THREAD_FINISH_ACTION_LABELS } from "./threadFinishAction";
@@ -559,9 +556,21 @@ export function ProjectDefaultsSettings({
             }
           />
           {category === "project" ? startFromOriginRow : null}
-          <ProviderLimitSettings />
-          <ModelLanesSettings />
-          <TaskRoutingSettings />
+          <SettingsRow
+            id="project-defaults-models"
+            title="Models and limits"
+            description="Which model does the work, where it runs and what happens at a usage limit are on the Models page."
+            control={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void navigate({ to: "/settings/models" })}
+              >
+                {tx("Open Models")}
+              </Button>
+            }
+          />
         </>
       ) : category === "source-control" ? (
         <>
