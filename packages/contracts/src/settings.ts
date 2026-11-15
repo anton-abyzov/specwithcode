@@ -387,6 +387,24 @@ export const SubscriptionRenewalDays = Schema.Record(
 );
 export type SubscriptionRenewalDays = typeof SubscriptionRenewalDays.Type;
 
+/**
+ * The share of a subscription a person plans to use, by account key: 100
+ * unless set. A spare kept at 30% that is used 30% meets its plan, so it does
+ * not lower the efficiency score.
+ */
+export const SubscriptionTargets = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+);
+export type SubscriptionTargets = typeof SubscriptionTargets.Type;
+
+/** What a subscription costs a month, by account key; only weighs the efficiency score. */
+export const SubscriptionPrices = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100_000 })),
+);
+export type SubscriptionPrices = typeof SubscriptionPrices.Type;
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -2117,6 +2135,10 @@ export const ServerSettings = Schema.Struct({
   subscriptionRenewalDays: SubscriptionRenewalDays.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Planned share per account; see `SubscriptionTargets`. */
+  subscriptionTargets: SubscriptionTargets.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Monthly price per account; see `SubscriptionPrices`. */
+  subscriptionPrices: SubscriptionPrices.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Retired environment tier for the new-thread workspace, which is now each
    * project's own choice (its override, then its specweave-studio.json, then
@@ -2536,6 +2558,9 @@ export const ServerSettingsPatch = Schema.Struct({
   machineNicknames: Schema.optionalKey(MachineNicknames),
   /** Merged by account key; an entry left out keeps its day. */
   subscriptionRenewalDays: Schema.optionalKey(SubscriptionRenewalDays),
+  /** Merged by account key, like the renewal days. */
+  subscriptionTargets: Schema.optionalKey(SubscriptionTargets),
+  subscriptionPrices: Schema.optionalKey(SubscriptionPrices),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),

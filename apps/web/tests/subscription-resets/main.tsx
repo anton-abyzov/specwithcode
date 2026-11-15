@@ -1,4 +1,4 @@
-// The real Subscriptions rows and reset report over fictional accounts.
+// The real Subscriptions dashboard and rows over fictional accounts.
 // `?case=empty` shows the states before any reading; `?theme=dark` the theme.
 // The clock is the one the verifier freezes. Nothing here talks to a server.
 import { createRoot } from "react-dom/client";
@@ -11,10 +11,10 @@ import {
 import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
 import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
 import { barColor } from "../../src/components/usage/UsageLimits";
-import { ResetReport } from "../../src/components/usage/subscriptions/ResetReport";
+import { SubscriptionsDashboard } from "../../src/components/usage/subscriptions/SubscriptionsDashboard";
 import { SubscriptionRow } from "../../src/components/usage/subscriptions/SubscriptionRow";
 import { subscriptionLabel } from "../../src/components/usage/subscriptions/SubscriptionsView";
-import { resetReport } from "../../src/components/usage/subscriptions/resetReportModel";
+import { resetReport, tokensLostAtReset } from "../../src/components/usage/subscriptions/resetReportModel";
 import { subscriptionRows } from "../../src/components/usage/subscriptions/subscriptionRows";
 import "./fixture.css";
 
@@ -122,11 +122,11 @@ const period = (
 const periods: UsageResetPeriod[] = empty
   ? []
   : [
-      ...[82, 95, 90, 96].map((used, index) =>
-        period("claudeAgent:ada@example.com", claude, "seven_day", 3 - index, used),
+      ...[70, 74, 81, 77, 85, 88, 91, 86, 82, 95, 90, 96].map((used, index) =>
+        period("claudeAgent:ada@example.com", claude, "seven_day", 11 - index, used),
       ),
-      ...[40, 55, 48, 59].map((used, index) =>
-        period("codex:ada@example.com", codex, "secondary", 3 - index, used),
+      ...[22, 30, 28, 35, 41, 38, 46, 52, 40, 55, 48, 59].map((used, index) =>
+        period("codex:ada@example.com", codex, "secondary", 11 - index, used),
       ),
       period("codex:team@example.com", codex, "secondary", 1, 27, 9 * HOUR),
     ];
@@ -148,9 +148,43 @@ const report = resetReport(periods, now, {
   tokensSpent: ({ driver }) => (driver === claude ? 300_000_000 : null),
 });
 
+// Readings through the newest Codex period, so its opened row draws use against an even pace.
+const newest = now - 2 * DAY;
+const history = new Map(
+  empty
+    ? []
+    : [
+        [
+          "codex:ada@example.com|weekly:secondary",
+          [0, 4, 9, 22, 25, 49, 55, 59].map((usedPercent, index) => ({
+            at: newest - 7 * DAY + index * 0.99 * DAY,
+            usedPercent,
+            resetsAt: newest,
+          })),
+        ],
+      ],
+);
+
 createRoot(document.getElementById("root")!).render(
   <div className="min-h-screen bg-background text-foreground">
   <main className="mx-auto flex max-w-5xl flex-col gap-6 p-4" data-fixture-ready="">
+    <SubscriptionsDashboard
+      ledger={periods}
+      rows={rows}
+      history={history}
+      now={now}
+      targets={{ "codex:team@example.com": 30 }}
+      prices={{}}
+      labelOf={labelOf}
+      colorOf={colorOf}
+      providerOf={(driver) => (driver === claude ? "Claude" : "Codex")}
+      providerColorOf={barColor}
+      machinesOf={(key) => byKey.get(key)?.environments.map((entry) => entry.label) ?? []}
+      tokensLostOf={(period) =>
+        period.driver === claude ? tokensLostAtReset(period, () => 300_000_000) : null
+      }
+      onSetPlan={() => undefined}
+    />
     {rows.length === 0 ? (
       <p className="text-sm text-muted-foreground" data-fixture-empty="">
         No subscription reports its limits yet. Sign in to a provider on a connected machine.
@@ -168,10 +202,7 @@ createRoot(document.getElementById("root")!).render(
         ))}
       </div>
     )}
-    <section className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">Used against lost at each reset</h3>
-      <ResetReport report={report} labelOf={labelOf} colorOf={colorOf} />
-    </section>
+
   </main>
   </div>,
 );

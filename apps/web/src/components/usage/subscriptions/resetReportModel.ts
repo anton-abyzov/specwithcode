@@ -12,6 +12,29 @@ const DAY = 24 * 60 * 60_000;
 /** Below this much used, tokens per percent is too noisy to scale up. */
 const MIN_USED_FOR_ESTIMATE = 5;
 
+/**
+ * Tokens the unused share of one reset would have bought: tokens per percent
+ * used, times the percent lost. Null when the spend behind the percent is not
+ * measurable; spend after a long-ago last read is unknown, so that is too.
+ */
+export function tokensLostAtReset(
+  period: {
+    readonly usedPercent: number;
+    readonly lostPercent: number;
+    readonly startedAt: number | null;
+    readonly endedAt: number;
+    readonly upperBound: boolean;
+  },
+  tokensSpent: (from: number, to: number) => number | null,
+): number | null {
+  if (period.lostPercent === 0) return 0;
+  if (period.upperBound || period.startedAt === null || period.usedPercent < MIN_USED_FOR_ESTIMATE) {
+    return null;
+  }
+  const spent = tokensSpent(period.startedAt, period.endedAt);
+  return spent === null || spent <= 0 ? null : (spent / period.usedPercent) * period.lostPercent;
+}
+
 export interface ReportCell {
   readonly usedPercent: number;
   readonly lostPercent: number;
@@ -128,18 +151,20 @@ export function resetReport(
       };
       lostSum += period.lostPercent;
       resets += 1;
-      if (tokens === null || period.lostPercent === 0) continue;
+      if (tokens === null) continue;
       const startedAt = period.startedAt === undefined ? null : Date.parse(period.startedAt);
-      const spent =
-        // Spend after the last read is unknown, so tokens per percent cannot be scaled.
-        upperBound || startedAt === null || period.usedPercentAtReset < MIN_USED_FOR_ESTIMATE
-          ? null
-          : (options.tokensSpent?.({ accountKey, driver: period.driver }, startedAt, endedAt) ??
-            null);
-      tokens =
-        spent === null || spent <= 0
-          ? null
-          : tokens + (spent / period.usedPercentAtReset) * period.lostPercent;
+      const lost = tokensLostAtReset(
+        {
+          usedPercent: period.usedPercentAtReset,
+          lostPercent: period.lostPercent,
+          startedAt: startedAt !== null && Number.isFinite(startedAt) ? startedAt : null,
+          endedAt,
+          upperBound,
+        },
+        (from, to) =>
+          options.tokensSpent?.({ accountKey, driver: period.driver }, from, to) ?? null,
+      );
+      tokens = lost === null ? null : tokens + lost;
     }
     if (resets === 0) continue;
     accounts.push({

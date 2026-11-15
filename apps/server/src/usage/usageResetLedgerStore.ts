@@ -213,6 +213,21 @@ export function readLedger(state: LedgerState, since: number): UsageResetPeriod[
     }));
 }
 
+/** Every account with a followed window, once each, with the newest read of any of them. */
+export function ledgerAccounts(
+  state: LedgerState,
+): Array<{ accountKey: string; driver: ServerProvider["driver"]; lastReadAt: number }> {
+  const accounts = new Map<string, { driver: ServerProvider["driver"]; lastReadAt: number }>();
+  for (const cursor of state.cursors.values()) {
+    const known = accounts.get(cursor.accountKey);
+    accounts.set(cursor.accountKey, {
+      driver: cursor.driver,
+      lastReadAt: Math.max(known?.lastReadAt ?? 0, cursor.at),
+    });
+  }
+  return [...accounts].map(([accountKey, account]) => ({ accountKey, ...account }));
+}
+
 const FILE_VERSION = 1;
 
 export function encodeLedgerFile(state: LedgerState): string {
@@ -265,7 +280,7 @@ export function decodeLedgerFile(raw: string): LedgerState {
   for (const entry of Array.isArray(parsed.cursors) ? parsed.cursors : []) {
     if (!isRecord(entry)) continue;
     const window = decodeWindow(entry);
-    const { at, usedPercent, resetsAt, startedAt, credits, creditSpentAt } = entry;
+    const { at, usedPercent, resetsAt, startedAt, credits, creditSpentAt, creditSpent } = entry;
     if (!window || !isFiniteNumber(at) || !isFiniteNumber(usedPercent)) continue;
     if (!isTimeOrNull(resetsAt) || !isTimeOrNull(startedAt)) continue;
     state.cursors.set(cursorKey(window.accountKey, window.windowKind, window.windowId), {
@@ -275,7 +290,8 @@ export function decodeLedgerFile(raw: string): LedgerState {
       resetsAt,
       startedAt,
       credits: isFiniteNumber(credits) ? credits : null,
-      creditSpentAt: isFiniteNumber(creditSpentAt) ? creditSpentAt : null,
+      // A file written before `creditSpentAt` only says a credit was spent: date it at the last read.
+      creditSpentAt: isFiniteNumber(creditSpentAt) ? creditSpentAt : creditSpent === true ? at : null,
     });
   }
   for (const entry of Array.isArray(parsed.periods) ? parsed.periods : []) {
