@@ -11,7 +11,10 @@ import {
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@specweave-studio/contracts/relay";
-import { projectThreadAwarenessV2 } from "@specweave-studio/shared/agentAwareness";
+import {
+  delegatedThreadAwaitsPerson,
+  projectThreadAwarenessV2,
+} from "@specweave-studio/shared/agentAwareness";
 import {
   projectAlertAllowed,
   projectNotificationLevel,
@@ -81,6 +84,15 @@ function isTurnItemPayload(
   );
 }
 
+/**
+ * Secret and access cards are turn items with no runtime request of their own,
+ * yet the shell reports them as the thread's pending request: opening or
+ * answering one changes what the owner is waiting on.
+ */
+function turnItemWaitsOnPerson(item: Pick<OrchestrationV2TurnItem, "type">): boolean {
+  return item.type === "secret_request" || item.type === "access_request";
+}
+
 export function shouldPublishAgentAwarenessEvent(
   event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
 ): boolean {
@@ -135,7 +147,10 @@ export function shouldPublishAgentAwarenessEvent(
     case "provider-session.detached":
     case "provider-turn.updated":
     case "turn-item.updated":
-      return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+      return (
+        isTurnItemPayload(event.payload) &&
+        (turnItemUpdateCanEndBackgroundWork(event.payload) || turnItemWaitsOnPerson(event.payload))
+      );
     case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":
@@ -205,8 +220,8 @@ function sanitizeRelayAgentActivityState(
 /**
  * Marks a state the project's notification level keeps off the phone's alerts.
  * The relay still updates Live Activities and widgets with it; only the
- * buzzing notification is skipped. Published threads are never delegated
- * workers (they project no activity), so only "needs you" matters here.
+ * buzzing notification is skipped. A delegated worker projects activity only
+ * while it waits on the person, so only "needs you" matters here.
  */
 export function applyProjectNotificationLevel(
   state: RelayAgentActivityState | null,
@@ -557,12 +572,13 @@ export const make = Effect.gen(function* () {
     const threadShell = yield* threads.getThreadShell(threadId);
     if (
       threadShell?.lineage.relationshipToParent === "subagent" &&
+      !(threadShell.archivedAt === null && delegatedThreadAwaitsPerson(threadShell)) &&
       !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
     ) {
-      // Subagents never project activity, so the relay holds no row to clear.
-      // Their events would otherwise publish a tombstone each, and every
-      // publish re-delivers the user's aggregate. Checked before the archive
-      // filter so archiving one stays quiet too.
+      // A subagent projects activity only while it waits on the person, so
+      // otherwise the relay holds no row to clear. Its events would publish a
+      // tombstone each, and every publish re-delivers the user's aggregate.
+      // Checked before the archive filter so archiving one stays quiet too.
       return;
     }
     const thread =

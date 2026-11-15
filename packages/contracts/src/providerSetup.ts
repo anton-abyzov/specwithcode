@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   ForwardCompatibleArray,
+  ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   IsoDateTime,
   TrimmedNonEmptyString,
@@ -31,6 +32,12 @@ export const CodexAuthCallbackState = Schema.Union([
 ]);
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+// An environment supplies these links and the client opens them, so anything
+// but a web address (a `javascript:` URL runs as the client) is refused.
+const SignInUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(16_384),
+  Schema.isPattern(/^https?:\/\//i),
+);
 
 export const ProviderAuthMethod = Schema.Struct({
   id: SetupOperationId,
@@ -47,14 +54,14 @@ export const ProviderAuthInteraction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("browser"),
     id: SetupOperationId,
-    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    url: SignInUrl,
     requiresConsent: Schema.Boolean,
     acceptsCallback: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("deviceCode"),
     id: SetupOperationId,
-    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    url: SignInUrl,
     userCode: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   }),
   Schema.Struct({
@@ -64,9 +71,10 @@ export const ProviderAuthInteraction = Schema.Union([
     outputOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     // Keep native prompts available (for example, keychain consent) while the
     // controlling client presents a device authorization link outside the PTY.
-    deviceCode: Schema.optionalKey(
+    // A link that is not a web address drops only the link, not the terminal.
+    deviceCode: ForwardCompatibleOptional(
       Schema.Struct({
-        url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+        url: SignInUrl,
         userCode: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
       }),
     ),
@@ -153,7 +161,8 @@ export const ProviderAuthState = Schema.Struct({
     "cancelled",
   ]),
   flowId: Schema.NullOr(SetupOperationId),
-  authorizationUrl: Schema.NullOr(Schema.String),
+  // A link that is not a web address decodes as no link rather than failing the state.
+  authorizationUrl: ForwardCompatibleNullable(SignInUrl),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
   // Newer servers may add method types, interactions, or owners; older

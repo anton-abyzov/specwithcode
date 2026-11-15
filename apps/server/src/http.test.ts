@@ -318,6 +318,31 @@ it.layer(
     }),
   );
 
+  it.effect("refuses framing of the app's HTML by other sites", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-static-frame-" });
+      yield* fs.writeFileString(path.join(staticDir, "index.html"), "<html>app</html>");
+      yield* fs.writeFileString(path.join(staticDir, "app.js"), "export {};");
+      const request = yield* makeStaticRequest(staticDir);
+
+      for (const [resource, method] of [
+        ["/", "GET"],
+        ["/threads/example", "GET"],
+        ["/index.html", "HEAD"],
+      ] as const) {
+        const response = yield* request(resource, { method });
+        expect(response.status).toBe(200);
+        expect(response.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
+        expect(response.headers["x-frame-options"]).toBe("DENY");
+      }
+      const script = yield* request("/app.js");
+      expect(script.status).toBe(200);
+      expect(script.headers["x-frame-options"]).toBeUndefined();
+    }),
+  );
+
   it.effect("closes static descriptors after GET, HEAD, 304, and request cancellation", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

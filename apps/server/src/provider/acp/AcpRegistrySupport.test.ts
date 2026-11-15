@@ -714,6 +714,44 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  itOnLinuxHost("launches the managed uv command over a PATH command named after the agent", () => {
+    const agent = makeAgent({
+      uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-uv-path-collision-",
+      });
+      const toolchain = yield* makeFakeUvToolchain(cacheDir);
+      const userBin = path.join(cacheDir, "user-bin");
+      const userCommand = path.join(userBin, "example-agent");
+      yield* fileSystem.makeDirectory(userBin, { recursive: true });
+      yield* fileSystem.writeFileString(userCommand, "#!/bin/sh\n");
+      yield* fileSystem.chmod(userCommand, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {
+        ...toolchain.environment,
+        PATH: `${userBin}:${toolchain.environment.PATH}`,
+      });
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   itOnLinuxHost("honors an exact Windows PATH override when launching a global package", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
@@ -1026,6 +1064,64 @@ describe("AcpRegistrySupport", () => {
       Effect.provideService(HostProcessArchitecture, "x64"),
     );
   });
+
+  itOnLinuxHost(
+    "refuses an archive command that links outside its install root without changing the target's mode",
+    () => {
+      const downloadUrl = "https://registry.test/agent.tar.gz";
+      const agent = makeAgent({
+        binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
+      });
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-acp-outside-link-",
+        });
+        const outsideFile = `${cacheDir}/outside`;
+        yield* fileSystem.writeFileString(outsideFile, "private\n");
+        yield* fileSystem.chmod(outsideFile, 0o600);
+        const source = `${cacheDir}/source`;
+        yield* fileSystem.makeDirectory(source);
+        yield* fileSystem.symlink(outsideFile, `${source}/agent`);
+        const archivePath = `${cacheDir}/agent.tar.gz`;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const tar = yield* spawner.spawn(
+          ChildProcess.make("tar", ["-czf", archivePath, "-C", source, "agent"]),
+        );
+        expect(yield* tar.exitCode).toBe(0);
+        const archive = yield* fileSystem.readFile(archivePath);
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  request.url === registryUrl
+                    ? new Response(makeRegistry(agent))
+                    : new Response(archive),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const error = yield* resolver.prepare({ agentId: agent.id }).pipe(Effect.flip);
+
+        expect(error.reason).toBe("archive_invalid");
+        expect((yield* fileSystem.stat(outsideFile)).mode & 0o777).toBe(0o600);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest())),
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcessArchitecture, "x64"),
+      );
+    },
+  );
 
   it.effect("searches compatible agents with deterministic ranking and bounded metadata", () => {
     const exact = {

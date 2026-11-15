@@ -50,4 +50,60 @@ describe("provider auth state", () => {
       methods: [method],
     });
   });
+
+  it("decodes only http and https sign-in links and drops the rest without failing the state", () => {
+    const state = {
+      instanceId: "cursor",
+      phase: "waiting",
+      flowId: "flow",
+      authorizationUrl: null,
+      expiresAt: null,
+      message: null,
+    };
+    const script = "javascript:alert(document.domain)";
+    expect(
+      decodeState({
+        ...state,
+        interaction: { type: "browser", id: "b", url: script, requiresConsent: true },
+      }),
+    ).toEqual(state);
+    expect(
+      decodeState({
+        ...state,
+        interaction: { type: "deviceCode", id: "d", url: script, userCode: "ABCD" },
+      }),
+    ).toEqual(state);
+    expect(
+      decodeState({
+        ...state,
+        interaction: {
+          type: "terminal",
+          id: "t",
+          output: "",
+          deviceCode: { url: "data:text/html,<script>1</script>", userCode: "ABCD" },
+        },
+      }).interaction,
+    ).toEqual({ type: "terminal", id: "t", output: "" });
+    expect(decodeState({ ...state, authorizationUrl: script })).toEqual(state);
+    expect(decodeState({ ...state, authorizationUrl: "file:///etc/passwd" })).toEqual(state);
+    expect(
+      decodeState({ ...state, authorizationUrl: "https://example.com/login" }).authorizationUrl,
+    ).toBe("https://example.com/login");
+    expect(
+      decodeState({
+        ...state,
+        interaction: {
+          type: "browser",
+          id: "b",
+          url: "http://127.0.0.1:4000/cb",
+          requiresConsent: false,
+        },
+      }).interaction,
+    ).toEqual({
+      type: "browser",
+      id: "b",
+      url: "http://127.0.0.1:4000/cb",
+      requiresConsent: false,
+    });
+  });
 });

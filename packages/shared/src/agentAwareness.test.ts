@@ -28,6 +28,7 @@ describe("projectThreadAwarenessV2", () => {
         | "pendingBackgroundTasks"
         | "pendingRuntimeRequest"
         | "lineage"
+        | "creationSource"
       >
     > = {},
   ) => ({
@@ -39,6 +40,7 @@ describe("projectThreadAwarenessV2", () => {
     },
     title: "Integrate orchestration",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    creationSource: "web" as const,
     status: "running" as const,
     pendingRuntimeRequest: null,
     updatedAt,
@@ -136,5 +138,69 @@ describe("projectThreadAwarenessV2", () => {
         }),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+
+  const delegatedLineage = {
+    rootThreadId: "parent" as ThreadId,
+    parentThreadId: "parent" as ThreadId,
+    relationshipToParent: "subagent" as const,
+  };
+
+  it.each([
+    ["a secret", "user_input", "waiting_for_input"],
+    ["an access request", "permission", "waiting_for_approval"],
+    ["a command approval", "command", "waiting_for_approval"],
+  ] as const)("tells the owner when a delegated worker waits on %s", (_case, kind, phase) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          creationSource: "mcp",
+          lineage: delegatedLineage,
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-worker"),
+            kind,
+            createdAt: updatedAt,
+          },
+        }),
+      }),
+    ).toMatchObject({ phase, threadId: "thread-2" });
+  });
+
+  it("keeps a delegated worker quiet while it refreshes authentication", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          creationSource: "mcp",
+          lineage: delegatedLineage,
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-worker-auth"),
+            kind: "auth_refresh",
+            createdAt: updatedAt,
+          },
+        }),
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves a provider's own subagent request to its parent thread", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          creationSource: "provider",
+          lineage: delegatedLineage,
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-native"),
+            kind: "command",
+            createdAt: updatedAt,
+          },
+        }),
+      }),
+    ).toBeNull();
   });
 });

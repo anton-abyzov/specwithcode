@@ -363,7 +363,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
     description:
-      "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
+      "Wait budget for mode=wait only. Default 4 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
