@@ -389,10 +389,22 @@ describe("Linux signatures", () => {
     expect(linuxPackagesToSign([...OWN_ASSETS, ...ARM64_ASSETS, "notes.txt"], VERSION)).toEqual(
       linux.filter((name) => !name.endsWith(".yml")).sort(),
     );
+    // The version-free copies are signed too, never the Windows ones.
+    expect(linuxPackagesToSign([...UPLOAD_ASSETS], VERSION)).toEqual(
+      [
+        ...linux.filter((name) => !name.endsWith(".yml")),
+        "SpecWithCode-amd64.deb",
+        "SpecWithCode-arm64.AppImage",
+        "SpecWithCode-arm64.deb",
+        "SpecWithCode-x86_64.AppImage",
+      ].sort(),
+    );
     for (const name of [
       `SpecWithCode-${VERSION}-x86_64.AppImage.asc`,
       `SpecWithCode-${VERSION}-amd64.deb.asc`,
       `SpecWithCode-${VERSION}-arm64.deb.asc`,
+      "SpecWithCode-amd64.deb.asc",
+      "SpecWithCode-x86_64.AppImage.asc",
       WINDOWS_LINUX_SUMS_SIGNATURE,
       RELEASE_KEY,
     ]) {
@@ -400,6 +412,7 @@ describe("Linux signatures", () => {
       expect(isReleaseShAssetName(name), name).toBe(false);
     }
     expect(isWindowsLinuxAssetName(`SpecWithCode-${VERSION}-x64.exe.asc`, VERSION)).toBe(false);
+    expect(isWindowsLinuxAssetName("SpecWithCode-x64.exe.asc", VERSION)).toBe(false);
     expect(isWindowsLinuxAssetName("SHA256SUMS.asc", VERSION)).toBe(false);
   });
 
@@ -1039,10 +1052,15 @@ describe("install.ps1", () => {
   });
 
   it("prints one prefilled issue link on failure and sends nothing", () => {
-    expect(script).toMatch(/function Fail\(\[string\] \$message\) \{\n  Report-Failure \$message\n/);
+    expect(script).toMatch(
+      /function Fail\(\[string\] \$message\) \{\n  Report-Failure \$message\n  throw "specweave-studio install: \$message"\n\}/,
+    );
     expect(script).toContain("https://github.com/anton-abyzov/specwithcode/issues/new?title=");
     expect(script).toContain("[Uri]::EscapeDataString($body)");
-    expect(script).toMatch(/trap \{\n  Report-Failure \$_\.Exception\.Message\n  break\n\}/);
+    expect(script).toMatch(/\n\} catch \{\n  Report-Failure \$_\.Exception\.Message\n  throw\n\}\n$/);
+    // Under `irm | iex` a trap would stay armed in the person's session and `exit` would close it.
+    expect(script).not.toMatch(/^\s*trap\b/m);
+    expect(script).not.toMatch(/^\s*exit\b/m);
     expect(script).not.toMatch(/Invoke-(?:WebRequest|RestMethod)[^\n]*issues/);
   });
 });
@@ -1445,19 +1463,23 @@ describe("release-windows-linux.yml", () => {
   });
 
   it("signs each release's own SHA256SUMS without changing it", () => {
-    const publish = workflow.slice(workflow.indexOf("\n  publish:\n"));
-    const step = publish.slice(
-      publish.indexOf("- name: Sign the macOS checksums"),
-      publish.indexOf("- name: Add checksums to the release notes"),
+    const job = workflow.slice(workflow.indexOf("\n  mac-sums-signature:\n"));
+    expect(workflow.indexOf("\n  publish:\n")).toBeLessThan(workflow.indexOf("\n  mac-sums-signature:\n"));
+    expect(job).toContain("needs: [plan, publish]");
+    expect(job).toContain('gh release download "v$VERSION" -R "$repo" -D "$dir" --clobber -p SHA256SUMS\n');
+    expect(job).toContain('gpgv --keyring "$keyring" "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS"');
+    expect(job).toContain('gh release upload "v$VERSION" -R "$repo" --clobber "$dir/SHA256SUMS.asc"');
+    expect(job).toContain(`trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT`);
+    expect(job).not.toMatch(/upload[^\n]*\/SHA256SUMS"/);
+  });
+
+  it("signs again on a catch-up run that skips, so a failed or stale signature heals", () => {
+    const job = workflow.slice(workflow.indexOf("\n  mac-sums-signature:\n"));
+    expect(job).toMatch(
+      /always\(\) && needs\.plan\.result == 'success' && needs\.plan\.outputs\.dry_run != 'true' &&\n\s+\(needs\.publish\.result == 'success' \|\| needs\.plan\.outputs\.skip == 'true'\)/,
     );
-    expect(publish.indexOf("- name: Verify both releases")).toBeLessThan(
-      publish.indexOf("- name: Sign the macOS checksums"),
-    );
-    expect(step).toContain("if: needs.plan.outputs.dry_run != 'true'");
-    expect(step).toContain('gh release download "v$VERSION" -R "$repo" -D "$dir" --clobber -p SHA256SUMS\n');
-    expect(step).toContain('gpgv --keyring "$keyring" "$dir/SHA256SUMS.asc" "$dir/SHA256SUMS"');
-    expect(step).toContain('gh release upload "v$VERSION" -R "$repo" --clobber "$dir/SHA256SUMS.asc"');
-    expect(step).not.toMatch(/upload[^\n]*\/SHA256SUMS"/);
+    // The skip path still names the version the job signs.
+    expect(workflow).toContain('{ echo "skip=true"; echo "version=$version"; echo "dry_run=false"; } >> "$GITHUB_OUTPUT"');
   });
 
   it("never names the macOS feed except to check it is unchanged", () => {

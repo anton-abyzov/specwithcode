@@ -171,7 +171,8 @@ const linuxBuilds = [
           On an Apple silicon Mac, or on Linux (x64 or arm64, with glibc and systemd), this installs
           the <code>specwithcode</code> command from the latest release and starts it as a background service. It
           checks the server archive against the release's <code>SHA256SUMS</code> and brings its own Node.js 22.
-          Run it again to update. On Windows, use the desktop app.
+          Run it again to update. On Windows, run <code>irm {`${RELEASES_URL}/latest/download/install.ps1`} | iex</code>
+          in PowerShell for the command, or use the desktop app.
         </p>
       </section>
     </div>

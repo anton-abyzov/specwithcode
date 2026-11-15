@@ -66,18 +66,22 @@ fail() {
 }
 
 # Percent-encodes one value for a URL query, byte by byte (POSIX sh, no external encoder).
-urlencode() {
+# Byte-wise in a subshell: under LC_ALL=C each step takes one byte, so a multibyte letter becomes
+# its UTF-8 bytes in every shell, and the letter class lists letters instead of a locale range.
+urlencode() (
+  LC_ALL=C
+  export LC_ALL
   rest="$1" encoded=''
   while [ -n "$rest" ]; do
     char="${rest%"${rest#?}"}"
     rest="${rest#?}"
     case "$char" in
-      [A-Za-z0-9.~_-]) encoded="${encoded}${char}" ;;
+      [abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.~_-]) encoded="${encoded}${char}" ;;
       *) encoded="${encoded}$(printf '%s' "$char" | od -An -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g' | tr 'a-f' 'A-F')" ;;
     esac
   done
   printf '%s' "$encoded"
-}
+)
 
 # One line with a GitHub new-issue link prefilled with the error, version and platform. Only
 # printed: nothing is sent unless the person opens the link and submits the issue themselves.

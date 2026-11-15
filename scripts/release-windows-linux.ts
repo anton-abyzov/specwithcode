@@ -47,11 +47,16 @@ function isSumsFile(name: string): boolean {
   return name === WINDOWS_LINUX_SUMS || name === WINDOWS_LINUX_SUMS_SIGNATURE;
 }
 
-/** The Linux packages in a directory that get a detached `.asc` signature beside them. */
+/**
+ * The Linux packages in a directory that get a detached `.asc` signature beside them: the
+ * versioned ones and their version-free copies, so `gpg --verify SpecWithCode-amd64.deb.asc`
+ * works for a file downloaded from a latest link.
+ */
 export function linuxPackagesToSign(names: ReadonlyArray<string>, version: string): string[] {
   const v = escapeRegExp(version);
-  const pattern = new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64|amd64)\\.(?:AppImage|deb)$`);
-  return names.filter((name) => pattern.test(name)).sort();
+  const versioned = new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64|amd64)\\.(?:AppImage|deb)$`);
+  const versionFree = /^SpecWithCode-(?:x86_64\.AppImage|arm64\.AppImage|amd64\.deb|arm64\.deb)$/;
+  return names.filter((name) => versioned.test(name) || versionFree.test(name)).sort();
 }
 
 export function isStableVersion(version: string): boolean {
@@ -183,8 +188,8 @@ export function isWindowsLinuxAssetName(name: string, version: string): boolean 
     new RegExp(`^SpecWithCode-${v}-(?:amd64|arm64)\\.deb(?:\\.asc)?$`),
     new RegExp(`^studio-${v}-win32-(?:x64|arm64)\\.zip$`),
     /^SpecWithCode-(?:x64|arm64)\.exe$/,
-    /^SpecWithCode-(?:x86_64|arm64)\.AppImage$/,
-    /^SpecWithCode-(?:amd64|arm64)\.deb$/,
+    /^SpecWithCode-(?:x86_64|arm64)\.AppImage(?:\.asc)?$/,
+    /^SpecWithCode-(?:amd64|arm64)\.deb(?:\.asc)?$/,
     /^install\.ps1$/,
     /^latest\.yml$/,
     /^latest-linux(?:-arm64)?\.yml$/,
