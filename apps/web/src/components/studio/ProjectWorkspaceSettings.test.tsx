@@ -1026,7 +1026,8 @@ describe("project settings and memory", () => {
   });
   // linux-mini's specweave project: the old project column is unset while the scoped
   // setting that General shows and launches read decides Use worktrees.
-  const worktreesOff = "Use worktrees is off for this project, so threads work in the project folder.";
+  const worktreesOff =
+    "Use worktrees is off for this project, so threads work in the project folder.";
   it("keeps Environment quiet about worktrees when the scoped setting is on and the old column is unset", async () => {
     expect(project.defaultThreadEnvMode).toBeUndefined();
     await render("environment", true, { kind: "code" });
