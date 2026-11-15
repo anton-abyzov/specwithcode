@@ -84,7 +84,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/previous" "$RUNNER_TEMP/candidate"
           if [ -z "$ARTIFACT" ]; then
-            gh release download "v$VERSION" -R "$PUBLIC_REPOSITORY" -p '*-amd64.deb' -p latest-linux.yml -D "$RUNNER_TEMP/candidate"
+            gh release download "v$VERSION" -R "$PUBLIC_REPOSITORY" -p "SpecWithCode-$VERSION-amd64.deb" -p latest-linux.yml -D "$RUNNER_TEMP/candidate"
           fi
           # The newest published release below the candidate that carries a .deb.
           previous=$(gh release list -R "$PUBLIC_REPOSITORY" -L 40 --exclude-pre-releases --json tagName --jq '.[].tagName' \
@@ -94,18 +94,21 @@ jobs:
                 [ "$(printf '%s\n%s\n' "$v" "$VERSION" | sort -V | head -1)" = "$v" ] || continue
                 # Read in full first: a pipe into grep -q kills gh, and pipefail reads that as no .deb.
                 assets=$(gh release view "v$v" -R "$PUBLIC_REPOSITORY" --json assets --jq '.assets[].name')
-                if grep -q -- '-amd64.deb$' <<<"$assets"; then echo "$v"; break; fi
+                if grep -qx -- "SpecWithCode-$v-amd64.deb" <<<"$assets"; then echo "$v"; break; fi
               done)
           [ -n "$previous" ] || { echo "::error::No published .deb below $VERSION"; exit 1; }
           echo "previous release: $previous"
-          gh release download "v$previous" -R "$PUBLIC_REPOSITORY" -p '*-amd64.deb' -D "$RUNNER_TEMP/previous"
+          echo "PREVIOUS=$previous" >> "$GITHUB_ENV"
+          gh release download "v$previous" -R "$PUBLIC_REPOSITORY" -p "SpecWithCode-$previous-amd64.deb" -D "$RUNNER_TEMP/previous"
       - name: Prove the update
         env:
           PHASES: ${{ inputs.phases || 'update,retry,replaced,signed' }}
+        # The versioned .deb by name: from 1.0.311 the artifact and the release also carry the
+        # version-free SpecWithCode-amd64.deb, so a *-amd64.deb glob matches two files.
         run: |
           node scripts/linux-update-proof.mjs \
-            --previous "$(ls "$RUNNER_TEMP"/previous/*-amd64.deb)" \
-            --candidate "$(ls "$RUNNER_TEMP"/candidate/*-amd64.deb)" \
+            --previous "$RUNNER_TEMP/previous/SpecWithCode-$PREVIOUS-amd64.deb" \
+            --candidate "$RUNNER_TEMP/candidate/SpecWithCode-$VERSION-amd64.deb" \
             --candidate-feed "$RUNNER_TEMP/candidate/latest-linux.yml" \
             --evidence "$RUNNER_TEMP/evidence" \
             --phases "$PHASES"
