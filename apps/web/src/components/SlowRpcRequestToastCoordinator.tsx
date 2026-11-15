@@ -61,21 +61,38 @@ export function SlowRpcRequestToastCoordinator() {
       ),
     [environments],
   );
-  const toastIdsRef = useRef(new Map<string | null, ToastId>());
+  /** The warning on screen for each machine, and the requests it lists. */
+  const shownRef = useRef(new Map<string | null, { id: ToastId; requestIds: ReadonlySet<string> }>());
+  /**
+   * Requests the user already dismissed a machine's warning for. The warning
+   * stays away until that machine has a slow request the user has not seen.
+   */
+  const dismissedRef = useRef(new Map<string | null, ReadonlySet<string>>());
 
   useEffect(() => {
-    const toastIds = toastIdsRef.current;
+    const shown = shownRef.current;
+    const dismissed = dismissedRef.current;
     const groups = groupSlowRpcAckRequests(slowRequests);
     const live = new Set(groups.map((group) => group.environmentId));
 
-    for (const [environmentId, toastId] of toastIds) {
+    for (const [environmentId, toast] of shown) {
       if (live.has(environmentId)) continue;
-      toastManager.close(toastId);
-      toastIds.delete(environmentId);
+      // Forget it first, so its removal does not read as a dismissal.
+      shown.delete(environmentId);
+      toastManager.close(toast.id);
+    }
+    for (const environmentId of dismissed.keys()) {
+      if (!live.has(environmentId)) dismissed.delete(environmentId);
     }
 
     for (const group of groups) {
-      const label = group.environmentId === null ? null : (labels.get(group.environmentId) ?? null);
+      const environmentId = group.environmentId;
+      const requestIds = new Set(group.requests.map((request) => request.requestId));
+      const seen = dismissed.get(environmentId);
+      if (seen && [...requestIds].every((requestId) => seen.has(requestId))) continue;
+      dismissed.delete(environmentId);
+
+      const label = environmentId === null ? null : (labels.get(environmentId) ?? environmentId);
       const nextToast = {
         data: {
           expandableContent: <SlowRequestDetails requests={group.requests} />,
@@ -87,16 +104,31 @@ export function SlowRpcRequestToastCoordinator() {
         title: slowMachineTitle(label),
         type: "warning" as const,
       };
-      const existing = toastIds.get(group.environmentId);
-      if (existing === undefined) toastIds.set(group.environmentId, toastManager.add(nextToast));
-      else toastManager.update(existing, nextToast);
+      const existing = shown.get(environmentId);
+      if (existing) {
+        toastManager.update(existing.id, nextToast);
+        shown.set(environmentId, { id: existing.id, requestIds });
+        continue;
+      }
+      const id: ToastId = toastManager.add({
+        ...nextToast,
+        onClose: () => {
+          const current = shown.get(environmentId);
+          if (current?.id !== id) return;
+          // Still shown when it went away: the user dismissed it.
+          shown.delete(environmentId);
+          dismissed.set(environmentId, current.requestIds);
+        },
+      });
+      shown.set(environmentId, { id, requestIds });
     }
   }, [slowRequests, labels]);
 
   useEffect(
     () => () => {
-      for (const toastId of toastIdsRef.current.values()) toastManager.close(toastId);
-      toastIdsRef.current.clear();
+      const toasts = [...shownRef.current.values()];
+      shownRef.current.clear();
+      for (const toast of toasts) toastManager.close(toast.id);
     },
     [],
   );
