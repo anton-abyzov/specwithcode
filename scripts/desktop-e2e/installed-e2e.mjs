@@ -847,15 +847,26 @@ const main = async () => {
     await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: TIMEOUT_MS });
     const sidebar = page.getByRole("navigation", { name: "Projects and chats" });
     const projectLink = sidebar.getByRole("link", { name: PROJECT_TITLE }).first();
-    // A project in a temporary folder (/tmp on Linux) is listed under Automated,
-    // which starts collapsed; open that group the way a person would.
-    const automated = sidebar.getByRole("button", { name: /^Automated \(\d+\)/ });
-    await Promise.race([
-      projectLink.waitFor({ state: "visible", timeout: 60_000 }),
-      automated.waitFor({ state: "visible", timeout: 60_000 }),
-    ]);
-    if (!(await projectLink.isVisible())) await automated.click({ timeout: 10_000 });
-    await projectLink.click({ timeout: 60_000 });
+    // A project in a temporary folder (/tmp on Linux) counts as made by checks, so the
+    // sidebar leaves it out; Settings > Archive lists it. Open it from there, the way a
+    // person would, when the sidebar does not show it.
+    const listed = await projectLink
+      .waitFor({ state: "visible", timeout: 30_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (listed) {
+      await projectLink.click({ timeout: 60_000 });
+    } else {
+      await page.goto(new URL("/settings/archived", baseUrl).href, {
+        waitUntil: "domcontentloaded",
+        timeout: TIMEOUT_MS,
+      });
+      await page
+        .locator("[data-automated-projects], [data-archived-projects]")
+        .getByRole("link", { name: PROJECT_TITLE })
+        .first()
+        .click({ timeout: 60_000 });
+    }
     const visible = await page
       .getByText(`E2E fake agent reply ${coordinatorToken}`)
       .first()
