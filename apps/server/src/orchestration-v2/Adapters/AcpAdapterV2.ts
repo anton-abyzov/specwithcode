@@ -1322,13 +1322,14 @@ function selectPermissionOptionId(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
-  const kind =
-    decision === "acceptForSession"
-      ? "allow_always"
-      : decision === "accept"
-        ? "allow_once"
-        : "reject_once";
-  return request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+  const optionIdOfKind = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
+    request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+  if (decision === "acceptForSession") {
+    // An agent may offer only allow-once; answering "cancelled" would stop the
+    // turn the person approved, so approve this request once instead.
+    return optionIdOfKind("allow_always") ?? optionIdOfKind("allow_once");
+  }
+  return optionIdOfKind(decision === "accept" ? "allow_once" : "reject_once");
 }
 
 /**
@@ -7586,6 +7587,29 @@ export function makeAcpAdapterV2(
                     const promptUsage = readAcpPromptUsage(result);
                     if (promptUsage !== undefined) {
                       context.promptUsage = addAcpTurnUsage(context.promptUsage, promptUsage);
+                    }
+                    // A refusal or a limit stop ended the turn without finishing it,
+                    // so it settles failed with the reason instead of completed.
+                    const unfinishedMessage = context.interrupted
+                      ? undefined
+                      : result.stopReason === "refusal"
+                        ? "The agent refused this request. Its next turn won't include this message or its reply."
+                        : result.stopReason === "max_tokens"
+                          ? "The agent stopped because its reply reached the output token limit."
+                          : result.stopReason === "max_turn_requests"
+                            ? "The agent stopped because it reached its request limit for this turn."
+                            : undefined;
+                    if (unfinishedMessage !== undefined) {
+                      yield* finalizeTurn(
+                        context,
+                        "failed",
+                        makeProviderFailure({
+                          message: unfinishedMessage,
+                          code: result.stopReason,
+                          class: "provider_error",
+                        }),
+                      );
+                      return;
                     }
                     const status =
                       result.stopReason === "cancelled"

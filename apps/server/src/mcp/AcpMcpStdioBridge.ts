@@ -162,6 +162,13 @@ function protocolVersionOf(entry: unknown): string | null {
   return typeof version === "string" && version.length > 0 ? version : null;
 }
 
+/** Answers a request the MCP server sends mid-call: ping succeeds, anything else is unsupported. */
+function replyToServerRequest(envelope: JsonRpcEnvelope): unknown {
+  return envelope.method === "ping"
+    ? { jsonrpc: "2.0", id: envelope.id, result: {} }
+    : { jsonrpc: "2.0", id: envelope.id, error: { code: -32601, message: "Method not found" } };
+}
+
 async function* sseDataLines(response: Response): AsyncGenerator<string> {
   if (response.body === null) return;
   const decoder = new TextDecoder();
@@ -303,12 +310,21 @@ function callAcpMcpToolWith(
             recoverable: response.status === 401,
           });
         }
-        const payloads = yield* Stream.runCollect(responsePayloads(response)).pipe(
-          Effect.mapError(fatal),
+        // A server request (ping, elicitation) can arrive on the stream before
+        // the result; it is answered here, since no agent sits behind this call.
+        const payloads: Array<unknown> = [];
+        yield* Stream.runForEach(
+          responsePayloads(response).pipe(Stream.mapError(fatal)),
+          (payload) => {
+            protocolVersion = protocolVersionOf(payload) ?? protocolVersion;
+            const envelope = asEnvelope(payload);
+            if (envelope?.id !== undefined && typeof envelope.method === "string") {
+              return send(replyToServerRequest(envelope)).pipe(Effect.asVoid);
+            }
+            payloads.push(payload);
+            return Effect.void;
+          },
         );
-        for (const payload of payloads) {
-          protocolVersion = protocolVersionOf(payload) ?? protocolVersion;
-        }
         return payloads;
       });
 
