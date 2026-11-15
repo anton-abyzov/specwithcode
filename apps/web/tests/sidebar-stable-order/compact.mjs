@@ -95,7 +95,13 @@ try {
         items.filter((item) => getComputedStyle(item).display !== "none").length,
       );
       if (name === "after") assert.equal(more > 0, sidebarWidth >= 316, `+N shown: ${more}`);
-      const clip = { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 520) };
+      const setAside = await page
+        .locator(".sws-sidebar button")
+        .evaluateAll((items) =>
+          items.map((item) => item.textContent ?? "").filter((text) => /^(Automated|Archived) \(/.test(text)),
+        );
+      if (name === "after") assert.deepEqual(setAside, [], "no Automated or Archived group in the sidebar");
+      const clip = { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 700) };
       await page.screenshot({ path: join(output, `${name}-${sidebarWidth}-${theme}.png`), clip });
       // Hovering the pinned, shared row shows its marks.
       await page.locator(".sws-project-row").first().hover();

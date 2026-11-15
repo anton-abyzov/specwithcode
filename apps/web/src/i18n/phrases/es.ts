@@ -707,10 +707,8 @@ export const es: PhraseCatalog = {
   "Add project": "Añadir proyecto",
   "All machines": "Todas las máquinas",
   "Archive project": "Archivar proyecto",
-  "Archived ({count})": "Archivados ({count})",
   "Archived chats": "Chats archivados",
   "Archived projects": "Proyectos archivados",
-  "Automated ({count})": "Automáticos ({count})",
   "Automated projects": "Proyectos automáticos",
   "Chat name": "Nombre del chat",
   Chats: "Chats",
@@ -730,8 +728,6 @@ export const es: PhraseCatalog = {
   "Drop here to pin": "Suelta aquí para fijar",
   "Filter and sort chats": "Filtrar y ordenar chats",
   "Filter and sort chats, filter active": "Filtrar y ordenar chats, filtro activo",
-  "Hide archived": "Ocultar archivados",
-  "Hide automated": "Ocultar automáticos",
   "Its machine": "Su máquina",
   Machine: "Máquina",
   "Move to project…": "Mover a un proyecto…",
@@ -765,8 +761,6 @@ export const es: PhraseCatalog = {
     "Mostrando chats en {machine}. Mostrar todas las máquinas",
   "Unpin project": "Desfijar proyecto",
   "Untitled chat": "Chat sin título",
-  "Projects that checks and agents made for themselves. Move one to your projects from its menu.":
-    "Proyectos que las comprobaciones y los agentes crearon para sí mismos. Pasa uno a tus proyectos desde su menú.",
   "Could not archive {name}": "No se pudo archivar {name}",
   "Could not restore {name}": "No se pudo restaurar {name}",
   "No chats yet. Threads agents started are on their project page.":

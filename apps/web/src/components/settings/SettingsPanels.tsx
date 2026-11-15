@@ -186,6 +186,7 @@ import {
   TIMELINE_DETAIL_LEVELS,
 } from "../../timelineDetail";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { ArchivedProjectsSections } from "./ArchivedProjectsSections";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { LanguageSettingRow } from "./LanguageSettingRow";
 import { SendFeedbackButton } from "../github/SendFeedback";
@@ -3795,6 +3796,7 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      <ArchivedProjectsSections />
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}

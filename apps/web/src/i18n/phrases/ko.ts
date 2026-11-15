@@ -693,10 +693,8 @@ export const ko: PhraseCatalog = {
   "Add project": "프로젝트 추가",
   "All machines": "모든 컴퓨터",
   "Archive project": "프로젝트 보관",
-  "Archived ({count})": "보관됨 ({count})",
   "Archived chats": "보관된 채팅",
   "Archived projects": "보관된 프로젝트",
-  "Automated ({count})": "자동 생성 ({count})",
   "Automated projects": "자동 생성 프로젝트",
   "Chat name": "채팅 이름",
   Chats: "채팅",
@@ -714,8 +712,6 @@ export const ko: PhraseCatalog = {
   "Drop here to pin": "여기에 놓아 고정",
   "Filter and sort chats": "채팅 필터 및 정렬",
   "Filter and sort chats, filter active": "채팅 필터 및 정렬, 필터 사용 중",
-  "Hide archived": "보관됨 숨기기",
-  "Hide automated": "자동 생성 숨기기",
   "Its machine": "해당 컴퓨터",
   Machine: "컴퓨터",
   "Move to project…": "프로젝트로 이동…",
@@ -749,8 +745,6 @@ export const ko: PhraseCatalog = {
     "{machine}의 채팅을 표시하는 중. 모든 컴퓨터 보기",
   "Unpin project": "프로젝트 고정 해제",
   "Untitled chat": "제목 없는 채팅",
-  "Projects that checks and agents made for themselves. Move one to your projects from its menu.":
-    "점검과 에이전트가 스스로 만든 프로젝트입니다. 메뉴에서 내 프로젝트로 옮길 수 있습니다.",
   "Could not archive {name}": "{name}을(를) 보관할 수 없습니다",
   "Could not restore {name}": "{name}을(를) 복원할 수 없습니다",
   "No chats yet. Threads agents started are on their project page.":

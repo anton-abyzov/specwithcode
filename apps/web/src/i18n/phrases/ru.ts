@@ -698,10 +698,8 @@ export const ru: PhraseCatalog = {
   "Add project": "Добавить проект",
   "All machines": "Все машины",
   "Archive project": "Архивировать проект",
-  "Archived ({count})": "Архив ({count})",
   "Archived chats": "Архивные чаты",
   "Archived projects": "Архивные проекты",
-  "Automated ({count})": "Автоматические ({count})",
   "Automated projects": "Автоматические проекты",
   "Chat name": "Название чата",
   Chats: "Чаты",
@@ -720,8 +718,6 @@ export const ru: PhraseCatalog = {
   "Drop here to pin": "Перетащите сюда, чтобы закрепить",
   "Filter and sort chats": "Фильтр и сортировка чатов",
   "Filter and sort chats, filter active": "Фильтр и сортировка чатов, фильтр включён",
-  "Hide archived": "Скрыть архив",
-  "Hide automated": "Скрыть автоматические",
   "Its machine": "Его машина",
   Machine: "Машина",
   "Move to project…": "Переместить в проект…",
@@ -755,8 +751,6 @@ export const ru: PhraseCatalog = {
     "Показаны чаты на {machine}. Показать все машины",
   "Unpin project": "Открепить проект",
   "Untitled chat": "Чат без названия",
-  "Projects that checks and agents made for themselves. Move one to your projects from its menu.":
-    "Проекты, которые проверки и агенты создали для себя. Перенесите любой в свои проекты через его меню.",
   "Could not archive {name}": "Не удалось архивировать {name}",
   "Could not restore {name}": "Не удалось восстановить {name}",
   "No chats yet. Threads agents started are on their project page.":

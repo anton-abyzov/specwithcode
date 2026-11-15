@@ -45,8 +45,6 @@ import {
 import { Link, useLocation, useParams, useSearch } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
-  ArchiveIcon,
-  BotIcon,
   ChevronRightIcon,
   ConciergeBellIcon,
   LaptopIcon,
@@ -285,10 +283,6 @@ export default function StudioSidebar() {
   const saveProjectOrder = (next: SidebarProjectOrder) =>
     saveOrder(rememberPinnedMembers(next, projectGroups));
   const [showAllProjects, setShowAllProjects] = useState(false);
-  // Null follows the open project: the list opens while an archived project is open.
-  const [showArchived, setShowArchived] = useState<boolean | null>(null);
-  // Null follows the open project too: Automated opens while one of its projects is open.
-  const [showAutomated, setShowAutomated] = useState<boolean | null>(null);
   const serverConfigs = useServerConfigs();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -447,10 +441,13 @@ export default function StudioSidebar() {
   const listedProjects = partition.listed;
   const automatedProjects = partition.automated.filter((group) => !isPersonalGroup(group));
   const archivedProjects = partition.archived.filter((group) => !isPersonalGroup(group));
-  const archivedOpen =
-    showArchived ?? archivedProjects.some((group) => group.projectKey === activeProjectKey);
-  const automatedOpen =
-    showAutomated ?? automatedProjects.some((group) => group.projectKey === activeProjectKey);
+  // The open project when it is archived or automated: listed alone under the projects.
+  const openSetAside = (() => {
+    const archived = archivedProjects.find((group) => group.projectKey === activeProjectKey);
+    if (archived) return { group: archived, archived: true };
+    const automated = automatedProjects.find((group) => group.projectKey === activeProjectKey);
+    return automated ? { group: automated, archived: false } : null;
+  })();
   // A chat another machine's project thread asked for groups with that project.
   const requestedBy = useCallback(
     (thread: EnvironmentThreadShell) =>
@@ -957,13 +954,6 @@ export default function StudioSidebar() {
         .filter((member) => member.workspaceSettings?.kind === "personal"),
       ownEnvironmentId: primaryEnvironmentId,
     });
-  const automatedWaiting = automatedProjects.reduce(
-    (sum, group) =>
-      projectShowsWaitingCount(notificationsFor(group))
-        ? sum + (waitingByProject.get(group.projectKey) ?? 0)
-        : sum,
-    0,
-  );
   const newChatShortcut = shortcutLabelForCommand(keybindings, "chat.new");
   const searchShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
 
@@ -1077,9 +1067,7 @@ export default function StudioSidebar() {
                 </button>
               </Tip>
             </div>
-            {codeProjects.length === 0 &&
-            automatedProjects.length === 0 &&
-            archivedProjects.length === 0 ? (
+            {codeProjects.length === 0 && !openSetAside ? (
               <p className="sws-side-empty">
                 {tx("No projects yet. Create one or open a folder.")}
               </p>
@@ -1135,103 +1123,29 @@ export default function StudioSidebar() {
                   : tx("Show {count} more", { count: hiddenProjects })}
               </button>
             ) : null}
-            {automatedProjects.length > 0 ? (
-              <>
-                <Tip
-                  side="right"
-                  label={tx(
-                    "Projects that checks and agents made for themselves. Move one to your projects from its menu.",
-                  )}
-                >
-                  <button
-                    type="button"
-                    className="sws-side-more"
-                    aria-expanded={automatedOpen}
-                    aria-controls="sws-side-automated"
-                    onClick={() => setShowAutomated(!automatedOpen)}
-                  >
-                    <BotIcon aria-hidden className="sws-side-more-icon" />
-                    {automatedOpen
-                      ? tx("Hide automated")
-                      : tx("Automated ({count})", { count: automatedProjects.length })}
-                    {!automatedOpen && automatedWaiting > 0 ? (
-                      <span className="sws-count sws-count-waiting">
-                        {automatedWaiting}
-                        <span className="sr-only">
-                          {" "}
-                          {t("sidebar.needYou", { count: automatedWaiting })}
-                        </span>
-                      </span>
-                    ) : null}
-                  </button>
-                </Tip>
-                {automatedOpen ? (
-                  <ul
-                    id="sws-side-automated"
-                    className="sws-side-list"
-                    aria-label={tx("Automated projects")}
-                  >
-                    {automatedProjects.map((group) => (
-                      <ProjectRow
-                        key={group.projectKey}
-                        group={group}
-                        displayedProject={displayedCheckouts.get(group.projectKey)}
-                        archived={isArchivedGroup(group, scratchRootFor)}
-                        automated
-                        waiting={waitingByProject.get(group.projectKey) ?? 0}
-                        attentionLabel={attentionByProject.get(group.projectKey)?.label}
-                        attentionComplete={attentionByProject.get(group.projectKey)?.complete}
-                        current={group.projectKey === activeProjectKey}
-                        onOpen={closeMobile}
-                        onArchive={(archived) => void setGroupArchived(group, archived)}
-                        onOriginChange={(origin) => void setGroupOrigin(group, origin)}
-                        notifications={notificationsFor(group)}
-                        onNotificationsChange={(level) => void setGroupNotifications(group, level)}
-                        rename={renameFor(group)}
-                        designsProjectId={designsFor(group)}
-                      />
-                    ))}
-                  </ul>
-                ) : null}
-              </>
-            ) : null}
-            {archivedProjects.length > 0 ? (
-              <>
-                <button
-                  type="button"
-                  className="sws-side-more"
-                  aria-expanded={archivedOpen}
-                  aria-controls="sws-side-archived"
-                  onClick={() => setShowArchived(!archivedOpen)}
-                >
-                  <ArchiveIcon aria-hidden className="sws-side-more-icon" />
-                  {archivedOpen
-                    ? tx("Hide archived")
-                    : tx("Archived ({count})", { count: archivedProjects.length })}
-                </button>
-                {archivedOpen ? (
-                  <ul
-                    id="sws-side-archived"
-                    className="sws-side-list"
-                    aria-label={tx("Archived projects")}
-                  >
-                    {archivedProjects.map((group) => (
-                      <ProjectRow
-                        key={group.projectKey}
-                        group={group}
-                        displayedProject={displayedCheckouts.get(group.projectKey)}
-                        archived
-                        waiting={0}
-                        current={group.projectKey === activeProjectKey}
-                        onOpen={closeMobile}
-                        onArchive={(archived) => void setGroupArchived(group, archived)}
-                        rename={renameFor(group)}
-                        designsProjectId={designsFor(group)}
-                      />
-                    ))}
-                  </ul>
-                ) : null}
-              </>
+            {/* Archived and automated projects live in Settings > Archive. The one open
+                now stays here, so the page's project is never missing from the list. */}
+            {openSetAside ? (
+              <ul className="sws-side-list" aria-label={tx("Open project")}>
+                <ProjectRow
+                  key={openSetAside.group.projectKey}
+                  group={openSetAside.group}
+                  displayedProject={displayedCheckouts.get(openSetAside.group.projectKey)}
+                  archived={openSetAside.archived}
+                  automated={!openSetAside.archived}
+                  waiting={0}
+                  current
+                  onOpen={closeMobile}
+                  onArchive={(archived) => void setGroupArchived(openSetAside.group, archived)}
+                  onOriginChange={
+                    openSetAside.archived
+                      ? undefined
+                      : (origin) => void setGroupOrigin(openSetAside.group, origin)
+                  }
+                  rename={renameFor(openSetAside.group)}
+                  designsProjectId={designsFor(openSetAside.group)}
+                />
+              </ul>
             ) : null}
           </div>
 
