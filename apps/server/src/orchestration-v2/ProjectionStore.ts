@@ -385,6 +385,8 @@ export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
 
 export interface ProjectionTimelinePageOptions {
   readonly afterPosition?: number;
+  /** Reads backward: the newest `limit` items before this position. */
+  readonly beforePosition?: number;
   readonly itemId?: TurnItemId;
   readonly view?: "messages" | "activity";
   readonly limit: number;
@@ -393,7 +395,29 @@ export interface ProjectionTimelinePage {
   readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly totalItems: number;
   readonly hasMore: boolean;
+  /** A backward read left older matching items before the page. */
+  readonly hasEarlier?: boolean;
 }
+
+/** One page of a thread's visible items, forward from afterPosition or backward from beforePosition. */
+export const selectTimelinePage = <Row extends { readonly position: number }>(
+  matching: ReadonlyArray<Row>,
+  options: ProjectionTimelinePageOptions,
+): { readonly page: ReadonlyArray<Row>; readonly hasMore: boolean; readonly hasEarlier: boolean } => {
+  if (options.beforePosition === undefined) {
+    const page = matching.slice(0, options.limit);
+    return { page, hasMore: matching.length > page.length, hasEarlier: false };
+  }
+  const before = options.beforePosition;
+  const older = matching.filter((row) => row.position < before);
+  const page = older.slice(Math.max(0, older.length - options.limit));
+  const last = page.at(-1)?.position ?? before - 1;
+  return {
+    page,
+    hasMore: matching.some((row) => row.position > last),
+    hasEarlier: older.length > page.length,
+  };
+};
 
 export interface ProjectionStoreV2Shape {
   readonly getThreadAttachmentIds: (
@@ -5719,7 +5743,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ))
                   : row.sourceItemId === options.itemId,
               );
-            const page = matching.slice(0, options.limit);
+            const { page, hasMore, hasEarlier } = selectTimelinePage(matching, options);
             const items = yield* Effect.forEach(page, (row) =>
               Effect.gen(function* () {
                 if (row.synthetic !== undefined)
@@ -5755,7 +5779,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               items,
               totalItems: index.visible.length,
-              hasMore: matching.length > page.length,
+              hasMore,
+              ...(options.beforePosition === undefined ? {} : { hasEarlier }),
             };
           }),
         )
@@ -7678,10 +7703,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     ["user_message", "assistant_message", "proposed_plan"].includes(row.item.type))
                 : row.sourceItemId === options.itemId,
             );
+            const { page, hasMore, hasEarlier } = selectTimelinePage(matching, options);
             return {
-              items: matching.slice(0, options.limit),
+              items: page,
               totalItems: projection.visibleTurnItems.length,
-              hasMore: matching.length > options.limit,
+              hasMore,
+              ...(options.beforePosition === undefined ? {} : { hasEarlier }),
             };
           }),
         ),
