@@ -423,6 +423,7 @@ describe("model chip with usage", () => {
   const chip = (
     usedPercent: number,
     extra: Partial<ComponentProps<typeof ProviderModelPicker>> = {},
+    usageShown = true,
   ) =>
     renderToStaticMarkup(
       <ProviderModelPicker
@@ -435,7 +436,9 @@ describe("model chip with usage", () => {
         }
         onInstanceModelChange={() => {}}
         triggerParts={{ provider: "Claude", model: "Opus 5.5" }}
-        usage={{ connected: true, environmentId: "env", machineLabel: null, running: null }}
+        {...(usageShown
+          ? { usage: { connected: true, environmentId: "env", machineLabel: null, running: null } }
+          : {})}
         fit="full"
         {...extra}
       />,
@@ -469,7 +472,7 @@ describe("model chip with usage", () => {
   });
 
   it("stays one button with no usage to show", () => {
-    const markup = chip(40, { usage: undefined });
+    const markup = chip(40, {}, false);
     expect(buttons(markup)).toHaveLength(1);
     expect(markup).not.toContain("data-model-usage-button");
   });

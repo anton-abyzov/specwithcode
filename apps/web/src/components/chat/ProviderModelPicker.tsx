@@ -46,6 +46,9 @@ const PICKER_COLLISION_AVOIDANCE = {
   fallbackAxisSide: "none",
 } as const;
 
+const TOUCH_TARGET =
+  "relative pointer-coarse:after:absolute pointer-coarse:after:top-1/2 pointer-coarse:after:left-1/2 pointer-coarse:after:h-11 pointer-coarse:after:w-full pointer-coarse:after:min-w-11 pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2";
+
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
    * The instance currently selected in the composer. Drives the trigger
@@ -174,6 +177,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const showInstanceBadge =
     triggerEntry !== null && shouldShowInstanceBadge(triggerEntry, props.instanceEntries);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
+  const [showingAllLimits, setShowingAllLimits] = useState(false);
   const usage = useModelPickerUsage(
     props.usage,
     props.instanceEntries,
@@ -558,7 +562,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           data-model-chip-split=""
           {...(props.disabled ? { "data-disabled": "" } : {})}
           {...(fit ? { "data-model-chip": "", "data-model-fit": fit } : {})}
-          className={cn("min-w-0 shrink justify-between whitespace-nowrap", chipWidthClass)}
+          className={cn(
+            // Each half has its own touch target, so the chip's own overlay must not cover them.
+            "min-w-0 shrink justify-between whitespace-nowrap pointer-coarse:after:hidden",
+            chipWidthClass,
+          )}
         >
           <Tooltip disabled={isMenuOpen}>
             <TooltipTrigger
@@ -569,6 +577,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   data-model-chip-main=""
                   className={cn(
                     "flex min-w-0 flex-1 cursor-pointer items-center self-stretch rounded-(--control-radius) outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    TOUCH_TARGET,
                     size === "xs" ? "-ms-1.75 ps-1.75" : "-ms-2.5 ps-2.5",
                   )}
                   disabled={props.disabled}
@@ -579,7 +588,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{tooltip}</TooltipPopup>
           </Tooltip>
-          <Popover open={isUsageOpen} onOpenChange={setIsUsageOpen}>
+          <Popover
+            open={isUsageOpen}
+            onOpenChange={(open) => {
+              setIsUsageOpen(open);
+              if (!open) setShowingAllLimits(false);
+            }}
+          >
             <Tooltip disabled={isUsageOpen}>
               <TooltipTrigger
                 render={
@@ -590,7 +605,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     data-model-chip-part="usage-ring"
                     data-model-usage-button=""
                     className={cn(
-                      "flex shrink-0 cursor-pointer items-center self-stretch rounded-(--control-radius) tabular-nums outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-w-11 pointer-coarse:justify-center",
+                      "flex shrink-0 cursor-pointer items-center self-stretch rounded-(--control-radius) tabular-nums outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-ring",
+                      TOUCH_TARGET,
                       size === "xs"
                         ? "-me-1.75 gap-1 ps-0.5 pe-1.75"
                         : "-me-2.5 gap-1.5 ps-1 pe-2.5",
@@ -627,7 +643,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               data-model-usage-popup=""
             >
               {isUsageOpen ? (
-                props.secondaryView ? (
+                showingAllLimits && props.secondaryView ? (
                   <div
                     className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
                     data-sws-picker=""
@@ -641,11 +657,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     })}
                   </div>
                 ) : usage && triggerEntry ? (
+                  // This session's account first: its windows and when each resets.
                   <div
                     className="w-screen max-w-[min(22rem,calc(100vw-1.5rem))]"
                     data-sws-picker=""
                   >
                     <ModelPickerUsageBand entry={triggerEntry} usage={usage} />
+                    {props.secondaryView ? (
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2 text-start text-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:outline-none"
+                        data-model-usage-all=""
+                        onClick={() => setShowingAllLimits(true)}
+                      >
+                        {props.secondaryView.label} →
+                      </button>
+                    ) : null}
                   </div>
                 ) : null
               ) : null}

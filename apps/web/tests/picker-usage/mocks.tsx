@@ -29,6 +29,7 @@ export const useUpdateClientSettings = () => (patch: Partial<typeof settings>) =
   for (const listener of listeners) listener();
 };
 export const primaryServerKeybindingsAtom = Atom.make({ bindings: [], warnings: [] });
+export const environmentServerConfigsAtom = Atom.make(new Map());
 export const ChatGptSharingControl = () => null;
 // The picker re-reads old usage through this command; the fixture has no machine to ask.
 export const serverEnvironment = { refreshProviders: { label: "refreshProviders" } };
