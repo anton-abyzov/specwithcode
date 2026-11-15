@@ -33,6 +33,8 @@ import {
   isUnknownBillingAgent,
   providerUsedPercent,
   usageResetAt,
+  type UsageUnknownReason,
+  usageUnknownReason,
 } from "./providerFallback.ts";
 
 export type SourceState = "ready" | "limited" | "sign-in" | "not-installed" | "not-ready";
@@ -180,6 +182,12 @@ export interface TrackSource {
    * named, and for any held source in Review, which never reviews on one.
    */
   readonly used: boolean;
+  /**
+   * Review only: why a ready source's usage is unknown. A review prefers a
+   * source with a fresh reading, so such a row can lose to a lower one, unless
+   * its usage was never read, which keeps its place.
+   */
+  readonly usage: UsageUnknownReason | null;
 }
 
 export interface TrackRow {
@@ -250,6 +258,7 @@ export function describeTrack(input: {
         status: sourceStatus(provider, input.nowMs, served),
         hold,
         used: hold === null || (provider.instanceId === named && input.track !== "review"),
+        usage: input.track === "review" ? usageUnknownReason(provider, input.nowMs, served) : null,
       };
     });
   };

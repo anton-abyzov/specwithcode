@@ -229,8 +229,6 @@ export const zh: Messages = {
   "fallback.moveUp": "上移 {label}",
   "fallback.moveDown": "下移 {label}",
   "fallback.remove": "移除 {label}",
-  "fallback.sameModelAria": "{label} 之后：其他提供方上的同一模型",
-  "fallback.sameModelOn": "{provider} 上的同一模型",
   "fallback.orderLabel": "备用顺序",
   "fallback.status.ready": "可以接手受限会话",
   "fallback.status.unverified": "已登录，没有最近的用量数据",

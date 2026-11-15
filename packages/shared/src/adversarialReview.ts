@@ -178,92 +178,6 @@ export function reviewerChain(input: {
 /** Whether a reviewer step could review now, before the author's family is known. */
 export type ReviewerStepStatus = Exclude<ReviewerSkipReason, "same-family" | "current"> | "ready";
 
-export interface ReviewerOrderStep {
-  readonly selection: ModelSelection;
-  readonly family: ModelFamily;
-  readonly status: ReviewerStepStatus;
-  /** When a full entry's usage resets, if known. */
-  readonly resetAt: number | null;
-  /** An agent of unknown billing nobody listed: never picked until a person lists it. */
-  readonly unconsented: boolean;
-}
-
-export interface ReviewerOrderView {
-  /** True when no reviewer order is set and the default order applies. */
-  readonly isDefault: boolean;
-  readonly groups: ReadonlyArray<{
-    readonly primary: ReviewerOrderStep;
-    readonly alternates: ReadonlyArray<ReviewerOrderStep>;
-  }>;
-}
-
-/** No thread runs here: settings describe the order before any author is known. */
-const NO_AUTHOR_INSTANCE = "__reviewer-order__" as ModelSelection["instanceId"];
-
-/**
- * The effective reviewer order with each step's status on this machine now,
- * by the same rules `resolveReviewer` walks (sign-in, usage, exclusions,
- * unknown billing). The author's family is skipped at review time, so it is
- * not a status here; each step names its family instead.
- */
-export function describeReviewerOrder(input: {
-  readonly providers: ReadonlyArray<ServerProvider>;
-  readonly reviewers: ReadonlyArray<ModelSelection>;
-  readonly tier: ProviderModelTier;
-  readonly tiers?: ProviderModelTiers | undefined;
-  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
-  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
-  readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
-  readonly nowMs: number;
-}): ReviewerOrderView {
-  const groups = reviewerOrderGroups(input);
-  const chain = groups.flatMap((group) => [group.primary, ...group.alternates]);
-  const entries = describeFallbackOrder({
-    providers: input.providers,
-    currentInstanceId: NO_AUTHOR_INSTANCE,
-    rule: {
-      providerLimitFallbackModels: chain,
-      providerLimitFallbackModelSelection: null,
-      providerLimitExcludedModels: input.excludedModels ?? [],
-    },
-    nowMs: input.nowMs,
-  });
-  const byKey = new Map(entries.map((entry) => [fallbackSelectionKey(entry.selection), entry]));
-  const named = new Set(input.reviewers.map(fallbackSelectionKey));
-  const step = (selection: ModelSelection): ReviewerOrderStep => {
-    const key = fallbackSelectionKey(selection);
-    const entry = byKey.get(key);
-    const provider = input.providers.find((item) => item.instanceId === selection.instanceId);
-    const unavailable: FallbackOrderUnavailable | null =
-      entry === undefined ? (provider === undefined ? "missing" : "not-ready") : entry.unavailable;
-    const unconsented = !named.has(key) && isUnknownBillingAgent(provider, selection.model);
-    // As `resolveReviewer` reads it: a Gemini or Vertex account nobody named never reviews.
-    const unnamedSpend = !named.has(key) && isGeminiSpendProvider(provider);
-    const status: ReviewerStepStatus =
-      unnamedSpend && (unavailable === null || unavailable === "unverified")
-        ? "per-token"
-        : unconsented && (unavailable === null || unavailable === "unverified")
-          ? "unknown-billing"
-          : unavailable === null || unavailable === "current"
-            ? "ready"
-            : unavailable;
-    return {
-      selection,
-      family: selectionFamily(input.providers, selection),
-      status,
-      resetAt: entry?.resetAt ?? null,
-      unconsented,
-    };
-  };
-  return {
-    isDefault: input.reviewers.length === 0,
-    groups: groups.map((group) => ({
-      primary: step(group.primary),
-      alternates: group.alternates.map(step),
-    })),
-  };
-}
-
 /**
  * The first entry of the reviewer order that can run now and is not in the
  * author's family. An entry whose usage was never read keeps its place: the
@@ -294,6 +208,10 @@ export function resolveReviewer(input: {
   const entries = describeFallbackOrder({
     providers: input.providers,
     currentInstanceId: input.author.instanceId,
+    // Only the author's own model on its own source is "the model that did
+    // the work"; another family on the same source (Sol through the Copilot
+    // account Opus ran on) can still review.
+    currentModel: input.author.model,
     rule: {
       providerLimitFallbackModels: chain,
       providerLimitFallbackModelSelection: null,
@@ -357,7 +275,7 @@ export function resolveReviewer(input: {
  * failed or unsupported probe, with no windows and no limit denial seen.
  * Muse reports this way; it says nothing about the account being full.
  */
-function usageNeverRead(provider: ServerProvider | undefined): boolean {
+export function usageNeverRead(provider: ServerProvider | undefined): boolean {
   const limits = provider?.usageLimits;
   return (
     limits !== undefined &&
@@ -365,6 +283,68 @@ function usageNeverRead(provider: ServerProvider | undefined): boolean {
     limits.windows.length === 0 &&
     limits.nativeDenialObservedAt === undefined
   );
+}
+
+/** Who reviews the work of one model family now, as the settings page shows it. */
+export interface ReviewRuleLine {
+  readonly family: ModelFamily;
+  /** The models of that family that do work here, by name, in order. */
+  readonly authors: ReadonlyArray<string>;
+  /** The model that would review now, or null when none can. */
+  readonly reviewer: ModelSelection | null;
+  /** Entries above the reviewer passed over because they are the author's family. */
+  readonly sameFamily: ReadonlyArray<ModelSelection>;
+  /** Every entry passed over, in order, with why (all of them when no reviewer). */
+  readonly skipped: ReadonlyArray<ReviewerSkip>;
+}
+
+/**
+ * For each family among `authors` (the models that do work here: the Daily
+ * and Complex tracks), the reviewer `resolveReviewer` would pick now. Authors
+ * of no known family are matched by model, so each gets its own line.
+ */
+export function describeReviewRule(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly authors: ReadonlyArray<ModelSelection>;
+  readonly reviewers: ReadonlyArray<ModelSelection>;
+  readonly tier: ProviderModelTier;
+  readonly tiers?: ProviderModelTiers | undefined;
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
+  readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
+  readonly nowMs: number;
+}): ReadonlyArray<ReviewRuleLine> {
+  const groups = new Map<string, { family: ModelFamily; first: ModelSelection; names: string[] }>();
+  for (const author of input.authors) {
+    const provider = input.providers.find((entry) => entry.instanceId === author.instanceId);
+    const names = describeModel(provider, author.model);
+    const family = modelFamily(names);
+    const key = family === "other" ? `other:${names.slug}` : family;
+    const name = names.name ?? author.model;
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, { family, first: author, names: [name] });
+    else if (!group.names.includes(name)) group.names.push(name);
+  }
+  return [...groups.values()].map((group) => {
+    const resolution = resolveReviewer({
+      providers: input.providers,
+      author: group.first,
+      reviewers: input.reviewers,
+      tier: input.tier,
+      tiers: input.tiers,
+      sourceOrder: input.sourceOrder,
+      excludedModels: input.excludedModels,
+      nowMs: input.nowMs,
+    });
+    return {
+      family: group.family,
+      authors: group.names,
+      reviewer: resolution.reviewer,
+      sameFamily: resolution.skipped
+        .filter((skip) => skip.reason === "same-family")
+        .map((skip) => skip.selection),
+      skipped: resolution.skipped,
+    };
+  });
 }
 
 /** Short words for a skip reason, for notices. */

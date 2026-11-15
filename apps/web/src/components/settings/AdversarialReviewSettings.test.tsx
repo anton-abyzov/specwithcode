@@ -24,6 +24,11 @@ vi.mock("../../state/environments", () => ({
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
+vi.mock("./ModelTracksSettings", () => ({
+  ModelTracksSettings: (props: { tracks?: ReadonlyArray<string>; reviewSwitch?: boolean }) => (
+    <div data-review-card={props.tracks?.join(",")} data-review-switch={props.reviewSwitch} />
+  ),
+}));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({ scope: { kind: "project" }, target: { environmentId: "mac" } }),
 }));
@@ -209,84 +214,22 @@ describe("AdversarialReviewSettings", () => {
     expect(state.update).toHaveBeenCalledWith({ adversarialReview: { tier: "frontier" } });
   });
 
-  it("shows the default order as steps, other families first, and customizes it", () => {
-    render(<AdversarialReviewSettings />);
-    const order = byLabel("Reviewer order");
-    expect(
-      order.find((node) => node.props["data-reviewer-order"] !== undefined).props[
-        "data-reviewer-order"
-      ],
-    ).toBe("default");
-    const steps = byLabel("Reviewer order steps").findAllByType("li");
-    expect(
-      steps.map(
-        (step) =>
-          step.findAll((node) => node.props["data-label"] !== undefined)[0]!.props["data-label"],
-      ),
-    ).toEqual(["Codex · GPT-6.1 Sol", "Claude · Opus 5.5"]);
-    // A default order cannot be edited in place until it is customized.
-    expect(
-      renderer!.root.findAll((node) => node.props["aria-label"] === "Move Claude · Opus 5.5 up"),
-    ).toHaveLength(0);
-    act(() => byLabel("Customize reviewer order").props.onClick());
-    expect(state.update).toHaveBeenLastCalledWith({
-      adversarialReview: {
-        reviewers: [
-          { instanceId: codex, model: "gpt-6.1-sol" },
-          { instanceId: claude, model: "claude-opus-5-5" },
-        ],
-      },
-    });
-  });
-
-  it("adds, moves and clears the whole reviewer list", () => {
+  it("shows the same Review card as the Models page, without a second switch", () => {
     const first = { instanceId: claude, model: "claude-opus-5-5" };
     state.settings = {
       ...state.settings,
-      adversarialReview: { autoOnFeatureComplete: false, reviewers: [first], tier: "frontier" },
+      adversarialReview: { autoOnFeatureComplete: false, reviewers: [first], tier: "regular" },
     };
     render(<AdversarialReviewSettings />);
-    act(() => byLabel("Add a reviewer model").props.onClick());
-    expect(state.update).toHaveBeenLastCalledWith({
-      adversarialReview: { reviewers: [first, { instanceId: codex, model: "gpt-6.1-sol" }] },
-    });
-
-    state.settings = {
-      ...state.settings,
-      adversarialReview: {
-        autoOnFeatureComplete: false,
-        reviewers: [first, { instanceId: codex, model: "gpt-6.1-sol" }],
-        tier: "frontier",
-      },
-    };
-    render(<AdversarialReviewSettings />);
-    act(() => byLabel("Move Codex · GPT-6.1 Sol up").props.onClick());
-    expect(state.update).toHaveBeenLastCalledWith({
-      adversarialReview: { reviewers: [{ instanceId: codex, model: "gpt-6.1-sol" }, first] },
-    });
+    const card = renderer!.root.find((node) => node.props["data-review-card"] !== undefined);
+    expect(card.props["data-review-card"]).toBe("review");
+    expect(card.props["data-review-switch"]).toBe(false);
+    // No stacked provider icons: other sources are text in the card.
+    expect(
+      renderer!.root.findAll((node) => node.props["data-alternates-toggle"] !== undefined),
+    ).toHaveLength(0);
     act(() => byLabel("Reset reviewer order to default").props.onClick());
     expect(state.update).toHaveBeenLastCalledWith({ adversarialReview: { reviewers: [] } });
-  });
-});
-
-describe("AdversarialReviewSettings stored duplicates", () => {
-  it("shows a repeated model once and saves the list without the repeat", () => {
-    const opus = { instanceId: claude, model: "claude-opus-5-5" };
-    const sol = { instanceId: codex, model: "gpt-6.1-sol" };
-    state.settings = {
-      ...state.settings,
-      adversarialReview: {
-        autoOnFeatureComplete: false,
-        reviewers: [opus, opus, sol],
-        tier: "regular",
-      },
-    };
-    render(<AdversarialReviewSettings />);
-    expect(byLabel("Reviewer order steps").findAllByType("li")).toHaveLength(2);
-    act(() => byLabel("Move Codex · GPT-6.1 Sol up").props.onClick());
-    expect(state.update).toHaveBeenLastCalledWith({
-      adversarialReview: { reviewers: [sol, opus] },
-    });
   });
 });
 

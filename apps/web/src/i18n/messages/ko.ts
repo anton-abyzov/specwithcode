@@ -245,8 +245,6 @@ export const ko: Messages = {
   "fallback.moveUp": "{label} 위로 이동",
   "fallback.moveDown": "{label} 아래로 이동",
   "fallback.remove": "{label} 삭제",
-  "fallback.sameModelAria": "{label} 다음, 다른 제공업체의 같은 모델",
-  "fallback.sameModelOn": "{provider}의 같은 모델",
   "fallback.orderLabel": "대체 순서",
   "fallback.status.ready": "한도에 걸린 스레드를 받을 수 있음",
   "fallback.status.unverified": "로그인됨, 최근 사용량 정보 없음",

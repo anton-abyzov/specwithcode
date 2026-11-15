@@ -272,8 +272,6 @@ export const de: Messages = {
   "fallback.moveUp": "{label} nach oben",
   "fallback.moveDown": "{label} nach unten",
   "fallback.remove": "{label} entfernen",
-  "fallback.sameModelAria": "Gleiches Modell bei anderen Anbietern, nach {label}",
-  "fallback.sameModelOn": "Gleiches Modell bei {provider}",
   "fallback.orderLabel": "Fallback-Reihenfolge",
   "fallback.status.ready": "Kann einen limitierten Thread übernehmen",
   "fallback.status.unverified": "Angemeldet, kein aktueller Nutzungswert",

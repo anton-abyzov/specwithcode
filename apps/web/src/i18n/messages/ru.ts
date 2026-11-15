@@ -279,8 +279,6 @@ export const ru: Messages = {
   "fallback.moveUp": "Переместить {label} выше",
   "fallback.moveDown": "Переместить {label} ниже",
   "fallback.remove": "Удалить {label}",
-  "fallback.sameModelAria": "Та же модель у других провайдеров, после {label}",
-  "fallback.sameModelOn": "Та же модель у {provider}",
   "fallback.orderLabel": "Порядок резервных моделей",
   "fallback.status.ready": "Может принять тред с лимитом",
   "fallback.status.unverified": "Вход выполнен, нет свежих данных об использовании",
