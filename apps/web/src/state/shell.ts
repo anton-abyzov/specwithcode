@@ -1,7 +1,4 @@
-import {
-  AVAILABLE_CONNECTION_STATE,
-  connectionProjectionPhase,
-} from "@specweave-studio/client-runtime/connection";
+import { AVAILABLE_CONNECTION_STATE } from "@specweave-studio/client-runtime/connection";
 import {
   createEnvironmentShellAtoms,
   createEnvironmentSnapshotAtom,
@@ -19,30 +16,34 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { isHostedStaticApp } from "../hostedPairing";
+import { environmentHoldsBootstrap } from "./shellBootstrap";
 
 export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntime);
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
 export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
 
+/**
+ * The first load of chats has settled: every enabled machine has reported or
+ * had its tries (`environmentHoldsBootstrap`). Once settled it stays settled,
+ * so a machine added or retried later never returns the lists to loading.
+ */
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
+  if (Option.getOrElse(get.self<boolean>(), () => false)) return true;
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
   if (Option.isNone(catalog)) {
     return false;
   }
   for (const environmentId of enabledEnvironmentIds(catalog.value)) {
-    if (Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot)) {
-      continue;
-    }
     const connection = Option.getOrElse(
       AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))),
       () => AVAILABLE_CONNECTION_STATE,
     );
-    if (connectionProjectionPhase(connection) !== "disconnected") {
-      return false;
-    }
-    // A retrying environment is only transiently disconnected; give it its
-    // first retries before letting the landing settle without its snapshot.
-    if (connection.phase === "backoff" && connection.desired && connection.attempt <= 2) {
+    if (
+      environmentHoldsBootstrap(
+        connection,
+        Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot),
+      )
+    ) {
       return false;
     }
   }
