@@ -135,6 +135,7 @@ export function HandoffFolderCopy({
   onChoicesChange,
   canMove,
   uncommittedFiles = null,
+  chooseCopyFirst = false,
   onBusyChange,
   onCloseLockChange,
   onOpenProject,
@@ -166,6 +167,8 @@ export function HandoffFolderCopy({
   readonly canMove: boolean;
   /** Uncommitted files in the source, named in What comes along; null when unknown. */
   readonly uncommittedFiles?: number | null;
+  /** The machine holds several copies and none is picked yet: the copy cannot start. */
+  readonly chooseCopyFirst?: boolean;
   readonly onBusyChange: (busy: boolean) => void;
   /** True only while closing the dialog would interrupt a step that must finish here. */
   readonly onCloseLockChange?: (locked: boolean) => void;
@@ -1454,7 +1457,13 @@ export function HandoffFolderCopy({
             auto={auto}
             chooseFirst={chooseFirst}
             selection={selection}
-            setupBlocked={scope.loading || !machine || !!target?.unavailable || !folder.trim()}
+            setupBlocked={
+              scope.loading ||
+              !machine ||
+              !!target?.unavailable ||
+              !folder.trim() ||
+              chooseCopyFirst
+            }
             replaced={replaced}
             approveLabel={approveLabel}
             failedBeforeApply={failedBeforeApply}

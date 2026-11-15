@@ -33,6 +33,7 @@ import {
   MachineHandoffPrepareResult,
   MachineHandoffPreviewMetadata,
   MachineHandoffReceiveResult,
+  type MachineHandoffUpdateSkipped,
   type Project,
   ProjectId,
   ProjectWorkspaceError,
@@ -119,7 +120,8 @@ import {
 } from "./handoffLaunchPrompt.ts";
 import { copiedContextPaths } from "./folderCopyContextPaths.ts";
 import { makeCopyRegistration } from "./folderCopyRegistration.ts";
-import { gitGuarded } from "./machineHandoffGitGuard.ts";
+import { makeExistingCopyLocks } from "./existingCopyLocks.ts";
+import { existingCopyUpdate, gitGuarded } from "./machineHandoffGitGuard.ts";
 import { decodeDestinationRecord, decodeSourceRecord } from "./machineHandoffRecords.ts";
 import { leftBehindOf, markProjectMoved, projectRepositories } from "./repositorySync.ts";
 import { discoverCopyScopes, resolveCopyScope } from "./folderCopyScope.ts";
@@ -972,6 +974,22 @@ const make = Effect.gen(function* () {
                 manifest: saved.bundle.manifest,
               }),
             );
+          // A Git sync move publishes its commits so the destination's copy can fetch exactly
+          // them (1326). Without push access the move still goes on: the destination finds no
+          // published ref and says its copy was not updated.
+          if (saved.bundle.destination.transport === "git-sync")
+            yield* git
+              .publish({
+                publish: true,
+                allowChanges: true,
+                workspaceRoot: current.workspaceRoot,
+                manifest: saved.bundle.manifest,
+              })
+              .pipe(
+                Effect.catchTag("HandoffGitError", (error) =>
+                  Effect.logWarning("Git sync move did not publish its commits", error.reason),
+                ),
+              );
           const { digest: _oldDigest, ...value } = {
             ...saved.bundle,
             coordinatorBinding: releasedBinding,
@@ -1019,11 +1037,23 @@ const make = Effect.gen(function* () {
         return yield* write;
       }),
     );
+  const withFolderLocks = makeExistingCopyLocks({ admission, projects, git, sql, fs, path });
+  /** The manifest of a Git move into an existing copy, read before the input is validated. */
+  const gitSyncManifest = (input: Parameters<MachineHandoff["Service"]["receive"]>[0]) => {
+    const sent: Partial<MachineHandoffPreviewMetadata> | undefined =
+      input.mode === "start" ? input.bundle : input;
+    return sent?.destination?.transport === "git-sync" &&
+      sent.manifest !== undefined &&
+      validManifest(sent.manifest)
+      ? sent.manifest
+      : null;
+  };
   const receive: MachineHandoff["Service"]["receive"] = (input) =>
     locks.withLock(
       `destination:${input.operationId}`,
-      admission.withLock(
+      withFolderLocks(
         input.projectId,
+        gitSyncManifest(input),
         Effect.gen(function* () {
           yield* refuseMoveByTeamRules;
           const metadata = yield* Effect.try({
@@ -1217,6 +1247,9 @@ const make = Effect.gen(function* () {
                 ...(launch.verifiedNotes === undefined
                   ? {}
                   : { verifiedNotes: launch.verifiedNotes }),
+                ...(launch.updateSkipped === undefined
+                  ? {}
+                  : { updateSkipped: launch.updateSkipped }),
               };
               yield* store.write(`destination-${input.operationId}`, {
                 ...saved,
@@ -1241,6 +1274,16 @@ const make = Effect.gen(function* () {
           // A folder copy already placed the files; only its applied record proves it.
           const folderCopy = metadata.destination.transport === "folder-copy";
           const gitSync = metadata.destination.transport === "git-sync";
+          /** A thread of this project, or of another one in the folder, is working there. */
+          const existingCopy = {
+            inUse: (folder: string) =>
+              idle(input.projectId, folder).pipe(
+                Effect.as(false),
+                Effect.orElseSucceed(() => true),
+              ),
+          };
+          // Why the existing copy is not, or will not be, brought to the source heads (1326).
+          let updateSkipped: MachineHandoffUpdateSkipped | null = null;
           if (gitSync) {
             if (!useProjectFolder) return yield* new MachineHandoffError({ code: "invalid" });
             yield* gitGuarded(
@@ -1249,6 +1292,16 @@ const make = Effect.gen(function* () {
                 manifest: metadata.manifest,
               }),
             );
+            // The preview reads, never changes, the copy: the dialog offers to move anyway.
+            if (input.mode === "preview")
+              updateSkipped =
+                (yield* existingCopyUpdate(
+                  git.checkExistingCopy({
+                    workspaceRoot: current.workspaceRoot,
+                    manifest: metadata.manifest,
+                    existingCopy,
+                  }),
+                ))?.skipped ?? null;
           } else if (folderCopy) {
             if (!useProjectFolder) return yield* new MachineHandoffError({ code: "invalid" });
             yield* appliedCopy(
@@ -1276,7 +1329,28 @@ const make = Effect.gen(function* () {
               workspacePath: current.workspaceRoot,
               contextPath: null,
               replayed: false,
+              ...(updateSkipped ? { updateSkipped } : {}),
             };
+          // Bring the existing copy to the source heads through the same steps as any Git move,
+          // still under this project's admission lock, and before anything else changes here.
+          if (gitSync) {
+            const refusal = yield* existingCopyUpdate(
+              git.materialize({
+                workspaceRoot: current.workspaceRoot,
+                manifest: input.bundle.manifest,
+                worktreeParent: yield* store.prepareWorktreeParent,
+                useProjectFolder: true,
+                existingCopy,
+              }),
+            );
+            updateSkipped = refusal?.skipped ?? null;
+            // A client that offers "Move anyway" stops here first; the coordinator stays put.
+            if (refusal && input.staleCopy === "refuse")
+              return yield* new MachineHandoffError({
+                code: refusal.code,
+                updateSkipped: refusal.skipped,
+              });
+          }
           const nicknames = yield* serverSettings.getSettings.pipe(
             Effect.map((settings) => settings.machineNicknames),
             Effect.orElseSucceed(() => ({}) as MachineNicknames),
@@ -1459,6 +1533,7 @@ const make = Effect.gen(function* () {
             contextPath,
             prompt,
             ...(verifiedNotes === undefined ? {} : { verifiedNotes }),
+            ...(updateSkipped ? { updateSkipped } : {}),
           };
           // This is intent, never proof of a started turn. Recovery requires the accepted event.
           yield* store.write(`destination-${input.operationId}`, {
@@ -1501,6 +1576,7 @@ const make = Effect.gen(function* () {
             contextPath,
             replayed: false,
             ...(verifiedNotes === undefined ? {} : { verifiedNotes }),
+            ...(updateSkipped ? { updateSkipped } : {}),
           };
           yield* store.write(`destination-${input.operationId}`, {
             digest: metadata.digest,
@@ -1548,7 +1624,11 @@ const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrument
       [WS_METHODS.machineHandoffCopyScopes]: handoff.copyScopes,
       [WS_METHODS.machineHandoffCopyLeftBehind]: handoff.copyLeftBehind,
       [WS_METHODS.machineHandoffCopyCapabilities]: () =>
-        Effect.succeed({ scopeVersion: 1 as const, contextRetention: 1 as const }),
+        Effect.succeed({
+          scopeVersion: 1 as const,
+          contextRetention: 1 as const,
+          existingCopyUpdate: 1 as const,
+        }),
       [WS_METHODS.machineHandoffCopyOffer]: (input) => unlessUpdating(handoff.copyOffer(input)),
       [WS_METHODS.machineHandoffCopySourceStatus]: handoff.copySourceStatus,
       [WS_METHODS.machineHandoffCopySourceCancel]: handoff.copySourceCancel,

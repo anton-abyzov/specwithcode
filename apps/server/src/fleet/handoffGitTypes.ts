@@ -1,3 +1,4 @@
+import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 /** No absolute source paths or remote credentials cross the machine boundary. */
@@ -41,7 +42,18 @@ export class HandoffGitError extends Schema.TaggedError<HandoffGitError>()("Hand
     "operation-conflict",
     "worktree-conflict",
     "worker-checkpoint",
+    // An existing copy's update (1326): what stopped it before or during the update.
+    "unsafe-git-config",
+    "detached-head",
+    "in-use",
+    "needs-lfs",
+    "lfs-failed",
+    "external-git-storage",
   ]),
+  /** The manifest repository it stopped at, relative to the project folder. */
+  repository: Schema.optional(Schema.String),
+  /** `.git/config` keys outside the safe list, never their values. */
+  unsafeConfig: Schema.optional(Schema.Array(Schema.String)),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
@@ -148,4 +160,81 @@ export function validManifest(manifest: HandoffGitManifest): boolean {
     identities.add(repository.identity);
   }
   return true;
+}
+
+export type CheckpointWorker = {
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+};
+export type ManifestInput = {
+  readonly workspaceRoot: string;
+  readonly manifest: HandoffGitManifest;
+  readonly resumeProjectFolder?: boolean;
+};
+/**
+ * Updating a destination's existing copy (1326): `inUse` says whether a thread or another
+ * project works in a folder; it is asked again right before each repository moves.
+ */
+export interface ExistingCopyGuard {
+  readonly inUse: (folder: string) => Effect.Effect<boolean>;
+}
+
+/** What the Git side of a machine handoff offers; `handoffGit.ts` implements it. */
+export interface HandoffGitService {
+  readonly inspect: (input: {
+    readonly operationId: string;
+    readonly workspaceRoot: string;
+    /** Name what is checked out even with uncommitted changes: nothing is sent through Git. */
+    readonly allowChanges?: boolean;
+  }) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
+  /** The destination's folder holds the same repository as the source's root. */
+  readonly verifyRootIdentity: (input: ManifestInput) => Effect.Effect<void, HandoffGitError>;
+  readonly preflight: (input: ManifestInput) => Effect.Effect<void, HandoffGitError>;
+  readonly verifyWorkerCheckpoints: (
+    input: ManifestInput & {
+      readonly workers: ReadonlyArray<{
+        readonly worktreePath: string | null;
+        readonly branch: string | null;
+      }>;
+    },
+  ) => Effect.Effect<void, HandoffGitError>;
+  /**
+   * The workers verifyWorkerCheckpoints would refuse, for a handoff that leaves
+   * them on the source: any number of them, without refusing any. Past
+   * MAX_REPORTED_WORKTREES surviving worktrees, the rest are reported unchecked.
+   */
+  readonly reportWorkerCheckpoints: (
+    input: ManifestInput & { readonly workers: ReadonlyArray<CheckpointWorker> },
+  ) => Effect.Effect<ReadonlyArray<CheckpointWorker>, HandoffGitError>;
+  /** `allowChanges`: a Git sync move publishes each repository's HEAD whatever is uncommitted. */
+  readonly publish: (
+    input: ManifestInput & { readonly publish: true; readonly allowChanges?: boolean },
+  ) => Effect.Effect<HandoffGitManifest, HandoffGitError>;
+  /**
+   * Whether an existing copy can be brought to the manifest heads, without changing it:
+   * fails with the reason it cannot (a Git sync move's preview).
+   */
+  readonly checkExistingCopy: (
+    input: ManifestInput & { readonly existingCopy: ExistingCopyGuard },
+  ) => Effect.Effect<void, HandoffGitError>;
+  /**
+   * The folders an existing copy's update touches: each manifest repository there and every
+   * linked worktree of it, wherever that is. Work starting in any of them waits for the
+   * update (the caller locks their projects). Never fails; the update's own checks refuse.
+   */
+  readonly existingCopyFolders: (input: ManifestInput) => Effect.Effect<ReadonlyArray<string>>;
+  /**
+   * workspaceRoot must come from a registered project; worktreeParent is server-owned configuration.
+   * `existingCopy` (with useProjectFolder): the folder is a copy that predates this move, so its
+   * `.git/config` is checked against the safe list first, its root must be on a branch, each
+   * repository is re-checked for use right before it moves, and Git LFS files download as their
+   * own step.
+   */
+  readonly materialize: (
+    input: ManifestInput & {
+      readonly worktreeParent: string;
+      readonly useProjectFolder?: boolean;
+      readonly existingCopy?: ExistingCopyGuard;
+    },
+  ) => Effect.Effect<HandoffGitMaterialization, HandoffGitError>;
 }

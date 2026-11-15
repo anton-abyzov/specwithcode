@@ -2332,19 +2332,7 @@ export const ja: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "{name}（{host}）の古い記録をこのデバイスから削除しますか？\nこのマシンは新しいマシンとして再参加し、引き続き動作します。削除されるのは使われなくなった記録と、ここにキャッシュされたスレッドだけです。",
   "Use 2 or 3 characters.": "2〜3文字にしてください。",
-  "Coordinator here": "ここがコーディネーター",
-  "Coordinator here too": "ここもコーディネーター",
-  "Workers only": "ワーカーのみ",
-  "Moving coordinator": "コーディネーター移動中",
   "Not shared": "共有なし",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "このコピーでプロジェクトのコーディネーターが動いています（今作業中かどうかに関わらず）。他のマシンのコピーはここから作業を受け取ります。コピーの作り方ではなく、コーディネーターについての表示です。",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "このコピーでも独自のコーディネーターが動いています（どのマシンでも可能です）が、プロジェクトのコーディネーターは別のコピーです。引き継ぎでコーディネーターが移り、ここにはワーカーだけが残ります。",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "コーディネーターは別のマシンに移りました。このコピーは送られてきたワーカーを実行するだけです。",
-  "The project's coordinator is moving between machines right now.":
-    "プロジェクトのコーディネーターが今マシン間を移動中です。",
   "No other machine has a copy of this project.":
     "このプロジェクトのコピーは他のどのマシンにもありません。",
   "Connect to see its role": "接続すると役割が表示されます",
@@ -3163,7 +3151,7 @@ export const ja: PhraseCatalog = {
   "Run this draft on": "この下書きを実行するマシン",
   "Auto balance matching projects": "一致するプロジェクトを自動で分散",
   "Add to another machine…": "別のマシンに追加…",
-  "Copy to another machine…": "別のマシンにコピー…",
+  "Send to another machine…": "別のマシンに送る…",
   Link: "リンク",
   "Link with the project on {machine}…": "{machine} のプロジェクトとリンク…",
   "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
@@ -4592,7 +4580,6 @@ export const ja: PhraseCatalog = {
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
   "workers only": "ワーカーのみ",
-  "move pending": "移動の確認待ち",
   coordinator: "コーディネーター",
   "not linked": "未リンク",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
@@ -4667,8 +4654,6 @@ export const ja: PhraseCatalog = {
     "スリープ中に作業がほかへ移ったあとの動作です。「確認」では、作業を戻すボタンを 1 つ表示します。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} のエージェントは {thereLabel} で作業を開始できます",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "{thereLabel} のエージェントは {hereLabel} で作業を開始できます",
   "All sign-ins": "すべてのサインイン",
   "All sign-ins on this machine": "このマシンのすべてのサインイン",
   Allow: "許可",
@@ -4696,8 +4681,6 @@ export const ja: PhraseCatalog = {
     "SpecWithCode Connect 経由で {label} を開けませんでした。オンラインであることを確認してから、もう一度選んでください。",
   "Could not read this machine's projects. The grant keeps its choices.":
     "このマシンのプロジェクトを読み取れませんでした。許可の選択内容はそのまま残ります。",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "各カードには、どのマシンがどこで作業を開始できるかを双方向で表示します。詳細は行にポインターを合わせてください。",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "このアプリが把握しているほかのマシンは、すでに 設定 > マシン の「ここで作業を実行できるユーザー」に表示されています。変更、取り消し、復元はそこで行ってください。",
   "Expired: that machine must allow workers here again":
@@ -4776,7 +4759,6 @@ export const ja: PhraseCatalog = {
   "Projects {machine} may use": "{machine} が使えるプロジェクト",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "新しい作業をすぐに拒否します。ここで開始したスレッドは 2 分後に停止します。ワークツリーと変更は残ります。",
-  "Renews automatically.": "自動で更新されます。",
   "Search sign-ins": "サインインを検索",
   Secrets: "シークレット",
   "Set when it first starts work": "最初に作業を開始したときに設定されます",
@@ -4804,8 +4786,6 @@ export const ja: PhraseCatalog = {
   "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
     "ここか {coordinatorLabel} で停止するまで。自動で更新されます。",
   "Until you stop it, here or on that machine.": "ここかそのマシンで停止するまで。",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "{thereLabel} がここで使えるもの: 「ここで作業を実行できるユーザー」で設定します。",
   "When this machine wakes": "このマシンがスリープから復帰したとき",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "不在時にスレッド、ルーティン、コーディネーターを送る先です。このマシンがスリープしたときにも使われます。画面のロックは対象外です。",
@@ -4829,7 +4809,6 @@ export const ja: PhraseCatalog = {
   "renews automatically": "自動で更新",
   "until {date}": "{date} まで",
   "up to {access}": "最大 {access}",
-  "{access}, until {date}": "{access}、{date} まで",
   "{count} chosen projects (could not read this machine's projects)":
     "選択したプロジェクト {count} 件（このマシンのプロジェクトを読み取れませんでした）",
   "{count} more machines": "ほかに {count} 台のマシン",
@@ -5129,4 +5108,72 @@ export const ja: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage のパスをコマンドに書き込めません。AppImage を単純なフォルダーに移動し、そこから開いてください。",
   "Could not write {path} ({error}).": "{path} を書き込めませんでした（{error}）。",
+  "Main":
+    "メイン",
+  "Moving main":
+    "メインを移動中",
+  "Copy · main on {machine}":
+    "コピー · メインは {machine}",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "このプロジェクトの作業はここで始まります。他のマシンのコピーはここから作業を受け取ります。",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "メインは {machine} にあります。このコピーも独自に作業を開始できます。",
+  "Work starts on {machine}. This copy takes work from there.":
+    "作業は {machine} で始まります。このコピーはそこから作業を受け取ります。",
+  "Main is moving between machines right now.":
+    "メインは現在マシン間で移動中です。",
+  "{there} can start work here":
+    "{there} はここで作業を開始できます",
+  "{there} can't start work here":
+    "{there} はここで作業を開始できません",
+  "This machine can start work on {there}":
+    "このマシンは {there} で作業を開始できます",
+  "This machine can't start work on {there}":
+    "このマシンは {there} で作業を開始できません",
+  "until you stop it":
+    "停止するまで",
+  "1 running thread stops at {time}.":
+    "実行中のスレッド 1 件が {time} に停止します。",
+  "{count} running threads stop at {time}.":
+    "実行中のスレッド {count} 件が {time} に停止します。",
+  "Its access ran out {date}.":
+    "アクセスは {date} に期限切れになりました。",
+  "Its access ran out.":
+    "アクセスの期限が切れました。",
+  "Time limit ended {date}.":
+    "期限は {date} に終了しました。",
+  "Stopped {date}.":
+    "{date} に停止しました。",
+  "Stopped.":
+    "停止しました。",
+  "{there} stopped it.":
+    "{there} が停止しました。",
+  "{there} has not allowed it yet.":
+    "{there} はまだ許可していません。",
+  "Allow…":
+    "許可…",
+  "Set up…":
+    "設定…",
+  "Change…":
+    "変更…",
+  "Allow {there} to start work here for":
+    "{there} にここで作業の開始を許可する期間",
+  "More for {machine}":
+    "{machine} のその他",
+  "Hide connection details":
+    "接続の詳細を隠す",
+  "Let {thereLabel} start work here":
+    "{thereLabel} にここで作業を開始させる",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} はここで作業を開始できます: そのエージェントはこのマシンのプロジェクトでスレッドを開始できます。停止すると新しい作業はすぐに拒否され、実行中のスレッドは 2 分後に停止します。このマシンは {there} で作業を開始できます: ここのエージェントは {there} が許可するアクセスの範囲でスレッドを開始できます。",
+  "Allow {there} to start work here":
+    "{there} にここで作業の開始を許可",
+  "Stop {there} starting work here":
+    "{there} によるここでの作業開始を停止",
+  "Allow {there} again to start work here":
+    "{there} にここで作業の開始を再び許可",
+  "Set up this machine to start work on {there}":
+    "このマシンが {there} で作業を開始できるよう設定",
+  "Change what this machine may do on {there}":
+    "このマシンが {there} でできることを変更",
 };

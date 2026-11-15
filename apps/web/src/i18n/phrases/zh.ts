@@ -2248,19 +2248,7 @@ export const zh: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
   "Use 2 or 3 characters.": "请使用 2 或 3 个字符。",
-  "Coordinator here": "协调者在此",
-  "Coordinator here too": "这里也有协调者",
-  "Workers only": "仅运行 worker",
-  "Moving coordinator": "协调者迁移中",
   "Not shared": "未共享",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "项目的协调者在这个副本上运行，无论它现在是否在工作。其他机器上的副本从它那里接收工作。这里说的是协调者，不是副本是怎么创建的。",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "这个副本也在运行自己的协调者（每台机器都可以），但项目的协调者属于另一个副本。移交会把协调者移过去，这里只留下 worker。",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "协调者已迁移到另一台机器。这个副本只运行它派来的 worker。",
-  "The project's coordinator is moving between machines right now.":
-    "项目的协调者正在机器之间迁移。",
   "No other machine has a copy of this project.": "没有其他机器有这个项目的副本。",
   "Connect to see its role": "连接后可查看角色",
   "This app cannot see this machine, so it cannot tell what this copy does.":
@@ -3053,7 +3041,7 @@ export const zh: PhraseCatalog = {
   "Run this draft on": "在此运行草稿：",
   "Auto balance matching projects": "自动均衡匹配的项目",
   "Add to another machine…": "添加到另一台电脑…",
-  "Copy to another machine…": "复制到另一台电脑…",
+  "Send to another machine…": "发送到另一台电脑…",
   Link: "关联",
   "Link with the project on {machine}…": "与 {machine} 上的项目关联…",
   "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
@@ -4413,7 +4401,6 @@ export const zh: PhraseCatalog = {
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",
-  "move pending": "移动待确认",
   coordinator: "协调者",
   "not linked": "未关联",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
@@ -4486,8 +4473,6 @@ export const zh: PhraseCatalog = {
     "在它睡眠期间转走的工作之后。“询问”会显示一个按钮，用来把工作带回来。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} 上的智能体可以在 {thereLabel} 上开始工作",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "{thereLabel} 上的智能体可以在 {hereLabel} 上开始工作",
   "All sign-ins": "所有登录",
   "All sign-ins on this machine": "这台电脑上的所有登录",
   Allow: "允许",
@@ -4512,8 +4497,6 @@ export const zh: PhraseCatalog = {
     "无法通过 SpecWithCode Connect 打开 {label}。请确认它在线，然后再次选择它。",
   "Could not read this machine's projects. The grant keeps its choices.":
     "无法读取这台电脑的项目。授权会保留其已有的选择。",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "每张卡片双向显示谁可以在哪里开始工作。将鼠标悬停在某一行上可查看详情。",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "此应用知道的其他所有电脑都已列在 设置 > 机器 的“谁可以在这里运行工作”下。请在那里更改、撤销或恢复。",
   "Expired: that machine must allow workers here again":
@@ -4587,7 +4570,6 @@ export const zh: PhraseCatalog = {
   "Projects {machine} may use": "{machine} 可以使用的项目",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "立即拒绝新工作。它在这里启动的会话会在 2 分钟后停止；它们的工作树和更改会保留。",
-  "Renews automatically.": "自动续期。",
   "Search sign-ins": "搜索登录",
   Secrets: "机密",
   "Set when it first starts work": "在它首次开始工作时设置",
@@ -4615,8 +4597,6 @@ export const zh: PhraseCatalog = {
   "Until you stop it here or on {coordinatorLabel}. It renews by itself.":
     "直到你在这里或在 {coordinatorLabel} 上停止它。它会自动续期。",
   "Until you stop it, here or on that machine.": "直到你在这里或那台电脑上停止它。",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "{thereLabel} 在这里可以使用的内容：见“谁可以在这里运行工作”。",
   "When this machine wakes": "这台电脑唤醒时",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "离开模式将你的会话、例行任务和协调者发送到哪里。这台电脑睡眠时也会使用；锁屏不算。",
@@ -4640,7 +4620,6 @@ export const zh: PhraseCatalog = {
   "renews automatically": "自动续期",
   "until {date}": "有效至 {date}",
   "up to {access}": "最高 {access}",
-  "{access}, until {date}": "{access}，有效至 {date}",
   "{count} chosen projects (could not read this machine's projects)":
     "已选 {count} 个项目（无法读取这台电脑的项目）",
   "{count} more machines": "另外 {count} 台电脑",
@@ -4929,4 +4908,72 @@ export const zh: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
   "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
+  "Main":
+    "主副本",
+  "Moving main":
+    "主副本迁移中",
+  "Copy · main on {machine}":
+    "副本 · 主副本在 {machine}",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "此项目的工作从这里开始。其他机器上的副本从这里接收工作。",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "主副本在 {machine}。此副本也可以开始自己的工作。",
+  "Work starts on {machine}. This copy takes work from there.":
+    "工作从 {machine} 开始。此副本从那里接收工作。",
+  "Main is moving between machines right now.":
+    "主副本正在机器之间迁移。",
+  "{there} can start work here":
+    "{there} 可以在这里开始工作",
+  "{there} can't start work here":
+    "{there} 不能在这里开始工作",
+  "This machine can start work on {there}":
+    "此机器可以在 {there} 上开始工作",
+  "This machine can't start work on {there}":
+    "此机器不能在 {there} 上开始工作",
+  "until you stop it":
+    "直到你停止",
+  "1 running thread stops at {time}.":
+    "1 个运行中的线程将于 {time} 停止。",
+  "{count} running threads stop at {time}.":
+    "{count} 个运行中的线程将于 {time} 停止。",
+  "Its access ran out {date}.":
+    "访问权限已于 {date} 过期。",
+  "Its access ran out.":
+    "访问权限已过期。",
+  "Time limit ended {date}.":
+    "时限已于 {date} 结束。",
+  "Stopped {date}.":
+    "已于 {date} 停止。",
+  "Stopped.":
+    "已停止。",
+  "{there} stopped it.":
+    "{there} 已停止它。",
+  "{there} has not allowed it yet.":
+    "{there} 尚未允许。",
+  "Allow…":
+    "允许…",
+  "Set up…":
+    "设置…",
+  "Change…":
+    "更改…",
+  "Allow {there} to start work here for":
+    "允许 {there} 在这里开始工作的时长",
+  "More for {machine}":
+    "{machine} 的更多选项",
+  "Hide connection details":
+    "隐藏连接详情",
+  "Let {thereLabel} start work here":
+    "让 {thereLabel} 在这里开始工作",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} 可以在这里开始工作：它的代理可以在此机器的项目中启动线程。停止会立即拒绝新工作；正在运行的线程在 2 分钟后停止。此机器可以在 {there} 上开始工作：这里的代理可以在 {there} 允许的访问范围内在那里启动线程。",
+  "Allow {there} to start work here":
+    "允许 {there} 在此开始工作",
+  "Stop {there} starting work here":
+    "停止 {there} 在此开始工作",
+  "Allow {there} again to start work here":
+    "再次允许 {there} 在此开始工作",
+  "Set up this machine to start work on {there}":
+    "设置本机在 {there} 上开始工作",
+  "Change what this machine may do on {there}":
+    "更改本机在 {there} 上可以做的事",
 };

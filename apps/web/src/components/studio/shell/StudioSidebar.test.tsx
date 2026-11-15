@@ -52,6 +52,9 @@ const state = vi.hoisted(() => ({
 }));
 // Attention transport is isolated; root selection and aggregation remain real.
 vi.mock("../../../studio/fleet", () => ({ projectRemoteAttentionAtom: {} }));
+vi.mock("../../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => new Map(),
+}));
 vi.mock("../../../studio/useProjectAttention", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../studio/useProjectAttention")>();
   const { useUnreachableHosts } = await import("../../../studio/unreachableHosts");

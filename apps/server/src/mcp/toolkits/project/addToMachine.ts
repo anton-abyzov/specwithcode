@@ -9,6 +9,7 @@ import {
   ThreadId,
   type SourceControlCloneProtocol,
 } from "@specweave-studio/contracts";
+import { defaultDestinationFolder } from "@specweave-studio/shared/existingCopy";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -54,21 +55,8 @@ const invalid = (message: string) =>
 export const cloneUrlOf = (identity: RepositoryIdentity): string =>
   identity.origin?.remoteUrl ?? identity.locator.remoteUrl;
 
-const HOME_PREFIX =
-  /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)(?=$|[\\/])/u;
-
-/** The folder relative to home here, so it lands in the same place there; outside home, its name under home. */
-export function destinationFor(sourceRoot: string): string {
-  const trimmed = sourceRoot.replace(/[\\/]+$/u, "");
-  if (trimmed === "~" || trimmed.startsWith("~/")) return trimmed;
-  const home = HOME_PREFIX.exec(trimmed);
-  if (home) {
-    const rest = trimmed.slice(home[0].length).replaceAll("\\", "/").replace(/^\/+/u, "");
-    if (rest) return `~/${rest}`;
-  }
-  const name = trimmed.split(/[\\/]/u).findLast(Boolean);
-  return `~/${name ?? "project"}`;
-}
+/** The folder relative to home here, so it lands in the same place there; one rule with the app's. */
+export const destinationFor = (sourceRoot: string): string => defaultDestinationFolder(sourceRoot);
 
 /** `repo` from `git@host:owner/repo.git`, `https://host/owner/repo` or a path. */
 export function repositoryNameOf(cloneUrl: string): string {

@@ -2326,19 +2326,7 @@ export const ru: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "Удалить с этого устройства старую запись {name} ({host})?\nМашина подключилась заново как новая и продолжает работать; уходят только мёртвая запись и её кэшированные треды здесь.",
   "Use 2 or 3 characters.": "Используйте 2 или 3 символа.",
-  "Coordinator here": "Координатор здесь",
-  "Coordinator here too": "Тоже координатор",
-  "Workers only": "Только воркеры",
-  "Moving coordinator": "Координатор переезжает",
   "Not shared": "Не общий",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "Координатор проекта работает в этой копии, даже если сейчас он ничего не делает. Копии на других машинах берут работу у него. Речь о координаторе, а не о том, как копия была сделана.",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "В этой копии тоже работает свой координатор, как может быть на любой машине, но координатор проекта — в другой копии. «Передать» переносит координатора, и здесь остаются только воркеры.",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "Координатор переехал на другую машину. Эта копия только запускает воркеров, которых он сюда присылает.",
-  "The project's coordinator is moving between machines right now.":
-    "Координатор проекта прямо сейчас переезжает между машинами.",
   "No other machine has a copy of this project.":
     "Ни на одной другой машине нет копии этого проекта.",
   "Connect to see its role": "Подключитесь, чтобы увидеть роль",
@@ -3158,7 +3146,7 @@ export const ru: PhraseCatalog = {
   "Run this draft on": "Запустить этот черновик на",
   "Auto balance matching projects": "Автобаланс подходящих проектов",
   "Add to another machine…": "Добавить на другую машину…",
-  "Copy to another machine…": "Скопировать на другую машину…",
+  "Send to another machine…": "Отправить на другую машину…",
   Link: "Связать",
   "Link with the project on {machine}…": "Связать с проектом на {machine}…",
   "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
@@ -4587,7 +4575,6 @@ export const ru: PhraseCatalog = {
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
-  "move pending": "перенос не подтверждён",
   coordinator: "координатор",
   "not linked": "не связан",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
@@ -4662,8 +4649,6 @@ export const ru: PhraseCatalog = {
     "После того как работа ушла, пока машина спала. «Спросить» показывает одну кнопку, чтобы вернуть её.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Агенты на {hereLabel} могут запускать работу на {thereLabel}",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "Агенты на {thereLabel} могут запускать работу на {hereLabel}",
   "All sign-ins": "Все входы",
   "All sign-ins on this machine": "Все входы на этой машине",
   Allow: "Разрешить",
@@ -4690,8 +4675,6 @@ export const ru: PhraseCatalog = {
     "Не удалось открыть {label} через SpecWithCode Connect. Проверьте, что машина в сети, и выберите её снова.",
   "Could not read this machine's projects. The grant keeps its choices.":
     "Не удалось прочитать проекты этой машины. Разрешение сохраняет свой выбор.",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "Каждая карточка показывает, кто где может запускать работу, в обе стороны. Наведите на строку, чтобы увидеть подробности.",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "Все остальные машины, известные приложению, уже есть в разделе «Кто может запускать здесь работу» в «Настройки > Машины». Изменить, отозвать или восстановить доступ можно там.",
   "Expired: that machine must allow workers here again":
@@ -4770,7 +4753,6 @@ export const ru: PhraseCatalog = {
   "Projects {machine} may use": "Проекты, которые может использовать {machine}",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "Сразу отклоняет новую работу. Треды, которые она запустила здесь, остановятся через 2 минуты; их worktree и изменения сохранятся.",
-  "Renews automatically.": "Продлевается автоматически.",
   "Search sign-ins": "Поиск входов",
   Secrets: "Секреты",
   "Set when it first starts work": "Задаётся при первом запуске работы",
@@ -4799,8 +4781,6 @@ export const ru: PhraseCatalog = {
     "Пока вы не остановите это здесь или на {coordinatorLabel}. Продлевается само.",
   "Until you stop it, here or on that machine.":
     "Пока вы не остановите это здесь или на той машине.",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "Что {thereLabel} может использовать здесь: в разделе «Кто может запускать здесь работу».",
   "When this machine wakes": "Когда эта машина просыпается",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов. Также используется, когда эта машина спит; блокировка экрана не считается.",
@@ -4824,7 +4804,6 @@ export const ru: PhraseCatalog = {
   "renews automatically": "продлевается автоматически",
   "until {date}": "до {date}",
   "up to {access}": "не больше чем {access}",
-  "{access}, until {date}": "{access}, до {date}",
   "{count} chosen projects (could not read this machine's projects)":
     "Выбрано проектов: {count} (не удалось прочитать проекты этой машины)",
   "{count} more machines": "Ещё машин: {count}",
@@ -5125,4 +5104,72 @@ export const ru: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
   "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
+  "Main":
+    "Основная",
+  "Moving main":
+    "Основная переезжает",
+  "Copy · main on {machine}":
+    "Копия · основная на {machine}",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "Работа над этим проектом начинается здесь. Копии на других машинах получают работу отсюда.",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "Основная на {machine}. Эта копия тоже может начинать свою работу.",
+  "Work starts on {machine}. This copy takes work from there.":
+    "Работа начинается на {machine}. Эта копия получает работу оттуда.",
+  "Main is moving between machines right now.":
+    "Основная прямо сейчас переезжает между машинами.",
+  "{there} can start work here":
+    "{there} может начинать работу здесь",
+  "{there} can't start work here":
+    "{there} не может начинать работу здесь",
+  "This machine can start work on {there}":
+    "Эта машина может начинать работу на {there}",
+  "This machine can't start work on {there}":
+    "Эта машина не может начинать работу на {there}",
+  "until you stop it":
+    "пока вы не остановите",
+  "1 running thread stops at {time}.":
+    "1 работающий поток остановится в {time}.",
+  "{count} running threads stop at {time}.":
+    "Работающие потоки ({count}) остановятся в {time}.",
+  "Its access ran out {date}.":
+    "Доступ истёк {date}.",
+  "Its access ran out.":
+    "Доступ истёк.",
+  "Time limit ended {date}.":
+    "Срок закончился {date}.",
+  "Stopped {date}.":
+    "Остановлено {date}.",
+  "Stopped.":
+    "Остановлено.",
+  "{there} stopped it.":
+    "{there} остановил это.",
+  "{there} has not allowed it yet.":
+    "{there} ещё не разрешил это.",
+  "Allow…":
+    "Разрешить…",
+  "Set up…":
+    "Настроить…",
+  "Change…":
+    "Изменить…",
+  "Allow {there} to start work here for":
+    "Разрешить {there} начинать работу здесь на",
+  "More for {machine}":
+    "Ещё для {machine}",
+  "Hide connection details":
+    "Скрыть сведения о подключении",
+  "Let {thereLabel} start work here":
+    "Разрешить {thereLabel} начинать работу здесь",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} может начинать работу здесь: его агенты могут запускать потоки в проектах этой машины. «Остановить» сразу отклоняет новую работу; уже запущенные потоки останавливаются через 2 минуты. Эта машина может начинать работу на {there}: здешние агенты могут запускать там потоки в пределах доступа, который разрешает {there}.",
+  "Allow {there} to start work here":
+    "Разрешить {there} начинать работу здесь",
+  "Stop {there} starting work here":
+    "Запретить {there} начинать работу здесь",
+  "Allow {there} again to start work here":
+    "Снова разрешить {there} начинать работу здесь",
+  "Set up this machine to start work on {there}":
+    "Настроить эту машину для запуска работы на {there}",
+  "Change what this machine may do on {there}":
+    "Изменить, что этой машине можно на {there}",
 };

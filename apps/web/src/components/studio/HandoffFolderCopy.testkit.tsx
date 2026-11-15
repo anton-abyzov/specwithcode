@@ -187,6 +187,8 @@ export interface FixtureOptions {
   machineRequested?: boolean;
   /** How files travel, as the dialog holds it. */
   method?: "copy" | "clone";
+  /** Several copies on the machine and none picked yet. */
+  chooseCopyFirst?: boolean;
 }
 export function CopyFixture(overrides: FixtureOptions) {
   const [busy, setBusy] = useState(false);
@@ -220,6 +222,7 @@ export function CopyFixture(overrides: FixtureOptions) {
         ? { preferredMachine: overrides.preferredMachine as never }
         : {})}
       {...(overrides.machineRequested ? { machineRequested: true } : {})}
+      {...(overrides.chooseCopyFirst ? { chooseCopyFirst: true } : {})}
       onBusyChange={overrides.dialog ? updateBusy : onBusyChange}
       onCloseLockChange={setLocked}
       onOpenProject={onOpenProject}

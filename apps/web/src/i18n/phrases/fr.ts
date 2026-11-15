@@ -2349,19 +2349,7 @@ export const fr: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "Supprimer de cet appareil l'ancien enregistrement de {name} ({host}) ?\nLa machine a rejoint à nouveau comme une nouvelle et continue de fonctionner ; seuls l'enregistrement mort et ses fils en cache ici disparaissent.",
   "Use 2 or 3 characters.": "Utilisez 2 ou 3 caractères.",
-  "Coordinator here": "Coordinateur ici",
-  "Coordinator here too": "Coordinateur ici aussi",
-  "Workers only": "Workers seulement",
-  "Moving coordinator": "Coordinateur en transfert",
   "Not shared": "Non partagé",
-  "The project's coordinator runs on this copy, whether or not it is working right now. Copies on other machines take work from it. This is about the coordinator, not how the copy was made.":
-    "Le coordinateur du projet tourne sur cette copie, qu'il travaille en ce moment ou non. Les copies des autres machines reçoivent du travail de lui. Il s'agit du coordinateur, pas de la façon dont la copie a été faite.",
-  "This copy runs a coordinator of its own too, as each machine may, but the project's coordinator is another copy's. Hand off moves the coordinator and leaves only workers behind.":
-    "Cette copie fait aussi tourner son propre coordinateur, comme chaque machine peut le faire, mais le coordinateur du projet est celui d'une autre copie. Transférer déplace le coordinateur et ne laisse ici que des workers.",
-  "The coordinator moved to another machine. This copy only runs the workers it sends here.":
-    "Le coordinateur est passé sur une autre machine. Cette copie ne fait tourner que les workers qu'il envoie ici.",
-  "The project's coordinator is moving between machines right now.":
-    "Le coordinateur du projet passe d'une machine à l'autre en ce moment.",
   "No other machine has a copy of this project.": "Aucune autre machine n'a de copie de ce projet.",
   "Connect to see its role": "Connectez-vous pour voir son rôle",
   "This app cannot see this machine, so it cannot tell what this copy does.":
@@ -3187,7 +3175,7 @@ export const fr: PhraseCatalog = {
   "Run this draft on": "Exécuter ce brouillon sur",
   "Auto balance matching projects": "Répartir automatiquement les projets correspondants",
   "Add to another machine…": "Ajouter à une autre machine…",
-  "Copy to another machine…": "Copier vers une autre machine…",
+  "Send to another machine…": "Envoyer vers une autre machine…",
   Link: "Lier",
   "Link with the project on {machine}…": "Lier au projet sur {machine}…",
   "Makes this project and the one on {machine} one project with one coordinator. Threads and files stay where they are.":
@@ -4629,7 +4617,6 @@ export const fr: PhraseCatalog = {
   "Machine access settings": "Réglages d’accès entre machines",
   "{machine} offline": "{machine} hors ligne",
   "workers only": "workers uniquement",
-  "move pending": "déplacement en attente",
   coordinator: "coordinateur",
   "not linked": "non lié",
   "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
@@ -4706,8 +4693,6 @@ export const fr: PhraseCatalog = {
     "Après le départ du travail pendant sa veille. Demander affiche un bouton pour le faire revenir.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Les agents sur {hereLabel} peuvent lancer du travail sur {thereLabel}",
-  "Agents on {thereLabel} can start work on {hereLabel}":
-    "Les agents sur {thereLabel} peuvent lancer du travail sur {hereLabel}",
   "All sign-ins": "Toutes les connexions",
   "All sign-ins on this machine": "Toutes les connexions de cette machine",
   Allow: "Autoriser",
@@ -4735,8 +4720,6 @@ export const fr: PhraseCatalog = {
     "Impossible d’ouvrir {label} via SpecWithCode Connect. Vérifiez qu’elle est en ligne, puis choisissez-la à nouveau.",
   "Could not read this machine's projects. The grant keeps its choices.":
     "Impossible de lire les projets de cette machine. L’autorisation garde ses choix.",
-  "Each card shows who may start work where, both ways. Hover a line for details.":
-    "Chaque carte indique qui peut lancer du travail où, dans les deux sens. Survolez une ligne pour les détails.",
   "Every other machine this app knows is already listed under Who can run work here in Settings > Machines. Change, revoke or restore it there.":
     "Toutes les autres machines connues de cette app figurent déjà sous Qui peut lancer du travail ici dans Réglages > Machines. Modifiez, révoquez ou rétablissez-les là.",
   "Expired: that machine must allow workers here again":
@@ -4814,7 +4797,6 @@ export const fr: PhraseCatalog = {
   "Projects {machine} may use": "Projets que {machine} peut utiliser",
   "Refuses new work at once. Threads it started here stop in 2 minutes; their worktrees and changes stay.":
     "Refuse immédiatement tout nouveau travail. Les fils qu’elle a lancés ici s’arrêtent dans 2 minutes ; leurs worktrees et modifications restent.",
-  "Renews automatically.": "Se renouvelle automatiquement.",
   "Search sign-ins": "Rechercher des connexions",
   Secrets: "Secrets",
   "Set when it first starts work": "Défini quand elle lance du travail pour la première fois",
@@ -4843,8 +4825,6 @@ export const fr: PhraseCatalog = {
     "Jusqu’à ce que vous l’arrêtiez ici ou sur {coordinatorLabel}. Il se renouvelle de lui-même.",
   "Until you stop it, here or on that machine.":
     "Jusqu’à ce que vous l’arrêtiez, ici ou sur cette machine-là.",
-  "What {thereLabel} may use here: under Who can run work here.":
-    "Ce que {thereLabel} peut utiliser ici : sous Qui peut lancer du travail ici.",
   "When this machine wakes": "Au réveil de cette machine",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
     "Où Absence envoie vos fils, routines et coordinateurs. Aussi utilisé quand cette machine se met en veille ; verrouiller l’écran ne compte pas.",
@@ -4868,7 +4848,6 @@ export const fr: PhraseCatalog = {
   "renews automatically": "se renouvelle automatiquement",
   "until {date}": "jusqu’au {date}",
   "up to {access}": "jusqu’à {access}",
-  "{access}, until {date}": "{access}, jusqu’au {date}",
   "{count} chosen projects (could not read this machine's projects)":
     "{count} projets choisis (impossible de lire les projets de cette machine)",
   "{count} more machines": "{count} machines de plus",
@@ -5170,4 +5149,72 @@ export const fr: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Le chemin de l'AppImage ne peut pas être écrit dans la commande. Déplacez l'AppImage dans un dossier plus simple et ouvrez-le depuis là.",
   "Could not write {path} ({error}).": "Impossible d'écrire {path} ({error}).",
+  "Main":
+    "Principale",
+  "Moving main":
+    "Principale en déplacement",
+  "Copy · main on {machine}":
+    "Copie · principale sur {machine}",
+  "Work for this project starts here. Copies on other machines take work from it.":
+    "Le travail de ce projet démarre ici. Les copies sur d'autres machines reçoivent leur travail d'ici.",
+  "Main is on {machine}. This copy can also start work of its own.":
+    "La principale est sur {machine}. Cette copie peut aussi démarrer son propre travail.",
+  "Work starts on {machine}. This copy takes work from there.":
+    "Le travail démarre sur {machine}. Cette copie reçoit son travail de là-bas.",
+  "Main is moving between machines right now.":
+    "La principale est en train de changer de machine.",
+  "{there} can start work here":
+    "{there} peut démarrer du travail ici",
+  "{there} can't start work here":
+    "{there} ne peut pas démarrer de travail ici",
+  "This machine can start work on {there}":
+    "Cette machine peut démarrer du travail sur {there}",
+  "This machine can't start work on {there}":
+    "Cette machine ne peut pas démarrer de travail sur {there}",
+  "until you stop it":
+    "jusqu'à ce que tu l'arrêtes",
+  "1 running thread stops at {time}.":
+    "1 fil en cours s'arrête à {time}.",
+  "{count} running threads stop at {time}.":
+    "{count} fils en cours s'arrêtent à {time}.",
+  "Its access ran out {date}.":
+    "Son accès a expiré le {date}.",
+  "Its access ran out.":
+    "Son accès a expiré.",
+  "Time limit ended {date}.":
+    "La limite de temps a pris fin le {date}.",
+  "Stopped {date}.":
+    "Arrêté le {date}.",
+  "Stopped.":
+    "Arrêté.",
+  "{there} stopped it.":
+    "{there} l'a arrêté.",
+  "{there} has not allowed it yet.":
+    "{there} ne l'a pas encore autorisé.",
+  "Allow…":
+    "Autoriser…",
+  "Set up…":
+    "Configurer…",
+  "Change…":
+    "Modifier…",
+  "Allow {there} to start work here for":
+    "Autoriser {there} à démarrer du travail ici pendant",
+  "More for {machine}":
+    "Plus pour {machine}",
+  "Hide connection details":
+    "Masquer les détails de connexion",
+  "Let {thereLabel} start work here":
+    "Laisser {thereLabel} démarrer du travail ici",
+  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
+    "{there} peut démarrer du travail ici : ses agents peuvent lancer des fils dans les projets de cette machine. Arrêter refuse tout nouveau travail aussitôt ; les fils en cours s'arrêtent 2 minutes plus tard. Cette machine peut démarrer du travail sur {there} : les agents d'ici peuvent y lancer des fils, dans la limite de l'accès que {there} autorise.",
+  "Allow {there} to start work here":
+    "Autoriser {there} à lancer du travail ici",
+  "Stop {there} starting work here":
+    "Empêcher {there} de lancer du travail ici",
+  "Allow {there} again to start work here":
+    "Autoriser de nouveau {there} à lancer du travail ici",
+  "Set up this machine to start work on {there}":
+    "Configurer cette machine pour lancer du travail sur {there}",
+  "Change what this machine may do on {there}":
+    "Modifier ce que cette machine peut faire sur {there}",
 };

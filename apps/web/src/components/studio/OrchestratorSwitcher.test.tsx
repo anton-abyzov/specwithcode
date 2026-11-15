@@ -31,7 +31,22 @@ const copy = (
   machine: string,
   role: OrchestratorCopy["role"] = "coordinator",
   canStart = false,
-): OrchestratorCopy => ({ key, machine, folder: "/w/atlas", role, canStart });
+): OrchestratorCopy => ({
+  key,
+  machine,
+  folder: "/w/atlas",
+  role,
+  main: role === "coordinator",
+  label:
+    role === "coordinator"
+      ? { text: "Main" }
+      : role === "workers"
+        ? { text: "Copy · main on {machine}", values: { machine: "M4" } }
+        : role === "pending"
+          ? { text: "Moving main" }
+          : { text: "not linked" },
+  canStart,
+});
 
 const handlers = () => ({
   onView: vi.fn<(key: string) => void>(),
@@ -112,7 +127,7 @@ it("lists a machine that kept its coordinator once, as paused, with nothing to s
   const calls = handlers();
   await renderSwitcher(calls);
   const rows = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
-  expect(rows.map((row) => row.textContent)).toEqual(["M4coordinator", "Miniscoordinator paused"]);
+  expect(rows.map((row) => row.textContent)).toEqual(["M4Main", "Miniscoordinator paused"]);
   expect(rows[1]?.title).toBe(
     "Minis kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.",
   );
@@ -292,7 +307,7 @@ it("runs one coordinator start at a time across the switcher and the composer no
   expect(startCoordinator).toHaveBeenCalledTimes(2);
 });
 
-it("offers one Copy to another machine and Leave, even with one copy", async () => {
+it("offers one Send to another machine and Leave, even with one copy", async () => {
   const onCopy = vi.fn<() => void>();
   const onLeave = vi.fn<() => void>();
   await act(async () =>
@@ -322,7 +337,7 @@ it("offers one Copy to another machine and Leave, even with one copy", async () 
   expect(item("menuitem", "Leave this machine…")).toBeDefined();
   expect(item("menuitem", "Add to another machine…")).toBeUndefined();
   expect(item("menuitem", "Move to another machine…")).toBeUndefined();
-  await act(async () => item("menuitem", "Copy to another machine…")!.click());
+  await act(async () => item("menuitem", "Send to another machine…")!.click());
   await vi.waitFor(() => expect(onCopy).toHaveBeenCalledTimes(1));
   expect(onLeave).not.toHaveBeenCalled();
 });
@@ -332,13 +347,13 @@ it("names machines once and labels every group of actions", async () => {
   await renderSwitcher({ ...calls, onCopy: vi.fn(), onLeave: vi.fn() });
   expect(
     [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
-  ).toEqual(["M4coordinator", "Miniscoordinator paused"]);
+  ).toEqual(["M4Main", "Miniscoordinator paused"]);
   expect(
     [...document.querySelectorAll('[data-slot="menu-label"]')].map((row) => row.textContent),
   ).toEqual(["View this project on", "This project", "On M4"]);
   expect([...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)).toEqual(
     [
-      "Copy to another machine…",
+      "Send to another machine…",
       "Move running threads…M4 offline",
       "Leave this machine…",
       "Machine access settings",
