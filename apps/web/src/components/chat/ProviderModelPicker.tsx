@@ -226,6 +226,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
   };
 
+  // One popup at a time: the model menu can open from a shortcut while usage is open.
+  useEffect(() => {
+    if (isMenuOpen) setIsUsageOpen(false);
+  }, [isMenuOpen]);
+
   useEffect(() => {
     if (!isMenuOpen) {
       return;
@@ -386,9 +391,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   );
 
   // The usage ring is its own control on a model chip: it opens the account's usage.
+  // A per-token model has no allowance to show, so its chip stays one button.
   const splitUsage =
     parts !== undefined &&
     selectedUsage !== null &&
+    selectedUsage.kind !== "perToken" &&
     selectedUsageCopy !== null &&
     meterParts(selectedUsage, selectedUsageCopy, {
       nowMs: usage?.nowMs ?? Date.now(),
@@ -651,6 +658,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     {props.secondaryView.render({
                       back: () => {
                         setIsUsageOpen(false);
+                        setShowingPicker(true);
                         setIsMenuOpen(true);
                       },
                       close: () => setIsUsageOpen(false),
