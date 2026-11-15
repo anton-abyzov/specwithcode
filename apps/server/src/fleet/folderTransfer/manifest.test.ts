@@ -389,6 +389,16 @@ it("counts commits a clone from origin would miss: other remotes and tags do not
     git(repo, "checkout", "-q", "main");
     git(repo, "branch", "-q", "-D", "side");
     expect(await count()).toBe(1);
+    git(repo, "tag", "-d", "kept");
+    expect(await count()).toBe(0);
+    // Notes on a pushed commit never come with a clone.
+    git(repo, "notes", "add", "-m", "reviewed", "HEAD");
+    expect(await count()).toBe(1);
+    git(repo, "update-ref", "-d", "refs/notes/commits");
+    expect(await count()).toBe(0);
+    // An unborn HEAD is never cloned over.
+    git(repo, "checkout", "-q", "--orphan", "empty");
+    expect(await count()).toBe(1);
   } finally {
     NodeFS.rmSync(base, { recursive: true, force: true });
   }
