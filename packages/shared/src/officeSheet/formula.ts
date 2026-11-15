@@ -854,7 +854,11 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         // so an empty test cell still counts when the criterion fits it.
         const width = t.c2 - t.c1;
         const height = t.r2 - t.r1;
-        const done = walkRange(tabs[sumTab]!, s.c1, s.r1, s.c1 + width, s.r1 + height, (key) => {
+        // The sum range takes the test range's shape; it stops at the sheet's last
+        // column and row, where a wider key would land in another row.
+        const sumEndCol = Math.min(SHEET_LIMITS.columns - 1, s.c1 + width);
+        const sumEndRow = Math.min(SHEET_LIMITS.rows - 1, s.r1 + height);
+        const done = walkRange(tabs[sumTab]!, s.c1, s.r1, sumEndCol, sumEndRow, (key) => {
           if (failure) return;
           const col = key % COLUMN_SPAN;
           const row = (key - col) / COLUMN_SPAN;

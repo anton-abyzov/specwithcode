@@ -398,6 +398,13 @@ describe("sheet limits and validation", () => {
     expect(sheet("C4")).toBe(1);
   });
 
+  it("keeps a SUMIF sum range inside the sheet's last column", () => {
+    const cells: Record<string, SheetCellInput> = { H2: 999, ZZ1: 5, A3: '=SUMIF(A1:J1,"",ZZ1)' };
+    for (let row = 4; row < 24; row += 1) cells[`A${row}`] = row;
+    expect(evaluated(cells)("A3")).toBe(5);
+    expect(evaluated({ H2: 999, ZZ1: 5, A3: '=SUMIF(A1:J1,"",ZZ1)' })("A3")).toBe(5);
+  });
+
   it("gives an error for a number no cell can hold and for AND over no logical values", () => {
     const sheet = evaluated({ A1: "text", B1: "=1e999", B2: "=AND(A1:A3)", B3: "=OR(A1:A3,TRUE)" });
     expect(sheet("B1")).toEqual({ error: "#VALUE!" });
