@@ -500,7 +500,15 @@ it("on Tracks shows a saved order read-only, adds what Daily takes and keeps wha
   // The per-token Fable entry is refused by Daily, so it stays in the saved order, named.
   expect(patch.providerLimitFallbackModels).toEqual([fable]);
   expect(patch.providerLimitFallbackModelSelection).toEqual(fable);
+  // The note names the refused entry once the write lands, keyed to the order it left ...
+  state.settings = { ...state.settings, providerLimitFallbackModels: [fable] };
+  act(() => renderer!.update(<ProviderLimitSettings part="advanced" tracks />));
   expect(text()).toContain("stays here:");
+  // ... and another project with no saved order never sees it.
+  state.search = { project: "q" };
+  state.settings = { ...state.settings, providerLimitFallbackModels: [] };
+  act(() => renderer!.update(<ProviderLimitSettings part="advanced" tracks />));
+  expect(text()).not.toContain("stays here:");
 });
 
 it("on Tracks, Use tracks clears the saved order", () => {

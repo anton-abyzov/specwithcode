@@ -313,7 +313,8 @@ function TrackCard(props: {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-sm font-medium">{row.name}</span>
-                {index === 0 && row.selection !== null ? (
+                {row.selection !== null &&
+                rows.findIndex((entry) => entry.selection !== null) === index ? (
                   <Badge variant="outline" size="sm">
                     {tx(TRACK_FIRST[track])}
                   </Badge>

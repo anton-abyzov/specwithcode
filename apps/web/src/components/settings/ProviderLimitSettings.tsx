@@ -173,9 +173,18 @@ export function ProviderLimitSettings({
       providerLimitFallbackModels: [...order],
       providerLimitFallbackModelSelection: order[0] ?? null,
     });
-  const [foldRefused, setFoldRefused] = useState<
-    ReadonlyArray<{ readonly name: string; readonly reason: TrackEntryRefusal }>
-  >([]);
+  // The note belongs to one scope and the order it left behind; another project, checkout
+  // or machine, or a later change to the order, hides it.
+  const foldKeyFor = (order: ReadonlyArray<ModelSelection>) =>
+    `${search.machine ?? ""}|${search.project ?? ""}|${search.checkout ?? ""}|${order
+      .map((entry) => `${entry.instanceId}:${entry.model}`)
+      .join(",")}`;
+  const [foldNote, setFoldNote] = useState<{
+    readonly key: string;
+    readonly refused: ReadonlyArray<{ readonly name: string; readonly reason: TrackEntryRefusal }>;
+  } | null>(null);
+  const foldRefused =
+    foldNote !== null && foldNote.key === foldKeyFor(fallbackOrder) ? foldNote.refused : [];
   const dailyRows = describeTrack({
     track: "daily",
     saved: settings.modelLanes?.routine ?? [],
@@ -219,7 +228,7 @@ export function ProviderLimitSettings({
         });
       }
     }
-    setFoldRefused(refusedNames);
+    setFoldNote(refusedNames.length > 0 ? { key: foldKeyFor(kept), refused: refusedNames } : null);
     updateSettings({
       modelLanes: { routine: [...daily] } as unknown as ModelLanes,
       providerLimitFallbackModels: kept,
@@ -423,8 +432,8 @@ export function ProviderLimitSettings({
                 ) : null}
                 {foldRefused.length > 0 ? (
                   <ul className="px-3 pb-1 text-xs text-warning-foreground" role="status">
-                    {foldRefused.map((entry) => (
-                      <li key={entry.name}>
+                    {foldRefused.map((entry, at) => (
+                      <li key={`${at}:${entry.name}`}>
                         {`${entry.name} ${tx("stays here:")} ${tx(TRACK_ENTRY_REFUSALS[entry.reason])}`}
                       </li>
                     ))}
@@ -440,7 +449,7 @@ export function ProviderLimitSettings({
                       size="xs"
                       variant="outline"
                       onClick={() => {
-                        setFoldRefused([]);
+                        setFoldNote(null);
                         saveFallbackOrder([]);
                       }}
                     >
@@ -514,6 +523,15 @@ export function ProviderLimitSettings({
                   statuses={fallbackStatuses}
                 />
               </SettingsRow>
+              {part !== undefined && foldRefused.length > 0 ? (
+                <ul className="px-3 pb-1 text-xs text-warning-foreground" role="status">
+                  {foldRefused.map((entry, at) => (
+                    <li key={`${at}:${entry.name}`}>
+                      {`${entry.name} ${tx("stays here:")} ${tx(TRACK_ENTRY_REFUSALS[entry.reason])}`}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               {part !== undefined ? (
                 <div className="flex flex-wrap gap-2 px-3 pb-2">
                   <Button type="button" size="xs" variant="outline" onClick={addOrderToDaily}>
@@ -559,7 +577,11 @@ export function ProviderLimitSettings({
                   onCheckedChange={(checked) =>
                     updateSettings({ providerLimitFallbackListOnly: Boolean(checked) })
                   }
-                  aria-label={t("limitSettings.listOnly.title")}
+                  aria-label={
+                    usesTiers || tracks
+                      ? tx("Stay on my tracks")
+                      : t("limitSettings.listOnly.title")
+                  }
                 />
               }
             />
