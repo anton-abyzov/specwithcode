@@ -2149,9 +2149,12 @@ const make = Effect.gen(function* () {
     readonly effort: string | undefined;
     readonly deep: boolean;
   }) => {
+    // The entry's own options (its saved effort) travel with it; a named effort replaces them.
+    const saved = input.selection.options?.length ? input.selection.options : undefined;
     const base = {
       providerInstanceId: input.selection.instanceId,
       model: input.selection.model,
+      ...(saved === undefined ? {} : { options: saved }),
     } as OrchestratorMcpTarget;
     if (input.effort !== undefined)
       return resolveTargetRechecking({
@@ -2159,7 +2162,8 @@ const make = Effect.gen(function* () {
         target: { ...base, effort: input.effort } as OrchestratorMcpTarget,
         providers: input.providers,
       });
-    if (!input.deep)
+    // A saved effort is the person's choice and wins over the deep policy's extra high.
+    if (!input.deep || modelSelectionEffortValue(input.selection) !== undefined)
       return resolveTargetRechecking({
         parent: input.parent,
         target: base,

@@ -259,7 +259,7 @@ const logDecision = (project: Project, decision: TaskRoutingDecision) =>
 
 /**
  * The target a routed worker is resolved with: the routed model, the effort
- * the caller named or the baseline ran at (mapped to the new model by
+ * the caller named, else the track entry's own, else the one the baseline ran at (mapped to the new model by
  * target resolution) and any options the caller named, never the baseline's
  * own options, which belong to another model. An unmoved decision keeps the
  * original target.
@@ -269,7 +269,12 @@ export function routedTarget(
   original: OrchestratorMcpTarget | undefined,
 ): OrchestratorMcpTarget | undefined {
   if (!decision.moved) return original;
-  const effort = original?.effort ?? modelSelectionEffortValue(decision.baseline) ?? undefined;
+  // A track entry's saved effort is the person's choice for that model and beats the baseline's.
+  const effort =
+    original?.effort ??
+    modelSelectionEffortValue(decision.selection) ??
+    modelSelectionEffortValue(decision.baseline) ??
+    undefined;
   return {
     providerInstanceId: decision.selection.instanceId,
     model: decision.selection.model,

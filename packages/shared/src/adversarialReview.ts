@@ -257,8 +257,9 @@ export function describeReviewerOrder(input: {
 
 /**
  * The first entry of the reviewer order that can run now and is not in the
- * author's family. An entry with room wins; else the first whose usage is
- * unknown ("unverified"), which the fallback walker also lets a person pick.
+ * author's family. An entry whose usage is unread ("unverified") keeps its
+ * place: the order is the person's ranking, and a later model with known room
+ * never jumps ahead of it (Muse reports no percent, so it lost to GPT-6.1 Sol).
  */
 export function resolveReviewer(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -286,7 +287,6 @@ export function resolveReviewer(input: {
     limitedInstanceIds: input.limitedInstanceIds,
   });
   const skipped: ReviewerSkip[] = [];
-  let unverified: ModelSelection | null = null;
   const providerOf = (selection: ModelSelection) =>
     input.providers.find((provider) => provider.instanceId === selection.instanceId);
   const authorNames = describeModel(providerOf(input.author), input.author.model);
@@ -319,15 +319,9 @@ export function resolveReviewer(input: {
         : unconsented && (entry.unavailable === null || entry.unavailable === "unverified")
           ? "unknown-billing"
           : entry.unavailable;
-    if (reason === null) return { reviewer: entry.selection, skipped, authorFamily };
-    if (reason === "unverified" && unverified === null) unverified = entry.selection;
+    if (reason === null || reason === "unverified")
+      return { reviewer: entry.selection, skipped, authorFamily };
     skipped.push({ selection: entry.selection, reason });
-  }
-  if (unverified !== null) {
-    const index = skipped.findIndex(
-      (skip) => fallbackSelectionKey(skip.selection) === fallbackSelectionKey(unverified),
-    );
-    return { reviewer: unverified, skipped: skipped.slice(0, index), authorFamily };
   }
   return { reviewer: null, skipped, authorFamily };
 }

@@ -155,10 +155,36 @@ describe("built-in tracks", () => {
       sel("copilot", "gpt-6-astra"),
     ]);
     expect(defaultTrackSelections("review", providers)).toEqual([
-      sel("copilot", "gpt-6.1-sol"),
       sel("muse", "muse-wonder-1.0"),
+      sel("copilot", "gpt-6.1-sol"),
       sel("copilot", "gemini-4-carbon"),
     ]);
+  });
+
+  it("start Muse Wonder at extra high effort on Review when Muse offers it", () => {
+    const effortful = {
+      ...muse,
+      models: muse.models.map((model) => ({
+        ...model,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning effort",
+              type: "select" as const,
+              options: [
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra High" },
+              ],
+            },
+          ],
+        },
+      })),
+    };
+    expect(defaultTrackSelections("review", [effortful])[0]).toEqual({
+      ...sel("muse", "muse-wonder-1.0"),
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    });
   });
 
   it("leave out a model nothing on this machine lists", () => {

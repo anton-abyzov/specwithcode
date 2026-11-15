@@ -8,6 +8,7 @@
  *
  * @module modelTracks
  */
+import { resolveEffort, withEffortSelection } from "./effortLevel.ts";
 import {
   DEFAULT_MODEL_TRACKS,
   isPaidModelBilling,
@@ -176,7 +177,17 @@ export function defaultTrackSelections(
       ({ provider, slug }) =>
         !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
     );
-    return best === undefined ? [] : [{ instanceId: best.provider.instanceId, model: best.slug }];
+    if (best === undefined) return [];
+    const selection = { instanceId: best.provider.instanceId, model: best.slug };
+    // The entry's effort, at the nearest level this source offers; none when it has no effort knob.
+    const descriptors = best.provider.models.find((model) => model.slug === best.slug)?.capabilities
+      ?.optionDescriptors;
+    const effort = entry.effort === undefined ? null : resolveEffort(entry.effort, descriptors);
+    return [
+      effort === null || !effort.ok
+        ? selection
+        : { ...selection, options: withEffortSelection(undefined, effort) },
+    ];
   });
 }
 
@@ -269,7 +280,16 @@ export function launchTrackLanes(
       })) {
         if (provider.instanceId === entry.instanceId) continue;
         if (isHeldSource(provider as ServerProvider, slug)) continue;
-        push({ instanceId: provider.instanceId, model: slug });
+        // The entry's effort carries to another account of the same driver, whose options match.
+        const sameDriver =
+          entry.options !== undefined &&
+          providers.find((source) => source.instanceId === entry.instanceId)?.driver ===
+            provider.driver;
+        push({
+          instanceId: provider.instanceId,
+          model: slug,
+          ...(sameDriver ? { options: entry.options } : {}),
+        });
       }
     }
     return out;
