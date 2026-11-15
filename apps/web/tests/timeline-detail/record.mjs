@@ -68,6 +68,14 @@ async function walk(page, width) {
     return true;
   };
   await note("start");
+  // With a project the menu also holds the reply style.
+  await openMenu();
+  if (await pick("Detailed")) {
+    await note("Detailed replies for the project");
+    await openMenu();
+    await pick("Concise");
+    await note("Concise replies again");
+  } else await page.keyboard.press("Escape");
   await openMenu();
   await pick("Everything", "last");
   await note("Everything for every thread");

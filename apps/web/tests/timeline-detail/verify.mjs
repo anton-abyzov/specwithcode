@@ -262,6 +262,28 @@ try {
       await page.keyboard.press("ControlOrMeta+Alt+KeyO");
       await expectLevel(page, `${width}-${theme}-cycle`, "normal");
       row.cyclesBackToNormal = true;
+      // In a project the same menu holds the reply style; a phone-width header keeps
+      // the level and leaves the style to the menu and the button's name.
+      await page.goto(`${origin}/?theme=${theme}&project=1`);
+      await page.locator("main").waitFor();
+      const trigger = page.locator("[data-timeline-detail]");
+      NodeAssert.equal(
+        (await trigger.innerText()).trim(),
+        wide ? "Concise · Folded steps" : "Folded steps",
+        `${width}-${theme}-project: trigger`,
+      );
+      await openMenu(page);
+      await menuFits(page, `${width}-${theme}-project`);
+      await page.screenshot({ path: shot("menu-project") });
+      await page.getByRole("menuitemradio", { name: /^Detailed/ }).click();
+      await page.waitForFunction(
+        () =>
+          document.querySelector("[data-timeline-detail]")?.getAttribute("aria-label") ===
+          "Agent replies: Detailed. Show: Folded steps",
+      );
+      await openMenu(page);
+      await page.getByRole("menuitemradio", { name: /^Concise/ }).click();
+      row.projectReplies = true;
       receipt.push(row);
       await context.close();
     }
