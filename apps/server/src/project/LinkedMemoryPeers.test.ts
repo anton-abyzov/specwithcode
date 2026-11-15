@@ -63,6 +63,26 @@ it.effect("the peer route answers only a linked copy of the project", () =>
         page.files.map((file) => file.name),
         ["beta.md"],
       );
+      // Another project on a listed machine is not a copy of this one: a link
+      // waiting for its commit reads nothing.
+      const unlisted = yield* receiver
+        .memoryExport(from(alpha.environmentId), {
+          projectId: beta.projectId,
+          forProjectId: ProjectId.make("joining-not-listed"),
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(
+        Exit.isFailure(unlisted) ? Option.getOrUndefined(Exit.findErrorOption(unlisted))?.code : "",
+        "needs_grant",
+      );
+      const listed = yield* receiver.memoryExport(from(alpha.environmentId), {
+        projectId: beta.projectId,
+        forProjectId: alpha.projectId,
+      });
+      assert.deepStrictEqual(
+        listed.files.map((file) => file.name),
+        ["beta.md"],
+      );
     }),
   ),
 );

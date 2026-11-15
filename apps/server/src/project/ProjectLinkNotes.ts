@@ -18,9 +18,14 @@ import type { MemoryHistoryState } from "./linkedMemoryMerge.ts";
  * takes it.
  */
 
-/** The kept copy holds this note with text other than the joining version. */
-export const isSuperseded = (keptContent: string, note: ProjectLinkSupersededNote) =>
-  memoryContentHash(keptContent) !== note.contentSha256;
+/**
+ * The kept copy holds this note with text other than the joining version, and
+ * it is still the text the person reviewed (when the review named it).
+ */
+export const isSuperseded = (keptContent: string, note: ProjectLinkSupersededNote) => {
+  const kept = memoryContentHash(keptContent);
+  return kept !== note.contentSha256 && (note.keptSha256 === undefined || note.keptSha256 === kept);
+};
 
 /** A set-aside joining version with the hash of the kept note's current text. */
 export interface SupersededByKept extends ProjectLinkSupersededNote {

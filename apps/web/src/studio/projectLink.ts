@@ -9,6 +9,7 @@ import {
   allocateNoteName,
   ProjectLinkError,
   logicalProjectMemberKey,
+  repositoryGroupingKeyOf,
   type LogicalProjectMember,
   type ProjectLinkNote,
   type ProjectLinkNoteWrite,
@@ -324,7 +325,7 @@ export function sameRepositoryLinkOffers<P extends EnvironmentProject>(
   scratchRootFor: ScratchRootLookup,
 ): P[] {
   const keyOf = (item: Pick<EnvironmentProject, "repositoryIdentity">) =>
-    item.repositoryIdentity?.canonicalKey.toLowerCase() ?? null;
+    item.repositoryIdentity ? repositoryGroupingKeyOf(item.repositoryIdentity).toLowerCase() : null;
   const key = keyOf(project);
   if (key === null) return [];
   const offers = new Map<string, P>();
@@ -452,12 +453,21 @@ export function supersededNotes(
   return rows.flatMap((row) => {
     const choice = choices[row.name];
     const hash = row.joining?.contentSha256;
+    const keptHash = row.kept?.contentSha256;
     return row.kind === "conflict" &&
       row.kept &&
       hash !== undefined &&
       /^[0-9a-f]{64}$/u.test(hash) &&
       (choice === "kept" || choice === "both")
-      ? [{ name: row.name, contentSha256: hash }]
+      ? [
+          {
+            name: row.name,
+            contentSha256: hash,
+            ...(keptHash !== undefined && /^[0-9a-f]{64}$/u.test(keptHash)
+              ? { keptSha256: keptHash }
+              : {}),
+          },
+        ]
       : [];
   });
 }

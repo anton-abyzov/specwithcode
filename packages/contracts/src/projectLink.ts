@@ -150,6 +150,11 @@ export type ProjectLinkRoutine = typeof ProjectLinkRoutine.Type;
 export const ProjectLinkSupersededNote = Schema.Struct({
   name: ProjectMemoryName,
   contentSha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  /**
+   * The kept copy's version the person reviewed. A kept note edited since then
+   * was never weighed against the joining one, so nothing is recorded for it.
+   */
+  keptSha256: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))),
 });
 export type ProjectLinkSupersededNote = typeof ProjectLinkSupersededNote.Type;
 

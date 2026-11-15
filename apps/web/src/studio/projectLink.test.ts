@@ -136,6 +136,19 @@ describe("notes", () => {
     const set = [{ name: "plan.md", contentSha256: sha }];
     expect(supersededNotes(rows, { "plan.md": "kept" })).toEqual(set);
     expect(supersededNotes(rows, { "plan.md": "both" })).toEqual(set);
+    // With the kept copy's hash, the choice names the kept text it was made against.
+    const keptSha = "d".repeat(64);
+    expect(
+      supersededNotes(
+        noteMergeRows(
+          kept.map((item) =>
+            item.name === "plan.md" ? { ...item, contentSha256: keptSha } : item,
+          ),
+          [{ ...note("plan.md", "joining plan"), contentSha256: sha }],
+        ),
+        { "plan.md": "kept" },
+      ),
+    ).toEqual([{ name: "plan.md", contentSha256: sha, keptSha256: keptSha }]);
     // Keeping the joining text writes it to the kept copy; nothing is set aside.
     expect(supersededNotes(rows, { "plan.md": "joining" })).toEqual([]);
     expect(supersededNotes(rows, {})).toEqual([]);
@@ -545,6 +558,30 @@ describe("linkCandidates", () => {
       project("m1", "no-remote"),
     ];
     expect(ids(sameRepositoryLinkOffers(all, own, scratchRootFor as never))).toEqual(["m3:new"]);
+    // A fork matches by its own remote, never by the repository it was forked from.
+    const fork = (item: EnvironmentProject, origin: string) =>
+      ({
+        ...item,
+        updatedAt: "2026-11-10T00:00:00.000Z",
+        repositoryIdentity: {
+          canonicalKey: "github.com/acme/app",
+          locator: { remoteUrl: "https://github.com/acme/app.git" },
+          origin: { canonicalKey: origin },
+        },
+      }) as unknown as EnvironmentProject;
+    const ownFork = fork(copy("m4", "fork", undefined), "github.com/me/app");
+    const forks = [
+      ownFork,
+      at(project("m3", "upstream"), "2026-11-10T00:00:00.000Z"),
+      fork(project("m5", "theirs"), "github.com/them/app"),
+      fork(project("m1", "mine"), "GitHub.com/me/app"),
+    ];
+    expect(ids(sameRepositoryLinkOffers(forks, ownFork, scratchRootFor as never))).toEqual([
+      "m1:mine",
+    ]);
+    expect(ids(sameRepositoryLinkOffers(forks, own, scratchRootFor as never))).toEqual([
+      "m3:upstream",
+    ]);
     // A project with no remote has nothing to compare.
     expect(
       sameRepositoryLinkOffers(all, copy("m4", "local", undefined), scratchRootFor as never),

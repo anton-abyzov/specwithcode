@@ -181,4 +181,25 @@ describe("ProjectLink note choices and the first memory merge", () => {
     });
     expect(keptState.files).toEqual({});
   });
+
+  it("ignores a choice made against kept text that has changed since the review", async () => {
+    const stale = await linked({
+      notes: [],
+      superseded: [
+        {
+          name: "decisions.md",
+          contentSha256: M3_HASH,
+          keptSha256: memoryContentHash("M4 decision before an edit"),
+        },
+      ],
+    });
+    expect(stale.keptState.files).toEqual({});
+    const step = stale.onJoining.steps.find((entry) => entry.name === "decisions.md");
+    expect(step?.kind === "write" && step.conflictCopy).toBeTruthy();
+    const current = await linked({
+      notes: [],
+      superseded: [{ name: "decisions.md", contentSha256: M3_HASH, keptSha256: M4_HASH }],
+    });
+    expect(current.keptState.files["decisions.md"]?.history).toEqual([M3_HASH, M4_HASH]);
+  });
 });
