@@ -60,15 +60,18 @@ try {
     const items = await page.locator('[role="menuitem"]').allTextContents();
     results.push({ theme, items, file });
     if (!before) {
-      // One action per machine: m1 kept its coordinator, linux-mini runs its own.
+      // Each machine once: m1 kept its coordinator (paused), linux-mini runs its own, so
+      // neither gets a coordinator item; viewing m1 is the way to its coordinator.
       assert.deepEqual(
         items.filter((text) => /coordinator/i.test(text)),
-        ["Open coordinator on m1"],
+        [],
       );
-      await page.getByRole("menuitem", { name: "Open coordinator on m1" }).click();
+      const rows = await page.locator('[role="menuitemradio"]').allTextContents();
+      assert.deepEqual(rows, ["m1coordinator paused", "linux-minicoordinator", "m4coordinator"]);
+      await page.locator('[role="menuitemradio"]', { hasText: "m1" }).click();
       await page.locator('[data-viewing="m1:p"]').waitFor();
       assert.match(await page.locator(".sws-host-name").textContent(), /Runs on m1/);
-      await page.screenshot({ path: path.join(output, `coordinator-menu-opened-m1-${theme}.png`) });
+      await page.screenshot({ path: path.join(output, `coordinator-menu-viewed-m1-${theme}.png`) });
     }
     await page.close();
   }

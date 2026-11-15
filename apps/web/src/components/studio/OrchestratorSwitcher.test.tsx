@@ -36,7 +36,6 @@ const copy = (
 const handlers = () => ({
   onView: vi.fn<(key: string) => void>(),
   onMove: vi.fn<(key: string) => void>(),
-  onStart: vi.fn<(key: string) => Promise<boolean> | void>(),
   onAllowWorkers: vi.fn<() => void>(),
 });
 
@@ -66,13 +65,12 @@ const item = (role: string, text: string) =>
     element.textContent?.includes(text),
   );
 
-it("keeps viewing, moving and starting as separate actions", async () => {
+it("keeps viewing and moving as separate actions", async () => {
   const calls = handlers();
   await renderSwitcher(calls);
   await act(async () => item("menuitemradio", "Minis")!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
   expect(calls.onMove).not.toHaveBeenCalled();
-  expect(calls.onStart).not.toHaveBeenCalled();
 });
 
 it("switches the view only after its menu has closed", async () => {
@@ -110,71 +108,42 @@ it("offers the coordinator-only move only to copies that run workers", async () 
   expect(labels.some((label) => label?.startsWith("Sync to"))).toBe(false);
 });
 
-it("opens the coordinator a copy kept from before: runs it again, then shows it", async () => {
+it("lists a machine that kept its coordinator once, as paused, with nothing to start here", async () => {
   const calls = handlers();
-  calls.onStart.mockResolvedValue(true);
   await renderSwitcher(calls);
+  const rows = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+  expect(rows.map((row) => row.textContent)).toEqual(["M4coordinator", "Miniscoordinator paused"]);
+  expect(rows[1]?.title).toBe(
+    "Minis kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.",
+  );
   const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
-  // One action for that machine, never Move and Start side by side.
-  expect(labels).toContain("Open coordinator on Minis");
-  expect(labels).not.toContain("Move coordinator to Minis…");
-  expect(labels.some((label) => label?.startsWith("Start a coordinator"))).toBe(false);
-  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
-  expect(calls.onStart).toHaveBeenCalledWith("minis:p");
-  expect(calls.onMove).not.toHaveBeenCalled();
+  // Viewing is the one way to that coordinator: no Open, Start or Move beside it.
+  expect(labels.filter((label) => label?.includes("Minis"))).toEqual([]);
+  await act(async () => rows[1]!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("minis:p"));
+  expect(calls.onMove).not.toHaveBeenCalled();
 });
 
-it("stays on this machine when that coordinator did not start", async () => {
-  const calls = handlers();
-  calls.onStart.mockResolvedValue(false);
-  await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
-  expect(calls.onStart).toHaveBeenCalledWith("minis:p");
-  await act(async () => Promise.resolve());
-  expect(calls.onView).not.toHaveBeenCalled();
-});
-
-it("never pulls the page back when the start settles after the view changed", async () => {
-  const calls = handlers();
-  let finish!: (ok: boolean) => void;
-  calls.onStart.mockReturnValue(new Promise<boolean>((resolve) => (finish = resolve)));
-  await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
-  // The person views another copy before the start settles.
-  await renderSwitcher({ ...calls, current: "minis:p" });
-  await act(async () => finish(true));
-  expect(calls.onView).not.toHaveBeenCalled();
-});
-
-it("never switches the view once the switcher has left the page", async () => {
-  const calls = handlers();
-  let finish!: (ok: boolean) => void;
-  calls.onStart.mockReturnValue(new Promise<boolean>((resolve) => (finish = resolve)));
-  await renderSwitcher(calls);
-  await act(async () => item("menuitem", "Open coordinator on Minis")!.click());
-  await act(async () => root.render(<></>));
-  await act(async () => finish(true));
-  expect(calls.onView).not.toHaveBeenCalled();
-});
-
-it("offers one item per machine, preferring Open, and none where any copy there coordinates", async () => {
+it("offers one item per machine, and none where any copy there coordinates or kept one", async () => {
   const calls = handlers();
   await renderSwitcher({
     ...calls,
     copies: [
       copy("m4:p", "M4"),
-      // Two checkouts on m1: one kept its coordinator, one only runs workers.
+      // Two checkouts on m1: one kept its coordinator, so m1 gets no move.
       { ...copy("m1:a", "M1", "workers"), folder: "/w/a" },
       { ...copy("m1:b", "M1", "workers", true), folder: "/w/b" },
       // On m3 one copy runs its own coordinator, so the workers copy beside it gets nothing.
       copy("m3:a", "M3"),
-      { ...copy("m3:b", "M3", "workers", true), folder: "/w/b" },
+      { ...copy("m3:b", "M3", "workers"), folder: "/w/b" },
+      // m5 has two workers-only copies and gets one move.
+      { ...copy("m5:a", "M5", "workers"), folder: "/w/a" },
+      { ...copy("m5:b", "M5", "workers"), folder: "/w/b" },
     ],
   });
   const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
   expect(labels.filter((label) => /coordinator/.test(label ?? ""))).toEqual([
-    "Open coordinator on M1 · /w/b",
+    "Move coordinator to M5 · /w/a…",
   ]);
 });
 
@@ -203,24 +172,12 @@ it("offers nothing for a machine that already runs its own coordinator, but list
   const calls = handlers();
   await renderSwitcher({
     ...calls,
-    copies: [copy("m4:p", "M4"), copy("mini:p", "Mini"), copy("m1:p", "M1", "workers", true)],
+    copies: [copy("m4:p", "M4"), copy("mini:p", "Mini"), copy("m1:p", "M1", "workers")],
   });
   const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
   expect(labels.filter((label) => label?.includes("Mini"))).toEqual([]);
-  expect(labels.filter((label) => label?.includes("M1"))).toEqual(["Open coordinator on M1"]);
+  expect(labels.filter((label) => label?.includes("M1"))).toEqual(["Move coordinator to M1…"]);
   expect(item("menuitemradio", "Mini")).toBeDefined();
-});
-
-it("moves when no kept coordinator can start there", async () => {
-  const calls = handlers();
-  // Never ran a coordinator there, or that machine's server cannot start one yet.
-  await renderSwitcher({
-    ...calls,
-    copies: [copy("m4:p", "M4"), copy("minis:p", "Minis", "workers", false)],
-  });
-  const labels = [...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent);
-  expect(labels).toContain("Move coordinator to Minis…");
-  expect(labels).not.toContain("Open coordinator on Minis");
 });
 
 it("opens thread migration as its own action, after the menu closes", async () => {
@@ -235,7 +192,6 @@ it("opens thread migration as its own action, after the menu closes", async () =
   expect(menuOpenAtMigrate).toEqual([false]);
   expect(calls.onView).not.toHaveBeenCalled();
   expect(calls.onMove).not.toHaveBeenCalled();
-  expect(calls.onStart).not.toHaveBeenCalled();
 });
 
 it("leaves thread migration off while the viewed machine is unreachable", async () => {
@@ -351,7 +307,6 @@ it("offers one Copy to another machine and Leave, even with one copy", async () 
         savedMachineMissing={false}
         onView={vi.fn()}
         onMove={null}
-        onStart={null}
         onAllowWorkers={null}
         onCopy={onCopy}
         onLeave={onLeave}
@@ -377,14 +332,13 @@ it("names machines once and labels every group of actions", async () => {
   await renderSwitcher({ ...calls, onCopy: vi.fn(), onLeave: vi.fn() });
   expect(
     [...document.querySelectorAll('[role="menuitemradio"]')].map((row) => row.textContent),
-  ).toEqual(["M4coordinator", "Minisworkers only"]);
+  ).toEqual(["M4coordinator", "Miniscoordinator paused"]);
   expect(
     [...document.querySelectorAll('[data-slot="menu-label"]')].map((row) => row.textContent),
   ).toEqual(["View this project on", "This project", "On M4"]);
   expect([...document.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)).toEqual(
     [
       "Copy to another machine…",
-      "Open coordinator on Minis",
       "Move running threads…M4 offline",
       "Leave this machine…",
       "Machine access settings",
@@ -422,7 +376,6 @@ it("stays a plain label with one copy and no machine actions", async () => {
         savedMachineMissing={false}
         onView={vi.fn()}
         onMove={null}
-        onStart={null}
         onAllowWorkers={null}
       />,
     ),

@@ -12,7 +12,6 @@ import {
   DoorOpenIcon,
   MessageSquareShareIcon,
   MoveRightIcon,
-  SquareArrowOutUpRightIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
@@ -52,6 +51,10 @@ const ROLE_NOTE: Record<OrchestratorCopy["role"], string> = {
   independent: "not linked",
 };
 
+/** A workers-only copy that kept its coordinator from before says so: it is paused, not gone. */
+const noteOf = (copy: OrchestratorCopy) =>
+  copy.canStart ? "coordinator paused" : ROLE_NOTE[copy.role];
+
 /** Runs the pending action once the popup holding this has left the DOM. */
 function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }) {
   useEffect(
@@ -71,12 +74,11 @@ function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }
  * with the viewed machine (move its running threads, leave). Viewing reads that
  * machine's server and moves nothing; every move is its own confirmed action.
  *
- * Each other machine gets at most one coordinator action, named by its state:
- * a copy that kept its own coordinator from before (its binding was handed
- * over, so it can start again) gets "Open coordinator on X", which runs that
- * coordinator again and shows it; a copy that only runs workers gets "Move
- * coordinator to X…"; a copy that already runs a coordinator gets none, since
- * viewing it above is how it is opened.
+ * Each machine appears once, in the view list, with a note naming its state:
+ * coordinator, workers only, coordinator paused (it kept its coordinator from
+ * before; its own page offers to run it again), or not linked. The only
+ * coordinator item below is "Move coordinator to X…", for a machine whose copy
+ * runs workers only and kept nothing.
  */
 export function OrchestratorSwitcher({
   label,
@@ -89,7 +91,6 @@ export function OrchestratorSwitcher({
   savedMachineMissing,
   onView,
   onMove,
-  onStart,
   onAllowWorkers,
   onMigrate = null,
   onCopy = null,
@@ -112,11 +113,6 @@ export function OrchestratorSwitcher({
   onView: ((key: string) => void) | null;
   /** Opens the confirmed coordinator move; null when it cannot be offered. */
   onMove: ((key: string) => void) | null;
-  /**
-   * Runs the coordinator a copy kept from before again; resolves true once it runs,
-   * and the switcher then shows that copy.
-   */
-  onStart: ((key: string) => Promise<boolean> | void) | null;
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
   onMigrate?: (() => void) | null;
@@ -132,18 +128,6 @@ export function OrchestratorSwitcher({
   // left is hidden under an Activity, and a menu hidden mid-close stays mounted
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
-  // Open shows the started copy only while this switcher still shows the copy it was
-  // clicked on: a start that settles after the person viewed another copy or left the
-  // project never pulls them back.
-  const shown = useRef({ mounted: true, current });
-  shown.current.current = current;
-  useEffect(() => {
-    const state = shown.current;
-    state.mounted = true;
-    return () => {
-      state.mounted = false;
-    };
-  }, []);
   const tx = useTx();
   const runsOn = tx("Runs on {machine}", { machine: label });
   // The chip names the machine and shows its state by the dot alone, in the machine's own
@@ -185,22 +169,21 @@ export function OrchestratorSwitcher({
   const nameOf = (copy: OrchestratorCopy) =>
     ambiguous(copy.machine) ? `${copy.machine} · ${copy.folder}` : copy.machine;
   const others = listed.filter((copy) => copy.key !== current);
-  // One coordinator action per machine. A copy that kept its coordinator from before is
-  // opened (run again); moving this one there would leave two conversations for one
-  // place. A machine where any copy runs its own coordinator, listed or not, already has
-  // one: viewing it opens it, so it gets nothing here.
+  // One coordinator item per machine at most. A machine where any copy runs its own
+  // coordinator, or kept one (paused), gets none: viewing it opens it, and a paused one
+  // offers to run again on its own page. Moving this one there would leave two
+  // conversations for one place.
   const hostOf = (copy: OrchestratorCopy) => checkoutKeyEnvironmentId(copy.key);
-  const coordinating = new Set(copies.filter((copy) => copy.role === "coordinator").map(hostOf));
-  const coordinatorActions: Array<{ copy: OrchestratorCopy; kind: "open" | "move" }> = [];
+  const coordinating = new Set(
+    copies.filter((copy) => copy.role === "coordinator" || copy.canStart).map(hostOf),
+  );
+  const coordinatorActions: OrchestratorCopy[] = [];
   for (const host of new Set(others.map(hostOf))) {
-    if (coordinating.has(host)) continue;
-    const there = others.filter((copy) => hostOf(copy) === host);
-    const open = onStart ? there.find((copy) => copy.canStart) : undefined;
-    const move = onMove
-      ? there.find((copy) => copy.role === "workers" || copy.role === "independent")
-      : undefined;
-    if (open) coordinatorActions.push({ copy: open, kind: "open" });
-    else if (move) coordinatorActions.push({ copy: move, kind: "move" });
+    if (coordinating.has(host) || !onMove) continue;
+    const move = others.find(
+      (copy) => hostOf(copy) === host && (copy.role === "workers" || copy.role === "independent"),
+    );
+    if (move) coordinatorActions.push(move);
   }
   // Copy and the coordinator actions act on this project; threads and Leave on the machine.
   const projectActions = onCopy !== null || coordinatorActions.length > 0;
@@ -249,14 +232,18 @@ export function OrchestratorSwitcher({
                 ...listed.map((copy) => ({
                   key: copy.key,
                   name: nameOf(copy),
-                  note: ROLE_NOTE[copy.role],
-                  hint:
-                    copy.role === "independent"
+                  note: noteOf(copy),
+                  hint: copy.canStart
+                    ? tx(
+                        "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.",
+                        { machine: nameOf(copy) },
+                      )
+                    : copy.role === "independent"
                       ? tx(
-                          "Not linked: {machine} runs its own coordinator, threads and memory for this repository.",
-                          { machine: nameOf(copy) },
-                        )
-                      : nameOf(copy),
+                            "Not linked: {machine} runs its own coordinator, threads and memory for this repository.",
+                            { machine: nameOf(copy) },
+                          )
+                        : nameOf(copy),
                 })),
                 // Linked, but this app has no connection to it, so it has no copy to show.
                 ...unknown.map((ref) => ({
@@ -304,39 +291,16 @@ export function OrchestratorSwitcher({
                   {tx("Copy to another machine…")}
                 </MenuItem>
               ) : null}
-              {coordinatorActions.map(({ copy, kind }) =>
-                kind === "open" ? (
-                  <MenuItem
-                    key={copy.key}
-                    data-orchestrator-start={copy.key}
-                    title={tx(
-                      "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.",
-                      { machine: nameOf(copy) },
-                    )}
-                    onClick={() => {
-                      const from = current;
-                      const opened = onStart?.(copy.key);
-                      void Promise.resolve(opened).then((ok) => {
-                        const state = shown.current;
-                        if (ok && onView && state.mounted && state.current === from)
-                          onView(copy.key);
-                      });
-                    }}
-                  >
-                    <SquareArrowOutUpRightIcon aria-hidden />
-                    {tx("Open coordinator on {machine}", { machine: nameOf(copy) })}
-                  </MenuItem>
-                ) : (
-                  <MenuItem
-                    key={copy.key}
-                    data-orchestrator-move={copy.key}
-                    onClick={() => onMove?.(copy.key)}
-                  >
-                    <MoveRightIcon aria-hidden />
-                    {tx("Move coordinator to {machine}…", { machine: nameOf(copy) })}
-                  </MenuItem>
-                ),
-              )}
+              {coordinatorActions.map((copy) => (
+                <MenuItem
+                  key={copy.key}
+                  data-orchestrator-move={copy.key}
+                  onClick={() => onMove?.(copy.key)}
+                >
+                  <MoveRightIcon aria-hidden />
+                  {tx("Move coordinator to {machine}…", { machine: nameOf(copy) })}
+                </MenuItem>
+              ))}
             </MenuGroup>
           </>
         ) : null}
@@ -392,7 +356,7 @@ export function OrchestratorSwitcher({
  */
 export function ProjectOrchestratorSwitcher({
   project,
-  members,
+  members: _members,
   label,
   connected,
   isThisDevice,
@@ -423,7 +387,6 @@ export function ProjectOrchestratorSwitcher({
   // A nickname shows as typed; only a host label drops its owner.
   const name = useMachineNickname(project.environmentId, label);
   const identity = useMachineIdentity(project.environmentId, label);
-  const start = useStartCoordinator(members, copies);
   return (
     <OrchestratorSwitcher
       identity={identity}
@@ -441,7 +404,6 @@ export function ProjectOrchestratorSwitcher({
       onCopy={onCopy}
       // Away mode runs on this device's machine, so it is offered only there.
       onLeave={isThisDevice ? () => requestAway("away") : null}
-      onStart={start}
       onAllowWorkers={() => void navigate({ to: "/settings/connections" })}
       onMigrate={
         connected

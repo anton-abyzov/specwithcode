@@ -58,7 +58,6 @@ function Page() {
         savedMachineMissing={false}
         onView={setCurrent}
         onMove={() => {}}
-        onStart={async () => true}
         onAllowWorkers={() => {}}
         onMigrate={() => {}}
         onCopy={() => {}}

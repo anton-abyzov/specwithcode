@@ -4620,9 +4620,8 @@ export const fr: PhraseCatalog = {
   "Installs from npm": "Installations depuis npm",
   "View this project on": "Voir ce projet sur",
   "Move coordinator to {machine}…": "Déplacer le coordinateur vers {machine}…",
-  "Open coordinator on {machine}": "Ouvrir le coordinateur sur {machine}",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine} a gardé son coordinateur d'avant. L'ouvrir le relance à côté de celui-ci ; rien n'est déplacé.",
+  "coordinator paused": "coordinateur en pause",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} a gardé son coordinateur d'avant et n'exécute plus que des workers. Affichez-le pour lire cette conversation ou le relancer.",
   "Machine access settings": "Réglages d’accès entre machines",
   "{machine} offline": "{machine} hors ligne",
   "workers only": "workers uniquement",

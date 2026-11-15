@@ -4604,9 +4604,8 @@ export const es: PhraseCatalog = {
   "Installs from npm": "Instalaciones desde npm",
   "View this project on": "Ver este proyecto en",
   "Move coordinator to {machine}…": "Mover el coordinador a {machine}…",
-  "Open coordinator on {machine}": "Abrir el coordinador en {machine}",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine} conservó su coordinador de antes. Abrirlo lo vuelve a ejecutar junto a este; nada se mueve.",
+  "coordinator paused": "coordinador en pausa",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} conservó su coordinador anterior y ahora solo ejecuta workers. Ábrelo para leer esa conversación o volver a ejecutarlo.",
   "Machine access settings": "Ajustes de acceso entre equipos",
   "{machine} offline": "{machine} sin conexión",
   "workers only": "solo workers",

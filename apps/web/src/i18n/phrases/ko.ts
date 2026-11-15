@@ -4530,9 +4530,8 @@ export const ko: PhraseCatalog = {
   "Installs from npm": "npm 설치",
   "View this project on": "이 프로젝트를 볼 컴퓨터",
   "Move coordinator to {machine}…": "코디네이터를 {machine}(으)로 이동…",
-  "Open coordinator on {machine}": "{machine}에서 코디네이터 열기",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine}에 이전 코디네이터가 남아 있습니다. 열면 이 코디네이터와 함께 다시 실행되며, 아무것도 이동하지 않습니다.",
+  "coordinator paused": "코디네이터 일시 중지됨",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine}은(는) 이전 코디네이터를 유지하고 있으며 지금은 워커만 실행합니다. 열어서 그 대화를 읽거나 다시 실행하세요.",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
   "workers only": "워커 전용",

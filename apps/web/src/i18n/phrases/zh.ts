@@ -4404,9 +4404,8 @@ export const zh: PhraseCatalog = {
   "Installs from npm": "npm 安装量",
   "View this project on": "查看此项目的电脑",
   "Move coordinator to {machine}…": "将协调器移到 {machine}…",
-  "Open coordinator on {machine}": "打开 {machine} 上的协调者",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine} 保留了之前的协调者。打开会让它在这个协调者旁边再次运行；不会移动任何内容。",
+  "coordinator paused": "协调器已暂停",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} 保留了之前的协调器，现在只运行 worker。查看它以阅读那段对话或重新运行。",
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",

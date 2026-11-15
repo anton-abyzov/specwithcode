@@ -4583,9 +4583,8 @@ export const ja: PhraseCatalog = {
   "Installs from npm": "npm からのインストール",
   "View this project on": "このプロジェクトを表示するマシン",
   "Move coordinator to {machine}…": "コーディネーターを {machine} に移動…",
-  "Open coordinator on {machine}": "{machine} のコーディネーターを開く",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "{machine} には以前のコーディネーターが残っています。開くとこのコーディネーターと並んで再び動きます。何も移動しません。",
+  "coordinator paused": "コーディネーター一時停止中",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} は以前のコーディネーターを保持しており、現在はワーカーのみを実行しています。表示してその会話を読むか、再実行できます。",
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
   "workers only": "ワーカーのみ",

@@ -4578,9 +4578,8 @@ export const ru: PhraseCatalog = {
   "Installs from npm": "Установки из npm",
   "View this project on": "Смотреть проект на",
   "Move coordinator to {machine}…": "Перенести координатора на {machine}…",
-  "Open coordinator on {machine}": "Открыть координатора на {machine}",
-  "{machine} kept its coordinator from before. Opening runs it again next to this one; nothing moves.":
-    "На {machine} сохранился прежний координатор. Открытие снова запустит его рядом с этим; ничего не переносится.",
+  "coordinator paused": "координатор на паузе",
+  "{machine} kept its coordinator from before and now runs workers only. View it to read that conversation or run it again.": "{machine} сохранил прежний координатор и сейчас выполняет только воркеры. Откройте его, чтобы прочитать тот разговор или запустить его снова.",
   "Machine access settings": "Настройки доступа между машинами",
   "{machine} offline": "{machine} не в сети",
   "workers only": "только исполнители",
