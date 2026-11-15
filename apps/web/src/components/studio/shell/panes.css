@@ -1687,3 +1687,127 @@ button.sws-subagent-row:focus-visible {
 .assistant-service-form input {
   width: min(100%, 26rem);
 }
+
+/* Board -------------------------------------------------------------------- */
+
+.sws-board {
+  container: sws-board / inline-size;
+}
+.sws-board-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sws-board-column {
+  min-width: 0;
+}
+.sws-board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sws-board-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+.sws-board-card:has(button.sws-board-card-open:hover) {
+  background: var(--accent);
+}
+.sws-board-card[data-blocked] {
+  border-color: color-mix(in srgb, var(--shell-waiting) 45%, var(--border));
+}
+.sws-board-card-open {
+  width: 100%;
+  padding: 8px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  border-radius: var(--radius-lg);
+}
+button.sws-board-card-open {
+  cursor: pointer;
+}
+.sws-board-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+.sws-board-card-id {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.sws-board-card-title {
+  font-size: var(--text-compact);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--foreground);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.sws-board-meter {
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 9999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.sws-board-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--shell-done);
+}
+.sws-board-card-chips {
+  padding: 0 10px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sws-board-chip-blocked {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--shell-waiting) 14%, transparent);
+  color: var(--shell-waiting);
+}
+.sws-board-more {
+  width: 100%;
+  height: 30px;
+  margin-top: 4px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.sws-board-more:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sws-board-more:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+/* Wide enough for four columns: the expanded panel, or a wide window. */
+@container sws-board (min-width: 720px) {
+  .sws-board-columns {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: start;
+    gap: 10px;
+  }
+  .sws-board-column {
+    order: 0 !important;
+    padding: 2px 8px 8px;
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--muted) 55%, transparent);
+  }
+  .sws-board-card {
+    background: var(--background);
+  }
+}

@@ -163,6 +163,7 @@ import { ThreadsPane } from "./shell/ThreadsPane";
 import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
+import { BoardPane } from "./shell/BoardPane";
 import { LibraryPane } from "./shell/LibraryPane";
 import { LIBRARY_SECTIONS, type LibrarySection } from "../../studio/projectArtifacts";
 import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
@@ -458,11 +459,15 @@ export function ProjectWorkspaceSurface({
   const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
   const findRef = useRef<HTMLInputElement>(null);
   const [findOpen, setFindOpen] = useState(false);
-  const [paneTab, setPaneTab] = useLocalStorage<ProjectPaneTab, ProjectPaneTab>(
+  const [storedPaneTab, setPaneTab] = useLocalStorage<ProjectPaneTab, ProjectPaneTab>(
     PANE_TAB_STORAGE_KEY,
     "threads",
     PaneTabSchema,
   );
+  // The Board tab lists SpecWeave increments; a project without them has no such tab,
+  // and the remembered tab is shared by every project.
+  const hasBoard = snapshot?.specweave === true;
+  const paneTab = storedPaneTab === "board" && !hasBoard ? "threads" : storedPaneTab;
   // The panel takes the whole width, as the desktop app's expand does; never remembered.
   const [paneExpanded, setPaneExpanded] = useState(false);
   // The open thread's header slot that the embedded chat portals its panel toggles into.
@@ -1655,6 +1660,7 @@ export function ProjectWorkspaceSurface({
     expanded: paneExpanded,
     onToggleExpanded: () => setPaneExpanded((value) => !value),
     onClose: hideOverview,
+    ...(hasBoard ? {} : { hiddenTabs: ["board"] as const }),
   };
   const overviewShortcut = shortcutLabelForCommand(keybindings, "rightPanel.toggle");
   const paneOpen = overviewOpen || selectedThread !== null;
@@ -1818,6 +1824,14 @@ export function ProjectWorkspaceSurface({
                   projectKey={projectKey}
                   projectTitle={projectTitle}
                   onOpenPlan={() => setPlanOpen(true)}
+                  onOpenBoard={
+                    hasBoard
+                      ? () => {
+                          showPaneTab("board");
+                          setPaneExpanded(true);
+                        }
+                      : undefined
+                  }
                   onOpenSettingsTab={setTab}
                   designHere={project.environmentId === primaryEnvironmentId}
                 />
@@ -2235,6 +2249,13 @@ export function ProjectWorkspaceSurface({
                     onOpenPullRequest: (url) => void openLink(url).catch(() => undefined),
                     toolsSlotRef: setThreadToolsSlot,
                   }}
+                />
+              ) : paneTab === "board" ? (
+                <BoardPane
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  workspaceRoot={project.workspaceRoot}
+                  bar={paneBar}
                 />
               ) : paneTab === "designs" ? (
                 <ProjectDesignsPane
