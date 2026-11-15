@@ -472,7 +472,9 @@ export function ProjectMachineHandoff({
     );
     setIntent("move");
     setSyncKey(null);
-    setMethod(existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : DEFAULT_COPY_METHOD);
+    setMethod(
+      existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : DEFAULT_COPY_METHOD,
+    );
     setSelected(requestedTarget);
     setPickerMachine(null);
     setSnapshot(null);
