@@ -108,6 +108,12 @@ describe("SheetView", () => {
       "120K · 100%",
       "-45K",
     ]);
+    // Each bar carries its share of the largest value; the stylesheet turns it into a width.
+    expect(
+      chart
+        .findAllByProps({ className: "office-bars-bar" })
+        .map((bar) => bar.props.style["--office-bar-share"]),
+    ).toEqual([1, 0]);
     // The chart sits on the grid, two columns right of its data and level with it.
     const placed = root.findByProps({ className: "office-grid-chart" });
     expect(placed.props.style).toMatchObject({ left: 44 + 3 * 112, top: 28, width: 520 });

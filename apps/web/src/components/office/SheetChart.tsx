@@ -4,7 +4,7 @@ import {
   compactNumber,
 } from "@specweave-studio/shared/officeSheet";
 import { XIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { useTx } from "../../i18n";
 
@@ -88,10 +88,13 @@ function BarChart(props: { readonly series: SheetChartSeries; readonly tone: num
           <span className="office-bars-track">
             <span
               className="office-bars-bar"
-              style={{
-                width: `${max > 0 ? Math.max(0, (point.value / max) * 100) : 0}%`,
-                background: seriesColor(props.tone),
-              }}
+              style={
+                {
+                  // The stylesheet scales this share inside the room left for the value.
+                  "--office-bar-share": max > 0 ? Math.max(0, point.value / max) : 0,
+                  background: seriesColor(props.tone),
+                } as CSSProperties
+              }
             />
             <span className="office-bars-value">
               {compactNumber(point.value)}

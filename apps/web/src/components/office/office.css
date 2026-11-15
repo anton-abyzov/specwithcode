@@ -381,9 +381,9 @@
 
 .office-bars-bar {
   height: 1.125rem;
+  /* The longest bar stops 5.5rem short of the track, which keeps room for its value. */
+  width: calc((100% - 5.5rem) * var(--office-bar-share, 0));
   min-width: 2px;
-  /* Room is kept for the value after the longest bar. */
-  max-width: calc(100% - 5.5rem);
   flex: none;
   border-radius: 2px;
 }
