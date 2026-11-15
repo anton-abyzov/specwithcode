@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type QuotaAlertAccount,
+  coversQuotaAlertPeriod,
   describeQuotaAlert,
   quotaAlertId,
   quotaAlerts,
@@ -87,6 +88,34 @@ describe("quotaAlerts", () => {
       now,
     );
     expect(both.map((entry) => entry.kind)).toEqual(["window"]);
+    // One line per subscription, even when the expiring window is a shorter one.
+    const short = quotaAlerts(
+      [
+        account({
+          windows: [
+            { id: "primary", title: "5-hour", leftPercent: 70, resetsAt: now + HOUR, expiring: true },
+            ...monthly(55),
+          ],
+          renewal: { at: now + 20 * HOUR },
+        }),
+      ],
+      [],
+      now,
+    );
+    expect(short.map((entry) => entry.kind)).toEqual(["window"]);
+  });
+
+  it("names the window the renewal ends, and stays quiet when none resets with it", () => {
+    const windows = [
+      { id: "monthly", title: "Monthly", leftPercent: 90, resetsAt: now + 29 * DAY, expiring: false },
+      { id: "weekly", title: "Weekly", leftPercent: 50, resetsAt: now + 18 * HOUR, expiring: false },
+    ];
+    const [alert] = quotaAlerts([account({ windows, renewal: { at: now + 20 * HOUR } })], [], now);
+    expect(alert).toMatchObject({ kind: "renewal", windowTitle: "Weekly", leftPercent: 50 });
+    // The monthly window keeps its quota through this renewal.
+    expect(
+      quotaAlerts([account({ windows: windows.slice(0, 1), renewal: { at: now + 20 * HOUR } })], [], now),
+    ).toEqual([]);
   });
 
   it("reports an early reset for six hours, after what is about to be lost", () => {
@@ -102,7 +131,10 @@ describe("quotaAlerts", () => {
     expect(describeQuotaAlert(alerts[1]!, "Codex Pro", now)).toBe(
       "Codex Pro on m4 reset early: weekly back to 100%",
     );
-    expect(quotaAlerts([], [{ ...early, endedAt: now - 7 * HOUR }], now)).toEqual([]);
+    expect(quotaAlerts([account()], [{ ...early, endedAt: now - 7 * HOUR }], now)).toHaveLength(1);
+    // Signed out since, or only on an offline machine: not this person's news any more.
+    expect(quotaAlerts([], [early], now)).toEqual([]);
+    expect(quotaAlerts([account({ offline: true })], [early], now)).toEqual([]);
   });
 });
 
@@ -115,5 +147,25 @@ describe("visibleQuotaAlerts", () => {
     // Last week's dismissal does not hide this week's alert.
     expect(visibleQuotaAlerts(alerts, { [key]: now + 9 * HOUR - 7 * DAY })).toHaveLength(1);
     expect(quotaAlertId(alerts[0]!)).toBe(`${key}@${now + 9 * HOUR}`);
+  });
+
+  it("keeps a dismissal when a re-read moves the same reset a few seconds", () => {
+    const alerts = quotaAlerts([account()], [], now);
+    const key = alerts[0]!.key;
+    const dismissed = { [key]: alerts[0]!.periodEnd };
+    const drifted = quotaAlerts(
+      [
+        account({
+          windows: [
+            { id: "secondary", title: "Weekly", leftPercent: 62, resetsAt: now + 9 * HOUR + 3000, expiring: true },
+          ],
+        }),
+      ],
+      [],
+      now,
+    );
+    expect(visibleQuotaAlerts(drifted, dismissed)).toEqual([]);
+    expect(coversQuotaAlertPeriod(dismissed[key], now + 9 * HOUR + 5 * HOUR)).toBe(false);
+    expect(coversQuotaAlertPeriod(undefined, now)).toBe(false);
   });
 });

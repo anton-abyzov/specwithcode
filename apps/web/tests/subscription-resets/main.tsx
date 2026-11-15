@@ -179,8 +179,8 @@ createRoot(document.getElementById("root")!).render(
             ? []
             : [
                 {
-                  accountKey: "codex:team@example.com",
-                  driver: "codex",
+                  accountKey: "claudeAgent:ada@example.com",
+                  driver: "claudeAgent",
                   windowId: "secondary",
                   windowTitle: "Weekly",
                   endedAt: now - 2 * HOUR,
@@ -188,7 +188,9 @@ createRoot(document.getElementById("root")!).render(
               ],
           now,
         )}
-        labelOf={(alert) => (byKey.get(alert.accountKey)?.plan ? `Codex ${byKey.get(alert.accountKey)?.plan}` : "Codex")}
+        labelOf={(alert) =>
+          `${alert.driver === "codex" ? "Codex" : "Claude"} ${byKey.get(alert.accountKey)?.plan ?? ""}`.trim()
+        }
         now={now}
         onOpen={() => undefined}
         onDismiss={() => undefined}

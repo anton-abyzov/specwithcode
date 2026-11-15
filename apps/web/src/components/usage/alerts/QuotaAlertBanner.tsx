@@ -7,13 +7,23 @@ import {
   quotaAlerts,
   visibleQuotaAlerts,
 } from "@specweave-studio/shared/quotaAlerts";
-import { type LimitAccount, collectLimitAccounts, limitAccountKey } from "@specweave-studio/shared/usageLimits";
+import {
+  type LimitAccount,
+  collectLimitAccounts,
+  limitAccountKey,
+} from "@specweave-studio/shared/usageLimits";
+import { windowTitle } from "@specweave-studio/shared/usageWindows";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { TimerIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../../hooks/useSettings";
+import {
+  usePrimarySettings,
+  usePrimarySettingsAvailable,
+  useUpdatePrimarySettings,
+} from "../../../hooks/useSettings";
+import { usePrimaryEnvironmentId } from "../../../state/environments";
 import { environmentPresentations } from "../../../state/presentation";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { getDriverOption } from "../../settings/providerDriverMeta";
@@ -35,10 +45,25 @@ function planLabel(account: LimitAccount | undefined, alert: QuotaAlert): string
   return plan ? `${provider} ${plan}` : provider;
 }
 
+const KIND_TITLE: Record<string, string> = {
+  monthly: "Monthly",
+  weekly: "Weekly",
+  session: "Session",
+};
+
+/** The reset window as the account names it now, else by its kind. */
+function earlyWindowTitle(
+  account: LimitAccount | undefined,
+  period: { readonly windowId: string; readonly windowKind: string },
+): string {
+  const live = account?.limits.windows.find((window) => window.id === period.windowId);
+  return live ? windowTitle(live) : (KIND_TITLE[period.windowKind] ?? "Limit");
+}
+
 /**
  * Quota about to be lost, above the project list: the soonest loss first, a
- * way to the Subscriptions view, and a dismissal that holds until the next
- * period. Renders nothing when there is nothing to say.
+ * way to the Subscriptions view, and a dismissal of the lines it shows that
+ * holds until the next period. Renders nothing when there is nothing to say.
  */
 export function QuotaAlertBanner({
   alerts,
@@ -59,6 +84,7 @@ export function QuotaAlertBanner({
   return (
     <section
       className="mx-2 mb-2 flex flex-col gap-1.5 rounded-lg border border-warning/40 bg-warning/8 p-2.5 text-xs"
+      role="status"
       aria-label="Quota about to reset"
       data-quota-alert-banner=""
     >
@@ -80,7 +106,8 @@ export function QuotaAlertBanner({
           type="button"
           className="-m-1 rounded-sm p-1 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           aria-label="Dismiss until the next reset"
-          onClick={() => onDismiss(alerts)}
+          // Only what was read: an alert behind the count shows once these are gone.
+          onClick={() => onDismiss(shown)}
         >
           <XIcon className="size-3.5" aria-hidden />
         </button>
@@ -99,7 +126,10 @@ export function QuotaAlertBanner({
 /** The live banner: reads every connected machine's accounts and the reset ledger. */
 export function QuotaAlerts({ onOpen }: { readonly onOpen?: () => void }) {
   const enabled = usePrimarySettings((settings) => settings.quotaAlertsEnabled);
-  return enabled === false ? null : <LiveQuotaAlerts onOpen={onOpen} />;
+  // Dismissals and the switch live in primary settings. The hosted app has none, so a
+  // banner there could be neither dismissed nor turned off.
+  const available = usePrimarySettingsAvailable();
+  return enabled === false || !available ? null : <LiveQuotaAlerts onOpen={onOpen} />;
 }
 
 function LiveQuotaAlerts({ onOpen }: { readonly onOpen?: (() => void) | undefined }) {
@@ -114,6 +144,7 @@ function LiveQuotaAlerts({ onOpen }: { readonly onOpen?: (() => void) | undefine
   const renewalDays = usePrimarySettings((settings) => settings.subscriptionRenewalDays);
   const dismissed = usePrimarySettings((settings) => settings.quotaAlertDismissals);
   const updateSettings = useUpdatePrimarySettings();
+  const here = usePrimaryEnvironmentId();
   const connectedKey = [...presentations]
     .filter(
       ([, presentation]) =>
@@ -142,7 +173,7 @@ function LiveQuotaAlerts({ onOpen }: { readonly onOpen?: (() => void) | undefine
             accountKey: period.accountKey,
             driver: period.driver,
             windowId: period.windowId,
-            windowTitle: period.windowKind === "monthly" ? "Monthly" : "Weekly",
+            windowTitle: earlyWindowTitle(byKey.get(period.accountKey), period),
             endedAt: Date.parse(period.endedAt),
           },
         ]
@@ -163,23 +194,29 @@ function LiveQuotaAlerts({ onOpen }: { readonly onOpen?: (() => void) | undefine
     void navigate({ to: "/usage" });
   };
 
-  const pending = alerts
-    .map((alert) => `${quotaAlertId(alert)}\t${describeQuotaAlert(alert, labelOf(alert), now)}`)
-    .join("\n");
+  // Every client shows the banner, but one machine speaks for an account: the first of
+  // the machines it is signed in on. Two desktops on one account notify once, not twice.
+  const speaksFor = (alert: QuotaAlert) => {
+    const holders = (byKey.get(alert.accountKey)?.environments ?? [])
+      .map((environment) => String(environment.environmentId))
+      .toSorted();
+    return here !== null && holders[0] === String(here);
+  };
+  const pending = alerts.filter(speaksFor).map((alert) => ({
+    key: alert.key,
+    periodEnd: alert.periodEnd,
+    title: alert.kind === "earlyReset" ? "A limit reset early" : "Quota is about to reset unused",
+    body: describeQuotaAlert(alert, labelOf(alert), now),
+  }));
+  const pendingKey = JSON.stringify(pending);
+  // Tried again on every minute tick: an alert first seen while the window was in front,
+  // or before notifications were connected, still notifies once the window is behind.
   useEffect(() => {
-    if (pending === "") return;
-    for (const line of pending.split("\n")) {
-      const [id, body] = line.split("\t");
-      if (id === undefined || body === undefined) continue;
-      notifyQuotaAlert({
-        id,
-        title: id.includes("|early:") ? "A limit reset early" : "Quota is about to reset unused",
-        body,
-        onOpen: open,
-      });
+    for (const entry of JSON.parse(pendingKey) as typeof pending) {
+      notifyQuotaAlert({ ...entry, onOpen: open });
     }
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the alert set decides; `open` is rebuilt each render.
-  }, [pending]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the alert set and the tick decide; `open` is rebuilt each render.
+  }, [pendingKey, now]);
 
   return (
     <QuotaAlertBanner

@@ -12,6 +12,12 @@ import { EXPIRING_QUOTA_MIN_LEFT_PERCENT } from "./expiringQuota.ts";
 const HOUR = 60 * 60_000;
 /** A banked reset or a renewal counts within its last day. */
 export const QUOTA_ALERT_HORIZON_MS = 24 * HOUR;
+/**
+ * Two reads of one period may report its end a little apart (a provider
+ * rounds or recomputes the reset time), so ends this close are one period.
+ * The shortest window is hours long, so the next period is never this near.
+ */
+export const QUOTA_ALERT_PERIOD_DRIFT_MS = 30 * 60_000;
 /** An early reset is news for this long. */
 export const EARLY_RESET_NOTICE_MS = 6 * HOUR;
 
@@ -64,9 +70,17 @@ export interface QuotaAlert {
   readonly count?: number;
 }
 
-/** `key` at `periodEnd`: one per period, for a notification tag. */
+/** `key` at `periodEnd`, for a list key. Not a period identity: see `coversQuotaAlertPeriod`. */
 export const quotaAlertId = (alert: Pick<QuotaAlert, "key" | "periodEnd">): string =>
   `${alert.key}@${alert.periodEnd}`;
+
+/**
+ * Whether a period end recorded earlier (`recorded`, a dismissal or a sent
+ * notification) is the period ending at `periodEnd`, allowing for drift
+ * between reads. A later period is not covered.
+ */
+export const coversQuotaAlertPeriod = (recorded: number | undefined, periodEnd: number): boolean =>
+  recorded !== undefined && periodEnd <= recorded + QUOTA_ALERT_PERIOD_DRIFT_MS;
 
 /**
  * Every alert that holds at `now`, the soonest loss first. An offline
@@ -85,6 +99,7 @@ export function quotaAlerts(
     if (accountKey === null || account.offline) continue;
     machinesOf.set(accountKey, account.machines);
     const base = { accountKey, driver: account.driver, machines: account.machines };
+    const before = alerts.length;
     for (const window of account.windows) {
       if (!window.expiring || window.resetsAt === null || window.resetsAt <= now) continue;
       alerts.push({
@@ -109,37 +124,42 @@ export function quotaAlerts(
       }
     }
     const renewsAt = account.renewal?.at ?? null;
-    if (renewsAt !== null && renewsAt > now && renewsAt - now <= QUOTA_ALERT_HORIZON_MS) {
-      // The longest window is the subscription's own; a short one refills by itself.
-      const longest = account.windows
-        .filter((window) => window.resetsAt !== null)
-        .toSorted((left, right) => (right.resetsAt ?? 0) - (left.resetsAt ?? 0))[0];
-      const alreadyNamed = longest !== undefined && longest.expiring;
-      if (
-        longest !== undefined &&
-        !alreadyNamed &&
-        longest.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT
-      ) {
+    // One line per subscription: a window alert already says quota is about to go.
+    const named = alerts.length > before;
+    if (!named && renewsAt !== null && renewsAt > now && renewsAt - now <= QUOTA_ALERT_HORIZON_MS) {
+      // The quota a renewal ends is the window that resets with it: the one whose reset is
+      // nearest the renewal, within a day (a day set by hand is a date, not an hour). A
+      // window that resets well after it keeps its quota through the renewal.
+      const ending = account.windows
+        .flatMap((window) =>
+          window.resetsAt === null ? [] : [{ window, apart: Math.abs(window.resetsAt - renewsAt) }],
+        )
+        .filter((entry) => entry.apart <= QUOTA_ALERT_HORIZON_MS)
+        .toSorted((left, right) => left.apart - right.apart)[0]?.window;
+      if (ending !== undefined && ending.leftPercent >= EXPIRING_QUOTA_MIN_LEFT_PERCENT) {
         alerts.push({
           ...base,
           key: `${accountKey}|renewal`,
           periodEnd: renewsAt,
           kind: "renewal",
-          windowTitle: longest.title,
-          leftPercent: longest.leftPercent,
+          windowTitle: ending.title,
+          leftPercent: ending.leftPercent,
         });
       }
     }
   }
   for (const reset of earlyResets) {
     if (reset.endedAt > now || now - reset.endedAt > EARLY_RESET_NOTICE_MS) continue;
+    // Signed out since, or only on a machine that is offline: no longer this person's news.
+    const machines = machinesOf.get(reset.accountKey);
+    if (machines === undefined) continue;
     alerts.push({
       key: `${reset.accountKey}|early:${reset.windowId}`,
       periodEnd: reset.endedAt,
       kind: "earlyReset",
       accountKey: reset.accountKey,
       driver: reset.driver,
-      machines: machinesOf.get(reset.accountKey) ?? [],
+      machines,
       windowTitle: reset.windowTitle,
     });
   }
@@ -150,13 +170,14 @@ export function quotaAlerts(
 
 /**
  * The alerts not dismissed for their period. `dismissed` holds, per alert
- * key, the period end that was dismissed; a later period shows again.
+ * key, the period end that was dismissed; a later period shows again, and a
+ * re-read that moves the same period's end a little does not.
  */
 export function visibleQuotaAlerts(
   alerts: readonly QuotaAlert[],
   dismissed: Readonly<Record<string, number>>,
 ): QuotaAlert[] {
-  return alerts.filter((alert) => (dismissed[alert.key] ?? 0) < alert.periodEnd);
+  return alerts.filter((alert) => !coversQuotaAlertPeriod(dismissed[alert.key], alert.periodEnd));
 }
 
 const duration = (ms: number): string => {

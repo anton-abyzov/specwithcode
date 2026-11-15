@@ -400,8 +400,9 @@ export type SubscriptionTargets = typeof SubscriptionTargets.Type;
 
 /**
  * Dismissed use-it-or-lose-it alerts: per alert key, the end (epoch ms) of the
- * period that was dismissed. A later period alerts again, and each key holds
- * one value, so the map never grows past the account windows.
+ * period that was dismissed. A later period alerts again. Each key holds one
+ * value, so the map grows only with the accounts and windows ever warned
+ * about, not with time.
  */
 export const QuotaAlertDismissals = Schema.Record(
   TrimmedNonEmptyString,

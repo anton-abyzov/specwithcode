@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { QuotaAlertBanner } from "./QuotaAlertBanner";
-import { claimQuotaAlertNotification } from "./quotaAlertNotifications";
+import { quotaAlertNotified, recordQuotaAlertNotification } from "./quotaAlertNotifications";
 
 const HOUR = 3_600_000;
 const now = Date.parse("2026-11-14T20:00:00.000Z");
@@ -37,6 +37,7 @@ describe("QuotaAlertBanner", () => {
     expect(html).toContain("Codex Pro on m4: 62% of its weekly quota resets in 9 h");
     expect(html).toContain("See subscriptions");
     expect(html).toContain('aria-label="Dismiss until the next reset"');
+    expect(html).toContain('role="status"');
   });
 
   it("shows the two soonest and counts the rest", () => {
@@ -63,7 +64,7 @@ describe("QuotaAlertBanner", () => {
   });
 });
 
-describe("claimQuotaAlertNotification", () => {
+describe("quota alert notification record", () => {
   beforeEach(() => {
     const store = new Map<string, string>();
     vi.stubGlobal("localStorage", {
@@ -73,8 +74,12 @@ describe("claimQuotaAlertNotification", () => {
   });
 
   it("lets one period notify once and the next period again", () => {
-    expect(claimQuotaAlertNotification("codex:a@x.dev|window:secondary@1")).toBe(true);
-    expect(claimQuotaAlertNotification("codex:a@x.dev|window:secondary@1")).toBe(false);
-    expect(claimQuotaAlertNotification("codex:a@x.dev|window:secondary@2")).toBe(true);
+    const key = "codex:a@x.dev|window:secondary";
+    expect(quotaAlertNotified(key, now)).toBe(false);
+    expect(recordQuotaAlertNotification(key, now)).toBe(true);
+    expect(quotaAlertNotified(key, now)).toBe(true);
+    // The same reset re-read three seconds later is the same period.
+    expect(quotaAlertNotified(key, now + 3000)).toBe(true);
+    expect(quotaAlertNotified(key, now + 5 * HOUR)).toBe(false);
   });
 });

@@ -60,6 +60,6 @@ A banner above the project list says when a subscription is about to lose quota,
 - a subscription renewing within a day with at least 40% of its quota unused;
 - a limit the provider reset early, for six hours after it happened.
 
-"See subscriptions" opens this page. The X dismisses the banner until the next reset of the windows it named. When the app is not in front and notifications are connected, each warning also raises one notification per period.
+The banner shows the two soonest and counts the rest; a subscription takes one line. "See subscriptions" opens this page. The X dismisses the lines shown until the next reset of the windows they named. When the app is not in front and notifications are connected, each warning also raises one notification per period, on one machine: the first of the machines the account is signed in on.
 
-An offline machine's reading is stale, so it raises no warning. Turn the warnings off under Settings > Models, "Warn before quota resets unused"; the choice is saved on your main machine.
+An offline machine's reading is stale, so it raises no warning, and neither does an account you signed out of. The hosted app has no main machine to save a dismissal on, so it shows no banner. Turn the warnings off under Settings > Models, "Warn before quota resets unused"; the choice is saved on your main machine.
