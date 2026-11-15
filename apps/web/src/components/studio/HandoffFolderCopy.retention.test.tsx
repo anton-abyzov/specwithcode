@@ -43,6 +43,8 @@ vi.mock("./ProjectLinkDialog", () => ({
     <div data-slot="link-dialog">{JSON.stringify([props.initialCandidate, props.initialKept])}</div>
   ),
 }));
+// The credentials list has its own test (CopyCredentialsChecklist.test.tsx).
+vi.mock("./CopyCredentialsChecklist", () => ({ CopyCredentialsChecklist: () => null }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: string) => async (request: unknown) => {
     state.calls.push([name, request]);

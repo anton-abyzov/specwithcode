@@ -16,6 +16,7 @@ import type { LeftOnSource } from "./HandoffSourceChanges";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { formatBytes } from "../../studio/folderCopy";
 import { HandoffSecretsStep } from "./HandoffSecretsStep";
+import { CopyCredentialsChecklist } from "./CopyCredentialsChecklist";
 import { CopyClassPicker, CopyPlanPreview } from "./HandoffCopyPreview";
 import { CopyProgressPanel } from "./CopyProgressPanel";
 import {
@@ -344,6 +345,16 @@ export function HandoffCopyStepPanels({
               onChange={onSecretsChange}
             />
           )}
+          {machine && (
+            <CopyCredentialsChecklist
+              sourceEnvironmentId={project.environmentId}
+              projectId={project.id}
+              destinationEnvironmentId={machine}
+              sourceLabel={sourceLabel}
+              targetLabel={targetLabel}
+              disabled={busy}
+            />
+          )}
         </>
       )}
 
@@ -381,6 +392,17 @@ export function HandoffCopyStepPanels({
           linkDialog={linkDialog}
           onLinkDialogClose={onLinkDialogClose}
           onLinked={onLinked}
+        />
+      )}
+
+      {/* After the copy: what the new machine still needs before the project works there. */}
+      {stage === "done" && machine && (
+        <CopyCredentialsChecklist
+          sourceEnvironmentId={project.environmentId}
+          projectId={project.id}
+          destinationEnvironmentId={machine}
+          sourceLabel={sourceLabel}
+          targetLabel={targetLabel}
         />
       )}
 
